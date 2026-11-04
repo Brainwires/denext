@@ -1,13 +1,15 @@
 // Production build, stage 4: public-env tree-shaking, self-hosted fonts, the build
 // manifest, precompression, the atomic client swap, typed modules, and the size summary.
 
-import { buildServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
+import type { ServerCopiesManifest } from "../server-copies.ts";
+import { buildServerCopies } from "../server-copies-build.ts";
 import { walk } from "@std/fs";
 import { join } from "@std/path";
 import { resetFonts } from "../../compat/next/font/registry.ts";
 import { extractPublicEnvRefs } from "../../runtime/public-env.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import { generateServerActionsKey } from "../../server/action-bound.ts";
+import { actionIdSecretDigest, actionIdSecretEnvValue } from "../../server/action-ids.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import { type BundleChunk, bundleSummaryLines } from "../bundle-report.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
@@ -93,6 +95,12 @@ function envBuildId(): string | undefined {
 }
 
 /** The boundary `manifest.json` records: the Flight one, else the crawl's (null: no page). */
+/** The fingerprint of the `DENEXT_ACTION_ID_SECRET` this build minted its ids under. */
+function recordedEnvSecretDigest(): { actionIdSecretDigest: string } | Record<never, never> {
+  const env = actionIdSecretEnvValue();
+  return env ? { actionIdSecretDigest: actionIdSecretDigest(env) } : {};
+}
+
 function recordedBoundary(ctx: BuildContext) {
   const boundary = ctx.boundary ?? ctx.crawledBoundary;
   return boundary ? serializeBoundary(boundary, ctx.projectDir) : null;
@@ -115,6 +123,13 @@ function buildManifestFor(
     // only by the server (`DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` overrides it for replicas built
     // separately).
     serverActionsKey: generateServerActionsKey(),
+    // Mints the Server Action ids (src/server/action-ids.ts): new per build, read only by the
+    // server. Absent when `DENEXT_ACTION_ID_SECRET` set it, which the server then needs too — its
+    // fingerprint is recorded, so a server given another value refuses to start instead of
+    // answering every action with "unknown".
+    ...(ctx.actionIdSecret
+      ? { actionIdSecret: ctx.actionIdSecret }
+      : { actionIdSecretEnv: true, ...recordedEnvSecretDigest() }),
     ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,
@@ -133,6 +148,10 @@ function buildManifestFor(
     // rebuilds the loader from.
     nextCompat: ctx.compat,
     compatServerModules: ctx.compatServerModules,
+    // next-compat: the server bundle points every stylesheet import at its shim (esbuild's CSS
+    // shim plugin), so `denext start` needs no CSS import map, no re-exec and no `--allow-run`
+    // (`buildServesCss`). Absent from an older compat build, whose start keeps the re-exec.
+    ...(ctx.compat ? { compatCss: true } : {}),
     // The public-env vars the client bundles reference — the prod server ships only
     // these (∪ the `publicEnv` config allowlist) in each page's env island.
     publicEnvKeys,

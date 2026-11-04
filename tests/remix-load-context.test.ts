@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { loadContextModule } from "../src/build/remix-load-context.ts";
+import { carryLoadContext, loadContextModule } from "../src/build/remix-load-context.ts";
 import { transformRemixApp } from "../src/build/remix-migrate.ts";
 import { clearLoadContext, loadContext } from "../src/compat/remix/load-context.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
@@ -146,6 +146,56 @@ Deno.test("load context: Express reads become denext expressions", async () => {
       result!.warnings[1],
       "load-context.ts: 5 value(s) need porting by hand — see its TODO(denext migrate) notes",
     );
+    // req.ip → clientIp() changes whose word about the client is believed: said in the report.
+    assertStringIncludes(result!.warnings[2], "req.ip no longer follow Express's `trust proxy`");
+    assertStringIncludes(result!.warnings[2], "trustForwardedHeaders");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("load context: req.secure / req.protocol / req.hostname are reported with req.ip", async () => {
+  const dir = await scaffold(
+    `export const handler = createRequestHandler({\n` +
+      `  getLoadContext: (req) => ({ ip: req.ip, secure: req.secure, proto: req.protocol, ` +
+      `host: req.hostname, path: req.path }),\n});\n`,
+  );
+  try {
+    const result = (await loadContextModule(dir))!;
+    const code = result.module!.code;
+    assertStringIncludes(code, "ip: clientIp(),");
+    assertStringIncludes(code, 'secure: (requestUrl.protocol === "https:"),');
+    const note = result.warnings.find((w) => w.includes("trust proxy")) ?? "";
+    assertStringIncludes(note, "req.hostname, req.ip, req.protocol, req.secure no longer follow");
+    assertStringIncludes(note, "TLS-terminating proxy");
+    // A context reading none of them gets no such note.
+    const plain = await scaffold(
+      `export const handler = createRequestHandler({\n  getLoadContext: (req) => ({ p: req.path }),\n});\n`,
+    );
+    try {
+      const quiet = (await loadContextModule(plain))!;
+      assert(!quiet.warnings.some((w) => w.includes("trust proxy")), quiet.warnings.join("\n"));
+    } finally {
+      await Deno.remove(plain, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("load context: an existing load-context.ts is never overwritten", async () => {
+  const dir = await scaffold();
+  const mine = "// my own load context\nexport default () => ({ mine: true });\n";
+  try {
+    await Deno.writeTextFile(join(dir, "load-context.ts"), mine);
+    const result = (await loadContextModule(dir))!;
+    assertEquals(result.module, null);
+    assertEquals(result.warnings, [
+      "server/index.ts: getLoadContext NOT ported — load-context.ts already exists",
+    ]);
+    const carried = await carryLoadContext(dir);
+    assertEquals(carried?.written, []);
+    assertEquals(await Deno.readTextFile(join(dir, "load-context.ts")), mine, "byte for byte");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

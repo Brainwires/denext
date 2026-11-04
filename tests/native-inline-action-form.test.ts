@@ -9,14 +9,25 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { build } from "../src/build/build.ts";
-import { staticExport } from "../src/build/export.ts";
 import { serveEphemeral } from "../src/build/prod-server.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { actionIdFor, forgetTaggedServers } from "../src/runtime/server-action.ts";
+import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
+import { restoreActionIdStateAfterEachTest } from "./helpers/action-id-state.ts";
 import { writeNativeActionFormFixture } from "./helpers/native-action-form-fixture.ts";
+import { serverModuleIdFor } from "../src/build/boundary-ids.ts";
+import { inlineActionModuleKey } from "../src/build/inline-server-action.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// A test that installs a build secret or sets DENEXT_ACTION_ID_SECRET hands the next one the
+// state as it found it, even when it fails half-way.
+restoreActionIdStateAfterEachTest();
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 /** A fresh fixture project (real path: the ids hash the module URL the server loads). */
 async function fixture(options: { static?: boolean; closure?: boolean } = {}): Promise<string> {
@@ -56,19 +67,21 @@ async function assertInlinePost(origin: string, title: string): Promise<void> {
   assertStringIncludes(await (await fetch(origin + "/")).text(), `<li>inline:${title}</li>`);
 }
 
-/** The id next-compat's server bundle gives the page's first inline action (`addInline`). */
+/**
+ * The id next-compat's server bundle gives the page's first inline action (`addInline`): keyed by
+ * the module's project-relative path, so a build of the same source elsewhere mints the same.
+ */
 function compatId(dir: string): string {
-  return actionIdFor(toFileUrl(join(dir, "app", "page.tsx")).href, "inline:0:addInline");
+  const url = toFileUrl(join(dir, "app", "page.tsx")).href;
+  return actionIdFor(inlineActionModuleKey(url, dir), "inline:0:addInline");
 }
 
 Deno.test({
   name: "native inline Server Action: `denext start` renders its endpoint and runs a no-JS post",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture();
   try {
-    await build(dir);
+    await buildInChild(dir);
     const server = await serveEphemeral(dir);
     try {
       const html = await (await fetch(server.origin + "/")).text();
@@ -77,6 +90,7 @@ Deno.test({
       // The build's bound-action key stays on the server.
       const manifest = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "manifest.json")));
       assert(typeof manifest.serverActionsKey === "string", "the build recorded a key");
+      assert(typeof manifest.actionIdSecret === "string", "the build recorded its id secret");
       for (
         const path of [
           "/manifest.json",
@@ -89,6 +103,7 @@ Deno.test({
         const res = await fetch(server.origin + path);
         const text = await res.text();
         assert(!text.includes(manifest.serverActionsKey), `${path} serves the key`);
+        assert(!text.includes(manifest.actionIdSecret), `${path} serves the id secret`);
       }
     } finally {
       await server.close();
@@ -136,8 +151,6 @@ for (const unbundled of [false, true]) {
     name: `native inline Server Action: \`denext dev\`${
       unbundled ? " (unbundled)" : ""
     } renders its endpoint and runs a no-JS post`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     const dir = await fixture();
     try {
@@ -167,15 +180,20 @@ for (const unbundled of [false, true]) {
 
 Deno.test({
   name: "native inline Server Action: `denext export` renders its endpoint",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture({ static: true });
+  // The export runs in its own process: the shared secret a deploy that builds more than once
+  // sets makes its ids the ones this process (a server of another build) mints — once this
+  // process forgets the build secret an earlier `denext start` in this file installed, which is
+  // authoritative over the variable while installed.
+  Deno.env.set("DENEXT_ACTION_ID_SECRET", "export-and-server-share-this");
+  setBuildActionIdSecret(null);
   try {
-    const { outDir } = await staticExport(dir);
+    const { outDir } = await exportInChild(dir);
     const html = await Deno.readTextFile(join(outDir, "index.html"));
     assertEquals(formAction(html, "inline"), `/_denext/action/${compatId(dir)}`);
   } finally {
+    Deno.env.delete("DENEXT_ACTION_ID_SECRET");
     // Every fixture's action module has the same id (`app/actions.ts`): let the next be tagged.
     forgetTaggedServers();
     await Deno.remove(dir, { recursive: true }).catch(() => {});
@@ -184,12 +202,10 @@ Deno.test({
 
 Deno.test({
   name: "native bound Server Actions: a closure and `.bind` post their sealed values, no-JS",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await fixture({ closure: true });
   try {
-    await build(dir);
+    await buildInChild(dir);
     const server = await serveEphemeral(dir);
     try {
       const html = await (await fetch(server.origin + "/")).text();
@@ -211,9 +227,19 @@ Deno.test({
       const [base, token] = closure.split(".");
       const edited = token.slice(0, -2) + (token.endsWith("A") ? "BB" : "AA");
       const tampered = await postForm(server.origin, `${base}.${edited}`, "evil");
-      assertEquals(tampered.status, 404);
+      assertEquals(tampered.status, 409);
       await tampered.body?.cancel();
       assert(!(await (await fetch(server.origin + "/")).text()).includes("evil"));
+      // An export no module imports is refused like an unknown id, under its real id.
+      const actionsUrl = toFileUrl(join(dir, "app", "actions.ts")).href;
+      const unreferenced = actionIdFor(
+        serverModuleIdFor(join(dir, "app"), actionsUrl),
+        "addUnreferenced",
+      );
+      const refused = await postForm(server.origin, `/_denext/action/${unreferenced}`, "sneak");
+      assertEquals(refused.status, 409);
+      await refused.body?.cancel();
+      assert(!(await (await fetch(server.origin + "/")).text()).includes("unreferenced:"));
     } finally {
       await server.close();
     }

@@ -21,7 +21,8 @@
 //       `type: object` whose `additionalProperties` is the value schema. No marker: a form
 //       renderer recognises a map structurally, from a non-empty `additionalProperties`.
 //   Per-property JSDoc tags: `@default` / `@minimum` / `@maximum` become the matching
-//   keyword (a JSON-literal body only), and `@widget textarea` becomes
+//   keyword (a JSON-literal body only), `@itemPattern "<regex>"` an array's `items.pattern`,
+//   and `@widget textarea` becomes
 //   `x-denext.widget: "textarea"` (any other widget name is ignored). Nothing is inferred
 //   from a type or a prose description. Descriptions are the first JSDoc paragraph,
 //   verbatim except for `{@link}` markup.
@@ -353,6 +354,29 @@ export function widgetHint(tags: DocTag[] | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * The `pattern` a property's `@itemPattern "<regex>"` JSDoc tag gives each item of an array
+ * (a JSON string literal, so backslashes are escaped as in JSON), or `undefined`. Like the other
+ * constraint tags it is stated in the source only where `config-validate.ts` enforces the same
+ * rule on every entry.
+ *
+ * @param tags The property's JSDoc tags, as `deno doc --json` reports them.
+ * @returns The regular expression's source, or `undefined`.
+ */
+export function itemPattern(tags: DocTag[] | undefined): string | undefined {
+  for (const tag of tags ?? []) {
+    const match = /^@itemPattern\s+(\S.*)$/.exec(String(tag.value ?? "").trim());
+    if (!match) continue;
+    try {
+      const pattern = JSON.parse(match[1].trim());
+      if (typeof pattern === "string") return pattern;
+    } catch {
+      // Not a JSON string — describe nothing.
+    }
+  }
+  return undefined;
+}
+
 /** One property's schema: description, type, tag constraints, and any widget hint. */
 function propertySchema(p: DocProp, ctx: SchemaContext): Schema {
   const gone = deprecation(p.jsDoc?.tags);
@@ -368,6 +392,11 @@ function propertySchema(p: DocProp, ctx: SchemaContext): Schema {
   };
   const widget = widgetHint(p.jsDoc?.tags);
   if (widget) schema[EXT] = { ...(schema[EXT] as Schema | undefined), widget };
+  const pattern = itemPattern(p.jsDoc?.tags);
+  const items = schema.items;
+  if (pattern !== undefined && typeof items === "object" && items !== null) {
+    schema.items = { ...(items as Schema), pattern };
+  }
   return schema;
 }
 

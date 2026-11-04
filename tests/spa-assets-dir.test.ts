@@ -10,11 +10,11 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { Schema } from "effect";
-import { staticExport } from "../src/build/export.ts";
 import { startSpaProdServer } from "../src/build/spa.ts";
 import { collectViteManifest } from "../src/build/spa/vite-manifest.ts";
 import { spaClientPrefix } from "../src/build/spa/shared.ts";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -126,12 +126,10 @@ for (const compat of [false, true]) {
   const path = compat ? "esbuild" : "native";
   Deno.test({
     name: `spa.assetsDir (${path} path): export lays out assets/ the way T3's server serves it`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await spaFixture(compat, `, assetsDir: "assets", viteManifest: true, ota: true`);
     try {
-      await staticExport(dir);
+      await exportInChild(dir);
       const out = join(dir, "out");
       // Nothing is left under the default directory.
       assertFalse(await Deno.stat(join(out, "_denext", "client")).then(() => true, () => false));
@@ -190,12 +188,10 @@ for (const compat of [false, true]) {
 
 Deno.test({
   name: "spa.assetsDir: unset keeps _denext/client/ (default layout unchanged)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(false, "");
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const out = join(dir, "out");
     assert((await Deno.stat(join(out, "_denext", "client", "index.js"))).isFile);
     assertStringIncludes(
@@ -275,8 +271,6 @@ async function builtProject(): Promise<string> {
 
 Deno.test({
   name: "spa.assetsDir: denext start serves the client from /assets/, public/assets/ behind it",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await builtProject();
   const controller = new AbortController();
@@ -315,8 +309,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.assetsDir: the dev server (bundled loop) serves the client from /assets/",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(true, `, assetsDir: "assets"`);
   const server = await startSpaDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" }, { unbundled: false });
@@ -347,14 +339,12 @@ Deno.test({
 // the bundle is the client) and the static export — and the public file never replaces it.
 Deno.test({
   name: "spa.assetsDir: a public/ file at a build path loses to the build in export, dev and start",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const PUBLIC = "// public/assets/index.js";
   const dir = await spaFixture(false, `, assetsDir: "assets"`);
   try {
     await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), PUBLIC);
-    await staticExport(dir);
+    await exportInChild(dir);
     const exported = await Deno.readTextFile(join(dir, "out", "assets", "index.js"));
     assert(exported !== PUBLIC, "export: the build's entry stays");
     assert(
@@ -379,8 +369,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.assetsDir: denext start serves the build's file over a same-named public one",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await builtProject();
   await Deno.writeTextFile(join(dir, "public", "assets", "index.js"), "// public");

@@ -4,11 +4,12 @@
 // per request.
 
 import { assert, assertEquals } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/cache-components", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("cache-components");
 
 const cachedStamp = (html: string): string => {
   const m = html.match(/data-cached-stamp="([^"]+)"/);
@@ -77,13 +78,11 @@ async function stepPprNoStore(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "examples/cache-components: cached shell + per-request dynamic hole (PPR)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
 
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;

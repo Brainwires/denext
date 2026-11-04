@@ -45,13 +45,36 @@ const home = await client.get("/");`}
         (<code>@denext/pages-router</code>), or a route a plugin serves, answers in the test the way
         it does in the server. Each <code>createTestApp</code> call gets its own plugin set. Its
         {" "}
-        <code>close()</code> runs the plugins' teardowns, and <code>await using</code>{" "}
-        calls it for you.
+        <code>close()</code>{" "}
+        runs the plugins' teardowns and cancels the response bodies the test never read (as a server
+        does when the client goes away), and <code>await using</code> calls it for you.
       </p>
       <Code lang="ts">
         {`await using app = await createTestApp("./"); // pages/ + plugins: [pagesRouter()]
 const client = createTestClient(app);
 assertEquals((await client.get("/api/hello")).status, 200); // a Pages API route`}
+      </Code>
+      <p>
+        The rest of what <code>denext start</code>{" "}
+        runs comes up too. The plugins' build steps run, and the files they emit (<code>
+          emitFile
+        </code>) are served; they write into a temporary directory, never your{" "}
+        <code>.denext/</code>. Every <code>jobs/</code> module is registered, so{" "}
+        <code>runJob(name)</code>{" "}
+        works from the test and from a route it requests (no schedule fires). The{" "}
+        <code>services/</code> tree starts under its supervisor, and <code>close()</code>{" "}
+        stops it. Pass <code>{`{ buildSteps: false }`}</code>, <code>{`{ jobs: false }`}</code> or
+        {" "}
+        <code>{`{ services: false }`}</code>{" "}
+        to leave one out. Services are supervised process-wide, so close one test app before you
+        start another.
+      </p>
+      <Code lang="ts">
+        {`import { runJob } from "denext/server";
+
+await using app = await createTestApp("./"); // jobs/digest.ts, services/queue.ts
+assertEquals(await runJob("digest", { day: "mon" }), "sent");
+const feed = await createTestClient(app).get("/feed.xml"); // emitted by a plugin build step`}
       </Code>
 
       <h2>Component testing</h2>
@@ -78,6 +101,15 @@ assertEquals(screen.getByRole("button").textContent, "Count: 1");`}
         <code>getByRole</code> (over a broad implicit-ARIA role table), <code>getByText</code>,{" "}
         <code>getByLabelText</code>, <code>getByPlaceholderText</code>,{" "}
         <code>getByTestId</code>, and their <code>query*</code>/<code>getAll*</code> variants.
+      </p>
+      <p>
+        SVG and MathML render as in a browser: <code>&lt;svg&gt;</code>{" "}
+        and its content are created in the SVG namespace (a{" "}
+        <code>&lt;foreignObject&gt;</code>&apos;s children are HTML again), with case-kept tag names
+        such as <code>linearGradient</code>, so a queried element reports <code>namespaceURI</code>,
+        {" "}
+        <code>localName</code> and <code>getAttributeNS</code>{" "}
+        and events fire on SVG elements like any other.
       </p>
       <p>
         For state that settles <em>after</em> an async effect, use the async <code>findBy*</code>

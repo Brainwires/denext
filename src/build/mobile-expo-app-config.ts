@@ -53,6 +53,7 @@ import {
 } from "./mobile-native-config.ts";
 import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 import { dirname } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
@@ -152,6 +153,7 @@ async function edit(
   }
   if (next === text) report.unchanged.push(rel);
   else {
+    await assertInsideProject(dir, nativeJoin(dir, rel));
     await Deno.writeTextFile(nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
@@ -306,6 +308,7 @@ async function writeFile(
       return;
     }
   } catch { /* new */ }
+  await assertInsideProject(dir, path);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeFile(path, bytes);
   report.written.push(rel);
@@ -348,6 +351,7 @@ async function replacePlaceholderSplash(
   // The placeholder's own images (three scales of the same white square) go with it.
   for await (const entry of Deno.readDir(nativeJoin(dir, set))) {
     if (entry.isFile && /^splash-2732x2732(-\d)?\.png$/.test(entry.name)) {
+      await assertInsideProject(dir, nativeJoin(dir, set, entry.name), { entry: true });
       await Deno.remove(nativeJoin(dir, set, entry.name));
       report.written.push(`${set}/${entry.name} (removed: Capacitor's placeholder)`);
     }

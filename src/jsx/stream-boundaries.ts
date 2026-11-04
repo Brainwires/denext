@@ -89,10 +89,33 @@ interface Slot<S extends SettledBoundary> {
 /** The provider-scope key naming the boundary a subtree renders in. */
 const BOUNDARY: unique symbol = /* @__PURE__ */ Symbol("denext.streamBoundary");
 
-/** A random hex string, so content can never forge a boundary token. */
+/** A random 16-digit hex string, so content can never forge a boundary token. */
 function randomNonce(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const [a, b] = crypto.getRandomValues(new Uint32Array(2));
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+
+/** A boundary token found in some HTML: where it starts and ends, and the boundary id. */
+type FoundToken = [start: number, end: number, id: string];
+
+/**
+ * The first token at or after `from` in `html`: `prefix` (`\0dnx-sb:<nonce>:`), a non-empty id
+ * and a closing `\0` — what the regular expression `\0dnx-sb:<nonce>:([^\0]+)\0` would match
+ * there. Scanned with `indexOf`, as a pattern holding a per-render nonce would be compiled again
+ * for every render (a cost every streamed page paid per request).
+ */
+function findToken(html: string, prefix: string, from: number): FoundToken | null {
+  for (
+    let start = html.indexOf(prefix, from);
+    start !== -1;
+    start = html.indexOf(prefix, start + 1)
+  ) {
+    const idStart = start + prefix.length;
+    const close = html.indexOf("\u0000", idStart);
+    if (close === -1) return null;
+    if (close > idStart) return [start, close + 1, html.slice(idStart, close)];
+  }
+  return null;
 }
 
 /**
@@ -102,7 +125,8 @@ function randomNonce(): string {
 export class StreamBoundaries<S extends SettledBoundary> {
   private readonly slots = new Map<string, Slot<S>>();
   private readonly nonce = randomNonce();
-  private readonly tokenRe = new RegExp(`\u0000dnx-sb:${this.nonce}:([^\u0000]+)\u0000`, "g");
+  /** What every token of this render starts with. */
+  private readonly prefix = `\u0000dnx-sb:${this.nonce}:`;
   /** Boundaries rendering without having suspended. */
   private busy = 0;
   private readonly waiters: Array<() => void> = [];
@@ -163,7 +187,7 @@ export class StreamBoundaries<S extends SettledBoundary> {
   /** The token standing for boundary `id` in its parent's HTML, its fallback recorded. */
   token(id: string, fallback: string): string {
     this.slots.get(id)!.fallback = fallback;
-    return `\u0000dnx-sb:${this.nonce}:${id}\u0000`;
+    return `${this.prefix}${id}\u0000`;
   }
 
   /**
@@ -175,23 +199,33 @@ export class StreamBoundaries<S extends SettledBoundary> {
    * nothing.
    */
   expand(html: string, streamed: Set<Promise<S>>, head: HeadCollector | null = null): string {
-    if (!html.includes("\u0000")) return html;
-    return html.replace(this.tokenRe, (_token, id: string) => {
-      const slot = this.slots.get(id)!;
-      const settled = slot.settled;
-      if (settled?.ok) {
-        this.inlined.add(id);
-        // Its hoisted tags join the enclosing head (the document's, or a streamed parent's).
-        const own = settled.head && !head ? headMarkup(settled.head) : "";
-        if (settled.head && head) mergeHead(head, settled.head);
-        return `<!--$-->${own}${this.expand(settled.html, streamed, head)}<!--/$-->`;
-      }
-      if (!settled) streamed.add(this.flushed(slot, streamed));
-      // A boundary that already failed keeps its fallback for good: marked, so `denext
-      // doctor` finds it stuck in a document that streams nothing.
-      const failed = settled ? " data-dnx-failed" : "";
-      return `<div data-dnx-b="${id}"${failed}>${this.expand(slot.fallback, streamed)}</div>`;
-    });
+    let token = findToken(html, this.prefix, 0);
+    if (!token) return html;
+    let out = "";
+    let last = 0;
+    for (; token; token = findToken(html, this.prefix, last)) {
+      out += html.slice(last, token[0]) + this.decide(token[2], streamed, head);
+      last = token[1];
+    }
+    return out + html.slice(last);
+  }
+
+  /** Boundary `id`'s markup where its token stood: inline content, or its fallback placeholder. */
+  private decide(id: string, streamed: Set<Promise<S>>, head: HeadCollector | null): string {
+    const slot = this.slots.get(id)!;
+    const settled = slot.settled;
+    if (settled?.ok) {
+      this.inlined.add(id);
+      // Its hoisted tags join the enclosing head (the document's, or a streamed parent's).
+      const own = settled.head && !head ? headMarkup(settled.head) : "";
+      if (settled.head && head) mergeHead(head, settled.head);
+      return `<!--$-->${own}${this.expand(settled.html, streamed, head)}<!--/$-->`;
+    }
+    if (!settled) streamed.add(this.flushed(slot, streamed));
+    // A boundary that already failed keeps its fallback for good: marked, so `denext
+    // doctor` finds it stuck in a document that streams nothing.
+    const failed = settled ? " data-dnx-failed" : "";
+    return `<div data-dnx-b="${id}"${failed}>${this.expand(slot.fallback, streamed)}</div>`;
   }
 
   /**
@@ -201,9 +235,12 @@ export class StreamBoundaries<S extends SettledBoundary> {
    * sets the whole response, as a signal thrown in the shell does.
    */
   inlineSignal(html: string): unknown {
-    if (!html.includes("\u0000")) return undefined;
-    for (const m of html.matchAll(this.tokenRe)) {
-      const settled = this.slots.get(m[1])!.settled;
+    for (
+      let token = findToken(html, this.prefix, 0);
+      token;
+      token = findToken(html, this.prefix, token[1])
+    ) {
+      const settled = this.slots.get(token[2])!.settled;
       if (!settled?.ok) continue;
       if (settled.signal !== undefined) return settled.signal;
       const nested = this.inlineSignal(settled.html);

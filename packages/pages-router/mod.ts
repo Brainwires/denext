@@ -82,6 +82,13 @@ import {
 } from "@denext/denext/plugin-kit";
 import { join, resolve } from "@std/path";
 import { createPagesHandler } from "./src/handler.ts";
+import {
+  COMPAT_DIR,
+  COMPAT_RECORD,
+  compiledApp,
+  recordCompatModules,
+  recordedCompatModules,
+} from "./src/compat-record.ts";
 import { type PagesScan, scanPagesDir } from "./src/scan.ts";
 import { type ClientBundler, createClientBundler, PAGES_PREFIX } from "./src/client-bundle.ts";
 import { prerenderStaticPages } from "./src/ssg.ts";
@@ -102,33 +109,74 @@ async function isDir(path: string): Promise<boolean> {
  * (`import styled from …` yields the module namespace, not the `default` proxy, so a
  * module-scope `styled.div\`\`` throws). Returns the native loader unchanged for
  * denext-native apps (no npm React) — no compat build, no added cost.
+ *
+ * `denext build` builds the bundles into `.denext/pages-compat/` and records them; `denext start`
+ * and a compiled app (whose embedded `.denext` is read-only and which has no bundler) load that
+ * record. A production server without one (an older build) builds them at startup, as before;
+ * a compiled app refuses, naming the fix.
  */
 async function buildCompatLoad(
   ctx: PluginContext,
   scan: PagesScan,
   configPath: string,
 ): Promise<(filePath: string) => Promise<unknown>> {
-  const override = ctx.config.compatibilityMode;
-  const compat = override ??
-    await isDir(join(ctx.projectRoot, "node_modules", "react"));
-  if (!compat) return ctx.load;
-  const modules = [
-    scan.app,
-    scan.document,
-    ...scan.pages.filter((p) => !p.isApi).map((p) => p.filePath),
-  ].filter((m): m is string => typeof m === "string");
+  const outDir = join(ctx.projectRoot, ".denext");
+  const building = ctx.mode === "build";
+  // A build records afresh: an earlier build's record never outlives a change of mode or pages.
+  if (building) await Deno.remove(join(outDir, COMPAT_DIR, COMPAT_RECORD)).catch(() => {});
+  const modules = compatModules(scan);
   if (modules.length === 0) return ctx.load;
+  const recorded = await recordedLoad(ctx, outDir, modules);
+  if (recorded) return recorded;
+  if (!await usesNpmReact(ctx)) return ctx.load;
+  refuseInCompiledApp(ctx);
   const moduleMap = await buildNextCompatModules({
     projectDir: ctx.projectRoot,
     configPath,
-    outDir: join(ctx.projectRoot, ".denext"),
+    outDir: building ? join(outDir, COMPAT_DIR) : outDir,
     modules,
     minify: ctx.mode !== "dev",
     // Honor the App-Router opt-out: `nodeResolve: false` puts the compat
     // bundle back on Deno's strict `npm:` loader (the default resolves from node_modules).
     resolveAllNodeModules: ctx.config.nodeResolve !== false,
   });
+  if (building) await recordCompatModules(ctx.projectRoot, outDir, moduleMap);
   return createNextCompatServerLoader(ctx.load, { moduleMap });
+}
+
+/** A production server's loader over the bundles the build recorded, or `null` without them. */
+async function recordedLoad(
+  ctx: PluginContext,
+  outDir: string,
+  modules: readonly string[],
+): Promise<((filePath: string) => Promise<unknown>) | null> {
+  if (ctx.mode !== "prod") return null;
+  const moduleMap = await recordedCompatModules(ctx.projectRoot, outDir, modules);
+  return moduleMap ? createNextCompatServerLoader(ctx.load, { moduleMap }) : null;
+}
+
+/** A compiled app can build no bundles (no bundler, a read-only `.denext`): refuse, naming the fix. */
+function refuseInCompiledApp(ctx: PluginContext): void {
+  if (ctx.mode !== "prod" || !compiledApp()) return;
+  throw new Error(
+    "@denext/pages-router: this compiled app's build recorded no compat server bundles for its " +
+      `pages (.denext/${COMPAT_DIR}/${COMPAT_RECORD}). Rebuild it with \`denext build --compile\`.`,
+  );
+}
+
+/** The modules a page render loads: `_app`, `_document` and every non-API page. */
+function compatModules(scan: PagesScan): string[] {
+  return [
+    scan.app,
+    scan.document,
+    ...scan.pages.filter((p) => !p.isApi).map((p) => p.filePath),
+  ].filter((m): m is string => typeof m === "string");
+}
+
+/** The app renders with npm React: `compatibilityMode`, else a `node_modules/react`. */
+async function usesNpmReact(ctx: PluginContext): Promise<boolean> {
+  const mode = ctx.config.compatibilityMode;
+  return mode === undefined ? await isDir(join(ctx.projectRoot, "node_modules", "react")) : !!mode;
 }
 
 /** Options for {@linkcode pagesRouter}. */

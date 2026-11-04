@@ -3,11 +3,12 @@
 // width-allowlist rejection, the page's generated srcSet, and the dynamic OG image.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/image", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("image");
 
 // `next/og` renders through denext's first-party `@denext/og` codec (a workspace member
 // locally, JSR when published). The OG step self-skips when it can't be resolved.
@@ -61,13 +62,11 @@ async function ogImageRendersPng(origin: string) {
 
 Deno.test({
   name: "examples/image: optimizer, width allowlist, srcSet, and OG image",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const { origin } = started;

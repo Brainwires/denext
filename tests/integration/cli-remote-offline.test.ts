@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { contentType } from "@std/media-types";
 import { extname, fromFileUrl, join, normalize } from "@std/path";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("../..", import.meta.url));
 const enabled = Deno.env.get("DENEXT_TEST_REMOTE_CLI") === "1";
@@ -31,7 +32,12 @@ function serveCheckout(): { server: Deno.HttpServer; origin: string } {
   return { server, origin: `http://127.0.0.1:${server.addr.port}` };
 }
 
-/** The checkout's import map with its local targets served from `origin` (as JSR would). */
+/**
+ * The checkout's import map with its local targets served from `origin` (as JSR would), and
+ * `@denext/docs-corpus` too: denext pins it at exactly its own version, which JSR always has when
+ * it has that denext (every release publishes the corpus first), so the stand-in serves the
+ * checkout's copy rather than a JSR release of another commit.
+ */
 async function remoteConfig(origin: string, dir: string): Promise<string> {
   const { imports } = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
     imports: Record<string, string>;
@@ -41,6 +47,12 @@ async function remoteConfig(origin: string, dir: string): Promise<string> {
       [k, v],
     ) => [k, v.startsWith("./") ? `${origin}/${v.slice(2)}` : v]),
   );
+  const corpus = JSON.parse(
+    await Deno.readTextFile(join(ROOT, "packages", "docs-corpus", "deno.json")),
+  ) as { name: string; exports: Record<string, string> };
+  for (const [sub, file] of Object.entries(corpus.exports)) {
+    remote[corpus.name + sub.slice(1)] = `${origin}/packages/docs-corpus/${file.slice(2)}`;
+  }
   const path = join(dir, "deno.json");
   await Deno.writeTextFile(path, JSON.stringify({ imports: remote, lock: false }));
   return path;
@@ -51,8 +63,6 @@ Deno.test({
     enabled ? "" : " (skipped: set DENEXT_TEST_REMOTE_CLI=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const tmp = await Deno.makeTempDir({ prefix: "denext_remote_cli_" });
     const { server, origin } = serveCheckout();
@@ -63,13 +73,11 @@ Deno.test({
       await Deno.writeTextFile(join(project, "app", "page.tsx"), "export default () => null;\n");
       const cli = `${origin}/cli.ts`;
       const run = async (args: string[], env: Record<string, string> = {}) => {
-        const out = await new Deno.Command(Deno.execPath(), {
+        const out = await boundedOutput(Deno.execPath(), {
           args,
           cwd: tmp,
           env: { DENO_DIR: join(tmp, "deno-dir"), DENEXT_DENO: "stock", NO_COLOR: "1", ...env },
-          stdout: "piped",
-          stderr: "piped",
-        }).output();
+        });
         const decoder = new TextDecoder();
         return { code: out.code, out: decoder.decode(out.stdout), err: decoder.decode(out.stderr) };
       };

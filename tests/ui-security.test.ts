@@ -24,6 +24,10 @@ import {
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 /**
  * A started server, handshaken: `cookie` is the `Cookie` header value the exchange minted and
@@ -703,4 +707,25 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("ui security: a write through a dangling symlink pointing outside the project is refused", async () => {
+  if (!FILE_SYMLINKS) return;
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_dangling_" });
+  const outside = await Deno.makeTempDir({ prefix: "denext_ui_dangling_out_" });
+  try {
+    const target = join(outside, "created.txt");
+    // Windows needs the link's type when the target does not exist.
+    await Deno.symlink(target, join(dir, "link.txt"), { type: "file" });
+    await Deno.symlink(join(outside, "gone"), join(dir, "linkdir"), { type: "dir" });
+
+    await assertRejects(() => writeFileAtomic(dir, "link.txt", "pwned"), Error, "dangling");
+    await assertRejects(() => uiSafeJoin(dir, "link.txt"), Error, "dangling");
+    await assertRejects(() => uiSafeJoin(dir, "linkdir/new.txt"), Error, "dangling");
+    assertEquals(await Deno.stat(target).catch(() => null), null, "nothing created outside");
+    assertEquals(await Deno.stat(join(outside, "gone")).catch(() => null), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
 });

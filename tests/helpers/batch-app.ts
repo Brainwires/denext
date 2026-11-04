@@ -1,7 +1,7 @@
 // A small app with a handful of API routes (and one page) — the target for the typed-API batch
 // tests (server handler + client batcher). Shared so both sides exercise the same routes.
 
-import { createApp } from "../../src/server/app.ts";
+import { createApp } from "./released-app.ts";
 import { parsePattern } from "../../src/router/segments.ts";
 import type { RouteManifest } from "../../src/router/manifest.ts";
 import type { ApiModule } from "../../src/server/types.ts";

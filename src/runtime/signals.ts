@@ -8,7 +8,8 @@
 // is component-scoped (a write re-renders the owning component), matching React's
 // model; fine-grained per-subscriber updates are a later optimization.
 
-import { useId, useRef, useState } from "./hooks.ts";
+import { useRef, useState } from "./hooks.ts";
+import { useId } from "./hooks/use-id.ts";
 import { adoptedSignal, recordSignal } from "./signal-state.ts";
 
 /** A reactive box holding a single serializable value. */

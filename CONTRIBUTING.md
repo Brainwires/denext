@@ -19,8 +19,9 @@ deno task budget          # CI's bundle-budget job: the shared-chunk budget of e
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
 
-- **`regen`** runs every generator a CI drift test checks, in dependency order: the command
-  table, packed native templates, config schema, serial-test list, plugin catalog, the
+- **`regen`** runs every generator a CI drift test checks, in dependency order: first `deno fmt`
+  over the docs corpus's inputs (the corpus fingerprints their bytes, so one regen is final even
+  when the commit hook's fmt would reformat a page), then the command table, packed native templates, config schema, serial-test list, plugin catalog, the
   react-native tables, the served `install.sh` / `install.ps1`, the desktop examples' package
   scripts, the MCP / CLI / examples / fixed pages, then the docs corpus and `llms*.txt`.
   `regen --check` lists what is stale and leaves the tree as it was. Stale generated files were
@@ -117,6 +118,14 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   and the route assertions are real failures. Bump a bed's SHA
   deliberately and say why in the commit (the pin comment names what the newer
   upstream needs).
+- **`deno task ts7:diff`** compares TypeScript 6 with TypeScript 7 on the repo and its examples:
+  it runs `deno check` on the toolchain twice per target, with `DENEXT_NATIVE_CHECK=0` (the
+  in-process TypeScript 6) and `DENEXT_NATIVE_CHECK=1` (the native TypeScript 7 checker), and
+  reports the diagnostics only one compiler gives, or gives with another message
+  (`scripts/ts7-diff.ts`). Name targets to narrow it (`deno task ts7:diff . examples/hello`);
+  `--out` / `--json` write the report, `--fail-on-diff` exits 1 on any difference. In CI it is
+  dispatch-only: `gh workflow run ts7-diff.yml --ref <branch> [-f targets="…"]`, with the report in
+  the job summary and the `ts7-diff` artifact.
 - **Running the suites on Windows: keep the temp directory on the checkout's drive.** The tests
   write temp projects that import this checkout, and Deno 2.9 resolves a config's `file:` targets
   on another drive as `file:///C:/D:/…`, so with the checkout on `D:` and `%TEMP%` on `C:` they
@@ -134,7 +143,7 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
 
 **What CI runs on a push.** GitHub runs at most 20 of the account's jobs at once (5 of them
 macOS), so a push runs only what it needs. A push to `development` runs ci.yml's fast jobs
-(`check`, `bundle-budget`, `ios-export-router`, `windows-resolve`) and the path-filtered
+(`check`, `bundle-budget`, `ios-export-router`, `windows-resolve`, `cargo-audit`) and the path-filtered
 workflows whose filter matches (desktop-ci.yml, desktop-window.yml, parity-native.yml,
 parity-drift.yml, native-plugins.yml). A push to a `ci/*` branch runs native-plugins.yml when a
 native template changed and nothing else; a `fix/*` or `feat/*` branch runs no workflow. To test a
@@ -201,6 +210,21 @@ exits, so there is never a stale lock to clear). The same applies to `denext bui
 [the CLI reference](https://denext.dev/docs/cli#build-locks) and
 `src/build/project-locks.ts`. Call the `*:run` tasks directly only when you know nothing
 else writes `coverage/`.
+
+**The per-file coverage ratchet.** Besides the aggregate 85% and the fixed per-file floors
+(`scripts/coverage-floor.ts`), `deno task test:coverage` holds every module under `src/cli`,
+`src/server`, `src/compat` and `packages/` to the line / branch / function coverage
+`scripts/coverage-baseline.json` records for it (`scripts/coverage-ratchet.ts`): a file may not
+drop below its numbers (by more than one line, branch or function), and a file new to the
+baseline needs 85%. The numbers only go up. When a run beats them, it lists the files; record
+them from CI's report without re-running the suite locally:
+
+```sh
+gh run download <ci.yml run id> -n coverage-lcov -D coverage
+deno task coverage:ratchet:update   # raises, adds new files, drops deleted ones; never lowers
+```
+
+Lowering a number is a hand edit of the baseline, visible in review.
 
 If a report is a **genuine false positive**, scope the suppression as narrowly
 as possible — prefer a per-line/file marker over widening config:
@@ -351,15 +375,16 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 2. **Run the heavy CI jobs on that commit.** A push to `development` runs only
    ci.yml's fast jobs; `integration`, `next-compat`, `coverage`,
    `backend-integration` (the `@denext/backend` suites against a real Postgres and MinIO,
-   as service containers) and `windows-tests` (the unit and integration suites on
-   Windows) run on pull requests, `main` and a manual dispatch. Dispatch it
+   as service containers), `windows-tests` (the unit and integration suites on
+   Windows) and `macos-tests` (the unit suite on macOS arm64, with a real ad-hoc `codesign`)
+   run on pull requests, `main` and a manual dispatch. Dispatch it
    and wait:
    `gh workflow run ci.yml --ref development`, then
    `gh run watch "$(gh run list --workflow=ci.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`.
    The release script checks this itself (`scripts/release-ci.ts`): it refuses
    to start unless the newest ci.yml run on HEAD that ran those jobs has
    `check`, `integration`, `next-compat`, `coverage`, `backend-integration`,
-   `ios-export-router`, `windows-resolve` and `windows-tests` green (it needs `gh`,
+   `ios-export-router`, `windows-resolve`, `windows-tests` and `macos-tests` green (it needs `gh`,
    logged in).
    It also needs the newest desktop-ci.yml run on HEAD green in every job (the
    desktop suites on all three OSes, the installers, install.ps1 / install.sh;
@@ -372,6 +397,11 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
    every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
    and `gh workflow run desktop-window.yml --ref development`.
+   Last, it needs the newest native-plugins.yml run on HEAD green in both builds
+   (`NATIVE_PLUGINS_JOBS`: `android`, `ios`: examples/mobile built with every
+   denext native plugin). A push runs it only when a native template or
+   installer changes, so dispatch it too:
+   `gh workflow run native-plugins.yml --ref development`.
 3. **Cut:** `deno task release X.Y.Z` (add `--confirm` to skip the prompt,
    `--dry` to preview). The script: bumps every version spot (`deno task bump`
    — root `deno.json` + `mod.ts`, `ROADMAP.md`'s status line, every
@@ -498,6 +528,71 @@ only that package, on its own tag:
    `git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z" <commit>` (e.g.
    `photon-v1.1.0`) and `git push origin <pkg>-vX.Y.Z`.
 
+### A bad runtime release
+
+A released Deno toolchain or Deno Desktop runtime (`denext-runtime-v<version>` on
+`Brainwires/deno`) that turns out to be broken is revoked through the signed revoked-runtimes list
+(`src/build/runtime-revocations.ts`; users' side: [the toolchain docs](https://denext.dev/docs/toolchain#revoked-runtimes)).
+The list is ECDSA P-256 signed with a maintainer key; denext verifies it with the two public keys
+compiled into `src/build/runtime-revocation-keys.ts` (the active one and an offline backup). With
+both slots empty the check is a no-op: no list is read, nothing is fetched. Signing is a manual
+step on the maintainer's Mac, never a CI secret: `deno task revocations` (`scripts/runtime-revocations.ts`)
+reads the private key from the login keychain with `security find-generic-password -w`, never
+prints it and never writes it to disk.
+
+**One-time setup** (a maintainer, by hand; an agent never creates or handles the key):
+
+1. `deno task revocations keygen` stores a new private key in the login keychain (service
+   `denext-runtime-revocations`, account `active`) and prints its public key. Paste it into the
+   first (active) slot of `src/build/runtime-revocation-keys.ts`.
+2. `deno task revocations keygen --slot backup` makes the backup pair. Paste its public key into
+   the second slot, export the item (Keychain Access) into the password manager, then delete it
+   from the keychain: the backup key lives offline and is used only to rotate. Also keep a copy of
+   the active key in the password manager.
+3. Commit the keys module and release it.
+4. Set `DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root>` in the shell that signs, then
+   publish the first list (nothing revoked): `deno task revocations init`. It rsyncs
+   `runtime/revocations.json` into the web root and commits `runtime-revocations.json` to the
+   orphan branch `denext-revocations` of `Brainwires/deno` (`gh`, logged in with push access).
+   The docs-site deploy (`rsync --delete site/out/ …`) must leave the file alone: add
+   `--exclude /runtime/` to that rsync.
+
+**Runbook (bad runtime release N):**
+
+1. Confirm the break (a crash report, an issue) and work out which targets it hits.
+2. Revoke it: `deno task revocations add --component cli --version N [--targets <triple,…>]
+   --reason "<one line>" [--advisory <https url>] [--fixed-in "denext X.Y.Z"]` (`--component
+   desktop` for the Deno Desktop runtime). It signs with the keychain key, verifies the result
+   against the compiled-in public keys, writes `.denext/runtime-revocations.json` and publishes it
+   to denext.dev and the mirror (`--no-publish` stops before that; `deno task revocations publish
+   <file>` publishes later).
+3. Check from a clean `DENO_DIR`: `denext toolchain status` shows the revocation and the rollback.
+   Users pick it up within 12 hours, or at once on `toolchain status` / `doctor`.
+4. Re-pin. When a fixed runtime N+1 exists, `deno task desktop:pin-runtime denext-runtime-vN+1`:
+   the new pins keep N-1 as their `rollback`, because N is revoked. Otherwise restore the previous
+   pins (`git show <last good>:src/build/deno-toolchain-pin.json`, the same for
+   `desktop-runtime-pin.json`). `--rollback <tag>` names the fallback release explicitly.
+5. Cut a denext patch release through the normal gates (`deno task release`, then merge
+   `development → main`). Publish a GitHub advisory if security is involved.
+6. Optionally point the fork release's notes at the revocation (its assets stay immutable).
+
+**Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
+There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign
+--if-due`) when fewer than 10 days remain, on the machine that holds the key. A failure there is a
+warning, never a failed release; run `deno task revocations resign` by hand when releases pause
+for more than about 10 days. Sign on a machine whose clock is right: a list dated more than a day
+ahead of a user's clock is refused.
+
+**The compiled-in floor.** Each release compiles in the sequence of the list published when it
+was cut (`RUNTIME_REVOCATION_MIN_SEQUENCE` in `src/build/runtime-revocation-keys.ts`), so a fresh
+install never takes an older, still-valid list from a stale or tampered mirror. `deno task
+release` raises it at step 1c (`deno task revocations floor`, the published list verified against
+the compiled-in keys; it never lowers it). A failure there is a warning and the release keeps the
+previous floor. After revoking a release in an emergency, cut the patch release from step 5 of the
+runbook so the new revocation becomes its floor. `deno task
+revocations verify` checks the published copy against the compiled-in keys. To rotate, sign with
+the backup key (store it in the keychain as the `active` item), compile a new backup into the next release, and retire the old active key.
+
 ### Gotchas
 
 - **Clean tree required.** `deno publish` (and the workflow) refuse a dirty
@@ -518,6 +613,13 @@ only that package, on its own tag:
 `deno task release X.Y.Z --confirm` green · publish workflow green ·
 `jsr:@denext/denext@X.Y.Z` resolves · development → main PR merged · docs
 deployed.
+
+JSR refuses a package past 20 MiB of uncompressed files. For `@denext/denext`, the publish job runs
+`scripts/publish-strip.ts --write` first: it blanks whole-line `//` comments and the JSDoc outside
+the public API, keeping every line number, and fails over its 18.5 MiB guard. The release script and
+`tests/release-tools.test.ts` measure the same size. Run it with no flag to see the number. ci.yml's
+`check` job runs the strip and `deno publish --dry-run --allow-dirty` in a clone, so a commit that
+would fail there is stopped before a tag can exist.
 
 ## Conventions
 
@@ -594,10 +696,23 @@ The docs corpus (`deno task docs:corpus`) is the `@denext/docs-corpus` package
 
 The native templates `denext mobile add …` writes (Swift, Java, Kotlin, XML) are edited in
 `src/build/native-templates/*.ts`, which is not published: `deno task gen:native-templates`
-packs them Brotli-compressed into `src/build/native-templates.packed.ts` (the pre-commit hook
-repacks when a source is staged; `tests/native-templates-packed.test.ts` fails on drift). The
+packs them Brotli-compressed into `packages/docs-corpus/native-templates.ts` (shipped in
+`@denext/docs-corpus`, which denext pins at its own version) and writes their layout into
+`src/build/native-templates.packed.ts` (the pre-commit hook repacks when a source is staged; `tests/native-templates-packed.test.ts` fails on drift). The
 JSR package has a 20 MiB cap: a generated file over 50 KiB ships compressed or is listed, with
 its reason, in `tests/release-tools.test.ts`.
+
+A CLI verb's help text (its `summary`, `usage`, `flags`, `positionals` and the rest of its
+description) is edited in `src/cli/commands/meta/<module>.ts`, beside the module under
+`src/cli/commands/` that implements it: one `export const <verb>Meta: CommandMeta` per verb. Those
+files are not published. `deno task gen:command-table` (or `deno task regen`, which also rewrites
+the CLI reference from it) packs them Brotli-compressed into `src/cli/command-meta.packed.ts`,
+and the verb's spec reads its own back with `...commandMeta("<verb>")`
+(`src/cli/command-meta.ts`), so `--help`, `denext --help`, completions, `denext commands` and
+the CLI reference all print the packed copy. A new verb gets a meta export and a
+`...commandMeta("<name>")` spread in its spec; `tests/cli-command-meta.test.ts` fails when a
+registered verb has no description or a command module spells its help out again, and
+`deno task regen --check` (and `tests/cli-startup-graph.test.ts`) when the packed table is stale.
 
 ## Repo layout
 

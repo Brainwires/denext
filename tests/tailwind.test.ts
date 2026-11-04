@@ -2,10 +2,19 @@
 // buildAppCss compile+exclude behavior (driven through a stub binary so no real
 // download/network is needed).
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
+import { machoFixture, sha256Hex } from "./helpers/macho-fixture.ts";
 import { join, toFileUrl } from "@std/path";
 import {
+  compileTailwind,
   DEFAULT_TAILWIND_VERSION,
+  resolveTailwindBin,
   tailwindAssetName,
   tailwindDownloadUrl,
   tailwindPaths,
@@ -169,6 +178,210 @@ Deno.test({
     } finally {
       if (prevBin === undefined) Deno.env.delete("TAILWIND_BIN");
       else Deno.env.set("TAILWIND_BIN", prevBin);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/**
+ * Run `fn` with a custom Tailwind version pinned to `pin` (the env a custom release needs) and a
+ * fresh cache directory, restoring the environment after.
+ */
+async function withPinnedVersion(
+  version: string,
+  pin: string,
+  fn: (cacheDir: string) => Promise<void>,
+): Promise<void> {
+  const keys = ["DENEXT_TAILWIND_VERSION", "DENEXT_TAILWIND_SHA256", "TAILWIND_BIN"];
+  const saved = keys.map((k) => [k, Deno.env.get(k)] as const);
+  const cacheDir = await Deno.makeTempDir({ prefix: "denext_tw_sig_" });
+  try {
+    Deno.env.set("DENEXT_TAILWIND_VERSION", version);
+    Deno.env.set("DENEXT_TAILWIND_SHA256", pin);
+    Deno.env.delete("TAILWIND_BIN");
+    await fn(cacheDir);
+  } finally {
+    for (const [k, v] of saved) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    await Deno.remove(cacheDir, { recursive: true });
+  }
+}
+
+/** A fetch that serves `bytes` and counts its calls. */
+function countingFetch(bytes: Uint8Array): { fetch: typeof fetch; calls: () => number } {
+  let calls = 0;
+  const fetchImpl = (() => {
+    calls++;
+    return Promise.resolve(new Response(bytes.slice()));
+  }) as typeof fetch;
+  return { fetch: fetchImpl, calls: () => calls };
+}
+
+// Tailwind's macOS releases are Bun-compiled with a stale hash for the last page before their
+// ad-hoc signature, and macOS 27 on Apple Silicon SIGKILLs v4.3.0 at launch (exit 137) for it.
+Deno.test("resolveTailwindBin: on macOS the verified download is cached with its signature repaired", async () => {
+  const good = await machoFixture();
+  const published = await machoFixture({ stale: [good.pages - 1] });
+  await withPinnedVersion("v0.0.0-sig", await sha256Hex(published.bytes), async (cacheDir) => {
+    const served = countingFetch(published.bytes);
+    const options = { cacheDir, os: "darwin", arch: "aarch64", fetch: served.fetch, log: () => {} };
+    const bin = await resolveTailwindBin(options);
+    assertEquals(await Deno.readFile(bin), good.bytes);
+    assertEquals(served.calls(), 1);
+    // The repaired binary is what this process verified: no second download.
+    assertEquals(await resolveTailwindBin(options), bin);
+    assertEquals(served.calls(), 1);
+  });
+});
+
+Deno.test("resolveTailwindBin: a published macOS asset already in the cache is repaired in place", async () => {
+  const good = await machoFixture();
+  const published = await machoFixture({ stale: [good.pages - 1] });
+  await withPinnedVersion(
+    "v0.0.0-sig-cached",
+    await sha256Hex(published.bytes),
+    async (cacheDir) => {
+      const dest = join(cacheDir, "tailwindcss");
+      await Deno.writeFile(dest, published.bytes, { mode: 0o755 }); // what an older denext cached
+      const served = countingFetch(published.bytes);
+      const bin = await resolveTailwindBin({
+        cacheDir,
+        os: "darwin",
+        arch: "aarch64",
+        fetch: served.fetch,
+        log: () => {},
+      });
+      assertEquals(bin, dest);
+      assertEquals(served.calls(), 0);
+      assertEquals(await Deno.readFile(dest), good.bytes);
+    },
+  );
+});
+
+Deno.test("resolveTailwindBin: off macOS the asset is cached exactly as published", async () => {
+  const published = await machoFixture({ stale: [0] });
+  await withPinnedVersion(
+    "v0.0.0-sig-linux",
+    await sha256Hex(published.bytes),
+    async (cacheDir) => {
+      const served = countingFetch(published.bytes);
+      const options = { cacheDir, os: "linux", arch: "x86_64", fetch: served.fetch, log: () => {} };
+      const bin = await resolveTailwindBin(options);
+      assertEquals(await Deno.readFile(bin), published.bytes);
+      await resolveTailwindBin(options);
+      assertEquals(served.calls(), 1);
+    },
+  );
+});
+
+Deno.test("resolveTailwindBin: a cached binary of a version with no pin is refused", async () => {
+  const keys = ["DENEXT_TAILWIND_VERSION", "DENEXT_TAILWIND_SHA256", "TAILWIND_BIN"];
+  const saved = keys.map((k) => [k, Deno.env.get(k)] as const);
+  const cacheDir = await Deno.makeTempDir({ prefix: "denext_tw_nopin_" });
+  try {
+    Deno.env.set("DENEXT_TAILWIND_VERSION", "v0.0.0-nopin");
+    Deno.env.delete("DENEXT_TAILWIND_SHA256");
+    Deno.env.delete("TAILWIND_BIN");
+    await Deno.writeTextFile(join(cacheDir, "tailwindcss"), "#!/bin/sh\n");
+    const served = countingFetch(new Uint8Array());
+    await assertRejects(
+      () => resolveTailwindBin({ cacheDir, os: "linux", arch: "x86_64", fetch: served.fetch }),
+      Error,
+      "no pinned sha256",
+    );
+    assertEquals(served.calls(), 0);
+  } finally {
+    for (const [k, v] of saved) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    await Deno.remove(cacheDir, { recursive: true });
+  }
+});
+
+Deno.test("resolveTailwindBin: a failed download names the overrides", async () => {
+  await withPinnedVersion("v0.0.0-404", "00", async (cacheDir) => {
+    const notFound = (() =>
+      Promise.resolve(
+        new Response("nope", { status: 404, statusText: "Not Found" }),
+      )) as typeof fetch;
+    await assertRejects(
+      () =>
+        resolveTailwindBin({
+          cacheDir,
+          os: "linux",
+          arch: "x86_64",
+          fetch: notFound,
+          log: () => {},
+        }),
+      Error,
+      "TAILWIND_BIN",
+    );
+  });
+});
+
+// A Tailwind v3 install is compiled with its own CLI through `deno run npm:tailwindcss@3`; a stub
+// `DENO_BIN` stands in for Deno, so no npm download happens. POSIX only.
+Deno.test({
+  name:
+    "compileTailwind: a v3 install runs its own CLI, retrying without a PostCSS config that fails",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_tw_v3_" });
+    const prev = Deno.env.get("DENO_BIN");
+    try {
+      await Deno.mkdir(join(dir, "node_modules", "tailwindcss"), { recursive: true });
+      await Deno.writeTextFile(
+        join(dir, "node_modules", "tailwindcss", "package.json"),
+        JSON.stringify({ version: "3.4.17" }),
+      );
+      await Deno.writeTextFile(join(dir, "postcss.config.js"), "export default {};\n");
+      const log = join(dir, "calls.log");
+      const stub = join(dir, "deno-stub.sh");
+      // Fails while `--postcss` is passed; else writes the output (the arg after `-o`).
+      await Deno.writeTextFile(
+        stub,
+        `#!/bin/sh\necho "$*" >> '${log}'\ncase "$*" in *--postcss*) echo 'postcss broke' >&2; exit 1;; esac\n` +
+          `while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf 'v3css' > "$2"; fi; shift; done\n`,
+      );
+      await Deno.chmod(stub, 0o755);
+      Deno.env.set("DENO_BIN", stub);
+      const output = join(dir, "out.css");
+      await compileTailwind({ input: join(dir, "in.css"), output, projectDir: dir, minify: true });
+      assertEquals(await Deno.readTextFile(output), "v3css");
+      const calls = (await Deno.readTextFile(log)).trim().split("\n");
+      assertEquals(calls.length, 2);
+      assertStringIncludes(calls[0], "npm:tailwindcss@3.4.17");
+      assertStringIncludes(calls[0], "--postcss");
+      assert(!calls[1].includes("--postcss"), calls[1]);
+      assertStringIncludes(calls[1], "--minify");
+
+      // Both attempts failing reports the CLI's error.
+      await Deno.writeTextFile(stub, "#!/bin/sh\necho 'v3 exploded' >&2\nexit 2\n");
+      await assertRejects(
+        () => compileTailwind({ input: join(dir, "in.css"), output, projectDir: dir }),
+        Error,
+        "v3 exploded",
+      );
+    } finally {
+      if (prev === undefined) Deno.env.delete("DENO_BIN");
+      else Deno.env.set("DENO_BIN", prev);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "compileTailwind: a standalone binary's failure is reported with its stderr",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_tw_fail_" });
+    try {
+      const bin = join(dir, "tw.sh");
+      await Deno.writeTextFile(bin, "#!/bin/sh\necho 'bad input' >&2\nexit 3\n");
+      await Deno.chmod(bin, 0o755);
+      await assertRejects(
+        () => compileTailwind({ input: "in.css", output: "out.css", cwd: dir, bin, minify: true }),
+        Error,
+        "Tailwind compile failed (3)",
+      );
+    } finally {
       await Deno.remove(dir, { recursive: true });
     }
   },

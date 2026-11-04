@@ -51,10 +51,13 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * Generation 5: the bridge forwards the OS's low-memory warning to the page
  * (`DenextMemoryWarning`, see bridge-memory-warning-native-template.ts: React Native mode's
  * `AppState` `memoryWarning`); the bump keeps an older denext from rewriting it away.
+ * Generation 6: the frame guard also refuses a main frame on another origin than the app's
+ * (`plugins.DenextBridge.allowedOrigins` / `frameGuard: false` in the Capacitor config); the bump
+ * keeps an older denext from rewriting that check away.
  * Bump again only when a released generation would drop a registration, the frame guard, the
  * memory-warning forwarder or the router (or one of its checks).
  */
-export const APP_EXTENSION_TEMPLATE_VERSION = 5;
+export const APP_EXTENSION_TEMPLATE_VERSION = 6;
 
 /** The marker family of the app extension templates. */
 const FAMILY = "app-extension";

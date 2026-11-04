@@ -49,6 +49,28 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Read the Gleam pin
+        # tests/e2e/lustre.e2e.test.ts and create-lustre build with denext's pinned Gleam, which the
+        # CLI downloads on first use into <DENO_DIR>/denext-deno/gleam/<version>/<target> and
+        # SHA-256-verifies (src/build/gleam-toolchain.ts). The cache below only saves that download;
+        # the CLI still verifies what it finds there before running it.
+        id: gleam-pin
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
       - name: Install Playwright's Chromium and WebKit
         # tests/e2e/spa-shell.e2e.test.ts drives both engines through playwright-core (pinned in
         # deno.json); under CI=1 it fails rather than skips when they are missing.

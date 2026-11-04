@@ -46,7 +46,8 @@ const ROOTS = [
   "examples",
 ];
 
-const SKIP_DIRS = /(^|\/)(node_modules|lib|vendor|ios|android|\.denext|out|dist)(\/|$)/;
+// Either separator: `walk` tests the OS path, which is `\`-separated on Windows.
+const SKIP_DIRS = /(^|[\\/])(node_modules|lib|vendor|ios|android|\.denext|out|dist)([\\/]|$)/;
 
 async function* files(): AsyncGenerator<string> {
   for (const entry of ROOTS) {
@@ -66,6 +67,15 @@ async function* files(): AsyncGenerator<string> {
     ) yield f.path;
   }
 }
+
+Deno.test("the scan skips build output and node_modules on every OS's separator", () => {
+  for (const sep of ["/", "\\"]) {
+    const path = (...p: string[]) => ["C:", "repo", "examples", "app", ...p].join(sep);
+    assertEquals(SKIP_DIRS.test(path(".denext", "server", "x.ts")), true, sep);
+    assertEquals(SKIP_DIRS.test(path("node_modules", "pkg", "README.md")), true, sep);
+    assertEquals(SKIP_DIRS.test(path("app", "page.tsx")), false, sep);
+  }
+});
 
 Deno.test("docs, plugin READMEs and examples teach jobs, never the 3.x task names", async () => {
   const hits: string[] = [];

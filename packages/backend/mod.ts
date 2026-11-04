@@ -137,6 +137,7 @@ export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-s
 export type {
   RealtimeLogicalOptions,
   RealtimeOptions,
+  RealtimeReplayOptions,
   RealtimeRevalidateOptions,
   RealtimeSocketOptions,
   RealtimeTableOptions,
@@ -344,7 +345,8 @@ function setupRealtime(
   const engine = new RealtimeEngine(
     options,
     () => db.service(),
-    (key, frame) => channel.publish(key, frame),
+    (key, frame, grant) => channel.publish(key, frame, grant),
+    (key) => channel.discard(key),
   );
   installRealtime(engine);
   ctx.addTeardown(() => engine.stop());

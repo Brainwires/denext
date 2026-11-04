@@ -7,11 +7,16 @@
 // Promotion refuses what installed apps would refuse anyway, so a rollout never strands a
 // cohort: a source without a valid manifest, an unsigned release onto a channel that serves
 // signed ones (apps embedding the public key refuse it, code `signature`), and a release whose
-// `sequence` is below what the target's devices may already run (code `downgrade`). `force`
-// overrides the signature and sequence checks only.
+// `sequence` is below what the target's devices may already run (code `downgrade`), and a release
+// whose signed `expiresAt` has passed (code `expired`). `force` overrides these checks only.
 
 import { dirname, join, relative, resolve, SEPARATOR } from "@std/path";
-import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "../mobile/ota-manifest.ts";
+import {
+  isOtaManifest,
+  isOtaManifestExpired,
+  OTA_MANIFEST_PATH,
+  type OtaManifest,
+} from "../mobile/ota-manifest.ts";
 import {
   isOtaRolloutPercent,
   OTA_CHANNEL_NAME,
@@ -106,7 +111,8 @@ function fromFile(file: string, release: string): string {
 
 /**
  * Refuse `source` onto a channel whose devices may run `targets` (its current release and any
- * rollout candidate): unsigned onto signed, or a lower `sequence`. Skipped with `force`.
+ * rollout candidate): unsigned onto signed, a lower `sequence`, or an expired one. Skipped with
+ * `force`.
  */
 function checkCompatible(
   source: OtaManifest,
@@ -116,6 +122,12 @@ function checkCompatible(
   force: boolean,
 ): void {
   if (force) return;
+  if (isOtaManifestExpired(source)) {
+    throw new Error(
+      `${sourceLabel} expired at ${new Date(source.expiresAt! * 1000).toISOString()}: apps ` +
+        "refuse it (code expired). Re-sign it (`denext ota manifest --sign`) or pass --force",
+    );
+  }
   if (source.signature === undefined && targets.some((t) => t.signature !== undefined)) {
     throw new Error(
       `${sourceLabel} is unsigned but channel "${to}" serves signed releases: apps that embed ` +

@@ -193,9 +193,47 @@ Deno.test("merge keys: a service shows what it inherits; setting a field overrid
   const next = edit(MERGED, [{ op: "set", service: "api", field: "image", value: "node" }]);
   assertStringIncludes(next, "  api:\n    image: node\n    <<: *base\n");
   assertEquals(readCompose(next)!.services.map((s) => s.image), ["nginx", "node"]);
+  // Compose can't drop a merged value for one service (`!reset` keeps it, `null` is invalid).
   assertMatch(
     refusal(MERGED, [{ op: "set", service: "api", field: "image", value: null }]),
     /merge key/,
+  );
+  assertMatch(
+    refusal(MERGED, [{ op: "set", service: "api", field: "user", value: null }]),
+    /has no user to delete/,
+  );
+});
+
+Deno.test("set: the plain-text settings are read, written and deleted like image", () => {
+  const src = 'services:\n  api:\n    image: x\n    user: "1000" # uid\n';
+  const api = readCompose(src)!.services[0];
+  assertEquals(api.settings, { user: "1000" });
+  const next = edit(src, [
+    { op: "set", service: "api", field: "user", value: "app" },
+    { op: "set", service: "api", field: "working_dir", value: "/srv/app" },
+    { op: "set", service: "api", field: "stop_grace_period", value: "30s" },
+    { op: "set", service: "api", field: "container_name", value: "api-1" },
+  ]);
+  assertEquals(readCompose(next)!.services[0].settings, {
+    user: "app",
+    working_dir: "/srv/app",
+    stop_grace_period: "30s",
+    container_name: "api-1",
+  });
+  assertStringIncludes(next, "    user: app # uid\n");
+  assertEquals(
+    edit(next, [
+      { op: "set", service: "api", field: "user", value: null },
+      { op: "set", service: "api", field: "working_dir", value: null },
+      { op: "set", service: "api", field: "stop_grace_period", value: null },
+      { op: "set", service: "api", field: "container_name", value: null },
+    ]),
+    "services:\n  api:\n    image: x\n",
+  );
+  // A value that YAML would read as another type is quoted.
+  assertEquals(
+    parse(edit(src, [{ op: "set", service: "api", field: "hostname", value: "true" }])),
+    { services: { api: { image: "x", user: "1000", hostname: "true" } } },
   );
 });
 

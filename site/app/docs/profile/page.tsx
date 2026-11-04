@@ -109,7 +109,9 @@ denext profile --android --interact toggle.js --iterations 5 --budget perf.json`
         <li>
           <code>--package &lt;appId&gt;</code>{" "}
           picks the app's process; it defaults to the Capacitor config's{" "}
-          <code>appId</code>, and without either the single debuggable WebView is used.{" "}
+          <code>appId</code>, and without either the single debuggable WebView is used. It must be a
+          Java package name (<code>com.example.app</code>): it reaches the device&apos;s shell
+          through <code>adb shell pidof</code>, so anything else is refused before adb runs.{" "}
           <code>--device &lt;serial&gt;</code> picks a device when several are attached. adb is{" "}
           <code>$ADB</code> when set, else the <code>adb</code> on the PATH.
         </li>

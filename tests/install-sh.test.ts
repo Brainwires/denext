@@ -67,12 +67,29 @@ if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; 
 const DENEXT_STUB = `#!/bin/sh
 [ "$1" = "--version" ] && { echo "denext \${STUB_VERSION:-9.9.9} (binary)"; exit 0; }
 echo "$*" >> "$DENEXT_STUB_LOG"
+# Where \`toolchain link\` / \`unlink\` would put \`deno\`: the install dir they were handed.
+case "$1 $2" in "toolchain link" | "toolchain unlink") echo "$DENEXT_INSTALL" >> "$DENEXT_STUB_LOG.install" ;; esac
 # A release before 4.0 has no \`toolchain\` verb.
 case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "toolchain" ] && {
   echo "denext: unknown command \"toolchain\"" >&2; exit 1; } ;; esac
 [ "$1 $2" = "toolchain install" ] && [ -n "$STUB_TOOLCHAIN_FAIL" ] && exit 1
 [ "$1 $2" = "toolchain status" ] && printf '{\n  "version": "2.9.7-denext.99",\n  "esbuild": {\n    "version": "0.25.5"\n  }\n}\n'
 exit 0
+`;
+
+/**
+ * A stub `gh` (always first on PATH, so a runner's real GitHub CLI is never asked): logs its
+ * arguments, is signed in only when `STUB_GH_AUTH` is set, and passes `attestation verify` only
+ * when `STUB_GH_VERIFY=ok`.
+ */
+const GH_STUB = `#!/bin/sh
+echo "$*" >> "$STUB_LOG.gh"
+case "$1 $2" in
+  "auth status") [ -n "$STUB_GH_AUTH" ] || exit 1; exit 0 ;;
+  "attestation verify") [ "$STUB_GH_VERIFY" = "ok" ] && exit 0
+    echo "no attestations found" >&2; exit 1 ;;
+esac
+exit 2
 `;
 
 /** A stub `uname` reporting `os` / `arch`. */
@@ -94,6 +111,8 @@ interface Run {
   calls: string[];
   /** The URLs fetched with a progress bar. */
   progress: string[];
+  /** Every invocation of the stub `gh`, in order. */
+  gh: string[];
 }
 
 /** A local "release" the stub curl serves, and a run of the script against it. */
@@ -120,6 +139,7 @@ class Release {
     await Deno.mkdir(r.stubs);
     await Deno.mkdir(r.served);
     await Deno.writeTextFile(join(r.stubs, "curl"), CURL_STUB, { mode: 0o755 });
+    await Deno.writeTextFile(join(r.stubs, "gh"), GH_STUB, { mode: 0o755 });
     await Deno.writeTextFile(
       join(r.stubs, "uname"),
       unameStub(opts.os ?? "Linux", opts.arch ?? "x86_64"),
@@ -173,6 +193,7 @@ class Release {
     await Deno.writeTextFile(`${this.log}.headers`, "");
     await Deno.writeTextFile(`${this.log}.denext`, "");
     await Deno.writeTextFile(`${this.log}.progress`, "");
+    await Deno.writeTextFile(`${this.log}.gh`, "");
     // `script` runs the installer on a pseudo-terminal (stdout and stderr both a TTY).
     const [cmd, cmdArgs] = !opts.tty
       ? ["sh", [SCRIPT, ...args]]
@@ -205,6 +226,7 @@ class Release {
       binary: join(this.install, "bin", "denext"),
       calls: (await Deno.readTextFile(`${this.log}.denext`)).split("\n").filter(Boolean),
       progress: (await Deno.readTextFile(`${this.log}.progress`)).split("\n").filter(Boolean),
+      gh: (await Deno.readTextFile(`${this.log}.gh`)).split("\n").filter(Boolean),
     };
   }
 
@@ -237,6 +259,32 @@ Deno.test("install.sh: a good checksum installs the binary", { ignore: NO_SH }, 
     // No `deno` on this PATH: the toolchain is installed and linked as `deno`.
     assertEquals(run.calls, ["toolchain install", "toolchain link"]);
     assertEquals(run.stderr, "");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: toolchain link / unlink get the install dir it resolved", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  const handed = `${r.log}.denext.install`;
+  const read = async () => (await Deno.readTextFile(handed)).split("\n").filter(Boolean);
+  try {
+    // No DENEXT_INSTALL (empty reads as unset): the default ~/.denext, named to the binary.
+    const run = await r.run({ DENEXT_INSTALL: "" });
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls, ["toolchain install", "toolchain link"]);
+    const home = join(r.dir, ".denext");
+    assertEquals(await read(), [home]);
+    assert((await Deno.stat(join(home, "bin", "denext"))).isFile);
+    const gone = await r.run({ DENEXT_INSTALL: "" }, [], ["--uninstall"]);
+    assertEquals(gone.calls, ["toolchain unlink"]);
+    assertEquals(await read(), [home, home]);
+    // A custom prefix is passed through as is.
+    await Deno.remove(handed);
+    assertEquals((await r.run()).code, 0);
+    assertEquals(await read(), [r.install]);
   } finally {
     await r.remove();
   }
@@ -447,6 +495,68 @@ Deno.test("install.sh: DENEXT_ARTIFACTS installs a local build, still checksum-v
   }
 });
 
+Deno.test("install.sh: a signed-in gh must verify the archive's build attestation", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    // Signed in, and the attestation verifies: installed, and said so.
+    const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "ok" });
+    assertEquals(ok.code, 0, ok.stderr);
+    assertStringIncludes(ok.stdout, "build attestation verified");
+    const verify = ok.gh.find((c) => c.startsWith("attestation verify"));
+    assert(verify, ok.gh.join("\n"));
+    assertStringIncludes(verify, `${ASSET} --repo Brainwires/denext`);
+    assertStringIncludes(
+      verify,
+      "--signer-workflow Brainwires/denext/.github/workflows/publish.yml",
+    );
+    // Signed in, and it does not verify (a swapped release with a matching SHA256SUMS): nothing.
+    await Deno.remove(r.install, { recursive: true });
+    const bad = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no" });
+    assertEquals(bad.code, 1);
+    assertStringIncludes(bad.stderr, "build attestation verification FAILED");
+    assertEquals(await r.installed(), false);
+    // DENEXT_INSECURE=1 installs such a release (one from before attestations) on the checksum.
+    const forced = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no", DENEXT_INSECURE: "1" });
+    assertEquals(forced.code, 0, forced.stderr);
+    assertStringIncludes(forced.stderr, "could not be verified");
+    // No signed-in gh: installed on the checksum, with a note; required, refused.
+    await Deno.remove(r.install, { recursive: true });
+    const plain = await r.run();
+    assertEquals(plain.code, 0, plain.stderr);
+    assertStringIncludes(plain.stdout, "build attestation not checked");
+    assert(!plain.gh.some((c) => c.startsWith("attestation")), plain.gh.join("\n"));
+    await Deno.remove(r.install, { recursive: true });
+    const required = await r.run({ DENEXT_REQUIRE_ATTESTATION: "1" });
+    assertEquals(required.code, 1);
+    assertStringIncludes(required.stderr, "DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI");
+    assertEquals(await r.installed(), false);
+    // A local DENEXT_ARTIFACTS build has no attestation to check.
+    const local = await r.run({ DENEXT_ARTIFACTS: r.served, STUB_GH_AUTH: "1" });
+    assertEquals(local.code, 0, local.stderr);
+    assertEquals(local.gh, []);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("publish.yml: the release attests every archive's build provenance", async () => {
+  const workflow = await Deno.readTextFile(WORKFLOW);
+  const release = workflow.slice(
+    workflow.indexOf("\n  release:"),
+    workflow.indexOf("\n  package-managers:"),
+  );
+  assertStringIncludes(release, "actions/attest-build-provenance@");
+  assertStringIncludes(release, "subject-checksums: dist/SHA256SUMS");
+  assertStringIncludes(release, "id-token: write");
+  assertStringIncludes(release, "attestations: write");
+  // Attested before the release is created, so no release ever exists without it.
+  assert(
+    release.indexOf("attest-build-provenance") < release.indexOf("softprops/action-gh-release"),
+  );
+});
+
 Deno.test("install.sh: a truncated download runs nothing", { ignore: NO_SH }, async () => {
   // `curl … | sh` executes what arrived; everything is inside main(), called on the last line,
   // so a script cut short anywhere before that line does nothing at all.
@@ -495,7 +605,7 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   assertEquals(workflow.match(/softprops\/action-gh-release/g)?.length, 1);
   assertStringIncludes(workflow, "prerelease: ${{ contains(github.ref_name, '-') }}");
   assertStringIncludes(workflow, "make_latest: ${{ !contains(github.ref_name, '-') }}");
-  assertStringIncludes(workflow, "needs: binaries");
+  assertStringIncludes(workflow, "needs: [binaries, smoke]");
   assertStringIncludes(workflow, "fail_on_unmatched_files: true");
   // Every third-party action is a full commit SHA with the version it is beside it.
   const uses = workflow.split("\n").filter((l) => /^\s*-?\s*uses:/.test(l));
@@ -503,9 +613,18 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   for (const line of uses) {
     assert(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(line.trim()), line);
   }
-  // The binary is executed, not merely linked, before it ships.
-  assertStringIncludes(workflow, "./denext --version");
-  assertStringIncludes(workflow, "pins no denext");
+  // The binary is executed, not merely linked, before it ships: where it is built (x86_64 Linux),
+  // and by the `smoke` job on an Arm Linux runner and a Mac (both Mac binaries) before the release.
+  assertStringIncludes(workflow, "sh scripts/ci/binary-smoke.sh ./denext");
+  assertStringIncludes(workflow, "{ os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }");
+  assertStringIncludes(
+    workflow,
+    "{ os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }",
+  );
+  assertStringIncludes(workflow, "tests/integration/cli-binary-smoke.test.ts");
+  const smoke = await Deno.readTextFile(new URL("../scripts/ci/binary-smoke.sh", import.meta.url));
+  assertStringIncludes(smoke, '"$bin" --version');
+  assertStringIncludes(smoke, "pins no denext");
 });
 
 Deno.test("install.sh: a GITHUB_TOKEN goes to the API lookup only, never shown", {

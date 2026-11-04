@@ -435,19 +435,21 @@ async function signInWithIdToken(
 }
 
 /**
- * The answer to an id_token sign-in that owes a second factor: a single-use `mfa_token` to
+ * The answer to a native sign-in (an id_token, or a passkey without user verification) that
+ * owes a second factor: a single-use `mfa_token` to
  * finish it at `/native/mfa`, and the factors it can be finished with. No session, no tokens,
  * and no `signIn` event until the factor is proven.
  */
-async function pendingNativeSignIn(
+export async function pendingNativeSignIn(
   ctx: AuthRouteContext,
   native: ResolvedNative,
   user: AuthSession["user"],
-  provider: NativeIdTokenProvider,
+  provider: string,
   isNewUser: boolean,
   enroll: boolean,
+  amr?: string[],
 ): Promise<Response> {
-  const pending = newNativeMfaPending(user, provider, isNewUser, enroll);
+  const pending = newNativeMfaPending(user, provider, isNewUser, enroll, amr);
   const token = await issueNativeMfaToken(native, pending);
   return json(
     {

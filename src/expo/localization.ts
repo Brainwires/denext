@@ -20,7 +20,8 @@
  * @module
  */
 
-import { useEffect, useMemo, useReducer } from "../runtime/hooks.ts";
+import { useEffect, useMemo } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 
 /** One of the user's locales. */
 export interface Locale {

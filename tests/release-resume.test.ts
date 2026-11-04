@@ -5,6 +5,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
+  CORPUS_DATA_MODULES,
   CORPUS_MODULE,
   CORPUS_PACKAGE,
   corpusVersion,
@@ -13,18 +14,33 @@ import {
 import { memberPin, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 import {
   detectResume,
+  gateMarkerName,
+  gateRefusal,
+  ghPublishRun,
   type PublishDeps,
   publishFrom,
+  type PublishRun,
+  readGatePass,
   ReleaseAbort,
   releaseSubject,
   resumeCommand,
   resumeFromArg,
   waitForJsrVersion,
+  writeGatePass,
 } from "../scripts/lib/release-publish.ts";
 
 const VERSION = await corpusVersion();
 const TARGET = { version: VERSION, tag: `v${VERSION}`, branch: "development" };
 const LOCAL_HASH = moduleSourceHash(await Deno.readTextFile(CORPUS_MODULE))!;
+/** The corpus package's data modules as this tree has them (JSR serves the same). */
+const LOCAL_DATA: Record<string, string> = Object.fromEntries(
+  await Promise.all(
+    CORPUS_DATA_MODULES.map(async (m) => [
+      `/${CORPUS_PACKAGE}/${VERSION}/${m}`,
+      await Deno.readTextFile(new URL(`../packages/docs-corpus/${m}`, import.meta.url)),
+    ]),
+  ),
+);
 
 /** A fake jsr.io whose listed versions the test changes as time passes. */
 class FakeJsr {
@@ -55,6 +71,7 @@ class FakeJsr {
         new Response(`export const CORPUS_SOURCE_HASH: string = "${LOCAL_HASH}";\n`),
       );
     }
+    if (Object.hasOwn(LOCAL_DATA, path)) return Promise.resolve(new Response(LOCAL_DATA[path]));
     return Promise.resolve(new Response("", { status: 404 }));
   };
 }
@@ -102,7 +119,12 @@ class FakeGit {
 }
 
 /** Deps over the fakes, on a virtual clock that `sleep` advances (calling `onSleep`). */
-function deps(git: FakeGit, jsr: FakeJsr, onSleep: (now: number) => void = () => {}) {
+function deps(
+  git: FakeGit,
+  jsr: FakeJsr,
+  onSleep: (now: number) => void = () => {},
+  run: { current: PublishRun } = { current: { state: "success" } },
+) {
   let now = 0;
   const sleeps: number[] = [];
   const logs: string[] = [];
@@ -117,6 +139,7 @@ function deps(git: FakeGit, jsr: FakeJsr, onSleep: (now: number) => void = () =>
     },
     now: () => now,
     log: (line) => logs.push(line),
+    publishRun: () => Promise.resolve(run.current),
   };
   return { d, sleeps, logs, elapsed: () => now };
 }
@@ -169,6 +192,7 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
   // JSR lists the corpus now: the corpus tag is neither made nor pushed again, then the tag,
   // the pushes and the PR hand-over.
   jsr.list(CORPUS_PACKAGE, VERSION);
+  jsr.list("@denext/denext", VERSION);
   git.calls = [];
   const resumed = deps(git, jsr);
   await publishFrom(TARGET, "corpus", resumed.d);
@@ -186,6 +210,7 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
 Deno.test("release resume: a failed push resumes at the push, with the tag already made", async () => {
   const git = new FakeGit();
   const jsr = new FakeJsr(await pinnedListing(true));
+  jsr.list("@denext/denext", VERSION);
   const { d } = deps(git, jsr);
   git.failPush = true;
   const err = await assertRejects(() => publishFrom(TARGET, "corpus", d), ReleaseAbort);
@@ -223,5 +248,197 @@ Deno.test("release resume: a fresh tree is not a resume; --resume-from is valida
   assertRejects(
     () => Promise.resolve().then(() => resumeFromArg(["--resume-from", "x"])),
     ReleaseAbort,
+  );
+});
+
+Deno.test("release resume: no recorded gate pass refuses every resume, naming --regate", () => {
+  const current = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+  for (const step of ["commit", "corpus", "tag", "push", "pr"] as const) {
+    const refusal = gateRefusal(null, current, TARGET, step);
+    assert(refusal, `${step} resumed without a gate pass`);
+    assertStringIncludes(refusal, "never passed");
+    assertStringIncludes(refusal, `--resume-from ${step} --regate`);
+  }
+});
+
+Deno.test("release resume: a gate pass covers only its own version, base and tree", () => {
+  const pass = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+  assertEquals(gateRefusal(pass, { ...pass }, TARGET, "tag"), null);
+  // A release commit made by hand on a tree the gate never saw (the old "commit by hand" hint).
+  assertStringIncludes(
+    gateRefusal(pass, { ...pass, tree: "c".repeat(40) }, TARGET, "corpus")!,
+    "tree changed since the gates passed",
+  );
+  assertStringIncludes(
+    gateRefusal(pass, { ...pass, base: "d".repeat(40) }, TARGET, "push")!,
+    "but this release is cut on",
+  );
+  assertStringIncludes(
+    gateRefusal({ ...pass, version: "0.0.1" }, pass, TARGET, "pr")!,
+    "is for 0.0.1",
+  );
+});
+
+Deno.test("release resume: the gate-pass marker round-trips; a missing or bad one reads null", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-gate-marker-" });
+  try {
+    const path = `${dir}/${gateMarkerName(VERSION)}`;
+    assertEquals(await readGatePass(path), null);
+    const pass = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
+    await writeGatePass(path, pass);
+    assertEquals(await readGatePass(path), pass);
+    await Deno.writeTextFile(path, '{"version": 1}');
+    assertEquals(await readGatePass(path), null);
+    await Deno.writeTextFile(path, "not json");
+    assertEquals(await readGatePass(path), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("release: the gate pass is recorded after both gates and required by every resume", async () => {
+  const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  const body = (fn: string) => {
+    const start = src.indexOf(`async function ${fn}(`);
+    assert(start >= 0, fn);
+    return src.slice(start, src.indexOf("\n}\n", start));
+  };
+  const main = body("main");
+  // Fresh release: CI gate, then the local gate, then the marker, then (and only then) publish.
+  const order = ["checkCi(", "runGate(", "recordGatePass(", "confirmRelease("].map((s) =>
+    main.indexOf(s)
+  );
+  assert(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), String(order));
+  // A resume returns before any of that, so it must check the marker itself: on the `commit`
+  // path before the commit, on every other path before the publish steps.
+  const resume = body("resumeRelease");
+  const commitPath = resume.slice(resume.indexOf(`if (step === "commit")`));
+  assert(
+    commitPath.indexOf("requireGatePass(") < commitPath.indexOf("publish("),
+    "commit resume checks the marker before committing",
+  );
+  assert(
+    resume.lastIndexOf("requireGatePass(") < resume.indexOf("publishSteps("),
+    "every other resume checks the marker before publishing",
+  );
+  // The fresh path re-checks the commit it made against the marker before publishing.
+  const publish = body("publish");
+  assert(publish.indexOf("gateRefusal(") < publish.indexOf("publishSteps("));
+  // No "commit by hand" escape hatch, and `deno cache` is fail-stop.
+  assert(!src.includes("commit by hand"));
+  assert(/if \(await run\("deno", "cache", "mod\.ts"\) !== 0\)/.test(src));
+});
+
+/** A tag already on origin, every pin on JSR, and the given publish run: resume at `pr`. */
+async function prResume(run: PublishRun, listed: boolean, wait?: number) {
+  const git = new FakeGit();
+  git.local.add(TARGET.tag);
+  git.remote.add(TARGET.tag);
+  const jsr = new FakeJsr(await pinnedListing(true));
+  if (listed) jsr.list("@denext/denext", VERSION);
+  const state = { current: run };
+  const made = deps(git, jsr, () => {}, state);
+  return { ...made, git, jsr, state, d: { ...made.d, jsrWaitMs: wait } };
+}
+
+Deno.test("release resume: a failed publish run is never reported as released", async () => {
+  const { d, logs } = await prResume(
+    { state: "failed", id: "42", url: "https://github.com/x/actions/runs/42" },
+    false,
+  );
+  assertEquals(await detectResume(TARGET, d), "pr");
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "FAILED");
+  assertStringIncludes(err.message, "gh run rerun 42 --failed");
+  assertStringIncludes(err.message, "burned");
+  assertStringIncludes(err.message, "do NOT merge main");
+  assertStringIncludes(err.message, resumeCommand(TARGET, "pr"));
+  assert(!logs.some((l) => l.includes("✓ Released")), logs.join("\n"));
+});
+
+Deno.test("release resume: a successful run that JSR does not list is not a release", async () => {
+  const { d, logs } = await prResume({ state: "success" }, false, 10 * MINUTE);
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "not confirmed released");
+  assertStringIncludes(err.message, "on jsr.io: no");
+  assert(!logs.some((l) => l.includes("✓ Released")));
+});
+
+Deno.test("release resume: a run GitHub cannot report stops instead of claiming success", async () => {
+  const { d, logs } = await prResume({ state: "unknown", detail: "gh: not logged in" }, true);
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "gh: not logged in");
+  assert(!logs.some((l) => l.includes("✓ Released")));
+});
+
+Deno.test("release resume: a publish still running is waited for, then reported released", async () => {
+  const made = await prResume({ state: "pending" }, false);
+  const { d, logs, state, jsr } = made;
+  const waited = deps(made.git, jsr, (now) => {
+    if (now >= 20 * MINUTE) {
+      jsr.list("@denext/denext", VERSION);
+      state.current = { state: "success" };
+    }
+  }, state);
+  await publishFrom(TARGET, "pr", { ...waited.d, jsrWaitMs: 3 * 60 * MINUTE });
+  assert(waited.elapsed() >= 20 * MINUTE, "polled until the publish finished");
+  assert(waited.logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
+  assert(d && logs.length === 0);
+});
+
+Deno.test("release resume: a published release on JSR with a green run hands over the PR", async () => {
+  const { d, logs } = await prResume({ state: "success" }, true);
+  await publishFrom(TARGET, "pr", d);
+  assert(logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
+  assert(logs.some((l) => l.includes("gh pr create --base main --head development")));
+});
+
+Deno.test("release resume: only a publish run on the tag's own commit counts", async () => {
+  const TAG_SHA = "a".repeat(40);
+  const calls: string[][] = [];
+  /** A gh that lists `runs` (newest first) and reports each run's publish job as `jobs[id]`. */
+  const fake = (
+    runs: Array<{ databaseId: number; url: string; headSha: string }>,
+    jobs: Record<string, { status: string; conclusion: string }>,
+    commit: string | null = TAG_SHA,
+  ) => ({
+    gh: (...args: string[]) => {
+      calls.push(args);
+      if (args[0] === "run" && args[1] === "list") return Promise.resolve(JSON.stringify(runs));
+      const job = jobs[args[2]];
+      return Promise.resolve(JSON.stringify({ jobs: job ? [{ name: "publish", ...job }] : [] }));
+    },
+    tagCommit: (tag: string) => Promise.resolve(tag === "v9.9.9" ? commit : null),
+  });
+  const ok = { status: "completed", conclusion: "success" };
+  // The newest run is a same-named branch's (another commit): skipped for the tag's own run.
+  const other = { databaseId: 2, url: "u2", headSha: "b".repeat(40) };
+  const own = { databaseId: 1, url: "u1", headSha: TAG_SHA };
+  assertEquals(
+    await ghPublishRun("v9.9.9", fake([other, own], { "2": ok, "1": ok })),
+    { state: "success", id: "1", url: "u1" },
+  );
+  const list = calls.find((c) => c[1] === "list")!;
+  assertStringIncludes(list.join(" "), "--branch v9.9.9");
+  assertStringIncludes(list.join(" "), "headSha");
+  // Only other commits' runs (even a green one): nothing for this tag yet.
+  assertEquals(await ghPublishRun("v9.9.9", fake([other], { "2": ok })), { state: "none" });
+  // A tag whose commit can't be read stops the release rather than trust any run.
+  const unread = await ghPublishRun("v9.9.9", fake([own], { "1": ok }, null));
+  assertEquals(unread.state, "unknown");
+  assertStringIncludes(unread.detail ?? "", "commit of tag v9.9.9");
+  // The tag's own run, still going, and failed.
+  assertEquals(
+    (await ghPublishRun("v9.9.9", fake([own], { "1": { status: "in_progress", conclusion: "" } })))
+      .state,
+    "pending",
+  );
+  assertEquals(
+    (await ghPublishRun(
+      "v9.9.9",
+      fake([own], { "1": { status: "completed", conclusion: "failure" } }),
+    ))
+      .state,
+    "failed",
   );
 });

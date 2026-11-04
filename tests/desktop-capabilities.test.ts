@@ -2,21 +2,32 @@
 // desktop.capabilities config splice (idempotent, comment-preserving, dry-run), and the
 // permission flags each capability implies.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   addDesktopCapabilities,
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
+  DESKTOP_DATA_TOKEN,
   desktopBuildFlags,
   desktopIncludeArgs,
   desktopNpmArgs,
   desktopNpmArgsFor,
   desktopPackageFlags,
   desktopPermissionFlags,
+  desktopScopedPath,
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
+  passkeyRpId,
 } from "../src/build/desktop-capabilities.ts";
+import { desktopPasskeyRpIds } from "../src/build/desktop-launch-policy.ts";
+import { readConfigModel } from "../src/build/config-edit.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 function project(config?: string): string {
@@ -132,6 +143,120 @@ Deno.test("desktop add: unknown or missing capabilities are refused", async () =
   );
 });
 
+/** The config's `desktop.capabilities.passkeys.rpIds`, as the packaging reads it. */
+async function rpIdsIn(dir: string): Promise<string[] | null> {
+  const model = await readConfigModel(await Deno.readTextFile(join(dir, "denext.config.ts")));
+  return desktopPasskeyRpIds({ desktop: model.keys.desktop?.value });
+}
+
+Deno.test("desktop add passkeys --rp-id: writes rpIds instead of an empty pin; repeatable, merged", async () => {
+  const bare = project("export default {};\n");
+  const empty = await addDesktopCapabilities({ capabilities: ["passkeys"], dir: bare });
+  assertEquals(await rpIdsIn(bare), [], "without --rp-id the pin is empty (fail closed)");
+  assert(empty.manual.some((m) => m.includes("--rp-id <domain>")), "and the step says how");
+  const dir = project("export default {};\n");
+  const report = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["Example.com", "clerk.example.com", "example.com"],
+  });
+  assertEquals(report.added, ["passkeys"]);
+  assertEquals(report.rpIds, ["example.com", "clerk.example.com"]);
+  assertEquals(await rpIdsIn(dir), ["example.com", "clerk.example.com"]);
+  assertFalse(report.manual.some((m) => m.includes("--rp-id <domain>")), "no empty-pin step");
+  assertStringIncludes(formatDesktopAddReport(report, false), "relying parties: example.com");
+  // a second run merges into the list it finds, keeping what is there
+  const again = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["auth.example.org", "example.com"],
+  });
+  assertEquals(again.kept, ["passkeys"]);
+  assertEquals(await rpIdsIn(dir), ["example.com", "clerk.example.com", "auth.example.org"]);
+  const same = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["auth.example.org"],
+  });
+  assertEquals(same.diff, "");
+  // an empty pin `add` wrote earlier is filled in; a `false` is replaced (enabled)
+  await addDesktopCapabilities({ capabilities: ["passkeys"], dir: bare, passkeyRpIds: ["a.dev"] });
+  assertEquals(await rpIdsIn(bare), ["a.dev"]);
+  const off = project("export default { desktop: { capabilities: { passkeys: false } } };\n");
+  const on = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir: off,
+    passkeyRpIds: ["a.dev"],
+  });
+  assertEquals([on.added, await rpIdsIn(off)], [["passkeys"], ["a.dev"]]);
+});
+
+Deno.test("denext desktop add passkeys --rp-id a --rp-id b: the CLI writes both", async () => {
+  const { CommandRegistry } = await import("../src/cli/command.ts");
+  const { desktopCommand } = await import("../src/cli/commands/desktop.ts");
+  const { desktopAdd } = await import("../src/cli/commands/desktop-add.ts");
+  const reg = new CommandRegistry();
+  reg.register(desktopCommand);
+  const dir = project("export default {};\n");
+  const out = reg.parse([
+    "desktop",
+    "add",
+    "passkeys",
+    "--rp-id",
+    "a.dev",
+    "--rp-id=b.example.com",
+  ]);
+  assert(out.kind === "run");
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await desktopAdd(out.ctx, dir);
+  } finally {
+    console.log = log;
+  }
+  assertEquals(await rpIdsIn(dir), ["a.dev", "b.example.com"]);
+});
+
+Deno.test("desktop add passkeys --rp-id: each ID must be a registrable domain", async () => {
+  assertEquals(passkeyRpId(" Example.COM "), "example.com");
+  assertEquals(passkeyRpId("bücher.example"), "xn--bcher-kva.example");
+  for (
+    const bad of [
+      "localhost",
+      "https://example.com",
+      "example.com:443",
+      "example.com/path",
+      "192.168.1.10",
+      "-bad.example.com",
+      "a..example.com",
+      ".example.com",
+      "",
+      "exa mple.com",
+    ]
+  ) {
+    let threw = false;
+    try {
+      passkeyRpId(bad);
+    } catch (err) {
+      threw = true;
+      assertStringIncludes(String(err), "not a registrable domain");
+    }
+    assert(threw, bad);
+  }
+  const dir = project("export default {};\n");
+  await assertRejects(
+    () => addDesktopCapabilities({ capabilities: ["passkeys"], dir, passkeyRpIds: ["localhost"] }),
+    Error,
+    "not a registrable domain",
+  );
+  await assertRejects(
+    () => addDesktopCapabilities({ capabilities: ["fs"], dir, passkeyRpIds: ["example.com"] }),
+    Error,
+    "--rp-id applies to the passkeys capability",
+  );
+  assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), "export default {};\n");
+});
+
 Deno.test("desktop add: a config whose desktop value is code is refused with the snippet", async () => {
   const dir = project("const d = { capabilities: {} };\nexport default { desktop: d };\n");
   await assertRejects(
@@ -219,6 +344,95 @@ Deno.test("desktopBuildFlags: a capability that writes collapses to one broad --
   assert(!flags.some((f) => f.startsWith("--allow-write=")), flags.join(" "));
   // read is covered by the broad baseline, so no capability-scoped --allow-read is added.
   assertEquals(flags.filter((f) => f.startsWith("--allow-read")), ["--allow-read"]);
+});
+
+Deno.test("desktopBuildFlags: on a runtime that expands $DENO_DESKTOP_DATA the app-folder writes are scoped", () => {
+  const app = (
+    desktop: Record<string, unknown>,
+    identifier: string | null = "com.example.app",
+  ) => ({
+    desktop: { ...(identifier !== null ? { app: { identifier } } : {}), ...desktop },
+  });
+  const writeOf = (flags: string[]) => flags.filter((f) => f.startsWith("--allow-write"));
+  const scope = { dataScope: true, cacheScope: true } as const;
+  // fs (its default folders), sqlite and updates: the data and cache folders, never broad.
+  assertEquals(
+    writeOf(
+      desktopBuildFlags(
+        app({ capabilities: { fs: true, sqlite: true, updates: true } }),
+        "darwin",
+        scope,
+      ),
+    ),
+    [`--allow-write=$DENO_DESKTOP_CACHE,${DESKTOP_DATA_TOKEN}`],
+  );
+  // The UI overlay keeps its versions in <data>/ui-updates; a sidecar's log file in <data>/logs.
+  assertEquals(
+    writeOf(desktopBuildFlags(
+      app({
+        update: { ui: { feedUrl: "https://u.example.com/f", publicKey: "k" } },
+        sidecars: [{ name: "api", run: { module: "./api.ts" }, logs: "file" }],
+      }),
+      "linux",
+      scope,
+    )),
+    [`--allow-write=${DESKTOP_DATA_TOKEN}/logs,${DESKTOP_DATA_TOKEN}/ui-updates`],
+  );
+  // extraPermissions: a folder token or an absolute path is kept exactly.
+  assertEquals(
+    writeOf(desktopBuildFlags(
+      app({
+        capabilities: { sqlite: true },
+        extraPermissions: { write: ["$APPDATA/exports", "/var/tmp/app"] },
+      }),
+      "linux",
+      scope,
+    )),
+    [`--allow-write=${DESKTOP_DATA_TOKEN},${DESKTOP_DATA_TOKEN}/exports,/var/tmp/app`],
+  );
+  // A write that has no folder token stays broad: a picked path (dialogs), $DOCUMENTS, a relative
+  // path, a `..` component.
+  for (
+    const desktop of [
+      { capabilities: { dialogs: true, sqlite: true } },
+      { capabilities: { fs: { read: ["$APPDATA"], write: ["$APPDATA", "$DOCUMENTS"] } } },
+      { extraPermissions: { write: ["data"] } },
+      { extraPermissions: { write: ["$APPDATA/../other"] } },
+    ]
+  ) {
+    assertEquals(writeOf(desktopBuildFlags(app(desktop), "linux", scope)), ["--allow-write"]);
+  }
+  // No identifier (the runtime could not expand the token) or an older runtime: today's flags.
+  const sqlite = { capabilities: { sqlite: true } };
+  assertEquals(writeOf(desktopBuildFlags(app(sqlite, null), "linux", scope)), ["--allow-write"]);
+  assertEquals(writeOf(desktopBuildFlags(app(sqlite, " "), "linux", scope)), ["--allow-write"]);
+  assertEquals(
+    writeOf(desktopBuildFlags(app(sqlite), "linux", { dataScope: false })),
+    ["--allow-write"],
+  );
+  // Nothing writes: no --allow-write at all, whatever the runtime.
+  assertEquals(writeOf(desktopBuildFlags(app({}), "linux", scope)), []);
+  // Read stays the broad baseline in the default mode.
+  assert(desktopBuildFlags(app(sqlite), "linux", scope).includes("--allow-read"));
+});
+
+Deno.test("desktopScopedPath: folder tokens become the runtime's, absolute paths stay, the rest cannot be scoped", () => {
+  assertEquals(desktopScopedPath("$APPDATA"), DESKTOP_DATA_TOKEN);
+  assertEquals(desktopScopedPath("$APPDATA/logs"), `${DESKTOP_DATA_TOKEN}/logs`);
+  assertEquals(desktopScopedPath("$APPDATA\\a\\b"), `${DESKTOP_DATA_TOKEN}/a/b`);
+  assertEquals(desktopScopedPath("$CACHE"), "$DENO_DESKTOP_CACHE");
+  assertEquals(
+    desktopScopedPath("$DENO_DESKTOP_CACHE/sidecars/x"),
+    "$DENO_DESKTOP_CACHE/sidecars/x",
+  );
+  assertEquals(desktopScopedPath(`${DESKTOP_DATA_TOKEN}/x`), `${DESKTOP_DATA_TOKEN}/x`);
+  assertEquals(desktopScopedPath("/opt/app"), "/opt/app");
+  assertEquals(desktopScopedPath("C:\\Data"), "C:\\Data");
+  assertEquals(desktopScopedPath("D:/Data"), "D:/Data");
+  assertEquals(desktopScopedPath("\\\\server\\share"), "\\\\server\\share");
+  for (const value of ["*", "$DOCUMENTS", "$APPDATAX", "data", "./x", "$APPDATA/../x", "/a/../b"]) {
+    assertEquals(desktopScopedPath(value), undefined, value);
+  }
 });
 
 Deno.test("desktopBuildFlags: the full capability set on Windows, least-privilege", () => {
@@ -357,13 +571,38 @@ Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missi
       join(withCfg, "denext.config.ts"),
       "export default { desktop: { capabilities: { device: true, shell: true } } };\n",
     );
+    // The stock runtime's flags (the split network grant is its own test).
     assertEquals(
-      await desktopPackageFlags(`file://${join(bare, "scripts", "package-macos.ts")}`, "darwin"),
+      await desktopPackageFlags(
+        `file://${join(bare, "scripts", "package-macos.ts")}`,
+        "darwin",
+        false,
+      ),
       [...DESKTOP_BASELINE_FLAGS],
     );
     assertEquals(
-      await desktopPackageFlags(`file://${join(withCfg, "scripts", "package-macos.ts")}`, "darwin"),
+      await desktopPackageFlags(
+        `file://${join(withCfg, "scripts", "package-macos.ts")}`,
+        "darwin",
+        false,
+      ),
       [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease", "--allow-run=open,osascript"],
+    );
+    // On the pinned runtime (3.0.0-rc.2+) the network grant is split by direction.
+    assertEquals(
+      await desktopPackageFlags(
+        `file://${join(withCfg, "scripts", "package-macos.ts")}`,
+        "darwin",
+        true,
+      ),
+      [
+        "--allow-net-connect=127.0.0.1,localhost",
+        "--allow-net-listen=127.0.0.1,localhost",
+        "--allow-read",
+        "--allow-env",
+        "--allow-sys=osRelease",
+        "--allow-run=open,osascript",
+      ],
     );
   } finally {
     await Deno.remove(bare, { recursive: true });

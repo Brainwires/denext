@@ -2,13 +2,17 @@
 // (next-compat: `react` / `next/*` imports through `compatibilityMode`) and a Pages Router app
 // (`@denext/pages-router`). Each fixture is built and compiled, its project directory DELETED,
 // and the binary run from another directory: its pages (server-rendered, with their client
-// bundles), its API routes and its static assets must all come from what it embedded.
+// bundles), its API routes and its static assets must all come from what it embedded. The Pages
+// Router app also uses what its server render loads through the build's server copies: a
+// platform file (`.web.tsx`), `"use cache"` and an inline `"use server"` function.
 //
 // Heavy (two builds and two `deno compile`s, ~300 MB each): run it where there is room.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
+import { boundPort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -47,6 +51,14 @@ export function GET(request: Request) {
   return NextResponse.json({ hello: new URL(request.url).searchParams.get("name") });
 }
 `,
+  // A route reading a file beside itself (an OG image route's font): the bundled module's
+  // `import.meta.url` names its embedded source file.
+  "app/api/og/route.ts": `import fs from "node:fs/promises";
+export async function GET() {
+  return new Response(await fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url)));
+}
+`,
+  "app/api/og/Inter-SemiBold.ttf": "font bytes beside the route\n",
   "public/hello.txt": "hello from the drop-in\n",
 };
 
@@ -75,7 +87,33 @@ const PAGES_ROUTER: Record<string, string> = {
     },
   }),
   "denext.config.ts": `import { pagesRouter } from "@denext/pages-router";
-export default { plugins: [pagesRouter()] };
+export default { plugins: [pagesRouter()], cacheComponents: true };
+`,
+  "components/variant.tsx": "export function Variant() { return <p>plain variant</p>; }\n",
+  "components/variant.web.tsx": "export function Variant() { return <p>web variant</p>; }\n",
+  "lib/stamp.ts": `export async function stamp(): Promise<string> {
+  "use cache";
+  return crypto.randomUUID();
+}
+`,
+  "lib/actions.ts": `export async function act(): Promise<number> {
+  "use server";
+  return 1;
+}
+`,
+  "pages/cached.tsx": `import { stamp } from "../lib/stamp.ts";
+export async function getServerSideProps() {
+  return { props: { stamp: await stamp() } };
+}
+export default function Cached({ stamp }: { stamp: string }) {
+  return <p>stamp[{stamp}]</p>;
+}
+`,
+  "pages/api/action.ts": `import { act } from "../../lib/actions.ts";
+// deno-lint-ignore no-explicit-any
+export default function handler(_req: any, res: any) {
+  res.status(200).json({ reference: typeof (act as any).denextActionId });
+}
 `,
   "styles/globals.css": ".shell { color: rgb(1, 2, 3); }\n",
   "pages/_app.tsx": `import "../styles/globals.css";
@@ -86,11 +124,13 @@ export default function App({ Component, pageProps }: { Component: any; pageProp
 `,
   "pages/index.tsx": `import { useState } from "@denext/denext";
 import { Link } from "@denext/pages-router/link";
+import { Variant } from "../components/variant.tsx";
 export default function Home() {
   const [n, setN] = useState(0);
   return (
     <main>
       <h1>pages home</h1>
+      <Variant />
       <button type="button" onClick={() => setN(n + 1)}>Clicked {n}</button>
       <Link href="/blog/hello">Post</Link>
     </main>
@@ -113,6 +153,54 @@ export default function handler(req: any, res: any) {
   "public/hello.txt": "hello from the pages app\n",
 };
 
+/**
+ * A Pages Router app on npm React (the plugin's compat path: `react` imports, `compatibilityMode`):
+ * its server render loads the compat bundles the build recorded, as the binary can neither build
+ * them nor write them into its embedded `.denext`.
+ */
+const COMPAT_PAGES: Record<string, string> = {
+  // As `denext migrate` writes it: `react` aliased to denext's compat modules.
+  "deno.json": JSON.stringify({
+    nodeModulesDir: "auto",
+    compilerOptions: { jsx: "react-jsx", jsxImportSource: "react" },
+    imports: {
+      "@denext/pages-router": `${FW_URL}packages/pages-router/mod.ts`,
+      "react": `${FW_URL}src/compat/react.ts`,
+      "react/jsx-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+      "react/jsx-dev-runtime": `${FW_URL}src/jsx/jsx-runtime.ts`,
+      "react-dom": `${FW_URL}src/compat/react-dom.ts`,
+    },
+  }),
+  "denext.config.ts": `import { pagesRouter } from "@denext/pages-router";
+export default { compatibilityMode: true, plugins: [pagesRouter()] };
+`,
+  "pages/_app.tsx": `// deno-lint-ignore no-explicit-any
+export default function App({ Component, pageProps }: { Component: any; pageProps: any }) {
+  return <div className="shell"><Component {...pageProps} /></div>;
+}
+`,
+  "pages/index.tsx": `import { useState } from "react";
+export default function Home() {
+  const [n] = useState(3);
+  return <main><h1>compat pages home</h1><p>count {n}</p></main>;
+}
+`,
+  "pages/post/[id].tsx":
+    `export function getServerSideProps({ params }: { params: { id: string } }) {
+  return { props: { id: params.id } };
+}
+export default function Post({ id }: { id: string }) {
+  return <h1>compat post {id}</h1>;
+}
+`,
+  "pages/api/hello.ts": `// deno-lint-ignore no-explicit-any
+export default function handler(req: any, res: any) {
+  res.status(200).json({ compat: req.query.name ?? null });
+}
+`,
+  "public/hello.txt": "hello from the compat pages app\n",
+};
+
 /** Write `files` under `dir`. */
 async function writeFiles(dir: string, files: Record<string, string>): Promise<void> {
   for (const [rel, content] of Object.entries(files)) {
@@ -122,21 +210,13 @@ async function writeFiles(dir: string, files: Record<string, string>): Promise<v
   }
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /**
  * Build and compile `project` into `bin` with the CLI running under `config` (the drop-in's own
  * deno.json maps nothing the CLI imports, as a real one run through the installed CLI); exits
  * non-zero → the output in the error.
  */
 async function compile(project: string, bin: string, config: string): Promise<void> {
-  const r = await new Deno.Command(Deno.execPath(), {
+  const r = await boundedOutput(Deno.execPath(), {
     args: [
       "run",
       "-A",
@@ -151,10 +231,9 @@ async function compile(project: string, bin: string, config: string): Promise<vo
     ],
     cwd: project,
     env: { NO_COLOR: "1" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+    // A compile build on a loaded runner: a failure bound, not a latency claim.
+    timeoutMs: 900_000,
+  });
   const out = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
   assertEquals(r.code, 0, out);
 }
@@ -165,12 +244,15 @@ interface Served {
   stop(): Promise<string>;
 }
 
-/** Start `bin` in `cwd` on a free port and wait until `/` answers 200. */
+/**
+ * Start `bin` in `cwd` on `--port 0` and wait until `/` answers 200 on the port it says it bound
+ * (nothing picks a port another process could take first).
+ */
 async function serve(bin: string, cwd: string): Promise<Served> {
-  const port = freePort();
   const child = new Deno.Command(bin, {
+    args: ["--port", "0"],
     cwd,
-    env: { NO_COLOR: "1", PORT: String(port) },
+    env: { NO_COLOR: "1" },
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
@@ -183,6 +265,7 @@ async function serve(bin: string, cwd: string): Promise<Served> {
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  const port = await boundPort(() => output, () => exited);
   const origin = `http://127.0.0.1:${port}`;
   const get = async (path: string) => {
     const res = await fetch(origin + path);
@@ -198,7 +281,7 @@ async function serve(bin: string, cwd: string): Promise<Served> {
     await drained;
     return output;
   };
-  for (let i = 0; i < 1200 && !exited; i++) {
+  for (let i = 0; i < 1200 && port !== undefined && !exited; i++) {
     try {
       if ((await get("/")).status === 200) return { get, stop };
     } catch { /* not listening yet */ }
@@ -259,8 +342,6 @@ async function compiledApp(
 
 Deno.test({
   name: "denext build --compile: a next-compat drop-in app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_compat_", NEXT_COMPAT, "framework", async (app) => {
       const home = await app.get("/");
@@ -276,6 +357,9 @@ Deno.test({
       const hello = await app.get("/api/hello?name=bin");
       assertEquals(hello.status, 200);
       assertEquals(JSON.parse(hello.text), { hello: "bin" });
+      const og = await app.get("/api/og");
+      assertEquals(og.status, 200, og.text);
+      assertEquals(og.text, "font bytes beside the route\n");
       assertEquals((await app.get("/hello.txt")).text, "hello from the drop-in\n");
       assertEquals((await app.get("/missing")).status, 404);
     }),
@@ -283,8 +367,6 @@ Deno.test({
 
 Deno.test({
   name: "denext build --compile: a Pages Router app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_pages_", PAGES_ROUTER, "project", async (app) => {
       const home = await app.get("/");
@@ -292,8 +374,19 @@ Deno.test({
       assertStringIncludes(home.text, "pages home");
       assertStringIncludes(home.text, "pages shell");
       assertStringIncludes(home.text, "Clicked 0");
+      assertStringIncludes(home.text, "web variant", "the server render takes the .web file");
       const assets = await assertAssetsLoad(app, home.text);
       assert(assets.length > 0, "the page loads its client bundle");
+      // `"use cache"`: the second render reuses the first one's value.
+      const stamps: (string | undefined)[] = [];
+      for (let i = 0; i < 2; i++) {
+        const res = await app.get("/cached");
+        assertEquals(res.status, 200);
+        stamps.push(/stamp\[(?:<!-- -->)?([\w-]+)/.exec(res.text)?.[1]);
+      }
+      assert(stamps[0] !== undefined && stamps[0] === stamps[1], `cached: ${stamps}`);
+      // The inline `"use server"` function is a registered server reference.
+      assertEquals(JSON.parse((await app.get("/api/action")).text), { reference: "string" });
       const post = await app.get("/blog/hello");
       assertEquals(post.status, 200);
       assertStringIncludes(post.text, "post hello from gssp");
@@ -302,5 +395,23 @@ Deno.test({
       assertEquals(JSON.parse(hello.text), { hello: "bin" });
       assertEquals((await app.get("/hello.txt")).text, "hello from the pages app\n");
       assertEquals((await app.get("/missing")).status, 404);
+    }),
+});
+
+Deno.test({
+  name: "denext build --compile: a compat (npm React) Pages Router app serves its pages",
+  fn: () =>
+    compiledApp("denext_compile_compat_pages_", COMPAT_PAGES, "framework", async (app) => {
+      const home = await app.get("/");
+      assertEquals(home.status, 200);
+      assertStringIncludes(home.text, "compat pages home");
+      assert(/count (?:<!-- -->)?3/.test(home.text), home.text);
+      assertStringIncludes(home.text, 'class="shell"');
+      const post = await app.get("/post/7");
+      assertEquals(post.status, 200);
+      assertStringIncludes(post.text, "compat post");
+      const hello = await app.get("/api/hello?name=bin");
+      assertEquals(JSON.parse(hello.text), { compat: "bin" });
+      assertEquals((await app.get("/hello.txt")).text, "hello from the compat pages app\n");
     }),
 });

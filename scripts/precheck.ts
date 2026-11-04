@@ -4,20 +4,67 @@
 //   deno task precheck                 # against the merge base with origin/development
 //   deno task precheck --base <ref>    # against another base
 //   deno task precheck --no-budget     # skip the bundle budget even when the client runtime changed
+//   deno task precheck --no-tests      # skip the changed files' own tests
 //
 // It runs, in order, stopping at nothing (every failure is listed, each with its fix):
 //   1. regen --check   every generated file CI diffs is current (scripts/regen.ts)
 //   2. fmt + lint      the changed files (the whole repo when deno.json's fmt or lint changed)
-//   3. type-check      cli.ts + mod.ts (CI's step) and every changed TypeScript file; changed
-//                      `.vitest.ts` files on denext's Deno toolchain, as CI checks them
+//   3. type-check      cli.ts + mod.ts (CI's step) and every changed TypeScript file, on denext's
+//                      Deno toolchain (native TypeScript 7) as CI checks them — never the `deno`
+//                      that happens to be on PATH (a stock 2.9 checks with TypeScript 6)
 //   4. drift tests     the consistency tests that turned CI red most often (DRIFT_TESTS)
-//   5. doc-lint        when a published module changed (`deno task doc-lint`)
-//   6. bundle budget   when a module that can reach the client bundle changed (`deno task budget`)
+//   5. test badge      `deno task badge:tests --check` (CI checks it on the dispatched run a
+//                      release counts, on `main` and on pull requests)
+//   6. affected tests  the changed test files and the test files importing a changed module
+//                      (scripts/affected-tests.ts), when there are at most AFFECTED_TESTS_CAP
+//   7. doc-lint        when a published module changed (`deno task doc-lint`)
+//   8. bundle budget   when a module that can reach the client bundle changed (`deno task budget`,
+//                      on denext's Deno toolchain as CI's bundle-budget job runs it: a stock Deno
+//                      bundles the same chunks a little larger and would fail a passing change)
+//   9. cargo audit     when a wasm package's Cargo.lock / Cargo.toml / .cargo/audit.toml changed
+//                      (`deno task audit:cargo`; skipped, with a note, without cargo-audit)
+//  10. npm audit       when a deno.lock (the root's or an example's), a deno.json, an example's
+//                      package.json or security/npm-audit-allow.json changed (`deno task
+//                      audit:npm`: high / critical advisories fail)
+//
+// The fallow badge has no check mode (its score moves with unrelated churn): the release
+// regenerates it.
 //
 // It checks the working tree, so uncommitted edits count. The full suites stay in CI.
 
 import { fromFileUrl } from "@std/path";
 import { regen } from "./regen.ts";
+import { cargoAuditAvailable, isCargoAuditInput } from "./cargo-audit.ts";
+import { isNpmAuditInput } from "./npm-audit.ts";
+import { affectedTests } from "./affected-tests.ts";
+import { parallelSuiteFiles } from "./lib/serial-scan.ts";
+
+/**
+ * The most affected test files precheck runs itself; past it, it names them and leaves them to
+ * the push's CI dispatch (a pre-push hook that runs for many minutes gets skipped).
+ */
+export const AFFECTED_TESTS_CAP = 25;
+
+/**
+ * The type-check's command: `deno check` on denext's Deno toolchain (scripts/toolchain-deno.ts:
+ * the running Deno when it is the toolchain, else the pinned build), as CI's "Type check" step
+ * runs it after putting the toolchain on PATH.
+ *
+ * @param files What to check besides cli.ts and mod.ts.
+ */
+export function typeCheckArgs(files: readonly string[]): string[] {
+  return ["run", "-A", "scripts/toolchain-deno.ts", "check", "cli.ts", "mod.ts", ...files];
+}
+
+/**
+ * The bundle budget's command: `deno task budget` on denext's Deno toolchain
+ * (scripts/toolchain-deno.ts; every `deno` the task starts is that toolchain too), as CI's
+ * bundle-budget job runs it. The budget is measured against the toolchain's output: a stock Deno
+ * on PATH measures the same chunks a few dozen bytes larger and fails a change CI passes.
+ */
+export function budgetArgs(): string[] {
+  return ["run", "-A", "scripts/toolchain-deno.ts", "task", "budget"];
+}
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -38,6 +85,7 @@ export const DRIFT_TESTS: readonly string[] = [
   "tests/native-templates-packed.test.ts",
   "tests/plugin-catalog.test.ts",
   "tests/react-native-aliases-manifest.test.ts",
+  "tests/sanitizer-ratchet.test.ts",
   "tests/serial-tests.test.ts",
   "tests/ui-form-widgets.test.ts",
   "tests/workflow-path-filters.test.ts",
@@ -145,18 +193,18 @@ function parseArgs(args: readonly string[]) {
   return {
     base: i >= 0 && args[i + 1] ? args[i + 1] : "origin/development",
     budget: !args.includes("--no-budget"),
+    tests: !args.includes("--no-tests"),
   };
 }
 
 if (import.meta.main) {
-  const { base, budget } = parseArgs(Deno.args);
+  const { base, budget, tests } = parseArgs(Deno.args);
   const t0 = performance.now();
   const changed = await changedFiles(base);
   const configChanged = changed.includes("deno.json") && await lintOrFmtConfigChanged(base);
   const fmtLintTargets = changed.filter((f) => /\.(ts|tsx|js|jsx|json|jsonc|md|css)$/.test(f));
   const checkable = changed.filter(isCheckable);
-  const vitest = checkable.filter((f) => f.endsWith(".vitest.ts"));
-  const plain = checkable.filter((f) => !f.endsWith(".vitest.ts"));
+
   console.log(`precheck: ${changed.length} changed file(s) since ${base}`);
   const outcomes: Outcome[] = [];
 
@@ -184,20 +232,43 @@ if (import.meta.main) {
     return await deno(["lint", ...ROOT_CONFIG, ...lintable]);
   });
 
-  await step(outcomes, "type-check", "fix the TS errors above", async () => {
-    let ok = await deno(["check", "cli.ts", "mod.ts", ...plain]);
-    if (vitest.length > 0) {
-      // Vitest files type-check only against the toolchain's `vitest` (scripts/test-run.ts).
-      ok = await deno(["run", "-A", "scripts/toolchain-deno.ts", "check", ...vitest]) && ok;
-    }
-    return ok;
-  });
+  await step(
+    outcomes,
+    "type-check (denext's toolchain, TypeScript 7)",
+    "fix the TS errors above (no toolchain yet: denext toolchain install)",
+    // `.vitest.ts` files resolve `vitest` only on the toolchain, which now checks everything.
+    () => deno(typeCheckArgs(checkable)),
+  );
 
   await step(
     outcomes,
     "drift tests",
     "each failure above names its fix (most: deno task regen, then commit)",
     () => deno(["test", "-A", "--unstable-kv", "--parallel", ...DRIFT_TESTS], { NO_COLOR: "1" }),
+  );
+
+  await step(
+    outcomes,
+    "test-count badge (badge:tests --check)",
+    "deno task badge:tests, then commit .github/badges/tests.json",
+    () => deno(["task", "badge:tests", "--check"]),
+  );
+
+  await step(
+    outcomes,
+    "affected tests (scripts/affected-tests.ts)",
+    "the failures above are the changed files' own tests",
+    async () => {
+      if (!tests) return "--no-tests";
+      const affected = affectedTests(changed, await parallelSuiteFiles());
+      if (affected.length === 0) return "no test file changed or imports a changed module";
+      if (affected.length > AFFECTED_TESTS_CAP) {
+        return `${affected.length} affected test files (over ${AFFECTED_TESTS_CAP}): run ` +
+          "`deno run -A scripts/affected-tests.ts <changed files>` and test them before CI";
+      }
+      console.log(`  ${affected.join("\n  ")}`);
+      return await deno(["run", "-A", "scripts/test-run.ts", ...affected], { NO_COLOR: "1" });
+    },
   );
 
   await step(outcomes, "doc-lint", "add the missing JSDoc / export the referenced type", () => {
@@ -214,7 +285,36 @@ if (import.meta.main) {
       if (!changed.some(reachesClientBundle) && !changed.includes("deno.lock")) {
         return Promise.resolve("no client-reachable module changed");
       }
-      return deno(["task", "budget"]);
+      return deno(budgetArgs());
+    },
+  );
+
+  await step(
+    outcomes,
+    "cargo audit (packages/*/Cargo.lock)",
+    "deno task audit:cargo; update the crate, or document an unreachable advisory in .cargo/audit.toml",
+    async () => {
+      if (!changed.some(isCargoAuditInput)) {
+        return "no Cargo.lock / Cargo.toml / audit.toml changed";
+      }
+      if (!await cargoAuditAvailable()) {
+        return "cargo-audit not installed (cargo install cargo-audit --locked); CI's cargo-audit job runs it";
+      }
+      return deno(["task", "audit:cargo"]);
+    },
+  );
+
+  await step(
+    outcomes,
+    "npm audit (deno.lock + examples/*/deno.lock)",
+    "deno task audit:npm; lock a fixed version, or allowlist one still under the age hold in security/npm-audit-allow.json",
+    () => {
+      if (!changed.some(isNpmAuditInput)) {
+        return Promise.resolve(
+          "no deno.lock / deno.json / package.json / npm-audit-allow.json changed",
+        );
+      }
+      return deno(["task", "audit:npm"]);
     },
   );
 

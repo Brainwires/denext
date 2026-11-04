@@ -12,14 +12,18 @@
 //                          database that already has tables unless --yes, then pg_restore
 //                          --clean --if-exists in one transaction, with the app stopped
 //
-// A full backup is untrusted input when it is restored: it is extracted by `safe-extract.ts`
-// (no absolute paths, no `..`, no link leaving the directory, no hard links or devices), and
-// only the steps restore knows are run, from the files the manifest names.
+// A backup must be TRUSTED input: its SQL runs as the database superuser (`psql` for roles.sql,
+// extensions.sql and settings.sql, `pg_restore` for the dump), so a crafted one can run `\!`
+// shell commands or `COPY … TO PROGRAM` inside the db container and change any role. What
+// restore does guard is the host: a full backup is extracted by `safe-extract.ts` (no absolute
+// paths, no `..`, no link leaving the directory, no hard links or devices) under a size cap
+// derived from the free disk, and only the steps restore knows are run, from the files the
+// manifest names.
 
 import { isAbsolute, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";
 import { writeAppUpdateArchive } from "../../build/app-update.ts";
-import { extractArchive } from "../../build/safe-extract.ts";
+import { extractArchive, UnsafeArchiveError } from "../../build/safe-extract.ts";
 import {
   composeArgs,
   exists,
@@ -527,8 +531,104 @@ async function restoreFull(
   }
 }
 
+const GIB = 1024 ** 3;
+
+/** The extraction cap when the free space can't be measured and no `--max-size` is given. */
+const UNMEASURED_RESTORE_CAP = 16 * GIB;
+
 /**
- * `denext stack restore <file> [--yes]`.
+ * A size such as `20G`, `512MiB`, `1.5t` or `1048576` (bytes; K/M/G/T are powers of 1024).
+ *
+ * @param text The size.
+ * @returns The bytes.
+ */
+export function parseSize(text: string): number {
+  const m = /^(\d+(?:\.\d+)?)\s*([kmgt]?)(?:i?b)?$/i.exec(text.trim());
+  const bytes = m
+    ? Math.floor(Number(m[1]) * 1024 ** " kmgt".indexOf(m[2].toLowerCase() || " "))
+    : 0;
+  if (!(bytes > 0) || !Number.isSafeInteger(bytes)) {
+    throw new Error(`--max-size: "${text}" is not a size (e.g. 20G, 512M or a byte count)`);
+  }
+  return bytes;
+}
+
+/** `bytes` for a person: `1.5 GiB`. */
+function formatSize(bytes: number): string {
+  const units = ["bytes", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return i === 0 ? `${bytes} bytes` : `${n.toFixed(1)} ${units[i]}`;
+}
+
+/** The most a full backup may expand to, and why: `--max-size`, else free space minus a margin. */
+export interface RestoreCap {
+  /** The cap, in bytes. */
+  readonly bytes: number;
+  /** Where it came from, for the refusal. */
+  readonly why: string;
+}
+
+/**
+ * How large a full backup may expand to while it is extracted into `scratch`: what the disk
+ * holding it has free, minus a margin (a tenth of it, at least 1 GiB) so the extraction can never
+ * fill it, and no more than `--max-size`. Refuses when the disk has no room left at all.
+ *
+ * @param ctx The invocation (`--max-size`).
+ * @param io Its `freeBytes`.
+ * @param scratch The directory the backup is extracted under.
+ * @returns The cap.
+ */
+export async function restoreCap(
+  ctx: CommandContext,
+  io: StackIo,
+  scratch: string,
+): Promise<RestoreCap> {
+  const flag = ctx.flags["max-size"];
+  const asked = typeof flag === "string" ? parseSize(flag) : undefined;
+  const free = await io.freeBytes?.(scratch);
+  if (free === undefined) {
+    return asked !== undefined
+      ? { bytes: asked, why: "--max-size" }
+      : { bytes: UNMEASURED_RESTORE_CAP, why: "the default when free space can't be measured" };
+  }
+  const margin = Math.max(GIB, Math.floor(free / 10));
+  const room = free - margin;
+  if (room <= 0) {
+    throw new Error(
+      `only ${formatSize(free)} is free where the backup would be extracted (${scratch}); ` +
+        `restore keeps ${formatSize(margin)} free. Free up space or point TMPDIR at a larger disk`,
+    );
+  }
+  if (asked !== undefined && asked <= room) return { bytes: asked, why: "--max-size" };
+  return {
+    bytes: room,
+    why: `${formatSize(free)} free where it is extracted, less a ${formatSize(margin)} margin`,
+  };
+}
+
+/** Extract a full backup under `cap`, turning "too large" into a refusal that says what to do. */
+async function extractBackup(file: string, dest: string, cap: RestoreCap): Promise<string> {
+  try {
+    await extractArchive(file, "tar.gz", dest, { maxBytes: cap.bytes, maxEntries: 10_000_000 });
+  } catch (error) {
+    if (error instanceof UnsafeArchiveError && /expands past/.test(error.message)) {
+      throw new Error(
+        `the backup expands past ${formatSize(cap.bytes)} (${cap.why}), so it was not ` +
+          "restored. Free up space, point TMPDIR at a larger disk, or pass a larger --max-size",
+      );
+    }
+    throw error;
+  }
+  return await backupRoot(dest);
+}
+
+/**
+ * `denext stack restore <file> [--yes] [--max-size <size>]`.
  *
  * @param ctx The invocation.
  * @param dir The project.
@@ -546,10 +646,7 @@ export async function restoreAction(ctx: CommandContext, dir: string, io: StackI
   try {
     // Extract (and so validate) the whole archive before the database is touched.
     const root = kind === "full"
-      ? await extractArchive(file, "tar.gz", join(extracted, "x"), {
-        maxBytes: 2 ** 40,
-        maxEntries: 10_000_000,
-      }).then(() => backupRoot(join(extracted, "x")))
+      ? await extractBackup(file, join(extracted, "x"), await restoreCap(ctx, io, extracted))
       : "";
     if (root) await fullSteps(root);
     const source = kind === "full"

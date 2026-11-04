@@ -21,6 +21,7 @@ on:
       - "src/ts/program-api.ts" # the TypeScript program API the extractor reads through
       - "src/compat/next-auth/providers/list.ts" # the provider ids spec.ts lists
       - "tests/fixtures/react-surface.baseline.json"
+      - "tests/fixtures/preact-surface.baseline.json"
       - ".github/workflows/parity-drift.yml"
 
 permissions:

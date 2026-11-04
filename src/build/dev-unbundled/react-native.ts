@@ -1,6 +1,8 @@
 // Unbundled dev, React Native mode (`reactNative` in the config): the per-module loop for an
 // Expo / React Native app, so an edit to one of the app's modules hot-swaps it in place with
-// its hook state kept (Fast Refresh), as in the App Router and the other SPA paths.
+// its hook state kept (Fast Refresh), as in the App Router and the other SPA paths. The same
+// loop serves React Native mode on the App Router: there the dependency bundle covers what the
+// route entries and the Flight islands reach (see `prewarmNpmBundle`), not expo-router's routes.
 //
 // React Native mode's resolution (react-native → react-native-web and its overlay, the
 // `expo-*` shims, expo-router's route context and navigators, the list adapters, the worklets
@@ -294,8 +296,10 @@ export function dependencySignature(st: UnbundledState): string {
 
 /**
  * Transform every app module reachable from the SPA entry and from expo-router's routes (which
- * only the dependency bundle's route context imports), so each one's specifiers and names are
- * recorded before the dependency bundle is built. Cached transforms make a re-crawl cheap.
+ * only the dependency bundle's route context imports) — on the App Router, from the client
+ * entries' roots served so far (route modules, Flight islands) — so each one's specifiers and
+ * names are recorded before the dependency bundle is built. Cached transforms make a re-crawl
+ * cheap.
  *
  * @param st The unbundled dev state.
  * @param transformModule Transforms one app module (returns its first-party deps).
@@ -306,7 +310,8 @@ export async function crawlReactNativeGraph(
 ): Promise<void> {
   const roots = [
     ...(st.opts.spaEntry ? [st.opts.spaEntry] : []),
-    ...await expoRouterRouteFiles(st.opts.projectDir),
+    ...(st.opts.reactNative?.appRouter ? [] : await expoRouterRouteFiles(st.opts.projectDir)),
+    ...st.npmCrawledRoots,
   ];
   await crawlModuleGraph(roots.map(norm).filter((abs) => CODE_FILE.test(abs)), transformModule);
 }
@@ -401,14 +406,18 @@ function requireFacadeSource(url: string): string {
  * `st.npmDir`, served under `@npm`). The runtime (`@dep`) must already be prebuilt.
  *
  * @param st The unbundled dev state (React Native mode).
+ * @param specs The specifiers to bundle (every one the app imported, by default).
  */
-export async function buildReactNativeDeps(st: UnbundledState): Promise<void> {
+export async function buildReactNativeDeps(
+  st: UnbundledState,
+  specs: Iterable<string> = st.npmSpecs,
+): Promise<void> {
   const rn = st.opts.reactNative!;
   const entriesDir = join(st.npmDir, ".entries");
   await ensureDir(entriesDir);
   const entryPoints: Record<string, string> = {};
   const entries = new Map<string, { spec: string; names: ReadonlySet<string> }>();
-  for (const spec of st.npmSpecs) {
+  for (const spec of specs) {
     const slug = depSlug(spec);
     // A placeholder on disk (esbuild needs the entry to exist); the plugin generates its source.
     const written = join(entriesDir, `${slug}.js`);
@@ -485,17 +494,24 @@ export async function reactNativeDepsInvalidated(
   changed: string[],
 ): Promise<boolean> {
   if (!st.opts.reactNative) return false;
-  let invalid = changed.some((p) => DEPENDENCY_MANIFESTS.has(basename(p)));
-  if (!invalid) {
-    const root = await expoRouterRoot(st.opts.projectDir);
-    // Compared `/`-separated: a watcher path and a realpath may disagree on Windows separators.
-    const routes = root ? slashed(norm(root)) + "/" : null;
-    for (const raw of changed) {
-      const abs = norm(raw);
-      if (!routes || !slashed(abs).startsWith(routes) || !/\.[jt]sx?$/.test(abs)) continue;
-      if (!st.known.has(abs) || !(await exists(abs))) invalid = true;
-    }
-  }
+  const invalid = changed.some((p) => DEPENDENCY_MANIFESTS.has(basename(p))) ||
+    // On the App Router `app/` is not expo-router's: a page coming or going changes nothing here.
+    (!st.opts.reactNative.appRouter && await expoRouteSetChanged(st, changed));
   if (invalid) st.npmBuiltSig = null;
   return invalid;
+}
+
+/** Whether `changed` adds or removes an expo-router route (a file the bundle's context lists). */
+async function expoRouteSetChanged(st: UnbundledState, changed: string[]): Promise<boolean> {
+  const root = await expoRouterRoot(st.opts.projectDir);
+  if (!root) return false;
+  // Compared `/`-separated: a watcher path and a realpath may disagree on Windows separators.
+  const routes = slashed(norm(root)) + "/";
+  let added = false;
+  for (const raw of changed) {
+    const abs = norm(raw);
+    if (!slashed(abs).startsWith(routes) || !/\.[jt]sx?$/.test(abs)) continue;
+    if (!st.known.has(abs) || !(await exists(abs))) added = true;
+  }
+  return added;
 }

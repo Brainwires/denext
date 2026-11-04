@@ -9,7 +9,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { type HeadCollector, renderShell } from "../src/jsx/render-to-stream.ts";
 import { SWAP_RUNTIME, SWAP_RUNTIME_BODY, swapRuntimeHash } from "../src/server/swap-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { createResource, Suspense } from "../src/runtime/suspense.ts";
 import { forbidden, notFound, redirect, unauthorized } from "../src/runtime/error-boundary.ts";

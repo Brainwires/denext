@@ -6,9 +6,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startDevOnDir } from "./e2e/harness.ts";
-import { fromFileUrl } from "@std/path";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+// A private copy: this test builds into (and edits) the app, which other test files read.
+const HELLO = await copyExample("hello");
 
 type Ctx = { origin: string; routeJs: string };
 
@@ -60,8 +61,6 @@ async function stepAppRoutesHydrate({ origin }: Ctx): Promise<void> {
 
 Deno.test({
   name: "dev server (bundled path) builds per-route client bundles on demand",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // Bundled mode is selected per-server (not via the process-global DENEXT_DEV_UNBUNDLED),
   // so this stays correct when it runs in parallel with the unbundled-default dev-server test.

@@ -52,6 +52,9 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_spa-island": "src/spa-island.ts",
   // Isomorphic `client:*` islands: the route entry's install and the island rewrite's import.
   "denext_iso-island": "src/iso-island.ts",
+  // Server Actions: the generated `"use server"` stubs' import and the Flight entry's on-demand call.
+  "denext_action-stub": "src/action-stub.ts",
+  "denext_action-call": "src/action-call.ts",
   // A Deno Desktop window's page APIs, imported from "use client" modules (`denext desktop dev`
   // serves the page through this dev server): the bridge client, the window, the app chrome and
   // the Clerk bridge. Missing, the page's module graph 404s and it never hydrates.
@@ -79,6 +82,8 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/mvu": "mvu.js",
   "denext/spa-island": "spa-island.js",
   "denext/iso-island": "iso-island.js",
+  "denext/action-stub": "action-stub.js",
+  "denext/action-call": "action-call.js",
 };
 
 const WINDOWS = Deno.build.os === "windows";
@@ -249,6 +254,12 @@ export interface ReactNativeDevOptions {
   define: Record<string, string>;
   /** Resolve every bare package from `node_modules` (the app's `nodeResolve`). */
   resolveAllNodeModules?: boolean;
+  /**
+   * On the App Router: `app/` is the App Router's, not expo-router's routes, so the dependency
+   * bundle covers the client entries' roots instead, and a route coming or going changes nothing
+   * in it.
+   */
+  appRouter?: boolean;
 }
 
 /** Everything the unbundled dev stages share for one project. */
@@ -293,7 +304,11 @@ export interface UnbundledState {
    * npm bundle waits for so its first build already holds every package the page imports.
    */
   npmCrawl: Promise<void> | null;
-  /** compat: the graph roots already crawled (an entry is crawled once). */
+  /**
+   * compat: the graph roots already crawled (an entry is crawled once). React Native mode on the
+   * App Router: the client entries' roots (route modules, Flight islands) its dependency bundle
+   * covers, crawled with every check of it.
+   */
   readonly npmCrawledRoots: Set<string>;
   /** compat: how many times the npm bundle has been built (diagnostics and tests). */
   npmBuilds: number;
@@ -302,6 +317,11 @@ export interface UnbundledState {
   mergedConfigPath: string | null;
   /** The app's import-map aliases (`readImportAliases`), loaded once. */
   aliasPrefixes: ImportAliases | null;
+  /**
+   * The project root, then the other members of its Deno workspace (`packages/ui`), loaded with
+   * {@link aliasPrefixes}: a file alias resolves first-party only under one of them.
+   */
+  firstPartyRoots: readonly string[] | null;
   /**
    * React Native: the names the app's modules import from each package specifier, so the
    * dependency bundle's entry for it can re-export them (CommonJS packages included).
@@ -348,6 +368,7 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     runtimeBuilt: null,
     mergedConfigPath: null,
     aliasPrefixes: null,
+    firstPartyRoots: null,
     npmNames: new Map(),
     npmBuiltSig: null,
     graphEpoch: 0,

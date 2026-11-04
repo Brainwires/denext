@@ -21,6 +21,8 @@
 // bump ./version.ts and the ESBUILD_NPM table in ./binary.ts, and pin a toolchain whose zip
 // carries that release.
 
+import { runToExit } from "../exited-output.ts";
+import { spawnExclusive } from "../serial-child.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile, readFileSync, unlink, writeFile } from "node:fs";
@@ -28,7 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as common from "./vendor/common.ts";
 import type * as types from "./vendor/types.ts";
-import { ESBUILD_BINARY_PATH_ENV, resolveEsbuildBinary } from "./binary.ts";
+import { ESBUILD_BINARY_PATH_ENV, noteStockEsbuild, resolveEsbuildBinary } from "./binary.ts";
 import { ESBUILD_VERSION } from "./version.ts";
 import * as ourselves from "./mod.ts";
 
@@ -80,7 +82,9 @@ interface Service {
 }
 
 let longLivedService: Promise<Service> | undefined;
-let stopService: (() => void) | undefined;
+let stopService: (() => Promise<void>) | undefined;
+/** The exit of a child being stopped: a concurrent {@linkcode stop} waits for it too. */
+let stopping: Promise<void> | undefined;
 let initializeWasCalled = false;
 let warned = false;
 
@@ -101,7 +105,7 @@ function ensureServiceIsRunning(): Promise<Service> {
 async function checkOverrideVersion(path: string): Promise<void> {
   let reported: string;
   try {
-    const out = await new Deno.Command(path, { args: ["--version"], stdin: "null" }).output();
+    const out = await runToExit(path, { args: ["--version"], stdin: "null" });
     reported = new TextDecoder().decode(out.stdout).trim();
   } catch (err) {
     throw new Error(
@@ -123,15 +127,21 @@ async function startService(): Promise<Service> {
     warned = true;
     console.warn(binary.warning);
   }
+  // The npm esbuild is the stock-Deno fallback, gone in 5.0 (once per process tree).
+  noteStockEsbuild(binary);
   // The toolchain and npm binaries are hash-pinned to ESBUILD_VERSION; an override is only as
   // good as its word, so ask it first and refuse with a message that names the variable.
   if (binary.source === "env") await checkOverrideVersion(binary.path);
   const defaultWD = Deno.cwd();
-  const child = spawn(binary.path, [`--service=${ESBUILD_VERSION}`, "--ping"], {
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "inherit"],
-    cwd: defaultWD,
-  });
+  // Long-lived: on Windows it must not be created while a `deno info` / `deno bundle` child of
+  // this process runs, or it inherits and holds that child's pipes (serial-child.ts).
+  const child = await spawnExclusive(() =>
+    spawn(binary.path, [`--service=${ESBUILD_VERSION}`, "--ping"], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "inherit"],
+      cwd: defaultWD,
+    })
+  );
   const { readFromStdout, afterClose, service } = common.createChannel({
     writeToStdin(bytes) {
       child.stdin!.write(bytes, (err) => {
@@ -148,13 +158,23 @@ async function startService(): Promise<Service> {
   const stdout = child.stdout!;
   stdin.on("error", afterClose);
   child.on("error", afterClose);
+  // Settles once the child has exited and its pipes are closed.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   const stop = () => {
     stdin.destroy();
     stdout.destroy();
+    // Wait for the exit with the child referenced: an unref'd child's exit would not keep the
+    // event loop alive for the wait, and a test that ended first would see the process open.
+    if (child.exitCode === null && child.signalCode === null) child.ref();
     child.kill();
     initializeWasCalled = false;
     longLivedService = undefined;
     stopService = undefined;
+    stopping = closed;
+    void closed.then(() => {
+      if (stopping === closed) stopping = undefined;
+    });
+    return closed;
   };
   stopService = stop;
   stdout.on("data", (chunk: Uint8Array) => {
@@ -265,13 +285,16 @@ export const analyzeMetafile: typeof types.analyzeMetafile = (metafile, options)
   ensureServiceIsRunning().then((s) => s.analyzeMetafile(metafile, options));
 
 /**
- * Stop the esbuild child (the next call starts a new one). Optional in a CLI — an idle child does
- * not keep the process alive — but a Deno test that used esbuild calls it before it ends.
+ * Stop the esbuild child (the next call starts a new one), resolving once it has exited. Optional
+ * in a CLI — an idle child does not keep the process alive — but a Deno test that used esbuild
+ * awaits it before it ends.
  */
 export const stop: typeof types.stop = async () => {
   const pending = longLivedService;
   if (pending) await pending.catch(() => {});
-  stopService?.();
+  await stopService?.();
+  // Another caller's stop() may have begun it (a dev server's shutdown): wait for that exit too.
+  await stopping;
 };
 
 const noSync = (name: string) => () => {

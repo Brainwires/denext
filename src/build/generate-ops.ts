@@ -25,7 +25,7 @@ import { vectorSearchSql } from "../server/vector-sql.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { detectDockerMode } from "./docker-template.ts";
-import { denoReleaseVersion } from "./deno-version.ts";
+import { currentDenoIdentity, denoReleaseVersion } from "./deno-version.ts";
 
 /** One file an ops scaffold would write. */
 export interface OpsPlanFile {
@@ -488,7 +488,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v${denoReleaseVersion(Deno.version.deno)}
+          deno-version: v${denoReleaseVersion(currentDenoIdentity())}
           cache: true
 ${checkSteps(tasks)}${buildTask ? `      - run: deno task ${buildTask}\n` : ""}`;
   return [{ path: join(projectDir, ".github", "workflows", "ci.yml"), contents }];

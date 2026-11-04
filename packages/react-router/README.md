@@ -80,8 +80,38 @@ A route module's browser half runs as in React Router v7:
   loaders of a `force-static` page get the URL alone (no headers, no body), as React Router's
   build-time prerender does, since one render is served to everyone.
 
+## Load context and middleware
+
+Every loader, action and route middleware gets a `context`. Supply it with the plugin's
+`getLoadContext` option (given `{ request, params }`, run once per request), or with a
+`load-context.ts` calling `defineLoadContext` from `denext/remix/server` that
+`instrumentation.ts` imports; `denext migrate` writes both from a custom server's
+`getLoadContext`. The `context` is a `RouterContextProvider`: an object's properties ride on it,
+and `createContext` keys work through `context.get` / `context.set`.
+
+```ts
+// denext.config.ts
+export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };
+
+// app/root.tsx
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ request, context }, next) => {
+    context.set(userContext, await getUser(request));
+    return next();
+  },
+];
+```
+
+A route's `middleware` (or `unstable_middleware`) runs outermost route first, once per request,
+before the route's loader and action; a thrown `redirect()` stops the request. On a resource
+route and a plain POST to a page's action, `next()` runs the handler; on a page render it
+resolves at once to a stand-in response whose headers reach the page.
+
 ## Limitations
 
+- **Middleware on a page render runs ahead of the loaders, not around the render:** code after
+  `next()` runs before the loaders, and a parent's loader may run before a child's middleware.
+  `clientMiddleware` does not run.
 - **`serverLoader()` on a navigation** resolves the data the navigation already fetched:
   denext renders the target route on the server, so its server `loader` runs with that render
   instead of on demand, and the route renders before its `clientLoader` settles.

@@ -23,12 +23,16 @@ import {
   type ServicesSnapshot,
   stopServices,
 } from "../src/server/service-loader.ts";
-import { supervisionStatus } from "../src/server/supervise.ts";
+import { forgetStoppedSupervisors, supervisionStatus } from "../src/server/supervise.ts";
 import { runHealthChecks } from "../src/server/health.ts";
 import { loadInstrumentation } from "../src/server/instrumentation.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const SUPERVISE = new URL("../src/server/supervise.ts", import.meta.url).href;
 const EXACT = { initialMs: 100, maxMs: 1_000, factor: 2, jitter: 0 };
@@ -162,6 +166,89 @@ Deno.test("bootServices: a root `services` supervisor, a status snapshot, a heal
   }
 });
 
+Deno.test("stopServices: a call made while a stop is in progress waits for it, final snapshot included", async () => {
+  const dir = await fixture({ "services/a.ts": HOLDING() });
+  const outDir = join(dir, ".denext");
+  const snapshotPath = join(outDir, SERVICES_SNAPSHOT);
+  const read = async () => JSON.parse(await Deno.readTextFile(snapshotPath)) as ServicesSnapshot;
+  try {
+    assert(await bootServices(dir, { outDir }));
+    await until(async () => {
+      try {
+        return (await read()).supervisors[0]?.state === "running";
+      } catch {
+        return false;
+      }
+    });
+    // The server's drain stops the tree; a caller that stops it too (a test's cleanup, a signal
+    // handler) must not return before that stop has written its last file.
+    const draining = stopServices();
+    await stopServices();
+    assertEquals((await read()).supervisors, [], "the final snapshot is on disk");
+    assertEquals(
+      [...Deno.readDirSync(outDir)].map((e) => e.name),
+      [SERVICES_SNAPSHOT],
+      "no temporary file left behind",
+    );
+    await draining;
+  } finally {
+    await stopServices();
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("the status snapshot: a debounced write still in flight finishes before the final one", async () => {
+  const dir = await fixture({ "services/a.ts": HOLDING() });
+  const outDir = join(dir, ".denext");
+  const snapshotPath = join(outDir, SERVICES_SNAPSHOT);
+  const write = Deno.writeTextFile;
+  let held: (() => void) | undefined;
+  let inFlight!: () => void;
+  const reached = new Promise<void>((r) => inFlight = r);
+  // Each snapshot write's start and end, in order.
+  const writes: Array<"begin" | "end"> = [];
+  try {
+    // Hold the first debounced write before it creates its temporary file.
+    Deno.writeTextFile = (async (
+      path: string | URL,
+      data: string | ReadableStream<string>,
+      options?: Deno.WriteFileOptions,
+    ) => {
+      const snapshot = String(path).endsWith(".tmp");
+      if (snapshot) writes.push("begin");
+      if (snapshot && !held) {
+        await new Promise<void>((r) => {
+          held = r;
+          inFlight();
+        });
+      }
+      await write(path, data, options);
+      if (snapshot) writes.push("end");
+    }) as typeof Deno.writeTextFile;
+    assert(await bootServices(dir, { outDir }));
+    await reached;
+    const stopping = stopServices();
+    // Once the supervisors are down the stop queues its final write, which would race ahead of
+    // the held one here: it must not begin until that one has ended.
+    await until(() => supervisionStatus().length === 0);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(writes, ["begin"], "the final write waits for the one in flight");
+    held!();
+    await stopping;
+    // The stop resolved only once nothing more is in flight: every write it began has ended.
+    assertEquals(writes.at(-1), "end");
+    assertEquals(writes.filter((w) => w === "begin").length, writes.length / 2);
+    const last = JSON.parse(await Deno.readTextFile(snapshotPath)) as ServicesSnapshot;
+    assertEquals(last.supervisors, [], "the final snapshot is the last one written");
+    assertEquals([...Deno.readDirSync(outDir)].map((e) => e.name), [SERVICES_SNAPSHOT]);
+  } finally {
+    Deno.writeTextFile = write;
+    held?.();
+    await stopServices();
+    await removeTempDir(dir);
+  }
+});
+
 Deno.test("bootServices: a tree that gives up fails the health check and calls onServiceError", async () => {
   const dir = await fixture({
     "services/crashy.ts": `import { defineService } from "${SUPERVISE}";\n` +
@@ -188,6 +275,8 @@ Deno.test("bootServices: a tree that gives up fails the health check and calls o
     console.error = error;
     console.warn = warn;
     await stopServices();
+    // A failed tree stays listed by design (its status says why); the next test starts clean.
+    forgetStoppedSupervisors();
     await removeTempDir(dir);
   }
   assertEquals((await runHealthChecks()).checks.services, undefined);

@@ -246,7 +246,7 @@ Deno.test("windows install: deno.exe + esbuild.exe from a Windows-made zip, stam
     const opts = { env: envFrom({}), pin: s.pin, target: WIN, os: "windows", cacheRoot: s.cache };
     const esb = await toolchainEsbuild({ ...opts, verify: true });
     assertEquals([esb.state, esb.path], ["ok", join(installDir(s), "esbuild.exe")]);
-    const status = await denoToolchainStatus({ ...opts, verify: true, running: PINNED });
+    const status = await denoToolchainStatus({ ...opts, verify: true, running: { deno: PINNED } });
     assertEquals([status.state, status.path, status.active], ["cached", rt.deno, true]);
   } finally {
     await s.dispose();
@@ -402,7 +402,11 @@ Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, never touc
       cacheRoot: "Z:\\nonexistent\\denext-deno",
       fetch: noNetwork,
     });
-    assertEquals(choice, { kind: "stock", reason: "DENEXT_DENO=stock" }, JSON.stringify(raw));
+    assertEquals(
+      choice,
+      { kind: "stock", reason: "DENEXT_DENO=stock", optedOut: true },
+      JSON.stringify(raw),
+    );
   }
   const status = await denoToolchainStatus({
     env: envFrom({ DENEXT_DENO: "stock " }),

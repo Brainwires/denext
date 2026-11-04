@@ -22,6 +22,8 @@ import {
 } from "@std/path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { referencedActionExports } from "./action-references.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
 import {
   missingVariantMessage,
@@ -30,25 +32,21 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
+import { boundedSpawn } from "./child-probe.ts";
+import { childDeadlineMs, DENO_INFO_DEADLINE_MS, retryOnStall } from "./serial-child.ts";
+import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
-// The boundary ids live in a leaf module the server runtime imports without this crawler.
+// The boundary ids and the manifest's shape live in leaf modules the server runtime imports
+// without this crawler.
 export { clientIdFor, shortHash };
-
-/** A discovered boundary module: its file URL and (optionally) its export names. */
-export interface BoundaryRef {
-  /** The module's `file://` URL. */
-  url: string;
-  /** Exported symbol names, when resolved (empty if not extracted). */
-  exports: string[];
-}
-
-/** The client/server module split discovered across an app's import graph. */
-export interface BoundaryManifest {
-  /** `"use client"` modules keyed by a stable client id (`c_<hash>`). */
-  client: Map<string, BoundaryRef>;
-  /** `"use server"` modules keyed by a stable module id (`<hash>`). */
-  server: Map<string, BoundaryRef>;
-}
+import {
+  type BoundaryManifest,
+  type BoundaryRef,
+  deserializeBoundary,
+  serializeBoundary,
+} from "./boundary-manifest.ts";
+export { deserializeBoundary, serializeBoundary };
+export type { BoundaryManifest, BoundaryRef };
 
 /** `dir` with exactly one trailing platform separator, for a prefix test on local paths. */
 function dirPrefix(dir: string): string {
@@ -129,41 +127,6 @@ export async function assertPlatformFilesResolve(
     const spec = "./" + relative(projectDir, path).replaceAll("\\", "/");
     throw new Error(missingVariantMessage(spec, variants, resolution));
   }
-}
-
-/** {@link BoundaryManifest} as the build manifest stores it: ids → project-relative paths. */
-export interface SerializedBoundary {
-  client: Record<string, { path: string; exports: string[] }>;
-  server: Record<string, { path: string; exports: string[] }>;
-}
-
-/**
- * Serialize a boundary manifest for `manifest.json` (module URLs → paths relative to
- * `projectDir`, so a deployed build is portable), and rebuild it at server startup — which
- * saves the prod server the import-graph crawl the build already did (30 s on a large app).
- */
-export function serializeBoundary(b: BoundaryManifest, projectDir: string): SerializedBoundary {
-  const rel = (m: Map<string, BoundaryRef>) =>
-    Object.fromEntries(
-      [...m].map(([id, ref]) => [id, {
-        // `/`-separated so a manifest built on Windows reads the same everywhere.
-        path: relative(projectDir, fromFileUrl(ref.url)).split(SEPARATOR).join("/"),
-        exports: ref.exports,
-      }]),
-    );
-  return { client: rel(b.client), server: rel(b.server) };
-}
-
-/** Inverse of {@link serializeBoundary}. */
-export function deserializeBoundary(sb: SerializedBoundary, projectDir: string): BoundaryManifest {
-  const abs = (r: Record<string, { path: string; exports: string[] }>) =>
-    new Map(
-      Object.entries(r).map(([id, ref]) => [id, {
-        url: toFileUrl(resolve(projectDir, ref.path)).href,
-        exports: ref.exports,
-      }]),
-    );
-  return { client: abs(sb.client), server: abs(sb.server) };
 }
 
 /** Options for {@linkcode crawlLocalModules}. */
@@ -440,11 +403,13 @@ export function reachableModules(info: DenoInfo, roots: string[]): DenoInfoModul
  * parsed graph plus the entries' resolved specifiers. Shared by the boundary/hydration
  * crawl and the CSS discovery crawl so both apply the same flags (sloppy imports, the
  * minimum-dependency-age policy) and the same temp-dir hygiene. Cached per `cache` name
- * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely.
+ * (see {@link resetModuleGraphCache}); `cache: false` bypasses caching entirely. A `deno info`
+ * still running after `deadlineMs` (default 2 minutes) is killed and started once more; a second
+ * stall fails the crawl. One crawl runs at a time per process.
  */
 export function denoInfoGraph(
   entryFiles: string[],
-  opts: { cache?: boolean | string } = {},
+  opts: { cache?: boolean | string; deadlineMs?: number } = {},
 ): Promise<ModuleGraph> {
   const name = cacheNameOf(opts.cache);
   const wanted = entryFiles.map((f) => toFileUrl(f).href);
@@ -460,7 +425,7 @@ export function denoInfoGraph(
     const pending = graphInFlight.get(key);
     if (pending) return pending;
   }
-  const run = spawnDenoInfo(entryFiles).then((graph) => {
+  const run = spawnDenoInfo(entryFiles, opts.deadlineMs).then((graph) => {
     if (name) {
       const entries = new Set(wanted);
       // Keep the largest graph: a later, smaller request must not evict the superset.
@@ -468,9 +433,12 @@ export function denoInfoGraph(
       if (!prev || [...prev.entries].every((e) => entries.has(e))) {
         graphCaches.set(name, { entries, info: graph.info, resolved: graph.resolvedEntries });
       }
-      graphInFlight.delete(key);
     }
     return { info: graph.info, roots: graph.roots };
+  }).finally(() => {
+    // Settled either way: a failed crawl (a stall, a bad config) must not answer every later
+    // request for the same graph until the cache is reset.
+    if (name) graphInFlight.delete(key);
   });
   if (name) graphInFlight.set(key, run);
   return run;
@@ -497,6 +465,7 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
 
 async function spawnDenoInfo(
   entryFiles: string[],
+  deadlineMs: number = childDeadlineMs(DENO_INFO_DEADLINE_MS),
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
@@ -505,31 +474,58 @@ async function spawnDenoInfo(
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const configDir = appConfigDir();
-    const command = new Deno.Command(denoExecutable(), {
-      // Run in the app's folder so Deno discovers its config (and import map) as it does for the
-      // app's own commands. Without one: a process whose working directory was deleted (a test
-      // that removed its temp cwd) can't spawn `deno info` from it; run from the first entry's
-      // folder instead.
+    const args = [
+      "info",
+      "--unstable-sloppy-imports",
+      ...minDepAgeArgs(),
+      "--json",
+      ...await redirectConfigArgs(tmpDir),
+      // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
+      toFileUrl(barrel).href,
+    ];
+    const spawnOptions = (stderr: StderrMode): Deno.CommandOptions => ({
+      // Run in the app's folder so Deno discovers its config (and import map) as it does for
+      // the app's own commands. Without one: a process whose working directory was deleted (a
+      // test that removed its temp cwd) can't spawn `deno info` from it; run from the first
+      // entry's folder instead.
       ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: [
-        "info",
-        "--unstable-sloppy-imports",
-        ...minDepAgeArgs(),
-        "--json",
-        ...await redirectConfigArgs(tmpDir),
-        // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
-        toFileUrl(barrel).href,
-      ],
+      args,
+      stdin: "null",
       stdout: "piped",
-      stderr: "piped",
+      stderr,
     });
-    const { code, stdout, stderr } = await command.output();
-    if (code !== 0) {
-      throw new Error(`deno info failed (${code}):\n${new TextDecoder().decode(stderr)}`);
+    // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
+    // another thread (Windows) can hold them open for its whole life. One crawl at a time per
+    // process; one that never exits is killed at the deadline and started once more. stderr is
+    // discarded unless the crawl fails (see quietThenExplain): a quiet stderr pipe held for the
+    // crawl's whole life is what starves other children's reads on Windows. Under
+    // DENEXT_CHILD_PROBE a stall reports the crawl's debug log and CPU samples (child-probe.ts).
+    // A crawl whose JSON is complete and that then stays silent without exiting (seen on Windows:
+    // a spin in the process's teardown) is killed after a grace and its output used.
+    const output = await quietThenExplain((mode) =>
+      retryOnStall(
+        "deno info",
+        args,
+        (deadline) =>
+          boundedSpawn(
+            denoExecutable(),
+            spawnOptions(mode),
+            deadline,
+            "deno info",
+            undefined,
+            // One JSON document: a crawl that wrote all of it and then never exits is not waited on.
+            {},
+          ),
+        deadlineMs,
+      )
+    );
+    if (output.code !== 0) {
+      const stderr = new TextDecoder().decode(output.stderr);
+      throw new Error(`deno info failed (${output.code}):\n${stderr}`);
     }
-    const info = JSON.parse(new TextDecoder().decode(stdout)) as DenoInfo;
+    const info = JSON.parse(new TextDecoder().decode(output.stdout)) as DenoInfo;
     renameCopies(info, activeRedirects()?.originals ?? {});
     // The barrel's dependency list maps each entry as WRITTEN (`file://…` of the given path)
     // to the specifier `deno info` reports for it (resolved/realpath'd), so BFS roots match
@@ -751,7 +747,11 @@ async function appLocalModules(entryFiles: string[]): Promise<string[]> {
   try {
     fwSrc = await Deno.realPath(fwSrc);
   } catch { /* framework src not on disk */ }
-  return await crawlLocalModules(entryFiles, { exclude: (p) => isUnderFrameworkSrc(p, fwSrc) });
+  // The crawl's own paths need the same canonical spelling: an import map can name the checkout
+  // through a symlink, and its modules then arrive under that spelling (see canonical-path.ts).
+  return await crawlLocalModules(entryFiles, {
+    exclude: (p) => isUnderFrameworkSrc(p, fwSrc) || isUnderFrameworkSrc(canonicalPath(p), fwSrc),
+  });
 }
 
 /**
@@ -786,6 +786,7 @@ export async function buildBoundaryManifest(
 
   if (opts.npm) await addNpmBoundary(manifest, appDir, locals, opts.npm);
 
+  const localServers = new Map<string, string[]>();
   await Promise.all(
     locals.map(async (filePath) => {
       const directive: Directive = await readDirective(filePath);
@@ -806,11 +807,37 @@ export async function buildBoundaryManifest(
         // `createServerReference` per export.
         const exports = opts.exportsOf ? await opts.exportsOf(filePath) : [];
         manifest.server.set(serverModuleIdFor(appDir, url), { url, exports });
+        localServers.set(url, exports);
       }
     }),
   );
-
+  if (localServers.size > 0) await recordExposedActions(manifest, entryFiles, locals, localServers);
   return manifest;
+}
+
+/**
+ * Record on each local `"use server"` module which of its exports the app's modules reference
+ * (`exposed`, ./action-references.ts): the server registers only those. One referenced as a
+ * whole keeps every export.
+ */
+async function recordExposedActions(
+  manifest: BoundaryManifest,
+  entryFiles: string[],
+  locals: string[],
+  servers: Map<string, string[]>,
+): Promise<void> {
+  const { info, roots } = await denoInfoGraph(entryFiles);
+  const localUrls = new Set(locals.map((p) => toFileUrl(p).href));
+  const graph = runtimeReachable(info, roots).filter((m) => localUrls.has(m.specifier));
+  const referenced = await referencedActionExports(graph, servers);
+  // A route entry the framework imports itself is referenced as a whole.
+  const entries = new Set(roots);
+  for (const ref of manifest.server.values()) {
+    if (!servers.has(ref.url) || entries.has(ref.url)) continue;
+    const names = referenced.get(ref.url);
+    if (names === "*") continue;
+    ref.exposed = [...names ?? []].sort();
+  }
 }
 
 /**
@@ -906,13 +933,24 @@ export async function localModulesOutside(
   routes: RouteEntrySource[],
 ): Promise<string[]> {
   const entries = [...new Set(routes.flatMap(routeEntryFiles))];
+  let local: string[];
   try {
-    const local = await crawlLocalModules(entries);
-    const root = dirPrefix(projectDir);
-    return local.filter((f) => !f.startsWith(root) && !isFrameworkSource(f));
-  } catch {
+    local = await crawlLocalModules(entries);
+  } catch (err) {
+    // Fail closed, and say so: the scans then read the project directory alone, so a feature
+    // used ONLY from a sibling package is missed (its runtime is not preinstalled). Including
+    // every crawlable file instead would turn every gated runtime on for every app.
+    console.warn(
+      `denext: could not crawl the routes' import graph for the build-time feature scans ` +
+        `(${err instanceof Error ? err.message : String(err)}); scanning ${projectDir} only.`,
+    );
     return [];
   }
+  // Compare canonical spellings: the crawl reports Deno's resolved (real) paths for imports and
+  // the caller's spelling for the roots, so a project behind a symlink would otherwise put its
+  // own files, and the framework's, "outside" the project (see canonical-path.ts).
+  const root = dirPrefix(canonicalPath(projectDir));
+  return local.filter((f) => !canonicalPath(f).startsWith(root) && !isFrameworkSource(f));
 }
 
 /**
@@ -929,10 +967,22 @@ export async function localModulesOutside(
 export function isFrameworkSource(path: string): boolean {
   const fw = frameworkRoot();
   if (!isAbsolute(fw)) return false; // a remote framework root has no local modules
-  const root = dirPrefix(fw);
-  if (!path.startsWith(root)) return false;
-  const rel = path.slice(root.length).split(SEPARATOR).join("/");
+  // Canonical on both sides: an import map may name the checkout through a symlink while the
+  // framework's own URL is the real path, or the other way round (see canonical-path.ts).
+  const root = canonicalFrameworkPrefix(fw);
+  const real = canonicalPath(path);
+  if (!real.startsWith(root)) return false;
+  const rel = real.slice(root.length).split(SEPARATOR).join("/");
   return rel.startsWith("src/") || rel.startsWith("packages/") || !rel.includes("/");
+}
+
+/** The last framework root {@linkcode isFrameworkSource} canonicalised, and its prefix. */
+let frameworkPrefix: { fw: string; prefix: string } | undefined;
+
+/** `fw`'s canonical directory prefix, memoised (the crawl asks once per module). */
+function canonicalFrameworkPrefix(fw: string): string {
+  if (frameworkPrefix?.fw !== fw) frameworkPrefix = { fw, prefix: dirPrefix(canonicalPath(fw)) };
+  return frameworkPrefix.prefix;
 }
 
 export function routeEntryFiles(r: RouteEntrySource): string[] {

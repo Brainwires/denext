@@ -15,6 +15,7 @@
 // no npm, no native tools. Nothing here loads the project's modules.
 
 import { dirname, join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { posixRelative } from "./mobile-paths.ts";
 import {
   circleMasked,
@@ -607,10 +608,14 @@ export async function generateMobileAssets(
   if (!opts.dryRun) {
     for (const job of jobs) {
       const path = nativeJoin(root, job.path);
+      await assertInsideProject(root, path);
       await Deno.mkdir(dirname(path), { recursive: true });
       await Deno.writeFile(path, await job.make());
     }
-    for (const path of removed) await Deno.remove(nativeJoin(root, path));
+    for (const path of removed) {
+      await assertInsideProject(root, nativeJoin(root, path), { entry: true });
+      await Deno.remove(nativeJoin(root, path));
+    }
   }
   const files = jobs.map(({ path, what, size }) => (size ? { path, what, size } : { path, what }));
   return { root, platforms, files, warnings, removed, dryRun: opts.dryRun === true };

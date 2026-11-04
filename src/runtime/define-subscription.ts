@@ -31,8 +31,8 @@ import {
   isStandardSchema,
   type StandardSchemaV1,
 } from "./define-action.ts";
+import { clientActionStub } from "./action-stub.ts";
 import {
-  clientActionStub,
   registerServerReference,
   registerSubscription,
   SUBSCRIPTION_DEF,

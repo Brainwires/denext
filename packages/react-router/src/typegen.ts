@@ -171,6 +171,15 @@ type Match<Id extends string, M, P> = {
   handle: M extends { handle: infer H } ? H : unknown;
 };
 type AppLoadContext = Record<string, unknown>;
+type RouterContext<T> = { readonly defaultValue?: T };
+type RouterContextProvider = {
+  get<T>(context: RouterContext<T>): T;
+  set<C extends RouterContext<unknown>>(
+    context: C,
+    value: C extends RouterContext<infer T> ? T : never,
+  ): void;
+};
+type LoadContext = AppLoadContext & RouterContextProvider;
 type Location = { pathname: string; search: string; hash: string; state: unknown; key: string };
 type MetaDescriptor =
   | { charSet: "utf-8" }
@@ -206,13 +215,17 @@ export namespace Route {
   };
   export type HeadersFunction = (args: HeadersArgs) => Headers | HeadersInit;
 
-  export type LoaderArgs = { request: Request; params: Params; context: AppLoadContext };
+  export type LoaderArgs = { request: Request; params: Params; context: LoadContext };
   export type ClientLoaderArgs = {
     request: Request;
     params: Params;
     serverLoader: () => Promise<ServerLoaderData<Module>>;
   };
-  export type ActionArgs = { request: Request; params: Params; context: AppLoadContext };
+  export type ActionArgs = { request: Request; params: Params; context: LoadContext };
+  export type MiddlewareFunction = (
+    args: { request: Request; params: Params; context: LoadContext },
+    next: () => Promise<Response>,
+  ) => Response | undefined | void | Promise<Response | undefined | void>;
   export type ClientActionArgs = {
     request: Request;
     params: Params;

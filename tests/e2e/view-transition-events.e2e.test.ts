@@ -33,8 +33,6 @@ const FIXTURE = fromFileUrl(new URL("./fixtures/client-layout", import.meta.url)
 
 Deno.test({
   name: "e2e: <ViewTransition> onEnter/onExit/onUpdate and an <Activity> hiding as an exit",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

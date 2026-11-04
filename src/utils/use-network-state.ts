@@ -6,7 +6,8 @@
  * @module
  */
 
-import { useCallback, useSyncExternalStore } from "../runtime/hooks.ts";
+import { useCallback } from "../runtime/hooks.ts";
+import { useSyncExternalStore } from "../runtime/hooks/use-sync-external-store.ts";
 
 /** Network status, with connection hints when the browser provides them. */
 export interface NetworkState {

@@ -1,7 +1,8 @@
 // Auto-REST rate limits: a fixed-window request budget per client in front of the statements, on
 // denext's rate-limit stores. A signed-in user is counted by their user id (so users behind one
-// address don't share a budget), anyone else by their client address (`clientIpForLimits()`: the
-// socket peer, a trusted proxy's hop or the app's `rateLimitHeader`, an IPv6 address by its /64).
+// address don't share a budget; an anonymous sign-in by its address as well), anyone else by
+// their client address (`clientIpForLimits()`: the socket peer, a trusted proxy's hop or the
+// app's `rateLimitHeader`, an IPv6 address by its /64).
 // The secret key (`service_role`) is a trusted server and is never limited. A request whose
 // credential is refused (a 401) is charged to its address too, so a stream of forged tokens is
 // bounded like anonymous reads. When no address can be told apart from a shared proxy's — an
@@ -24,8 +25,12 @@ export interface RestRateLimitOptions {
   /** The window, in milliseconds. Default 60 000 (one minute). */
   windowMs?: number;
   /**
-   * Where the counts live. Default: a bounded in-memory store, per process — behind several
-   * replicas pass a shared one (`postgresRateLimitStore()` from `denext/server`).
+   * Where the counts live. Default: the routes' own bounded in-memory store, per process (10 000
+   * clients; one over its budget is kept until its window ends). Pass a shared store
+   * (`redisRateLimitStore()`, `postgresRateLimitStore()`, `denoKvRateLimitStore()` from
+   * `denext/server`, with a `prefix` of its own) so every replica counts against one budget. The
+   * auth rate-limit store (`denextAuth({ rateLimit: { store } })`) is never used for these: each
+   * request would write to it, and its lockout rules are the sign-in limiters'.
    */
   store?: RateLimitStore;
 }
@@ -104,7 +109,7 @@ function addressBucket(): string | undefined {
 /** Counts requests against {@link ResolvedRestRateLimit}'s budget. */
 export class RestLimiter {
   readonly #limit: ResolvedRestRateLimit;
-  readonly #store: RateLimitStore;
+  #store: RateLimitStore | undefined;
 
   /**
    * A limiter.
@@ -113,7 +118,16 @@ export class RestLimiter {
    */
   constructor(limit: ResolvedRestRateLimit) {
     this.#limit = limit;
-    this.#store = limit.store ?? inMemoryRateLimitStore({ lockoutAt: limit.max });
+    this.#store = limit.store;
+  }
+
+  /**
+   * The store the counts go to: the configured `store`, else the routes' own bounded in-memory
+   * store for this process (never the auth limiters' store). A key is kept from eviction only
+   * once it is over the budget (`lockoutAt` is the first refused count).
+   */
+  get store(): RateLimitStore {
+    return this.#store ??= inMemoryRateLimitStore({ lockoutAt: this.#limit.max + 1 });
   }
 
   /**
@@ -124,14 +138,19 @@ export class RestLimiter {
    */
   async charge(identity: RequestIdentity): Promise<void> {
     if (identity.role === "service_role") return;
-    const key = identity.role === "authenticated" && identity.userId !== undefined
-      ? `rest|user:${identity.userId}`
-      : this.#addressKey();
-    if (key !== undefined) await this.#count(key);
+    if (identity.role !== "authenticated" || identity.userId === undefined) {
+      return await this.chargeRefused();
+    }
+    await this.#count(`rest|user:${identity.userId}`);
+    // An anonymous sign-in is minted on request: by its own budget alone, one address could
+    // take a fresh budget per sign-in. It also counts against its address, as signed-out
+    // visitors do.
+    if (identity.claims.is_anonymous === true) await this.chargeRefused();
   }
 
   /**
-   * Count a request whose credential was refused against its address.
+   * Count a request against its address: a signed-out one, an anonymous sign-in's, or one whose
+   * credential was refused.
    *
    * @throws {RestRateLimited} When the address's budget is spent.
    */
@@ -146,7 +165,7 @@ export class RestLimiter {
   }
 
   async #count(key: string): Promise<void> {
-    const window = await this.#store.increment(key, this.#limit.windowMs);
+    const window = await this.store.increment(key, this.#limit.windowMs);
     if (window.count <= this.#limit.max) return;
     throw new RestRateLimited(Math.max(1, Math.ceil((window.resetAt - Date.now()) / 1000)));
   }

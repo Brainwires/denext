@@ -9,7 +9,6 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
 import { generateSpaEntry, spaShellHtml, supportInstall } from "../src/build/spa/shared.ts";
 import { escapeInlineScript, spaShellFor, spaShellInstall } from "../src/build/spa/shell.ts";
 import { SHELL_CAPTURE_SCRIPT } from "../src/build/spa/shell-capture.ts";
@@ -17,6 +16,7 @@ import { sha256Base64 } from "../src/server/csp.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig, SpaConfig } from "../src/server/config.ts";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const FIXTURE = fromFileUrl(new URL("./e2e/fixtures/spa-shell", import.meta.url));
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -135,14 +135,12 @@ Deno.test("spa.shell config: validated, and never together with spa.loading", ()
 
 Deno.test({
   name: "spa.shell export: each target's shell is prerendered with hashed scripts",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixtureCopy();
   try {
     const shells: Record<string, string> = {};
     for (const platform of ["web", "macos", "android"] as const) {
-      await staticExport(dir, { platform, outDir: `out-${platform}` });
+      await exportInChild(dir, { platform, outDir: `out-${platform}` });
       const html = await Deno.readTextFile(join(dir, `out-${platform}`, "index.html"));
       await assertScriptsHashed(html);
       const [boot, capture] = inlineScripts(html);
@@ -165,8 +163,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.shell dev: the dev server serves the prerendered shell for the page's target",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixtureCopy();
   const server = await startSpaDevOnDir(dir);

@@ -17,13 +17,18 @@
 // The per-name files are the app's to edit (the marker keeps an edited one); the bundle and the
 // Live Activity dispatcher are composed from the names found in the extension folder and are
 // rewritten while unedited. The same marker family and version as app-extension-native-templates.ts.
-// The templates are `String.raw` literals: only `${…}` interpolates.
 //
-// The template texts ship packed: native-templates/widget.ts (the readable source, not published)
-// is packed with the others into native-templates.packed.ts by `deno task gen:native-templates`.
+// The template texts ship packed: native-templates/widget.ts and native-templates/widget-sources.ts
+// (the readable sources, not published; the per-name files there have `{{=name}}` holes this
+// module fills) are packed with the others into the docs-corpus pack by `deno task
+// gen:native-templates`.
 
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
+import { fillTemplate } from "./packed-text.ts";
 import { HEADER } from "./widget-template-header.ts";
+
+/** The per-name sources' texts (readable source: native-templates/widget-sources.ts). */
+const SOURCES = NATIVE_TEMPLATES.widgetSources.WIDGET_SOURCE_TEMPLATES;
 
 /** The widget extension's target (and folder, under `ios/App/`). */
 export const WIDGETS_TARGET = "DenextWidgets";
@@ -114,71 +119,7 @@ ${empty}`;
  * @returns The template (without its marker).
  */
 export function widgetSource(name: string): string {
-  return HEADER("widget", true) + String.raw`
-import SwiftUI
-import WidgetKit
-
-/// One timeline entry of the ${name} widget.
-struct ${name}Entry: TimelineEntry {
-    let date: Date
-    let title: String
-    let text: String
-}
-
-/// Reads what setWidgetData("${name}", data) stored; reloadWidgets("${name}") (and every
-/// setWidgetData) asks WidgetKit for a new timeline.
-struct ${name}Provider: TimelineProvider {
-    func placeholder(in context: Context) -> ${name}Entry {
-        ${name}Entry(date: Date(), title: "${name}", text: "")
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (${name}Entry) -> Void) {
-        completion(entry())
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<${name}Entry>) -> Void) {
-        completion(Timeline(entries: [entry()], policy: .never))
-    }
-
-    private func entry() -> ${name}Entry {
-        let data = DenextWidgetStore.object(kind: "${name}") ?? [:]
-        return ${name}Entry(
-            date: Date(),
-            title: data["title"] as? String ?? "${name}",
-            text: data["body"] as? String ?? "Open the app to load this widget."
-        )
-    }
-}
-
-/// The widget's view: edit it freely.
-struct ${name}WidgetView: View {
-    let entry: ${name}Entry
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.title).font(.headline).lineLimit(2)
-            Text(entry.text).font(.subheadline).foregroundColor(.secondary).lineLimit(4)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .denextWidgetBackground()
-    }
-}
-
-/// The ${name} widget (kind "${name}").
-struct ${name}Widget: Widget {
-    let kind = "${name}"
-
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: ${name}Provider()) { entry in
-            ${name}WidgetView(entry: entry)
-        }
-        .configurationDisplayName("${name}")
-        .description("${name}")
-        .supportedFamilies([.systemSmall, .systemMedium])
-    }
-}
-`;
+  return HEADER("widget", true) + fillTemplate(SOURCES["Widget.swift"], { name });
 }
 
 /** One enum parameter of a configurable widget (`--configurable period:enum=day|week`). */
@@ -317,139 +258,7 @@ ${shown}    ]
   const defaults = params.map((p) => `        "${p.name}": "${p.values[0]}",\n`).join("");
   return HEADER("widget", true) + `// denext-widget-configurable: ${formatWidgetParams(params)}
 // (re-running \`denext mobile add widget --name ${name}\` without --configurable keeps these).
-` + String.raw`
-import AppIntents
-import SwiftUI
-import WidgetKit
-
-/// One timeline entry of the ${name} widget.
-struct ${name}Entry: TimelineEntry {
-    let date: Date
-    let title: String
-    let text: String
-    /// The values the user chose, by parameter name (the defaults on iOS 14–16).
-    let params: [String: String]
-}
-
-/// Reads what setWidgetData("${name}", data, { params }) stored for the chosen values, else what
-/// setWidgetData("${name}", data) stored; reloadWidgets("${name}") (and every setWidgetData)
-/// asks WidgetKit for new timelines.
-enum ${name}Snapshot {
-    /// Each parameter's default: its first value.
-    static let defaults: [String: String] = [
-${defaults}    ]
-
-    static func placeholder() -> ${name}Entry {
-        ${name}Entry(date: Date(), title: "${name}", text: "", params: defaults)
-    }
-
-    static func entry(_ params: [String: String]) -> ${name}Entry {
-        let data = DenextWidgetStore.object(kind: "${name}", params: params) ?? [:]
-        return ${name}Entry(
-            date: Date(),
-            title: data["title"] as? String ?? "${name}",
-            text: data["body"] as? String ?? "Open the app to load this widget.",
-            params: params
-        )
-    }
-}
-
-/// The widget's view: edit it freely (entry.params holds the chosen values).
-struct ${name}WidgetView: View {
-    let entry: ${name}Entry
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(entry.title).font(.headline).lineLimit(2)
-            Text(entry.text).font(.subheadline).foregroundColor(.secondary).lineLimit(4)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .denextWidgetBackground()
-    }
-}
-
-/// iOS 14–16: the defaults' snapshot.
-struct ${name}StaticProvider: TimelineProvider {
-    func placeholder(in context: Context) -> ${name}Entry {
-        ${name}Snapshot.placeholder()
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (${name}Entry) -> Void) {
-        completion(${name}Snapshot.entry(${name}Snapshot.defaults))
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<${name}Entry>) -> Void) {
-        completion(Timeline(entries: [${name}Snapshot.entry(${name}Snapshot.defaults)], policy: .never))
-    }
-}
-
-/// The ${name} widget before iOS 17 (kind "${name}.static"): not configurable. On iOS 17 and
-/// later it lists no family, so only ${name}ConfigurableWidget is offered.
-struct ${name}Widget: Widget {
-    let kind = "${name}.static"
-
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: ${name}StaticProvider()) { entry in
-            ${name}WidgetView(entry: entry)
-        }
-        .configurationDisplayName("${name}")
-        .description("${name}")
-        .supportedFamilies(${name}Widget.families)
-    }
-
-    static var families: [WidgetFamily] {
-        if #available(iOSApplicationExtension 17.0, *) { return [] }
-        return [.systemSmall, .systemMedium]
-    }
-}
-
-${enums}
-/// What the user picks when editing the widget.
-@available(iOS 17.0, *)
-struct ${name}ConfigurationIntent: WidgetConfigurationIntent {
-    static let title: LocalizedStringResource = "${name}"
-    static let description: IntentDescription? = IntentDescription("Choose what the ${name} widget shows.")
-
-${fields}
-    /// The chosen values by parameter name: the params setWidgetData stored the snapshot under.
-    var params: [String: String] {
-        [
-${chosen}        ]
-    }
-}
-
-/// iOS 17 and later: the snapshot for the values the user chose.
-@available(iOS 17.0, *)
-struct ${name}IntentProvider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> ${name}Entry {
-        ${name}Snapshot.placeholder()
-    }
-
-    func snapshot(for configuration: ${name}ConfigurationIntent, in context: Context) async -> ${name}Entry {
-        ${name}Snapshot.entry(configuration.params)
-    }
-
-    func timeline(for configuration: ${name}ConfigurationIntent, in context: Context) async -> Timeline<${name}Entry> {
-        Timeline(entries: [${name}Snapshot.entry(configuration.params)], policy: .never)
-    }
-}
-
-/// The configurable ${name} widget (kind "${name}", iOS 17 and later).
-@available(iOS 17.0, *)
-struct ${name}ConfigurableWidget: Widget {
-    let kind = "${name}"
-
-    var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: kind, intent: ${name}ConfigurationIntent.self, provider: ${name}IntentProvider()) { entry in
-            ${name}WidgetView(entry: entry)
-        }
-        .configurationDisplayName("${name}")
-        .description("${name}")
-        .supportedFamilies([.systemSmall, .systemMedium])
-    }
-}
-`;
+` + fillTemplate(SOURCES["ConfigurableWidget.swift"], { name, defaults, enums, fields, chosen });
 }
 
 /** The ActivityKit attributes both the App and the widget extension compile. */
@@ -469,52 +278,7 @@ export function liveActivitiesSource(names: readonly string[]): string {
     `        case "${n}": return ${n}LiveActivity.dynamicIsland(context)\n`
   );
   return HEADER("live-activity", false) +
-    String
-      .raw`// Rewritten while unedited whenever a Live Activity is added; if you edit it, add new names to
-// both switches yourself.
-
-import ActivityKit
-import SwiftUI
-import WidgetKit
-
-/// Every denext Live Activity, dispatched on DenextActivityAttributes.name.
-@available(iOS 16.1, *)
-struct DenextLiveActivities: Widget {
-    var body: some WidgetConfiguration {
-        ActivityConfiguration(for: DenextActivityAttributes.self) { context in
-            switch context.attributes.name {
-${lock.join("")}            default: DenextLiveActivities.fallback(context)
-            }
-        } dynamicIsland: { context in
-            DenextLiveActivities.island(context)
-        }
-    }
-
-    static func island(_ context: ActivityViewContext<DenextActivityAttributes>) -> DynamicIsland {
-        switch context.attributes.name {
-${island.join("")}        default:
-            return DynamicIsland {
-                DynamicIslandExpandedRegion(.center) { fallback(context) }
-            } compactLeading: {
-                Text(context.attributes.name.prefix(1))
-            } compactTrailing: {
-                EmptyView()
-            } minimal: {
-                Text(context.attributes.name.prefix(1))
-            }
-        }
-    }
-
-    /// An activity whose name has no UI here: its name and state title.
-    @ViewBuilder
-    static func fallback(_ context: ActivityViewContext<DenextActivityAttributes>) -> some View {
-        VStack(alignment: .leading) {
-            Text(context.state["title"]?.text ?? context.attributes.name).font(.headline)
-        }
-        .padding()
-    }
-}
-`;
+    fillTemplate(SOURCES["LiveActivities.swift"], { lock: lock.join(""), island: island.join("") });
 }
 
 /**
@@ -525,51 +289,7 @@ ${island.join("")}        default:
  * @returns The template (without its marker).
  */
 export function liveActivitySource(name: string): string {
-  return HEADER("live-activity", true) + String.raw`
-import ActivityKit
-import SwiftUI
-import WidgetKit
-
-/// The ${name} Live Activity's UI: startLiveActivity("${name}", attributes, state) shows it, and
-/// context.state holds the latest state object (updateLiveActivity, or an ActivityKit push).
-@available(iOS 16.1, *)
-enum ${name}LiveActivity {
-    /// The Lock Screen / banner presentation.
-    @ViewBuilder
-    static func lockScreen(_ context: ActivityViewContext<DenextActivityAttributes>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(context.state["title"]?.text ?? "${name}").font(.headline)
-            if let text = context.state["body"]?.text {
-                Text(text).font(.subheadline).foregroundColor(.secondary)
-            }
-            if let progress = context.state["progress"]?.number {
-                ProgressView(value: min(max(progress, 0), 1))
-            }
-        }
-        .padding()
-    }
-
-    /// The Dynamic Island presentations.
-    static func dynamicIsland(_ context: ActivityViewContext<DenextActivityAttributes>) -> DynamicIsland {
-        DynamicIsland {
-            DynamicIslandExpandedRegion(.leading) {
-                Text(context.state["title"]?.text ?? "${name}").font(.headline)
-            }
-            DynamicIslandExpandedRegion(.bottom) {
-                Text(context.state["body"]?.text ?? "").font(.subheadline)
-            }
-        } compactLeading: {
-            Text("${name}".prefix(1))
-        } compactTrailing: {
-            if let progress = context.state["progress"]?.number {
-                Text("\(Int(min(max(progress, 0), 1) * 100))%")
-            }
-        } minimal: {
-            Text("${name}".prefix(1))
-        }
-    }
-}
-`;
+  return HEADER("live-activity", true) + fillTemplate(SOURCES["LiveActivity.swift"], { name });
 }
 
 /** App-side plugins for `ios/App/App/`, keyed by file name. */
@@ -594,47 +314,7 @@ export const WIDGETS_ANDROID_FILES: Readonly<Record<string, string>> =
  */
 export function androidWidgetSource(name: string, rPackage: string): string {
   const res = snakeName(name);
-  return HEADER("widget", true) + String.raw`
-package dev.denext.widgets;
-
-import android.app.PendingIntent;
-import android.appwidget.AppWidgetManager;
-import android.appwidget.AppWidgetProvider;
-import android.content.Context;
-import android.content.Intent;
-import android.widget.RemoteViews;
-import ${rPackage}.R;
-import org.json.JSONObject;
-
-/**
- * The ${name} home-screen widget: shows what {@code setWidgetData("${name}", data)} stored
- * ({@code title} and {@code body}, as a starting point). Its layout is
- * {@code res/layout/denext_widget_${res}.xml}, its size and preview
- * {@code res/xml/denext_widget_${res}_info.xml}. Edit freely.
- */
-public class ${name}Widget extends AppWidgetProvider {
-
-    /** The widget kind setWidgetData / reloadWidgets name. */
-    public static final String KIND = "${name}";
-
-    @Override
-    public void onUpdate(Context context, AppWidgetManager manager, int[] ids) {
-        JSONObject data = DenextWidgetsPlugin.data(context, KIND);
-        String title = data == null ? KIND : data.optString("title", KIND);
-        String body = data == null ? "Open the app to load this widget." : data.optString("body", "");
-        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
-        PendingIntent open = launch == null ? null : PendingIntent.getActivity(
-            context, 0, launch, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        for (int id : ids) {
-            RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.denext_widget_${res});
-            views.setTextViewText(R.id.denext_widget_title, title);
-            views.setTextViewText(R.id.denext_widget_body, body);
-            if (open != null) views.setOnClickPendingIntent(R.id.denext_widget_root, open);
-            manager.updateAppWidget(id, views);
-        }
-    }
-}
-`;
+  return HEADER("widget", true) + fillTemplate(SOURCES["Widget.java"], { name, rPackage, res });
 }
 
 /**
@@ -643,33 +323,7 @@ public class ${name}Widget extends AppWidgetProvider {
  * @returns The template (without its marker; an XML file).
  */
 export function androidWidgetLayout(): string {
-  return `<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/denext_widget_root"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#FFFFFFFF"
-    android:orientation="vertical"
-    android:padding="12dp">
-
-    <TextView
-        android:id="@+id/denext_widget_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:maxLines="2"
-        android:textColor="#FF111111"
-        android:textSize="16sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/denext_widget_body"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:maxLines="4"
-        android:textColor="#FF555555"
-        android:textSize="14sp" />
-</LinearLayout>
-`;
+  return SOURCES["widget_layout.xml"];
 }
 
 /**

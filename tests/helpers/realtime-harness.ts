@@ -5,7 +5,7 @@
 // tests.
 
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
-import { watchChannelTransport } from "../../src/runtime/channel.ts";
+import { type ChannelEvent, watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
 import {
   limitAddrOf,
@@ -53,6 +53,8 @@ export interface TestConn extends ChannelConn {
   limitIp?: string;
   /** Every `channel` frame's value, in order. */
   frames: TableChangesFrame[];
+  /** Every frame's text as sent to the socket, in order (what the browser would see). */
+  raw: string[];
   /** Every refusal / error code. */
   errors: string[];
   /** `channel-ready` acks. */
@@ -83,19 +85,42 @@ export interface Harness {
   drop(conn: TestConn): void;
   /** Stop the hub. */
   dispose(): void;
+  /**
+   * Hold every (re-)authorization until the returned release is called: a re-authorization in
+   * flight while frames arrive, as on a loaded server.
+   */
+  holdAuth(): () => void;
+  /**
+   * Hold the transport's events from the hub until the returned release is called: frames handed
+   * to the Live hub that its flush has not fanned out yet. `held()` counts them.
+   */
+  holdDelivery(): { held(): number; release(): void };
 }
 
 let peers = 0;
 
+/** Options of {@linkcode realtimeHarness}. */
+export interface HarnessOptions {
+  /**
+   * Run this hub as another instance of the app: every event it takes from the (shared) transport
+   * is marked as published by `instance`, as one that reached it from another process would be —
+   * a hub on a second replica behind a shared transport, with no sticky sessions.
+   */
+  instance?: string;
+}
+
 /**
  * Build the harness.
  *
+ * @param options Which instance the hub stands for (default: this process).
  * @returns The harness.
  */
-export function realtimeHarness(): Harness {
+export function realtimeHarness(options: HarnessOptions = {}): Harness {
+  let authHeld: Promise<void> = Promise.resolve();
   const hub = createChannelHub<TestConn>({
     limits: () => ({ maxChannelsPerConnection: 64, channelAuthTtlSeconds: 300 }),
     sendFrame: (conn, text) => {
+      conn.raw.push(text);
       const msg = JSON.parse(text);
       if (msg.type === "channel") conn.frames.push(msg.value);
       if (msg.type === "channel-ready") conn.readies++;
@@ -108,7 +133,7 @@ export function realtimeHarness(): Harness {
       // As the Live hub records an (untrusted) socket peer: by default a loopback/private one is
       // the connection's address, but not one to key per-address limits on.
       setClientAddr(request, conn.ip, conn.limitIp);
-      return Promise.resolve(runWithContext(createRequestContext(request), fn));
+      return authHeld.then(() => runWithContext(createRequestContext(request), fn));
     },
     connContext: (conn) => ({ origin: ORIGIN, url: "", cookie: conn.cookie, peerId: conn.peerId }),
     isConnected: () => true,
@@ -117,7 +142,13 @@ export function realtimeHarness(): Harness {
     armRecover: () => {},
   });
   const { current, stop } = watchChannelTransport(() => {});
-  const unsubscribe = current.subscribe((ev) => hub.deliver(ev));
+  let queued: ChannelEvent[] | null = null;
+  const { instance } = options;
+  const unsubscribe = current.subscribe((raw) => {
+    const ev = instance === undefined ? raw : { ...raw, instance };
+    if (queued) queued.push(ev);
+    else hub.deliver(ev);
+  });
   return {
     conn(cookie = "", ip, upgrade = {}) {
       const handshake = new Request(`${ORIGIN}/_denext/live`, { headers: upgrade.headers });
@@ -130,6 +161,7 @@ export function realtimeHarness(): Harness {
         cookie,
         ip,
         frames: [],
+        raw: [],
         errors: [],
         readies: 0,
       };
@@ -147,6 +179,24 @@ export function realtimeHarness(): Harness {
     },
     unsubscribe: (conn, subId = "s1") => hub.unsubscribe(conn, subId),
     drop: (conn) => hub.drop(conn),
+    holdAuth() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      authHeld = promise;
+      return () => {
+        authHeld = Promise.resolve();
+        resolve();
+      };
+    },
+    holdDelivery() {
+      const events: ChannelEvent[] = queued = [];
+      return {
+        held: () => events.length,
+        release() {
+          queued = null;
+          for (const ev of events) hub.deliver(ev);
+        },
+      };
+    },
     dispose() {
       unsubscribe();
       stop();
@@ -160,11 +210,20 @@ export function changesOf(conn: TestConn): TableChange[] {
   return conn.frames.flatMap((frame) => frame.changes ?? []);
 }
 
-/** Wait until `done()` (bounded), polling every 5 ms. */
-export async function until(done: () => boolean, ms = 15_000, what = "condition"): Promise<void> {
+/**
+ * Wait until `done()` (bounded), polling every 5 ms. `what` names the condition in the timeout
+ * error; a function is called then, so the error can say how far it got.
+ */
+export async function until(
+  done: () => boolean,
+  ms = 15_000,
+  what: string | (() => string) = "condition",
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${typeof what === "function" ? what() : what}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }

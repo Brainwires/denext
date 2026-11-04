@@ -28,7 +28,7 @@ import ReactDOM, {
   hydrateRoot,
   render,
 } from "../src/compat/react-dom.ts";
-import { useEffectEvent } from "../src/runtime/hooks.ts";
+import { useEffectEvent } from "../src/runtime/hooks/use-effect-event.ts";
 import { createRoot as clientCreateRoot } from "../src/compat/react-dom-client.ts";
 import ReactDOMClient from "../src/compat/react-dom-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";

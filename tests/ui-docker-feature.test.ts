@@ -23,7 +23,11 @@ import {
   renderDockerfile,
   renderDockerignore,
 } from "../src/build/docker-template.ts";
-import { denoReleaseVersion } from "../src/build/deno-version.ts";
+import { currentDenoIdentity, denoReleaseVersion } from "../src/build/deno-version.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const FILES = ["Dockerfile", "docker-compose.yml", ".dockerignore"] as const;
 
@@ -106,7 +110,7 @@ Deno.test("every rendered Docker file carries the sentinel, and options flow int
 
   // Defaults render today's files: the bare `deno task start`, port 3000, the pinned version.
   const server = renderDockerfile({ mode: "server" });
-  assertStringIncludes(server, `FROM denoland/deno:${denoReleaseVersion(Deno.version.deno)}`);
+  assertStringIncludes(server, `FROM denoland/deno:${denoReleaseVersion(currentDenoIdentity())}`);
   assertStringIncludes(server, `CMD ["deno", "task", "start"]`);
   assertStringIncludes(server, "EXPOSE 3000");
 
@@ -821,6 +825,43 @@ Deno.test("compose editor: a merge key's fields are shown as inherited, and a se
       await composeOnDisk(h),
       "x-base: &base\n  image: nginx\nservices:\n  web:\n    image: caddy\n    <<: *base\n",
     );
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("compose editor: the plain-text settings render and post", async () => {
+  const h = await ui();
+  try {
+    await Deno.writeTextFile(join(h.dir, COMPOSE), ANCHORED);
+    const body = await (await get(h, "/docker?tab=services")).text();
+    for (const field of ["container_name", "hostname", "working_dir", "user", "platform"]) {
+      assertStringIncludes(body, `name="${field}"`);
+    }
+    const preview = await previewEdit(h, {
+      service: "web",
+      op: "apply",
+      working_dir: "/srv",
+      stop_signal: "SIGINT",
+    });
+    assertEquals(JSON.parse(confirmFields(preview).ops), [
+      { op: "set", service: "web", field: "working_dir", value: "/srv" },
+      { op: "set", service: "web", field: "stop_signal", value: "SIGINT" },
+    ]);
+    const res = await post(h, "/docker", confirmFields(preview));
+    assertEquals(res.status, 303);
+    await res.body?.cancel();
+    assertEquals(
+      await composeOnDisk(h),
+      "x-base: &base\n  image: nginx\nservices:\n  web:\n    <<: *base\n" +
+        "    working_dir: /srv\n    stop_signal: SIGINT\n",
+    );
+    const bad = await postJson(h, "/api/docker", {
+      editor: "compose",
+      ops: [{ op: "set", service: "web", field: "privileged", value: "true" }],
+    });
+    assertEquals(bad.status, 400);
+    assertStringIncludes(await bad.text(), "unknown field");
   } finally {
     await stop(h);
   }

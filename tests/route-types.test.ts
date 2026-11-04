@@ -4,6 +4,7 @@ import { generateRouteTypes } from "../src/build/route-types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiRoute, PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 const pat = (rp: string) => (rp === "/" ? [] : parsePattern(rp.slice(1)));
 const page = (
@@ -124,13 +125,11 @@ Deno.test("route-types: the generated module compiles and its types are usable",
       `${dir}/deno.json`,
       JSON.stringify({ imports: { denext: "./denext.ts" } }),
     );
-    const { code, stderr } = await new Deno.Command(Deno.execPath(), {
-      args: ["check", "--config", `${dir}/deno.json`, `${dir}/consumer.ts`],
-      env: fileUrlCheckEnv(),
-      stderr: "piped",
-      stdout: "null",
-    }).output();
-    assertEquals(code, 0, new TextDecoder().decode(stderr));
+    const { code, stderr } = await quietDeno(
+      ["check", "--config", `${dir}/deno.json`, `${dir}/consumer.ts`],
+      { env: fileUrlCheckEnv(), stdout: "null" },
+    );
+    assertEquals(code, 0, stderr);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

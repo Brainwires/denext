@@ -99,8 +99,83 @@ export default { plugins: [reactRouter()] };`}
         <code>headers()</code> does, so it is never cached for everyone.
       </p>
 
+      <h2>Load context and middleware</h2>
+      <p>
+        Every loader, action and route middleware receives a{" "}
+        <code>context</code>. Supply it with the plugin's <code>getLoadContext</code>{" "}
+        option (React Router's <code>getLoadContext</code>, given{" "}
+        <code>&#123; request, params &#125;</code> and run once per request), or from a{" "}
+        <code>load-context.ts</code> module that calls <code>defineLoadContext</code> from{" "}
+        <code>denext/remix/server</code> and is imported by <code>instrumentation.ts</code>.{" "}
+        <code>denext migrate</code> writes both files from a custom server's{" "}
+        <code>getLoadContext</code> (<code>@react-router/express</code>'s{" "}
+        <code>createRequestHandler</code>), whether it returns an object or a{" "}
+        <code>RouterContextProvider</code>.
+      </p>
+      <Code lang="ts">
+        {`// app/context.ts
+import { createContext } from "react-router";
+export const userContext = createContext<User | null>(null);
+
+// app/root.tsx
+export const middleware: Route.MiddlewareFunction[] = [
+  async ({ request, context }, next) => {
+    context.set(userContext, await getUser(request));
+    const response = await next();
+    response.headers.set("x-app", "1");
+    return response;
+  },
+];
+
+// any loader below it
+export function loader({ context }: Route.LoaderArgs) {
+  return { user: context.get(userContext) };
+}
+
+// denext.config.ts
+export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };`}
+      </Code>
+      <p>
+        The <code>context</code> is always a <code>RouterContextProvider</code>: a{" "}
+        <code>getLoadContext</code>{" "}
+        object's properties ride on it (<code>context.db</code>), and typed keys from{" "}
+        <code>createContext</code> work through <code>context.get</code> /{" "}
+        <code>context.set</code>. Route <code>middleware</code> (or the older{" "}
+        <code>unstable_middleware</code>) wraps the whole request, as React Router's server
+        middleware does: it runs outermost route first, each middleware once, and its{" "}
+        <code>next()</code>{" "}
+        resolves to the response the browser gets. On a page that is the rendered document, or a
+        client navigation's payload (React Router's <code>.data</code>{" "}
+        request), after every loader, the render and the route's error boundaries ran, so a
+        middleware can read the status, set headers on the document, time the render, or return its
+        own <code>Response</code> instead. A response it builds after <code>next()</code>{" "}
+        (a fresh one, a copy, or a thrown{" "}
+        <code>redirect()</code>) still gets the app's configured headers and the cookies the render
+        set, where it lacks them; a header it set itself is kept. A render error reaches{" "}
+        <code>next()</code>{" "}
+        as the error response (the boundary's, at its status), never as a throw. A middleware that
+        returns a <code>Response</code> without calling <code>next()</code>{" "}
+        answers with it and nothing renders. A thrown <code>redirect()</code> or{" "}
+        <code>Response</code> before <code>next()</code>{" "}
+        answers as that route's loader throwing it would: a redirect, or the nearest error boundary
+        at its status. On a resource route, a plain (no-JavaScript) POST to a page's action and an
+        action submitted from the page, <code>next()</code>{" "}
+        runs the handler and resolves to its response; on a resource route an error the handler
+        throws reaches <code>next()</code>{" "}
+        as React Router's 500 response, which a middleware can replace.
+      </p>
+
       <h2>Limitations</h2>
       <ul>
+        <li>
+          A route <code>middleware</code> that throws after <code>next()</code>{" "}
+          answers with the thrown{" "}
+          <code>Response</code>, or the app's error response for an error, rather than rendering an
+          error boundary. A page written out by <code>denext export</code>{" "}
+          is rendered outside a request, so there its middleware runs ahead of the loaders and{" "}
+          <code>next()</code> resolves at once to a stand-in response. A{" "}
+          <code>clientMiddleware</code> export does not run.
+        </li>
         <li>
           On a client navigation, <code>serverLoader()</code>{" "}
           resolves the data the navigation already fetched: the server loader runs with the route's

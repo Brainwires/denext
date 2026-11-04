@@ -118,15 +118,15 @@ const SPA_REFRESH_FILTER = /\.(tsx|jsx|ts)$/;
  * @param projectDir Absolute app root — only files under it are instrumented (npm
  *   deps under `node_modules`, and the generated `.entries` wrappers, are skipped).
  * @param pre A source transform run first (SPA mode's `client:*` rewrite): the new source, or
- *   `null` to keep the module as written.
+ *   `null` to keep the module as written (given the module's path).
  */
 export function spaRefreshPlugin(
   projectDir: string,
-  pre?: (source: string) => Promise<string | null>,
+  pre?: (source: string, path: string) => Promise<string | null>,
 ): esbuild.Plugin {
   return firstPartyTsxPlugin("denext-spa-fast-refresh", projectDir, async (written, path) => {
     // A source transform that runs first (SPA mode's `client:*` rewrite), when given.
-    const rewritten = pre ? await pre(written) : null;
+    const rewritten = pre ? await pre(written, path) : null;
     const source = rewritten ?? written;
     // Parse-and-instrument is best-effort: a parse failure (caught by the shared wrapper)
     // leaves the module as written — those components simply remount on edit.

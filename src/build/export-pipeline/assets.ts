@@ -181,6 +181,23 @@ export async function exportClientTransforms(ctx: ExportContext): Promise<void> 
   ctx.transforms = await clientTransforms(ctx, exportBuildDir(ctx.paths), ctx.platform);
 }
 
+/** The build-scan gates a native bundle defines (`deno bundle --define`), as the build's. */
+function scanGates(
+  ctx: ExportContext,
+): {
+  usesImageBlur: boolean;
+  usesFormActions: boolean;
+  usesHrefParams: boolean;
+  usesHookBoundaries: boolean;
+} {
+  return {
+    usesImageBlur: ctx.usesImageBlur,
+    usesFormActions: ctx.usesFormActions,
+    usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
+  };
+}
+
 /** Client bundles (minified): a whole-tree bundle per isomorphic (non-Flight, non-static) route. */
 export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
   for (const route of ctx.manifest.pages) {
@@ -197,6 +214,7 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
       usesIsoIslands: ctx.usesIsoIslands,
+      ...scanGates(ctx),
     });
     await writeBundleOutput(ctx.clientOut, bundle, `${routeId(route.routePath)}.js`);
   }
@@ -228,6 +246,7 @@ export async function bundleExportGlobalError(ctx: ExportContext): Promise<void>
       minify: prodMinify(),
       ...exportClientResolution(ctx, server),
       instrumentationClient,
+      ...scanGates(ctx),
     });
     await writeBundleOutput(ctx.clientOut, bundle, GLOBAL_ERROR_BUNDLE_FILE);
   }
@@ -265,12 +284,13 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
       minify: prodMinify(),
       ...exportClientResolution(ctx, boundary.server),
-      // Seed the feature-flag map on the native client, as the build does, so an un-folded
-      // feature() call agrees with the server render.
+      // The feature-flag map on the native client, as the build does (defined or seeded), so
+      // an un-folded feature() call agrees with the server render.
       features: featureFlags(ctx.paths.config),
       instrumentationClient: ctx.paths.instrumentationClientPath,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      ...scanGates(ctx),
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
   }

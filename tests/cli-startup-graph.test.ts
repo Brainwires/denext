@@ -11,7 +11,17 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
 import { buildLazyRegistry } from "../src/cli/lazy-registry.ts";
 import { materializeCommand } from "../src/cli/lazy-command.ts";
-import { generate, MODULES_OUT, TABLE_OUT } from "../scripts/gen-command-table.ts";
+import {
+  computedModuleUrls,
+  ENTRY_LAZY_MODULES,
+  generate,
+  META_OUT,
+  MODULES_OUT,
+  OFFLINE_OUT,
+  TABLE_OUT,
+} from "../scripts/gen-command-table.ts";
+import { CLI_MODULES_URL } from "../src/cli/cli-cache.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 import { VERSION as CLI_VERSION } from "../src/version.ts";
 import { VERSION } from "../mod.ts";
 import { CLI_COMPILE_INCLUDES, compileCliArgs } from "../scripts/compile-cli.ts";
@@ -25,17 +35,22 @@ interface ModuleInfo {
   modules: Array<{ specifier: string; dependencies?: Array<{ code?: { specifier: string } }> }>;
 }
 
-/** `deno info --json <root>`. */
+/**
+ * `deno info --json <root>`, bounded the way the build runs it (scripts/deno-doc.ts
+ * `boundedDeno`, over src/build/serial-child.ts): one `deno info` child at a time in this process,
+ * read until it exits, killed at its deadline and retried once, a second stall failing with its
+ * CPU time and debug-log tail. On Windows a `deno info` child started beside the other Deno
+ * children of `deno test --parallel` sometimes never exits; unbounded, that held this file until
+ * the 600 s stall watchdog.
+ */
 async function info(root: string): Promise<ModuleInfo> {
-  const { stdout, success } = await new Deno.Command(Deno.execPath(), {
-    // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
-    args: ["info", "--json", toFileUrl(join(ROOT, root)).href],
-    cwd: ROOT,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  assert(success, `deno info ${root}`);
-  return JSON.parse(new TextDecoder().decode(stdout));
+  // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
+  const { stdout, success, stderr } = await boundedDeno(
+    ["info", "--json", toFileUrl(join(ROOT, root)).href],
+    { cwd: ROOT },
+  );
+  assert(success, `deno info ${root}: ${stderr}`);
+  return JSON.parse(stdout);
 }
 
 /** Every module reachable from the info's roots through code dependencies, into `out`. */
@@ -101,10 +116,53 @@ Deno.test("`denext commands` and completions load project discovery, not denext/
 });
 
 Deno.test("the committed verb table matches buildRegistry() (drift check)", async () => {
-  const { table, modules } = await generate();
+  const { table, meta, modules, offline } = await generate();
   const stale = "is stale: run `deno task gen:command-table` and commit";
   assertEquals(await Deno.readTextFile(TABLE_OUT), table, `command-table.generated.ts ${stale}`);
+  assertEquals(await Deno.readTextFile(META_OUT), meta, `command-meta.packed.ts ${stale}`);
   assertEquals(await Deno.readTextFile(MODULES_OUT), modules, `lazy-modules.generated.ts ${stale}`);
+  assertEquals(
+    await Deno.readTextFile(OFFLINE_OUT),
+    offline,
+    `offline-modules.generated.ts ${stale}`,
+  );
+});
+
+Deno.test("the CLI's offline cache covers every module a verb can load", async () => {
+  // What `denext toolchain install` (and a remote CLI's first-run warm-up) `deno cache`s.
+  assertEquals(CLI_MODULES_URL, toFileUrl(OFFLINE_OUT).href);
+  const real = Deno.realPathSync(ROOT);
+  const graph = new Set(
+    [...await staticGraph("src/cli/offline-modules.generated.ts")].map((url) =>
+      url.startsWith("file:") ? toFileUrl(Deno.realPathSync(fromFileUrl(url))).href : url
+    ),
+  );
+  const missing = (files: readonly string[]) =>
+    files.filter((file) => !graph.has(toFileUrl(join(real, file)).href));
+  // Every verb module the lazy table imports on demand, and the entrypoint's own lazy modules.
+  const table = await Deno.readTextFile(TABLE_OUT);
+  const verbs = [...table.matchAll(/(?:spec|factory)\("(\.\/[^"]+)"/g)].map((m) => m[1]);
+  assert(verbs.length > 30, `only ${verbs.length} verb modules in the table`);
+  const cli = (rel: string) => join("src/cli", rel);
+  assertEquals(missing([...new Set([...verbs, ...ENTRY_LAZY_MODULES])].map(cli)), [], "lazy");
+  // Every framework export: a build bundles and a server loads them by URL.
+  const { exports } = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
+    exports: Record<string, string>;
+  };
+  const exported = Object.values(exports).filter((p) => /\.(?:ts|tsx|js|mjs)$/.test(p));
+  assertEquals(missing(exported), [], "exports");
+  // Every module src/ loads through a computed URL (the desktop sidecar bundler, a worker, …).
+  const computed = await computedModuleUrls();
+  const rel = (file: string) => file.slice(ROOT.length).replace(/^[\\/]/, "");
+  assert(
+    computed.some((f) => f.endsWith("desktop-sidecar-bundle.ts")),
+    "a `new URL(CONST, import.meta.url)` module is found",
+  );
+  assert(
+    computed.some((f) => f.endsWith("client-runtime.ts")),
+    "a frameworkFileUrl module is found",
+  );
+  assertEquals(missing(computed.map(rel)), [], "computed URLs");
 });
 
 Deno.test("every lazy verb loads the registry's own spec", async () => {
@@ -134,7 +192,8 @@ Deno.test("src/version.ts carries the framework VERSION", () => {
 Deno.test("every compile of the CLI goes through scripts/compile-cli.ts", async () => {
   // A binary built without `--include src/cli/lazy-modules.generated.ts` starts and prints its
   // version, but every verb fails to load; one built without the framework files the CLI reads
-  // at run time (deno.json, AGENTS.md) fails in those verbs (4.5.1: `migrate`, the MCP guide).
+  // at run time (deno.json) fails in those verbs (4.5.1: `migrate`, then still reading AGENTS.md
+  // for the MCP guide).
   // So no place spells out its own `deno compile … cli.ts`: each runs the one script.
   const files = [
     "deno.json",

@@ -218,10 +218,13 @@ export default function Chart() { /* … */ }
         <em>in the same tree</em>, so it reads the page's context, its events bubble to the page's
         handlers, and an error reaches the page's error boundary, as without the directive. The
         runtime ships only in an app whose sources write a directive (a build scan, like the other
-        gated runtimes). The click that wakes a <code>client:interaction</code>{" "}
-        island reaches its handler: the island hydrates while that event bubbles, before the page's
-        listener dispatches it (an <code>onClickCapture</code>{" "}
-        handler in the island misses it). A module-level <code>hydrate</code>{" "}
+        gated runtimes). A user event on an island's server DOM before it hydrates (a click, a key,
+        focus, <code>input</code>, <code>change</code>,{" "}
+        <code>submit</code>) is seen first by a listener above the document, as React's selective
+        hydration does: the island hydrates there, whatever its strategy (and so does an island
+        nested in it), so the event then runs through the page once, <code>onClickCapture</code>
+        {" "}
+        handlers included. A module-level <code>hydrate</code>{" "}
         default is not read, and a class or lazy component renders eagerly.
       </p>
       <p>
@@ -229,10 +232,15 @@ export default function Chart() { /* … */ }
         directive elements, <code>denext build</code> and <code>denext export</code>{" "}
         move it (and what only it imports) into a chunk of its own, fetched when the strategy fires,
         so a <code>client:visible</code>{" "}
-        island below the fold costs no JavaScript until it nears the viewport. A{" "}
-        <code>client:interaction</code>{" "}
-        island whose chunk is still loading holds the gesture at its wrapper and replays it once
-        hydrated. A component that is also used without a directive, or a module that a Flight route
+        island below the fold costs no JavaScript until it nears the viewport. An island whose chunk
+        is still loading holds the events on it (no listener sees them yet; a held click or submit
+        has its default action cancelled) and replays them in order once hydrated, so every listener
+        sees each one once. A split class or lazy component, which the server rendered eagerly,
+        waits for its chunk before the page (or its Suspense boundary, which then renders it on the
+        client) hydrates; its <code>useId</code>{" "}
+        values match the server's either way. A component that is also used without a directive, or
+        a module that a Flight route, <code>global-error</code> or{" "}
+        <code>instrumentation-client</code>{" "}
         also reaches, keeps the island's code in the page bundle; <code>denext dev</code>{" "}
         always does.
       </p>
@@ -306,7 +314,9 @@ export function Review({ diagram, diff }) {
                 to interact with). The gesture that triggered it is replayed on the mounted
                 component, as on a Flight island: its events (a press, the focus, the click) go to
                 the element at the same position in the component's DOM, so a placeholder shaped
-                like the component lets the first click land on the real button.
+                like the component lets the first click land on the real button. A press starts the
+                import at once, but the component mounts only once the press is released, so the
+                click that completes it is replayed too.
               </td>
             </tr>
           </tbody>
@@ -314,15 +324,20 @@ export function Review({ diagram, diff }) {
       </div>
       <p>
         The component gets the element's other props and children, and later renders update it as
-        usual. A failed chunk import throws to the nearest error boundary. Only a component imported
-        by name (default or named) is deferred; a member tag (<code>
+        usual. A failed chunk import throws to the nearest error boundary. A component imported by
+        name (default or named) is deferred, and so is a member tag on an import (<code>
           &lt;UI.Chart client:visible /&gt;
-        </code>), a module-level <code>export const hydrate</code>{" "}
-        default and an element whose name an inner scope re-binds mount eagerly. A component that is
-        also used without a directive, or referenced as a value, keeps its static import: its
-        directive elements still defer their mount, but its code stays in the main bundle. An app
-        with no directive bundles none of this. In an npm-React app type-checked against{" "}
-        <code>@types/react</code>, TypeScript learns the attributes from{" "}
+        </code>{" "}
+        with <code>import * as UI</code>, or a member of a default or named import). A module-level
+        {" "}
+        <code>export const hydrate</code>{" "}
+        default works as on a Flight route: a component whose module, imported by a relative path,
+        exports one is deferred wherever it is written without a directive (through a namespace
+        import, its direct members are). An element whose name an inner scope re-binds mounts
+        eagerly. A component that is also used without a directive, or referenced as a value, keeps
+        its static import: its directive elements still defer their mount, but its code stays in the
+        main bundle. An app with no directive bundles none of this. In an npm-React app type-checked
+        against <code>@types/react</code>, TypeScript learns the attributes from{" "}
         <code>denext/jsx-directives</code>'s <code>ClientDirectives</code>, added to React's{" "}
         <code>Attributes</code> by a two-line declaration of your own (with{" "}
         <code>deno check</code>, list it in <code>compilerOptions.types</code>):

@@ -69,6 +69,14 @@ render rather than swapping in the boundary — per Next's own "terminates
 rendering of the route segment" contract. See
 [Deliberate differences](/docs/differences).
 
+A **Server Action** the browser calls may throw them too, as in Next. The call rejects with the
+same signal (`isNotFound(err)` holds, `unstable_rethrow` passes it on), and once it reaches the
+client tree (an event handler that returns the call's promise, a `<form action>`,
+`useActionState`) the server renders the current URL with the signal raised at the page: the
+page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx` replaces the page in
+place under the layouts. The URL stays and nothing reloads; `redirect()` from an action still
+navigates. A caller that catches the rejection itself decides what happens instead.
+
 ## `useErrorBoundary()`
 
 `useErrorBoundary()` (from `denext`) returns `{ captureError, reset }` for the

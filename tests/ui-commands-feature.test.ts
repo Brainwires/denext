@@ -365,6 +365,26 @@ Deno.test("running a verb streams its output and an exit frame", async () => {
   });
 });
 
+Deno.test("discovery reads one JSON document (not waited on past it); a verb run waits for its exit", async () => {
+  await withProject(listing([GREET]), async (dir) => {
+    const opts: Array<{ argv: string[]; json: boolean }> = [];
+    const stub = stubRunner(["hello"]);
+    setCommandRunner((argv, o) => {
+      opts.push({ argv, json: o.jsonDocument !== undefined });
+      return stub(argv, o);
+    });
+    await listCommands(dir);
+    await (await commandsPanel(
+      new Request("http://127.0.0.1/commands", { method: "POST" }),
+      ctx(dir, { method: "POST", json: true, form: runBody("greet") }),
+    )).body?.cancel();
+    const discovery = opts.find((o) => o.argv.includes("commands"));
+    const run = opts.find((o) => o.argv.includes("greet"));
+    assertEquals(discovery?.json, true);
+    assertEquals(run?.json, false, "a verb's output is not one document");
+  });
+});
+
 Deno.test("a machine client gets the run as a JSON envelope", async () => {
   await withProject(listing([GREET]), async (dir) => {
     setCommandRunner(stubRunner(["nope"], 2));

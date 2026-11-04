@@ -29,8 +29,6 @@ const label = reason ? ` (skipped: ${reason})` : "";
 Deno.test({
   name: `supabase-js auth against /auth/v1 on Postgres${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     let env: PostgresEnvironment | undefined;
     await runFlows(
@@ -61,8 +59,6 @@ const SCHEMA = `
 Deno.test({
   name: `an /auth/v1 access token scopes db() and auto-REST through RLS${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment();
     const app = await supabaseAuthApp({

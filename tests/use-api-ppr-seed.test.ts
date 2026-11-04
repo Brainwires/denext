@@ -9,16 +9,16 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { json } from "../src/server/typed-response.ts";
 import { useApi } from "../src/client/use-api.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import { cookies } from "../src/server/request-context.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
-import { stableKey } from "../src/runtime/wire-codec.ts";
+import { stableKey } from "../src/runtime/wire-encode.ts";
 
 const ORIGIN = "http://localhost";
 

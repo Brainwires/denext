@@ -17,7 +17,7 @@ import * as ReactIs from "../src/compat/react-is.ts";
 import { StrictMode } from "../src/runtime/strict-mode.ts";
 import { createResource, Suspense } from "../src/runtime/suspense.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

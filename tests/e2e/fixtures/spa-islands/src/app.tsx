@@ -3,6 +3,8 @@ import Chart from "./chart.tsx";
 import { Panel } from "./panel.tsx";
 import { Wide } from "./wide.tsx";
 import { Later } from "./later.tsx";
+import * as Widgets from "./widgets.tsx";
+import Stamp from "./stamp.tsx";
 
 // Each deferred component's module sets `window.__loaded.<name>` when it is evaluated, so the
 // test sees when its chunk loaded, apart from when it mounted.
@@ -26,6 +28,8 @@ export function App() {
       />
       <div style={{ height: "3000px" }} data-testid="spacer" />
       <Chart client:visible label="sales" count={n} />
+      <Widgets.Gauge client:visible value={n} />
+      <Stamp />
     </main>
   );
 }

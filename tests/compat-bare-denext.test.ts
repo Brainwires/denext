@@ -9,13 +9,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import {
   DENEXT_RUNTIME_FILES,
   DENEXT_SERVER_SUBPATHS,
   runtimeEntryPoints,
 } from "../src/build/next-compat.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const JSR = "jsr:@denext/denext@^3.4.1";
 const exportsMap = JSON.parse(
@@ -119,7 +119,7 @@ for (const [platform, want, lock] of CASES) {
   Deno.test(`compat SPA export --platform ${platform}: bare "denext" from JSR (${how}) is the prebuilt runtime`, async () => {
     const dir = await project(ROW_APP, lock);
     try {
-      const js = await clientJs((await staticExport(dir, { platform })).outDir);
+      const js = await clientJs((await exportInChild(dir, { platform })).outDir);
       assertStringIncludes(js, want);
       for (const other of ["PLAIN_ROW", "MOBILE_ROW"].filter((l) => l !== want)) {
         assert(!js.includes(other), `${other} bundled for ${platform}`);
@@ -139,7 +139,7 @@ Deno.test("compat SPA export: every client denext subpath, mapped to JSR, bundle
   const uses = CLIENT.map((_, i) => `m${i}`).join(", ");
   const dir = await project({ "src/main.tsx": `${imports}\nconsole.log([${uses}].length);\n` });
   try {
-    const js = await clientJs((await staticExport(dir, { platform: "web" })).outDir);
+    const js = await clientJs((await exportInChild(dir, { platform: "web" })).outDir);
     assertEquals(count(js, DISPATCHER), 1, "exactly one copy of denext's hooks");
   } finally {
     await Deno.remove(dir, { recursive: true });

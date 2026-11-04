@@ -151,13 +151,14 @@ Deno.test("expo-auth-session: useLoadedAuthRequest + useAuthRequestResult prompt
       });
       return null;
     });
-    await tick();
+    // The request is built asynchronously (crypto for the state / PKCE): wait for it.
+    await until(() => request !== null);
     const loaded = request as AuthSession.AuthRequest | null;
     assert(loaded?.url?.startsWith("https://auth.test/authorize?"));
     session.plugin.start = () =>
       Promise.resolve({ url: `myapp://cb?code=abc&state=${loaded!.state}` });
     const out = await prompt();
-    await tick();
+    await until(() => result !== null);
     assertEquals(out.type === "success" && out.params.code, "abc");
     assertEquals((result as AuthSession.AuthSessionResult | null)?.type, "success");
     root.unmount();
@@ -236,10 +237,12 @@ Deno.test("providers/google: a failed exchange is an error response", async () =
 
 /**
  * Wait until `ready()` holds: a request is built asynchronously (crypto for the state / PKCE),
- * which on a loaded machine can take more than one tick. Fails after 5 s.
+ * which on a loaded machine can take more than one tick. The deadline only catches a hook that
+ * never settles; it is no timing assumption (a Windows runner at full load has spent seconds
+ * between ticks), so it is a minute.
  */
 async function until(ready: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 60_000;
   while (!ready()) {
     if (Date.now() > deadline) throw new Error("timed out waiting for the auth request");
     await tick();

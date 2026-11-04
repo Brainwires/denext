@@ -194,6 +194,48 @@ Deno.test("expo app config: read statically — consts, members, templates, cond
   assertEquals(await readStaticAppConfig("this is not ( valid"), null);
 });
 
+Deno.test({
+  name: "expo app config: a FIFO or an oversized file under a config's name is skipped, never read",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withApp({}, async (dir) => {
+      // A clone's app.json can be a FIFO: opened for reading it would block until a writer came.
+      // This writer unblocks a regressed read so the failure is an assertion, not a hang.
+      for (const name of ["app.json", "app.config.ts"]) {
+        const made = await new Deno.Command("mkfifo", { args: [join(dir, name)], stdin: "null" })
+          .output();
+        assert(made.success, "mkfifo failed");
+      }
+      let writers: Promise<unknown> | undefined;
+      const timer = setTimeout(() => {
+        writers = Promise.all(
+          ["app.json", "app.config.ts"].map((name) =>
+            Deno.writeTextFile(join(dir, name), JSON.stringify({ expo: { name: "Fifo" } }))
+              .catch(() => {})
+          ),
+        );
+      }, 3_000);
+      try {
+        const started = performance.now();
+        const config = await readExpoAppConfig(dir);
+        assert(performance.now() - started < 3_000, "a FIFO was opened");
+        assertEquals(config.source, null);
+        assertEquals(config.name, undefined);
+      } finally {
+        clearTimeout(timer);
+        await writers;
+      }
+    });
+    await withApp({}, async (dir) => {
+      const big = JSON.stringify({ expo: { name: "Big", extra: { pad: "x".repeat(9 << 20) } } });
+      await Deno.writeTextFile(join(dir, "app.json"), big);
+      const config = await readExpoAppConfig(dir);
+      assertEquals(config.source, null);
+      assertEquals(config.name, undefined);
+    });
+  },
+});
+
 Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native modules)", async () => {
   await withApp(T3_LIKE, async (dir) => {
     const r = await migrateProject(dir, { from: "expo", denextLocalPath: Deno.cwd() });

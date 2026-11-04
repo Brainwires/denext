@@ -3,7 +3,7 @@
 // deno-doc → JSON-Schema mapping shared through scripts/lib/ts-to-schema.ts.
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import { generate, KEYS_OUT, SCHEMA_OUT } from "../scripts/gen-config-schema.ts";
+import { generate, KEYS_OUT, SCHEMA_MODULE_OUT, SCHEMA_OUT } from "../scripts/gen-config-schema.ts";
 import {
   constraints,
   description,
@@ -13,6 +13,12 @@ import {
   tsTypeToSchema,
 } from "../scripts/lib/ts-to-schema.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "../src/server/config-keys.generated.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The drift test re-derives the schema from a whole-repo `deno doc --json` pass in this process:
+// on a loaded Windows runner (serial child queue) that can outrun the default 10 minutes, so the
+// deadline is 30.
+watchTests(1_800_000);
 
 const STALE = "is stale — run `deno task gen:config-schema` (or `deno task docs:api`) and commit";
 
@@ -20,9 +26,14 @@ Deno.test("generated config keys + JSON Schema match the DenextConfig type (drif
   // Re-derive both artifacts from a fresh `deno doc --json` pass and compare byte-for-byte
   // with the committed files. Adding/removing a `DenextConfig` or `ExperimentalConfig` field
   // (or editing its JSDoc) without regenerating fails here.
-  const { keysModule, schema } = await generate();
+  const { keysModule, schema, schemaModule } = await generate();
   assertEquals(await Deno.readTextFile(KEYS_OUT), keysModule, `config-keys.generated.ts ${STALE}`);
   assertEquals(await Deno.readTextFile(SCHEMA_OUT), schema, `denext.config.schema.json ${STALE}`);
+  assertEquals(
+    await Deno.readTextFile(SCHEMA_MODULE_OUT),
+    schemaModule,
+    `config-schema.packed.ts ${STALE}`,
+  );
 });
 
 Deno.test("the committed schema mirrors the runtime validator's contract", async () => {

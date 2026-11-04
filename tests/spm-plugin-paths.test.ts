@@ -8,6 +8,7 @@ import { dirname, join } from "@std/path";
 import { capacitorIosDir, stabilizeSpmPluginPaths } from "../src/build/spm-plugin-paths.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
 import { symlinkDir } from "./helpers/temp.ts";
+import { installFakeCapacitorCli } from "./_capacitor-cli.ts";
 
 const STORE =
   "node_modules/.pnpm/@scope+plugin@8.0.1_@capacitor+core@8.5.3/node_modules/@scope/plugin";
@@ -89,6 +90,7 @@ Deno.test("stabilizeSpmPluginPaths: follows capacitor.config's ios.path; no Pack
 
 Deno.test("denext mobile sync: cap sync in the project, then the plugin paths", async () => {
   const { app, swift } = await project(null);
+  await installFakeCapacitorCli(app);
   const calls: string[] = [];
   const log = console.log;
   const lines: string[] = [];
@@ -103,7 +105,7 @@ Deno.test("denext mobile sync: cap sync in the project, then the plugin paths", 
       global: { json: false, verbose: false, quiet: false },
       rest: [],
     });
-    assertEquals(calls, [`${app}: npx cap sync ios`]);
+    assertEquals(calls, [`${app}: npx --no cap sync ios`]);
     assertStringIncludes(await Deno.readTextFile(swift), "../../../node_modules/@scope/plugin");
     assertStringIncludes(lines.join("\n"), "plugin path → ../../../node_modules/@scope/plugin");
   } finally {

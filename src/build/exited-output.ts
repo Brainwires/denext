@@ -1,0 +1,242 @@
+// A child's output, read until it EXITS rather than until its pipes close.
+//
+// `new Deno.Command(…).output()` resolves when the child's stdout and stderr reach EOF, which
+// needs every copy of their write ends closed, not only the child's. On Windows a process another
+// thread of this process spawns at the same moment inherits every inheritable handle that exists
+// then, the pipes just made for this child included (Deno's Windows spawn takes no process-wide
+// lock around pipe creation and `CreateProcessW`). When that process is long-lived (an esbuild
+// service, a server, a sidecar), `output()` never returns: `deno test --parallel` runs every test
+// file on a thread of one process, so a `createTestApp` (its `deno info` crawl) beside a build
+// could hang the whole run. On every OS, a grandchild the child leaves running holds the pipes
+// the same way. What the child wrote is in the pipe by the time it exits, so this reads until
+// EOF or, at the latest, a short grace after the exit.
+
+/** How long the pipes are read after the child has exited, by default. */
+const DRAIN_AFTER_EXIT_MS = 5_000;
+
+/**
+ * Hand each chunk of `stream` to `onChunk` until the stream ends or, at the latest, `graceMs`
+ * after `exited` resolves; then cancel the reader. The streaming form of what
+ * {@linkcode exitedOutput} does for a whole output: a caller that consumes a child's output as it
+ * arrives (a line-by-line task runner) ends with the child, not with the last process holding a
+ * copy of its pipe.
+ *
+ * @param stream One of a child's piped output streams.
+ * @param exited Resolves when the child has exited (its `status`).
+ * @param onChunk Receives each chunk, in order, synchronously. A throw stops the reading.
+ * @param graceMs How long to keep reading after the exit.
+ * @returns Resolves once the reading is over and the reader cancelled; rejects with what
+ *   `onChunk` threw, if it did (an error reading the stream only ends it).
+ */
+export async function drainUntilExit(
+  stream: ReadableStream<Uint8Array>,
+  exited: Promise<unknown>,
+  onChunk: (chunk: Uint8Array) => void,
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<void> {
+  const reader = stream.getReader();
+  let failed: { error: unknown } | undefined;
+  const all = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      try {
+        onChunk(value);
+      } catch (error) {
+        failed = { error };
+        return;
+      }
+    }
+  })().catch(() => {});
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  let read = false;
+  // No grace once the pipes have ended: an exit reported after the EOF must not start a timer
+  // nothing would clear.
+  const late = exited.then(() =>
+    new Promise<void>((r) => {
+      if (!read) grace = setTimeout(r, graceMs);
+    })
+  );
+  await Promise.race([all, late]);
+  read = true;
+  clearTimeout(grace);
+  await reader.cancel().catch(() => {});
+  if (failed) throw failed.error;
+}
+
+/** Read `stream` to its end, or until `graceMs` after `exited` resolves. */
+async function readPipe(
+  stream: ReadableStream<Uint8Array>,
+  exited: Promise<unknown>,
+  graceMs: number,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  await drainUntilExit(stream, exited, (chunk) => void chunks.push(chunk), graceMs);
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const c of chunks) out.set(c, (at += c.length) - c.length);
+  return out;
+}
+
+/** Which of a child's output streams were spawned `"piped"`. */
+export interface PipedStreams {
+  /** Whether stdout is piped. */
+  readonly stdout: boolean;
+  /** Whether stderr is piped. */
+  readonly stderr: boolean;
+}
+
+/**
+ * `child`'s status and piped output, like `Deno.Command#output()`, except that the pipes are
+ * read for at most `graceMs` once the child has exited (see the module comment). A stream that
+ * was not piped throws `TypeError` when read, as `output()`'s does.
+ *
+ * @param child A spawned child.
+ * @param piped Which of its output streams were spawned `"piped"`.
+ * @param graceMs How long to keep reading after the exit.
+ * @returns The child's {@linkcode Deno.CommandOutput}.
+ */
+export async function exitedOutput(
+  child: Deno.ChildProcess,
+  piped: PipedStreams,
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<Deno.CommandOutput> {
+  const [status, out, err] = await Promise.all([
+    child.status,
+    piped.stdout ? readPipe(child.stdout, child.status, graceMs) : null,
+    piped.stderr ? readPipe(child.stderr, child.status, graceMs) : null,
+  ]);
+  const read = (name: string, bytes: Uint8Array | null) => () => {
+    if (bytes === null) throw new TypeError(`${name} is not piped`);
+    return bytes;
+  };
+  return Object.defineProperties({ ...status } as Deno.CommandOutput, {
+    stdout: { get: read("stdout", out), enumerable: true },
+    stderr: { get: read("stderr", err), enumerable: true },
+  });
+}
+
+/** {@linkcode runToExit}'s options: `Deno.CommandOptions` with stdin given as `input`. */
+export type RunToExitOptions = Omit<Deno.CommandOptions, "stdin"> & {
+  /**
+   * The child's stdin: `"null"` (the default) or `"inherit"`. Ignored when `input` is given.
+   */
+  readonly stdin?: "null" | "inherit";
+  /**
+   * Bytes (or UTF-8 text) written to the child's stdin, which is then closed. A child that exits
+   * without reading them all is not an error: its status says how it ended.
+   */
+  readonly input?: string | Uint8Array;
+};
+
+/** Write `input` to `stdin` and close it; a child that stopped reading is not an error. */
+async function feed(stdin: WritableStream<Uint8Array>, input: string | Uint8Array): Promise<void> {
+  const writer = stdin.getWriter();
+  try {
+    await writer.write(typeof input === "string" ? new TextEncoder().encode(input) : input);
+    await writer.close();
+  } catch {
+    await writer.abort().catch(() => {}); // the child closed its end (exited, or read no more)
+  }
+}
+
+/**
+ * Run `cmd` to its exit and collect its output, like `new Deno.Command(cmd, options).output()`
+ * but read with {@linkcode exitedOutput}, so a pipe handle another process inherited cannot keep
+ * it waiting. stdout and stderr default to `"piped"` as `output()`'s do; stdin defaults to
+ * `"null"`, so the child inherits no handle it does not need, unless `input` is given.
+ *
+ * @param cmd The program.
+ * @param options How to run it.
+ * @param graceMs How long to keep reading the pipes after the exit.
+ * @returns The child's {@linkcode Deno.CommandOutput}; rejects when it cannot be started.
+ */
+export async function runToExit(
+  cmd: string | URL,
+  options: RunToExitOptions = {},
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<Deno.CommandOutput> {
+  const { input, ...rest } = options;
+  const stdout = rest.stdout ?? "piped";
+  const stderr = rest.stderr ?? "piped";
+  const child = new Deno.Command(cmd, {
+    ...rest,
+    stdin: input !== undefined ? "piped" : rest.stdin ?? "null",
+    stdout,
+    stderr,
+  })
+    .spawn();
+  // Written beside the reads, so a child that answers before it has read everything cannot
+  // fill its output pipe while this side is still blocked writing.
+  // Not awaited past the exit: a write still blocked then (another process holds the read end)
+  // must not keep this waiting either; `feed` never rejects.
+  if (input !== undefined) void feed(child.stdin, input);
+  return await exitedOutput(
+    child,
+    { stdout: stdout === "piped", stderr: stderr === "piped" },
+    graceMs,
+  );
+}
+
+/** A child's status and its piped output as text, from {@linkcode runToExitText}. */
+export interface TextOutput {
+  /** Whether it exited 0. */
+  readonly success: boolean;
+  /** Its exit code. */
+  readonly code: number;
+  /** Its stdout as UTF-8 text (`""` when not piped). */
+  readonly stdout: string;
+  /** Its stderr as UTF-8 text (`""` when not piped). */
+  readonly stderr: string;
+}
+
+/**
+ * {@linkcode runToExit} with the output decoded as UTF-8 text.
+ *
+ * @param cmd The program.
+ * @param options How to run it.
+ * @param graceMs How long to keep reading the pipes after the exit.
+ * @returns The status and text; rejects when the program cannot be started.
+ */
+export async function runToExitText(
+  cmd: string | URL,
+  options: RunToExitOptions = {},
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<TextOutput> {
+  const out = await runToExit(cmd, options, graceMs);
+  const text = (read: () => Uint8Array) => {
+    try {
+      return new TextDecoder().decode(read());
+    } catch {
+      return ""; // not piped
+    }
+  };
+  return {
+    success: out.success,
+    code: out.code,
+    stdout: text(() => out.stdout),
+    stderr: text(() => out.stderr),
+  };
+}
+
+/** How a child's stderr is spawned by {@linkcode quietThenExplain}. */
+export type StderrMode = "null" | "piped";
+
+/**
+ * Run a child with its stderr discarded and, only when it fails, once more with stderr piped, for
+ * the error text. A pipe nobody reads until the exit is not free on Windows: Deno reads each piped
+ * stream with a blocking read that holds one of a small pool of threads for as long as the stream
+ * stays quiet, and with enough such children alive at once the read another child's busy stdout
+ * needs never runs, so that child fills its pipe and never exits. A child that is quiet on stderr
+ * until it exits (`deno info`, `deno bundle`, `deno check`) therefore runs with no stderr pipe; the
+ * failure re-run costs a second run only when something is already wrong.
+ *
+ * @param run Runs the child to its end with the given stderr mode.
+ * @returns The first run's output when it exited 0, else the re-run's (stderr readable).
+ */
+export async function quietThenExplain(
+  run: (stderr: StderrMode) => Promise<Deno.CommandOutput>,
+): Promise<Deno.CommandOutput> {
+  const first = await run("null");
+  return first.code === 0 ? first : await run("piped");
+}

@@ -21,11 +21,15 @@ export {
   ensureFlightModules,
   flightClientIds,
   parseFlight,
+  setActionCallLoader,
 } from "./flight-client.ts";
+export type { ActionCallModule } from "./flight-client.ts";
 // A streamed Flight document's tree: the shell + each hole / deferred value as it streamed.
 export { readStreamedFlight } from "./streamed-flight.ts";
-// Server Actions: the browser dispatch stub emitted for each `"use server"` export.
-export { clientActionStub } from "../runtime/server-action.ts";
+// Server Actions: the stub emitted for each `"use server"` export is NOT re-exported here; it is
+// `denext/action-stub` (src/action-stub.ts). It carries the wire encoder, and the Flight entry
+// imports this barrel, so a re-export here would put the encoder's file in every Flight page's
+// startup graph — where the on-demand action call (`denext/action-call`) would hoist it.
 // Class components: `installClassSupport` lives in its own entrypoint, `denext/class-runtime`
 // (a code-split chunk). The entry imports it statically when the build scan saw a class, and
 // otherwise calls `loadClassRuntime()` — the single dynamic-import site — when the document

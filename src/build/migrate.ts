@@ -13,10 +13,20 @@
 // derived from the Vite config/usage, and — with `--desktop` — a `desktop.ts` entry
 // and `spa.proxy` for a `deno desktop` build.
 
+import { carryPackageManagerPatches, type MigratePatchesReport } from "./migrate-patches.ts";
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
-import { mfs } from "./migrate-io.ts";
+import { confineWrites, mfs } from "./migrate-io.ts";
+import { withCapacitorConfigValue } from "./capacitor-config.ts";
+import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
+import {
+  frameworkRuntimeDeps,
+  type ImportClash,
+  importsOf,
+  planFrameworkDeps,
+  readDenoConfig,
+} from "./local-checkout-imports.ts";
 import {
   type MappedViteEmitter,
   readViteConfig,
@@ -27,14 +37,14 @@ import {
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG, machineEnvIn } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import {
   formatIconSearch,
@@ -43,6 +53,7 @@ import {
   resolveIconSource,
 } from "./mobile-icon-source.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
+import { type CarriedLoadContext, carryLoadContext } from "./remix-load-context.ts";
 import {
   isTanstackStartApp,
   readTanstackStartOptions,
@@ -57,6 +68,13 @@ import {
   type FreshMigrateInfo,
   transformFreshApp,
 } from "./migrate-fresh.ts";
+import {
+  detectLustre,
+  lustreAppFiles,
+  lustreConfigSource,
+  type LustreMigrateInfo,
+  transformLustreApp,
+} from "./migrate-lustre.ts";
 import {
   type PreactMigrateInfo,
   preactMigrateInfo,
@@ -105,6 +123,12 @@ import {
   type PrismaWiring,
 } from "./prisma-migrate.ts";
 import { denoSqlHasColumns } from "../server/prisma-adapter/client.ts";
+import { TOOLCHAIN_ACTIVE_ENV } from "./deno-toolchain.ts";
+import {
+  compareDenoVersions,
+  FIRST_OWN_VERSION_RUNTIME,
+  isDenextReleaseVersion,
+} from "./deno-version.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
@@ -153,7 +177,7 @@ const DENEXT_OWNED = new Set([
  * minor line.
  */
 function catalogSpec(name: string): string {
-  const entry = CATALOG.plugins.find((p) => p.name === name);
+  const entry = pluginCatalog().plugins.find((p) => p.name === name);
   if (!entry) throw new Error(`the first-party plugin catalog has no entry for "${name}"`);
   return entry.spec;
 }
@@ -335,7 +359,7 @@ async function buildAppRouterImports(
   // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
   // local-path mode — denext's own deps (`@std/*`, `ws`, …) so `deno desktop` etc. resolve.
   addMissing(imports, await collectTsPathAliases(dir));
-  addMissing(imports, frameworkDepsFor(R, deps));
+  addMissing(imports, await frameworkDepsFor(dir, R, deps));
   return imports;
 }
 
@@ -377,7 +401,8 @@ export interface MigrateOptions {
   proxyPrefixes?: string[];
   /**
    * Force the source framework instead of auto-detecting (`next` | `remix` | `react-router` |
-   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact`). Reserved for ambiguous
+   * `vite` | `cra` | `generic` | `expo` | `tanstack-start` | `fresh` | `preact` | `lustre`). Reserved
+   * for ambiguous
    * cases; auto-detection is used when omitted.
    */
   from?: string;
@@ -477,7 +502,8 @@ export interface MigrateResult {
     | "expo"
     | "tanstack-start"
     | "fresh"
-    | "preact";
+    | "preact"
+    | "lustre";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -504,6 +530,11 @@ export interface MigrateResult {
   spa?: SpaMigrateInfo;
   /** Present when {@link kind} is `"remix"` — the assisted route-tree transform report. */
   remix?: RemixMigrateInfo;
+  /**
+   * Present when a React Router app's custom server has a `getLoadContext`: it was carried to
+   * `load-context.ts` (registered by `instrumentation.ts`); the notes say what needs porting.
+   */
+  loadContext?: CarriedLoadContext;
   /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
   prisma?: PrismaMigrateInfo;
   /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
@@ -516,12 +547,33 @@ export interface MigrateResult {
   fresh?: FreshMigrateInfo;
   /** Present when {@link kind} is `"preact"` — the tooling, the routers and the findings. */
   preact?: PreactMigrateInfo;
+  /** Present when {@link kind} is `"lustre"` — the entry, the mount and what did not migrate. */
+  lustre?: LustreMigrateInfo;
   /** Present when an App Router app has a `next.config.*` — what was carried over and what was not. */
   nextConfig?: NextConfigReport;
   /** Present with `--enable-capacitor`: the Capacitor target written and the steps to run. */
   capacitor?: CapacitorMigrateInfo;
   /** Why `--enable-capacitor` was not applied (a Pages Router or Remix-family app). */
   capacitorSkipped?: string;
+  /**
+   * Present when a dependency's install script needs a lifecycle-script jail exception
+   * (src/build/jail-exceptions.ts): whether the jail is on for the project, and the
+   * `supplyChain.jailScripts.packages` entries written into deno.json (or left to the user).
+   */
+  jailScripts?: JailReport;
+  /**
+   * Present when package.json / pnpm-workspace.yaml declares pnpm or Bun npm patches
+   * (`patchedDependencies`): the ones carried into deno.json's `patchedDependencies` (copied to
+   * `patches/npm/`) and the ones left for review (src/build/migrate-patches.ts).
+   */
+  patches?: MigratePatchesReport;
+  /**
+   * `--denext-local-path` only: the packages the app maps (its import map, or a package.json
+   * dependency) at another major than the denext checkout's own import map. The app's entry was
+   * kept (denext's would shadow the app's version); denext's modules that import the package
+   * then load the app's version, so check they still work with it.
+   */
+  importClashes?: ImportClash[];
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -546,10 +598,16 @@ function nextConfigReport(next: NextConfigTranslation | null): NextConfigReport 
     evaluated: !next.raw,
     ...(next.raw && next.rawReason ? { reason: next.rawReason } : {}),
     carried: [...Object.keys(next.fields), ...Object.keys(next.rules)],
-    dropped: next.dropped.map((key) => ({
-      key,
-      note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
-    })),
+    dropped: [
+      ...next.dropped.map((key) => ({
+        key,
+        note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
+      })),
+      ...Object.entries(next.machineEnv ?? {}).map(([key, vars]) => ({
+        key,
+        note: machineEnvNote(vars),
+      })),
+    ],
   };
 }
 
@@ -704,74 +762,20 @@ async function packageExports(dir: string): Promise<Record<string, string>> {
 }
 
 /**
- * denext's own `jsr:`/`npm:` deps from a checkout's `deno.json` — the app config must carry
- * these so `deno desktop` (and any tool following the local file:// denext modules) can
- * resolve `@std/path`, `ws`, … Only the ones denext's own runtime source imports: the root
- * import map also serves the workspace packages and the tests (`effect@^3` for
- * `@denext/effect`, `jsqr` for a test), and mapping those into the app would shadow the app's
- * own versions (an app may run Effect 4).
+ * The framework deps an app's import map gets (local-path mode; none for JSR): never one the app
+ * maps itself. A key in the app's existing import map keeps the app's value, and a package.json
+ * dependency stays unmapped so it resolves to the app's own version (installed, or pinned by
+ * `classifyDeps`); see `src/build/local-checkout-imports.ts`, which also reports the clashes.
  */
-async function frameworkDepsOf(
-  abs: string,
-  denoCfg: Record<string, unknown>,
-): Promise<Record<string, string>> {
-  const used = await denextOwnSpecifiers(abs);
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
-    if ((v.startsWith("jsr:") || v.startsWith("npm:")) && importsKey(used, k)) out[k] = v;
-  }
-  return out;
-}
-
-/** Static and dynamic import specifiers in module text (statements at a line start). */
-const IMPORT_SPECIFIERS = [
-  /^[ \t]*(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']/gm,
-  /^[ \t]*import\s*["']([^"']+)["']/gm,
-  /\bimport\(\s*["']([^"']+)["']\s*[,)]/g,
-];
-
-/** The specifiers each checkout's runtime source imports, cached (the source does not change). */
-const ownSpecifiers = new Map<string, Promise<Set<string>>>();
-
-/** Every specifier denext's runtime source (`src/`, `mod.ts`, `cli.ts`) imports. */
-function denextOwnSpecifiers(abs: string): Promise<Set<string>> {
-  let found = ownSpecifiers.get(abs);
-  if (!found) {
-    found = (async () => {
-      const specs = new Set<string>();
-      const scan = (text: string) => {
-        for (const re of IMPORT_SPECIFIERS) {
-          for (const m of text.matchAll(re)) specs.add(m[1]);
-        }
-      };
-      await walkCode(join(abs, "src"), scan);
-      for (const file of ["mod.ts", "cli.ts"]) {
-        const text = await mfs.readTextFile(join(abs, file)).catch(() => null);
-        if (text) scan(text);
-      }
-      return specs;
-    })();
-    ownSpecifiers.set(abs, found);
-  }
-  return found;
-}
-
-/** Whether an import-map key (`ws`, `@std/path`, a `prefix/`) covers one of `specs`. */
-function importsKey(specs: Set<string>, key: string): boolean {
-  if (key.endsWith("/")) return [...specs].some((s) => s.startsWith(key));
-  if (specs.has(key)) return true;
-  return [...specs].some((s) => s.startsWith(key + "/"));
-}
-
-/**
- * The framework deps an app's import map gets: never one the app depends on itself, which
- * resolves to the app's own version (installed, or pinned by `classifyDeps`).
- */
-function frameworkDepsFor(
+async function frameworkDepsFor(
+  dir: string,
   R: DenextResolver,
   deps: Record<string, string>,
-): Array<[string, string]> {
-  return Object.entries(R.frameworkDeps()).filter(([key]) => !(key in deps));
+): Promise<Array<[string, string]>> {
+  const framework = R.frameworkDeps();
+  if (Object.keys(framework).length === 0) return [];
+  const imports = importsOf(await readDenoConfig(dir));
+  return planFrameworkDeps(framework, { imports, deps }).entries;
 }
 
 /** The resolver: the published JSR package, or a local denext checkout (`--denext-local`). */
@@ -780,7 +784,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const abs = resolve(localPath);
   const denoCfg = (await readJson(join(abs, "deno.json"))) ?? {};
   const exp = (denoCfg.exports ?? {}) as Record<string, string>;
-  const frameworkDeps = await frameworkDepsOf(abs, denoCfg);
+  const frameworkDeps = await frameworkRuntimeDeps(abs, denoCfg);
   const fileFor = (root: string, rel: string) =>
     toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
   const local = (sub: string): string => {
@@ -885,7 +889,7 @@ async function applyPrismaImports(
   R: DenextResolver,
   mode: MigrateOptions["prismaAdapter"] = "auto",
 ): Promise<PrismaWiring | null> {
-  const denoSql = mode === "deno-sql" || (mode === "auto" && await denoSqlHasColumns());
+  const denoSql = mode === "deno-sql" || (mode === "auto" && await appRuntimeReadsColumns());
   const wiring = await detectPrismaWiring(
     dir,
     deps,
@@ -896,6 +900,26 @@ async function applyPrismaImports(
   for (const key of wiring.importsToDelete) delete imports[key];
   Object.assign(imports, wiring.importsToAdd);
   return wiring;
+}
+
+/**
+ * Whether the Deno the migrated app runs on reports `Deno.SQL` result columns (what
+ * `denext/prisma-adapter` needs): this process's own, or — when migrate runs on a stock Deno —
+ * the toolchain denext hands its children (`DENEXT_TOOLCHAIN_ACTIVE`, a release of denext's Deno),
+ * which `denext dev`, `build` and `start` re-run on. `DENEXT_DENO=stock` sets no such marker, so
+ * the app keeps Prisma's npm adapters there. Exported for testing.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`).
+ * @param probe This process's own check (default {@linkcode denoSqlHasColumns}).
+ */
+export async function appRuntimeReadsColumns(
+  env: (name: string) => string | undefined = (name) => Deno.env.get(name),
+  probe: () => Promise<boolean> = denoSqlHasColumns,
+): Promise<boolean> {
+  if (await probe()) return true;
+  const active = env(TOOLCHAIN_ACTIVE_ENV);
+  return active !== undefined && isDenextReleaseVersion(active) &&
+    compareDenoVersions(active, FIRST_OWN_VERSION_RUNTIME) >= 0;
 }
 
 /**
@@ -914,9 +938,10 @@ async function writeAppRouterDenoJson(
   written: string[],
   cap?: CapacitorPlan,
   rr?: boolean,
+  start: StartPermissions = "all",
 ): Promise<boolean> {
   const denoJson = {
-    tasks: appRouterTasks(R, prismaWiring, cap),
+    tasks: appRouterTasks(R, prismaWiring, cap, start),
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
@@ -951,14 +976,18 @@ async function writeAppRouterDenoJson(
   return denoJsonExists;
 }
 
-/** An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones. */
+/**
+ * An App Router app's tasks: the dev/build/export/start set, Prisma's, and the Capacitor ones.
+ * `start` is `"server"` for a Next.js App Router app (see {@link nextStartPermissions}).
+ */
 function appRouterTasks(
   R: DenextResolver,
   prismaWiring: PrismaWiring | null,
   cap?: CapacitorPlan,
+  start: StartPermissions = "all",
 ): Record<string, string> {
   return {
-    ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto"),
+    ...spaTasks(false, R.cli, false, prismaWiring?.nodeModulesDir ?? "auto", start),
     ...prismaWiring?.tasks,
     ...cap?.tasks,
   };
@@ -1032,6 +1061,11 @@ interface NextConfigTranslation {
   raw: boolean;
   /** Why the evaluation failed (when {@link raw}). */
   rawReason?: string;
+  /**
+   * Keys left out because their evaluated value interpolates a machine-path variable (`HOME`,
+   * `TMPDIR`, …), each with the variables: inlined, it would carry the migrating machine's path.
+   */
+  machineEnv?: Record<string, string[]>;
   /**
    * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
    * remark/rehype/recma lists). `createMDX` hides those options inside a webpack-loader
@@ -1201,10 +1235,52 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
+  const value = result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">;
+  return { ...base, ...withoutMachineEnv(value) };
+}
+
+/**
+ * The translation without the fields and rule lists whose values interpolate a machine-path
+ * variable (the evaluator hands the config placeholders for them), listed in `machineEnv` for a
+ * hand port instead of being inlined with this machine's path.
+ */
+function withoutMachineEnv(
+  value: Pick<NextConfigTranslation, "fields" | "rules" | "dropped">,
+): Pick<NextConfigTranslation, "fields" | "rules" | "dropped" | "machineEnv"> {
+  const machineEnv: Record<string, string[]> = {};
+  const keep = (group: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(group ?? {}).filter(([key, v]) => {
+        const vars = machineEnvIn(v);
+        if (vars.length) machineEnv[key] = vars;
+        return vars.length === 0;
+      }),
+    );
+  const fields = keep(value.fields);
+  // A rule list keeps the rules that read no machine path; only the others are left out.
+  const lists: Record<string, unknown> = {};
+  for (const [key, list] of Object.entries(value.rules ?? {})) {
+    if (!Array.isArray(list)) {
+      lists[key] = list;
+      continue;
+    }
+    const vars = machineEnvIn(list);
+    if (vars.length) machineEnv[key] = vars;
+    lists[key] = list.filter((rule) => machineEnvIn(rule).length === 0);
+  }
+  const rules = keep(lists);
   return {
-    ...base,
-    ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
+    fields,
+    rules,
+    dropped: value.dropped ?? [],
+    ...(Object.keys(machineEnv).length ? { machineEnv } : {}),
   };
+}
+
+/** The note for a key left out by {@linkcode withoutMachineEnv}. */
+function machineEnvNote(vars: string[]): string {
+  return `a rule or value reads ${vars.join(", ")} — this machine's path — and was not ` +
+    `inlined. Port it by hand (read process.env at run time).`;
 }
 
 /**
@@ -1440,9 +1516,47 @@ export async function migrateProject(
   options: MigrateOptions = {},
 ): Promise<MigrateResult> {
   checkCapacitorFlags(options);
-  const r = await migrateAnyProject(dir, options);
+  // A cloned repository's symlinks never redirect a write out of the project.
+  return await confineWrites(dir, () => migrateConfined(dir, options));
+}
+
+/** {@link migrateProject} inside the project's write confinement. */
+async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
+  // Read before the migration rewrites a generated deno.json.
+  const clashes = await localImportClashes(dir, options.denextLocalPath);
+  const migrated = withClashes(await migrateAnyProject(dir, options), clashes);
+  // Only the app is written: a workspace root's settings above it are left to the user.
+  const jail = await applyJailExceptions(dir, {
+    fs: mfs,
+    edit: !migrated.denoJsonExists,
+    confine: dir,
+  });
+  const withJail = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  const patches = await carryPackageManagerPatches(dir, { edit: !migrated.denoJsonExists });
+  const r = patches ? { ...withJail, patches } : withJail;
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
+}
+
+/**
+ * `--denext-local-path`: the keys the app maps itself (its import map, its package.json
+ * dependencies) at another major than the checkout's deps; none without a local path.
+ */
+async function localImportClashes(dir: string, localPath?: string): Promise<ImportClash[]> {
+  if (!localPath) return [];
+  const framework = await frameworkRuntimeDeps(resolve(localPath));
+  const pkg = await readJson(join(dir, "package.json"));
+  const deps = {
+    ...(pkg?.dependencies as Record<string, string> ?? {}),
+    ...(pkg?.devDependencies as Record<string, string> ?? {}),
+  };
+  const imports = importsOf(await readDenoConfig(dir));
+  return planFrameworkDeps(framework, { imports, deps }).clashes;
+}
+
+/** A result with its import clashes, when there are any. */
+function withClashes(r: MigrateResult, clashes: ImportClash[]): MigrateResult {
+  return clashes.length ? { ...r, importClashes: clashes } : r;
 }
 
 /** Refuse a bad `--app-id` / `--platform`, or one given without `--enable-capacitor`. */
@@ -1466,6 +1580,8 @@ function capacitorSkipReason(r: MigrateResult): string {
     ? "a TanStack Start app (its server functions need a server)"
     : r.kind === "fresh"
     ? "a Fresh app (its handlers and middleware need a server)"
+    : r.kind === "lustre"
+    ? "a Lustre (Gleam) app"
     : "a Pages Router app";
   return `--enable-capacitor covers SPA, Next App Router and Expo apps; this is ${what}, ` +
     "which it does not cover yet";
@@ -1476,6 +1592,10 @@ async function migrateAnyProject(dir: string, options: MigrateOptions): Promise<
   // Fresh apps are Deno projects (no package.json), so they are recognized first.
   if (options.from === "fresh" || (!options.from && await detectFresh(dir))) {
     return await migrateFreshProject(dir, options);
+  }
+  // So are Lustre apps (a Gleam project; any package.json only carries tooling).
+  if (options.from === "lustre" || (!options.from && await detectLustre(dir))) {
+    return await migrateLustreProject(dir, options);
   }
   const deps = await readAppDeps(dir);
   return await migrateNonNextProject(dir, deps, options) ??
@@ -1516,6 +1636,8 @@ async function migrateNextProject(
     prismaWiring,
     written,
     cap.plan,
+    false,
+    nextStartPermissions(pagesRouter, prismaWiring),
   );
   const capacitor = await writeCapacitorConfig(dir, cap.plan, written);
   // Prisma source transform (schema + `@prisma/client` imports + adapter injection + patch
@@ -1536,6 +1658,23 @@ async function migrateNextProject(
     nextConfig: nextConfigReport(next),
     capacitor,
   };
+}
+
+/**
+ * The permissions a migrated Next.js app's `start` gets. An App Router app's next-compat build
+ * points every stylesheet import at its shim inside the server bundle (manifest `compatCss`), so
+ * its `start` spawns nothing and gets the least-privilege set `denext create` writes. `-A` stays
+ * for a Pages Router app (its server render resolves stylesheets through the CSS import map
+ * `start` applies by re-running itself, which needs an unscoped `--allow-run`) and for a Prisma
+ * app (its SQLite database lives outside `.denext`, and the query engine may need more than the
+ * least-privilege set). Its server runs the app's npm dependencies, so it also gets
+ * {@link NODE_OS_SYS}.
+ */
+function nextStartPermissions(
+  pagesRouter: boolean,
+  prismaWiring: PrismaWiring | null,
+): StartPermissions {
+  return pagesRouter || prismaWiring ? "all" : "server";
 }
 
 /**
@@ -1594,7 +1733,25 @@ async function writeCapacitorConfig(
         ),
       written,
     );
+  if (plan.frameGuardOptOut) await optOutOfFrameGuard(join(dir, plan.frameGuardOptOut), written);
   return { ...plan.info, configWritten };
+}
+
+/**
+ * Write `plugins.DenextBridge.frameGuard: false` into a kept Capacitor config that loads a hosted
+ * `server.url` (its page calls native plugins from that origin, which the bridge's origin guard
+ * refuses by default). Every other byte of a module config is kept.
+ */
+async function optOutOfFrameGuard(file: string, written: string[]): Promise<void> {
+  const source = await mfs.readTextFile(file);
+  const next = await withCapacitorConfigValue(file, source, [
+    "plugins",
+    "DenextBridge",
+    "frameGuard",
+  ], false);
+  if (next === source) return;
+  await mfs.writeTextFile(file, next);
+  written.push(file);
 }
 
 /** The TODO comment over a placeholder app id, by where it came from. */
@@ -1775,11 +1932,17 @@ async function migrateReactRouterProject(
     written,
   ));
 
+  // The custom server's `getLoadContext` (`@react-router/express`'s `createRequestHandler`)
+  // → `load-context.ts`, registered at boot by `instrumentation.ts`.
+  const loadContext = await carryLoadContext(dir);
+  if (loadContext) written.push(...loadContext.written);
+
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   return {
     kind: "remix",
     wrote: written,
     ...classified,
+    ...(loadContext ? { loadContext } : {}),
     pagesRouter: false,
     effect: hasEffect,
     pagesConfigWritten: !pagesConfigExists,
@@ -1927,6 +2090,7 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
   Object.assign(imports, aliases);
   const written: string[] = [];
   const fresh = await transformFreshApp(dir, detection, written);
+  Object.assign(imports, fresh.importOverrides);
   const before = (detection.config.imports ?? {}) as Record<string, string>;
   const removed = droppedFreshImports(before);
   const configPath = detection.configPath ?? join(dir, "deno.json");
@@ -1976,6 +2140,67 @@ import type { DenextConfig } from "denext/server";
 export default {
 ${tailwind}} satisfies DenextConfig;
 `;
+}
+
+// ── Lustre migration ────────────────────────────────────────────────────────
+
+/**
+ * A Lustre app (Gleam, JavaScript target) → denext's App Router: the Gleam project stays as it
+ * is and the `gleam()` plugin compiles it; `app/` gets a page whose island runs the entry's own
+ * `main`, `priv/static/` moves to `public/`, and `deno.json` maps `@gleam/` onto Gleam's build.
+ */
+async function migrateLustreProject(
+  dir: string,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const detection = await detectLustre(dir);
+  if (!detection) {
+    throw new Error(
+      `no Lustre app in ${dir}: expected a gleam.toml depending on lustre, with ` +
+        '`target = "javascript"` or lustre_dev_tools',
+    );
+  }
+  const R = await denextResolver(denextVersion(), options.denextLocalPath);
+  const { info, title } = await transformLustreApp(dir, detection);
+  const imports = await buildAppRouterImports(dir, R, {});
+  imports["denext/gleam"] = R.sub("gleam");
+  imports["@gleam/"] = "./build/dev/javascript/";
+  const written: string[] = [];
+  const denoJsonExists = await writeAppRouterDenoJson(dir, R, imports, null, written);
+  // Gleam's build output (the `.gitignore` is already listed when the line above wrote it).
+  const ignore = await appendGitignore(dir, ["build/"]);
+  if (ignore && !written.includes(ignore)) written.push(ignore);
+  await mfs.mkdir(join(dir, "app"), { recursive: true });
+  for (const [rel, source] of Object.entries(lustreAppFiles(GEN_MARKER, info, title))) {
+    if (!await writeIfWritable(join(dir, rel), () => source, written)) {
+      info.review.push({ item: rel, reason: "already exists and is left untouched" });
+    }
+  }
+  const configExists = !(await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => lustreConfigSource(GEN_MARKER),
+    written,
+  ));
+  if (configExists) {
+    info.review.push({
+      item: "denext.config.ts",
+      reason: 'exists and is left untouched; add gleam() from "denext/gleam" to its plugins',
+    });
+  }
+  return {
+    kind: "lustre",
+    wrote: written,
+    aliased: [],
+    passthrough: [],
+    dropped: [],
+    flagged: [],
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: !configExists,
+    pagesConfigExists: false,
+    denoJsonExists,
+    lustre: info,
+  };
 }
 
 // ── Vite SPA migration ──────────────────────────────────────────────────────
@@ -2718,6 +2943,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
     for (const [fn, arr] of ruleEntries) bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
   }
   if (next.dropped.length) notes.push(...droppedKeyNotes(next.dropped));
+  for (const [key, vars] of Object.entries(next.machineEnv ?? {})) {
+    notes.push(`  // ${commentSafe(key)}: ${machineEnvNote(vars)}`);
+  }
   return notes;
 }
 
@@ -2836,12 +3064,36 @@ const MIGRATED_RUN = "deno run -A --node-modules-dir=none";
 /** The permissions a SPA's `start` needs: the set `denext create`'s `start` task has. */
 const LEAST_PRIVILEGE_START = "--allow-net --allow-read --allow-env --allow-write=.denext";
 
+/**
+ * The read-only system information Node's `os` module reads (`hostname()`, `cpus()`,
+ * `totalmem()` / `freemem()`, `loadavg()`, `uptime()`, `release()` / `version()`, `homedir()`,
+ * `userInfo()`), which loggers, metrics and SDKs call at import or per request: a migrated
+ * Next.js app's server runs its npm dependencies, so its `start` grants these. Not
+ * `networkInterfaces` (it lists the host's addresses) nor the priority setters.
+ */
+const NODE_OS_SYS =
+  "--allow-sys=hostname,osRelease,osUptime,loadavg,cpus,systemMemoryInfo,homedir,uid,gid,username";
+
+/**
+ * A migrated app's `start` permissions: `"least-privilege"` (a SPA's export server), `"server"`
+ * (that set plus {@link NODE_OS_SYS}, for a server that runs the app's npm code) or `"all"`
+ * (`-A`).
+ */
+type StartPermissions = "least-privilege" | "server" | "all";
+
+/** The `start` task for `start` permissions. */
+function startTask(run: string, cli: string, start: StartPermissions): string {
+  if (start === "all") return `${run} ${cli} start .`;
+  const sys = start === "server" ? ` ${NODE_OS_SYS}` : "";
+  return `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START}${sys} ${cli} start .`;
+}
+
 function spaTasks(
   desktop: boolean,
   cli: string,
   hasIcon: boolean,
   nodeModulesDir: "manual" | "auto" = "auto",
-  start: "least-privilege" | "all" = "all",
+  start: StartPermissions = "all",
 ): Record<string, string> {
   // The CLI PROCESS always runs with `--node-modules-dir=none`, whatever the app's mode:
   // Deno resolves a REMOTE module's npm imports (the JSR-installed CLI's own `esbuild`,
@@ -2863,12 +3115,14 @@ function spaTasks(
     build: `${run} ${cli} build .`,
     export: `${run} ${cli} export .`,
     // A SPA's `start` serves its export and spawns nothing, so it gets the least-privilege set
-    // `denext create` writes. `-A` for an App Router app: its next-compat build's `start` re-execs
-    // a child `deno` to apply the CSS shim import map (`maybeReexecForCss`), which needs an
-    // unscoped `--allow-run` (equivalent to every permission) and writes the app's deno.json.
-    start: start === "least-privilege"
-      ? `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START} ${cli} start .`
-      : `${run} ${cli} start .`,
+    // `denext create` writes; so does a Next.js App Router app, whose next-compat server bundle
+    // carries its stylesheet shims (`nextStartPermissions`), plus the read-only `os` information
+    // its npm dependencies read (`NODE_OS_SYS`). `-A` for the rest: a Pages Router
+    // app's `start` re-execs a child `deno` to apply the CSS shim import map
+    // (`maybeReexecForCss`), which needs an unscoped `--allow-run` (equivalent to every
+    // permission) and writes the app's deno.json; the Remix, React Router, Fresh and TanStack
+    // Start paths keep it until their `start` is verified under the least-privilege set.
+    start: startTask(run, cli, start),
   };
   if (desktop) tasks.desktop = desktopTask(hasIcon);
   return tasks;
@@ -2968,7 +3222,7 @@ async function spaImportMap(
   for (const [key, val] of await collectTsPathAliases(dir)) {
     if (!(key in imports)) imports[key] = val;
   }
-  addMissing(imports, frameworkDepsFor(R, deps));
+  addMissing(imports, await frameworkDepsFor(dir, R, deps));
   return imports;
 }
 

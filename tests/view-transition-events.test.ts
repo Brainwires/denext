@@ -11,7 +11,8 @@ import "./helpers/view-transition-runtime.ts";
 import "./helpers/activity-runtime.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Activity, ViewTransition } from "../src/runtime/react-extras.ts";
-import { startTransition, useState } from "../src/runtime/hooks.ts";
+import { useState } from "../src/runtime/hooks.ts";
+import { startTransition } from "../src/runtime/hooks/transition.ts";
 import {
   addTransitionType,
   getViewTransitionSupport,

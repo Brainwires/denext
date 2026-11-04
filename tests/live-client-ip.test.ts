@@ -235,6 +235,47 @@ Deno.test("live maxConnectionsPerIp: one address's connections are capped; other
   }
 });
 
+Deno.test("live maxConnectionsPerIp: handshakes waiting on authorize hold their slot", async () => {
+  let openGate!: () => void;
+  const gate = new Promise<void>((resolve) => openGate = resolve);
+  let calls = 0;
+  const { server } = startHub({
+    limits: { maxConnectionsPerIp: 2, maxConnections: 3 },
+    authorize: async () => {
+      calls++;
+      await gate;
+      return true;
+    },
+  });
+  resetLiveWarningsForTesting();
+  try {
+    await capturingWarnings(async () => {
+      // Two from one address wait on the slow hook…
+      const pending = [
+        handleLiveUpgrade(upgradeFrom("198.51.100.7")),
+        handleLiveUpgrade(upgradeFrom("198.51.100.7")),
+      ];
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(calls, 2);
+      // …so a third from it is refused at once, without reaching the hook.
+      assertEquals((await handleLiveUpgrade(upgradeFrom("198.51.100.7"))).status, 429);
+      // Another address takes the last slot of the total; a fourth handshake meets the total cap.
+      const other = handleLiveUpgrade(upgradeFrom("192.0.2.4"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals((await handleLiveUpgrade(upgradeFrom("192.0.2.5"))).status, 503);
+      assertEquals(calls, 3);
+      openGate();
+      // Past the hook they go on to the upgrade (which fails off a real server: 400) and give
+      // their slots back.
+      for (const res of await Promise.all([...pending, other])) assertEquals(res.status, 400);
+      assertEquals((await handleLiveUpgrade(upgradeFrom("198.51.100.7"))).status, 400);
+    });
+  } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
 Deno.test("live maxConnectionsPerIp: an IPv6 /64 counts as one address", async () => {
   // The server records every connection as 2001:db8::1 (a client on a v6 network).
   const { server, port } = startHub({ limits: { maxConnectionsPerIp: 1 } }, false, "2001:db8::1");

@@ -2,7 +2,7 @@
 import { djb2 } from "./djb2.ts";
 import { detachedFromRequest } from "./root-context-bridge.ts";
 import { isChannel, registerChannelIfLoaded } from "./channel-brand.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "./wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "./wire-codec.ts";
 import type { ResolvedRestart } from "./restart.ts";
 import { processShared } from "./process-shared.ts";
 //
@@ -63,33 +63,8 @@ const shared = /* @__PURE__ */ processShared("serverActionState", () => ({
 }));
 
 /**
- * Define a server action. Give it a **stable, explicit id** (unique per app) so
- * the client stub and the server handler agree across the boundary.
- *
- * On the server the returned function runs `handler` directly and registers it
- * for RPC dispatch. In the browser it returns a stub that POSTs the arguments to
- * the action endpoint and resolves with the JSON result.
- *
- * The handler runs with the request's async context, so it may read
- * `cookies()`/`headers()`, call `revalidatePath`/`revalidateTag`, or `redirect()`.
- * It **must** authorize and validate its own input — registration alone exposes
- * it to any same-origin caller.
- *
- * @param id A stable, app-unique identifier for this action.
- * @param handler The server-side implementation.
- * @returns A {@link ServerActionRef} usable as a `<form action>` or called directly.
- */
-export function serverAction<A extends unknown[], R>(
-  id: string,
-  handler: (...args: A) => R | Promise<R>,
-): ServerActionRef<A, R> {
-  if (typeof document !== "undefined") return clientActionStub<A, R>(id);
-  return registerServerReference(id, handler);
-}
-
-/**
  * Register a handler as a server reference under `id` and return a callable ref
- * tagged with that id. The building block behind {@link serverAction} and the
+ * tagged with that id. The building block behind `serverAction` (action-stub.ts) and the
  * auto-registration of `"use server"` module exports.
  *
  * @param id The stable server-reference id.
@@ -133,15 +108,65 @@ export function setServerReferenceDecorator(
 const actionNames = /* @__PURE__ */ processShared("actionNames", () => new Map<string, string>());
 
 /**
- * The opaque, build-stable id of an exported server function: a hash of
- * `moduleId#exportName`, so the wire id does not spell out the module path and export
- * name (an enumeration aid) while staying identical across processes and replicas.
+ * Mints an action id from its `module#export` key with the build's secret (installed by
+ * src/server/action-ids.ts, which holds `node:crypto` out of this isomorphic module); `null` for
+ * a build that predates salted ids.
+ */
+const idMinter = /* @__PURE__ */ processShared("actionIdMinter", () => ({
+  mint: null as ((key: string) => string | null) | null,
+}));
+
+/**
+ * Install the server's action-id minter (src/server/action-ids.ts).
+ *
+ * @param mint Returns the salted id for a `module#export` key, or `null` for the legacy id.
+ */
+export function setActionIdMinter(mint: (key: string) => string | null): void {
+  idMinter.mint = mint;
+}
+
+/**
+ * The opaque id of an exported server function: an HMAC of `moduleId#exportName` under the
+ * build's secret (src/server/action-ids.ts), so the wire id neither spells out the module path
+ * and export name nor can be computed from the source, and is identical across the processes
+ * and replicas that serve one build. With no minter installed, or for a build that recorded no
+ * secret, the legacy unsalted hash.
  */
 export function actionIdFor(moduleId: string, exportName: string): string {
   const key = `${moduleId}#${exportName}`;
-  const id = `a${djb2(key)}${djb2([...key].reverse().join(""))}`;
+  const id = idMinter.mint?.(key) ?? `a${djb2(key)}${djb2([...key].reverse().join(""))}`;
   actionNames.set(id, key);
   return id;
+}
+
+/**
+ * Exports `tagServerExports` tagged itself, by the `module#export` key it tagged them for: a
+ * later pass (a new build's secret in the same process) re-tags them, where a `serverAction`
+ * ref with its own id is left alone.
+ */
+const autoTagged = /* @__PURE__ */ processShared(
+  "autoTaggedServerExports",
+  () => new WeakMap<object, string>(),
+);
+
+/** The process's policy for exports no module references (see {@linkcode tagServerExports}). */
+const exposure = /* @__PURE__ */ processShared("serverActionExposure", () => ({
+  // Dev: register them anyway (an edit that adds the import must not need a restart) and warn
+  // when one is called. Production refuses them.
+  permissive: false,
+  // Ids registered only because of `permissive`, by their `module#export` key.
+  unreferenced: new Map<string, string>(),
+  warned: new Set<string>(),
+}));
+
+/**
+ * Whether exports of `"use server"` modules that no module imports stay callable (dev, with a
+ * warning when one is called) or are refused like an unknown id (production, the default).
+ *
+ * @param permissive True in `denext dev`.
+ */
+export function setUnreferencedActionsPermissive(permissive: boolean): void {
+  exposure.permissive = permissive;
 }
 
 /** The `module#export` an opaque action id was minted for (dev diagnostics), if known. */
@@ -160,48 +185,99 @@ export function describeActionId(id: string): string | undefined {
  * @param mod The imported `"use server"` module namespace.
  * @param moduleId The module's stable id.
  * @param scope The registry to register into (dev: a platform target's); `""` is the global one.
+ * @param exposed The export names the app's modules reference (the build's import analysis);
+ *   the others are tagged but not registered (see {@linkcode setUnreferencedActionsPermissive}).
+ *   Omitted: every export is registered (a build that recorded no analysis).
  */
 export function tagServerExports(
   mod: Record<string, unknown>,
   moduleId: string,
   scope = "",
+  exposed?: Iterable<string>,
 ): void {
+  const reachable = exposed ? new Set(exposed) : null;
   for (const [name, value] of Object.entries(mod)) {
     // A `createChannel` export (an object, not a function): assign its id and register it.
     // It is NOT an action — a channel is never HTTP-callable, only subscribed to.
     if (isChannel(value)) {
       if (!value.denextChannelId) registerChannelIfLoaded(actionIdFor(moduleId, name), value);
-      continue;
+    } else if (typeof value === "function") {
+      tagExport(value as ActionHandler, moduleId, name, scope, !reachable || reachable.has(name));
     }
-    if (typeof value !== "function") continue;
-    const id = actionIdFor(moduleId, name);
-    // A `serverAction("id", fn)` ref (or one re-exported from another module) keeps its own id.
-    const tagged = (value as { denextActionId?: unknown }).denextActionId;
-    if (tagged !== undefined && tagged !== id) continue;
-    registryFor(scope).set(id, value as ActionHandler);
-    if (tagged !== undefined) continue;
-    Object.defineProperty(value, "denextActionId", {
-      value: id,
-      enumerable: false,
-      configurable: true,
-    });
-    shared.decorateReference?.(value as ActionHandler, id);
-    // A `defineSubscription` export: its definition is registered (and made live-readable).
-    const def = (value as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
-    if (def) registerSubscription(id, def);
   }
 }
 
 /**
- * Build a browser dispatch stub for a server-reference id. Used by the Flight
- * client to rehydrate a `{$:"a"}` reference into a callable that POSTs to the
- * action endpoint. The returned function is tagged with `denextActionId` so it
- * round-trips (e.g. when re-serialized as a `<form action>`).
+ * How `fn` is tagged already: with `id` (`"current"`), not at all or by an earlier pass of
+ * {@linkcode tagServerExports} under another secret (`"none"`), or with an id of its own — a
+ * `serverAction("id", fn)` ref, or one re-exported from another module (`"foreign"`, kept).
+ */
+function existingTag(fn: ActionHandler, id: string, key: string): "current" | "none" | "foreign" {
+  const tagged = (fn as { denextActionId?: unknown }).denextActionId;
+  if (tagged === undefined) return "none";
+  if (tagged === id) return "current";
+  return autoTagged.get(fn) === key ? "none" : "foreign";
+}
+
+/** Tag and register one function export of a `"use server"` module (see the caller). */
+function tagExport(
+  fn: ActionHandler,
+  moduleId: string,
+  name: string,
+  scope: string,
+  referenced: boolean,
+): void {
+  const id = actionIdFor(moduleId, name);
+  const key = `${moduleId}#${name}`;
+  const tagged = existingTag(fn, id, key);
+  if (tagged === "foreign") return;
+  registerExport(scope, id, key, fn, referenced);
+  if (tagged === "current") return;
+  Object.defineProperty(fn, "denextActionId", { value: id, enumerable: false, configurable: true });
+  autoTagged.set(fn, key);
+  shared.decorateReference?.(fn, id);
+  // A `defineSubscription` export: its definition is registered (and made live-readable).
+  const def = (fn as { [SUBSCRIPTION_DEF]?: SubscriptionDef })[SUBSCRIPTION_DEF];
+  if (def && registryFor(scope).has(id)) registerSubscription(id, def);
+}
+
+/**
+ * Register the export `key` under `id` when a module references it; one no module references is
+ * refused (left out, so a request naming it is an unknown action) unless the process is
+ * permissive (dev), which registers it and remembers to warn when it is called.
+ */
+function registerExport(
+  scope: string,
+  id: string,
+  key: string,
+  handler: ActionHandler,
+  referenced: boolean,
+): void {
+  if (referenced || exposure.permissive) {
+    registryFor(scope).set(id, handler);
+    if (referenced) exposure.unreferenced.delete(id);
+    else exposure.unreferenced.set(id, key);
+    return;
+  }
+  registryFor(scope).delete(id);
+}
+
+/**
+ * A browser reference to the Server Action `id`: a callable that hands each call to `call`,
+ * tagged with `denextActionId` so it round-trips (e.g. when re-serialized as a `<form action>`).
+ * The two stubs build on it — the Flight client's (src/client/flight-client.ts) and the generic
+ * `clientActionStub` (action-stub.ts) — each with its own on-demand dispatch, so neither puts the
+ * dispatch or the wire encoder in a page's startup chunks.
  *
  * @param id The server-reference / action id.
+ * @param call Performs the call (loads the dispatch, POSTs, resolves with the result).
+ * @returns The reference.
  */
-export function clientActionStub<A extends unknown[], R>(id: string): ServerActionRef<A, R> {
-  const ref = (...args: A) => dispatchFromClient(id, args) as Promise<R>;
+export function actionReference<A extends unknown[], R>(
+  id: string,
+  call: (id: string, args: unknown[]) => Promise<unknown>,
+): ServerActionRef<A, R> {
+  const ref = (...args: A) => call(id, args) as Promise<R>;
   return Object.assign(ref, { denextActionId: id }) as ServerActionRef<A, R>;
 }
 
@@ -218,7 +294,7 @@ const taggedServers = /* @__PURE__ */ processShared("taggedServers", () => new S
  *   its own module instances; `""` (production) is the global registry.
  */
 export async function tagServerModules(
-  servers: Iterable<[string, { url: string }]>,
+  servers: Iterable<[string, { url: string; exposed?: readonly string[] }]>,
   load?: (url: string) => Promise<unknown>,
   scope = "",
 ): Promise<void> {
@@ -230,7 +306,7 @@ export async function tagServerModules(
     [...servers].map(async ([moduleId, ref]) => {
       if (taggedServers.has(key(moduleId))) return;
       const mod = load ? await load(ref.url) : await detachedFromRequest(() => import(ref.url));
-      tagServerExports(mod as Record<string, unknown>, moduleId, scope);
+      tagServerExports(mod as Record<string, unknown>, moduleId, scope, ref.exposed);
       // `forgetTaggedServers` ran while this module loaded: what loaded may be the pre-edit
       // instance, so leave it untagged and let the next pass load the current one.
       if (generation === shared.serverTagGeneration) taggedServers.add(key(moduleId));
@@ -257,7 +333,18 @@ export function forgetTaggedServers(): void {
  * @param scope Dev: the requesting target's registry, consulted before the global one.
  */
 export function getServerAction(id: string, scope = ""): ActionHandler | undefined {
-  return (scope ? scopedRegistries.get(scope)?.get(id) : undefined) ?? registry.get(id);
+  const handler = (scope ? scopedRegistries.get(scope)?.get(id) : undefined) ?? registry.get(id);
+  const unreferenced = handler && exposure.unreferenced.get(id);
+  if (unreferenced && !exposure.warned.has(id)) {
+    exposure.warned.add(id);
+    console.warn(
+      `denext: the Server Action ${unreferenced} was called, but no module imports it. ` +
+        "A production build exposes only the actions the app's modules import (directly or " +
+        "through a re-export), so this call would get an unknown-action 404 there: import it " +
+        "where it is used.",
+    );
+  }
+  return handler;
 }
 
 // Action ids explicitly opted in to invocation over the Live WebSocket channel
@@ -355,7 +442,10 @@ export function isServerAction(
   );
 }
 
-/** Reserved FormData field carrying non-FormData args alongside a FormData arg. */
+/**
+ * Reserved FormData field carrying non-FormData args alongside a FormData arg (the client's
+ * encoder, src/client/action-dispatch.ts, writes the same name).
+ */
 const META_FIELD = "__denext_meta";
 
 // ---- Client dispatch -------------------------------------------------------
@@ -365,97 +455,28 @@ const META_FIELD = "__denext_meta";
 // reflects the server's new state (Next.js read-your-writes / refresh semantics).
 // The handler is registered by the client runtime at boot (`startClient` →
 // `setActionRefreshHandler`) — a seam so this isomorphic module never links client
-// navigation into the server graph. Left null on the server / before boot.
+// navigation into the server graph. Left null on the server / before boot. Handed to the
+// dispatch with each call.
 let onActionRefresh: (() => void) | null = null;
 
 /**
  * Register the post-action refresh handler. Called once by the client runtime at
  * boot with a closure that re-renders the current route. When a server action
- * reports `refresh`/`updatedTags`, {@link dispatchFromClient} invokes it so the
+ * reports `refresh`/`updatedTags`, the client dispatch invokes it so the
  * client reflects the mutation without a full page reload.
  */
 export function setActionRefreshHandler(refresh: () => void): void {
   onActionRefresh = refresh;
 }
 
-async function dispatchFromClient(id: string, args: unknown[]): Promise<unknown> {
-  const { body, headers } = encodeActionArgs(args);
-  headers["x-denext-action"] = "1";
-  const res = await fetch(actionEndpoint(id), {
-    method: "POST",
-    headers,
-    body,
-    // Never attach credentials cross-origin; same-origin cookies still flow.
-    credentials: "same-origin",
-  });
-  const data = (await res.json().catch(() => ({}))) as {
-    result?: unknown;
-    enc?: number;
-    redirect?: string;
-    replace?: boolean;
-    error?: string;
-    refresh?: true;
-    updatedTags?: string[];
-  };
-  if (data.redirect) {
-    // A `replace`-type redirect swaps the current history entry (no back-stack entry);
-    // otherwise push a new one. Both are full navigations from a Server Action.
-    if (typeof location !== "undefined") {
-      if (data.replace) location.replace(data.redirect);
-      else location.href = data.redirect;
-    }
-    return undefined;
-  }
-  if (!res.ok || data.error) {
-    throw new Error(data.error ?? `server action failed (${res.status})`);
-  }
-  // Read-your-writes: if the action revalidated tags or asked for a refresh,
-  // re-render the current route so the client reflects the new server state.
-  if ((data.refresh || (data.updatedTags && data.updatedTags.length > 0)) && onActionRefresh) {
-    onActionRefresh();
-  }
-  // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
-  return data.enc === WIRE_ENC ? decodeWire(data.result) : data.result;
-}
-
 /**
- * Encode action arguments for transport. When one argument is a `FormData`, the
- * request is multipart (the form fields ride along) and the other arguments are
- * JSON-encoded in a reserved meta field; otherwise the arguments are sent as
- * JSON. Exported for the server decoder to mirror.
+ * The post-action refresh handler {@linkcode setActionRefreshHandler} registered, handed to the
+ * client dispatch with each call.
+ *
+ * @returns The handler, or `null` (the server, or before the client booted).
  */
-export function encodeActionArgs(
-  args: unknown[],
-): { body: BodyInit; headers: Record<string, string> } {
-  const hasFormData = typeof FormData !== "undefined";
-  let fdIndex = -1;
-  if (hasFormData) {
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] instanceof FormData) {
-        fdIndex = i;
-        break;
-      }
-    }
-  }
-  if (fdIndex === -1) {
-    return {
-      body: JSON.stringify(wireEnvelope("args", args)),
-      headers: { "content-type": "application/json" },
-    };
-  }
-  const fd = args[fdIndex] as FormData;
-  const others = args.map((a, i) => (i === fdIndex ? null : a));
-  fd.append(META_FIELD, JSON.stringify({ fdIndex, ...wireEnvelope("others", others) }));
-  return { body: fd, headers: {} };
-}
-
-/**
- * `{ [field]: value }` through the wire codec, plus `enc: 1` only when a tag was needed — so
- * a plain-JSON argument list is byte-identical to before and the decoder skips the walk.
- */
-function wireEnvelope(field: string, value: unknown): Record<string, unknown> {
-  const p = prepareWire(value);
-  return p.tagged ? { [field]: p.value, enc: WIRE_ENC } : { [field]: p.value };
+export function actionRefreshHandler(): (() => void) | null {
+  return onActionRefresh;
 }
 
 /** Un-envelope a codec-flagged field (`enc: 1`); a plain field is returned as-is. */
@@ -464,7 +485,8 @@ function decodeEnvelope(env: { enc?: unknown }, value: unknown): unknown {
 }
 
 /**
- * Decode action arguments from a request body (mirror of {@link encodeActionArgs}).
+ * Decode action arguments from a request body (mirror of the client's `encodeActionArgs`,
+ * src/client/action-dispatch.ts).
  * A native (no-JS) form post with no meta field yields a single `FormData` arg.
  *
  * @param request The incoming action request.

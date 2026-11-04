@@ -665,13 +665,17 @@ export function sqliteMetaStore(path: string): MetaStore {
         ).changes > 0;
       });
     },
-    saveResumable(row) {
+    saveResumable(row, lease, keepUntil) {
       return later(() =>
-        void run(
-          "update resumable_uploads set state = ?, lease = null, lease_until = null where id = ?",
+        run(
+          `update resumable_uploads set state = ?, lease = ?, lease_until = ?
+           where id = ? and lease = ?`,
           JSON.stringify(stateOf(row)),
+          keepUntil === undefined ? null : lease,
+          keepUntil ?? null,
           row.id,
-        )
+          lease,
+        ).changes > 0
       );
     },
     deleteResumable(id) {

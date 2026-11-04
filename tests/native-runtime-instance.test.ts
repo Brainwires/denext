@@ -10,7 +10,6 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { copy } from "@std/fs";
-import { staticExport } from "../src/build/export.ts";
 import { resolveFirstParty, rewriteSpecifier } from "../src/build/dev-unbundled/resolve.ts";
 import {
   createUnbundledState,
@@ -18,6 +17,7 @@ import {
   depSlug,
   type TransformEntry,
 } from "../src/build/dev-unbundled/state.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const FRAMEWORK = fromFileUrl(new URL("../", import.meta.url));
 
@@ -94,7 +94,7 @@ for (const which of ["this checkout", "another copy of denext"] as const) {
       const appDir = join(dir, "app-project");
       await Deno.mkdir(appDir);
       await project(appDir, root);
-      const { outDir } = await staticExport(appDir);
+      const { outDir } = await exportInChild(appDir);
       assertStringIncludes(await Deno.readTextFile(join(outDir, "index.html")), "COUNTER_ISLAND");
       const js = await clientJs(outDir);
       assertStringIncludes(js, "COUNTER_ISLAND");

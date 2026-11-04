@@ -12,8 +12,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const SOURCE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
 const APP = fromFileUrl(new URL("../../examples/.hello-gz-test", import.meta.url));
@@ -87,15 +87,13 @@ async function stepHardeningHeaders(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "prod server serves a precompressed .gz client asset on gzip negotiation",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await copyAppSource();
 
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    const { outDir } = await build(APP);
+    const { outDir } = await buildInChild(APP);
     const clientDir = join(outDir, "client");
     const chunk = await findSharedChunk(clientDir);
 

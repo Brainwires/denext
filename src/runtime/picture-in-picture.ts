@@ -12,7 +12,8 @@
  * @module
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "./hooks.ts";
+import { useCallback, useEffect, useRef, useState } from "./hooks.ts";
+import { useSyncExternalStore } from "./hooks/use-sync-external-store.ts";
 
 /** Options for {@linkcode usePictureInPicture}. */
 export interface UsePictureInPictureOptions {

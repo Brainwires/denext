@@ -1,5 +1,10 @@
 // Production build, stage 0: the non-App-Router builds and the staging setup.
 
+import {
+  actionIdSecretFromEnv,
+  generateActionIdSecret,
+  setBuildActionIdSecret,
+} from "../../server/action-ids.ts";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { EMITTED_DIR, runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
@@ -17,16 +22,22 @@ import {
   appRendersDocumentTags,
   appUsesActivity,
   appUsesClassComponents,
+  appUsesFormActions,
+  appUsesHookBoundaries,
+  appUsesHrefParams,
+  appUsesImageBlur,
   appUsesIsoIslands,
   appUsesViewTransition,
   type ClassRuntimeMode,
 } from "../bundle.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { dirExists, setupPlugins } from "../pipeline-shared.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import { dirExists } from "../paths.ts";
 import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
+import { buildRouterlessServerCopies } from "../server-copies-build.ts";
 
 /**
  * Plugin build steps (e.g. a Pages Router bundling its own client entries). The files they
@@ -57,7 +68,9 @@ function pluginPrepareSteps(paths: ProjectPaths): Promise<void> {
  * The builds that bypass the App Router pipeline, or null when the app has an `app/`
  * tree: SPA mode ("React but not Next") bundles the single client entry and emits an HTML
  * shell; an app with no `app/` dir (Pages Router) has nothing to scan/bundle — the
- * `@denext/pages-router` plugin owns that build, so only plugin setup + build steps run.
+ * `@denext/pages-router` plugin owns that build, so only plugin setup + build steps run, and the
+ * manifest records the server render's copies (platform files, `"use cache"`, inline
+ * `"use server"`), which `denext start` and a compiled app load the pages through.
  */
 export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildResult | null> {
   if (paths.config?.mode === "spa") {
@@ -69,6 +82,11 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
   await setupPlugins(paths, "build");
   await pluginPrepareSteps(paths);
   await pluginBuildSteps(paths);
+  const serverCopies = await buildRouterlessServerCopies(paths);
+  await Deno.writeTextFile(
+    join(paths.outDir, "manifest.json"),
+    `${JSON.stringify({ serverCopies }, null, 2)}\n`,
+  );
   return { routes: [], outDir: paths.outDir };
 }
 
@@ -80,6 +98,9 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
  * `client/`, and stale content-hashed chunks from prior builds are dropped).
  */
 export async function prepareBuild(projectDir: string, paths: ProjectPaths): Promise<BuildContext> {
+  // Before anything mints an action id (the stubs, the inline actions): this build's secret.
+  const actionIdSecret = actionIdSecretFromEnv() ? null : generateActionIdSecret();
+  setBuildActionIdSecret(actionIdSecret);
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
   }
@@ -107,8 +128,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // `<ViewTransition>` defined there counts as used. npm packages are not scanned (their
   // sources are opaque to a token scan) — the class runtime covers them by loading on demand.
   const outside = await localModulesOutside(projectDir, manifest.pages);
-  const { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons } =
-    await runtimeFeatureScans(projectDir, paths, outside);
+  const scans = await runtimeFeatureScans(projectDir, paths, outside);
   return {
     projectDir,
     paths,
@@ -116,6 +136,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     clientDir,
     finalClientDir,
     compat,
+    actionIdSecret,
     flightRoutes,
     boundaryRoutes,
     hasFlight: boundaryRoutes.length > 0,
@@ -131,11 +152,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     serverModules: new Map(),
     usesLive: false,
     usesLiveView: false,
-    classRuntime,
-    usesActivity,
-    usesViewTransition,
-    usesIsoIslands,
-    usesSingletons,
+    ...scans,
     compatServerModules: {},
   };
 }
@@ -177,7 +194,7 @@ async function runtimeFeatureScans(
 ): Promise<
   Pick<
     BuildContext,
-    "classRuntime" | "usesActivity" | "usesViewTransition" | "usesIsoIslands" | "usesSingletons"
+    RuntimeScanKey
   >
 > {
   // The class-component runtime is a code-split chunk the generated entry loads on demand
@@ -203,5 +220,35 @@ async function runtimeFeatureScans(
   // Gate the host-singleton runtime: install it only when the app renders a document tag (a
   // client root layout's `<html>`/`<body>` adopt the page's own elements).
   const usesSingletons = await appRendersDocumentTags(projectDir, outside);
-  return { classRuntime, usesActivity, usesViewTransition, usesIsoIslands, usesSingletons };
+  // Build-scan defines (`deno bundle --define`): the boot's blur-placeholder clearing and the
+  // reconciler's function-valued form-action seam fold out of an app that never writes them, and
+  // so does the route-pattern href filling.
+  const usesImageBlur = await appUsesImageBlur(projectDir, outside);
+  const usesFormActions = await appUsesFormActions(projectDir, outside);
+  const usesHrefParams = await appUsesHrefParams(projectDir, outside);
+  // …and the reconciler's hook-boundary seam (Preact's `useErrorBoundary`).
+  const usesHookBoundaries = await appUsesHookBoundaries(projectDir, outside);
+  return {
+    classRuntime,
+    usesActivity,
+    usesViewTransition,
+    usesIsoIslands,
+    usesSingletons,
+    usesImageBlur,
+    usesFormActions,
+    usesHrefParams,
+    usesHookBoundaries,
+  };
 }
+
+/** The {@linkcode BuildContext} fields {@linkcode runtimeFeatureScans} fills. */
+type RuntimeScanKey =
+  | "classRuntime"
+  | "usesActivity"
+  | "usesViewTransition"
+  | "usesIsoIslands"
+  | "usesSingletons"
+  | "usesImageBlur"
+  | "usesFormActions"
+  | "usesHrefParams"
+  | "usesHookBoundaries";

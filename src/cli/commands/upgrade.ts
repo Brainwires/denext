@@ -14,14 +14,22 @@ import {
   type UpgradeStep,
 } from "../../build/upgrade.ts";
 import { projectDir } from "../shared.ts";
+import { memberDirs } from "../../build/workspace-imports.ts";
+import { assertInsideProject } from "../../build/project-confine.ts";
 import {
   DENEXT_EXCLUDE,
+  denextExemptions,
   type DepAgeRule,
   holdMessage,
   readProjectRule,
   stripDenextExclude,
 } from "../../build/dep-age.ts";
 import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
+import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
+import { setJsonValue } from "../../build/json-edit.ts";
+import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
+import type { StaleNativeTemplate } from "../../build/native-template-status.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -41,40 +49,47 @@ async function configPath(dir: string): Promise<string | null> {
 async function memberConfigs(
   dir: string,
   text: string,
-): Promise<{ paths: string[]; unresolved: string[] }> {
+): Promise<{ paths: string[]; unresolved: string[]; outside: string[] }> {
+  const paths: string[] = [];
+  const unresolved: string[] = [];
+  const outside: string[] = [];
+  const entries = workspaceEntries(text);
+  for (const entry of entries) {
+    if (entry.startsWith("!")) continue; // an exclusion names no member of its own
+    const dirs = await memberDirs(dir, entry, entries);
+    const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
+    // A member entry (`"../other"`) or a member linked out of the project is never rewritten.
+    const inside = (await Promise.all(found.map((p) => insideProject(dir, p))))
+      .every(Boolean);
+    if (!inside) outside.push(entry);
+    else if (found.length) paths.push(...found);
+    else unresolved.push(entry);
+  }
+  return { paths: [...new Set(paths)], unresolved, outside };
+}
+
+/** The string entries of a config's `workspace` (a list, or `{ members }`); none when unparsable. */
+function workspaceEntries(text: string): string[] {
   let members: unknown;
   try {
     members = (parseJsonc(text) as { workspace?: unknown })?.workspace;
   } catch {
-    return { paths: [], unresolved: [] };
+    return [];
   }
   const list = Array.isArray(members)
     ? members
     : (members as { members?: unknown } | undefined)?.members;
-  if (!Array.isArray(list)) return { paths: [], unresolved: [] };
-  const paths: string[] = [];
-  const unresolved: string[] = [];
-  for (const entry of list) {
-    if (typeof entry !== "string") continue;
-    const dirs = await memberDirs(dir, entry);
-    const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
-    if (found.length) paths.push(...found);
-    else unresolved.push(entry);
-  }
-  return { paths: [...new Set(paths)], unresolved };
+  return Array.isArray(list) ? list.filter((e): e is string => typeof e === "string") : [];
 }
 
-/** The directories one `workspace` entry names: a path, or a `dir/*` glob over subdirectories. */
-async function memberDirs(root: string, entry: string): Promise<string[]> {
-  if (!entry.includes("*")) return [join(root, entry)];
-  const m = /^(.*?)\/?\*\/?$/.exec(entry);
-  if (!m || m[1].includes("*")) return [];
-  const parent = join(root, m[1]);
-  const out: string[] = [];
+/** Whether a write to `path` stays inside the project at `dir` (no `..`, no symlink out). */
+async function insideProject(dir: string, path: string): Promise<boolean> {
   try {
-    for await (const e of Deno.readDir(parent)) if (e.isDirectory) out.push(join(parent, e.name));
-  } catch { /* no such directory: unresolved */ }
-  return out.sort();
+    await assertInsideProject(dir, path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The steps as aligned `name  from → to` lines (unchanged ones say so). */
@@ -98,10 +113,75 @@ interface UpgradeOutcome {
   readonly lock: boolean | undefined;
   /** The configs whose `"jsr:@denext/*"` exclude entry was (or would be) removed. */
   readonly stripped: readonly string[];
+  /**
+   * The other `@denext` entries in a config's `minimumDependencyAge.exclude`, by config: denext
+   * never writes them, so they are flagged, not removed.
+   */
+  readonly exemptions: readonly { readonly path: string; readonly entries: readonly string[] }[];
   /** The clock the plan was made at (for the hold lines). */
   readonly now: Date;
   /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
   readonly editor: { readonly path: string; readonly written: boolean } | null;
+  /** Whether the `.deno/` exclude was (or would be) added to the root config, if it was missing. */
+  readonly denoExclude: { readonly written: boolean } | null;
+  /** The lifecycle-script jail exceptions the dependencies need (`null`: none needed). */
+  readonly jail: JailReport | null;
+  /** The native template families in `ios/` / `android/` older than this denext writes. */
+  readonly nativeTemplates: readonly StaleNativeTemplate[];
+}
+
+/** Whether an `exclude` entry already keeps the runtime's `.deno/` directory out. */
+const DENO_DIR_ENTRY = /^(?:\.\/)?\.deno(?:\/(?:\*\*)?)?$/;
+
+/**
+ * The root config's text with the scaffold's `.deno/` entry added to its top-level `exclude`
+ * (runtime 3.0.0-rc.5's type-check writes `.deno/npm-compat` there, whose `_test.ts` files
+ * `deno test` would otherwise walk), or `null`: already there, or a config whose `exclude` isn't
+ * a list (left for the user). Comments and key order are kept.
+ *
+ * @param text The `deno.json` / `deno.jsonc` text.
+ * @returns The new text, or `null`.
+ */
+export async function denoDirExcludeUpdate(text: string): Promise<string | null> {
+  let doc: unknown;
+  try {
+    doc = parseJsonc(text);
+  } catch {
+    return null;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return null;
+  const exclude = (doc as { exclude?: unknown }).exclude;
+  if (exclude !== undefined && !Array.isArray(exclude)) return null;
+  const list = (exclude ?? []) as unknown[];
+  if (list.some((e) => typeof e === "string" && DENO_DIR_ENTRY.test(e.trim()))) return null;
+  const edit = await setJsonValue(text, ["exclude"], [...list, ...SCAFFOLD_EXCLUDE]);
+  return edit.ok ? edit.source : null;
+}
+
+/** Add the `.deno/` exclude to the root config when it is missing (written when `write`). */
+async function applyDenoExclude(
+  path: string,
+  write: boolean,
+): Promise<UpgradeOutcome["denoExclude"]> {
+  const next = await denoDirExcludeUpdate(await Deno.readTextFile(path));
+  if (next === null) return null;
+  if (write) await Deno.writeTextFile(path, next);
+  return { written: write };
+}
+
+/**
+ * The jail exceptions the project's dependencies need (sharp, Prisma's engines, puppeteer, …):
+ * the runtime jails dependencies' lifecycle scripts by default from 3.0.0-rc.5, so a project
+ * upgraded from a denext that pinned an earlier runtime gets them written now, as `create`,
+ * `migrate` and `add` write them (only when `write`; else reported).
+ */
+async function applyJail(dir: string, write: boolean): Promise<JailReport | null> {
+  try {
+    const report = await applyJailExceptions(dir, { edit: write });
+    return report.action === "none" ? null : report;
+  } catch {
+    return null; // an unreadable project: the doctor check reports it
+  }
 }
 
 /**
@@ -122,7 +202,7 @@ export async function editorSettingUpdate(
   if (!tsgoLspByDefault(env)) return null;
   const path = join(dir, ".vscode", "settings.json");
   const info = await Deno.lstat(path).catch(() => null);
-  if (!info?.isFile) return null;
+  if (!info?.isFile || !await insideProject(dir, path)) return null;
   const before = await Deno.readTextFile(path);
   let settings: unknown;
   try {
@@ -135,30 +215,53 @@ export async function editorSettingUpdate(
   return text === null ? null : { path, text };
 }
 
+/** The `--json` document of an outcome. */
+function outcomeJson(
+  o: UpgradeOutcome,
+  files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
+): Record<string, unknown> {
+  const optional: Record<string, unknown> = {
+    removedExclude: nonEmpty(o.stripped),
+    denextExemptions: nonEmpty(o.exemptions),
+    lockRefreshed: o.lock,
+    editorSettings: o.editor,
+    denoExclude: o.denoExclude,
+    jailExceptions: o.jail && { action: o.jail.action, lines: o.jail.lines },
+    nativeTemplates: nonEmpty(o.nativeTemplates),
+    unresolvedMembers: nonEmpty(files.unresolved),
+    outsideMembers: nonEmpty(files.outside),
+  };
+  return {
+    config: o.path,
+    ...o.plan,
+    written: o.written,
+    files: files.changedFiles,
+    ...Object.fromEntries(
+      Object.entries(optional).filter(([, v]) => v !== undefined && v !== null),
+    ),
+  };
+}
+
+/** A list, or undefined when it is empty (left out of the `--json` document). */
+function nonEmpty<T>(list: readonly T[]): readonly T[] | undefined {
+  return list.length ? list : undefined;
+}
+
 /** Print the outcome: one JSON document, or the human report. */
 function printOutcome(
   json: boolean,
   o: UpgradeOutcome,
-  files: { changedFiles: string[]; unresolved: string[] },
+  files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
 ): void {
-  const { changedFiles, unresolved } = files;
-  if (json) {
-    console.log(JSON.stringify({
-      config: o.path,
-      ...o.plan,
-      written: o.written,
-      files: changedFiles,
-      ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
-      ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
-      ...(o.editor ? { editorSettings: o.editor } : {}),
-      ...(unresolved.length ? { unresolvedMembers: unresolved } : {}),
-    }));
-    return;
-  }
+  const { changedFiles, unresolved, outside } = files;
+  if (json) return void console.log(JSON.stringify(outcomeJson(o, files)));
   report(o.plan, o.path, o.check, o.written, o.now);
   reportExclude(o.dir, o.stripped, o.written);
-  reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved);
+  reportExemptions(o.dir, o.exemptions);
+  reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
+  reportProjectRepairs(o);
+  reportNativeTemplates(o.nativeTemplates);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
     console.error(
@@ -219,11 +322,22 @@ export async function runUpgrade(
     return 1;
   }
   // A workspace's members pin denext too: plan over every config at once so they all agree.
-  const { files: read, unresolved } = await workspaceConfigs(dir, path);
+  if (!await insideProject(dir, path)) {
+    console.error(
+      `denext upgrade: ${path} is a symlink that leads out of the project; not changed`,
+    );
+    return 1;
+  }
+  const { files: read, unresolved, outside } = await workspaceConfigs(dir, path);
   // The `jsr:@denext/*` exemption from Deno's dependency-age hold goes first: the plan then
   // picks only versions the hold lets in.
   const files = read.map((f) => ({ ...f, ...stripDenextExclude(f.text) }));
   const stripped = files.filter((f) => f.removed).map((f) => f.path);
+  const exemptions = files.flatMap((f) => {
+    const entries = denextExemptions(configObject(f.text)?.minimumDependencyAge)
+      .filter((e) => e !== DENEXT_EXCLUDE);
+    return entries.length ? [{ path: f.path, entries }] : [];
+  });
   const now = options.now ?? new Date();
   const rule = options.rule ?? await readProjectRule(dir, now, files[0].text);
   const plan = await planUpgrade(
@@ -235,14 +349,44 @@ export async function runUpgrade(
   const changed = plan.ok && (plan.changed || stripped.length > 0);
   const written = changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
+  const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
-  const editor = plan.ok
-    ? await applyEditorSetting(dir, !check && ctx.flags["dry-run"] !== true)
-    : null;
-  const outcome = { dir, path, plan, check, written, lock, stripped, now, editor };
-  printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved });
+  const nativeTemplates = await nativeTemplatesBehind(dir);
+  const outcome = {
+    dir,
+    path,
+    plan,
+    check,
+    written,
+    lock,
+    stripped,
+    exemptions,
+    now,
+    ...repairs,
+    nativeTemplates,
+  };
+  printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
+}
+
+/**
+ * What an upgrade sets right beside the pins (only once the plan is good): the `.deno/` exclude,
+ * the jail exceptions and the editor's language server, written when `write` (not with
+ * `--dry-run` / `--check`, which only report them).
+ */
+async function projectRepairs(
+  dir: string,
+  path: string,
+  ok: boolean,
+  write: boolean,
+): Promise<Pick<UpgradeOutcome, "denoExclude" | "jail" | "editor">> {
+  if (!ok) return { denoExclude: null, jail: null, editor: null };
+  return {
+    denoExclude: await applyDenoExclude(path, write),
+    jail: await applyJail(dir, write),
+    editor: await applyEditorSetting(dir, write),
+  };
 }
 
 /**
@@ -272,14 +416,14 @@ function upgradeFlags(ctx: CommandContext) {
 async function workspaceConfigs(
   dir: string,
   path: string,
-): Promise<{ files: { path: string; text: string }[]; unresolved: string[] }> {
+): Promise<{ files: { path: string; text: string }[]; unresolved: string[]; outside: string[] }> {
   const text = await Deno.readTextFile(path);
   const members = await memberConfigs(dir, text);
   const files = [{ path, text }];
   for (const member of members.paths) {
     if (member !== path) files.push({ path: member, text: await Deno.readTextFile(member) });
   }
-  return { files, unresolved: members.unresolved };
+  return { files, unresolved: members.unresolved, outside: members.outside };
 }
 
 /**
@@ -312,6 +456,51 @@ function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
   );
 }
 
+/** The `.deno/` exclude and the jail exceptions added (or that would be). */
+function reportProjectRepairs(o: UpgradeOutcome): void {
+  if (o.denoExclude) {
+    console.log(
+      `\n${o.denoExclude.written ? "Added" : "Would add"} ".deno/" to ${
+        relative(o.dir, o.path) || o.path
+      }'s "exclude": the runtime's type-check writes .deno/npm-compat, which test, lint and ` +
+        "fmt must not walk.",
+    );
+  }
+  if (o.jail) console.log(`\n${o.jail.lines.join("\n")}`);
+}
+
+/**
+ * The project's native template families older than this denext writes (`denext mobile add`'s
+ * files in `ios/` / `android/`): never rewritten by `upgrade`, which only names the command that
+ * refreshes each (they change the binary, so they ship in a new build, not with the pin).
+ */
+async function nativeTemplatesBehind(dir: string): Promise<StaleNativeTemplate[]> {
+  try {
+    const { staleNativeTemplates } = await import("../../build/native-template-status.ts");
+    return await staleNativeTemplates(dir);
+  } catch {
+    return []; // an unreadable project: `denext mobile doctor` reports it
+  }
+}
+
+/** The out-of-date native templates and the command that refreshes each. */
+function reportNativeTemplates(stale: readonly StaleNativeTemplate[]): void {
+  if (!stale.length) return;
+  console.log(
+    "\nNative templates older than this denext writes (`upgrade` does not rewrite native files):",
+  );
+  for (const t of stale) {
+    console.log(
+      `  ${t.family}  generation ${t.generation} → ${t.current}: run \`${t.command}\` ` +
+        `(${t.files.length} file${t.files.length === 1 ? "" : "s"})`,
+    );
+  }
+  console.log(
+    "An unedited file is upgraded in place; an edited one needs `--force` or the changes merged " +
+      "by hand. Then ship a new binary.",
+  );
+}
+
 /** Why the `jsr:@denext/*` exclude entry was removed (or would be). */
 function reportExclude(dir: string, stripped: readonly string[], written: boolean): void {
   if (!stripped.length) return;
@@ -327,13 +516,47 @@ function reportExclude(dir: string, stripped: readonly string[], written: boolea
   );
 }
 
+/** A config's parsed object, or null when it doesn't parse. */
+function configObject(text: string): Record<string, unknown> | null {
+  try {
+    const doc = parseJsonc(text);
+    return doc !== null && typeof doc === "object" ? doc as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The other `@denext` exemptions from the hold: flagged, never removed (denext didn't write them). */
+function reportExemptions(dir: string, exemptions: UpgradeOutcome["exemptions"]): void {
+  for (const { path, entries } of exemptions) {
+    console.error(
+      `\ndenext upgrade: ${relative(dir, path) || path} exempts ${
+        entries.map((e) => `"${e}"`).join(", ")
+      } from minimumDependencyAge, so a just-published @denext release resolves before Deno's ` +
+        "dependency-age hold has passed. denext never writes such an entry; remove it unless you " +
+        "publish denext yourself: https://denext.dev/docs/toolchain#supply-chain-hold",
+    );
+  }
+}
+
 /** The workspace part of the human output: the member configs touched, and those not read. */
-function reportWorkspace(dir: string, changed: readonly string[], unresolved: readonly string[]) {
+function reportWorkspace(
+  dir: string,
+  changed: readonly string[],
+  unresolved: readonly string[],
+  outside: readonly string[],
+) {
   if (changed.length > 1) {
     console.log(`Workspace configs: ${changed.map((f) => relative(dir, f)).join(", ")}`);
   }
   for (const m of unresolved) {
     console.error(`denext upgrade: workspace member ${m} has no deno.json; its pins were not read`);
+  }
+  for (const m of outside) {
+    console.error(
+      `denext upgrade: workspace member ${m} is outside the project (or linked out of it); ` +
+        "its pins were not read or changed",
+    );
   }
 }
 
@@ -361,48 +584,7 @@ function report(
 
 /** `denext upgrade [dir]`. */
 export const upgradeCommand: CommandSpec = {
-  name: "upgrade",
-  summary: "Bump denext, its CLI tasks and the first-party @denext/* packages together",
-  usage: "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\n" +
-    "run the CLI) and moves them to the newest versions that work together: the newest denext\n" +
-    "every pinned first-party package has a compatible version for (each package's own\n" +
-    "@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\n" +
-    "Nothing moves backwards; each pin keeps its ^ / ~ / exact operator. A package that imports\n" +
-    "no denext stays within its own caret range unless --allow-major. Workspace members'\n" +
-    "deno.json files move with the root. A JSR request that fails is an error, never read as\n" +
-    "incompatible. --to picks the denext version (an older one needs --allow-downgrade);\n" +
-    "--dry-run prints the plan; --check exits 1 when anything is out of date.\n" +
-    "Only versions Deno's minimum dependency age already lets in are pinned (a newer one is\n" +
-    "named, with when it becomes eligible; a pin still held moves down to one that resolves),\n" +
-    'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed.\n' +
-    'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
-    '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
-    "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [
-    { name: "dry-run", type: "boolean", help: "Print the plan without writing deno.json" },
-    {
-      name: "check",
-      type: "boolean",
-      help: "Write nothing; exit 1 when an upgrade is available (for CI)",
-    },
-    {
-      name: "to",
-      type: "string",
-      valueName: "<version>",
-      help: "The denext version to move to (default: the newest every package supports)",
-    },
-    {
-      name: "allow-downgrade",
-      type: "boolean",
-      help: "Let --to name a denext version older than the current pin",
-    },
-    {
-      name: "allow-major",
-      type: "boolean",
-      help: "Let a package that imports no denext move to a new major (breaking) version",
-    },
-  ],
+  ...commandMeta("upgrade"),
   run: async (ctx) => {
     const code = await runUpgrade(ctx);
     if (code !== 0) Deno.exit(code);

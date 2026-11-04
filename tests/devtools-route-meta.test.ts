@@ -323,8 +323,6 @@ Deno.test("unbundled (per-module) entry is byte-identical to its pre-D1 output, 
 
 Deno.test({
   name: "dev server bundled path: /_denext/route.js carries the page's `#default` metadata",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-route-meta-dev-" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;

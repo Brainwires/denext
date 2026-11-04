@@ -27,6 +27,8 @@ import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plug
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
+import { runtime } from "../packages/backend/src/runtime.ts";
+import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
 const allow = () => true;
 const docs = { mime: ["text/plain", "image/png"], maxBytes: 64, authorize: allow };
@@ -120,6 +122,77 @@ Deno.test("fs storage: sign → PUT → complete → signed GET (full, Range, HE
   }
 });
 
+Deno.test("fs storage: several ranges, and If-Range, as the static handler reads them", async () => {
+  const app = await backendApp({ buckets: { docs } });
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    await bucket.upload("abc.txt", "abcdefghijklmnopqrstuvwxyz", { contentType: "text/plain" });
+    const url = await bucket.createSignedUrl("abc.txt", { expiresIn: 60 });
+    const full = await app.call(url);
+    const etag = full.headers.get("etag")!;
+    const modified = full.headers.get("last-modified")!;
+    await full.body?.cancel();
+
+    // Two ranges (given out of order, one coalescing with a third) → multipart/byteranges.
+    const multi = await app.call(url, { headers: { range: "bytes=20-22, 0-1, 2-3" } });
+    assertEquals(multi.status, 206);
+    const type = multi.headers.get("content-type")!;
+    const boundary = /^multipart\/byteranges; boundary=(\S+)$/.exec(type)![1];
+    const body = await multi.text();
+    assertEquals(
+      Number(multi.headers.get("content-length")),
+      new TextEncoder().encode(body).length,
+    );
+    assertEquals(
+      body,
+      `--${boundary}\r\ncontent-type: text/plain\r\ncontent-range: bytes 0-3/26\r\n\r\nabcd` +
+        `\r\n--${boundary}\r\ncontent-type: text/plain\r\ncontent-range: bytes 20-22/26\r\n\r\nuvw` +
+        `\r\n--${boundary}--\r\n`,
+    );
+    const head = await app.call(url, {
+      method: "HEAD",
+      headers: { range: "bytes=20-22, 0-1, 2-3" },
+    });
+    assertEquals([head.status, head.headers.get("content-length"), await head.text()], [
+      206,
+      multi.headers.get("content-length"),
+      "",
+    ]);
+    // Eight separate ranges are served in parts; a ninth asks for the whole object (a 200), so
+    // one request can't fan out into many driver reads.
+    const spaced = (n: number) =>
+      `bytes=${Array.from({ length: n }, (_, i) => `${i * 3}-${i * 3}`).join(", ")}`;
+    const eight = await app.call(url, { headers: { range: spaced(8) } });
+    assertEquals(eight.status, 206);
+    assertEquals((await eight.text()).match(/content-range: /g)?.length, 8);
+    const nine = await app.call(url, { headers: { range: spaced(9) } });
+    assertEquals([nine.status, await nine.text()], [200, "abcdefghijklmnopqrstuvwxyz"]);
+
+    // A suffix range, and one unsatisfiable spec among satisfiable ones is dropped.
+    const tail = await app.call(url, { headers: { range: "bytes=-3, 900-" } });
+    assertEquals([tail.status, tail.headers.get("content-range"), await tail.text()], [
+      206,
+      "bytes 23-25/26",
+      "xyz",
+    ]);
+
+    const ranged = async (ifRange: string) => {
+      const res = await app.call(url, { headers: { range: "bytes=24-", "if-range": ifRange } });
+      return [res.status, await res.text()];
+    };
+    assertEquals(await ranged(etag), [206, "yz"]);
+    assertEquals(await ranged(modified), [206, "yz"]);
+    assertEquals(await ranged(`W/${etag}`), [200, "abcdefghijklmnopqrstuvwxyz"]);
+    assertEquals(await ranged('"another-version"'), [200, "abcdefghijklmnopqrstuvwxyz"]);
+    assertEquals(await ranged("Thu, 01 Jan 1998 00:00:00 GMT"), [
+      200,
+      "abcdefghijklmnopqrstuvwxyz",
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("fs storage: a signed PUT waits in the staging place until its completion", async () => {
   const app = await backendApp({ buckets: { docs } });
   try {
@@ -156,6 +229,60 @@ Deno.test("fs storage: a signed PUT waits in the staging place until its complet
     });
     assertEquals(swapped.status, 403);
     await swapped.body?.cancel();
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: a never-completed upload is never an object, and a completion sweeps it", async () => {
+  const app = await backendApp({ buckets: { docs } });
+  const staged = async () =>
+    (await storedFiles(app.root)).filter((f) => f.startsWith(".denext-staging/"));
+  try {
+    const bucket = storage.bucket("docs", { service: true });
+    // Over the bucket's 64-byte cap with no size declared: the signed PUT itself refuses it
+    // (the fs driver's PUT passes through the server), storing nothing.
+    const big = await bucket.createSignedUploadUrl("big.txt", { contentType: "text/plain" });
+    const refused = await app.call(big.url, {
+      method: "PUT",
+      headers: big.headers,
+      body: "x".repeat(65),
+    });
+    assertEquals(refused.status, 413);
+    await refused.body?.cancel();
+    assertEquals(await staged(), []);
+    // Sent, never completed: nothing serves, lists or reports it.
+    const left = await uploadVia(app, "docs", "never.txt", "left", "text/plain", 4);
+    assertEquals(left.put.status, 200);
+    await left.put.body?.cancel();
+    assertEquals((await staged()).length, 1);
+    assertEquals(await bucket.download("never.txt"), null);
+    assertEquals(await bucket.exists("never.txt"), false);
+    assertEquals((await bucket.list()).objects, []);
+    const url = await bucket.createSignedUrl("never.txt");
+    const get = await app.call(url);
+    assertEquals(get.status, 404);
+    await get.body?.cancel();
+
+    // Its window passes; the next upload's COMPLETION (no new upload is signed) sweeps it.
+    const next = await uploadVia(app, "docs", "ok.txt", "ok", "text/plain", 2);
+    await next.put.body?.cancel();
+    const [leftFile] = (await staged()).filter((f) => !f.endsWith(next.plan.upload.key));
+    const rt = runtime();
+    const rows = await rt.meta.expiredResumables(Date.now() + 86_400_000, 10);
+    const row = rows.find((r) => r.name === "never.txt")!;
+    await rt.meta.deleteResumable(row.id);
+    await rt.meta.createResumable({ ...row, expires_at: Date.now() - 1 });
+    const done = await app.sign({ op: "complete", token: next.plan.upload.token });
+    assertEquals(done.status, 200);
+    await done.body?.cancel();
+    for (let i = 0; i < 200 && (await staged()).length > 0; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assertEquals(await staged(), [], `${leftFile} was swept`);
+    assertEquals(await rt.meta.getResumable(row.id), null);
+    assertEquals(await bucket.exists("never.txt"), false);
+    assertEquals(await bucket.exists("ok.txt"), true);
   } finally {
     await app.close();
   }
@@ -321,7 +448,35 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
   }
 });
 
-Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, symlinks)", async () => {
+Deno.test({
+  name: SYMLINK_GATE.name("fs storage: a symlink planted inside the bucket is never followed"),
+  ignore: SYMLINK_GATE.ignore,
+}, async () => {
+  const app = await backendApp({ buckets: { docs, pub: { public: true } } });
+  try {
+    await Deno.writeTextFile(join(app.root, "outside.txt"), "TOP SECRET");
+    await Deno.mkdir(join(app.root, ".storage", "pub"), { recursive: true });
+    await Deno.symlink(
+      join(app.root, "outside.txt"),
+      join(app.root, ".storage", "pub", "link.txt"),
+    );
+    const link = await app.call("/_denext/storage/o/pub/link.txt");
+    assertEquals(link.status, 404);
+    await link.body?.cancel();
+    assertEquals(await storage.bucket("pub", { service: true }).head("link.txt"), null);
+    assertEquals(await storage.bucket("pub", { service: true }).download("link.txt"), null);
+    await storage.bucket("pub", { service: true }).remove("link.txt");
+    assert(
+      (await Deno.lstat(join(app.root, ".storage", "pub", "link.txt"))).isSymlink,
+      "remove left the link alone",
+    );
+    assertEquals(await Deno.readTextFile(join(app.root, "outside.txt")), "TOP SECRET");
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL)", async () => {
   const app = await backendApp({ buckets: { docs, pub: { public: true } } });
   try {
     await Deno.writeTextFile(join(app.root, "outside.txt"), "TOP SECRET");
@@ -354,23 +509,6 @@ Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, sy
       assertEquals(res.status, 404, path);
       await res.body?.cancel();
     }
-    // A symlink planted inside the bucket that points outside is never followed.
-    await Deno.mkdir(join(app.root, ".storage", "pub"), { recursive: true });
-    await Deno.symlink(
-      join(app.root, "outside.txt"),
-      join(app.root, ".storage", "pub", "link.txt"),
-    );
-    const link = await app.call("/_denext/storage/o/pub/link.txt");
-    assertEquals(link.status, 404);
-    await link.body?.cancel();
-    assertEquals(await storage.bucket("pub", { service: true }).head("link.txt"), null);
-    assertEquals(await storage.bucket("pub", { service: true }).download("link.txt"), null);
-    await storage.bucket("pub", { service: true }).remove("link.txt");
-    assert(
-      (await Deno.lstat(join(app.root, ".storage", "pub", "link.txt"))).isSymlink,
-      "remove left the link alone",
-    );
-    assertEquals(await Deno.readTextFile(join(app.root, "outside.txt")), "TOP SECRET");
     // Keys the filesystem cannot hold portably, and a key/prefix collision.
     await assertRejects(
       () => storage.bucket("pub", { service: true }).upload("a:b.txt", "x"),
@@ -953,4 +1091,40 @@ Deno.test("fs storage: the rebuilt sign request carries the client address and a
   abort.abort();
   assert(rebuilt.signal.aborted);
   await original.body?.cancel();
+});
+
+Deno.test("storage: a multi-range answer cancelled before it streams closes the first part's reader (F-L6)", async () => {
+  const { objectResponse } = await import("../packages/backend/src/serve.ts");
+  const cancelled: number[] = [];
+  const opened: number[] = [];
+  const read = (range?: { start: number; end: number }) => {
+    const start = range?.start ?? 0;
+    opened.push(start);
+    return Promise.resolve(
+      new ReadableStream<Uint8Array>({
+        pull(c) {
+          c.enqueue(new Uint8Array(4));
+          c.close();
+        },
+        cancel() {
+          cancelled.push(start);
+        },
+      }),
+    );
+  };
+  const info = { key: "k", size: 100, contentType: "text/plain" };
+  const ranges = [{ start: 0, end: 3 }, { start: 10, end: 13 }];
+  // The client goes away before a byte is read: the first part, already open, is closed.
+  const gone = await objectResponse(info, new Headers(), ranges, read);
+  await gone.body!.cancel();
+  assertEquals(opened, [0]);
+  assertEquals(cancelled, [0]);
+  // Read to the end: both parts streamed, nothing left to cancel.
+  opened.length = 0;
+  cancelled.length = 0;
+  const whole = await objectResponse(info, new Headers(), ranges, read);
+  const text = await whole.text();
+  assertEquals(opened, [0, 10]);
+  assertEquals(cancelled, []);
+  assertEquals((text.match(/content-range: bytes/g) ?? []).length, 2);
 });

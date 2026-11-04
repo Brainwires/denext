@@ -22,21 +22,42 @@
 //  3. SIGNATURE REQUIRED. `publicKey` is embedded in the app binary; a manifest without a
 //     signature, or one whose signature does not verify, is REFUSED (`unsigned` / `signature`).
 //  4. MONOTONIC SEQUENCE. A manifest whose `sequence` is `<=` the highest already accepted (or
-//     which has none after a sequenced one was accepted) is refused (`downgrade`). A version
+//     which has none after a sequenced one was accepted) is refused (`downgrade`). The bundled
+//     export's own `sequence` (recorded at launch in `bundle.json`) is the floor before any
+//     overlay was accepted, so an older signed UI cannot replace a newer bundled one. A version
 //     that fails to boot has its sequence recorded so it is never retried in a loop.
 //  5. NO PATH ESCAPE. Every manifest path is checked with `isOtaManifestPath` (no control
 //     characters) and split into segments that reject `""`, `.`, `..` and backslashes; the
 //     resolved path must stay inside the staging/version directory.
+//  3b. THE APP. A manifest's `appId` is trusted only under a valid `appSignature` (payload v5);
+//     with `appId` configured (`desktop.app.identifier`) a manifest naming another app, or none,
+//     is refused (`app_mismatch`), so a feed for another app sharing the key cannot install here.
+//  4b. EXPIRY. A manifest whose signed `expiresAt` has passed is refused (`expired`), as is one
+//     without an expiry once the bundled export's own manifest carries one (an expiry-aware
+//     app never takes an unexpiring release), so a feed that keeps serving an old release is
+//     noticed instead of reported as "no update".
 //  6. ATOMIC POINTER SWAP. The "current" pointer is flipped by writing `current.json.tmp` and
 //     `Deno.rename`-ing it over `current.json` — a same-directory rename is atomic, so a crash
 //     never leaves a half-written pointer. The previous version dir is kept for rollback.
+//  7. NOTHING BUT THE MANIFEST. An overlay folder holds exactly its signed manifest's files and the
+//     manifest itself: an extra file (a planted `_denext/desktop-preload.js`, a stray `.html` or
+//     `.js`) or a symbolic link anywhere in it fails re-verification, so nothing the signature does
+//     not cover is ever served or injected.
+//  8. VERIFIED WHEN SERVED. The runtime serves overlay files through {@linkcode openDesktopUi}: each
+//     file's bytes are checked against the manifest when they are read for a request (hashed the
+//     first time, and again whenever the file's stat stamp — inode, size, mtime, ctime — moves), so
+//     a file changed after launch is never served. A failed check takes the overlay out of service
+//     (rolled back and reported as `rejected`) and the bundled export is served from then on.
 
 import { dirname, join, resolve, SEPARATOR } from "@std/path";
 import {
   isOtaManifest,
+  isOtaManifestExpired,
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
+  otaAppMismatch,
+  otaAppSignaturePayload,
   type OtaManifest,
   otaManifestVersion,
   otaPlatformMismatch,
@@ -45,6 +66,7 @@ import {
 } from "../mobile/ota-manifest.ts";
 import { parseOtaPublicKey } from "../build/ota-signing.ts";
 import { env, osDataDir } from "./app-dirs.ts";
+import { reserveRuntimeDir } from "./path-scope.ts";
 
 /** The signed manifest format the feed serves, shared with mobile OTA (`denext/mobile`). */
 export type { OtaManifest, OtaManifestFile } from "../mobile/ota-manifest.ts";
@@ -69,12 +91,17 @@ const DEFAULT_APP_ID = "denext-desktop";
  *   SHA-256 does not match its manifest entry;
  * - `unsigned`: the manifest carries no `signature` (a `publicKey` is always configured);
  * - `signature`: the `signature` does not verify against the configured `publicKey`;
- * - `downgrade`: `manifest.sequence` is `<=` the highest accepted, or absent after a sequenced
- *   manifest was accepted;
+ * - `downgrade`: `manifest.sequence` is `<=` the highest accepted or the bundled export's own
+ *   (recorded by {@linkcode resolveDesktopUiDir}), or absent once there is such a floor;
  * - `platform_mismatch`: the manifest names another target (`denext export --platform`) than this
  *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its
  *   `platform` disagrees with the export's stamp file, or that stamp (which the version covers,
  *   unlike the unsigned field) names another target, with or without the field;
+ * - `app_mismatch`: {@linkcode DesktopUpdaterConfig.appId} is set (`runDesktop` sets it to
+ *   `desktop.app.identifier`) and the manifest names another app, or none (re-sign it: `denext ota
+ *   manifest --app-id <id> --sign`);
+ * - `expired`: the manifest's signed `expiresAt` has passed, or it carries none while the bundled
+ *   export's manifest does (re-sign it: `denext ota manifest --sign`);
  * - `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;
  * - `rejected`: the version was rolled back after failing to boot; refused until
  *   {@linkcode desktopUpdateReset}.
@@ -87,6 +114,8 @@ export type DesktopUpdateErrorCode =
   | "signature"
   | "downgrade"
   | "platform_mismatch"
+  | "app_mismatch"
+  | "expired"
   | "not_staged"
   | "rejected";
 
@@ -127,8 +156,10 @@ export interface DesktopUpdaterConfig {
    */
   readonly dataDir?: string;
   /**
-   * The app identifier used to build the default {@linkcode DesktopUpdaterConfig.dataDir}.
-   * Default `"denext-desktop"`. Ignored when `dataDir` is set.
+   * The app identifier (`desktop.app.identifier`, which `runDesktop` passes): it names the default
+   * {@linkcode DesktopUpdaterConfig.dataDir} (default `"denext-desktop"` when unset), and when set
+   * a manifest must name this app in its signed `appId` (`denext ota manifest --app-id`; a signed
+   * desktop `spa.ota` export stamps it), or it is refused (code `app_mismatch`).
    */
   readonly appId?: string;
   /** The manifest / file request timeout in ms. Default 30 000. */
@@ -296,36 +327,345 @@ async function removeDir(path: string): Promise<void> {
   await Deno.remove(path, { recursive: true }).catch(() => {});
 }
 
+// ---------------------------------------------------------------------------------------------
+// The served overlay: re-verified at launch, and every file verified again when it is served.
+
+/** A file's expected bytes: its manifest entry (or, for the manifest itself, what launch read). */
+interface ExpectedFile {
+  readonly sha256: string;
+  readonly size: number;
+}
+
 /**
- * RE-VERIFY an active overlay at LAUNCH, then return its dir (or `null` to fall back to the bundled
- * export). The applied overlay keeps its signed manifest at `versions/<version>/<OTA_MANIFEST_PATH>`,
- * so this recomputes the signature + integrity and every file's SHA-256 FROM DISK — invariant 1
- * again, on EVERY boot, not only at apply. So an overlay tampered with after it was applied — a page
- * or a bug that wrote into the overlay directory despite the reserved-path guard, whatever the
- * configured `dataDir` — is NEVER served: it cannot persist an injected script across relaunches or
- * outlive a signed update. The cost is one hash per overlay file at startup (a UI export is small).
+ * A file's stat stamp: what changes whenever its bytes can have changed. `ctime` is set by the
+ * kernel on every write, rename and `utimes` (no user call sets it back), and `ino` changes when the
+ * file is replaced. `null` when the platform lacks either (the file is then hashed every time).
+ */
+function statStamp(info: Deno.FileInfo): string | null {
+  if (info.ino === null || info.ctime === null) return null;
+  return `${info.dev}:${info.ino}:${info.size}:${
+    info.mtime?.getTime() ?? ""
+  }:${info.ctime.getTime()}`;
+}
+
+/**
+ * How old a file's `ctime` must be (ms) before its stamp may stand in for a hash: a write landing in
+ * the same clock tick as the verifying read could otherwise leave the stamp unchanged (git's "racy
+ * clean" rule). A younger file is hashed on every read until it ages.
+ */
+const STAMP_SETTLE_MS = 2_000;
+
+/** One read of a file: its bytes and, when the file held still during the read, its stamp. */
+type StampedRead =
+  | { readonly ok: true; readonly bytes: Uint8Array; readonly stamp: string | null }
+  | { readonly ok: false; readonly tampered: boolean; readonly reason: string };
+
+/**
+ * Read `path` whole, with the stat stamp of the open handle before and after the read. A file that
+ * is gone, or is not a regular file, is `tampered`; any other error (a permission, an I/O error) is
+ * not, so it is refused for now without taking the overlay out of service.
+ */
+async function readStamped(path: string, rel: string): Promise<StampedRead> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true });
+  } catch (err) {
+    return err instanceof Deno.errors.NotFound
+      ? { ok: false, tampered: true, reason: `${rel} is missing` }
+      : { ok: false, tampered: false, reason: `${rel} cannot be read: ${msg(err)}` };
+  }
+  try {
+    const before = await file.stat();
+    if (!before.isFile) return { ok: false, tampered: true, reason: `${rel} is not a file` };
+    const bytes = await readUpTo(file, before.size);
+    const after = await file.stat();
+    return { ok: true, bytes, stamp: heldStamp(before, after, bytes.length) };
+  } catch (err) {
+    return { ok: false, tampered: false, reason: `${rel} cannot be read: ${msg(err)}` };
+  } finally {
+    file.close();
+  }
+}
+
+/** Up to `size` bytes of `file`, from where it stands (fewer when it ends first). */
+async function readUpTo(file: Deno.FsFile, size: number): Promise<Uint8Array> {
+  const bytes = new Uint8Array(size);
+  let read = 0;
+  while (read < size) {
+    const n = await file.read(bytes.subarray(read));
+    if (n === null) break;
+    read += n;
+  }
+  return bytes.subarray(0, read);
+}
+
+/**
+ * The stamp a read may be remembered by: the file's, when it held still through the read (the
+ * same stamp before and after, every byte read) and has settled ({@link STAMP_SETTLE_MS}); else
+ * `null`.
+ */
+function heldStamp(before: Deno.FileInfo, after: Deno.FileInfo, read: number): string | null {
+  const stamp = statStamp(before);
+  if (stamp === null || read !== before.size || stamp !== statStamp(after)) return null;
+  return Date.now() - before.ctime!.getTime() >= STAMP_SETTLE_MS ? stamp : null;
+}
+
+/** Whether `read` holds `expected`'s bytes: by its stamp when that is the one verified, else hashed. */
+async function holdsExpected(
+  read: { bytes: Uint8Array; stamp: string | null },
+  expected: ExpectedFile,
+  verifiedStamp: string | undefined,
+): Promise<boolean> {
+  if (read.stamp !== null && read.stamp === verifiedStamp) return true;
+  return read.bytes.length === expected.size && await sha256Hex(read.bytes) === expected.sha256;
+}
+
+/**
+ * The first entry under `root` that the signed manifest does not cover — a symbolic link anywhere,
+ * a file it does not list (`allowed`), or anything but a file or a directory — or `null`.
+ */
+async function strayEntry(
+  root: string,
+  allowed: ReadonlySet<string>,
+  prefix = "",
+): Promise<string | null> {
+  for await (const entry of Deno.readDir(prefix ? join(root, ...prefix.split("/")) : root)) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isSymlink) return `${rel} is a symbolic link`;
+    if (entry.isDirectory) {
+      const inner = await strayEntry(root, allowed, rel);
+      if (inner) return inner;
+    } else if (!entry.isFile || !allowed.has(rel)) {
+      return `${rel} is not in the signed manifest`;
+    }
+  }
+  return null;
+}
+
+/** What reading one file of the served overlay gives ({@linkcode DesktopUiOverlay.read}). */
+export type DesktopUiRead =
+  /** The file's bytes, which match the signed manifest. */
+  | { readonly status: "ok"; readonly bytes: Uint8Array }
+  /** Not a file of this UI (or it cannot be read right now): answer as for a missing file. */
+  | { readonly status: "missing" }
+  /** The overlay is out of service (it was changed after it was verified): serve the bundled export. */
+  | { readonly status: "withdrawn" };
+
+/** The verified UI overlay a launch serves (see {@linkcode openDesktopUi}). */
+export interface DesktopUiOverlay {
+  /** The overlay's version (its manifest version). */
+  readonly version: string;
+  /** The overlay's directory, `<dataDir>/versions/<version>`. */
+  readonly dir: string;
+  /**
+   * Whether the overlay was taken out of service during this session: a file failed its check when
+   * it was served. Everything is then served from the bundled export.
+   */
+  readonly withdrawn: boolean;
+  /**
+   * Read one file of the overlay for serving, verified against the signed manifest: hashed the
+   * first time, and again whenever its stat stamp changes. A file the manifest does not list, or
+   * one whose bytes no longer match, takes the overlay out of service (`withdrawn`): it is rolled
+   * back like a version that failed to boot (`rejected` in {@linkcode desktopUpdateStatus}) and the
+   * bundled export is served from then on.
+   *
+   * @param path The file's path inside the UI, `/`-separated and without a leading slash
+   *   (`index.html`, `_denext/client/app.js`).
+   * @returns The verified bytes, `missing`, or `withdrawn`.
+   */
+  read(path: string): Promise<DesktopUiRead>;
+}
+
+/** The UI a launch serves: the verified overlay, or the bundled export alone. */
+export interface DesktopUi {
+  /** The bundled export (the app's own UI). */
+  readonly bundledDir: string;
+  /** The active overlay, verified at launch, or `null` to serve the bundled export. */
+  readonly overlay: DesktopUiOverlay | null;
+}
+
+/** Report an overlay taken out of service (the runtime's log; `rejected` in the status). */
+function reportWithdrawn(version: string, reason: string): void {
+  console.error(
+    `desktop: the UI update ${version.slice(0, 12)}… no longer matches its signed manifest ` +
+      `(${reason}); it was rolled back and is refused until desktopUpdateReset.`,
+  );
+}
+
+/** The overlay {@linkcode openDesktopUi} hands the runtime: the files verified at launch. */
+class VerifiedOverlay implements DesktopUiOverlay {
+  #withdrawal: Promise<void> | undefined;
+  readonly #stamps = new Map<string, string>();
+
+  constructor(
+    readonly version: string,
+    readonly dir: string,
+    private readonly dataDir: string,
+    private readonly files: ReadonlyMap<string, ExpectedFile>,
+  ) {}
+
+  get withdrawn(): boolean {
+    return this.#withdrawal !== undefined;
+  }
+
+  /** Record `path`'s stamp once its bytes matched (a `null` stamp is never trusted). */
+  remember(path: string, stamp: string | null): void {
+    if (stamp === null) this.#stamps.delete(path);
+    else this.#stamps.set(path, stamp);
+  }
+
+  /** Read `path` and check it against `expected`: its verified bytes, or why it fails. */
+  async check(path: string, expected: ExpectedFile): Promise<StampedRead> {
+    const target = safeJoin(this.dir, path);
+    if (!target) return { ok: false, tampered: true, reason: `unsafe path ${path}` };
+    const read = await readStamped(target, path);
+    if (!read.ok) return read;
+    if (!(await holdsExpected(read, expected, this.#stamps.get(path)))) {
+      this.#stamps.delete(path);
+      return { ok: false, tampered: true, reason: `${path} does not match the signed manifest` };
+    }
+    this.remember(path, read.stamp);
+    return read;
+  }
+
+  async read(path: string): Promise<DesktopUiRead> {
+    if (this.#withdrawal) return { status: "withdrawn" };
+    if (safeSegments(path) === null) return { status: "missing" };
+    const expected = this.files.get(path);
+    if (!expected) {
+      // Only a file counts as planted: a directory of the UI is not, and is not served anyway.
+      const target = safeJoin(this.dir, path)!;
+      const info = await Deno.lstat(target).catch(() => null);
+      if (info === null || info.isDirectory) return { status: "missing" };
+      return await this.withdraw(`${path} is not in the signed manifest`);
+    }
+    const result = await this.check(path, expected);
+    if (result.ok) return { status: "ok", bytes: result.bytes };
+    return result.tampered ? await this.withdraw(result.reason) : { status: "missing" };
+  }
+
+  /** Take the overlay out of service: roll it back (once) and serve the bundle from now on. */
+  async withdraw(reason: string): Promise<DesktopUiRead> {
+    this.#withdrawal ??= (async () => {
+      reportWithdrawn(this.version, reason);
+      const pointer = await readPointer(this.dataDir);
+      if (pointer?.version === this.version) await rollback(this.dataDir, pointer);
+    })().catch(() => {});
+    await this.#withdrawal;
+    return { status: "withdrawn" };
+  }
+}
+
+/** The outcome of re-verifying an overlay at launch. */
+type LaunchCheck =
+  | { readonly ok: true; readonly overlay: VerifiedOverlay }
+  | { readonly ok: false; readonly tampered: boolean; readonly reason: string };
+
+/**
+ * The files of an overlay's stored manifest (`bytes`), once it parses, names `version`, verifies
+ * (integrity + signature, re-checked every launch) and lists only safe paths including the
+ * `index.html` shell; else why not.
+ */
+async function storedManifestFiles(
+  bytes: Uint8Array,
+  version: string,
+  publicKey: string,
+): Promise<Map<string, ExpectedFile> | string> {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return "its manifest is not JSON";
+  }
+  if (!isOtaManifest(manifest) || manifest.version !== version) {
+    return "its manifest is not this version's";
+  }
+  try {
+    await assertVerified(manifest, publicKey);
+  } catch (err) {
+    return msg(err);
+  }
+  if (manifest.files.some((f) => safeSegments(f.path) === null || f.path === OTA_MANIFEST_PATH)) {
+    return "its manifest names an unsafe path";
+  }
+  // The runtime serves index.html as the shell; require it to be a file the manifest signs.
+  if (!manifest.files.some((f) => f.path === "index.html")) {
+    return "its manifest lists no index.html";
+  }
+  return new Map(manifest.files.map((f) => [f.path, { sha256: f.sha256, size: f.size }]));
+}
+
+/**
+ * RE-VERIFY an active overlay at LAUNCH. The applied overlay keeps its signed manifest at
+ * `versions/<version>/<OTA_MANIFEST_PATH>`, so this recomputes the signature + integrity and every
+ * file's SHA-256 FROM DISK — invariant 1 again, on EVERY boot, not only at apply — and refuses a
+ * folder holding anything else (invariant 7). So an overlay tampered with after it was applied —
+ * a page or a bug that wrote into the overlay directory despite the reserved-path guard, or another
+ * program running as the user — is NEVER served: it cannot persist an injected script across
+ * relaunches or outlive a signed update. The cost is one hash per overlay file at startup (a UI
+ * export is small). `tampered: false` is a read error (a permission, I/O): refused for this launch
+ * without rolling anything back.
  */
 async function verifyOverlay(
   dir: string,
   version: string,
   publicKey: string,
-): Promise<string | null> {
+): Promise<LaunchCheck> {
   const vdir = versionDir(dir, version);
-  const manifest = await readJson(join(vdir, OTA_MANIFEST_PATH), isOtaManifest);
-  if (!manifest || manifest.version !== version) return null;
-  try {
-    await assertVerified(manifest, publicKey); // integrity + signature, re-checked every launch
-    for (const file of manifest.files) {
-      const src = safeJoin(vdir, file.path);
-      if (!src) return null;
-      const bytes = await Deno.readFile(src).catch(() => null);
-      if (!bytes || (await sha256Hex(bytes)) !== file.sha256) return null;
-    }
-  } catch {
-    return null; // any signature/integrity/hash failure → do not serve the overlay
+  const tampered = (reason: string): LaunchCheck => ({ ok: false, tampered: true, reason });
+  const root = await Deno.lstat(vdir).catch(() => null);
+  if (root === null || root.isSymlink || !root.isDirectory) {
+    return tampered("the overlay is missing");
   }
-  // The runtime serves index.html as the shell; require it (normally a manifest file too).
-  return (await Deno.stat(join(vdir, "index.html")).then(() => true, () => false)) ? vdir : null;
+  const stored = await readStamped(join(vdir, ...OTA_MANIFEST_PATH.split("/")), OTA_MANIFEST_PATH);
+  if (!stored.ok) return stored;
+  const checked = await storedManifestFiles(stored.bytes, version, publicKey);
+  if (typeof checked === "string") return tampered(checked);
+  const files = checked;
+  const stray = await strayEntry(vdir, new Set([...files.keys(), OTA_MANIFEST_PATH])).catch((
+    err,
+  ) => `the overlay cannot be listed: ${msg(err)}`);
+  if (stray) return tampered(stray);
+  const overlay = new VerifiedOverlay(
+    version,
+    vdir,
+    dir,
+    new Map([
+      ...files,
+      [OTA_MANIFEST_PATH, {
+        sha256: await sha256Hex(stored.bytes),
+        size: stored.bytes.length,
+      }],
+    ]),
+  );
+  overlay.remember(OTA_MANIFEST_PATH, stored.stamp);
+  for (const [path, expected] of files) {
+    const result = await overlay.check(path, expected);
+    if (!result.ok) return result;
+  }
+  return { ok: true, overlay };
+}
+
+/**
+ * Serve `pointer`'s overlay, re-verified: an overlay that fails re-verification is rolled back
+ * (refused as `rejected`, its folder deleted) and the version it rolls back to is checked the same
+ * way, down to the bundled export (`null`). A read error refuses it for this launch only.
+ */
+async function openOverlay(
+  dir: string,
+  pointer: Pointer | undefined,
+  publicKey: string,
+): Promise<VerifiedOverlay | null> {
+  // Each rollback moves the pointer back (to the previous version, then to none): two at most.
+  let current = pointer;
+  for (let step = 0; current && step < 3; step++, current = await readPointer(dir)) {
+    const checked = await verifyOverlay(dir, current.version, publicKey);
+    if (checked.ok) return checked.overlay;
+    if (!checked.tampered) return null;
+    reportWithdrawn(current.version, checked.reason);
+    await rollback(dir, current);
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -407,29 +747,53 @@ async function assertVerified(manifest: OtaManifest, publicKey: string): Promise
   } catch (err) {
     throw new DesktopUpdateError("signature", `the public key is invalid: ${msg(err)}`);
   }
-  let ok = false;
+  // `otaSignaturePayload`: v1–v4, whatever the manifest says about its app.
+  if (!await verifies(key, manifest.signature, () => otaSignaturePayload(manifest))) {
+    throw new DesktopUpdateError("signature", "the manifest signature does not verify");
+  }
+  // Invariant 3b: an `appId` counts only under its own signature (payload v5).
+  if (
+    manifest.appId !== undefined &&
+    !await verifies(key, manifest.appSignature, () => otaAppSignaturePayload(manifest))
+  ) {
+    throw new DesktopUpdateError("signature", "the manifest's appSignature is missing or invalid");
+  }
+}
+
+/**
+ * Whether `signature` (standard base64 of the raw 64-byte r‖s) is `key`'s signature over the
+ * payload `payload()` builds; false for a missing or malformed signature, or a payload that does
+ * not build (e.g. an absurd sequence).
+ */
+async function verifies(
+  key: CryptoKey,
+  signature: string | undefined,
+  payload: () => Promise<Uint8Array>,
+): Promise<boolean> {
+  if (typeof signature !== "string") return false;
   try {
-    // Standard base64 → raw 64-byte r‖s, over `otaSignaturePayload` (v2 with a sequence, else v1).
-    const raw = base64ToBytes(manifest.signature);
-    const payload = await otaSignaturePayload(manifest);
-    ok = await crypto.subtle.verify(
+    return await crypto.subtle.verify(
       VERIFY_ALGORITHM,
       key,
-      raw as BufferSource,
-      payload as BufferSource,
+      base64ToBytes(signature) as BufferSource,
+      await payload() as BufferSource,
     );
   } catch {
-    ok = false; // malformed base64, bad r‖s length, or a bad payload (e.g. absurd sequence)
+    return false;
   }
-  if (!ok) throw new DesktopUpdateError("signature", "the manifest signature does not verify");
 }
 
 // ---------------------------------------------------------------------------------------------
 // Proxy-tolerant fetch (#4812: TLS-inspecting proxies stalled Electron's updater).
 
+/** A proxy variable in its upper- or lower-case spelling (the `curl` convention; only proxies want both). */
+function proxyEnv(name: string): string | undefined {
+  return env(name) ?? env(name.toLowerCase());
+}
+
 /** The proxy URL to use for `target`, honouring `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`. */
 function proxyUrlFor(target: URL): string | undefined {
-  const noProxy = env("NO_PROXY");
+  const noProxy = proxyEnv("NO_PROXY");
   if (noProxy) {
     const host = target.hostname;
     for (const raw of noProxy.split(",")) {
@@ -438,7 +802,7 @@ function proxyUrlFor(target: URL): string | undefined {
       if (entry === "*" || host === entry || host.endsWith(`.${entry}`)) return undefined;
     }
   }
-  const proxy = env(target.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY");
+  const proxy = proxyEnv(target.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY");
   return proxy && proxy.trim() ? proxy.trim() : undefined;
 }
 
@@ -501,6 +865,15 @@ async function assertPlatform(manifest: OtaManifest, config: DesktopUpdaterConfi
   if (mismatch !== null) throw new DesktopUpdateError("platform_mismatch", mismatch);
 }
 
+/**
+ * Refuse a manifest for another app, or (with {@linkcode DesktopUpdaterConfig.appId} set) one that
+ * names none (`app_mismatch`). Its `appId` is already verified ({@linkcode assertVerified}).
+ */
+function assertApp(manifest: OtaManifest, config: DesktopUpdaterConfig): void {
+  const mismatch = otaAppMismatch(manifest, config.appId, true);
+  if (mismatch !== null) throw new DesktopUpdateError("app_mismatch", mismatch);
+}
+
 /** Fetch and validate `${feedUrl}/_denext/ota.json`. */
 async function fetchManifest(config: DesktopUpdaterConfig): Promise<OtaManifest> {
   const base = config.feedUrl.replace(/\/+$/, "");
@@ -542,8 +915,38 @@ function fetchFile(
  * has none after a sequenced manifest was accepted). Called after the version-equality check, so
  * re-offering the running version is reported as "not available", not as a downgrade.
  */
-function assertNotDowngrade(manifest: OtaManifest, state: UpdaterState): void {
-  const highest = state.highestSequence;
+/**
+ * The highest accepted sequence, raised to the bundled export's own: an overlay older than the UI
+ * the app ships with is a downgrade even before any overlay was accepted. `null`: no floor yet.
+ */
+function downgradeFloor(state: UpdaterState, bundle: BundleRecord | undefined): number | null {
+  const known = [state.highestSequence, bundle?.sequence ?? null].filter((n) => n !== null);
+  return known.length === 0 ? null : Math.max(...known);
+}
+
+/**
+ * Refuse a manifest whose `expiresAt` has passed, or which has none while the bundled export's
+ * manifest carries one (invariant 4b).
+ */
+function assertFresh(manifest: OtaManifest, bundle: BundleRecord | undefined): void {
+  if (isOtaManifestExpired(manifest)) {
+    const at = new Date(manifest.expiresAt! * 1000).toISOString();
+    throw new DesktopUpdateError("expired", `the manifest expired at ${at}`);
+  }
+  if (manifest.expiresAt === undefined && bundle?.expiring === true) {
+    throw new DesktopUpdateError(
+      "expired",
+      "the manifest carries no expiry, but the bundled export's does",
+    );
+  }
+}
+
+function assertNotDowngrade(
+  manifest: OtaManifest,
+  state: UpdaterState,
+  bundle: BundleRecord | undefined,
+): void {
+  const highest = downgradeFloor(state, bundle);
   if (highest === null) return; // nothing accepted yet: any sequence (or none) is allowed
   if (manifest.sequence === undefined || manifest.sequence <= highest) {
     throw new DesktopUpdateError(
@@ -551,6 +954,26 @@ function assertNotDowngrade(manifest: OtaManifest, state: UpdaterState): void {
       `sequence ${manifest.sequence ?? "(none)"} is not newer than the accepted ${highest}`,
     );
   }
+}
+
+/**
+ * Fetch the feed's manifest and run the trust gate every path shares: integrity and signature
+ * (invariants 2–3), the target, the app (3b), and freshness (invariant 4b). With the data dir and the bundle
+ * record it read.
+ */
+async function fetchTrustedManifest(config: DesktopUpdaterConfig): Promise<{
+  dir: string;
+  manifest: OtaManifest;
+  bundle: BundleRecord | undefined;
+}> {
+  const dir = dataDirOf(config);
+  const manifest = await fetchManifest(config);
+  await assertVerified(manifest, config.publicKey);
+  await assertPlatform(manifest, config);
+  assertApp(manifest, config);
+  const bundle = await readBundleRecord(dir);
+  assertFresh(manifest, bundle);
+  return { dir, manifest, bundle };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -568,15 +991,16 @@ function assertNotDowngrade(manifest: OtaManifest, state: UpdaterState): void {
 export async function checkForDesktopUpdate(
   config: DesktopUpdaterConfig,
 ): Promise<DesktopUpdateCheck> {
-  const dir = dataDirOf(config);
-  const manifest = await fetchManifest(config);
-  await assertVerified(manifest, config.publicKey); // integrity + signature, verify-before-trust
-  await assertPlatform(manifest, config); // the target: the stamp file the version covers
+  // Integrity + signature (verify-before-trust), the target, the app and freshness: before "not
+  // available", so a stale feed is an error.
+  const { dir, manifest, bundle } = await fetchTrustedManifest(config);
 
   const pointer = await readPointer(dir);
   if (pointer && pointer.version === manifest.version) return { available: false };
+  // The bundled export itself, with no overlay active: nothing newer.
+  if (!pointer && bundle?.bundle === `ota:${manifest.version}`) return { available: false };
 
-  assertNotDowngrade(manifest, await readState(dir));
+  assertNotDowngrade(manifest, await readState(dir), bundle);
   return {
     available: true,
     version: manifest.version,
@@ -612,11 +1036,8 @@ async function currentOverlayHashes(dir: string): Promise<Map<string, string>> {
 export async function prepareDesktopUpdate(
   config: DesktopUpdaterConfig,
 ): Promise<DesktopUpdatePrepared> {
-  const dir = dataDirOf(config);
-  const manifest = await fetchManifest(config);
-  await assertVerified(manifest, config.publicKey); // re-verify: integrity + signature
-  await assertPlatform(manifest, config);
-  assertNotDowngrade(manifest, await readState(dir));
+  const { dir, manifest, bundle } = await fetchTrustedManifest(config); // re-verify
+  assertNotDowngrade(manifest, await readState(dir), bundle);
 
   const staging = stagingDir(dir, manifest.version);
   await removeDir(staging); // start clean; a stale partial staging must not survive
@@ -668,19 +1089,26 @@ export async function prepareDesktopUpdate(
 
 /**
  * Promote the staged `version` to the active overlay and flip the "current" pointer atomically.
- * Re-verifies the staged manifest (version + signature) and re-hashes every staged file BEFORE
- * the swap. The previous version dir is kept for rollback, the accepted `sequence` is recorded,
- * and the new version starts PENDING — {@linkcode desktopBooted} must confirm it or the next
+ * Re-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and
+ * re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the
+ * accepted `sequence` is recorded, every other staging folder is deleted, and the new version
+ * starts PENDING — {@linkcode desktopBooted} must confirm it or the next
  * {@linkcode resolveDesktopUiDir} rolls it back.
  *
  * @throws {@linkcode DesktopUpdateError} `not_staged` (no such staging), `rejected` (rolled back
- *   before), or `integrity`/`signature`/`invalid` if the staged content no longer verifies.
+ *   before), `downgrade` (not newer than the highest accepted sequence or the bundled export's),
+ *   `expired`, or `integrity`/`signature`/`invalid` if the staged content no longer verifies.
  */
 export async function applyDesktopUpdate(
   version: string,
   config: DesktopUpdaterConfig,
 ): Promise<void> {
   const dir = dataDirOf(config);
+  // A version is a manifest version (64 hex digits): anything else (a page-supplied `../x`) never
+  // names a staging dir, so it is never joined into a path.
+  if (!/^[0-9a-f]{64}$/.test(version)) {
+    throw new DesktopUpdateError("not_staged", `version ${JSON.stringify(version)} is not staged`);
+  }
   const staging = stagingDir(dir, version);
   const state = await readState(dir);
   if (state.rejected === version) {
@@ -693,6 +1121,12 @@ export async function applyDesktopUpdate(
   }
   // Invariant 1: verify-before-swap, again — signature and every file hash, from disk.
   await assertVerified(manifest, config.publicKey);
+  // Invariants 4 and 4b, again: a staged version is applied only while it is still newer than
+  // everything accepted (and the bundled export) and unexpired, so a call to apply cannot bring
+  // back an older UI left in a staging folder.
+  const bundle = await readBundleRecord(dir);
+  assertFresh(manifest, bundle);
+  assertNotDowngrade(manifest, state, bundle);
   for (const file of manifest.files) {
     const src = safeJoin(staging, file.path);
     if (!src) {
@@ -741,6 +1175,8 @@ export async function applyDesktopUpdate(
       previous,
     } satisfies Pointer,
   );
+  // Every other staged version is older than this one now: none may be applied later.
+  await removeStagingDirs(dir);
 }
 
 /**
@@ -776,37 +1212,45 @@ async function rollback(dir: string, pointer: Pointer): Promise<void> {
   }
 }
 
-/** Roll `pointer` back and serve the resulting overlay (re-verified) or the bundle. */
-async function rollbackAndServe(
-  dir: string,
-  pointer: Pointer,
-  bundledOut: string,
-  publicKey: string,
-): Promise<string> {
-  await rollback(dir, pointer);
-  const rolled = await readPointer(dir);
-  return rolled ? (await verifyOverlay(dir, rolled.version, publicKey)) ?? bundledOut : bundledOut;
-}
-
 /** The record (`bundle.json`) of the bundled export the overlay state belongs to. */
 interface BundleRecord {
   readonly bundle: string;
+  /** The bundled export's signed-manifest `sequence`: the downgrade floor before any overlay. */
+  readonly sequence?: number;
+  /** Whether the bundled export's manifest carries an `expiresAt`: overlays then must too. */
+  readonly expiring?: true;
 }
 
 function isBundleRecord(v: unknown): v is BundleRecord {
-  return typeof v === "object" && v !== null &&
-    typeof (v as Record<string, unknown>).bundle === "string";
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.bundle === "string" &&
+    (r.sequence === undefined ||
+      (Number.isSafeInteger(r.sequence) && (r.sequence as number) >= 0)) &&
+    (r.expiring === undefined || r.expiring === true);
 }
+
+const readBundleRecord = (dir: string) => readJson(bundlePath(dir), isBundleRecord);
 
 /**
  * The identity of the bundled export: its stamped `_denext/ota.json` version (which hashes every
  * file), else the SHA-256 of its `index.html`, else `null` (nothing to identify it by).
  */
-async function bundleIdentity(bundledOut: string): Promise<string | null> {
+async function bundleIdentity(bundledOut: string): Promise<BundleRecord | null> {
   const manifest = await readJson(join(bundledOut, OTA_MANIFEST_PATH), isOtaManifest);
-  if (manifest) return `ota:${manifest.version}`;
+  if (manifest) {
+    // The bundle ships inside the signed app, so its manifest's sequence is trusted as the floor.
+    const { sequence, expiresAt } = manifest;
+    return {
+      bundle: `ota:${manifest.version}`,
+      ...(sequence !== undefined ? { sequence } : {}),
+      ...(expiresAt !== undefined ? { expiring: true as const } : {}),
+    };
+  }
   try {
-    return `index:${await sha256Hex(await Deno.readFile(join(bundledOut, "index.html")))}`;
+    return {
+      bundle: `index:${await sha256Hex(await Deno.readFile(join(bundledOut, "index.html")))}`,
+    };
   } catch {
     return null;
   }
@@ -821,15 +1265,18 @@ async function bundleIdentity(bundledOut: string): Promise<string | null> {
 async function forgetOverlaysOfAnotherBundle(dir: string, bundledOut: string): Promise<void> {
   const identity = await bundleIdentity(bundledOut);
   if (identity === null) return;
-  const recorded = await readJson(bundlePath(dir), isBundleRecord);
-  if (recorded?.bundle === identity) return;
-  if (recorded) {
+  const recorded = await readBundleRecord(dir);
+  if (
+    recorded?.bundle === identity.bundle && recorded.sequence === identity.sequence &&
+    recorded.expiring === identity.expiring
+  ) return;
+  if (recorded && recorded.bundle !== identity.bundle) {
     await removeFile(pointerPath(dir));
     await removeFile(bootingPath(dir));
     await removeDir(join(dir, VERSIONS_DIR));
     await removeStagingDirs(dir);
   }
-  await writeJsonAtomic(bundlePath(dir), { bundle: identity } satisfies BundleRecord);
+  await writeJsonAtomic(bundlePath(dir), identity satisfies BundleRecord);
 }
 
 /** Remove every staging dir (a no-op without a data dir). */
@@ -846,49 +1293,80 @@ async function removeStagingDirs(dir: string): Promise<void> {
 }
 
 /**
- * The directory the desktop runtime should serve: the active verified overlay, or `bundledOut`.
+ * The UI the desktop runtime should serve this launch: the active overlay, re-verified, or only
+ * the bundled export (`overlay: null`). Serve the overlay's files through
+ * {@linkcode DesktopUiOverlay.read}, which checks each one against the signed manifest when it is
+ * served, never straight from its folder; `runDesktop({ updater })` does.
  *
  * This is also the BOOT WATCHDOG. If the pointer is PENDING and a boot marker for the same
  * version already exists, the previous launch applied that version and never confirmed it (it
  * failed to boot), so it is ROLLED BACK — its sequence refused so it is not retried in a loop —
  * and the previous good version (or the bundle) is served. A pending version on its FIRST launch
- * is served with a fresh marker armed; {@linkcode desktopBooted} clears it. A confirmed pointer
- * whose files exist is served directly; anything missing falls back to `bundledOut`.
+ * is served with a fresh marker armed; {@linkcode desktopBooted} clears it. An overlay that fails
+ * re-verification (a file changed, missing or added, a symbolic link, a manifest that no longer
+ * verifies) is rolled back the same way and reported as `rejected`; one that cannot be read right
+ * now (a permission or I/O error) is skipped for this launch only.
  *
  * An overlay is tied to the bundled export it was installed over (`bundle.json`: the export's
  * stamped version, else its `index.html` hash). When the app itself was replaced — a full-app
  * update or a reinstall brings a different bundle — every overlay is dropped and the new bundle is
  * served, so a UI built for the old app never runs on the new one.
+ *
+ * @param bundledOut The bundled export (the app's own UI).
+ * @param config The updater config.
+ * @returns The verified overlay, or the bundled export alone.
  */
-export async function resolveDesktopUiDir(
+export async function openDesktopUi(
   bundledOut: string,
   config: DesktopUpdaterConfig,
-): Promise<string> {
+): Promise<DesktopUi> {
   const dir = dataDirOf(config);
+  // The page's capabilities (fs, shell, window) never reach the overlay folder, wherever it is.
+  reserveRuntimeDir(resolve(dir));
   // An overlay belongs to the app it was installed over: a newer app's bundle drops it.
   await forgetOverlaysOfAnotherBundle(dir, bundledOut);
+  const ui = (overlay: VerifiedOverlay | null): DesktopUi => ({ bundledDir: bundledOut, overlay });
   const pointer = await readPointer(dir);
-  if (!pointer) return bundledOut;
+  if (!pointer) return ui(null);
 
   // Confirmed pointer: no trial in progress — serve its overlay (re-verified) or the bundle.
   if (!pointer.pending) {
     await removeFile(bootingPath(dir));
-    return (await verifyOverlay(dir, pointer.version, config.publicKey)) ?? bundledOut;
+    return ui(await openOverlay(dir, pointer, config.publicKey));
   }
 
   // A marker for this pending version means a previous launch already tried it and never
   // confirmed → it failed to boot. Roll back.
   const marker = await readBooting(dir);
   if (marker && marker.version === pointer.version) {
-    return await rollbackAndServe(dir, pointer, bundledOut, config.publicKey);
+    await rollback(dir, pointer);
+    return ui(await openOverlay(dir, await readPointer(dir), config.publicKey));
   }
 
-  // First trial launch: arm the watchdog marker and serve the pending overlay (re-verified; roll
-  // back if it is missing or fails re-verification).
-  const served = await verifyOverlay(dir, pointer.version, config.publicKey);
-  if (!served) return await rollbackAndServe(dir, pointer, bundledOut, config.publicKey);
-  await writeJsonAtomic(bootingPath(dir), { version: pointer.version } satisfies BootMarker);
-  return served;
+  // First trial launch: serve the pending overlay (re-verified; rolled back if it fails) and arm
+  // the watchdog marker for it.
+  const served = await openOverlay(dir, pointer, config.publicKey);
+  if (served?.version === pointer.version) {
+    await writeJsonAtomic(bootingPath(dir), { version: pointer.version } satisfies BootMarker);
+  }
+  return ui(served);
+}
+
+/**
+ * The directory of the UI {@linkcode openDesktopUi} resolves: the active overlay's, re-verified at
+ * launch, or `bundledOut`. A server that serves it must check each file as it serves it (an
+ * overlay file can change after launch): prefer {@linkcode openDesktopUi} and
+ * {@linkcode DesktopUiOverlay.read}.
+ *
+ * @param bundledOut The bundled export (the app's own UI).
+ * @param config The updater config.
+ * @returns The directory to serve.
+ */
+export async function resolveDesktopUiDir(
+  bundledOut: string,
+  config: DesktopUpdaterConfig,
+): Promise<string> {
+  return (await openDesktopUi(bundledOut, config)).overlay?.dir ?? bundledOut;
 }
 
 /**

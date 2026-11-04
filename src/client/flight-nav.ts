@@ -26,6 +26,13 @@ import {
 type NavCommit = typeof import("./nav-document.ts");
 
 /**
+ * The app's Flight-payload parser, once {@link setFlightParser} registered it (null in an app
+ * with no Flight route): for a compat layer that applies part of a fetched payload itself —
+ * Fresh's partial navigation (`denext/fresh/partial`) swaps only its `<Partial>` regions.
+ */
+export let flightParser: ((flight: unknown) => VNodeChild | Promise<VNodeChild>) | null = null;
+
+/**
  * Register the Flight-payload parser used by soft navigation, which installs the Flight
  * soft-nav runtime. Called once by the generated Flight entry with a closure over the app-wide
  * client registry (loading a route's island chunks before it reconstructs the tree).
@@ -33,6 +40,7 @@ type NavCommit = typeof import("./nav-document.ts");
 export function setFlightParser(
   parse: (flight: unknown) => VNodeChild | Promise<VNodeChild>,
 ): void {
+  flightParser = parse;
   setFlightNavigator(async (body, url, href, options, nav, res) => {
     // No root to render into (and not a root-less page this runtime can mount one for): hard
     // navigate rather than leave the user on the old route.

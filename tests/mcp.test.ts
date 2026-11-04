@@ -4,9 +4,8 @@
 // `runTool()`, and the checker/import-map as pure functions — so this is fast and hermetic.
 // One tool (`denext_generate`) is driven against a temp dir to prove the file-writing path.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { checkSnippet } from "../src/mcp/check.ts";
-import { readPackageFile } from "../src/mcp/package-file.ts";
 import { IMPORT_RULES, lookupImport } from "../src/mcp/next-denext-map.ts";
 import { dispatch } from "../src/mcp/server.ts";
 import { dockerRequestOf, runTool, TOOLS } from "../src/mcp/tools.ts";
@@ -19,10 +18,13 @@ import {
 } from "../src/build/dev-events.ts";
 import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
 import { symlinkDir } from "./helpers/symlink.ts";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+// A private copy: rendering loads (and may write the `.denext/` of) the app, which other test
+// files build at the same time.
+const HELLO = await copyExample("hello");
 
 // ── Snippet checker ───────────────────────────────────────────────────────────
 
@@ -167,7 +169,7 @@ Deno.test("denext_generate advertises every kind the generator supports", () => 
   const tool = TOOLS.find((t) => t.name === "denext_generate")!;
   const kind = (tool.inputSchema.properties as Record<string, { enum?: string[] }>).kind;
   assertEquals(kind.enum, [...GENERATE_KINDS]);
-  assertEquals(GENERATE_KINDS.length, 18);
+  assertEquals(GENERATE_KINDS.length, 19);
   for (const k of GENERATE_KINDS) assertStringIncludes(tool.description, k);
 });
 
@@ -518,17 +520,6 @@ Deno.test("runTool: render refuses a component path that escapes the project (co
   });
   assertEquals(res.isError, true);
   assertStringIncludes(res.content[0].text, "escapes the project");
-});
-
-Deno.test("readPackageFile: rejects a traversal path", async () => {
-  await assertRejects(
-    () => readPackageFile("../../etc/passwd"),
-    Error,
-    "invalid package file path",
-  );
-  await assertRejects(() => readPackageFile("/etc/passwd"), Error, "invalid package file path");
-  // A legitimate package file still reads.
-  assertStringIncludes(await readPackageFile("AGENTS.md"), "denext");
 });
 
 // Keep IMPORT_RULES and AGENTS.md in sync: every rule's `from` should be documented.

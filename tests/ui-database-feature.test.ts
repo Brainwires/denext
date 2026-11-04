@@ -13,6 +13,10 @@ import { join } from "@std/path";
 import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
 import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
 import type { DbEnvelope, DbReplies, DbReply, DbTableInfo } from "../src/ui/database/protocol.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 /** A project that uses Postgres (the Database section applies). */
 const PG_PROJECT = { ".env": "DATABASE_URL=postgres://app:pw@127.0.0.1:5432/app\n" };

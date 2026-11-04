@@ -21,6 +21,7 @@
  */
 
 import { domListsPlugin } from "./dom-lists.ts";
+import { contentHash8 } from "../plugin/asset-name.ts";
 import {
   missingVariantMessage,
   type Platform,
@@ -58,6 +59,7 @@ import {
 } from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { chainSourceTransforms, compatSourceTransform } from "./compat-chain.ts";
+import { pinImportMetaPlugins } from "./compat-import-meta.ts";
 import {
   findInlineServerActions,
   inlineServerActionError,
@@ -79,6 +81,7 @@ import {
   toFileUrl,
 } from "@std/path";
 import {
+  classDefine,
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
@@ -88,7 +91,9 @@ import {
   readFrameworkJson,
   readLocalAliases,
 } from "./bundle.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
+import { parse as parseJsonc } from "@std/jsonc";
 import {
   type AutoOptimizePackageImports,
   withOptimizedPackageImports,
@@ -99,6 +104,7 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
 import { readDirective } from "./directives.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { formatServerModuleLeaks, type ServerModuleLeak } from "./server-module-guard.ts";
 import { staticExportNames } from "./module-graph.ts";
 import { inRootContext } from "../server/root-context.ts";
@@ -381,10 +387,13 @@ function preactRuntimeEntries(u: EntryUrl): Record<string, string> {
     "preact-hooks": u("src/compat/preact/hooks.ts"),
     "preact-compat": u("src/compat/preact/compat.ts"),
     "preact-jsx-runtime": u("src/compat/preact/jsx-runtime.ts"),
+    "preact-render-to-string": u("src/compat/preact/render-to-string.ts"),
     "preact-iso": u("src/compat/preact/iso.ts"),
     "signals": u("src/compat/preact/signals.ts"),
     "fresh": u("src/compat/fresh/mod.ts"),
     "fresh-runtime": u("src/compat/fresh/runtime.ts"),
+    "fresh-partial": u("src/compat/fresh/partial.ts"),
+    "fresh-env": u("src/compat/fresh/env.ts"),
   };
 }
 
@@ -407,6 +416,10 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
     "spa-island": u("src/spa-island.ts"),
     // Isomorphic `client:*` islands (see iso-islands.ts).
     "iso-island": u("src/iso-island.ts"),
+    // Server Actions: the generated `"use server"` stubs' import and the Flight entry's on-demand
+    // call (see bundle.ts).
+    "action-stub": u("src/action-stub.ts"),
+    "action-call": u("src/action-call.ts"),
     // React Native mode's community-package stand-ins (see react-native-aliases.ts).
     ...communityRuntimeEntries(u),
   };
@@ -427,11 +440,6 @@ export interface PrebuildOptions {
    * patched framework sources are what get prebuilt (see {@link patchPlugin}).
    */
   projectDir?: string;
-}
-
-/** The esbuild `define` that gates the class-component runtime (see class-flag.ts). */
-function classDefine(classComponents?: boolean): Record<string, string> {
-  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
 }
 
 /**
@@ -465,7 +473,10 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
   const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
   const outDir = resolve(options.outDir);
-  const imports = await frameworkImports();
+  // Only what denext's graph imports (the root map's test-only `effect`, `jsqr`, … left out). The
+  // app's packages don't enter this framework-only graph, so there is nothing of the app's to
+  // shadow here.
+  const imports = await layeredFrameworkImports(await frameworkImports(), { root: rootUrl });
   const depAge = minDepAgeConfig(undefined);
   const patch = options.projectDir ? await loadDenextPatchSet(options.projectDir) : null;
   const classComponents = !!options.classComponents;
@@ -910,10 +921,13 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/preact/hooks": "preact-hooks.js",
   "denext/preact/compat": "preact-compat.js",
   "denext/preact/jsx-runtime": "preact-jsx-runtime.js",
+  "denext/preact/render-to-string": "preact-render-to-string.js",
   "denext/preact-iso": "preact-iso.js",
   "denext/signals": "signals.js",
   "denext/fresh": "fresh.js",
   "denext/fresh/runtime": "fresh-runtime.js",
+  "denext/fresh/partial": "fresh-partial.js",
+  "denext/fresh/env": "fresh-env.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).
@@ -926,6 +940,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/spa-island": "spa-island.js",
   // Isomorphic `client:*` islands (see iso-islands.ts).
   "denext/iso-island": "iso-island.js",
+  "denext/action-stub": "action-stub.js",
+  "denext/action-call": "action-call.js",
   // React Native mode's community-package stand-ins (see react-native-aliases.ts).
   ...communityRuntimeFiles(),
 };
@@ -1285,6 +1301,29 @@ function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
 }
 
 /**
+ * The automatic-runtime import source the compat bundle compiles JSX with: `"preact"` when the
+ * app's config sets `compilerOptions.jsxImportSource: "preact"` (what `denext migrate` writes for
+ * a Preact or Fresh app, whose import map points `preact/jsx-runtime` at
+ * `denext/preact/jsx-runtime`: Preact's `options.vnode` / `options.event` hooks and the signal
+ * DOM-prop binding), else `"react"` (aliased to denext's own runtime downstream). A config that
+ * is missing or does not parse is `"react"`.
+ *
+ * @param configPath The app's `deno.json` / `deno.jsonc` (a path or a `file:` URL).
+ * @returns The import source.
+ */
+export async function compatJsxImportSource(configPath: string): Promise<"react" | "preact"> {
+  const path = configPath.startsWith("file:") ? fromFileUrl(configPath) : configPath;
+  try {
+    const config = parseJsonc(await Deno.readTextFile(path)) as {
+      compilerOptions?: { jsxImportSource?: unknown };
+    } | null;
+    return config?.compilerOptions?.jsxImportSource === "preact" ? "preact" : "react";
+  } catch {
+    return "react";
+  }
+}
+
+/**
  * Bundle `entry` (client hydration entry or SSR render module) with all react
  * imports — including those inside npm packages — rewritten to the single
  * prebuilt denext runtime.
@@ -1328,7 +1367,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     platform: options.platform === "deno" ? "node" : "browser",
     minify: options.minify ?? false,
     jsx: "automatic",
-    jsxImportSource: "react",
+    jsxImportSource: await compatJsxImportSource(options.configPath),
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
     define: classDefine(options.classComponents),
@@ -1624,29 +1663,6 @@ async function cssUrlPath(
 const EMIT_ASSET_RE =
   /\.(?:svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|pdf)$/;
 
-/** esbuild's `[hash]` alphabet (RFC 4648 base32). */
-const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-/**
- * A content hash for an emitted file name in esbuild's `[hash]` shape — 8 base32 characters
- * (40 bits of two FNV-1a passes) — so a `name-HASH.ext` asset reads as content-hashed to the
- * immutable-cache check (`isContentHashed`) and to a server written for a Vite build.
- */
-function hash8(bytes: Uint8Array): string {
-  let a = 2166136261 >>> 0;
-  let b = 0x9747b28c;
-  for (let i = 0; i < bytes.length; i++) {
-    a = Math.imul(a ^ bytes[i], 16777619) >>> 0;
-    b = Math.imul(b ^ bytes[i], 16777619) >>> 0;
-  }
-  // 32 bits of `a` and the low 8 of `b`: eight 5-bit digits.
-  let out = "";
-  for (let i = 0; i < 6; i++) out += BASE32[(a >>> (27 - 5 * i)) & 31];
-  out += BASE32[((a & 3) << 3) | ((b >>> 5) & 7)];
-  out += BASE32[b & 31];
-  return out;
-}
-
 /**
  * Write `bytes` as `<emitDir>/assets/<name>-<hash><ext>` (once) and return its public URL.
  * `ext` overrides the source extension (a compiled `?url` stylesheet stays `.css`).
@@ -1658,7 +1674,7 @@ async function emitAsset(
   ext = extname(srcPath),
 ): Promise<string> {
   const base = basename(srcPath, extname(srcPath)).replace(/[^\w.-]+/g, "_");
-  const file = `${base}-${hash8(bytes)}${ext}`;
+  const file = `${base}-${contentHash8(bytes)}${ext}`;
   const dir = join(assets.emitDir!, "assets");
   await Deno.mkdir(dir, { recursive: true });
   const target = join(dir, file);
@@ -2647,8 +2663,12 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
  * intact. Modules with neither directive fall through to the normal loader. Exported for testing.
  *
  * @param options.useCache Compile `"use cache"` (default true).
+ * @param options.projectDir The project root: inline action ids are keyed by the module's
+ *   project-relative path, as the runtime loader keys them.
  */
-export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbuild.Plugin {
+export function cacheDirectivePlugin(
+  options: { useCache?: boolean; projectDir?: string } = {},
+): esbuild.Plugin {
   const useCache = options.useCache ?? true;
   return {
     name: "denext-server-directives",
@@ -2662,7 +2682,9 @@ export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbu
         const cached = cache
           ? await transformUseCache(source, url)
           : { code: source, changed: false };
-        const inline = await transformInlineServerActions(cached.code, url);
+        const inline = await transformInlineServerActions(cached.code, url, {
+          projectDir: options.projectDir,
+        });
         if (!cached.changed && !inline.changed) return undefined;
         const ext = extname(args.path).slice(1);
         return {
@@ -2738,7 +2760,25 @@ async function compatPlugins(
       loader: options.denoLoaderMode ?? "portable",
     }));
   }
-  return plugins;
+  return deno && options.absWorkingDir ? pinServerImportMeta(plugins, options) : plugins;
+}
+
+/**
+ * The server bundle's chain with each app module's `import.meta` pinned to its source file
+ * (./compat-import-meta.ts): relative to the bundle when every entry is written straight into
+ * `outdir` (its chunks are too), else absolute (a `?worker` entry under `assets/`).
+ */
+function pinServerImportMeta(
+  plugins: esbuild.Plugin[],
+  options: BundleNextCompatModulesOptions,
+): esbuild.Plugin[] {
+  const flat = Object.keys(options.entryPoints).every((name) => !/[\\/]/.test(name));
+  return pinImportMetaPlugins(plugins, {
+    projectDir: options.absWorkingDir!,
+    buildDir: dirname(options.outdir),
+    outdir: flat ? options.outdir : undefined,
+    jsxInJs: options.jsxInJs,
+  });
 }
 
 /**
@@ -2800,17 +2840,18 @@ async function sourcePlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
+  const projectDir = options.absWorkingDir ?? dirname(
+    options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
+  );
   const fumadocs = await detectFumadocsMdx(
-    options.absWorkingDir ?? dirname(
-      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
-    ),
+    projectDir,
     (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
   );
   return [
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild, options.configPath)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),
+    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true, projectDir })] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
   ];
@@ -2860,7 +2901,7 @@ export async function bundleNextCompatModules(
     // browser bundle, moved out of the web root by the export (hidden-sourcemaps.ts).
     ...(!deno && hiddenSourceMapsEnabled() ? { sourcemap: "external" as const } : {}),
     jsx: "automatic",
-    jsxImportSource: "react",
+    jsxImportSource: await compatJsxImportSource(options.configPath),
     absWorkingDir: options.absWorkingDir,
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.
@@ -2953,7 +2994,11 @@ export function serverStubPlugin(
 ): esbuild.Plugin {
   const byPath = new Map<string, { id: string; exports: readonly string[] }>();
   for (const [id, ref] of servers) {
-    if (ref.url.startsWith("file:")) byPath.set(fromFileUrl(ref.url), { id, exports: ref.exports });
+    // Keyed canonical: esbuild hands `onLoad` the real path, while a boundary walked from a
+    // symlinked spelling (macOS `/var` → `/private/var`) names the module through the link.
+    if (ref.url.startsWith("file:")) {
+      byPath.set(canonicalPath(fromFileUrl(ref.url)), { id, exports: ref.exports });
+    }
   }
   return {
     name: "denext-server-stub",
@@ -2963,7 +3008,7 @@ export function serverStubPlugin(
       const unknown = new Set<string>();
       build.initialOptions.metafile = true;
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
-        const s = byPath.get(args.path) ?? byPath.get(await realPathOr(args.path));
+        const s = byPath.get(canonicalPath(args.path));
         if (s) {
           return {
             contents: stubOf(s.id, s.exports),

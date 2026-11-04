@@ -3,6 +3,8 @@
 // and surfaces action errors, forwardRef render fns get props without `ref`, use() honors
 // React-tagged thenables, createPortal and a store without getServerSnapshot throw on the server.
 
+import "./helpers/class-runtime.ts";
+
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
@@ -16,6 +18,7 @@ import {
   useSyncExternalStore,
 } from "../mod.ts";
 import { ErrorBoundary, forwardRef, use } from "../mod.ts";
+import { Component } from "../src/compat/react.ts";
 import { createPortal } from "../src/client/mod.ts";
 
 Deno.test("server: a render-phase setState converges in place (derived-state idiom) like React", async () => {
@@ -139,6 +142,42 @@ Deno.test("a mount host's callback ref fires at COMMIT (node placed), not during
   await render(h(C, null));
   assert(parentAtRef != null, "the ref saw a placed node (commit), not an off-DOM node (render)");
   assert(refOrder !== -1 && refOrder < layoutOrder, "the ref attaches before layout effects run");
+});
+
+Deno.test("a class component's ref is its instance, attached at COMMIT after componentDidMount", async () => {
+  // React's commitLayoutEffectOnFiber runs a class's componentDidMount, then safelyAttachRef:
+  // the ref receives the instance (never the class's DOM), its output is already placed, and
+  // nothing fires during render. denext used to drop a class's ref entirely.
+  const log: string[] = [];
+  let rendering = false;
+  let inst: unknown = null;
+  class C extends Component {
+    constructor(p: Record<string, never>) {
+      super(p);
+      inst = this;
+    }
+    componentDidMount() {
+      log.push("didMount");
+    }
+    override render() {
+      rendering = true;
+      try {
+        return h("div", { ref: (el: { parentNode: unknown } | null) => (div = el) });
+      } finally {
+        rendering = false;
+      }
+    }
+  }
+  let div: { parentNode: unknown } | null = null;
+  let placed = false;
+  const ref = (v: unknown) => {
+    if (v === null) return;
+    log.push(rendering ? "ref-in-render" : v === inst ? "ref:instance" : "ref:other");
+    placed = div?.parentNode != null;
+  };
+  await render(h(C as never, { ref } as never));
+  assertEquals(log, ["didMount", "ref:instance"]);
+  assert(placed, "the class's output is in the document when its ref attaches");
 });
 
 Deno.test("use(): a React-tagged fulfilled thenable does not re-suspend", () => {

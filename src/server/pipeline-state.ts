@@ -14,7 +14,7 @@ import {
   type RedirectRule,
   type RewriteRule,
 } from "./config.ts";
-import { withHeaders } from "./middleware.ts";
+import { mergeHeaders, withHeaders } from "./middleware.ts";
 import { applyOutgoing } from "./response-headers.ts";
 
 /** The config-driven URL rules (denext.config redirects/rewrites/headers), compiled. */
@@ -131,6 +131,77 @@ function withInjectedHeaders(state: RequestState, res: Response): Response {
 export function finalize(state: RequestState, res: Response): Response {
   return applyOutgoing(
     withInjectedHeaders(state, res),
+    state.ctx.outgoingHeaders,
+    state.ctx.responseStatus,
+  );
+}
+
+/**
+ * {@linkcode finalize} for a response built from one that already left through it (a page request
+ * middleware's own response after `render()`, or a copy of the rendered one): the injected and
+ * request-queued headers it lacks are added, a Set-Cookie it already carries is not repeated, and
+ * its status is kept (a loader's status override belongs to the rendered response, not to a
+ * redirect the middleware answers with).
+ *
+ * @param state The request state.
+ * @param res The response the middleware resolved to.
+ * @returns `res`, or a copy with the missing headers.
+ */
+export function finalizeLacking(state: RequestState, res: Response): Response {
+  const headers = new Headers(res.headers);
+  const cookies = new Set(headers.getSetCookie());
+  // Outgoing after injected, as in `finalize`: a header both set takes the outgoing value.
+  const added = addLacking(res.headers, headers, cookies, state.injectedHeaders) +
+    addLacking(res.headers, headers, cookies, state.ctx.outgoingHeaders);
+  if (added === 0) return res;
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/** Add to `headers` what `from` has and `own` lacks (a Set-Cookie not in `cookies`); the count. */
+function addLacking(
+  own: Headers,
+  headers: Headers,
+  cookies: Set<string>,
+  from: Headers | undefined,
+): number {
+  let added = 0;
+  for (const cookie of from?.getSetCookie() ?? []) {
+    if (cookies.has(cookie)) continue;
+    cookies.add(cookie);
+    headers.append("set-cookie", cookie);
+    added++;
+  }
+  for (const [key, value] of from ?? []) {
+    if (key === "set-cookie" || own.has(key)) continue;
+    headers.set(key, value);
+    added++;
+  }
+  return added;
+}
+
+/**
+ * {@linkcode finalize} of `new Response(body, { status, headers })`, with the injected headers
+ * merged into `headers` before the response is made rather than into a copy of it afterwards:
+ * the same response, constructed once. (A copy costs a second `Headers` and `Response`, and the
+ * runtime prepares each response's native header block as it is constructed.)
+ *
+ * @param state The request state.
+ * @param body The response body.
+ * @param status The response status.
+ * @param headers The response's own headers.
+ * @returns The finalized response.
+ */
+export function finalizeNew(
+  state: RequestState,
+  body: BodyInit | null,
+  status: number,
+  headers: HeadersInit,
+): Response {
+  const own = state.injectedHeaders
+    ? mergeHeaders(new Headers(headers), state.injectedHeaders)
+    : headers;
+  return applyOutgoing(
+    new Response(body, { status, headers: own }),
     state.ctx.outgoingHeaders,
     state.ctx.responseStatus,
   );

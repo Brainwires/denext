@@ -29,7 +29,11 @@ async function navigateDeferred(post: boolean): Promise<void> {
     const errors = collectConsoleErrors(page);
     await page.goto(server.origin + "/", { waitUntil: "load" });
     await page.waitForFunction("!!document.querySelector('[data-testid=home]')");
-    // Hydrated: the layout's client counter responds.
+    // Hydrated (its effect has run, so a click is not lost on the server's markup): the
+    // layout's client counter responds.
+    await page.waitForFunction(
+      "!!document.querySelector('[data-testid=navcount][data-hydrated]')",
+    );
     const counter = await page.$("[data-testid=navcount]");
     assert(counter);
     await counter.click();
@@ -84,12 +88,8 @@ const FORCE_POST = `(() => {
 
 Deno.test({
   name: "e2e: a soft navigation streams its deferred values per boundary",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => navigateDeferred(false));
 
 Deno.test({
   name: "e2e: a soft navigation sent as a POST streams its deferred values too",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => navigateDeferred(true));

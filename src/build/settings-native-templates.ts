@@ -17,9 +17,16 @@
 //   them; `deliveredNotifications` / `removeDeliveredNotifications` in denext/mobile select by id,
 //   thread or tag in JavaScript. `local-notifications` and `push` install the plugin for these.
 //
-// Generation 2 added `sendIntent` (Android), generation 3 the delivered-notification methods; an
-// unedited older file is upgraded, and each bump keeps an older denext from rewriting the methods
-// away.
+// - Both: `biometricSecretSet` / `biometricSecretGet` / `biometricSecretDelete`, the native half of
+//   `secureStore.set(key, value, { requireBiometric: true })`: the OS enforces the biometric gate
+//   (iOS: a Keychain item whose `SecAccessControl` is `.biometryCurrentSet` or the passcode, read
+//   with an evaluated `LAContext`; Android 9+: an AES-GCM-sealed value whose key is wrapped by an
+//   Android Keystore key pair requiring user authentication, unwrapped through a `BiometricPrompt`
+//   `CryptoObject`). `biometrics` installs the plugin.
+//
+// Generation 2 added `sendIntent` (Android), generation 3 the delivered-notification methods,
+// generation 4 the biometric secrets; an unedited older file is upgraded, and each bump keeps an
+// older denext from rewriting the methods away.
 //
 // Edit these as source in native-templates/settings.ts:
 // they are compiled only in an app (against Capacitor 8). Every `\``
@@ -37,7 +44,7 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 
 /** The generation of the templates, stamped into every file the installer writes. */
-export const SETTINGS_TEMPLATE_VERSION = 3;
+export const SETTINGS_TEMPLATE_VERSION = 4;
 
 /**
  * A template as the installer writes it: a first line

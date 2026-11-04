@@ -220,7 +220,7 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 | **CVE-2025-55183**                                    | Server-Function source-code exposure.                                                                                                                                                                                  | 🟢 **Protected (by design)** — see [§3](#3-react-server-components--flight-protocol-rce-dos-source-leak).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **CVE-2026-64643**                                    | Unauthenticated disclosure of internal `use server` / `use cache` endpoint IDs, aiding attack chaining. CVSS 6.3.                                                                                                      | ✅ **Protected (tested)** — server-action ids on the wire are opaque hashes of `module#export` (`actionIdFor`, `src/runtime/server-action.ts`), not module paths; dispatch stays a `Map` lookup behind the CSRF check and body caps. `tests/server-reference.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Dev inspector sink** _(class — new surface in 2.5)_ | The DevTools MCP bridge is the first dev endpoint that **stores** browser-supplied structured data (the component tree the dev page pushes), so a hostile page could try to poison or flood what an agent later reads. | ✅ **Protected (tested)** — `POST /_denext/dev-inspect` exists only in dev and inherits the same loopback + `Sec-Fetch-Site` gate as every `/_denext/*` endpoint (a cross-origin POST is a **403**). It accepts `POST` with a `content-type` whose media type is **exactly** `application/json` (415 otherwise — a substring test would have admitted `text/html; x=application/json`), caps the body at 256 KB (413), and **rebuilds every stored node field by field** from coerced, length-clamped values rather than storing what arrived, so a forged tree can neither crash a formatter nor inject unbounded text into an agent's context (the depth/node caps are a backstop behind that). String values are redacted to `string(8)` — a length, never the characters. A snapshot expires after **10 minutes**, at most 8 page URLs are retained (LRU), and a read from a page (one carrying a `Referer`) is scoped to that page's own URL, so one dev page cannot read another route's hook state; the MCP bridge selects a page with `?url=`. Dev request-log entries are clamped the same way. `tests/mcp-devtools.test.ts`. |
-| **`NEXT_PUBLIC_` env leakage** _(class)_              | Server-only env vars accidentally shipped to the client bundle.                                                                                                                                                        | ✅ **Protected** — `filterPublicEnv` is the single producer of client-embedded env values and admits only `NEXT_PUBLIC_` / `DENEXT_PUBLIC_` prefixes; the client reads env solely from the embedded public island. _(Passing a secret as a prop to a client component remains developer responsibility, as in Next.js.)_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **`NEXT_PUBLIC_` env leakage** _(class)_              | Server-only env vars accidentally shipped to the client bundle.                                                                                                                                                        | ✅ **Protected** — `filterPublicEnv` is the single producer of client-embedded env values and admits only `NEXT_PUBLIC_` / `DENEXT_PUBLIC_` / `FRESH_PUBLIC_` prefixes; the client reads env solely from the embedded public island. _(Passing a secret as a prop to a client component remains developer responsibility, as in Next.js.)_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### `denext ui` — a local write surface, fenced in six layers
 
@@ -244,6 +244,46 @@ plan), because a lexical check alone cannot see through a symlinked directory.
 Every write is a `.tmp` file plus one rename, and a config form carries a
 SHA-256 of the source it was rendered from, so a file that changed on disk
 underneath you is a `409` rather than a lost edit.
+
+The UI refuses a dangling symlink anywhere on a path too, and so do the CLI
+commands that write into a project they did not create (`denext migrate`,
+`init`, `upgrade`, `mobile add`, `desktop add`), since a cloned repository's
+committed symlinks are its author's choice: they never write through a symlink,
+to a folder or a file, that leads out of the project, nor through a dangling
+one, and stop with an error naming it (`migrate` and `init` leave a `.vscode`
+linked elsewhere alone). A link that stays inside the project is followed.
+`denext upgrade` leaves a workspace member outside the project unpinned and
+names it, and `denext patch` refuses a package name that is not an npm name. A
+patch, which runs at every boot, writes only inside the package it names, by real
+path: a link inside the package that leads out of it (or dangles) is refused, and
+the package folder itself must resolve inside the project or its workspace root.
+
+### Untrusted repositories
+
+An installed `denext` (the compiled binary, or
+`deno install -g`, whose launcher names its own config) reads a project's files as data until a
+verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
+(a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
+`audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
+`desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
+`denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the
+CLI holds: `dev`, `build`, `export`, `start`, `test`, `check`, `doctor` (it renders every route, as
+does `denext_doctor`), `commands`, `job` (`--list` too), `db`, `migration`, `gen`, `deploy`
+(`prepare --dry-run` too), `analyze`, `profile`, `denext_render`, `denext ui`'s Commands, Doctor and
+Tasks panels, and **a verb denext doesn't know, including a mistyped one, when the config might
+define it**: denext reads the config's text first, and imports it unless it can see there are no
+`commands` or `plugins`. A spread, a variable as the default export or a wrapper other than
+`defineConfig` hides the keys, so those import too, since a project's real verb must not silently
+stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
+config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
+reviewed, type only the verbs listed above as running none of it. A compiled binary also offers an unknown
+verb to the denext the project pins before this read, so a verb only that newer denext has keeps
+working, and a repository can pin an older denext, which imports the config for any unknown verb. A
+verb named by the listing the last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+`deno run jsr:@denext/denext/cli …` is different: Deno applies the working
+directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
+so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,
+under the permissions you granted.
 
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
 `next.config` evaluation, `deno add`, **and discovering the project's own CLI
@@ -502,7 +542,8 @@ or weaker than ideal.
 > history is in the `Security` entries of the [changelog](/docs/changelog) from
 > 0.12.0 (the original six residual-risk gaps closed, ten CVE classes locked in
 > with parity tests) through 2.0.0 (the auth-hardening pass and the weak-secret
-> boot guard), and 2.5 closed the OIDC audience row below. One row remains open:
+> boot guard), and 2.5 closed the OIDC audience row below. One row remains open, and one is a
+> documented difference from `auth()`:
 
 1. **🟡 Server-Action / RSC CPU & concurrency throttling — mostly mitigated.**
    The slow-body vector is CLOSED (idle timeout on the action body reader → 408,
@@ -517,6 +558,12 @@ or weaker than ideal.
    is refused even when `aud` still lists us. A provider whose IdP legitimately
    mints multi-audience tokens without `azp` can opt back into membership with
    `strictAudience: false`.
+3. **🟡 `aal1` access tokens under row-level security — by design, as on Supabase.**
+   With `@denext/backend`, an `/auth/v1` access token of a user who owes a second factor
+   (`aal: "aal1"`) is `authenticated` under RLS, while `auth()` reads it as signed out. A
+   table that must stay behind the second factor needs a policy checking
+   `auth.jwt() ->> 'aal' = 'aal2'`:
+   [MFA and row-level security](/docs/backend#mfa-and-row-level-security).
 
 ### `<Script strategy="worker">` (Partytown) and HTML injection
 
@@ -538,6 +585,11 @@ Partytown on any page of the origin. denext closes both:
   inert. An injection cannot know the nonce (it is
   fixed before it is minted), a guessed or copied one fails, and an injected boot tag with a
   different nonce makes the page refuse Partytown altogether.
+- **A SPA's nonce comes from its shell.** A SPA renders `<Script>` in the browser, so `denext
+  dev` and `denext start` stamp each shell response instead: a fresh nonce on the boot tag and
+  the shell's own scripts, and `'nonce-…'` in the `spa.csp` policy's `script-src`. The worker
+  scripts the app renders take the nonce the boot ran with, and the checks below are the same.
+  A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no
   sandbox can pick one up early. Scripts a client render adds later are checked the same way.

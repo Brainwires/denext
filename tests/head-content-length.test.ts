@@ -2,7 +2,7 @@
 // was dropped and the server sent `content-length: 0`.
 
 import { assert, assertEquals } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";

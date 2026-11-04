@@ -24,9 +24,9 @@ export default function GraphQL() {
         {`// deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.6.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.7.0",
     "graphql": "npm:graphql@^16.9.0",
-    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.24.6",
     "@pothos/core": "npm:@pothos/core@^4"
   }
 }`}
@@ -211,6 +211,13 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         reloads the same way: the plugin follows the config's relative imports to the module that
         exports it and re-imports that module after an edit. One it cannot trace (built in the
         config itself, or imported through an alias) needs a restart, and a dev notice says so.
+      </p>
+      <p>
+        Each reload logs one line naming the edited files (
+        <code>[@denext/graphql] schema reloaded after an edit to app/graphql/schema.ts</code>). A
+        reload that fails (a syntax error, a schema that no longer builds) logs the error with the
+        same files and shows it in the dev error overlay; requests answer with that error until the
+        next edit.
       </p>
 
       <h2>CI</h2>

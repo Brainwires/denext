@@ -16,6 +16,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "codemod",
     "commands",
     "completions",
+    "crash-report",
     "create",
     "dashboard",
     "dashboard-logs", // hidden: the stack dashboard's log relay

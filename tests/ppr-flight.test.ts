@@ -17,7 +17,7 @@ import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import type { FlightNode } from "../src/jsx/render-to-flight.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { useSignal } from "../src/runtime/signals.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 import { withPrerender } from "../src/runtime/prerender.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 

@@ -22,6 +22,7 @@ import type { FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 import { addSyntheticEventMembers, delegates } from "./fiber/events.ts";
 import { SVG_NAMESPACE } from "./fiber/fiber-utils.ts";
+import { ERR_FORM_ACTIONS_OFF, reconcilerError } from "./fiber/errors.ts";
 
 /** The mutable host bookkeeping both reconcilers' node types satisfy. */
 export interface HostState {
@@ -54,11 +55,12 @@ function isFormActionProp(name: string, value: unknown): boolean {
   return (name === "action" || name === "formAction") && typeof value === "function";
 }
 
-/** Drop the "submit" listener a function-valued form action wired (setFormAction). */
+/** Drop a function-valued form action (setFormAction): its site, and a button's arming click. */
 function removeFormAction(el: Element, state: HostState): void {
+  delete (el as ActionEl).__dnxFA;
   const existing = state.listeners?.get("submit");
   if (!existing) return;
-  el.removeEventListener("submit", existing);
+  el.removeEventListener("click", existing);
   state.listeners!.delete("submit");
 }
 
@@ -66,7 +68,16 @@ function removeFormAction(el: Element, state: HostState): void {
 function removeProp(el: Element, state: HostState, name: string, oldValue: unknown): void {
   if (isEventProp(name)) return removeListener(el, state, name);
   // Dropping a function-valued form action must remove its listener, not just the attribute.
-  if (isFormActionProp(name, oldValue)) return removeFormAction(el, state);
+  // (Each form-action site reads the build gate itself: a define folds only a bare read.)
+  if (
+    (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) &&
+    isFormActionProp(name, oldValue)
+  ) return removeFormAction(el, state);
+  removeValue(el, name, oldValue);
+}
+
+/** Undo a gone non-function prop: raw HTML, the style properties denext set, else the attribute. */
+function removeValue(el: Element, name: string, oldValue: unknown): void {
   // The prop is gone: drop the raw HTML so reconciled children can take over.
   if (name === "dangerouslySetInnerHTML") {
     el.innerHTML = "";
@@ -122,9 +133,14 @@ function setProp(
     return setListener(el, state, name, value as EventListener | undefined, onError);
   }
   // A form `action={fn}` (React 19 form action / useActionState dispatch): intercept
-  // submit and call the action with the form's FormData.
+  // submit and call the action with the form's FormData. Off (a define the build sets from a
+  // scan of the app's sources for `action` / `formAction`) in an app that never writes one.
+  // In a build whose scan saw no form action the form would submit natively: say so instead.
   if (isFormActionProp(name, value)) {
-    return setFormAction(el, state, value as (payload: unknown) => void, onError);
+    if (typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__) {
+      return setFormAction(el, state, value as (payload: unknown) => void, onError);
+    }
+    reportError(reconcilerError(ERR_FORM_ACTIONS_OFF, name));
   }
   // Compared by `__html` (React parity): a fresh `{ __html }` object of the same markup each
   // render must not re-create the nodes.
@@ -211,12 +227,27 @@ const hasOwn = Object.prototype.hasOwnProperty;
 /** The props of an element that had none (a fresh mount's "old" props); never written. */
 export const NO_PROPS: Record<string, unknown> = Object.freeze({});
 
+/** Where a function-valued form action is set: its action, error route and host state. */
+export type FormActionSite = readonly [(payload: unknown) => void, ErrorRouter, HostState];
+
+/** A form or submit button carrying a function-valued action. */
+type ActionEl = Element & { __dnxFA?: FormActionSite; form?: ArmedForm | null };
+
+/** A form whose submit denext intercepts (one listener per form, however many actions). */
+type ArmedForm = HTMLFormElement & { __dnxFA?: FormActionSite; __dnxFS?: true };
+
+/** A submit that waited for the form-action runtime: what was submitted, taken at the submit. */
+export interface HeldSubmit {
+  /** The submitted `FormData` (the submitter's name/value included), or undefined. */
+  readonly data: unknown;
+}
+
 /** Runs one submit of a function-valued form action (form-action.ts's `runFormAction`). */
 export type FormActionRunner = (
   event: Event,
-  state: HostState,
-  action: (payload: unknown) => void,
-  onError: ErrorRouter,
+  form: HTMLFormElement,
+  site: FormActionSite,
+  held?: HeldSubmit,
 ) => void;
 
 /**
@@ -250,10 +281,12 @@ export function installFormActions(): Promise<void> {
 }
 
 /**
- * Wire a function-valued form `action` to the form's submit event. The submit is always
- * intercepted here; the work (FormData, the call, `useFormStatus`) is the on-demand
- * form-action.ts, whose load starts as soon as such a form renders, so it is in place well
- * before a person can submit. A submit that beats it waits for the load.
+ * Wire a function-valued form `action` / `formAction`. The submit is always intercepted, at the
+ * form (the submit event fires there, never at a button): a form's own action arms the form; a
+ * submit button's `formAction` arms its form once the button is in it (after this commit) and
+ * again on a click, so a submit through the button runs the button's action however it starts
+ * (a click, Enter, `form.requestSubmit(button)`). The call itself is the on-demand
+ * form-action.ts, whose load starts as soon as such an action renders.
  */
 function setFormAction(
   el: Element,
@@ -261,16 +294,50 @@ function setFormAction(
   action: (payload: unknown) => void,
   onError: ErrorRouter,
 ): void {
-  const existing = state.listeners?.get("submit");
-  if (existing) el.removeEventListener("submit", existing);
+  removeFormAction(el, state);
   if (!runFormAction) installFormActions().catch(() => {}); // a submit retries and reports it
-  const handler: EventListener = (event) => {
-    event.preventDefault();
-    if (runFormAction) return runFormAction(event, state, action, onError);
-    installFormActions().then(() => runFormAction!(event, state, action, onError), onError);
+  (el as ActionEl).__dnxFA = [action, onError, state];
+  if (el.tagName == "FORM") return armForm(el as ArmedForm);
+  const arm = () => armForm((el as ActionEl).form);
+  queueMicrotask(arm);
+  el.addEventListener("click", arm);
+  (state.listeners ??= new Map()).set("submit", arm);
+}
+
+/** Listen for `form`'s submits (once). */
+function armForm(form: ArmedForm | null | undefined): void {
+  if (!form || form.__dnxFS) return;
+  form.__dnxFS = true;
+  form.addEventListener("submit", (event) => formSubmit(event, form));
+}
+
+/**
+ * An armed form's submit: the submitting button's `formAction`, else the form's own `action`
+ * (React's rule); neither leaves the submit native. A submit that beats the form-action runtime
+ * is held for it (never sent natively), with its `FormData` and its form's `useFormStatus` pending
+ * state taken now.
+ */
+function formSubmit(event: Event, form: ArmedForm): void {
+  const submitter = (event as SubmitEvent).submitter as ActionEl | null;
+  const site = submitter?.__dnxFA ?? form.__dnxFA;
+  if (!site) return;
+  event.preventDefault();
+  if (runFormAction) return runFormAction(event, form, site);
+  let data: unknown;
+  try {
+    data = new FormData(form, submitter as HTMLElement | null);
+  } catch { /* no FormData here (a test shim) */ }
+  const sig = site[2].ext?.formStatus;
+  const pending = (by: number) => {
+    if (!sig) return;
+    sig.pending += by;
+    sig.listeners.forEach((l) => l());
   };
-  el.addEventListener("submit", handler);
-  (state.listeners ??= new Map()).set("submit", handler);
+  pending(1);
+  installFormActions().then(() => runFormAction!(event, form, site, { data }), (err) => {
+    pending(-1);
+    site[1](err);
+  });
 }
 
 /**

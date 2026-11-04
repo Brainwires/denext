@@ -8,7 +8,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
-import { useSyncExternalStore } from "../src/runtime/hooks.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 

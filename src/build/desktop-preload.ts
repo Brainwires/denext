@@ -9,6 +9,7 @@
 // privileges, so it is no sandbox. Its job is to run EARLY: expose bridges (`window.desktopBridge`,
 // Clerk's `__clerk_internal_electron`) before the page's own scripts read them.
 
+import { runToExit } from "./exited-output.ts";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { bundleFailureMessage, denoExecutable, minDepAgeArgs } from "./bundle.ts";
 import type { ProjectPaths } from "./paths.ts";
@@ -78,12 +79,12 @@ export async function bundleDesktopPreload(input: DesktopPreloadBundle): Promise
     throw new Error(`${input.label ?? "desktop.preload"}: no module at ${entry}`);
   }
   await Deno.mkdir(dirname(input.outFile), { recursive: true });
-  const { code, stderr } = await new Deno.Command(denoExecutable(), {
+  const { code, stderr } = await runToExit(denoExecutable(), {
     args: desktopPreloadBundleArgs(input),
     cwd: input.projectDir,
     stdout: "null",
     stderr: "piped",
-  }).output();
+  });
   if (code !== 0) {
     throw new Error(
       `${input.label ?? "desktop.preload"}: ${

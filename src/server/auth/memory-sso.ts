@@ -1,10 +1,12 @@
 // The in-memory adapter's SAML SSO group: stored providers (entity id and domains unique),
-// the SSO origin of sessions, and the shared SAML message-id replay cache.
+// the SSO origin of sessions, the shared SAML message-id replay cache, and the session index and
+// revocation list of SAML Single Logout for stateless cookie sessions.
 
 import type {
   AuthAdapter,
   SsoProviderRecord,
   SsoProviderWrite,
+  SsoSessionIndexRecord,
   SsoSessionRecord,
 } from "./adapter.ts";
 
@@ -23,10 +25,20 @@ export type SsoMethods = Pick<
   | "claimSamlMessageId"
 >;
 
+/** The Single Logout session-index and revocation methods, by name. */
+export type SsoIndexMethods = Pick<
+  AuthAdapter,
+  | "recordSsoSessionIndex"
+  | "listSsoSessionIndexBySessionIndex"
+  | "listSsoSessionIndexByNameId"
+  | "revokeSids"
+  | "isSidRevoked"
+>;
+
 /** The group, plus what the adapter's deletion and close need. */
 export interface MemorySsoGroup {
   /** The adapter methods. */
-  methods: SsoMethods;
+  methods: SsoMethods & SsoIndexMethods;
   /** Drop a deleted user's SSO session records. */
   dropUser(userId: string): void;
   /** Drop everything. */
@@ -111,6 +123,43 @@ function sessionMethods(
 }
 
 /**
+ * The Single Logout index and revocation list. Index rows past the cap are evicted oldest first
+ * (a lost row makes a LogoutRequest fail closed); revocations are never evicted, only expired.
+ */
+function indexMethods(
+  index: Map<string, SsoSessionIndexRecord>,
+  revoked: Map<string, number>,
+  maxEntries: number,
+  now: () => number,
+): SsoIndexMethods {
+  const live = (match: (r: SsoSessionIndexRecord) => boolean) =>
+    [...index.values()].filter((r) => r.expiresAt > now() && match(r)).map((r) => ({ ...r }));
+  return {
+    recordSsoSessionIndex(providerId, nameId, sessionIndex, sid, expiresAt) {
+      prune(index, maxEntries, (r) => r.expiresAt <= now());
+      index.set(sid, {
+        providerId,
+        nameId,
+        ...(sessionIndex !== undefined && { sessionIndex }),
+        sid,
+        expiresAt,
+      });
+    },
+    listSsoSessionIndexBySessionIndex: (providerId, nameId, sessionIndex) =>
+      live((r) =>
+        r.providerId === providerId && r.nameId === nameId && r.sessionIndex === sessionIndex
+      ),
+    listSsoSessionIndexByNameId: (providerId, nameId) =>
+      live((r) => r.providerId === providerId && r.nameId === nameId),
+    revokeSids(sids, expiresAt) {
+      prune(revoked, Infinity, (until) => until <= now());
+      for (const sid of sids) revoked.set(sid, Math.max(expiresAt, revoked.get(sid) ?? 0));
+    },
+    isSidRevoked: (sid) => (revoked.get(sid) ?? 0) > now(),
+  };
+}
+
+/**
  * Build the group.
  *
  * @param maxEntries The cap on session records and remembered message ids (oldest evicted).
@@ -121,10 +170,13 @@ export function memorySsoGroup(maxEntries: number, now: () => number): MemorySso
   const providers: Providers = new Map();
   const sessions = new Map<string, SsoSessionRecord>();
   const ids = new Map<string, number>();
+  const index = new Map<string, SsoSessionIndexRecord>();
+  const revoked = new Map<string, number>();
   return {
     methods: {
       ...providerMethods(providers, sessions),
       ...sessionMethods(sessions, ids, maxEntries, now),
+      ...indexMethods(index, revoked, maxEntries, now),
     },
     dropUser(userId) {
       for (const [key, s] of sessions) if (s.userId === userId) sessions.delete(key);
@@ -133,6 +185,8 @@ export function memorySsoGroup(maxEntries: number, now: () => number): MemorySso
       providers.clear();
       sessions.clear();
       ids.clear();
+      index.clear();
+      revoked.clear();
     },
   };
 }

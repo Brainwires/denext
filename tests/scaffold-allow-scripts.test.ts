@@ -12,3 +12,12 @@ Deno.test("a scaffolded deno.json denies @parcel/watcher's build script, so Deno
     assertEquals(cfg.allowScripts, { deny: ["npm:@parcel/watcher"] }, JSON.stringify(opts));
   }
 });
+
+Deno.test("a scaffolded deno.json excludes .deno/, so deno test skips a runtime's npm-compat copy", () => {
+  // Deno runtime 3.0.0-rc.5's type-check writes `.deno/npm-compat` (with `@jsr/*` `_test.ts`
+  // files) into the project root; default `deno test` discovery would run them.
+  for (const opts of [{}, { desktop: true }, { monorepoScope: "@acme" }]) {
+    const cfg = JSON.parse(denoJson({ dir: "/x", ...opts }));
+    assertEquals(cfg.exclude, [".deno/"], JSON.stringify(opts));
+  }
+});

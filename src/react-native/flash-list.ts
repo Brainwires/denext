@@ -26,10 +26,10 @@ import {
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 import { VirtualMasonry, type VirtualMasonryHandle } from "../client/virtual/virtual-masonry.ts";
 import type { VirtualListBlankArea } from "../client/virtual/types.ts";
 import { type CoreHandle, CoreList, type EngineOptions, slotElement } from "./lists/virtualized.ts";

@@ -27,6 +27,16 @@ export const RPC_PATH = "/_denext/desktop/rpc";
 export const EVENTS_PATH = "/_denext/desktop/events";
 /** The header that carries the per-launch token. */
 export const TOKEN_HEADER = "x-denext-desktop-token";
+/** The header that names the calling window (its per-window token). */
+const WINDOW_HEADER = "x-denext-desktop-window";
+/** The header that names the calling document (a random id per page load). */
+const PAGE_HEADER = "x-denext-desktop-page";
+/** The window binding the runtime gives each of the app's windows (its per-window token). */
+const WINDOW_BINDING = "__denextWindow";
+/** How long to wait for the window binding to appear (CEF registers bindings asynchronously). */
+const WINDOW_BINDING_WAIT_MS = 2_000;
+/** How often to look for it meanwhile. */
+const WINDOW_BINDING_POLL_MS = 20;
 /**
  * The largest RPC body the page sends (bytes of the JSON). The runtime refuses larger bodies
  * too; checking here fails fast with `too_large` instead of streaming megabytes into a 413.
@@ -123,6 +133,55 @@ function desktopToken(): string | undefined {
   return typeof g.token === "string" && g.token !== "" ? g.token : undefined;
 }
 
+/** This document's id: tells the runtime when a window shows a new page (a reload). */
+const PAGE_ID = crypto.randomUUID();
+
+/** The window binding, when the runtime registered it for this document. */
+function windowBinding(): (() => Promise<unknown>) | undefined {
+  const b = (globalThis as { bindings?: Record<string, unknown> }).bindings?.[WINDOW_BINDING];
+  return typeof b === "function" ? b as () => Promise<unknown> : undefined;
+}
+
+/** This window's token, once asked (`null`: none, the runtime treats the page as the main window). */
+let windowTokenPromise: Promise<string | null> | undefined;
+
+/**
+ * This window's per-window token: what the runtime's `__denextWindow` binding answers, so every
+ * call says which of the app's windows it came from. Asked once per document; `null` where the
+ * runtime gave the window none (`__denext.windows` unset: one window, or a runtime without
+ * bindings).
+ */
+function windowToken(): Promise<string | null> {
+  windowTokenPromise ??= (async () => {
+    const g = (globalThis as { __denext?: { windows?: unknown } }).__denext;
+    if (g?.windows !== true) return null;
+    for (let waited = 0; waited <= WINDOW_BINDING_WAIT_MS; waited += WINDOW_BINDING_POLL_MS) {
+      const bind = windowBinding();
+      if (bind) {
+        try {
+          const token = await bind();
+          return typeof token === "string" && token !== "" ? token : null;
+        } catch {
+          return null;
+        }
+      }
+      await new Promise((r) => setTimeout(r, WINDOW_BINDING_POLL_MS));
+    }
+    return null;
+  })();
+  return windowTokenPromise;
+}
+
+/** The headers every bridge request carries: the token, the page id and the window's token. */
+async function identityHeaders(token: string): Promise<Record<string, string>> {
+  const win = await windowToken();
+  return {
+    [TOKEN_HEADER]: token,
+    [PAGE_HEADER]: PAGE_ID,
+    ...(win !== null ? { [WINDOW_HEADER]: win } : {}),
+  };
+}
+
 /** Whether this document can reach the desktop bridge (a desktop window with a token). */
 export function hasDesktopBridge(): boolean {
   return desktopToken() !== undefined;
@@ -216,11 +275,14 @@ export async function desktopRpc<O = unknown>(
       ? signal.reason
       : desktopError(cap, method, "timeout", `no answer in ${timeout} ms`);
   try {
+    const identity = await identityHeaders(token);
+    // Aborted (or timed out) while the window's token was looked up: no request at all.
+    if (abort.signal.aborted) throw timedOut();
     let res: Response;
     try {
       res = await fetch(RPC_PATH, {
         method: "POST",
-        headers: { "content-type": "application/json", [TOKEN_HEADER]: token },
+        headers: { "content-type": "application/json", ...identity },
         body,
         signal: abort.signal,
         credentials: "same-origin",
@@ -365,9 +427,12 @@ function wanted(state: StreamState): boolean {
   return false;
 }
 
-/** The events request's headers: the token, and the last id seen so the runtime can replay. */
-function eventHeaders(state: StreamState, token: string): Record<string, string> {
-  const headers: Record<string, string> = { accept: "text/event-stream", [TOKEN_HEADER]: token };
+/** The events request's headers: the identity, and the last id seen so the runtime can replay. */
+async function eventHeaders(state: StreamState, token: string): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    accept: "text/event-stream",
+    ...(await identityHeaders(token)),
+  };
   if (state.lastEventId !== undefined) headers["last-event-id"] = state.lastEventId;
   return headers;
 }
@@ -380,7 +445,7 @@ async function readOnce(state: StreamState, token: string, signal: AbortSignal):
   try {
     const res = await fetch(EVENTS_PATH, {
       method: "GET",
-      headers: eventHeaders(state, token),
+      headers: await eventHeaders(state, token),
       signal,
       credentials: "same-origin",
       cache: "no-store",
@@ -472,4 +537,5 @@ export function subscribeDesktopEvent(
 export function resetDesktopBridgeForTesting(): void {
   if (stream) disconnect(stream);
   stream = undefined;
+  windowTokenPromise = undefined;
 }

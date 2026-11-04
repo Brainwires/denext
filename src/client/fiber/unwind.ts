@@ -6,9 +6,10 @@ import {
   findErrorBoundary,
   findSuspense,
   isClassBoundary,
+  isHookBoundary,
 } from "./fiber-utils.ts";
 import { reportCaught, reportUncaught } from "./root-callbacks.ts";
-import { retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
+import { raiseAccessSignal, retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
 
 import { isThenable } from "../../runtime/suspense.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
@@ -146,6 +147,11 @@ function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
   } else {
     reportCaught(boundary, thrown);
     fiberExt(boundary).__error = thrown;
+    // A component boundary must render on this pass (its error UI), not bail out.
+    if (
+      (typeof __DENEXT_HOOK_BOUNDARIES__ === "undefined" || __DENEXT_HOOK_BOUNDARIES__) &&
+      isHookBoundary(boundary)
+    ) boundary.lanes |= renderLanes;
   }
   reseedBoundary(boundary);
   return boundary;
@@ -165,6 +171,9 @@ export function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
     location.assign(thrown.url);
     return null;
   }
-  if (isControlSignal(thrown)) throw thrown;
+  // A Server Action's `notFound()` / `forbidden()` / `unauthorized()` that `useActionState`
+  // re-raised: the server renders the route's matching UI; this render is abandoned, keeping
+  // what is on screen until it lands. Any other control signal ends the render.
+  if (isControlSignal(thrown)) throw raiseAccessSignal(thrown) ? SUSPENDED_ROOT : thrown;
   return handleRenderError(sourceFiber, thrown);
 }

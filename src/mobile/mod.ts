@@ -49,13 +49,15 @@
  *   that `denext mobile add-ota` installs, which re-verifies a downloaded UI whenever it serves
  *   it ({@linkcode onOtaRejected} hears a refusal); {@linkcode prepareUiUpdate} /
  *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
- *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
+ *   {@linkcode otaSignaturePayload} / {@linkcode otaAppSignaturePayload} build the exact bytes
+ *   a manifest's `signature` / `appSignature` cover.
  * - Native capabilities, each through its official Capacitor plugin in the shell
  *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
  *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
  *   {@linkcode clipboardFormats},
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
- *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
+ *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash},
+ *   {@linkcode speak} / {@linkcode stopSpeaking} (the OS engine, else Web Speech) and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
  *   {@linkcode listDir} (app storage natively, OPFS on the web); {@linkcode downloadToFile} /
@@ -100,7 +102,8 @@
  *   watch on the web).
  * - {@linkcode openKeyValueStore}: durable key-value storage in the app's data folder, which the
  *   OS does not evict the way it may evict WebView storage (`denext mobile add storage`;
- *   IndexedDB on the web). React Native mode's AsyncStorage and MMKV run on it.
+ *   IndexedDB on the web). React Native mode's AsyncStorage and MMKV run on it. An encrypted
+ *   store's key rotates with {@linkcode rekeyKeyValueStore}.
  * - {@linkcode isScreenReaderEnabled} / {@linkcode onScreenReaderChange} /
  *   {@linkcode useScreenReader}: VoiceOver / TalkBack state (`denext mobile add accessibility`;
  *   `false` on the web).
@@ -234,8 +237,14 @@ export {
   otaStatus,
   prepareUiUpdate,
 } from "./ota.ts";
-export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
+export {
+  otaAppSignaturePayload,
+  type OtaManifest,
+  type OtaManifestFile,
+  otaSignaturePayload,
+} from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
+export { speak, type SpeakOptions, stopSpeaking } from "./speech.ts";
 export {
   type ClipboardContent,
   type ClipboardFormat,
@@ -257,6 +266,7 @@ export { hideSplash } from "./splash.ts";
 export {
   type SecureStore,
   secureStore,
+  type SecureStoreAccessibility,
   type SecureStoreFallback,
   type SecureStoreGetOptions,
   type SecureStoreSetOptions,
@@ -345,6 +355,13 @@ export {
   type SaveFileOptions,
 } from "./file-dialogs.ts";
 export { moveToTrash, openPath, revealInFileManager, type ShellItem } from "./shell.ts";
+export {
+  type ContactPickerError,
+  type ContactPickerErrorCode,
+  contactPickerSupported,
+  pickContact,
+  type PickedContact,
+} from "./contact-picker.ts";
 export {
   type BarcodeFormat,
   type BarcodeScanError,
@@ -584,6 +601,7 @@ export {
   type KeyValueStoreErrorCode,
   type KeyValueStoreOptions,
   openKeyValueStore,
+  rekeyKeyValueStore,
 } from "./kv-store.ts";
 export {
   nativeViewEmbedScroller,

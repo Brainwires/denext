@@ -90,7 +90,12 @@ async function keyBytes(path: string): Promise<Uint8Array | null> {
  * a fingerprint this machine accepts.
  */
 function listingKey(): Promise<CryptoKey | null> {
-  const path = keyPath();
+  let path: string;
+  try {
+    path = keyPath();
+  } catch {
+    return Promise.resolve(null); // no per-user cache directory: no key, so no listing is trusted
+  }
   let key = keys.get(path);
   if (!key) {
     key = keyBytes(path).then((bytes) =>

@@ -2,15 +2,11 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { createRoot, flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
-import {
-  useDeferredValue,
-  useEffect,
-  useId,
-  useImperativeHandle,
-  useLayoutEffect,
-  useSyncExternalStore,
-  useTransition,
-} from "../src/runtime/hooks.ts";
+import { useEffect, useImperativeHandle, useLayoutEffect } from "../src/runtime/hooks.ts";
+import { useTransition } from "../src/runtime/hooks/transition.ts";
+import { useDeferredValue } from "../src/runtime/hooks/use-deferred-value.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { createContext } from "../src/runtime/context.ts";
 import { useContext } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";

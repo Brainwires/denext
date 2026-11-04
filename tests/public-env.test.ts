@@ -4,6 +4,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import {
+  documentPublicEnv,
   extractPublicEnvRefs,
   filterPublicEnv,
   isPublicEnvKey,
@@ -75,4 +76,33 @@ Deno.test("publicEnv() on the server returns only the public subset of the live 
 
 Deno.test("PUBLIC_ENV_ID is the stable island id used for client hydration", () => {
   assertEquals(PUBLIC_ENV_ID, "__denext_public_env");
+});
+
+Deno.test("documentPublicEnv reads only the recorded names, live, without copying the env", () => {
+  const pub = "DENEXT_PUBLIC_DOC_ENV_TEST";
+  const other = "DENEXT_PUBLIC_DOC_ENV_OTHER";
+  const secret = "DENEXT_DOC_ENV_SECRET";
+  const toObject = Deno.env.toObject;
+  let copies = 0;
+  Deno.env.toObject = () => {
+    copies++;
+    return toObject.call(Deno.env);
+  };
+  try {
+    Deno.env.set(pub, "one");
+    Deno.env.set(other, "unlisted");
+    Deno.env.set(secret, "hidden");
+    // A secret name in the list (a hand-written `publicEnv` allowlist) is still never read out.
+    assertEquals(documentPublicEnv([pub, secret, "NEXT_PUBLIC_UNSET_DOC_ENV"]), { [pub]: "one" });
+    Deno.env.set(pub, "two");
+    assertEquals(documentPublicEnv([pub]), { [pub]: "two" }, "the value is read per render");
+    assertEquals(documentPublicEnv([]), {}, "an app that references none reads nothing");
+    assertEquals(copies, 0, "a known name list never copies the whole environment");
+    const all = documentPublicEnv(undefined);
+    assertEquals([all[pub], all[other], secret in all], ["two", "unlisted", false]);
+    assertEquals(copies, 1, "no list (dev): the public subset of the whole environment");
+  } finally {
+    Deno.env.toObject = toObject;
+    for (const name of [pub, other, secret]) Deno.env.delete(name);
+  }
 });

@@ -21,6 +21,8 @@ export const PREACT_ALIASES: Readonly<Record<string, string>> = {
   "preact/compat": "preact/compat",
   "preact/jsx-runtime": "preact/jsx-runtime",
   "preact/jsx-dev-runtime": "preact/jsx-runtime",
+  "preact-render-to-string": "preact/render-to-string",
+  "preact-render-to-string/stream": "preact/render-to-string",
   "@preact/signals": "signals",
   "@preact/signals/utils": "signals",
   "@preact/signals-core": "signals",
@@ -64,17 +66,11 @@ export interface SourceRule {
 /** The Preact patterns denext does not run as Preact does (shared by both migrators). */
 export const PREACT_SOURCE_RULES: readonly SourceRule[] = [
   {
-    re: /\buseErrorBoundary\b/,
-    item: "useErrorBoundary",
+    re: /["']preact-render-to-string\/(?:jsx|stream-node)["']/,
+    item: "preact-render-to-string/jsx, /stream-node",
     wont: true,
-    reason: "Preact's useErrorBoundary never sees an error on denext; catch with " +
-      "<ErrorBoundary> from denext (or an error.tsx) instead",
-  },
-  {
-    re: /["']preact-render-to-string["']/,
-    item: "preact-render-to-string",
-    wont: true,
-    reason: "not mapped; render with renderToString from denext/react-dom/server",
+    reason: "not mapped; render with renderToString / renderToReadableStream from " +
+      "denext/preact/render-to-string",
   },
   {
     re: /\buseSignalRef\b|\bcreateModel\b/,
@@ -83,10 +79,13 @@ export const PREACT_SOURCE_RULES: readonly SourceRule[] = [
     reason: "useSignalRef / createModel are not in denext/signals",
   },
   {
-    re: /import\s*\{[^}]*\boptions\b[^}]*\}\s*from\s*["']preact["']/,
+    re:
+      /\boptions\s*\.\s*(?:diffed|unmount|debounceRendering|requestAnimationFrame|__[a-z]|_[a-z])/,
     item: "preact options hooks",
     wont: true,
-    reason: "denext's renderer does not call Preact's `options` hooks",
+    reason: "denext calls Preact's options.vnode / options.event / options.useDebugValue, " +
+      "never options.diffed / unmount / debounceRendering / requestAnimationFrame or the " +
+      "internal (mangled) hooks",
   },
 ];
 

@@ -4,8 +4,8 @@
  * `View` in React Native mode, a `<div>` elsewhere). The package's native views have no web
  * build, so React Native mode resolves the package here.
  *
- * `blurAmount` (0–100, default 10) sets the blur radius and `blurType` the tint (`dark*`
- * names tint dark, `light` / `xlight` light, the materials a neutral frost). Android's
+ * `blurAmount` (0–100, default 10) sets the blur radius (Android's `blurRadius`, 0–25 pixels,
+ * overrides it) and `blurType` the tint (`dark*` names tint dark, `light` / `xlight` light, the materials a neutral frost). Android's
  * `overlayColor` replaces the tint, and `enabled={false}` renders a plain view. Where the
  * browser has no `backdrop-filter` the `reducedTransparencyFallbackColor` is the background.
  *
@@ -60,7 +60,7 @@ export interface BlurViewProps {
   overlayColor?: string;
   /** Android: `false` renders a plain view (default `true`). */
   enabled?: boolean;
-  /** Android: the blur radius (ignored; `blurAmount` sets it). */
+  /** Android: the blur radius in pixels, 0–25, overriding the one `blurAmount` sets. */
   blurRadius?: number;
   /** Android: the downsample factor (ignored). */
   downsampleFactor?: number;
@@ -105,7 +105,7 @@ export function BlurView(props: BlurViewProps): VNode {
     reducedTransparencyFallbackColor,
     overlayColor,
     enabled = true,
-    blurRadius: _radius,
+    blurRadius,
     downsampleFactor: _downsample,
     autoUpdate: _auto,
     style,
@@ -118,6 +118,10 @@ export function BlurView(props: BlurViewProps): VNode {
       base = { backgroundColor: reducedTransparencyFallbackColor };
     } else {
       base = blurStyle(blurAmount, tintOf(blurType));
+      if (typeof blurRadius === "number" && Number.isFinite(blurRadius)) {
+        const filter = `blur(${Math.max(0, Math.min(25, Math.round(blurRadius)))}px)`;
+        base.backdropFilter = base.WebkitBackdropFilter = filter;
+      }
       if (overlayColor !== undefined) base.backgroundColor = overlayColor;
     }
   }

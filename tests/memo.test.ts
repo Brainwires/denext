@@ -4,7 +4,8 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { MEMO_CACHE_SENTINEL, useContext, useMemoCache, useState } from "../src/runtime/hooks.ts";
+import { MEMO_CACHE_SENTINEL, useContext, useState } from "../src/runtime/hooks.ts";
+import { useMemoCache } from "../src/runtime/hooks/use-memo-cache.ts";
 import { memo, shallowEqualProps } from "../src/runtime/memo.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";

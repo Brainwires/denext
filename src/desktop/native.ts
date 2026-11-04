@@ -49,6 +49,11 @@ export function warnStorageFallback(cap: string): void {
   );
 }
 
+/** Forget which capabilities were warned about (tests: each starts with no warning given). */
+export function resetStorageFallbackWarningsForTesting(): void {
+  warned.clear();
+}
+
 // --- secure store (cap "secureStore") ---------------------------------------
 
 /** `secureStore.get` on desktop: the OS keychain entry, or `null`. */
@@ -123,6 +128,11 @@ export interface DesktopDownloadOptions {
   readonly headers?: Readonly<Record<string, string>>;
   /** Aborting it cancels the download in the runtime (its partial file removed). */
   readonly signal?: AbortSignal;
+  /**
+   * Continue a paused download (`resumeDownload`): from the bytes its partial file kept, when the
+   * server allows a range for the same file, else from zero.
+   */
+  readonly resume?: boolean;
   /** Called with the bytes so far: as the runtime reports them, and once at the end. */
   readonly onProgress?: (bytes: number, total: number | null) => void;
 }
@@ -148,8 +158,11 @@ function forwardDownloadProgress(
 /**
  * `downloadToFile` on desktop: the runtime fetches `url` itself (no CORS, no bytes through the
  * page) with the page's request `headers`, and writes the file, reporting progress as `fs`
- * `progress` events. Aborting `signal` sends `cancelDownload` (which answers once the partial
- * file is gone) and rejects with the signal's reason. It resolves the absolute path.
+ * `progress` events. A partial file a paused or interrupted download kept for the same URL and
+ * file is continued (a range request guarded by `If-Range`). Aborting `signal` sends
+ * `cancelDownload` (which answers once the partial file is gone) and rejects with the signal's
+ * reason; {@linkcode fsPauseDownload} stops it with the partial kept (it rejects with code
+ * `paused`). It resolves the absolute path.
  */
 export async function fsDownload(
   url: string,
@@ -169,7 +182,8 @@ export async function fsDownload(
   const stop = forwardDownloadProgress(id, onProgress);
   try {
     const args = { url, path, directory, id, headers: { ...(options.headers ?? {}) } };
-    const out = await desktopRpc<{ path?: unknown; bytes?: unknown }>("fs", "download", args, {
+    const method = options.resume ? "resumeDownload" : "download";
+    const out = await desktopRpc<{ path?: unknown; bytes?: unknown }>("fs", method, args, {
       timeoutMs: false,
       signal: call.signal,
     });
@@ -183,6 +197,53 @@ export async function fsDownload(
     signal?.removeEventListener("abort", onAbort);
     stop();
   }
+}
+
+/**
+ * Pause desktop download `id`: the runtime stops it and keeps its partial file and sidecar, and
+ * its {@linkcode fsDownload} call rejects with code `paused` (`data`: `{ bytes, total, resumable }`).
+ *
+ * @param id The download's id.
+ * @returns Whether a running download paused.
+ */
+export async function fsPauseDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ paused?: unknown }>("fs", "pauseDownload", { id });
+  return out?.paused === true;
+}
+
+/**
+ * Cancel desktop download `id`: a running one stops, and a paused one's kept partial file and
+ * sidecar are dropped (an earlier launch's too), with its record.
+ *
+ * @param id The download's id.
+ * @returns Whether it was cancelled (`false` for one that had already finished).
+ */
+export async function fsCancelDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ cancelled?: unknown }>("fs", "cancelDownload", { id });
+  return out?.cancelled === true;
+}
+
+/**
+ * The runtime's records of the downloads started with an id (kept across restarts): running,
+ * paused, failed, and done ones not yet forgotten, in the shape the transfer plugin lists them.
+ *
+ * @returns The records, as the runtime sends them.
+ */
+export async function fsListDownloads(): Promise<Record<string, unknown>[]> {
+  const out = await desktopRpc<{ transfers?: unknown }>("fs", "listDownloads", {});
+  const list = Array.isArray(out?.transfers) ? out.transfers : [];
+  return list.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+}
+
+/**
+ * Drop settled desktop download `id`'s record (a failed one's kept partial file with it).
+ *
+ * @param id The download's id.
+ * @returns Whether a record was dropped.
+ */
+export async function fsForgetDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ forgotten?: unknown }>("fs", "forgetDownload", { id });
+  return out?.forgotten === true;
 }
 
 // --- sqlite (cap "sqlite") --------------------------------------------------

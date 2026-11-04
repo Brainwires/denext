@@ -100,14 +100,14 @@ const MAX_BODY_BYTES = 64 * 1024;
 const PASSKEY_PROVIDER = "passkey";
 
 /** Everything a passkey route needs, once the feature is known to be configured. */
-interface PasskeyContext {
+export interface PasskeyContext {
   ctx: AuthRouteContext;
   rp: ResolvedPasskeys;
   adapter: PasskeyAdapter;
 }
 
 /** The configured feature, or `null` (→ a plain 404) when passkeys are off. */
-function passkeyContext(ctx: AuthRouteContext): PasskeyContext | null {
+export function passkeyContext(ctx: AuthRouteContext): PasskeyContext | null {
   const rp = resolvePasskeys(ctx.config);
   const adapter = passkeyAdapterOf(ctx.options.adapter);
   return rp && adapter ? { ctx, rp, adapter } : null;
@@ -125,7 +125,7 @@ function callerOrigin(pk: PasskeyContext): string | null | false {
 }
 
 /** The JSON body as an object; anything unusable (oversized, stalled, not JSON) is `{}`. */
-async function readBody(ctx: AuthRouteContext): Promise<Record<string, unknown>> {
+export async function readBody(ctx: AuthRouteContext): Promise<Record<string, unknown>> {
   const bytes = await readCappedBody(ctx.request, MAX_BODY_BYTES).catch(() => null);
   if (!(bytes instanceof Uint8Array)) return {};
   try {
@@ -154,13 +154,15 @@ interface StartedCeremony {
  * a fresh random ceremony id. Only the id's SHA-256 is stored; the id itself goes back in the
  * options response — readable by same-origin script only — and the verifying request must
  * carry it. So each tab's ceremony is its own: two in parallel in one browser don't collide,
- * as one cookie per browser did.
+ * as one cookie per browser did. A `native` ceremony (`/native/passkey/*`) is marked so: only
+ * those rows complete it, and they complete nothing else.
  */
-async function beginCeremony(
+export async function beginCeremony(
   pk: PasskeyContext,
   kind: PasskeyCeremony,
   origin: string | null,
   userId?: string,
+  native = false,
 ): Promise<StartedCeremony> {
   const ceremonyId = randomToken(16);
   const binding = await sha256Hex(ceremonyId);
@@ -169,6 +171,7 @@ async function beginCeremony(
     userId,
     binding,
     ...(origin !== null && { origin }),
+    ...(native && { native: true as const }),
   });
   return { challenge, ceremonyId };
 }
@@ -177,21 +180,23 @@ async function beginCeremony(
  * Redeem the challenge `clientDataJSON` carries — once, whatever follows — and check it was
  * issued to `ceremonyId` (the id its options response handed out), to one of `kinds`, and to
  * this caller: a ceremony started cross-origin completes only from that origin, with client data
- * naming it, and a same-origin one only same-origin. A missing, replayed or swapped id is
- * refused, and the challenge is spent either way.
+ * naming it, and a same-origin one only same-origin; a `native` one only at `/native/passkey/*`.
+ * A missing, replayed or swapped id is refused, and the challenge is spent either way.
  *
  * @returns The ceremony data, or `null`.
  */
-async function redeemCeremony(
+export async function redeemCeremony(
   pk: PasskeyContext,
   clientDataJSON: Uint8Array,
   kinds: readonly PasskeyCeremony[],
   ceremonyId: unknown,
   origin: string | null,
+  native = false,
 ): Promise<ChallengeData | null> {
   const clientData = parseClientData(clientDataJSON);
   const data = await redeemChallenge(pk.adapter, clientData.challenge);
   if (!data || !kinds.includes(data.kind)) return null;
+  if ((data.native === true) !== native) return null;
   if (!sameCaller(data, origin, clientData.origin)) return null;
   if (typeof ceremonyId !== "string" || !ceremonyId || ceremonyId.length > MAX_CEREMONY_ID) {
     return null;
@@ -233,14 +238,25 @@ async function registrationSession(
 ): Promise<{ session: AuthSession; origin: string | null } | Response> {
   const caller = await recentSession(pk);
   if (caller instanceof Response) return caller;
-  const stored = await pk.adapter.getUser(caller.session.user.id);
+  return await registrationRefusal(pk, caller.session) ?? caller;
+}
+
+/**
+ * Why `session`'s user may not register a passkey (the answer to send), or `null` when they
+ * may: the stored user exists, is no SSO user, and has a verified address when it has one.
+ */
+export async function registrationRefusal(
+  pk: PasskeyContext,
+  session: AuthSession,
+): Promise<Response | null> {
+  const stored = await pk.adapter.getUser(session.user.id);
   if (!stored) return json({ error: "unauthorized" }, 401);
   // An SSO user signs in through its identity provider only: no passkey to bypass it with.
   if (isSsoUser(stored)) return json({ error: "sso_user" }, 403);
   if (stored.email && !isVerified(stored.emailVerified)) {
     return json({ error: "email_unverified" }, 403);
   }
-  return caller;
+  return null;
 }
 
 /** `POST /passkey/register/options`. */
@@ -268,7 +284,21 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
   if (!pk) return null;
   const caller = await registrationSession(pk);
   if (caller instanceof Response) return caller;
-  const { session } = caller;
+  return await finishRegistration(pk, caller.session, caller.origin, false);
+}
+
+/**
+ * Verify and store the registration in the request body for `session`'s user: its ceremony
+ * redeemed for this caller (`origin`, or the native rows when `native`), the attestation verified,
+ * the credential stored. `{ ok: true, passkey }`, a `409` for a known credential ID, or a `400`.
+ */
+export async function finishRegistration(
+  pk: PasskeyContext,
+  session: AuthSession,
+  origin: string | null,
+  native: boolean,
+): Promise<Response> {
+  const ctx = pk.ctx;
   const body = await readBody(ctx);
   try {
     const credential = credentialOf(body.credential);
@@ -278,7 +308,8 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
       clientDataJSON,
       ["register"],
       body.ceremonyId,
-      caller.origin,
+      origin,
+      native,
     );
     if (!ceremony || ceremony.userId !== session.user.id) {
       throw new WebAuthnError("challenge", "no registration ceremony for this response");
@@ -296,7 +327,10 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
     return json({ ok: true, passkey: summarize(record) });
   } catch (error) {
     if (!(error instanceof WebAuthnError)) throw error;
-    ctx.options.logger.warn("denextAuth: refused a passkey registration", { code: error.code });
+    ctx.options.logger.warn("denextAuth: refused a passkey registration", {
+      code: error.code,
+      native,
+    });
     return json({ error: "invalid passkey", code: error.code }, 400);
   }
 }
@@ -357,7 +391,7 @@ async function handleAuthenticateOptions(ctx: AuthRouteContext): Promise<Respons
 }
 
 /** Report a refused passkey sign-in; the answer is always the same generic `401`. */
-async function refuse(
+export async function refuse(
   ctx: AuthRouteContext,
   reason: Extract<SignInFailedReason, "invalid_passkey" | "invalid_mfa_code">,
   code?: string,

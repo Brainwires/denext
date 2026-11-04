@@ -3,7 +3,8 @@
 // A native App Router app's server render loads some modules through copies: the web target's
 // platform files (`BigButton.web.tsx`, applied by rewriting the importers), Cache Components'
 // `"use cache"` compile and inline `"use server"` functions (./use-cache-loader.ts). `denext build` writes those copies under
-// `<outDir>/server-copies/` and records them, with the redirects, in `manifest.json`
+// `<outDir>/server-copies/` (./server-copies-build.ts) and records them, with the redirects, in
+// `manifest.json`
 // ({@linkcode ServerCopiesManifest}), so `denext start` walks nothing and writes nothing: it
 // serves the same files the build's client bundles resolved, on a read-only filesystem too.
 //
@@ -13,16 +14,10 @@
 // `denext start` needs no import map, no re-exec and no `--allow-run`
 // ({@linkcode buildServesCss}).
 
-import { fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
-import { resolveCacheComponents } from "../server/config.ts";
+import { join, resolve, toFileUrl } from "@std/path";
 import type { ModuleLoader } from "../server/types.ts";
 import type { ProjectPaths } from "./paths.ts";
-import { createPlatformScanner } from "./platform-extensions.ts";
-import { compileServerCopies, createPrecompiledLoader } from "./use-cache-loader.ts";
-import { inlineServerActionModules } from "./inline-server-action.ts";
-
-/** Where the build writes the copies, under the out dir. */
-const COPIES_DIR = "server-copies";
+import { createPrecompiledLoader } from "./precompiled-loader.ts";
 
 /** What `manifest.json` records (`serverCopies`); paths are relative, URLs use `/`. */
 export interface ServerCopiesManifest {
@@ -47,82 +42,9 @@ export interface ServerCopiesManifest {
   readonly relocatable?: boolean;
 }
 
-/** `url` (a file URL under `base`) as a `/`-separated relative path, or null. */
-function relativeTo(base: string, url: string): string | null {
-  if (!url.startsWith("file:")) return null;
-  const rel = relative(base, fromFileUrl(url)).replaceAll("\\", "/");
-  return rel.startsWith("..") ? null : rel;
-}
-
-/** `rel` (from {@linkcode relativeTo}) back as a file URL under `base`. */
+/** `rel` (a `/`-separated path relative to `base`) back as a file URL under `base`. */
 function urlUnder(base: string, rel: string): string {
   return toFileUrl(join(base, ...rel.split("/"))).href;
-}
-
-/** The file-URL entries of the build's CSS import map (stylesheet → its JS shim). */
-function cssRedirects(cssImportMap: Readonly<Record<string, string>> | undefined) {
-  return Object.fromEntries(
-    Object.entries(cssImportMap ?? {}).filter(([from, to]) =>
-      from.startsWith("file:") && to.startsWith("file:")
-    ),
-  );
-}
-
-/**
- * Compile the server copies of a native App Router build (the web target's platform files,
- * `"use cache"` when Cache Components are on, inline `"use server"` functions as registered
- * server references, and every stylesheet import pointed at its shim)
- * into `<outDir>/server-copies/`, and describe them for `manifest.json`. Null for a next-compat
- * build, whose server bundles carry the first two.
- *
- * @param paths The project paths.
- * @param compat Whether the build is next-compat.
- * @param cssImportMap The build's CSS import map (`AppCss.importMap`: stylesheet file URL → its
- *   shim's), or undefined when the app has no stylesheet.
- */
-export async function buildServerCopies(
-  paths: ProjectPaths,
-  compat: boolean,
-  cssImportMap?: Readonly<Record<string, string>>,
-): Promise<ServerCopiesManifest | null> {
-  if (compat) return null;
-  const projectDir = resolve(paths.projectDir);
-  const cacheDir = join(paths.outDir, COPIES_DIR);
-  await Deno.remove(cacheDir, { recursive: true }).catch(() => {});
-  const scanner = createPlatformScanner(projectDir);
-  const redirects = await scanner.redirects(paths.config, "web");
-  const css = cssRedirects(cssImportMap);
-  const hasCss = Object.keys(css).length > 0;
-  const useCache = resolveCacheComponents(paths.config);
-  const manifest = {
-    root: toFileUrl(projectDir).href,
-    redirects: {},
-    copies: {},
-    css: hasCss,
-    relocatable: true,
-  };
-  const files = await scanner.files();
-  const inline = await inlineServerActionModules(files);
-  if (!useCache && !hasCss && inline.length === 0 && Object.keys(redirects).length === 0) {
-    return manifest;
-  }
-  // Only the platform redirects are recorded: the server loads a module, never a stylesheet, as
-  // an entry, so the CSS ones live in the copies alone.
-  for (const [from, to] of Object.entries(redirects)) {
-    const a = relativeTo(projectDir, from);
-    const b = relativeTo(projectDir, to);
-    if (a !== null && b !== null) (manifest.redirects as Record<string, string>)[a] = b;
-  }
-  const copies = await compileServerCopies(
-    { projectDir, cacheDir, redirects: { ...css, ...redirects }, useCache, relocatable: true },
-    files,
-  );
-  for (const [from, to] of Object.entries(copies)) {
-    const a = relativeTo(projectDir, from);
-    const b = relativeTo(resolve(paths.outDir), to);
-    if (a !== null && b !== null) (manifest.copies as Record<string, string>)[a] = b;
-  }
-  return manifest;
 }
 
 /** `value` as a {@linkcode ServerCopiesManifest}, or null when it is not one. */
@@ -145,9 +67,10 @@ export function parseServerCopies(value: unknown): ServerCopiesManifest | null {
  * Whether `denext start` can serve the build in `outDir` without the CSS import map (and so
  * without the CLI's CSS re-exec, which spawns a second `deno` and needs `--allow-run`): a native
  * App Router build whose server copies point every stylesheet import at its shim, made for this
- * project where it now is (or relocatable copies, wherever it is). False for a next-compat build, a
- * SPA, an older build, no build, or a project moved since a build whose copies are not relocatable
- * (start then compiles copies without the stylesheets).
+ * project where it now is (or relocatable copies, wherever it is), or a next-compat build whose
+ * server bundle did the same (`compatCss`). False for a SPA, an older build, no build, or a
+ * project moved since a build whose copies are not relocatable (start then compiles copies
+ * without the stylesheets).
  *
  * @param projectDir The project root.
  * @param outDir The build output dir (`.denext`).
@@ -160,8 +83,9 @@ export async function buildServesCss(projectDir: string, outDir: string): Promis
     return false;
   }
   if (!doc || typeof doc !== "object") return false;
-  const bm = doc as { nextCompat?: unknown; serverCopies?: unknown };
-  if (bm.nextCompat === true) return false;
+  const bm = doc as { nextCompat?: unknown; compatCss?: unknown; serverCopies?: unknown };
+  // The compat server bundle inlines each stylesheet's shim, wherever the project now is.
+  if (bm.nextCompat === true) return bm.compatCss === true;
   const recorded = parseServerCopies(bm.serverCopies);
   return recorded?.css !== undefined && madeFor(recorded, projectDir);
 }

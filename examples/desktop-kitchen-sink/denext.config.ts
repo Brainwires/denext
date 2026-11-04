@@ -16,6 +16,21 @@ function packagingUpdateKey(): string | undefined {
 
 const updatePublicKey = packagingUpdateKey();
 
+/**
+ * The host the window test serves `downloadToFile`'s files from (this machine's private network
+ * address: the fs capability refuses loopback hosts), read at PACKAGE time like the update key:
+ * the download runs in the app's Deno process, which needs `--allow-net` for it.
+ */
+function packagingDownloadHost(): string | undefined {
+  try {
+    return Deno.env.get("KITCHEN_SINK_DOWNLOAD_HOST") || undefined;
+  } catch {
+    return undefined; // no env permission
+  }
+}
+
+const downloadHost = packagingDownloadHost();
+
 // Every shipped Deno Desktop capability, on: the window test (`deno task test:window`) drives each
 // one from the page and asserts the results. Pinned-runtime features (the stable app origin,
 // preload, deep links, single instance, the window API, the full-app updater) need denext's pinned
@@ -80,7 +95,8 @@ export default {
     },
     // The Node-API addon is a native library the Deno process loads: an unscoped `--allow-ffi`,
     // since the packaged app loads it from its embedded file system (no nameable path).
-    extraPermissions: { ffi: ["*"] },
+    // The window test's download host, when it packages (see packagingDownloadHost).
+    extraPermissions: { ffi: ["*"], ...(downloadHost ? { net: [downloadHost] } : {}) },
     // `autoConfirm: false` (read again at launch, unlike the key): the page confirms, or, on the
     // window test's trial launch of a new version, deliberately does not, so the next launch rolls
     // the update back.

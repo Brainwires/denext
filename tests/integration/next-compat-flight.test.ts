@@ -26,6 +26,10 @@ import {
 } from "../../src/build/module-graph.ts";
 import { renderToHtmlFlight, serializeFlight } from "../../src/jsx/render-to-html-flight.ts";
 import { tagClientExports } from "../../src/runtime/client-reference.ts";
+import { watchTests } from "../helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 type Fixture = {
   dir: string;

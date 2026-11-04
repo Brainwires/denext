@@ -240,3 +240,115 @@ Deno.test("generateRouteEntry: the host-singleton install is on unless a scan cl
   assertStringIncludes(generateRouteEntry(route), "installSingletonSupport();");
   assert(!generateRouteEntry(route, { usesSingletons: false }).includes("installSingletonSupport"));
 });
+
+Deno.test("appUsesImageBlur: a blur placeholder or blurDataURL in code, not an input's placeholder", async () => {
+  const { appUsesImageBlur } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-blur-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesImageBlur(dir);
+    };
+    assertEquals(await scan(`<input placeholder="Search" />`), false, "a plain placeholder");
+    assertEquals(await scan(`<input placeholder = 'Name' />`), false, "spaced, single quotes");
+    assertEquals(await scan(`// <Image placeholder="blur" />\nexport {};`), false, "a comment");
+    assertEquals(await scan(`<Image placeholder="blur" />`), true, "placeholder=blur");
+    assertEquals(await scan(`h(Image, { "placeholder": "data:image/png;x" })`), true, "data: URL");
+    assertEquals(await scan(`<Image placeholder={p} />`), true, "a computed placeholder");
+    assertEquals(await scan(`const img = { blurDataURL };`), true, "blurDataURL");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUsesHookBoundaries: useErrorBoundary or a preact-iso import in code, not a comment", async () => {
+  const { appUsesHookBoundaries } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-hook-boundary-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesHookBoundaries(dir);
+    };
+    assertEquals(await scan(`export default () => <ErrorBoundary />;`), false, "no hook");
+    assertEquals(await scan(`// useErrorBoundary()\nexport {};`), false, "a comment");
+    assertEquals(await scan(`const [e] = useErrorBoundary();`), true, "the hook");
+    assertEquals(await scan(`import { Router } from "preact-iso";`), true, "preact-iso");
+    assertEquals(await scan(`import { lazy } from 'denext/preact-iso';`), true, "denext's");
+    assertEquals(await scan(`import { lazy } from "preact-iso/lazy";`), true, "a subpath");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUsesHrefParams: a route-pattern string or template literal in code, not a comment", async () => {
+  const { appUsesHrefParams } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-href-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesHrefParams(dir);
+    };
+    assertEquals(
+      await scan(`export default ({ params }) => params.slug;`),
+      false,
+      "page params",
+    );
+    assertEquals(
+      await scan(`// <Link href={{ pathname: "/blog/[slug]" }} />`),
+      false,
+      "comment",
+    );
+    assertEquals(
+      await scan(`const a = xs[i]; const b = "[x]";`),
+      false,
+      "no route segment",
+    );
+    assertEquals(
+      await scan(`<Link href={{ pathname: "/blog/[slug]", params }} />`),
+      true,
+      "JSX",
+    );
+    assertEquals(
+      await scan(`push({ pathname: '/docs/[...rest]', params })`),
+      true,
+      "catch-all",
+    );
+    assertEquals(
+      await scan("const p = `/${s}/[[...opt]]`;"),
+      true,
+      "optional, template",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUsesFormActions: action / formAction props and keys in code, not in a comment", async () => {
+  const { appUsesFormActions } = await import("../src/build/bundle.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext-scan-action-" });
+  try {
+    const page = join(dir, "page.tsx");
+    const scan = async (src: string) => {
+      await Deno.writeTextFile(page, src);
+      return await appUsesFormActions(dir);
+    };
+    assertEquals(await scan(`const transaction = 1; // <form action={save}>`), false, "comment");
+    assertEquals(await scan(`if (action == null) {}`), false, "a comparison");
+    assertEquals(await scan(`<form action={save}>`), true, "a JSX prop");
+    assertEquals(await scan(`<button formAction={save} />`), true, "formAction");
+    assertEquals(await scan(`h("form", { action: save })`), true, "an h() props key");
+    // A shorthand property hands the prop over without `=` / `:` (AU5: a silent miss before).
+    assertEquals(await scan(`h("form", { action, method: "post" })`), true, "shorthand");
+    assertEquals(await scan(`const p = { id, formAction };`), true, "shorthand formAction");
+    assertEquals(await scan(`const { actions } = x;`), false, "another name");
+    // A module in a `.mts` / `.cts` file is source too.
+    await Deno.writeTextFile(page, "");
+    await Deno.writeTextFile(join(dir, "form.mts"), `h("form", { action: save })`);
+    assertEquals(await appUsesFormActions(dir), true, "an .mts module");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

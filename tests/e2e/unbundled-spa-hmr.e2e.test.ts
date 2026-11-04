@@ -34,8 +34,6 @@ async function writeImports(dir: string): Promise<void> {
 
 Deno.test({
   name: "e2e: unbundled dev loop — SPA per-module HMR preserves state, no reload",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_hmr_" });
   await copy(FIXTURE, dir, { overwrite: true });

@@ -4,8 +4,8 @@
 
 import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { buildInChild } from "../helpers/bounded-build.ts";
 
 const FILES: Record<string, string> = {
   "deno.json": JSON.stringify({ nodeModulesDir: "auto", imports: {} }),
@@ -39,8 +39,6 @@ export const config = { matcher: ["/dashboard/:path*"] };
 
 Deno.test({
   name: "next-compat: a Next 16 proxy.ts with `export function proxy` gates its matcher",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_proxy_" });
   const controller = new AbortController();
@@ -50,7 +48,7 @@ Deno.test({
       await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
       await Deno.writeTextFile(join(dir, rel), src);
     }
-    await build(dir);
+    await buildInChild(dir);
     const started = await startProdOrigin(dir, controller.signal);
     server = started.server;
     const { origin } = started;

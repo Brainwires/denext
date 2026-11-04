@@ -209,6 +209,12 @@ export interface DevState extends DevInspectState {
   lastEmittedManifest: RouteManifest | null;
 
   /**
+   * The typed-module emit in flight (or the last one, settled): fire-and-forget for requests, but
+   * awaitable, so whoever removes the project (a test's temp dir, on Windows) can let it land.
+   */
+  typedEmit: Promise<void> | null;
+
+  /**
    * Unbundled dev loop (Vite-class per-module HMR): serves each source module
    * transformed-but-unbundled at its own URL and hot-swaps a single edited module in
    * place (~5ms) instead of re-bundling the whole route (~hundreds of ms) through
@@ -343,6 +349,11 @@ export interface DevState extends DevInspectState {
   readonly devEvents: DevEventLog;
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
+  /**
+   * The background runs in flight (a `deno check` child): the server's `finished` waits for them,
+   * so a stopped server leaves no child behind (holding the project directory on Windows).
+   */
+  readonly background: Set<Promise<void>>;
 
   /** The dev module loader (wired by `startDevServer` once the manifest getter exists). */
   load: ModuleLoader;
@@ -366,6 +377,7 @@ export function createDevState(options: DevServerOptions): DevState {
     manifest: null,
     manifestInFlight: null,
     lastEmittedManifest: null,
+    typedEmit: null,
     unbundledOptIn: options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0"),
     unbundled: null,
     unbundledActive: false,
@@ -405,6 +417,7 @@ export function createDevState(options: DevServerOptions): DevState {
     devEvents: new DevEventLog(),
     ...createDevInspectState(),
     typeCheckToken: 0,
+    background: new Set(),
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>
       Promise.reject(new Error("denext: dev tag loader used before startDevServer wired it")),

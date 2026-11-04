@@ -6,8 +6,12 @@
 // size cap; a registered view and a token the server signed over exactly these props (either
 // failing is `gone` — the client re-renders the route for fresh ones, and an attacker learns
 // nothing); the props decode; the view's `authorize` in the viewer's session (a throw is a
-// deny); a post-await connected + cap re-check. Then a parked instance named by `resume` is
-// adopted (same view, same signed props), or `init` runs.
+// deny); a post-await connected + cap re-check. A connection's mounts run one at a time in
+// arrival order (`createMountQueue`), each for at most `renderTimeoutSeconds`; an unmount or a
+// close cancels the ones still waiting or running. Then a parked instance named by `resume` is
+// adopted (same view, same signed props, same viewer — `viewerIdentity`), or `init` runs. The
+// props token carries its issue time and is refused past `viewTokenMaxAgeSeconds`; a resume
+// matches the props it signs (`resumeKey`), not the token, so a re-signed page still resumes.
 //
 // Every `view-event`: frame shape; a bounded per-view inbox (events are processed one at a time,
 // in order — a flood past it is refused with `limit`, the inbound back-pressure); the handler
@@ -46,19 +50,26 @@ import {
   type MvuHost,
   resolveMsg,
 } from "../runtime/mvu.ts";
-import { prepareWire } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
-import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";
+import {
+  type LiveViewStore,
+  openViewSnapshot,
+  sealViewSnapshot,
+  type ViewSnapshot,
+} from "./live-view-store.ts";
 import { recordViewMessages, type RedactedValue, redactValue } from "./live-devtools.ts";
 import {
   authorizeView,
+  createMountQueue,
   endView,
   enqueueEvent,
   type MountShape,
-  mountView,
+  resumeKey,
   str,
   takeParked as takeParkedFrom,
+  viewerIdentity,
   type ViewHubBaseDeps,
   type ViewHubFrames,
 } from "./view-hub-common.ts";
@@ -101,8 +112,10 @@ export interface ViewInstance {
   readonly def: LiveViewDef;
   /** The decoded props `init` ran with. */
   readonly props: unknown;
-  /** `view + "\0" + token`: a resume must present the same signed props. */
+  /** `resumeKey` (view-hub-common.ts): a resume must present the same signed props. */
   readonly signed: string;
+  /** The viewer it was mounted for: a resume (here or from the store) must be the same viewer. */
+  readonly identity: string;
 }
 
 interface Instance<C> extends ViewInstance {
@@ -138,6 +151,11 @@ export interface ViewHub<C extends ViewConn> extends ViewHubFrames<C> {
   resumedElsewhere(iid: string): void;
   /** Stop every instance (teardown). */
   dispose(): void;
+  /**
+   * Resolves once every queued view-store write has landed (or failed and been logged): a
+   * parked view's snapshot is still being sealed and written after its socket closed.
+   */
+  settled(): Promise<void>;
   /** Parked instances (tests, diagnostics). */
   parked(): number;
   /** Every running instance, redacted (the DevTools' Live views tab). */
@@ -239,6 +257,17 @@ function checkForm(v: unknown): Record<string, string> | null {
   return out;
 }
 
+/** Whether a stored snapshot is this view, with these signed props, parked by this viewer. */
+function snapshotFits(
+  snapshot: ViewSnapshot | null,
+  view: string,
+  signed: string,
+  identity: string,
+): snapshot is ViewSnapshot {
+  return !!snapshot && snapshot.view === view && snapshot.signed === signed &&
+    snapshot.identity === identity;
+}
+
 /** The JSON size of a model (wire-codec shaped); `Infinity` when it can't be encoded. */
 function modelSize(model: unknown): number {
   try {
@@ -258,6 +287,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   const parkedViews = new Map<string, Instance<C>>();
   const all = new Set<Instance<C>>();
   const unstorable = new Set<string>();
+  /** The store chains still running (`settled()` waits for them). */
+  const pendingStore = new Set<Promise<void>>();
 
   /** Queue a store operation for `inst` (in order; a failure is logged, never thrown). */
   const storeOp = (inst: Instance<C>, op: (store: LiveViewStore) => Promise<void>): void => {
@@ -277,6 +308,10 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
           }
         })
     );
+    const chain = inst.storeChain;
+    pendingStore.add(chain);
+    // The chain never rejects (its `catch` logs), so this tail never does either.
+    chain.then(() => pendingStore.delete(chain));
   };
 
   /** Tell the other instances `iid` resumed here (the one that parked it stops its copy). */
@@ -285,7 +320,12 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   /** Write a parked instance's snapshot to the shared store. */
   const persist = (inst: Instance<C>): void => {
     const ttl = deps.limits().viewResumeSeconds;
-    const snapshot = { view: inst.def.id, signed: inst.signed, model: inst.engine.model };
+    const snapshot = {
+      view: inst.def.id,
+      signed: inst.signed,
+      identity: inst.identity,
+      model: inst.engine.model,
+    };
     storeOp(inst, async (store) => {
       await store.set(inst.iid, await sealViewSnapshot(inst.iid, snapshot), ttl);
     });
@@ -475,6 +515,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     def: LiveViewDef,
     props: unknown,
     signed: string,
+    identity: string,
     restored?: { model: unknown },
   ): Instance<C> | null => {
     let init;
@@ -518,6 +559,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       def,
       props,
       signed,
+      identity,
       owner: conn,
       attached: true,
       stopped: false,
@@ -547,6 +589,9 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     inst.needsFull = true;
     scheduleRender(inst);
   };
+
+  /** Each connection's mounts, placed in arrival order. */
+  const mounts = createMountQueue<C>(deps);
 
   const atCap = (conn: C, vid: string): boolean =>
     !conn.views.has(vid) && conn.views.size >= deps.limits().maxViewsPerConnection;
@@ -629,24 +674,29 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     authorize: (def: LiveViewDef, props: unknown) => authorize({ def, props }, conn),
   });
 
-  /** The parked instance `resume` names, when it is this view with these signed props. */
+  /** The parked instance `resume` names, when it is this view with these signed props and viewer. */
   const takeParked = (
     resume: string | undefined,
     view: string,
     signed: string,
+    identity: string,
   ): Instance<C> | undefined => {
-    const parked = takeParkedFrom(parkedViews, resume, view, signed);
+    const parked = takeParkedFrom(parkedViews, resume, view, signed, identity);
     if (!parked) return undefined;
     parked.authExpires = Date.now() + ttlMs();
     storeOp(parked, (store) => store.delete(parked.iid));
     return parked;
   };
 
-  /** The model a stored snapshot of `resume` holds, when it is this view with these props. */
+  /**
+   * The model a stored snapshot of `resume` holds, when it is this view with these props, parked
+   * by the same viewer. Another viewer's take still consumes the snapshot (it runs `init`).
+   */
   const takeStored = async (
     resume: string | undefined,
     view: string,
     signed: string,
+    identity: string,
   ): Promise<{ model: unknown } | undefined> => {
     const store = resume === undefined ? null : deps.store?.();
     if (!store) return undefined;
@@ -658,10 +708,18 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       return undefined;
     }
     const snapshot = sealed === null ? null : await openViewSnapshot(resume!, sealed);
-    if (!snapshot || snapshot.view !== view || snapshot.signed !== signed) return undefined;
+    if (!snapshotFits(snapshot, view, signed, identity)) return undefined;
     // The instance that parked it may still run its copy: it stops it on hearing this.
     announceResumed(resume!);
     return { model: snapshot.model };
+  };
+
+  /** What a mount resumes: the instance parked here, else the model a stored snapshot holds. */
+  const resumeOf = async (shape: MountShape, signed: string, identity: string) => {
+    const parked = takeParked(shape.resume, shape.view, signed, identity);
+    // Not parked here: another instance (or this one, before an eviction) may have stored it.
+    if (parked) return { parked, restored: undefined };
+    return { parked, restored: await takeStored(shape.resume, shape.view, signed, identity) };
   };
 
   /**
@@ -672,20 +730,21 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     conn: C,
     shape: MountShape,
     admitted: { def: LiveViewDef; props: unknown },
+    live: () => boolean,
   ): Promise<void> => {
     const { vid } = shape;
-    const signed = `${shape.view}\0${shape.token}`;
-    const parked = takeParked(shape.resume, shape.view, signed);
-    // Not parked here: another instance (or this one, before an eviction) may have stored it.
-    const restored = parked ? undefined : await takeStored(shape.resume, shape.view, signed);
-    if (restored && !deps.isConnected(conn)) return;
+    const signed = await resumeKey(shape.view, shape.props);
+    const identity = await viewerIdentity(deps, conn);
+    if (!live()) return;
+    const { parked, restored } = await resumeOf(shape, signed, identity);
+    if (restored && !live()) return;
     if (restored && atCap(conn, vid)) {
       return deps.sendError(conn, "limit", "too many views", { subId: vid });
     }
     const replaced = own(conn, vid);
     if (replaced) stop(replaced);
     if (parked) return attach(conn, vid, parked);
-    const inst = create(conn, vid, admitted.def, admitted.props, signed, restored);
+    const inst = create(conn, vid, admitted.def, admitted.props, signed, identity, restored);
     if (!inst) return;
     attach(conn, vid, inst);
     inst.engine.start();
@@ -693,13 +752,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
 
   return {
     mount(conn, msg) {
-      return mountView(
-        deps,
-        conn,
-        msg,
-        policy(conn),
-        (shape, admitted) => place(conn, shape, admitted),
-      );
+      return mounts.mount(conn, msg, policy(conn), place);
     },
 
     event(conn, msg) {
@@ -728,6 +781,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
 
     unmount(conn, vid) {
       if (typeof vid !== "string") return;
+      mounts.cancel(conn, vid);
       const inst = own(conn, vid);
       if (inst) stop(inst);
     },
@@ -742,6 +796,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     },
 
     drop(conn) {
+      mounts.cancel(conn);
       const { viewResumeSeconds, maxParkedViews } = deps.limits();
       for (const v of [...conn.views.values()]) {
         const inst = v as Instance<C>;
@@ -763,6 +818,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     },
 
     discard(conn) {
+      mounts.cancel(conn);
       for (const v of [...conn.views.values()]) stop(v as Instance<C>);
       conn.views.clear();
     },
@@ -791,6 +847,10 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       for (const inst of [...all]) stop(inst);
       for (const inst of [...parkedViews.values()]) stop(inst);
       parkedViews.clear();
+    },
+
+    async settled() {
+      while (pendingStore.size > 0) await Promise.all(pendingStore);
     },
 
     parked: () => parkedViews.size,

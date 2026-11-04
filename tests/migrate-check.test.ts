@@ -10,7 +10,7 @@
 //   3. the report has the documented shape, including the `--json` CLI output, and a run with
 //      read permission only succeeds.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
@@ -22,6 +22,7 @@ import {
 import { dryRunMigration, mfs, type PlannedChange } from "../src/build/migrate-io.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 const REMIX_FIXTURE = fromFileUrl(new URL("./fixtures/remix-app", import.meta.url));
@@ -193,6 +194,40 @@ Deno.test("migrate --check: Next App Router + Prisma — source rewrites are pla
   assert(paths.includes("modify app/db.server.ts"), paths.join("\n"));
   assert(paths.includes("modify package.json"), paths.join("\n"));
   assert(r.review.some((f) => f.item === "prisma"));
+});
+
+Deno.test({
+  name: "migrate --check: a next.config reading through a committed symlink gets nothing out",
+  ignore: Deno.build.os === "windows", // creating symlinks needs a privilege CI lacks there
+  fn: async () => {
+    const parent = await tempDir();
+    try {
+      const outside = join(parent, "outside");
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "credentials"), "OUTSIDE-SECRET");
+      const dirs = [join(parent, "check"), join(parent, "run")];
+      for (const dir of dirs) {
+        await writeTree(dir, {
+          ...NEXT_APP,
+          // The secret would land in pass-through fields the report and the config carry.
+          "next.config.js": `const fs = require("node:fs");
+let leaked = "none";
+try { leaked = fs.readFileSync("home/credentials", "utf8"); } catch {}
+module.exports = { basePath: "/" + leaked, env: { LEAKED: leaked } };
+`,
+        });
+        await Deno.symlink(join("..", "outside"), join(dir, "home"));
+      }
+      const report = await checkMigration(dirs[0]);
+      assertFalse(JSON.stringify(report).includes("OUTSIDE-SECRET"), "the --check report");
+      await migrateProject(dirs[1]);
+      const written = await Deno.readTextFile(join(dirs[1], "denext.config.ts"));
+      assertFalse(written.includes("OUTSIDE-SECRET"), written);
+      assertStringIncludes(written, "/none");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
 });
 
 Deno.test("migrate --check: Next Pages Router", async () => {
@@ -629,7 +664,7 @@ Deno.test({
     try {
       await writeTree(dir, NEXT_APP);
       const before = await snapshot(dir);
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "--no-prompt",
@@ -641,9 +676,7 @@ Deno.test({
           "--json",
           dir,
         ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const stderr = new TextDecoder().decode(out.stderr);
       assertEquals(out.code, 0, stderr);
       const json = JSON.parse(new TextDecoder().decode(out.stdout));
@@ -669,7 +702,7 @@ Deno.test({
     try {
       await writeTree(dir, NEXT_APP);
       const before = await snapshot(dir);
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "--no-prompt",
@@ -682,9 +715,7 @@ Deno.test({
           "--json",
           dir,
         ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       const stderr = new TextDecoder().decode(out.stderr);
       assertEquals(out.code, 0, stderr);
       const json = JSON.parse(new TextDecoder().decode(out.stdout));
@@ -707,4 +738,88 @@ Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
   assertEquals(shellPathArg("/home/me/my code", "darwin"), "'/home/me/my code'");
   assertEquals(shellPathArg("/tmp/it's", "linux"), "'/tmp/it'\\''s'");
   assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
+});
+
+Deno.test("migrate --check: a next.config that reads an unset machine path (HOME on Windows) is flagged", async () => {
+  // A well-known machine-specific variable that is NOT set (USERPROFILE off Windows, HOME on it):
+  // before, only variables that were set were masked, so the read passed unnoticed. A shell, an
+  // SSH session or a CI runner may set it anyway (Windows' OpenSSH sets HOME, and test-run sets
+  // TMPDIR everywhere), so the test unsets it for its own duration rather than trust the host.
+  const unset = Deno.build.os === "windows" ? "HOME" : "USERPROFILE";
+  const saved = Deno.env.get(unset);
+  Deno.env.delete(unset);
+  const dir = await tempDir();
+  try {
+    await writeTree(dir, {
+      "package.json": { name: "unset", dependencies: { next: "15.3.0", react: "19.1.0" } },
+      "next.config.mjs": `export default {
+  async redirects() {
+    return [
+      { source: "/cache", destination: (process.env.${unset} ?? "/fallback") + "/x", permanent: false },
+      { source: "/old", destination: "/new", permanent: true },
+    ];
+  },
+};
+`,
+      "app/layout.tsx": `export default function L({ children }) { return children; }\n`,
+      "app/page.tsx": `export default function P() { return null; }\n`,
+    });
+    const report = await checkMigration(dir);
+    assertStringIncludes(JSON.stringify(report), `a rule or value reads ${unset}`);
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // the plain rule is still inlined; the one reading the unset variable is left out
+    assertStringIncludes(config, '"source":"/old"');
+    assert(!config.includes('"source":"/cache"'), config);
+    assert(!config.includes("/fallback"), config);
+    assertStringIncludes(config, `// redirects: a rule or value reads ${unset}`);
+  } finally {
+    if (saved !== undefined) Deno.env.set(unset, saved);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/**
+ * A home-directory and a temp-directory variable this machine sets (Windows sets no `HOME` and,
+ * outside a POSIX shell, no `TMPDIR`): a config reads them only when they are there.
+ */
+function machinePathVars(): { home: string; tmp: string } {
+  const set = (keys: string[]) => keys.find((k) => Deno.env.get(k) !== undefined) ?? keys[0];
+  return { home: set(["HOME", "USERPROFILE"]), tmp: set(["TMPDIR", "TEMP", "TMP"]) };
+}
+
+Deno.test("migrate: a next.config rule that reads a machine path is left out, never inlined", async () => {
+  const dir = await tempDir();
+  const { home, tmp } = machinePathVars();
+  try {
+    await writeTree(dir, {
+      "package.json": { name: "paths", dependencies: { next: "15.3.0", react: "19.1.0" } },
+      "next.config.mjs": `export default {
+  async redirects() {
+    return [
+      { source: "/cache", destination: "/files" + (process.env.${home} ?? "") + "/x", permanent: false },
+      { source: "/old", destination: "/new", permanent: true },
+    ];
+  },
+  async headers() {
+    return [{ source: "/(.*)", headers: [{ key: "x-tmp", value: String(Deno.env.get("${tmp}")) }] }];
+  },
+};
+`,
+      "app/layout.tsx": `export default function L({ children }) { return children; }\n`,
+      "app/page.tsx": `export default function P() { return null; }\n`,
+    });
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The plain rule is inlined; the one reading the home path is not, and neither is this machine's path.
+    assertStringIncludes(config, '"source":"/old"');
+    assert(!config.includes('"source":"/cache"'), config);
+    assert(!config.includes("__denext_machine_env_"), config);
+    const homeValue = Deno.env.get(home);
+    if (homeValue) assert(!config.includes(homeValue), config);
+    assertStringIncludes(config, `// redirects: a rule or value reads ${home}`);
+    assertStringIncludes(config, `// headers: a rule or value reads ${tmp}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

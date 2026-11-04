@@ -3,17 +3,26 @@
 // published). Every record must decode byte-for-byte to its source, key order included, and
 // the published modules must hand out those same texts.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { dirname, join } from "@std/path";
 import { templateGroups } from "../scripts/gen-native-templates.ts";
 import { packTexts } from "../scripts/lib/pack-texts.ts";
 import { NATIVE_TEMPLATES } from "../src/build/native-templates.packed.ts";
-import { packedRecords } from "../src/build/packed-text.ts";
+import { fillTemplate, packedRecords } from "../src/build/packed-text.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "../src/build/ota-native-templates.ts";
 import { NATIVE_VIEWS_IOS_FILES } from "../src/build/native-views-native-templates.ts";
 import { WIDGETS_ANDROID_FILES } from "../src/build/widget-native-templates.ts";
 import * as otaSource from "../src/build/native-templates/ota.ts";
 import * as nativeViewsSource from "../src/build/native-templates/native-views.ts";
 import * as widgetSource from "../src/build/native-templates/widget.ts";
+import { FASTLANE_TEMPLATES } from "../src/build/native-templates/fastlane.ts";
+import { WIDGET_SOURCE_TEMPLATES } from "../src/build/native-templates/widget-sources.ts";
+import { NATIVE_MODULE_TEMPLATES } from "../src/build/native-templates/native-module.ts";
+import { MAIN_ACTIVITY_BLOCKS } from "../src/build/native-templates/main-activity.ts";
+import * as fastlane from "../src/build/fastlane-templates.ts";
+import * as widgets from "../src/build/widget-native-templates.ts";
+import * as nativeModule from "../src/build/native-module-native-templates.ts";
+import { mainActivitySource } from "../src/build/mobile-native-install.ts";
 
 Deno.test("packed native templates: every record decodes to its source (run `deno task gen:native-templates`)", async () => {
   const sources = await templateGroups();
@@ -56,4 +65,165 @@ Deno.test("packedRecords: lazy, ordered, read-only records and a clear error for
   // Nothing decodes until a text is read: a bad pack throws only on the first read.
   const bad = packedRecords({ g: { R: ["x"] } }, "not-brotli");
   assertThrows(() => bad.g.R.x);
+});
+
+Deno.test("packed native templates: a checkout outside its workspace reads its own pack, never a docs-corpus release", async () => {
+  // An app that links a denext checkout by path, or CI running the checkout's CLI from another
+  // directory, resolves `@denext/docs-corpus` through its own import map: a JSR release, which
+  // for an unreleased commit lacks that commit's pack, or is younger than Deno's minimum
+  // dependency age. The layout module must read the checkout's file instead. Here the corpus maps
+  // to a version that does not exist, so any read through it fails the import.
+  const root = new URL("../", import.meta.url);
+  const dir = await Deno.makeTempDir({ prefix: "denext_native_pack_" });
+  try {
+    const copy = async (file: string) => {
+      const to = join(dir, ...file.split("/"));
+      await Deno.mkdir(dirname(to), { recursive: true });
+      await Deno.copyFile(new URL(file, root), to);
+    };
+    await copy("src/build/native-templates.packed.ts");
+    await copy("src/build/checkout-file.ts");
+    await copy("src/build/packed-text.ts");
+    await copy("packages/docs-corpus/native-templates.ts");
+    const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "@std/encoding": imports["@std/encoding"],
+          "@std/encoding/": `${imports["@std/encoding"].replace(/^jsr:/, "jsr:/")}/`,
+          "@denext/docs-corpus": "jsr:@denext/docs-corpus@0.0.0-unpublished.0",
+          "@denext/docs-corpus/": "jsr:/@denext/docs-corpus@0.0.0-unpublished.0/",
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "probe.ts"),
+      'import { NATIVE_TEMPLATES } from "./src/build/native-templates.packed.ts";\n' +
+        "console.log(JSON.stringify(Object.keys(NATIVE_TEMPLATES.ota.OTA_IOS_FILES)));\n",
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", "--config", join(dir, "deno.json"), join(dir, "probe.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const decoder = new TextDecoder();
+    assert(out.success, decoder.decode(out.stderr));
+    assertEquals(JSON.parse(decoder.decode(out.stdout)), Object.keys(otaSource.OTA_IOS_FILES));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("packed native templates: a vendored @denext/denext reads the docs-corpus package, not a checkout path", async () => {
+  // `"vendor": true` copies @denext/denext to vendor/jsr.io/@denext/denext/<version>/: a `file:`
+  // module, but no checkout, so there is no packages/docs-corpus beside it. The layout module must
+  // import `@denext/docs-corpus/native-templates` (vendored beside it, mapped here to the
+  // workspace's package) instead of a path that is not there.
+  const root = new URL("../", import.meta.url);
+  const dir = await Deno.makeTempDir({ prefix: "denext_native_pack_vendor_" });
+  try {
+    const pkg = join(dir, "vendor", "jsr.io", "@denext", "denext", "9.9.9");
+    for (const file of ["native-templates.packed.ts", "checkout-file.ts", "packed-text.ts"]) {
+      await Deno.mkdir(join(pkg, "src", "build"), { recursive: true });
+      await Deno.copyFile(new URL(`src/build/${file}`, root), join(pkg, "src", "build", file));
+    }
+    const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "@std/encoding": imports["@std/encoding"],
+          "@std/encoding/": `${imports["@std/encoding"].replace(/^jsr:/, "jsr:/")}/`,
+          "@denext/docs-corpus/native-templates":
+            new URL("packages/docs-corpus/native-templates.ts", root).href,
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "probe.ts"),
+      `import { NATIVE_TEMPLATES } from "./vendor/jsr.io/@denext/denext/9.9.9/src/build/native-templates.packed.ts";\n` +
+        "console.log(JSON.stringify(Object.keys(NATIVE_TEMPLATES.ota.OTA_IOS_FILES)));\n",
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", "--config", join(dir, "deno.json"), join(dir, "probe.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const decoder = new TextDecoder();
+    assert(out.success, decoder.decode(out.stderr));
+    assertEquals(JSON.parse(decoder.decode(out.stdout)), Object.keys(otaSource.OTA_IOS_FILES));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("fillTemplate: fills every hole once, as is, and refuses a hole or a value left over", () => {
+  assertEquals(fillTemplate("a {{=x}} b {{=y}} {{=x}}", { x: "1", y: "2" }), "a 1 b 2 1");
+  // A value is text: replacement patterns and hole-like text stay as they are.
+  assertEquals(fillTemplate("<{{=x}}>", { x: "$& $1 {{=x}}" }), "<$& $1 {{=x}}>");
+  assertEquals(fillTemplate("no holes", {}), "no holes");
+  // Only `{{=name}}` is a hole: GitHub's `${{ … }}` and Swift's `\\(…)` are text.
+  assertEquals(fillTemplate("${{ github.ref }} {{ x }}", {}), "${{ github.ref }} {{ x }}");
+  assertThrows(() => fillTemplate("{{=x}}", {}), Error, "{{=x}} has no value");
+  assertThrows(() => fillTemplate("x", { x: "1" }), Error, "no hole {{=x}}");
+  // An inherited key is no value.
+  assertThrows(() => fillTemplate("{{=toString}}", {}), Error, "has no value");
+});
+
+Deno.test("packed native templates: the templated modules fill every hole from the pack", async () => {
+  const noHoles = (text: string, what: string) =>
+    assert(!/\{\{=/.test(text), `${what} has a hole left`);
+  // fastlane: the app id as a Ruby string literal, the pinned release, the static files.
+  const appfile = fastlane.appfileTemplate('com.example."app"');
+  assertStringIncludes(appfile, 'app_identifier("com.example.\\"app\\"")');
+  assertStringIncludes(
+    fastlane.matchfileTemplate("com.example.app"),
+    'app_identifier(["com.example.app"])',
+  );
+  assertStringIncludes(fastlane.gemfileTemplate(), `"~> ${fastlane.FASTLANE_VERSION}"`);
+  assertEquals(fastlane.gitignoreTemplate(), FASTLANE_TEMPLATES[".gitignore"]);
+  assertEquals(fastlane.fastfileTemplate(), FASTLANE_TEMPLATES.Fastfile);
+  for (const text of [appfile, fastlane.gemfileTemplate()]) noHoles(text, "a fastlane file");
+  // Widgets and Live Activities.
+  const params = [{ name: "period", values: ["day", "week"] }];
+  const widgetTexts = [
+    widgets.widgetSource("OrderStatus"),
+    widgets.configurableWidgetSource("OrderStatus", params),
+    widgets.liveActivitiesSource(["Delivery", "Timer"]),
+    widgets.liveActivitySource("Delivery"),
+    widgets.androidWidgetSource("OrderStatus", "com.example.app"),
+  ];
+  for (const text of widgetTexts) noHoles(text, "a widget source");
+  assertStringIncludes(widgetTexts[0], "struct OrderStatusWidget: Widget {");
+  assertStringIncludes(widgetTexts[1], "enum OrderStatusPeriodOption: String, AppEnum {");
+  assertStringIncludes(widgetTexts[1], '"period": "day",');
+  assertStringIncludes(
+    widgetTexts[2],
+    'case "Timer": return TimerLiveActivity.dynamicIsland(context)',
+  );
+  assertStringIncludes(widgetTexts[4], "import com.example.app.R;");
+  assertStringIncludes(widgetTexts[4], "R.layout.denext_widget_order_status");
+  assertEquals(widgets.androidWidgetLayout(), WIDGET_SOURCE_TEMPLATES["widget_layout.xml"]);
+  // Native modules.
+  for (
+    const fn of [nativeModule.swiftPlugin, nativeModule.kotlinPlugin, nativeModule.typescriptClient]
+  ) {
+    const text = fn("Scanner");
+    noHoles(text, fn.name);
+    assertStringIncludes(text, "Scanner");
+  }
+  assertStringIncludes(
+    nativeModule.kotlinPlugin("Scanner"),
+    `package ${nativeModule.NATIVE_MODULES_PACKAGE}\n`,
+  );
+  assertEquals(Object.keys(NATIVE_MODULE_TEMPLATES), ["Plugin.swift", "Plugin.kt", "Native.ts"]);
+  // The composed MainActivity ends with the packed blocks, in order.
+  const activity = await mainActivitySource("com.example.app", new Set());
+  const blocks = Object.values(MAIN_ACTIVITY_BLOCKS);
+  assert(activity.endsWith(blocks.join("")), "MainActivity ends with the packed blocks");
 });

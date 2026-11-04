@@ -1,11 +1,18 @@
 // `denext build --compile`'s pure parts: the `--allow-*` it bakes, the files it never embeds and
 // the `compile` config's validation. tests/integration/compile-app.test.ts compiles and runs an app.
 
-import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   compileApp,
   compileBuildFlags,
+  compileFrameworkImports,
   denortBinary,
   neverEmbedded,
   relativeCssRedirects,
@@ -15,6 +22,7 @@ import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { runStandalone, standaloneArgv } from "../src/standalone/mod.ts";
 import { runtimeStateDir, standaloneState } from "../src/server/standalone.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { inChild } from "./helpers/isolated.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -55,6 +63,8 @@ Deno.test("toolchainCompileFlags: the toolchain's npm pruning and runtime flags,
     "--exclude-unused-npm",
     "--unstable-no-legacy-abort",
   ]);
+  // From 3.0.0-rc.5 the new abort is the runtime's default: only the npm pruning.
+  assertEquals(toolchainCompileFlags("3.0.0-rc.5"), ["--exclude-unused-npm"]);
 });
 
 Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {
@@ -150,6 +160,7 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
   const slot = Symbol.for("denext.standalone");
   const logs: string[] = [];
   const log = console.log;
+  const error = console.error;
   console.log = (...a: unknown[]) => void logs.push(a.join(" "));
   try {
     for (const k of env) Deno.env.delete(k);
@@ -167,10 +178,57 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
     assertEquals(Deno.env.get("NODE_ENV"), "production");
     await runStandalone(toFileUrl(dir), ["job", "--list"]);
     assertStringIncludes(logs.join("\n"), "1 job(s)");
+    // Baked start.limits: `job` says it runs under them, unless the entry lifted them.
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+    const limits = { limitsBaked: ["--max-time=60"] };
+    await runStandalone(toFileUrl(dir), ["job", "--list"], limits);
+    assertStringIncludes(errors.join("\n"), "enforces the start.limits");
+    errors.length = 0;
+    await runStandalone(toFileUrl(dir), ["job", "--list"], { ...limits, limitsLifted: true });
+    assertEquals(errors.filter((e) => e.includes("start.limits")), []);
   } finally {
     console.log = log;
+    console.error = error;
     delete (globalThis as Record<symbol, unknown>)[slot];
     env.forEach((k, i) => saved[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[i]!));
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("runStandalone: a bad command line exits 2; start serves the embedded project", async () => {
+  // Its own process: `start` installs the shutdown signal handlers and both paths end the process.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_standalone_" }));
+  try {
+    const { value: result } = await inChild<
+      { exits: number[]; usage: boolean; started: string }
+    >({
+      imports: 'import { runStandalone } from "@repo/src/standalone/mod.ts";',
+      env: { DENEXT_STATE_DIR: join(dir, "state") },
+      cwd: dir,
+      body: `
+        const exits: number[] = [];
+        Deno.exit = ((code?: number): never => {
+          exits.push(code ?? 0);
+          throw new Error("exit");
+        }) as typeof Deno.exit;
+        const errors: string[] = [];
+        console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+        await runStandalone(${JSON.stringify(toFileUrl(dir + "/").href)}, ["start", "--nope"])
+          .catch(() => {});
+        // No build in the project: the server refuses to start, after the start verb ran.
+        const started = await runStandalone(${JSON.stringify(toFileUrl(dir + "/").href)}, [
+          "start",
+          "--port",
+          "0",
+        ]).then(() => "served", (err) => String(err));
+        return { exits, usage: errors.join("\\n").includes("job <name>"), started };
+      `,
+    });
+    assertEquals(result.exits, [2]);
+    assertEquals(result.usage, true);
+    assert(result.started !== "served", result.started);
+  } finally {
     await removeTempDir(dir);
   }
 });
@@ -198,6 +256,29 @@ Deno.test("relativeCssRedirects: stylesheet redirects name the embedded copies, 
   );
 });
 
+/** What the binary embeds: every included file (a directory's entries, one level) not excluded. */
+async function embeddedFiles(
+  dir: string,
+  included: string[],
+  excluded: Set<string>,
+): Promise<string[]> {
+  const embedded: string[] = [];
+  for (const path of included) {
+    const abs = join(dir, path);
+    const children = (await Deno.stat(abs)).isFile
+      ? [path]
+      : (await Array.fromAsync(Deno.readDir(abs))).map((e) => `${path}/${e.name}`);
+    embedded.push(...children.filter((p) => !excluded.has(p)));
+  }
+  return embedded;
+}
+
+/** Whether the file at `path` (a directory never) holds `text`. */
+async function holds(path: string, text: string): Promise<boolean> {
+  if (!(await Deno.stat(path)).isFile) return false;
+  return (await Deno.readTextFile(path)).includes(text);
+}
+
 /** A built project whose `.denext/` holds build outputs beside development state and secrets. */
 async function builtProjectWithState(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_compile_embed_" });
@@ -218,6 +299,8 @@ async function builtProjectWithState(): Promise<string> {
     ".denext/commands.json": "{}",
     ".denext/mobile-dev-backup.json": "{}",
     ".denext/mystery": "",
+    // A registry token: carried beside the compile config for Deno to read, never embedded.
+    ".npmrc": "//npm.example.com/:_authToken=npm_TOPSECRET\n",
   };
   for (const [path, text] of Object.entries(files)) {
     await Deno.mkdir(join(dir, path, ".."), { recursive: true });
@@ -246,30 +329,24 @@ Deno.test({
         argv.flatMap((a, i) => (a === name && argv[i + 1] !== undefined ? [argv[i + 1]] : []));
       const included = flag("--include");
       const excluded = new Set(flag("--exclude"));
-      // What the binary embeds: every included file not excluded.
-      const embedded: string[] = [];
-      for (const path of included) {
-        const abs = join(dir, path);
-        if ((await Deno.stat(abs)).isFile) {
-          if (!excluded.has(path)) embedded.push(path);
-          continue;
-        }
-        for await (const e of Deno.readDir(abs)) {
-          const child = `${path}/${e.name}`;
-          if (!excluded.has(child)) embedded.push(child);
-        }
-      }
+      const embedded = await embeddedFiles(dir, included, excluded);
       assertEquals(included.includes(".denext"), false, "the build dir is not embedded whole");
       for (const path of [".denext/manifest.json", ".denext/client", ".denext/server-copies"]) {
         assertEquals(included.includes(path), true, path);
       }
       for (const path of embedded) {
         assertEquals(
-          /backend-keys|\.dump$|stack-.*\.tar\.gz$|\/rag|dev\.json|commands\.json|mobile-dev-backup/
+          /backend-keys|\.dump$|stack-.*\.tar\.gz$|\/rag|dev\.json|commands\.json|mobile-dev-backup|\.npmrc$/
             .test(path),
           false,
           `${path} must not be embedded`,
         );
+      }
+      // The token's copy beside the compile config is excluded by name, and nothing embedded
+      // holds it.
+      assertEquals(excluded.has(".denext/compile/.npmrc"), true, [...excluded].join("\n"));
+      for (const path of embedded) {
+        assertEquals(await holds(join(dir, path), "npm_TOPSECRET"), false, path);
       }
       // `compile.include` named the backups directory: its dumps are still excluded.
       assertEquals(excluded.has(".denext/backups/stack-20261020.dump"), true);
@@ -278,6 +355,47 @@ Deno.test({
       assertEquals(result.skipped, ["mystery"]);
     } finally {
       await removeTempDir(dir);
+    }
+  },
+});
+
+Deno.test({
+  name: "compileApp: secrets behind a link in an included directory are excluded too",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    const dir = await builtProjectWithState();
+    const outside = await Deno.makeTempDir({ prefix: "denext_compile_linked_" });
+    try {
+      // `deno compile --include` embeds what a linked directory holds: a linked data folder with
+      // an env file and a database, a file link named innocently whose target is the `.env`,
+      // and a link cycle the walk must not loop on.
+      await Deno.writeTextFile(join(outside, ".env.production"), "SECRET=1\n");
+      await Deno.writeTextFile(join(outside, "app.db"), "");
+      await Deno.writeTextFile(join(outside, "readme.txt"), "");
+      await Deno.symlink(outside, join(outside, "loop"));
+      await Deno.writeTextFile(join(dir, ".env"), "SECRET=2\n");
+      await Deno.symlink(outside, join(dir, ".denext", "backups", "data"));
+      await Deno.symlink(join(dir, ".env"), join(dir, ".denext", "backups", "notes.txt"));
+      const record = join(dir, "argv.json");
+      const fake = join(dir, "fake-deno.sh");
+      await Deno.writeTextFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+      await Deno.chmod(fake, 0o755);
+      await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+      const argv = (await Deno.readTextFile(record)).trim().split("\n");
+      const excluded = new Set(argv.flatMap((a, i) => a === "--exclude" ? [argv[i + 1]] : []));
+      for (
+        const path of [
+          ".denext/backups/data/.env.production",
+          ".denext/backups/data/app.db",
+          ".denext/backups/notes.txt",
+        ]
+      ) {
+        assert(excluded.has(path), `${path} not excluded: ${[...excluded].join(", ")}`);
+      }
+      assert(!excluded.has(".denext/backups/data/readme.txt"));
+    } finally {
+      await removeTempDir(dir);
+      await Deno.remove(outside, { recursive: true });
     }
   },
 });
@@ -331,4 +449,65 @@ Deno.test({
       await removeTempDir(dir);
     }
   },
+});
+
+Deno.test({
+  name: "compileApp: start.tls with several certificates bakes --unstable-net; one does not",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    // The compile runs with a config of its own (.denext/compile/deno.json), which carries no
+    // `unstable` from the project's deno.json: without the flag the binary refused to serve
+    // several certificates ("needs the unstable net APIs").
+    const argvFor = async (certificates: number): Promise<string[]> => {
+      const dir = await builtProjectWithState();
+      try {
+        const certs = Array.from(
+          { length: certificates },
+          (_, i) =>
+            `{ hostnames: [${
+              i === 0 ? '"*"' : `"h${i}.test"`
+            }], certFileEnv: "C${i}", keyFileEnv: "K${i}" }`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "denext.config.ts"),
+          `export default { start: { tls: { certificates: [${certs.join(", ")}] } } };\n`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "deno.json"),
+          JSON.stringify({ name: "@acme/embed", unstable: ["net"] }),
+        );
+        const record = join(dir, "argv.json");
+        const fake = join(dir, "fake-deno.sh");
+        await Deno.writeTextFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+        await Deno.chmod(fake, 0o755);
+        await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+        const config = JSON.parse(
+          await Deno.readTextFile(join(dir, ".denext", "compile", "deno.json")),
+        );
+        assertEquals(config.unstable, undefined, "the compile config carries no unstable");
+        return (await Deno.readTextFile(record)).trim().split("\n");
+      } finally {
+        await removeTempDir(dir);
+      }
+    };
+    assert((await argvFor(2)).includes("--unstable-net"));
+    assertEquals((await argvFor(1)).includes("--unstable-net"), false);
+  },
+});
+
+Deno.test("compileFrameworkImports: a checkout's import map; none for a published, vendored or npm-compat copy", async () => {
+  // This checkout: its bare imports, absolutized against its own deno.json.
+  const own = await compileFrameworkImports();
+  assertEquals(own["denext"], new URL("../mod.ts", import.meta.url).href);
+  // A copy carries no repository deno.json (none is read) and imports fully qualified specifiers.
+  for (
+    const root of [
+      "https://jsr.io/@denext/denext/9.9.9/",
+      "file:///app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///C:/app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///app/node_modules/@jsr/denext__denext/",
+    ]
+  ) {
+    assertEquals(await compileFrameworkImports(root), {}, root);
+  }
 });

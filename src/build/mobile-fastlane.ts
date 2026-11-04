@@ -16,6 +16,7 @@
 // (`fastlaneFindings`), read as text, never run, plus the managed fastlane's state on this host.
 
 import { dirname, join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import type { CapabilityConfig, MobileCapability } from "./mobile-capabilities.ts";
@@ -104,6 +105,7 @@ async function writeMarked(
     report.manual.push(keptHint ?? `${rel} was edited and is kept (--force replaces it)`);
     return;
   }
+  await assertInsideProject(dir, path);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, next);
   report.written.push(rel);

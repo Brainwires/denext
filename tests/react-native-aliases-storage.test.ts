@@ -25,7 +25,7 @@ import { act, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { openKeyValueStore, resetKeyValueStoreForTesting } from "../src/mobile/kv-store.ts";
 import { withGlobals } from "./helpers/mobile-fakes.ts";
-import { fakeIndexedDB } from "./helpers/fake-indexeddb.ts";
+import { fakeIndexedDB, fakeIndexedDBIdle } from "./helpers/fake-indexeddb.ts";
 
 /** A Web Storage over a map. */
 function fakeLocalStorage(initial: Record<string, string> = {}): Storage {
@@ -61,7 +61,10 @@ async function inBrowser(
   resetAsyncStorageForTesting();
   resetMMKVForTesting();
   const idb = opts.idb ?? fakeIndexedDB();
-  await withGlobals({ ...idb, localStorage: opts.local ?? fakeLocalStorage() }, fn);
+  await withGlobals({ ...idb, localStorage: opts.local ?? fakeLocalStorage() }, async () => {
+    await fn();
+    await fakeIndexedDBIdle(); // the stores' write-behind finishes inside the test
+  });
   resetKeyValueStoreForTesting();
   resetAsyncStorageForTesting();
   resetMMKVForTesting();

@@ -15,6 +15,7 @@ import type { DbEnvelope, DbReply } from "../../ui/database/protocol.ts";
 import { openConnection } from "../db-admin/connection.ts";
 import { failureOf, handleDbRequest } from "../db-admin/handle.ts";
 import { setUpProject } from "../db/project.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** The most a request may carry on stdin. */
 const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
@@ -68,12 +69,8 @@ async function answer(projectDir: string): Promise<DbReply> {
 }
 
 export const dbAdminCommand: CommandSpec = {
-  name: "db-admin",
-  summary: "The database child process behind denext ui (JSON on stdin)",
-  hidden: true,
-  loadsModules: true,
+  ...commandMeta("db-admin"),
   moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
-  usage: "denext db-admin --json --cwd <dir> < request.json",
   run: async (ctx: CommandContext) => {
     const reply = await answer(resolve(ctx.global.cwd ?? "."));
     // Pretty-printed: the UI finds the document by its bare `{` / `}` lines.

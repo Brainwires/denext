@@ -18,7 +18,8 @@
  * @module
  */
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "./hooks.ts";
+import { useCallback, useEffect, useRef } from "./hooks.ts";
+import { useSyncExternalStore } from "./hooks/use-sync-external-store.ts";
 
 /** Options for {@linkcode useWakeLock}. */
 export interface UseWakeLockOptions {

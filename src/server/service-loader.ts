@@ -109,12 +109,16 @@ function startSnapshot(root: Supervisor, outDir: string): () => Promise<void> {
       broken = true;
     }
   };
+  // One write at a time, in order: the final write queues behind one still in flight, so the
+  // stop resolves only once nothing more will land (an older snapshot never overwrites it).
+  let writes = Promise.resolve();
+  const queue = (): Promise<void> => writes = writes.then(write);
   const off = root.onStatus(() => {
     if (timer !== undefined) return;
     timer = inRootContext(() =>
       setTimeout(() => {
         timer = undefined;
-        void write();
+        void queue();
       }, SNAPSHOT_DEBOUNCE_MS)
     );
   });
@@ -122,7 +126,7 @@ function startSnapshot(root: Supervisor, outDir: string): () => Promise<void> {
     off();
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
-    await write();
+    await queue();
   };
 }
 
@@ -176,12 +180,26 @@ export async function bootServices(
   return root;
 }
 
+/** The stop in progress, which a concurrent {@linkcode stopServices} call waits for. */
+let stopping: Promise<void> | null = null;
+
 /**
  * Stop every supervisor — the `services/` tree and any an app started itself — in reverse start
  * order, then write the final status snapshot. The server drain calls it once in-flight requests
- * have finished, before plugin teardowns (a service may still use what a plugin holds open).
+ * have finished, before plugin teardowns (a service may still use what a plugin holds open). A
+ * call made while a stop is in progress resolves when that stop has finished, its last file
+ * written.
+ *
+ * @returns Resolves once every supervisor has stopped and the snapshot is written.
  */
-export async function stopServices(): Promise<void> {
+export function stopServices(): Promise<void> {
+  stopping ??= stopEverything().finally(() => {
+    stopping = null;
+  });
+  return stopping;
+}
+
+async function stopEverything(): Promise<void> {
   await stopAllSupervisors();
   setSupervisionReporter(null);
   const current = running;

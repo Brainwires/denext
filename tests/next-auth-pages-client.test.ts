@@ -1,6 +1,6 @@
 // The next-auth shim's built-in pages and the browser state its client modules share: every
 // branch of the sign-in form (credentials with and without fields, labels, types and
-// placeholders; email; OAuth; WebAuthn left out), the escaping, the error codes and statuses, and
+// placeholders; email; OAuth; WebAuthn as the passkey button and its script), the escaping, the error codes and statuses, and
 // `client-state.ts` — the provider refetch, the same-origin rule for a `callbackUrl` (on and off
 // a page) and navigation.
 
@@ -16,6 +16,8 @@ import {
 } from "../src/compat/next-auth/client-state.ts";
 import {
   errorPage,
+  PASSKEY_SCRIPT,
+  PASSKEY_SCRIPT_HASH,
   signInPage,
   signOutPage,
   verifyRequestPage,
@@ -28,7 +30,7 @@ import type { ProviderDescriptor } from "../src/compat/next-auth/providers/share
 
 const query = (init: Record<string, string> = {}) => new URLSearchParams(init);
 
-Deno.test("pages: the sign-in page has a form per provider, WebAuthn left out", async () => {
+Deno.test("pages: the sign-in page has a form per provider, WebAuthn as a passkey button", async () => {
   const providers = [
     Credentials({
       credentials: {
@@ -55,6 +57,17 @@ Deno.test("pages: the sign-in page has a form per provider, WebAuthn left out", 
   assertStringIncludes(html, 'action="/api/auth/signin/github"');
   assertStringIncludes(html, '<input name="email" type="email" required>');
   assert(!html.includes("/signin/passkey"), "a passkey signs in from script");
+  assertStringIncludes(
+    html,
+    '<button type="button" data-denext-passkey hidden data-base="/api/auth" ' +
+      'data-callback="/x?a=1&amp;b=2">Sign in with Passkey</button>',
+  );
+  assertStringIncludes(html, `<script>${PASSKEY_SCRIPT}</script>`);
+  // The page's own CSP runs that script, by its hash, and nothing else inline.
+  assertEquals(
+    res.headers.get("content-security-policy"),
+    `script-src ${PASSKEY_SCRIPT_HASH}; object-src 'none'; base-uri 'none'`,
+  );
   // The hidden fields are escaped.
   assertStringIncludes(html, 'value="tok&quot;&lt;en&gt;"');
   assertStringIncludes(html, 'name="callbackUrl" value="/x?a=1&amp;b=2"');
@@ -71,6 +84,125 @@ Deno.test("pages: a credentials provider without fields, and the default callbac
   assertStringIncludes(html, 'name="callbackUrl" value="/"');
   assertStringIncludes(html, "Sign in with Pass &lt;phrase&gt;</button>");
   assert(!html.includes("<label>"));
+  assert(!html.includes("<script"), "no WebAuthn provider, no script");
+});
+
+Deno.test("pages: PASSKEY_SCRIPT_HASH is the script's SHA-256", async () => {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(PASSKEY_SCRIPT)),
+  );
+  assertEquals(PASSKEY_SCRIPT_HASH, `'sha256-${btoa(String.fromCharCode(...digest))}'`);
+});
+
+/** A stand-in for the page the passkey script runs in: one button, its error line, the calls. */
+function passkeyPage(get: () => Promise<unknown>, verify: Response) {
+  const calls: { url: string; body: Record<string, unknown> }[] = [];
+  const error = { hidden: true };
+  let onClick: (() => void) | undefined;
+  const attrs: Record<string, string> = { "data-base": "/api/auth", "data-callback": "/dash" };
+  const button = {
+    hidden: true,
+    nextElementSibling: error,
+    getAttribute: (name: string) => attrs[name] ?? null,
+    addEventListener: (_type: string, fn: () => void) => void (onClick = fn),
+  };
+  const assigned: string[] = [];
+  const globals = {
+    window: { PublicKeyCredential: function PublicKeyCredential() {} },
+    navigator: { credentials: { get } },
+    document: { querySelectorAll: () => [button] },
+    location: { assign: (url: string) => void assigned.push(url) },
+    fetch: (url: string, init: { body: string }) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return Promise.resolve(
+        url.endsWith("/options")
+          ? Response.json({
+            challenge: "AQID",
+            allowCredentials: [{ id: "BAU", type: "public-key" }],
+            ceremonyId: "c1",
+          })
+          : verify,
+      );
+    },
+  };
+  new Function(...Object.keys(globals), PASSKEY_SCRIPT)(...Object.values(globals));
+  const click = async () => {
+    onClick!();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  };
+  return { button, error, calls, assigned, click };
+}
+
+Deno.test("pages: the passkey script runs the sign-in ceremony and lands on the server's URL", async () => {
+  const bytes = (...b: number[]) => new Uint8Array(b).buffer;
+  let asked: { publicKey: { challenge: ArrayBuffer; allowCredentials: { id: ArrayBuffer }[] } };
+  const page = passkeyPage(
+    // deno-lint-ignore no-explicit-any
+    (options?: any) => {
+      asked = options;
+      return Promise.resolve({
+        id: "cred",
+        rawId: bytes(250, 251),
+        type: "public-key",
+        response: {
+          clientDataJSON: bytes(1),
+          authenticatorData: bytes(2),
+          signature: bytes(3),
+          userHandle: bytes(4),
+        },
+      });
+    },
+    Response.json({ url: "/dash" }),
+  );
+  assertEquals(page.button.hidden, false, "WebAuthn found: the button shows");
+  await page.click();
+  assertEquals(page.calls.map((c) => c.url), [
+    "/api/auth/passkey/authenticate/options",
+    "/api/auth/passkey/authenticate",
+  ]);
+  assertEquals([...new Uint8Array(asked!.publicKey.challenge)], [1, 2, 3]);
+  assertEquals([...new Uint8Array(asked!.publicKey.allowCredentials[0].id)], [4, 5]);
+  assertEquals(page.calls[1].body, {
+    credential: {
+      id: "cred",
+      rawId: "-vs",
+      type: "public-key",
+      response: {
+        clientDataJSON: "AQ",
+        authenticatorData: "Ag",
+        signature: "Aw",
+        userHandle: "BA",
+      },
+      clientExtensionResults: {},
+    },
+    ceremonyId: "c1",
+    callbackUrl: "/dash",
+  });
+  assertEquals(page.assigned, ["/dash"]);
+  assertEquals(page.error.hidden, true);
+});
+
+Deno.test("pages: the passkey script says nothing on a cancel and shows a refusal", async () => {
+  const cancelled = passkeyPage(
+    () => Promise.reject(Object.assign(new Error("x"), { name: "NotAllowedError" })),
+    Response.json({}),
+  );
+  await cancelled.click();
+  assertEquals([cancelled.calls.length, cancelled.error.hidden], [1, true], "a cancel is silent");
+  const refused = passkeyPage(
+    () =>
+      Promise.resolve({
+        id: "c",
+        rawId: new ArrayBuffer(1),
+        type: "public-key",
+        toJSON: () => ({ id: "c" }),
+      }),
+    new Response("{}", { status: 400 }),
+  );
+  await refused.click();
+  assertEquals(refused.calls[1].body.credential, { id: "c" }, "the browser's own toJSON()");
+  assertEquals([refused.assigned, refused.error.hidden], [[], false], "the refusal shows");
 });
 
 Deno.test("pages: error codes — known, unknown, prototype keys — and their statuses", async () => {

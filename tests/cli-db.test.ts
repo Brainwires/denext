@@ -24,6 +24,7 @@ import {
   sqlitePathOf,
 } from "../src/cli/db/target.ts";
 import { scriptedSql } from "./helpers/scripted-sql.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 async function project(files: Record<string, string>): Promise<string> {
   const root = await Deno.makeTempDir({ prefix: "dnx-cli-db-" });
@@ -225,7 +226,10 @@ Deno.test("migration new (--stdin), squash, fetch on SQLite", async () => {
     const text = await Deno.readTextFile(`${root}/migrations/${name}`);
     assertStringIncludes(text, "-- migrate:down\nDROP TABLE IF EXISTS example;");
     await assertRejects(() => act(MIGRATION_ACTIONS, root, ["new"]), TypeError, "name");
-    await new Promise((r) => setTimeout(r, 1100));
+    // The next one gets a later version even within the same second: back-date this one (the
+    // stamps have second resolution) rather than wait a second.
+    const first = name.replace(/^\d{14}/, "20000101000000");
+    await Deno.rename(`${root}/migrations/${name}`, `${root}/migrations/${first}`);
     await act(MIGRATION_ACTIONS, root, ["new", "piped"], { stdin: true }, {
       stdin: "CREATE TABLE piped (id INTEGER);",
     });
@@ -244,7 +248,7 @@ Deno.test("migration new (--stdin), squash, fetch on SQLite", async () => {
     assertEquals([...Deno.readDirSync(`${root}/migrations`)].map((e) => e.name), [piped]);
     const merged = await Deno.readTextFile(`${root}/migrations/${piped}`);
     assertStringIncludes(merged, "-- migrate:up\n");
-    assertStringIncludes(merged, `-- ${name}\n`);
+    assertStringIncludes(merged, `-- ${first}\n`);
     const list = JSON.parse(
       (await act(MIGRATION_ACTIONS, root, ["list"], {}, { json: true })).join("\n"),
     );
@@ -375,7 +379,7 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
   const root = await project({ "deno.json": "{}", "migrations/1_a.sql": A });
   try {
     const run = async (...args: string[]) => {
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "run",
           "-A",
@@ -384,10 +388,8 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
           "--cwd",
           root,
         ],
-        stdout: "piped",
-        stderr: "piped",
         env: { NO_COLOR: "1", DENEXT_DENO: "stock" },
-      }).output();
+      });
       const text = (b: Uint8Array) => new TextDecoder().decode(b);
       return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
     };
@@ -409,8 +411,6 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
 
 Deno.test({
   name: "denext gen: types through the backend's hooks, keys and bearer-jwt through its verb",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const { GEN_ACTIONS } = await import("../src/cli/commands/gen.ts");
   const { applyPlugins, resetPlugins, runPluginTeardown } = await import("../src/plugin/mod.ts");

@@ -17,7 +17,10 @@ import { resetDeepLinksForTesting } from "../src/mobile/deep-link.ts";
 type Any = any;
 
 const ORIGIN = "https://app.example.com";
-const AUTHORIZE = "https://auth.example.com/authorize?client_id=x&state=s1";
+/** A PKCE S256 pair's query: openAuthSession requires one (AU6-L9). */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
+const AUTHORIZE = "https://auth.example.com/authorize?client_id=x&state=s1" + PKCE;
 
 /** Define `values` on globalThis for `fn`, then restore every one and reset module state. */
 async function withGlobals(values: Record<string, unknown>, fn: () => unknown): Promise<void> {
@@ -136,14 +139,14 @@ Deno.test("openAuthSession: one session at a time (busy), in JS before the nativ
     const first = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
     assertEquals(await codeOf(openAuthSession(AUTHORIZE, { callbackScheme: "myapp" })), "busy");
     assertEquals(fake.starts.length, 1);
-    fake.pending.resolve({ url: "myapp://cb?code=1" });
-    assertEquals((await first).url, "myapp://cb?code=1");
+    fake.pending.resolve({ url: "myapp://cb?code=1&state=s1" });
+    assertEquals((await first).url, "myapp://cb?code=1&state=s1");
     // Settled: a new session may start.
-    const again = authPlugin(() => Promise.resolve({ url: "myapp://cb?code=2" }));
+    const again = authPlugin(() => Promise.resolve({ url: "myapp://cb?code=2&state=s1" }));
     (globalThis as Any).Capacitor.Plugins.DenextAuthSession = again.plugin;
     assertEquals(
       (await openAuthSession(AUTHORIZE, { callbackScheme: "myapp" })).url,
-      "myapp://cb?code=2",
+      "myapp://cb?code=2&state=s1",
     );
   });
 });
@@ -214,15 +217,15 @@ Deno.test("openAuthSession (native): the callback is claimed from deep-link rout
     await new Promise((r) => setTimeout(r, 0));
     const session = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
     await new Promise((r) => setTimeout(r, 0));
-    assert(isAuthSessionCallback("myapp://auth/callback?code=1"));
+    assert(isAuthSessionCallback("myapp://auth/callback?code=1&state=s1"));
     assert(!isAuthSessionCallback("other://x"));
     // Android: the redirect intent reaches the App plugin too.
-    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1" });
+    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1&state=s1" });
     for (const fn of listeners) fn({ url: "other://open" });
-    fake.pending.resolve({ url: "myapp://auth/callback?code=1" });
+    fake.pending.resolve({ url: "myapp://auth/callback?code=1&state=s1" });
     await session;
     // The delivered callback stays claimed for a moment (it may land after the resolve)...
-    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1" });
+    for (const fn of listeners) fn({ url: "myapp://auth/callback?code=1&state=s1" });
     // ...but other links of the scheme route again once the session settled.
     for (const fn of listeners) fn({ url: "myapp://threads/1" });
     assertEquals(seen, ["other://open", "myapp://threads/1"]);
@@ -311,15 +314,51 @@ Deno.test("openAuthSession (web): a popup closed without a callback is cancelled
   });
 });
 
+/**
+ * `setTimeout` / `setInterval` that fire only when the test says, so an ordering of timers (a poll,
+ * then a grace period) is the test's, not a loaded machine's.
+ */
+function manualTimers() {
+  const timers = new Map<number, { fn: () => void; repeat: boolean }>();
+  let next = 1;
+  const add = (repeat: boolean) => (fn: () => void) => {
+    timers.set(next, { fn, repeat });
+    return next++;
+  };
+  const clear = (id?: number) => void (id !== undefined && timers.delete(id));
+  const of = (repeat: boolean) => [...timers].filter(([, t]) => t.repeat === repeat);
+  return {
+    globals: {
+      setTimeout: add(false),
+      setInterval: add(true),
+      clearTimeout: clear,
+      clearInterval: clear,
+    },
+    /** Fire every pending interval (`true`) or timeout (`false`) once; a timeout is then gone. */
+    fire(repeat: boolean) {
+      for (const [id, t] of of(repeat)) {
+        if (!repeat) timers.delete(id);
+        t.fn();
+      }
+    },
+    /** How many intervals (`true`) or timeouts (`false`) are pending. */
+    count: (repeat: boolean) => of(repeat).length,
+  };
+}
+
 Deno.test("openAuthSession (web): a message landing just after the close still wins", async () => {
   const page = fakePage();
-  await withGlobals(page.globals, async () => {
+  const clock = manualTimers();
+  await withGlobals({ ...page.globals, ...clock.globals }, async () => {
     const session = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
+    for (let i = 0; i < 100 && clock.count(true) === 0; i++) await Promise.resolve();
+    assertEquals(clock.count(true), 1, "the popup's close poll runs");
     page.popup.close();
-    // Past the next poll, inside the grace period.
-    await new Promise((r) => setTimeout(r, 600));
-    page.post({ type: "denext:auth-callback", url: CALLBACK });
+    clock.fire(true); // the next poll sees the popup closed…
+    assertEquals(clock.count(false), 1, "…and starts the grace period instead of cancelling");
+    page.post({ type: "denext:auth-callback", url: CALLBACK }); // inside the grace period
     assertEquals((await session).url, CALLBACK);
+    assertEquals(clock.count(true) + clock.count(false), 0, "the poll and the grace timer cleared");
   });
 });
 
@@ -395,5 +434,88 @@ Deno.test("completeAuthSession: posts this URL to the opener for this origin onl
   }, () => {
     assertEquals(completeAuthSession(), false);
     assertEquals(closed, 1);
+  });
+});
+
+Deno.test("openAuthSession (native) SECURITY (AU6-M3): a callback the session did not ask for is refused", async () => {
+  const url = "https://idp.example.com/authorize?client_id=c&state=st8" +
+    "&redirect_uri=" + encodeURIComponent("myapp://auth/callback") + PKCE;
+  let answer = "";
+  const fake = authPlugin(() => Promise.resolve({ url: answer }));
+  await inShell({ DenextAuthSession: fake.plugin }, async () => {
+    // A forged deep link (another app's explicit intent) with the attacker's code and no state.
+    answer = "myapp://auth/callback?code=attacker";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The right target with another state.
+    answer = "myapp://auth/callback?code=c&state=other";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The right state on another path of the scheme.
+    answer = "myapp://auth/elsewhere?code=c&state=st8";
+    assertEquals(await codeOf(openAuthSession(url, { callbackScheme: "myapp" })), "invalid");
+    // The genuine callback (state in the query, or in the fragment for an implicit flow).
+    answer = "myapp://auth/callback?code=c&state=st8";
+    assertEquals((await openAuthSession(url, { callbackScheme: "myapp" })).url, answer);
+    answer = "myapp://auth/callback#access_token=t&state=st8";
+    assertEquals((await openAuthSession(url, { callbackScheme: "myapp" })).url, answer);
+    // A `state` option is checked when the URL names another redirect (through the provider).
+    const via =
+      "https://idp.example.com/authorize?redirect_uri=https%3A%2F%2Fidp.example.com%2Fcb" +
+      PKCE;
+    answer = "myapp://auth/callback?state=wrong";
+    assertEquals(
+      await codeOf(
+        openAuthSession(via, {
+          callbackScheme: "myapp",
+          callbackPrefix: "myapp://auth/callback",
+          state: "mine",
+        }),
+      ),
+      "invalid",
+    );
+    answer = "myapp://auth/callback?state=mine";
+    assertEquals(
+      (await openAuthSession(via, {
+        callbackScheme: "myapp",
+        callbackPrefix: "myapp://auth/callback",
+        state: "mine",
+      })).url,
+      answer,
+    );
+  });
+});
+
+Deno.test("openAuthSession SECURITY (AU6-L9): PKCE S256 is required unless waived with a reason", async () => {
+  const fake = authPlugin(() => Promise.resolve({ url: "myapp://auth/callback?code=c&state=s1" }));
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1";
+  await inShell({ DenextAuthSession: fake.plugin }, async () => {
+    for (
+      const url of [
+        bare,
+        bare + "&code_challenge_method=S256",
+        bare + "&code_challenge=short&code_challenge_method=S256",
+        bare + PKCE.replace("S256", "plain"),
+        bare + PKCE + PKCE, // repeated parameters
+      ]
+    ) {
+      assertEquals(
+        await codeOf(openAuthSession(url, { callbackScheme: "myapp" })),
+        "pkce_required",
+        url,
+      );
+    }
+    assertEquals(fake.starts, [], "nothing was opened without PKCE");
+    // An explicit waiver needs a reason.
+    assertEquals(
+      await codeOf(openAuthSession(bare, { callbackScheme: "myapp", pkce: "not-applicable" })),
+      "invalid",
+    );
+    assertEquals(
+      (await openAuthSession(bare, {
+        callbackScheme: "myapp",
+        pkce: "not-applicable",
+        reason: "the provider binds the code to a client assertion",
+      })).url,
+      "myapp://auth/callback?code=c&state=s1",
+    );
   });
 });

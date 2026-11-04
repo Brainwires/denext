@@ -6,6 +6,13 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// An App Router test app crawls its graph with `deno info` in this process: a stall there fails
+// the test, naming the open subprocess, instead of holding the CI job. The plugin test builds an
+// app with prepare and build steps, which on a loaded Windows runner (serial child queue) took
+// longer than the default, so the deadline is 15 minutes.
+watchTests(900_000);
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 const PAGES_ROUTER = new URL("../packages/pages-router/mod.ts", import.meta.url).href;
@@ -169,8 +176,12 @@ export default function Home() { return h("p", null, "plain"); }
       assertEquals(typeof app, "function");
       const res = await app(new Request("http://localhost/"));
       assertStringIncludes(await res.text(), "plain");
-      assertEquals((await app(new Request("http://localhost/plugin/ping"))).status, 404);
+      const unread = await app(new Request("http://localhost/plugin/ping"));
+      assertEquals(unread.status, 404);
       await app.close();
+      // close() cancelled the body the test never read, as a server does when its client goes:
+      // its request deadline does not outlive the app (the op sanitizer, on in deno.json).
+      assert(unread.bodyUsed, "the unread body was released");
       let exists = true;
       await Deno.stat(join(dir, ".denext")).catch(() => (exists = false));
       assert(!exists, "no plugins → no prepare step → no .denext written");
@@ -213,4 +224,113 @@ export async function GET() {
       });
     },
   );
+});
+
+const SERVER = new URL("../src/server/mod.ts", import.meta.url).href;
+
+/**
+ * A project that needs more than a request handler: a plugin with a prepare step and a build
+ * step (it emits a file the site serves), a `jobs/` job a route runs, and a `services/` service
+ * that records its start and stop.
+ */
+const RUNTIME_APP: Record<string, string> = {
+  "denext.config.ts": `import { join } from "node:path";
+const log = (globalThis.__testAppRuntimeLog ??= []);
+export default {
+  plugins: [{
+    name: "test-app-runtime",
+    setup(ctx) {
+      ctx.addPrepareStep(async ({ outDir }) => {
+        await Deno.mkdir(outDir, { recursive: true });
+        await Deno.writeTextFile(join(outDir, "prepared.txt"), "ok");
+        log.push("prepare");
+      });
+      ctx.addBuildStep(async ({ emitFile, outDir }) => {
+        log.push("build");
+        await emitFile({ fileName: "plugin/feed.xml", source: "<feed>from the build step</feed>" });
+        await Deno.writeTextFile(join(outDir, "build-out.txt"), "scratch");
+      });
+    },
+  }],
+};
+`,
+  "app/page.ts": `import { h } from "${JSX}";
+export default function Home() { return h("p", null, "home"); }
+`,
+  "app/api/greet/route.ts": `import { runJob } from "${SERVER}";
+export async function GET() { return Response.json(await runJob("greet", { name: "route" })); }
+`,
+  "jobs/greet.ts": `import { defineJob } from "${SERVER}";
+export default defineJob({ handler: ({ payload }) => "hello " + payload.name });
+`,
+  "services/ticker.ts": `import { defineService } from "${SERVER}";
+const log = (globalThis.__testAppRuntimeLog ??= []);
+export default defineService({
+  async start(ctx) {
+    log.push("service:start");
+    await ctx.stopped;
+    log.push("service:stop");
+  },
+});
+`,
+};
+
+function runtimeLog(): string[] {
+  return ((globalThis as { __testAppRuntimeLog?: string[] }).__testAppRuntimeLog ??= []);
+}
+
+Deno.test("createTestApp: plugin prepare + build steps run, jobs are registered and services start and stop", async () => {
+  runtimeLog().length = 0;
+  const { getJob, runJob } = await import("../src/server/mod.ts");
+  await withProject(RUNTIME_APP, async (dir) => {
+    const app = await createTestApp(dir);
+    const client = createTestClient(app);
+    assertEquals(runtimeLog(), ["prepare", "build", "service:start"]);
+    // The prepare step's codegen lands in the project's build dir, as under `denext dev`.
+    assertEquals(await Deno.readTextFile(join(dir, ".denext", "prepared.txt")), "ok");
+    // The build step's emitted file is served; its output never touches the project.
+    const feed = await client.get("/plugin/feed.xml");
+    assertEquals(feed.status, 200);
+    assertEquals(feed.text, "<feed>from the build step</feed>");
+    let leaked = true;
+    await Deno.stat(join(dir, ".denext", "emitted")).catch(() => (leaked = false));
+    assert(!leaked, "build steps emit into a temporary directory, not .denext/emitted");
+    // `runJob` works from the test and from a route the test requests.
+    assertEquals(await runJob("greet", { name: "test" }), "hello test");
+    assertEquals(JSON.parse((await client.get("/api/greet")).text), "hello route");
+    await app.close();
+    assertEquals(runtimeLog(), ["prepare", "build", "service:start", "service:stop"]);
+    // The jobs are unregistered and the emitted files are gone.
+    assertEquals(getJob("greet"), undefined);
+    await app.close(); // idempotent
+  });
+});
+
+Deno.test("createTestApp: options turn build steps, jobs and services off", async () => {
+  runtimeLog().length = 0;
+  const { getJob } = await import("../src/server/mod.ts");
+  await withProject(RUNTIME_APP, async (dir) => {
+    await using app = await createTestApp(dir, { buildSteps: false, jobs: false, services: false });
+    assertEquals(runtimeLog(), ["prepare"]);
+    assertEquals((await createTestClient(app).get("/plugin/feed.xml")).status, 404);
+    assertEquals(getJob("greet"), undefined);
+  });
+  assertEquals(runtimeLog(), ["prepare"]);
+});
+
+Deno.test("createTestApp: a job the process registered before is restored on close()", async () => {
+  const { defineJob, getJob, registerJob } = await import("../src/server/mod.ts");
+  const outer = defineJob({ handler: () => "outer" });
+  registerJob("greet", outer);
+  try {
+    await withProject(RUNTIME_APP, async (dir) => {
+      const app = await createTestApp(dir, { buildSteps: false, services: false });
+      assert(getJob("greet") !== outer, "the app's own job replaces it while the app runs");
+      await app.close();
+      assertEquals(getJob("greet"), outer);
+    });
+  } finally {
+    const { unregisterJob } = await import("../src/server/jobs.ts");
+    unregisterJob("greet");
+  }
 });

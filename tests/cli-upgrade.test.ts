@@ -3,7 +3,7 @@
 // against injected registry lookups, so nothing here touches the network.
 
 import { assert, assertEquals, assertFalse } from "@std/assert";
-import { join } from "@std/path";
+import { dirname, join } from "@std/path";
 import {
   applyUpgrade,
   compareVersions,
@@ -13,9 +13,11 @@ import {
   satisfies,
   type UpgradeLookups,
 } from "../src/build/upgrade.ts";
-import { runUpgrade } from "../src/cli/commands/upgrade.ts";
+import { denoDirExcludeUpdate, runUpgrade } from "../src/cli/commands/upgrade.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import CATALOG from "../src/plugin/catalog.json" with { type: "json" };
+import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
+import { AUTH_SESSION_TEMPLATE_VERSION } from "../src/build/auth-session-native-templates.ts";
 
 /** A fake registry: versions per package, and the denext range each version declares. */
 function registry(
@@ -297,9 +299,18 @@ Deno.test("plan: a prerelease pin may move along its prereleases; a release pin 
  * Run the verb in a temp project (with `.vscode/settings.json` holding `settings`, when given);
  * returns the exit code, the output, the file after and the settings after.
  */
-async function runIn(flags: Record<string, string | boolean>, json = false, settings?: string) {
+async function runIn(
+  flags: Record<string, string | boolean>,
+  json = false,
+  settings?: string,
+  files: Record<string, string> = {},
+) {
   const dir = await Deno.makeTempDir({ prefix: "denext_upgrade_" });
   await Deno.writeTextFile(join(dir, "deno.json"), CONFIG);
+  for (const [name, text] of Object.entries(files)) {
+    await Deno.mkdir(dirname(join(dir, name)), { recursive: true });
+    await Deno.writeTextFile(join(dir, name), text);
+  }
   if (settings !== undefined) {
     await Deno.mkdir(join(dir, ".vscode"));
     await Deno.writeTextFile(join(dir, ".vscode", "settings.json"), settings);
@@ -350,11 +361,44 @@ Deno.test("denext upgrade: --dry-run and --check write nothing; --check exits 1 
 Deno.test("denext upgrade writes the plan into deno.json", async () => {
   const run = await runIn({});
   assertEquals(run.code, 0);
-  assertEquals(
-    run.file,
-    CONFIG.replaceAll("denext@^3.0.0", "denext@^3.2.0").replace("@3.0.0/", "@3.2.0/"),
+  const upgraded = CONFIG.replaceAll("denext@^3.0.0", "denext@^3.2.0").replace(
+    "@3.0.0/",
+    "@3.2.0/",
   );
+  assertEquals(run.file, await denoDirExcludeUpdate(upgraded));
   assert(run.out.includes("Updated"), run.out);
+});
+
+Deno.test("denext upgrade adds the .deno/ exclude and the jail exceptions an older project lacks", async () => {
+  const pkg = JSON.stringify({ dependencies: { sharp: "0.34.0" } });
+  const run = await runIn({}, false, undefined, { "package.json": pkg });
+  assertEquals(run.code, 0);
+  const doc = JSON.parse(run.file.replace(/^\s*\/\/.*$/m, ""));
+  assertEquals(doc.exclude, [".deno/"]);
+  assert(run.out.includes('Added ".deno/"'), run.out);
+  assert(
+    doc.supplyChain?.jailScripts?.packages?.sharp !== undefined,
+    `sharp's exception is written: ${run.file}`,
+  );
+  // --dry-run and --check only say so.
+  const dry = await runIn({ "dry-run": true }, false, undefined, { "package.json": pkg });
+  assertEquals(dry.file, CONFIG);
+  assert(dry.out.includes('Would add ".deno/"'), dry.out);
+  assert(dry.out.includes("sharp"), dry.out);
+  const check = await runIn({ check: true }, true, undefined, { "package.json": pkg });
+  assertEquals(check.file, CONFIG);
+  assertEquals(JSON.parse(check.out).denoExclude, { written: false });
+});
+
+Deno.test("denoDirExcludeUpdate: added once, comments kept; a non-list exclude is left alone", async () => {
+  const text = '{\n  // mine\n  "exclude": ["dist/"]\n}\n';
+  const next = await denoDirExcludeUpdate(text);
+  assert(next?.includes("// mine"), next ?? "");
+  assertEquals(JSON.parse(next!.replace(/^\s*\/\/.*$/m, "")).exclude, ["dist/", ".deno/"]);
+  assertEquals(await denoDirExcludeUpdate(next!), null, "already there");
+  assertEquals(await denoDirExcludeUpdate('{ "exclude": ["./.deno"] }'), null);
+  assertEquals(await denoDirExcludeUpdate('{ "exclude": "nope" }'), null);
+  assertEquals(await denoDirExcludeUpdate("not json"), null);
 });
 
 Deno.test("denext upgrade adds the TypeScript 7 language server to Deno-LSP editor settings that chose none", async () => {
@@ -459,4 +503,37 @@ Deno.test("denext upgrade refreshes an existing deno.lock after writing (a --fro
   const failed = await run({}, true, false);
   assertEquals(failed.code, 0, "deno.json was still upgraded");
   assert(failed.out.includes("deno install"), failed.out);
+});
+
+Deno.test("denext upgrade: names the out-of-date native templates and the command that refreshes them", async () => {
+  const ios = "ios/App/App/DenextAuthSessionPlugin.swift";
+  const stale = AUTH_SESSION_TEMPLATE_VERSION - 1;
+  const files = {
+    [ios]: await renderMarkedTemplate("auth-session", stale, "// plugin\n"),
+    "android/app/src/main/java/dev/denext/authsession/DenextAuthSessionPlugin.java":
+      await renderMarkedTemplate("auth-session", AUTH_SESSION_TEMPLATE_VERSION, "// plugin\n"),
+  };
+  // --dry-run shows it (and changes no native file).
+  const dry = await runIn({ "dry-run": true }, false, undefined, files);
+  assertEquals(dry.code, 0);
+  assert(dry.out.includes("Native templates older than this denext writes"), dry.out);
+  assert(
+    dry.out.includes(
+      `auth-session  generation ${stale} → ${AUTH_SESSION_TEMPLATE_VERSION}: run ` +
+        "`denext mobile add auth-session` (2 files)",
+    ),
+    dry.out,
+  );
+  assert(dry.out.includes("ship a new binary"), dry.out);
+  // --json carries it.
+  const json = await runIn({ "dry-run": true }, true, undefined, files);
+  const doc = JSON.parse(json.out);
+  assertEquals(doc.nativeTemplates.length, 1);
+  assertEquals(doc.nativeTemplates[0].family, "auth-session");
+  assertEquals(doc.nativeTemplates[0].command, "denext mobile add auth-session");
+  // Current templates: nothing to say.
+  const current = await runIn({ "dry-run": true }, true, undefined, {
+    [ios]: await renderMarkedTemplate("auth-session", AUTH_SESSION_TEMPLATE_VERSION, "// p\n"),
+  });
+  assertEquals(JSON.parse(current.out).nativeTemplates, undefined);
 });

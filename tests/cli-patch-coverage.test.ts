@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { patchCommand } from "../src/cli/commands/patch.ts";
+import { patchCommand, patchCreate } from "../src/cli/commands/patch.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
 async function project(): Promise<string> {
@@ -102,5 +102,67 @@ Deno.test("an unknown action exits with the verb list", async () => {
   } finally {
     cap.restore();
     exit.restore();
+  }
+});
+
+/**
+ * A project with `left-pad@1.3.0` installed and edited, a pristine copy beside it (no network),
+ * and `nodeModulesDir: "auto"` so the runtime can register the patch.
+ */
+async function editedNpmProject(): Promise<{ dir: string; pristine: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_patch_cli_npm_" });
+  const pristine = join(dir, ".pristine");
+  const installed = join(dir, "node_modules", "left-pad");
+  const pkg = `{ "name": "left-pad", "version": "1.3.0" }\n`;
+  const src = "module.exports = function leftPad(s) {\n  return s;\n};\n";
+  for (const at of [pristine, installed]) {
+    await Deno.mkdir(at, { recursive: true });
+    await Deno.writeTextFile(join(at, "package.json"), pkg);
+    await Deno.writeTextFile(join(at, "index.js"), src);
+  }
+  await Deno.writeTextFile(
+    join(installed, "index.js"),
+    src.replace("return s;", 'return "!" + s;'),
+  );
+  await Deno.writeTextFile(join(dir, "deno.json"), `{ "nodeModulesDir": "auto" }\n`);
+  return { dir, pristine };
+}
+
+/** `patchCreate`'s console output. */
+async function created(dir: string, opts: Parameters<typeof patchCreate>[2]): Promise<string> {
+  const cap = capture();
+  try {
+    await patchCreate("left-pad", dir, opts);
+  } finally {
+    cap.restore();
+  }
+  return [...cap.logs, ...cap.errs].join("\n");
+}
+
+Deno.test("patch create <npm package> says when deno.json's patchedDependencies registers it", async () => {
+  const { dir, pristine } = await editedNpmProject();
+  const npmPristine = () => Promise.resolve(pristine);
+  try {
+    const out = await created(dir, { npmPristine, runtime: "3.0.0-denext.3" });
+    assertStringIncludes(
+      out,
+      "✔ wrote " + join("patches", "left-pad+1.3.0.patch") + " (1 file(s)):",
+    );
+    assertStringIncludes(out, "re-applied to node_modules at every dev/build/start (idempotent).");
+    assertStringIncludes(
+      out,
+      'registered as "left-pad@1.3.0" in deno.json "patchedDependencies" (patches/npm/): ' +
+        "applied by the runtime on install too.",
+    );
+    assertEquals(
+      JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).patchedDependencies,
+      { "left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch" },
+    );
+    // A runtime without patchedDependencies: the patch, and no registration line.
+    const older = await created(dir, { npmPristine, runtime: "3.0.0-denext.2" });
+    assertStringIncludes(older, "re-applied to node_modules");
+    assert(!older.includes("registered as"), older);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

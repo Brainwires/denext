@@ -9,6 +9,7 @@ import {
   freeLoopbackPort,
   inspectRendererLaunch,
   inspectRendererPlan,
+  loopbackPortTaken,
   parseInspectRendererAddr,
 } from "../src/build/desktop-inspect-renderer.ts";
 
@@ -115,6 +116,49 @@ Deno.test("inspectRendererLaunch: a bare flag picks a free port and prints the e
       }),
     Error,
     "non-loopback",
+  );
+});
+
+Deno.test("inspectRendererLaunch: a picked port another process holds is picked again", () => {
+  const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  try {
+    const taken = (held.addr as Deno.NetAddr).port;
+    const free = freeLoopbackPort();
+    const picks = [taken, free];
+    const { addr, plan } = inspectRendererLaunch({
+      value: true,
+      allowRemote: false,
+      backend: "cef",
+      os: "linux",
+      pickPort: () => picks.shift()!,
+    });
+    assertEquals(addr.port, free);
+    assertEquals(plan.env, { LAUFEY_REMOTE_DEBUGGING_PORT: String(free) });
+    assertEquals(loopbackPortTaken(taken), true);
+    assertEquals(loopbackPortTaken(free), false);
+    // A port the developer gave is used as given, taken or not.
+    const given = inspectRendererLaunch({
+      value: String(taken),
+      allowRemote: false,
+      backend: "cef",
+      os: "linux",
+    });
+    assertEquals(given.addr.port, taken);
+  } finally {
+    held.close();
+  }
+  assertThrows(
+    () =>
+      inspectRendererLaunch({
+        value: true,
+        allowRemote: false,
+        backend: "cef",
+        os: "linux",
+        pickPort: fixed,
+        portTaken: () => true,
+      }),
+    Error,
+    "no free loopback port in 5 picks",
   );
 });
 

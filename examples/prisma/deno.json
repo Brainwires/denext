@@ -25,8 +25,8 @@
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
     "denext/live": "../../src/live.ts",
-    "@prisma/client": "npm:@prisma/client@^6.7.0",
-    "@prisma/adapter-better-sqlite3": "npm:@prisma/adapter-better-sqlite3@^6.7.0"
+    "@prisma/client": "npm:@prisma/client@7.10.1",
+    "@prisma/adapter-better-sqlite3": "npm:@prisma/adapter-better-sqlite3@7.10.1"
   },
   "lint": {
     "plugins": ["../../src/lint/denext-plugin.ts"],

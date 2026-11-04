@@ -135,7 +135,11 @@ both. A `fileName` is a relative, `/`-separated path (no `..`, no leading `/`), 
 the build publishes itself: the HTML shell `index.html`, denext's output under `_denext/`
 (`client/`, `pages/`, `fonts/`, `ota.json`, `platform.txt`, `desktop-preload.js`), the
 `spa.assetsDir` client directory or, in an export, a file the build already wrote (a rendered
-page). Other `_denext/` paths are yours (`@denext/htmx` publishes `_denext/htmx/htmx.min.js`):
+page). Other `_denext/` paths are yours (`@denext/htmx` publishes `_denext/htmx/htmx.min.js`).
+Give a `name` instead of a `fileName` and the file gets a content-hashed name, as Rollup's default
+`assetFileNames` makes one: `{ name: "logo.svg", source }` is published as
+`assets/logo-<hash>.svg` (in the `spa.assetsDir` directory when that is set, beside the client
+output). `emitFile` resolves to the name the file was published under:
 
 ```ts
 ctx.addBuildStep(async ({ emitFile, clientModules }) => {
@@ -143,6 +147,8 @@ ctx.addBuildStep(async ({ emitFile, clientModules }) => {
     fileName: "third-party-licenses.json",
     source: JSON.stringify(await collectLicenses(clientModules ?? [])),
   });
+  const logo = await emitFile({ name: "logo.svg", source: await renderLogo() });
+  // logo === "assets/logo-<hash>.svg"
 });
 ```
 
@@ -152,8 +158,11 @@ otherwise. An existing Vite plugin that only emits files from `generateBundle` r
 through `viteEmitterPlugin(vitePlugin)` from `denext/plugin-kit/vite-emitter` (the same function
 `denext/plugin-kit` exports, on an entry that leaves the build toolchain out of
 `denext.config.ts`, which a Deno Desktop app's `desktop.ts` imports at runtime): its hook gets a `this` whose
-`emitFile` publishes through this seam (asset files with a `fileName`), and a `bundle` holding
-one chunk whose `modules` are `clientModules`. Other Vite hooks are not run.
+`emitFile` publishes through this seam (asset files, by `fileName`, or by `name` under that
+content-hashed `[name]-[hash][extname]` name, which `this.getFileName(ref)` returns), and a
+`bundle` holding one chunk whose `modules` are `clientModules`. A chunk-type `emitFile`, a custom
+`assetFileNames` pattern and `setAssetSource` are not supported, and other Vite hooks are not
+run.
 
 ### Seam 3b — prepare steps (codegen, dev **and** build)
 
@@ -177,8 +186,25 @@ ctx.addPrepareStep(
 ```
 
 A step whose globs match a dev change is re-run before the reload, so the reloaded page sees
-the fresh output. A step with no `watch` globs runs only at startup/build. A throwing step is
-logged, never fatal.
+the fresh output; on that re-run its context's `changed` lists the edited files its globs matched
+(absolute paths; absent at startup and at build). A step with no `watch` globs runs only at
+startup/build. A throwing step is logged, never fatal.
+
+A failure a plugin meets outside a request, such as a reload after an edit, can reach the browser
+too: under `denext dev` (App Router) `ctx.reportDevError(title, error)` shows it in the dev error
+overlay with its stack and first in-project frame. It is `undefined` in every other pipeline and
+does not log, so log as well:
+
+```ts
+ctx.addPrepareStep(async ({ changed }) => {
+  try {
+    await regenerate();
+  } catch (error) {
+    console.error(`my-plugin: regeneration failed after an edit to ${changed?.join(", ")}`, error);
+    ctx.reportDevError?.("my-plugin: regeneration failed", error);
+  }
+}, { watch: ["schema/**"] });
+```
 
 ### Seam 4 — teardown
 
@@ -261,7 +287,7 @@ extend the CLI — not just the request/route/build seams. `spec` is a `CommandS
 always wins (core can't be shadowed). See [Project commands](#project-commands) below for
 how the verb is discovered and listed.
 
-A verb that writes build output declares it with `locks: (ctx) => CommandLocks | undefined`, and
+A verb that writes build output declares it with `locks: (ctx) => CommandLocks | undefined` (or a Promise of one), and
 denext holds those OS file locks for the whole run, as its own `build` and `export` do (a second
 invocation prints `Blocking waiting for file lock on build directory .denext` and waits; the OS
 releases a lock when its holder exits). `CommandLocks` is `{ projectDir, buildDir?, outputDirs?,

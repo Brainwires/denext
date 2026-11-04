@@ -26,6 +26,7 @@ import {
   completeAuthSession,
   openAuthSession,
 } from "../mobile/auth-session.ts";
+import { hasPkce, warnWithoutPkce } from "./internal/pkce-warning.ts";
 
 /** How a browser session ended. */
 export enum WebBrowserResultType {
@@ -177,6 +178,10 @@ export function dismissBrowser(): Promise<{ type: WebBrowserResultType.DISMISS }
   return Promise.resolve({ type: WebBrowserResultType.DISMISS });
 }
 
+/** The `reason` openAuthSession keeps for an expo-web-browser session without PKCE. */
+const EXPO_NO_PKCE_REASON = "expo-web-browser openAuthSessionAsync: the URL carries no PKCE " +
+  "(an AuthRequest with usePKCE: false, or a flow without a code); Expo does not require it";
+
 /** The custom scheme of `redirectUrl`, or a placeholder the web popup ignores. */
 function callbackScheme(redirectUrl: string | null | undefined): string {
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(redirectUrl ?? "")?.[1]?.toLowerCase();
@@ -212,10 +217,15 @@ export async function openAuthSessionAsync(
     );
   }
   rememberRedirect(redirectUrl);
+  const withoutPkce = !hasPkce(url);
+  if (withoutPkce) warnWithoutPkce();
   try {
     const result = await openAuthSession(url, {
       callbackScheme: callbackScheme(redirectUrl),
       preferEphemeral: options.preferEphemeralSession === true,
+      // denext's own openAuthSession requires PKCE; expo-web-browser does not, so a URL without
+      // it (an AuthRequest with usePKCE: false, an implicit flow) keeps working here, warned.
+      ...(withoutPkce ? { pkce: "not-applicable" as const, reason: EXPO_NO_PKCE_REASON } : {}),
     });
     return { type: "success", url: result.url };
   } catch (err) {

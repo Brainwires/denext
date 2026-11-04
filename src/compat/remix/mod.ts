@@ -57,6 +57,14 @@ export type {
   ClientRouteData,
   ClientRouteDataOptions,
 } from "./client-data.ts";
+export {
+  createContext,
+  type RouterContext,
+  RouterContextProvider,
+  unstable_createContext,
+  unstable_RouterContextProvider,
+} from "./router-context.ts";
+export type { MiddlewareFunction, MiddlewareFunctionArgs } from "./middleware.ts";
 export { DocumentBody, DocumentHead, DocumentHtml } from "./document.ts";
 export type { DocumentAttrs } from "./document.ts";
 export {

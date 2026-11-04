@@ -6,7 +6,7 @@
  * @module
  */
 
-import { type Codec, decodeArray, decodeText, SCALARS } from "./pg-binary.ts";
+import { type Codec, decodeArray, decodeText, moneyDecoder, SCALARS } from "./pg-binary.ts";
 export type { Codec };
 import type { SqlColumn } from "./client.ts";
 import {
@@ -28,6 +28,26 @@ import {
 /** `pg_type.typtype` of a type OID (`"e"` for an enum), or null when unknown. */
 export type TypeKindLookup = (oid: number) => Promise<string | null>;
 
+/** The fractional digits of the server's `lc_monetary` (what a `money` value is counted in). */
+export type MoneyScaleLookup = () => Promise<number>;
+
+/** `money`'s type OID. */
+const MONEY_OID = 790;
+
+/**
+ * A built-in scalar's codec: `money` read at the scale `moneyScale` reports (two digits without
+ * one), any other from {@linkcode SCALARS}.
+ */
+async function builtinCodec(
+  oid: number,
+  moneyScale: MoneyScaleLookup | undefined,
+): Promise<Codec | undefined> {
+  if (oid === MONEY_OID && moneyScale) {
+    return { type: T.Numeric, decode: moneyDecoder(await moneyScale()) };
+  }
+  return SCALARS.get(oid);
+}
+
 const ENUM_CODEC: Codec = { type: T.Enum, decode: decodeText };
 const CITEXT_CODEC: Codec = { type: T.Text, decode: decodeText };
 
@@ -41,8 +61,9 @@ async function scalarCodec(
   oid: number,
   name: string | null | undefined,
   kindOf: TypeKindLookup,
+  moneyScale: MoneyScaleLookup | undefined,
 ): Promise<Codec> {
-  const builtin = SCALARS.get(oid);
+  const builtin = await builtinCodec(oid, moneyScale);
   if (builtin) return builtin;
   if (name === "citext") return CITEXT_CODEC;
   if (oid >= 16384 && (await kindOf(oid)) === "e") return ENUM_CODEC;
@@ -67,12 +88,19 @@ function arrayCodec(element: Codec): Codec {
  * (`kindOf`) — needed only for an array of enums, whose element kind the row description
  * does not carry.
  *
+ * A `money` column (or an array or domain of one) is read at the fractional digits
+ * `moneyScale` reports — the server's `lc_monetary` — and at two without it.
+ *
  * @throws {DriverAdapterError} `UnsupportedNativeDataType` for a type Prisma has no reading
  *   of (`interval`, ranges, composites, geometric types): cast it in the query (`::text`).
  */
-export async function columnCodec(column: SqlColumn, kindOf: TypeKindLookup): Promise<Codec> {
+export async function columnCodec(
+  column: SqlColumn,
+  kindOf: TypeKindLookup,
+  moneyScale?: MoneyScaleLookup,
+): Promise<Codec> {
   const oid = column.typeOid ?? 0;
-  const builtin = SCALARS.get(oid);
+  const builtin = await builtinCodec(oid, moneyScale);
   if (builtin) return builtin;
   switch (column.typeKind) {
     case "enum":
@@ -80,7 +108,7 @@ export async function columnCodec(column: SqlColumn, kindOf: TypeKindLookup): Pr
     case "array":
     case "domain": {
       if (column.baseTypeOid == null) throw unsupported(column.type);
-      const base = await scalarCodec(column.baseTypeOid, column.baseType, kindOf);
+      const base = await scalarCodec(column.baseTypeOid, column.baseType, kindOf, moneyScale);
       return column.typeKind === "array" ? arrayCodec(base) : base;
     }
     default:
@@ -148,11 +176,31 @@ const columnConstraint = (e: ServerFields) => {
   return column ? { fields: [column] } : undefined;
 };
 
+/** The table a default `<table>_<fields>_key` constraint name is on, as adapter-pg derives it. */
+function keyConstraintTable(index: string | undefined, fields: string[]): string | undefined {
+  const suffix = `_${fields.join("_")}_key`;
+  return fields.length && index?.endsWith(suffix) ? index.slice(0, -suffix.length) : undefined;
+}
+
+/**
+ * A unique violation as `@prisma/adapter-pg` reports it: the constraint by name (`index`) when the
+ * server names it, else the `Key (…)` fields; the table from the server's `table` field, else
+ * from a default `<table>_<fields>_key` constraint name.
+ */
+function uniqueViolation(e: ServerFields): MappedError {
+  const index = str(e.constraint);
+  const fields = keyFields(e.detail)?.fields ?? [];
+  const table = str(e.table) ?? keyConstraintTable(index, fields);
+  const constraint = index ? { index } : fields.length ? { fields } : undefined;
+  return { kind: "UniqueConstraintViolation", constraint, ...(table && { table }) };
+}
+
 /** Prisma's error kind for each SQLSTATE it has one for. */
 const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => MappedError> = {
   "22001": (e) => ({ kind: "LengthMismatch", column: str(e.column) }),
   "22003": (_e, message) => ({ kind: "ValueOutOfRange", cause: message }),
-  "23505": (e) => ({ kind: "UniqueConstraintViolation", constraint: keyFields(e.detail) }),
+  "22P02": (_e, message) => ({ kind: "InvalidInputValue", message }),
+  "23505": (e) => uniqueViolation(e),
   "23502": (e) => ({
     kind: "NullConstraintViolation",
     constraint: keyFields(e.detail) ?? columnConstraint(e),
@@ -164,6 +212,13 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
       constraint: columnConstraint(e) ?? (index ? { index } : undefined),
     };
   },
+  "23001": (e) => {
+    const index = str(e.constraint);
+    return {
+      kind: "RestrictViolation",
+      constraint: columnConstraint(e) ?? (index ? { index } : undefined),
+    };
+  },
   "3D000": (_e, message) => ({ kind: "DatabaseDoesNotExist", db: quoted(message) }),
   "28000": (_e, message) => ({
     kind: "DatabaseAccessDenied",
@@ -171,6 +226,7 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
   }),
   "28P01": (_e, message) => ({ kind: "AuthenticationFailed", user: quoted(message) }),
   "40001": () => ({ kind: "TransactionWriteConflict" }),
+  "40P01": () => ({ kind: "TransactionWriteConflict" }),
   "42P01": (_e, message) => ({ kind: "TableDoesNotExist", table: quoted(message) }),
   "42703": (_e, message) => ({ kind: "ColumnNotFound", column: quoted(message) }),
   "42P04": (_e, message) => ({ kind: "DatabaseAlreadyExists", db: quoted(message) }),

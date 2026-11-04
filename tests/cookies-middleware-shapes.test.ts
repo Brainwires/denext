@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { createMiddlewareRunner, redirectResponse } from "../src/server/middleware.ts";
 import { NextResponse } from "../src/compat/next/server.ts";
 import { NextRequest } from "../src/compat/next/request.ts";
@@ -18,7 +18,8 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { notFound } from "../src/runtime/error-boundary.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";

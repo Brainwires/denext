@@ -33,7 +33,7 @@ import { runSubRequest } from "./sub-request.ts";
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";
 import { serveMetadataFile } from "./metadata-files.ts";
 import { requestOrigin } from "./absolute-url.ts";
-import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
+import { documentPublicEnv } from "../runtime/public-env.ts";
 import { isAbortError } from "./abort.ts";
 import { isReadMethod, originOptions, reportRequestError } from "./app-config.ts";
 import {
@@ -408,7 +408,14 @@ function dispatchPage(
   const soft = state.request.headers.get("x-denext-nav") === "1";
   const matched = matchPage(manifest, routingPath, { soft });
   if (!matched) return null;
-  return servePage(state, { manifest, matched, localeInfo, soft, routingPath });
+  return servePage(state, {
+    manifest,
+    matched,
+    localeInfo,
+    soft,
+    routingPath,
+    recover: (error) => handlePipelineError(state, error),
+  });
 }
 
 /** The app's root not-found UI, as a full document (HEAD gets the headers only). */
@@ -421,7 +428,7 @@ async function serveNotFoundPage(state: RequestState, manifest: RouteManifest): 
     devScript: config.devScript,
     devScriptSrc: config.devScriptSrc,
     lang: config.i18n?.defaultLocale,
-    publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+    publicEnv: documentPublicEnv(config.publicEnvKeys),
   });
   const csp = await resolveCsp(doc, undefined, config.csp);
   const { body, headers } = documentBody(state.request, doc);

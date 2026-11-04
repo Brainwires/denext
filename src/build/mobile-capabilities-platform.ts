@@ -12,6 +12,7 @@ import type {
   MobileCapability,
   NativeEdit,
 } from "./mobile-capabilities.ts";
+import { assertInsideProject, writeTextInside } from "./project-confine.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
   withAppDelegateBackgroundTransfers,
@@ -193,6 +194,7 @@ async function writeRunnerConfig(dir: string, report: NativeInstallReport): Prom
       ["plugins", "BackgroundRunner"],
       BACKGROUND_RUNNER_CONFIG,
     );
+    await assertInsideProject(dir, file);
     await Deno.writeTextFile(file, next);
     report.written.push(rel);
   } catch (err) {
@@ -220,7 +222,7 @@ async function wireRunnerGradle(dir: string, report: NativeInstallReport): Promi
   } else if (next === gradle) {
     report.unchanged.push(rel);
   } else {
-    await Deno.writeTextFile(nativeJoin(dir, rel), next);
+    await writeTextInside(dir, nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
 }
@@ -399,14 +401,14 @@ function configureFileTransfer(): CapabilityConfig {
 export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   "app-review": {
     npm: "@capawesome/capacitor-app-review",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "requestReview() / openStoreReview({ appStoreId })",
     configure: configureAppReview,
   },
   "app-update": {
     npm: "@capawesome/capacitor-app-update",
-    version: "^8.0.5",
+    version: "8.0.5",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "getAppUpdateInfo() / openAppStore() / performImmediateUpdate() / " +
       "startFlexibleUpdate() (Android) / promptStoreUpdate() (OTA's onNativeUpdateRequired)",
@@ -414,7 +416,7 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "screen-orientation": {
     npm: "@capacitor/screen-orientation",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "lockOrientation(o) / unlockOrientation() / getOrientation() / useOrientation() " +
       "(screen.orientation on the web)",
@@ -422,7 +424,7 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "media-library": {
     npm: "@capacitor-community/media",
-    version: "^9.1.0",
+    version: "9.1.0",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: {
       NSPhotoLibraryUsageDescription: PHOTOS_USAGE,
@@ -434,14 +436,14 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "privacy-screen": {
     npm: "@capacitor/privacy-screen",
-    version: "^2.0.1",
+    version: "2.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "setPrivacyScreen(on) / usePrivacyScreen() (app-switcher cover; Android also blocks " +
       "screenshots)",
   },
   tracking: {
     npm: "capacitor-plugin-app-tracking-transparency",
-    version: "^3.0.0",
+    version: "3.0.0",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: {
       NSUserTrackingUsageDescription:
@@ -453,7 +455,7 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   background: {
     npm: "@capacitor/background-runner",
-    version: "^3.0.0",
+    version: "3.0.0",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "defineBackgroundTask({ name, interval, handler }) in background/*.ts / " +
       "runBackgroundTask(name)",
@@ -461,7 +463,7 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   restore: {
     npm: "@capacitor/app",
-    version: "^8.1.1",
+    version: "8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "onRestoredResult(handler) / useRestoredResult / restoreRouteOnRelaunch() (Android " +
       "process death)",
@@ -519,7 +521,7 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "background-location": {
     npm: "@capgo/background-geolocation",
-    version: "^8.4.7",
+    version: "8.4.7",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: {
       NSLocationWhenInUseUsageDescription: "Show where you are in the app.",
@@ -540,8 +542,8 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   application: {
     npm: "@capacitor/app",
-    version: "^8.1.1",
-    peers: ["@capacitor/device@^8.0.3"],
+    version: "8.1.1",
+    peers: ["@capacitor/device@8.0.3"],
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "the app's name, id, version and build (expo-application over @capacitor/app's " +
       "getInfo()) and the vendor / Android id (@capacitor/device's getId())",

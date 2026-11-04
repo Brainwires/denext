@@ -16,6 +16,8 @@ import "../runtime/class-flag.ts";
 import type { Context } from "../runtime/hooks.ts";
 import { getClassScheduleUpdate, setClassSupport } from "../client/fiber/class-support.ts";
 import { type Fiber, fiberExt } from "../client/fiber/fiber.ts";
+// Type only: a value import of dom-props.ts from this on-demand chunk re-splits the shared graph.
+import type { HostState } from "../client/dom-props.ts";
 import {
   type ClassInstanceFields,
   type ClassInternals,
@@ -105,9 +107,11 @@ function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   const x = classFields(inst);
   let c = x.classInstance as Any;
   const isMount = c == null;
+  // React 19 hands a class its props WITHOUT `ref` (the ref reaches the instance, not `props`).
+  const nextProps = withoutRef(inst.vnode.props);
 
   if (isMount) {
-    c = instantiateClass(Ctor, inst.vnode.props, contextForCtor(Ctor, inst), inst);
+    c = instantiateClass(Ctor, nextProps, contextForCtor(Ctor, inst), inst);
     x.classInstance = c;
   } else {
     c.context = contextForCtor(Ctor, inst); // refresh legacy context on update
@@ -116,7 +120,6 @@ function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   const i = internals(c);
   const prevProps = c.props;
   const prevState = c.state;
-  const nextProps = inst.vnode.props;
 
   let nextState = applyPendingState(c, i, nextProps);
   const gdsfp = Ctor.getDerivedStateFromProps;
@@ -129,6 +132,8 @@ function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
     c.props = nextProps;
     c.state = nextState;
     flushCallbacks(i);
+    // A bailed class still swaps a changed ref, as React's finishClassComponent marks it first.
+    queueRef(inst, c);
     return { vnode: null, bailed: true };
   }
 
@@ -142,7 +147,60 @@ function renderClassInstance(inst: ReconcilerInstance): ClassRenderResult {
   (inst.pendingEffects ??= []).push(
     isMount ? mountEffect(c, i) : updateEffect(inst, c, i),
   );
+  queueRef(inst, c);
   return { vnode, bailed: false };
+}
+
+/** `props` minus `ref` (a new object only when a ref is present). */
+function withoutRef(props: Any): Any {
+  if (props == null || !("ref" in props)) return props;
+  const { ref: _ref, ...rest } = props;
+  return rest;
+}
+
+/** The fiber's ref bookkeeping (the same fields a host's ref uses). */
+function refState(inst: ReconcilerInstance): HostState {
+  return inst as unknown as HostState;
+}
+
+/**
+ * Queue the class's ref as a layout effect after its `componentDidMount` / `componentDidUpdate`,
+ * as React's commit attaches a class ref (`safelyAttachRef`) — never during render. A changed ref
+ * detaches the old one first; an unchanged one (or none at all) queues nothing.
+ */
+function queueRef(inst: ReconcilerInstance, c: Any): void {
+  const ref = (inst.vnode.props as Any)?.ref;
+  const s = refState(inst);
+  if (!Object.is(ref ?? undefined, s.attachedRef)) {
+    (inst.pendingEffects ??= []).push(() => setRef(s, ref, c));
+  }
+}
+
+/**
+ * Point the fiber's ref at `c` (`ref == null`: just detach), React 19 style: the old ref is
+ * detached first (its returned cleanup, else a `null` call / `.current = null`), and a callback
+ * ref may return a cleanup. dom-props.ts' `updateRef` does the same for a host; it is not
+ * imported, so this chunk adds no edge into the shared graph.
+ */
+function setRef(s: HostState, ref: Any, c: unknown): void {
+  if (Object.is(s.attachedRef, ref ?? undefined)) return;
+  detachClassRef(s);
+  if (ref == null) return;
+  s.attachedRef = ref;
+  if (typeof ref !== "function") ref.current = c;
+  else {
+    const cleanup = ref(c);
+    if (typeof cleanup === "function") s.refCleanup = cleanup;
+  }
+}
+
+/** Detach the attached ref: its returned cleanup, else a `null` call / `.current = null`. */
+function detachClassRef(s: HostState): void {
+  const old = s.attachedRef as Any;
+  if (typeof s.refCleanup === "function") s.refCleanup();
+  else if (typeof old === "function") old(null);
+  else if (old != null) old.current = null;
+  s.refCleanup = s.attachedRef = undefined;
 }
 
 /** The instance's class fields, allocating the fiber's extension on first use. */
@@ -192,6 +250,8 @@ function captureSnapshot(inst: ReconcilerInstance): void {
  * instance runs it: one already hidden (or mounted hidden) has none to undo.
  */
 function unmountClassInstance(inst: ReconcilerInstance): void {
+  // The ref detaches BEFORE `componentWillUnmount`, as React's deletion / disappear does.
+  detachClassRef(refState(inst));
   const c = inst.ext?.classInstance as Any;
   if (!c || !internals(c).mounted) return;
   internals(c).mounted = false;
@@ -209,6 +269,7 @@ function setClassVisible(inst: ReconcilerInstance, visible: boolean): void {
   if (!visible) return unmountClassInstance(inst);
   inst.pendingEffects = undefined;
   if (!internals(c).mounted) mountEffect(c, internals(c))();
+  setRef(refState(inst), (inst.vnode.props as Any)?.ref, c);
 }
 
 /**
@@ -258,8 +319,9 @@ export function installClassSupport(): void {
   // The flag guard lets the compat esbuild `define` fold this body to a no-op when
   // `classComponents` is off — the class runtime then becomes unreferenced and drops from
   // the prebuilt compat runtime chunk (whose entry-point exports don't otherwise
-  // tree-shake). On the native path the flag is the runtime-global `true` and the whole
-  // function tree-shakes anyway when the app doesn't use classes.
+  // tree-shake). The native path defines it too (`deno bundle --define`; without that flag it
+  // is the runtime-global `true`), and the whole function tree-shakes anyway when the app
+  // doesn't use classes.
   if (!__DENEXT_CLASS_COMPONENTS__) return;
   setClassSupport({
     handleClassError,

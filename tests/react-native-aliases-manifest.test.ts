@@ -49,7 +49,9 @@ Deno.test("community manifest: every runtime entry's module exists, exports what
 Deno.test("community manifest: every stand-in module has an entry", async () => {
   const modules = new Set(Object.values(COMMUNITY_ALIASES).map((a) => a.module));
   for await (const entry of Deno.readDir(COMPAT_DIR)) {
-    if (!entry.isFile || !entry.name.endsWith(".ts") || entry.name === "manifest.ts") continue;
+    if (!entry.isFile || !entry.name.endsWith(".ts")) continue;
+    // The manifest itself: its public module, the hand-written data and the packed copy.
+    if (/^manifest(?:-data(?:\.packed)?)?\.ts$/.test(entry.name)) continue;
     assert(modules.has(`./${entry.name}`), `src/react-native-compat/${entry.name} has no entry`);
   }
 });

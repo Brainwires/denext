@@ -74,7 +74,12 @@ export type {
 } from "./lustre/server-kit.ts";
 export { lustreViewIsland } from "./lustre/view-island.ts";
 export type { LustreViewIslandProps } from "./lustre/view-island.ts";
-export type { LustreReconciler, LustreReconcilerClass } from "./lustre/view-client.ts";
+export type {
+  LustreInsertMetadata,
+  LustreMetadata,
+  LustreReconciler,
+  LustreReconcilerClass,
+} from "./lustre/view-client.ts";
 
 /**
  * The plugin's implementation, loaded when the plugin is set up. The specifier is not a literal so

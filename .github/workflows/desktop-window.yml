@@ -1,7 +1,8 @@
 # The desktop kitchen sink's window test (examples/desktop-kitchen-sink) on every desktop OS: package
 # the app with denext's pinned Deno Desktop runtime, open it in a real window and assert every check
 # the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
-# the Clerk bridge, and a full-app update installed, left unconfirmed and rolled back).
+# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, and
+# a full-app update installed, left unconfirmed and rolled back).
 #
 # Windows also runs the Authenticode phases: "sign" packages builds signed with two throwaway
 # self-signed certificates and checks the signer of every PE file, and, because the hosted runner
@@ -43,11 +44,13 @@ on:
       # The CLI and manifest modules those import directly (tests/workflow-path-filters.test.ts
       # fails when a direct import of the window test, the desktop verbs or src/build is missing).
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/start-options.ts"
       - "src/cli/dev-attach.ts"
       - "src/cli/explain-output.ts"
       - "src/cli/self-exec.ts"
       - "src/cli/shared.ts"
+      - "src/cli/shutdown.ts"
       - "src/ts/check.ts"
       - "src/ts/lsp-settings.ts"
       - "src/expo/manifest.ts"
@@ -57,6 +60,7 @@ on:
       - "src/platform.ts"
       - "src/version.ts"
       - "src/plugin/mod.ts"
+      - "src/plugin/asset-name.ts"
       - "src/react-native-compat/manifest.ts"
       - "src/react-native/lists/manifest.ts"
       - "scripts/install.sh"
@@ -99,7 +103,7 @@ jobs:
           ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7" # exactly: denext's pinned Deno Desktop runtime is built for it
+          deno-version: "2.9.8" # exactly: denext's pinned Deno Desktop runtime is built for it
       # The pinned runtime. A fresh download is checked against the pin's SHA-256; a cache hit is
       # only size-checked by default, so the job sets DENEXT_DESKTOP_RUNTIME_VERIFY=1 (the job env) to
       # re-hash every cached file against the pin before use — a poisoned cache entry fails.
@@ -114,7 +118,8 @@ jobs:
       # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
       # (gnome-keyring, and libsecret, which the runtime loads for secureStore), a notification
       # server (dunst), xprop (x11-utils: the session script polls for the window manager), the XDG
-      # scheme tools, and the WebKitGTK runtime the webview backend loads.
+      # scheme tools, the WebKitGTK runtime the webview backend loads, and xdotool (the runner
+      # presses Return in a page download's save dialog).
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
@@ -122,7 +127,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-1-0 dunst \
-            xdg-utils desktop-file-utils \
+            xdg-utils desktop-file-utils xdotool \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
       - name: Window test (Linux, headless session)
         if: runner.os == 'Linux'
@@ -155,13 +160,14 @@ jobs:
     needs: window-test
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.ref }}
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: desktop-window-*

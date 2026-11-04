@@ -19,6 +19,7 @@ import {
   desktopLaunchConfig,
   desktopNavigationOrigins,
   desktopRequireSandbox,
+  desktopUiUpdateFloorProblem,
   laufeyLaunchEnv,
   laufeyLaunchPath,
   syncDesktopAppConfig,
@@ -26,9 +27,14 @@ import {
   unpackagedLaunchEnv,
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
+import { strictLaunchRuntime } from "../src/build/desktop-launch-policy.ts";
+import { makeOtaManifest } from "../src/mobile/ota-manifest.ts";
 import { desktopOriginCheck } from "../src/cli/commands/doctor.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+
+/** What a launch file written with the default gate carries for the strict policy. */
+const STRICT = strictLaunchRuntime() ? { strictPolicy: true } : {};
 
 const T3 = { desktop: { app: { origin: "T3Code://App/", identifier: "com.t3.code" } } };
 
@@ -300,6 +306,7 @@ Deno.test("sync + launch file: driven from a package script's import.meta.url", 
       inspectable: false,
       // The bridge pinned to the app origin alone, not laufey's default of every t3code:// origin.
       bridgeOrigins: ["t3code://app"],
+      ...STRICT,
     });
     const linux = join(dir, "dist", "t3-x64");
     await Deno.mkdir(linux, { recursive: true });
@@ -323,6 +330,7 @@ Deno.test("launch file: without a config it still turns DevTools off", async () 
     assertEquals(JSON.parse(await Deno.readTextFile(written!)), {
       inspectable: false,
       bridgeOrigins: ["app://localhost"],
+      ...STRICT,
     });
     assertEquals(await syncDesktopAppConfig(entry), {
       appJson: "none",
@@ -502,6 +510,7 @@ Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only",
       inspectable: false,
       bridgeOrigins: ["app://localhost"],
       requireSandbox: true,
+      ...STRICT,
     });
     for (const os of ["darwin", "windows"] as const) {
       const other = await writeLaufeyLaunchConfig(entry, os, join(dir, os));
@@ -512,6 +521,69 @@ Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only",
   }
 });
 
+Deno.test("launch file: strictPolicy on a strict runtime, passkeyRpIds from the passkeys capability", async () => {
+  const dirs: string[] = [];
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    // A project per config: the config module is imported once per URL.
+    const write = async (config: unknown, strict: boolean, os: "linux" | "darwin" = "linux") => {
+      const dir = await project();
+      dirs.push(dir);
+      await Deno.mkdir(join(dir, "scripts"));
+      await Deno.writeTextFile(
+        join(dir, "denext.config.ts"),
+        `export default ${JSON.stringify(config)};\n`,
+      );
+      const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
+      const at = await writeLaufeyLaunchConfig(entry, os, join(dir, "out"), { strict });
+      return JSON.parse(await Deno.readTextFile(at!));
+    };
+    const passkeys = {
+      desktop: {
+        app: {
+          origin: "myapp://app",
+          identifier: "com.example.app",
+          bridgeOrigins: ["https://idp.example"],
+        },
+        capabilities: { passkeys: { rpIds: ["Example.com", "example.com", "auth.example.com"] } },
+      },
+    };
+    // Strict: the policy key, the bridge pinned to the app origin + the configured ones, and the
+    // RP IDs (lowercased, de-duplicated) laufey checks before the OS sees a ceremony.
+    assertEquals(await write(passkeys, true), {
+      appId: "com.example.app",
+      customSchemes: ["myapp"],
+      inspectable: false,
+      bridgeOrigins: ["myapp://app", "https://idp.example"],
+      passkeyRpIds: ["example.com", "auth.example.com"],
+      strictPolicy: true,
+    });
+    // An older runtime: the same pins, no strictPolicy (it would only be reported as unknown).
+    const loose = await write(passkeys, false, "darwin");
+    assertEquals(loose.strictPolicy, undefined);
+    assertEquals(loose.passkeyRpIds, ["example.com", "auth.example.com"]);
+    // Passkeys off: no passkeyRpIds (under strict laufey refuses every ceremony without it).
+    const off = await write({ desktop: { capabilities: { passkeys: false } } }, true);
+    assertEquals([off.passkeyRpIds, off.strictPolicy, off.bridgeOrigins], [
+      undefined,
+      true,
+      ["app://localhost"],
+    ]);
+    assertEquals(warnings, []);
+    // An empty list is written as the empty pin (every ceremony refused), and warned about.
+    const empty = await write({ desktop: { capabilities: { passkeys: { rpIds: [] } } } }, true);
+    assertEquals(empty.passkeyRpIds, []);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0], "refuses every passkey ceremony");
+    assertStringIncludes(warnings[0], "rpIds");
+  } finally {
+    console.warn = warn;
+    for (const dir of dirs) await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("config validation: desktop.linux", () => {
   const check = (linux: unknown) => () =>
     validateDenextConfig({ desktop: { linux } } as unknown as DenextConfig);
@@ -519,4 +591,45 @@ Deno.test("config validation: desktop.linux", () => {
   check({})();
   assertThrows(check("strict"), Error, "desktop.linux");
   assertThrows(check({ requireSandbox: 1 }), Error, "desktop.linux.requireSandbox");
+});
+
+Deno.test("package: desktop.update.ui requires a sequenced OTA manifest in the export (the downgrade floor)", async () => {
+  const dir = await project("{}\n");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "export default { desktop: { app: { identifier: 'com.example.app' }, update: { ui: " +
+        "{ feedUrl: 'https://updates.example.com/ui', publicKey: 'KEY' } } } };\n",
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-macos.ts")).href;
+    const ui = { desktop: { update: { ui: { feedUrl: "https://u.example", publicKey: "K" } } } };
+    // No manifest in the export at all.
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "has no OTA manifest");
+    const err = await assertRejects(() => syncDesktopAppConfig(entry));
+    assertStringIncludes((err as Error).message, "denext ota manifest out --sign");
+    // A manifest without a sequence (unsigned `spa.ota: true`).
+    const manifest = await makeOtaManifest([{
+      path: "index.html",
+      sha256: "0".repeat(64),
+      size: 1,
+    }]);
+    await Deno.mkdir(join(dir, "out", "_denext"), { recursive: true });
+    const write = (m: unknown) =>
+      Deno.writeTextFile(join(dir, "out", "_denext", "ota.json"), JSON.stringify(m));
+    await write(manifest);
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "without a sequence");
+    await assertRejects(() => syncDesktopAppConfig(entry));
+    await write({ nope: true });
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "an invalid OTA manifest");
+    // Sequenced: packaging goes on.
+    await write({ ...manifest, sequence: 1_800_000_000 });
+    assertEquals(await desktopUiUpdateFloorProblem(dir, ui), null);
+    assertEquals((await syncDesktopAppConfig(entry)).runtimeConfig, "none");
+    // Without the UI updater there is nothing to require.
+    await Deno.remove(join(dir, "out"), { recursive: true });
+    assertEquals(await desktopUiUpdateFloorProblem(dir, T3), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

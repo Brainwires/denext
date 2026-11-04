@@ -5,9 +5,9 @@ name: CI
 # tagged from sixty commits none of which had been through CI. So every push to `development`
 # runs the fast `check` job (and the `bundle-budget` and macOS `ios-export-router` jobs); the
 # heavy jobs (integration builds, real-npm next-compat, the coverage re-run, the backend suites
-# against real Postgres + MinIO, the unit + integration suites on Windows) run on pull requests,
-# `main` and a manual dispatch, not on a plain push — a dozen pushes a day to the working branch
-# would otherwise queue an hour of runners each.
+# against real Postgres + MinIO, the unit + integration suites on Windows, the unit suite on
+# macOS) run on pull requests, `main` and a manual dispatch, not on a plain push — a dozen pushes
+# a day to the working branch would otherwise queue an hour of runners each.
 #
 # A release is cut from a commit these heavy jobs passed on: `deno task release` refuses to tag
 # unless the newest ci.yml run on HEAD that ran them has every job green. On `development` that
@@ -16,6 +16,24 @@ name: CI
 # A newer push to `development` cancels the push run before it; dispatch, `main` and PR runs are
 # never cancelled (the event is part of the concurrency group, so a push never cancels a dispatch,
 # such as the one a release is gated on).
+#
+# What runs on what. Users run denext's Deno toolchain (the pinned fork build,
+# src/build/deno-toolchain-pin.json: its native TypeScript 7 checker, `Deno.SQL`, the Vitest API
+# and fixes stock Deno lacks), so the tests and the type-check run on it too:
+#   - stock Deno 2.9.6 (setup-deno): `deno fmt --check`, `deno lint` and `deno task doc-lint` in
+#     `check` (reproducible formatting and lint; JSR scores what stock `deno publish` uploads), and
+#     bootstrapping every job — it runs scripts/ci/toolchain-on-path.ts, after which each later
+#     step's `deno` is the toolchain.
+#   - the toolchain, put on PATH by that step: `check`'s `deno check` and unit suite,
+#     `bundle-budget`, `integration`, `next-compat`, `ios-export-router`, `windows-tests`,
+#     `macos-tests` and `windows-resolve`. scripts/test-run.ts runs every pass on the toolchain.
+#   - `coverage`: stock Deno starts scripts/test-run.ts, which under `--coverage` runs every pass
+#     (and `deno coverage`) on the toolchain it resolves the same way.
+#   - `backend-integration`: the toolchain downloaded from its release URL and SHA-256 (pinned in
+#     its env, kept equal to the pin by tests/deno-toolchain.test.ts).
+#   - Stock Deno stays under test where it is meant to: the suites' `DENEXT_DENO=stock` cases
+#     and the stock-Deno paths (npm:postgres via fromPostgresJs), and publishing (the release
+#     script's `deno publish --dry-run`, publish.yml's `deno publish`).
 on:
   push:
     branches: [main, development]
@@ -36,13 +54,16 @@ jobs:
   # `integration` job) so this job stays the short critical path.
   check:
     runs-on: ubuntu-latest
+    # Every job has a limit (the default is 6 h, held by a stall). Sized from recent green runs:
+    # check ≤ 15 min, integration / next-compat ≤ 3, coverage ≤ 52; about 3× / +40 min margin.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # stock, pinned for reproducible fmt/lint/doc-lint; bump deliberately and re-run `deno fmt`
 
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
@@ -61,13 +82,68 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Read the Gleam pin
+        # The unit suites that compile real Gleam (tests/gleam.test.ts, tests/migrate-lustre.test.ts)
+        # run with denext's pinned Gleam, which `toolchain install --with gleam` below downloads into
+        # <DENO_DIR>/denext-deno/gleam/<version>/<target> and SHA-256-verifies
+        # (src/build/gleam-toolchain.ts). The cache below only saves that download (~10 MB); the CLI
+        # still verifies what it finds there before running it. The same step as e2e.yml's.
+        id: gleam-pin
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
       - name: Format check
         run: deno fmt --check
 
       - name: Lint
         run: deno lint
 
+      - name: Doc lint (JSR documentation coverage + docs anchors)
+        # On the stock Deno, like fmt and lint: JSR scores the documentation of what stock
+        # `deno publish` uploads. The task also runs scripts/check-doc-anchors.ts: every
+        # `/docs/<page>#<anchor>` link must name an id the docs site renders.
+        # Use the deno.json task as the single source of truth for the file list —
+        # a hardcoded duplicate here drifts (e.g. missing class-component.ts /
+        # next/cookies.ts) and reports false private-type-ref errors.
+        run: deno task doc-lint
+
+      - name: Publish dry-run of the stripped package
+        # What publish.yml does to @denext/denext once the tag exists, here where a failure can
+        # still be fixed: the same stock Deno, the comment strip and its size guard, then
+        # `deno publish --dry-run --allow-dirty`. In a clone, as the strip rewrites its files.
+        run: |
+          copy="$RUNNER_TEMP/publish-dry-run"
+          git clone --quiet --no-hardlinks . "$copy"
+          cd "$copy"
+          deno run -A scripts/publish-strip.ts --write
+          deno publish --dry-run --allow-dirty > /dev/null
+          cd - > /dev/null
+          rm -rf "$copy"
+
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
+      - name: Install the pinned Gleam compiler
+        # From the cache above when the pin is unchanged (verified, not downloaded again).
+        run: deno run -A cli.ts toolchain install --with gleam
+
       - name: Type check
+        # The toolchain's checker: native TypeScript 7, as `denext check` and the dev overlay run it.
         run: deno check cli.ts mod.ts
 
       - name: Unit tests
@@ -75,26 +151,26 @@ jobs:
         # Excludes tests/e2e/ (real headless Chromium; `deno task test:e2e`) and
         # tests/integration/ (heavy build/bundle tests; the `integration` job).
         # --unstable-kv enables the Deno KV cache-store tests.
+        # DENEXT_TEST_GLEAM: the pinned Gleam installed above, so the suites that compile real
+        # Gleam run (and fail, rather than skip, if that install is broken).
         run: deno task test:unit
+        env:
+          DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if
         # .github/badges/tests.json drifts from the number of Deno.test cases.
         # Regenerate with `deno task badge:tests` and commit. The README shows `main`'s
         # badge and the release script refreshes it before the tag, so the check runs
-        # where it is displayed — `main` and the development → main PR — not on every
-        # push to `development`, where the pre-commit hook no longer regenerates it
-        # (a per-commit badge put parallel commits in conflict at nearly every rebase).
-        if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+        # where it is displayed — `main` and the development → main PR — and on a manual
+        # dispatch, the run `deno task release` counts (scripts/release-ci.ts), so the commit a
+        # release is cut from is checked too; not on every push to `development`, where the
+        # pre-commit hook no longer regenerates it (a per-commit badge put parallel commits in
+        # conflict at nearly every rebase).
+        if: >-
+          github.ref == 'refs/heads/main' || github.event_name == 'pull_request' ||
+          github.event_name == 'workflow_dispatch'
         run: deno task badge:tests --check
-
-      - name: Doc lint (JSR documentation coverage + docs anchors)
-        # The task also runs scripts/check-doc-anchors.ts: every `/docs/<page>#<anchor>` link
-        # must name an id the docs site renders.
-        # Use the deno.json task as the single source of truth for the file list —
-        # a hardcoded duplicate here drifts (e.g. missing class-component.ts /
-        # next/cookies.ts) and reports false private-type-ref errors.
-        run: deno task doc-lint
 
   # The client bundle budget on every event, pushes to `development` included: the shared-chunk
   # total of examples/hello's production build (`assertBundleBudgets`, 65,500 B raw) and the
@@ -111,7 +187,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -120,9 +196,63 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
       - name: Shared-chunk budget (production build of examples/hello)
         # The same command runs locally (and in `deno task precheck` when a client module changed).
         run: deno task budget
+
+  # `cargo audit` over the Rust-built wasm packages' lockfiles (packages/*/Cargo.lock: lightningcss,
+  # photon, swc), each from its package directory so its .cargo/audit.toml ignores (each with the
+  # reason the advisory cannot reach the wasm) apply. A vulnerability or an `unsound` advisory fails
+  # (scripts/cargo-audit.ts). It runs on every push, so it also runs whenever a lockfile changes, and
+  # a release needs it green: the advisory database is fetched fresh, so a new advisory against an
+  # unchanged lockfile stops the release too. cargo-audit is the release's prebuilt binary,
+  # SHA-256-pinned and cached; no Rust toolchain is installed. Seconds.
+  cargo-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_AUDIT_VERSION: "0.22.2"
+      CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # runs scripts/cargo-audit.ts only (no project code)
+
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cargo-audit-bin
+          key: ${{ runner.os }}-cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ env.CARGO_AUDIT_SHA256 }}
+
+      - name: Download cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="cargo-audit-x86_64-unknown-linux-musl-v${CARGO_AUDIT_VERSION}"
+          curl -sSfL -o "$RUNNER_TEMP/ca.tgz" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${CARGO_AUDIT_VERSION}/${name}.tgz"
+          echo "${CARGO_AUDIT_SHA256}  $RUNNER_TEMP/ca.tgz" | sha256sum -c -
+          mkdir -p ~/.cargo-audit-bin
+          tar -xzf "$RUNNER_TEMP/ca.tgz" -C "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/${name}/cargo-audit" ~/.cargo-audit-bin/cargo-audit
+
+      - name: cargo audit (packages/*/Cargo.lock)
+        run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
+
+      # The same gate for npm: `deno audit` over the root deno.lock and every example's deno.lock;
+      # a high or critical advisory fails unless security/npm-audit-allow.json holds it (a fix
+      # still under the age hold).
+      - name: deno audit (deno.lock + examples)
+        run: deno task audit:npm
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
@@ -131,13 +261,14 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -145,6 +276,11 @@ jobs:
           path: ~/.cache/deno
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
+
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
 
       - name: Integration tests
         env:
@@ -165,13 +301,14 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Set up Node
         # The next-compat tests install and bundle real npm React packages.
@@ -187,6 +324,11 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
       - name: next-compat tests (real npm React libs, no browser)
         run: deno task test:next-compat
 
@@ -199,6 +341,7 @@ jobs:
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 90
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -251,13 +394,16 @@ jobs:
       DENEXT_TEST_S3_ACCESS_KEY: dnxtest
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      # The Kotlin client-emitter goldens compile with the runner's kotlinc (tests/clients.test.ts;
+      # Go and Swift are found on PATH, Kotlin only through this variable: kotlinc is slow to start).
+      DENEXT_KOTLINC: kotlinc
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # runs scripts/test-run.ts, which runs every pass on the toolchain under --coverage
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -300,18 +446,32 @@ jobs:
           set -o pipefail
           deno task test:coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
 
+      # The lcov report the per-file floors read, kept so a baseline can be raised from a CI run
+      # without re-running the suite locally: `gh run download <run> -n coverage-lcov -D coverage`,
+      # then `deno task coverage:ratchet:update` (scripts/coverage-ratchet.ts).
+      - name: Upload the lcov report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: The backend-integration suites ran under coverage (none ignored)
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
-          # ignored either (an ignored one means its service env is not wired into this job).
-          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration|next-auth-adapters-integration'
+          # ignored either (an ignored one means its service env is not wired into this job). The
+          # Prisma adapter suites self-enable on a `Deno.SQL` with result columns (the toolchain's),
+          # so an ignored one here means the pass ran on a runtime without it.
+          files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration|next-auth-adapters-integration|prisma-adapter-postgres-integration|prisma-adapter-sqlite'
           awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
             /^running [0-9]+ tests? from / { current = $NF; next }
             current ~ files && /\.\.\. ignored/ { print current ": " $0; bad = 1 }
             current ~ files && /\.\.\. ok/ { ran[current] = 1 }
             END {
               n = 0; for (f in ran) n++
-              if (n < 21) { print "only " n " of 21 backend-integration files ran"; bad = 1 }
+              if (n < 23) { print "only " n " of 23 backend-integration files ran"; bad = 1 }
               exit bad
             }
           ' "$RUNNER_TEMP/coverage.txt" || {
@@ -387,9 +547,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.2
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.2-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: cd02c389e25c00c19f7803ac979447e0378fe527b4ac30db09f8cccfedddc2dc
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.8
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 24e1ba8af8bbe724c15ec70f2c608f06c5e82a618dfd95cf1159241e75c63d0e
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -457,7 +617,9 @@ jobs:
             tests/backend-rest-reload-integration.test.ts \
             tests/doctor-backend.test.ts \
             tests/redis-integration.test.ts \
-            tests/next-auth-adapters-integration.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
+            tests/next-auth-adapters-integration.test.ts \
+            tests/prisma-adapter-postgres-integration.test.ts \
+            tests/prisma-adapter-sqlite.test.ts 2>&1 | tee "$RUNNER_TEMP/backend.txt"
 
       - name: No test was ignored (each service was really reached)
         run: |
@@ -480,7 +642,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
@@ -489,6 +651,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          # Default DENO_DIR on macOS; denext's Deno toolchain is cached in it too.
+          path: ~/Library/Caches/deno
+          key: ${{ runner.os }}-${{ runner.arch }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-deno-
+
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
 
       - name: swiftc is on the runner
         run: swiftc --version
@@ -539,13 +714,17 @@ jobs:
     runs-on: windows-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Set up a JDK
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
@@ -561,10 +740,17 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
-      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: Deno
-      # 2.9 resolves a config's `file:` targets on another drive as `file:///C:/D:/…` (and loses
-      # the framework's own import map for its modules there), so a temp app on C: that imports
-      # this checkout on D: fails in Deno, not in denext. runner.temp has no 8.3 short names.
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
+      # The tests' temp projects go on the checkout's drive (D:), not C:\Users\RUNNER~1\…: up to
+      # runtime 3.0.0-rc.4 a temp app on another drive than this checkout failed to build. Deno's
+      # synthetic workspace import map wrote a member's / linked config's `imports` relative to the
+      # root config, and a value on another drive resolved under the root's drive
+      # (`file:///C:/D:/…`). 3.0.0-rc.5 writes such a value as an absolute URL; the temp projects
+      # stay here until a run on another drive confirms it. runner.temp has no 8.3 short names.
       - name: Unit tests
         env:
           TEMP: ${{ runner.temp }}
@@ -580,19 +766,89 @@ jobs:
           DENEXT_TEST_REMOTE_CLI: "1"
         run: deno task test:integration
 
-  # Module resolution on Windows: the esbuild deno-loader's WASM spells drive paths `/C:/…`,
-  # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
-  # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
-  windows-resolve:
-    runs-on: windows-latest
-    timeout-minutes: 15
+  # The unit suite on macOS (Apple silicon: one arm64 leg, mindful of the shared macOS runners):
+  # every `Deno.build.os === "darwin"` branch outside the desktop suites (code signing, the Deno
+  # and fastlane toolchains, mobile build / inspect, the profiler's browser, `denext ui`'s opener
+  # and signing panel, the CLI's self-exec) runs here, on denext's Deno toolchain. The ad-hoc
+  # `codesign` test (a real Mach-O signed with the Hardened Runtime + allow-jit, verified and run)
+  # is ignored off darwin, so this job fails if it was ignored rather than passed. Heavy (PRs,
+  # `main` and a manual dispatch), like `windows-tests`; a release needs it green.
+  macos-tests:
+    runs-on: macos-latest
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.6" # pinned for reproducible fmt/lint; bump deliberately (e.g. to 3.x) and re-run `deno fmt`
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
+
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac and run with java
+        # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          # Default DENO_DIR on macOS; denext's Deno toolchain is cached in it too.
+          path: ~/Library/Caches/deno
+          key: ${{ runner.os }}-${{ runner.arch }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-deno-
+
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
+      - name: Unit tests
+        env:
+          NO_COLOR: "1" # plain test names for the grep below
+        run: |
+          set -o pipefail
+          deno task test:unit 2>&1 | tee "$RUNNER_TEMP/unit.txt"
+
+      - name: The real ad-hoc codesign test ran (not ignored)
+        run: |
+          grep -E 'signCompiledBinary: a real ad-hoc codesign of a Mach-O, verified, and it runs \.\.\. ok' "$RUNNER_TEMP/unit.txt"
+
+  # Module resolution on Windows: the esbuild deno-loader's WASM spells drive paths `/C:/…`,
+  # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
+  # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
+  windows-resolve:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~\AppData\Local\deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
 
       - name: The deno-loader resolves package.json dependencies on Windows
         run: deno test -A tests/deno-loader-plugins.test.ts
+
+      - name: The deno-loader's own deno info children are bounded on Windows
+        run: deno test -A tests/loader-deno-info.test.ts

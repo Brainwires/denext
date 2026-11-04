@@ -8,7 +8,7 @@ denext's promise is the **React/Next.js surface**: imports resolve, public APIs
 exist, and they behave correctly for correct usage. _Underneath_ that surface,
 denext is its own engine — its own fiber reconciler, an async-only SSR renderer,
 its own Flight boundary and cache. That is not incidental; it is **where the wins
-come from** (~7× smaller output, 0 KB JS on a static route, resumability, live
+come from** (~5.8× smaller client runtime than Next.js 16.4.2, gzipped, 0 KB JS on a static route, resumability, live
 components — see [MISSION.md](https://github.com/Brainwires/denext/blob/main/MISSION.md)).
 
 These internal differences are **deliberate design choices, invisible to correct
@@ -162,7 +162,8 @@ React at bundle time. A few deliberate build defaults on that path:
   React type shim. Residual library type edges are type-only, never runtime.
 - **`classComponents`** — on every build path the class runtime is an on-demand chunk
   (see [KNOWN-DIFFERENCES.md](/docs/differences)); the next-compat build additionally
-  folds the flag through an esbuild `define`, so `classComponents: false` also strips the
+  folds the flag through an esbuild `define`, as does the native App Router build on denext's
+  Deno toolchain (`deno bundle --define`), so `classComponents: false` also strips the
   reconciler's class guards from that bundle. `true` imports the runtime statically.
 - **Run `denext build`/`dev` from the project directory** — the client/server boundary
   crawl resolves `@/…` path aliases from the app's `deno.json` on the cwd.
@@ -241,7 +242,9 @@ opt-in via `asyncContext`: `src/build/async-context-transform.ts` brackets
 each `await`/`for await` (`const $ = __asyncScope(); try { … await __asyncAwait($, X) … }
 finally { __asyncScopeEnd($); }`) so the frame's context is restored on resume **and** the
 ambient context is restored on completion — no trailing leak, so an urgent update after a
-transition settles is never mis-scoped. The runtime primitive (`src/runtime/async-context.ts`)
+transition settles is never mis-scoped. An async generator's `yield` and `yield*` are
+bracketed the same way (a `yield*` delegate's every step runs in the frame's context), and a
+module with a top-level `await` gets a module scope that its later statements resume in. The runtime primitive (`src/runtime/async-context.ts`)
 is a first-party `AsyncContext` (`Variable` + `Snapshot`); the reconciler reads a build-swapped
 mode `const` to choose identity scoping vs the default window. Like the qrl/auto-memo passes it
 touches only the **client** bundle (the server runs the original source, and the helpers are

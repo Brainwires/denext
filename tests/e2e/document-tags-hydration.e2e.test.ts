@@ -81,8 +81,6 @@ const APPS = [
 for (const app of APPS) {
   Deno.test({
     name: `e2e: hydration adopts the server DOM — ${app.name}`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     const server = await buildAndServe(app.dir);
     const browser = await launchBrowser();

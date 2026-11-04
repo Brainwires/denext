@@ -26,7 +26,8 @@ import type { DeployManifest } from "../src/deploy/manifest.ts";
 import { denoDeploy, docker, fly, genericHost, staticHost } from "../src/deploy/mod.ts";
 import { PRESET_NAMES } from "../src/deploy/presets.ts";
 import { staticRefusal } from "../src/deploy/presets/static.ts";
-import { fixtureProject } from "./helpers/deploy-fixture.ts";
+import { DEPLOY_FIXTURE_CONFIG, fixtureProject } from "./helpers/deploy-fixture.ts";
+import type { DenextConfig } from "../src/server/config.ts";
 
 const GOLDEN = fromFileUrl(new URL("./fixtures/deploy/golden/", import.meta.url));
 const UPDATE = Deno.env.get("DENEXT_UPDATE_GOLDEN") === "1";
@@ -63,11 +64,20 @@ function recordingContext(
   return { ctx, files, warnings, runs };
 }
 
-/** The fixture's manifest (framework version normalized, so goldens survive a release). */
-async function fixtureManifest(): Promise<{ paths: ProjectPaths; manifest: DeployManifest }> {
-  const paths = await fixtureProject();
-  const manifest = await collectDeployManifest(paths);
-  return { paths, manifest: { ...manifest, denext: "4.1.0" } };
+/**
+ * The fixture's manifest (framework version normalized, so goldens survive a release), written
+ * where `denext build` writes it (the docker preset reads `start.tls` from there).
+ */
+async function fixtureManifest(
+  config?: DenextConfig,
+): Promise<{ paths: ProjectPaths; manifest: DeployManifest }> {
+  const paths = await fixtureProject(config);
+  const manifest = { ...await collectDeployManifest(paths), denext: "4.1.0" };
+  await Deno.writeTextFile(
+    join(paths.outDir, "deploy-manifest.json"),
+    JSON.stringify(manifest, null, 2),
+  );
+  return { paths, manifest };
 }
 
 /**
@@ -105,8 +115,12 @@ async function assertGolden(preset: string, files: Map<string, string>): Promise
 }
 
 /** Run one preset's prepare over the fixture and check its files against the golden. */
-async function checkPreset(adapter: DeployAdapter, golden: string): Promise<string[]> {
-  const { paths, manifest } = await fixtureManifest();
+async function checkPreset(
+  adapter: DeployAdapter,
+  golden: string,
+  config?: DenextConfig,
+): Promise<string[]> {
+  const { paths, manifest } = await fixtureManifest(config);
   try {
     const { ctx, files, warnings } = recordingContext(manifest, paths.projectDir);
     await adapter.prepare(ctx);
@@ -137,6 +151,96 @@ Deno.test("deploy preset deno-deploy: the entry maps cron + KV; app settings", a
 
 Deno.test("deploy preset generic-host: systemd unit, nginx, Caddy, env example", async () => {
   await checkPreset(genericHost({ name: "shop", domain: "shop.example.com" }), "generic-host");
+});
+
+/** The fixture's config with `start.tls`: two certificates, one the `"*"` fallback. */
+const TLS_CONFIG: DenextConfig = {
+  ...DEPLOY_FIXTURE_CONFIG,
+  start: {
+    tls: {
+      certificates: [
+        { hostnames: ["shop.example.com"], certFileEnv: "SHOP_CERT", keyFileEnv: "SHOP_KEY" },
+        { hostnames: ["*"], certFileEnv: "DEFAULT_CERT", keyFileEnv: "DEFAULT_KEY" },
+      ],
+    },
+  },
+};
+
+Deno.test("deploy preset docker with start.tls: certs mounted, variables required, https probe", async () => {
+  const warnings = await checkPreset(docker({ denoTag: "2.9.7" }), "docker-tls", TLS_CONFIG);
+  // The fixture's deno.json has no "unstable": ["net"].
+  assert(warnings.some((w) => w.includes('"unstable": ["net"]')), warnings.join("\n"));
+});
+
+Deno.test("deploy preset fly with start.tls: TLS passed through as TCP, no proxy trust", async () => {
+  await checkPreset(fly({ app: "my-app", region: "ams", denoTag: "2.9.7" }), "fly-tls", TLS_CONFIG);
+});
+
+Deno.test("deploy preset generic-host with start.tls: the server faces clients, no proxy files", async () => {
+  const warnings = await checkPreset(
+    genericHost({ name: "shop", domain: "shop.example.com" }),
+    "generic-host-tls",
+    TLS_CONFIG,
+  );
+  assert(warnings.some((w) => w.includes("no nginx.conf or Caddyfile")), warnings.join("\n"));
+  assert(warnings.some((w) => w.includes('"unstable": ["net"]')), warnings.join("\n"));
+});
+
+Deno.test("deploy preset generic-host with start.tls: port, compiled binary and scoped reads", async () => {
+  const { paths, manifest } = await fixtureManifest(TLS_CONFIG);
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files, warnings } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return { unit: files.get("output/shop.service") ?? "", warnings, files };
+  };
+  try {
+    // Off 443: the origin carries the port, and no capability is granted.
+    const high = await unit(manifest, { port: 8443 });
+    assertStringIncludes(
+      high.unit,
+      "Environment=DENEXT_CANONICAL_ORIGIN=https://shop.example.com:8443\n",
+    );
+    assert(!high.unit.includes("CAP_NET_BIND_SERVICE"), high.unit);
+    assert(!high.unit.includes("DENEXT_TRUST_PROXY"), high.unit);
+    // A compiled executable binds every interface and has --unstable-net baked in.
+    const compiled = await unit({ ...manifest, compile: { output: "dist/shop", permissions: [] } });
+    assertStringIncludes(compiled.unit, "ExecStart=/srv/shop/shop\n");
+    assert(!compiled.warnings.some((w) => w.includes("unstable")), compiled.warnings.join("\n"));
+    // A start command that scopes its reads can't reach the certificate files: said so.
+    const scoped = await unit({
+      ...manifest,
+      server: {
+        ...manifest.server,
+        command: manifest.server.command.map((w) => w === "--allow-read" ? "--allow-read=." : w),
+      },
+    });
+    assert(
+      scoped.warnings.some((w) => w.includes("scopes --allow-read")),
+      scoped.warnings.join("\n"),
+    );
+    // One certificate needs no unstable net APIs.
+    const one = await unit({
+      ...manifest,
+      server: {
+        ...manifest.server,
+        tls: { certificates: [manifest.server.tls!.certificates[0]] },
+      },
+    });
+    assert(!one.warnings.some((w) => w.includes("unstable")), one.warnings.join("\n"));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset deno-deploy with start.tls: warned, the platform terminates TLS", async () => {
+  const { paths, manifest } = await fixtureManifest(TLS_CONFIG);
+  try {
+    const { ctx, warnings } = recordingContext(manifest, paths.projectDir);
+    await denoDeploy({ org: "acme", app: "shop" }).prepare(ctx);
+    assert(warnings.some((w) => w.includes("leave start.tls out")), warnings.join("\n"));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
 });
 
 Deno.test("deploy preset generic-host: the unit serves on denext's toolchain from the app's DENO_DIR", async () => {
@@ -172,6 +276,35 @@ Deno.test("deploy preset generic-host: the unit serves on denext's toolchain fro
   }
 });
 
+Deno.test("deploy preset generic-host: the unit turns the idle trim on for the toolchain server only", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const line = "Environment=DENO_UNSTABLE_IDLE_TRIM=1\n";
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return files.get("output/shop.service") ?? "";
+  };
+  try {
+    const on = { ...manifest, server: { ...manifest.server, idleTrim: true } };
+    const text = await unit(on);
+    assertStringIncludes(text, line);
+    // Before the env file, so DENO_UNSTABLE_IDLE_TRIM=0 there turns it off.
+    assert(text.indexOf(line) < text.indexOf("EnvironmentFile="), text);
+    // Opted out (or an older toolchain pin): nothing.
+    assert(!(await unit({ ...on, server: { ...on.server, idleTrim: false } })).includes(line));
+    // A manifest from before the field: nothing.
+    const { idleTrim: _, ...older } = on.server;
+    assert(!(await unit({ ...on, server: older })).includes(line));
+    // A compiled executable has it baked in; another deno may be stock.
+    assert(
+      !(await unit({ ...on, compile: { output: "dist/shop", permissions: [] } })).includes(line),
+    );
+    assert(!(await unit(on, { deno: "/usr/local/bin/deno" })).includes(line));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.example is filled", async () => {
   // Up to 4.5.0 a missing domain wrote DENEXT_CANONICAL_ORIGIN=https://example.com into the unit
   // and `server_name example.com` into nginx, and env.example listed only the app's own reads.
@@ -189,7 +322,7 @@ Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.ex
     );
     const env = files.get("output/env.example") ?? "";
     assertStringIncludes(env, "\nDENEXT_CANONICAL_ORIGIN=\n");
-    assertStringIncludes(env, "\n# DENEXT_SHUTDOWN_DRAIN_MS=10000\n");
+    assertStringIncludes(env, "set in the unit, with TimeoutStopSec above");
     // The prepare environment's canonical origin names the domain when no option does.
     const fromEnv = recordingContext(manifest, paths.projectDir, {
       vars: { DENEXT_CANONICAL_ORIGIN: "https://shop.example.org" },
@@ -217,6 +350,47 @@ Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.ex
     assertStringIncludes(
       secrets.files.get("output/env.example") ?? "",
       "at least 32 random characters",
+    );
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy presets generic-host / fly: the stop timeout follows the configured drain", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    // The default 10 s drain: 30 s, as before.
+    const plain = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop" }).prepare(plain.ctx);
+    const unit = plain.files.get("output/shop.service") ?? "";
+    assertStringIncludes(unit, "\nEnvironment=DENEXT_SHUTDOWN_DRAIN_MS=10000\nTimeoutStopSec=30\n");
+    // A 60 s drain from prepare's environment: systemd waits 80 s, not 30 (it used to kill the
+    // server mid-drain).
+    const long = recordingContext(manifest, paths.projectDir, {
+      vars: { DENEXT_SHUTDOWN_DRAIN_MS: "60000" },
+    });
+    await genericHost({ name: "shop" }).prepare(long.ctx);
+    assertStringIncludes(
+      long.files.get("output/shop.service") ?? "",
+      "\nEnvironment=DENEXT_SHUTDOWN_DRAIN_MS=60000\nTimeoutStopSec=80\n",
+    );
+    await fly({ app: "shop" }).prepare(long.ctx);
+    const toml = long.files.get("project/fly.toml") ?? "";
+    assertStringIncludes(toml, 'kill_timeout = "80s"');
+    assertStringIncludes(toml, 'DENEXT_SHUTDOWN_DRAIN_MS = "60000"');
+    // The preset option wins; 0 (wait for every request) has no systemd limit and Fly's most.
+    const none = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop", drainMs: 0 }).prepare(none.ctx);
+    assertStringIncludes(
+      none.files.get("output/shop.service") ?? "",
+      "\nTimeoutStopSec=infinity\n",
+    );
+    await fly({ app: "shop", drainMs: 0 }).prepare(none.ctx);
+    assertStringIncludes(none.files.get("project/fly.toml") ?? "", 'kill_timeout = "300s"');
+    await assertRejects(
+      async () => await genericHost({ name: "shop", drainMs: -1 }).prepare(none.ctx),
+      Error,
+      "drainMs",
     );
   } finally {
     await Deno.remove(paths.projectDir, { recursive: true });
@@ -488,6 +662,103 @@ Deno.test("deploy runner: adapter resolution and a missing deploy step", async (
       Error,
       "has no deploy step",
     );
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset generic-host: the toolchain's unit listens only on its port (split --allow-net)", async () => {
+  // Up to 4.6.0 the unit's server ran with the unscoped --allow-net: any dependency could open a
+  // listener. The toolchain (3.0.0-rc.2+) splits the grant by direction.
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0]) => {
+      const { ctx, files } = recordingContext(m, paths.projectDir);
+      await genericHost(options).prepare(ctx);
+      return /^ExecStart=(.*)$/m.exec(files.get("output/shop.service") ?? "")?.[1] ?? "";
+    };
+    const port = await unit(manifest, { name: "shop", domain: "shop.example.com", port: 8080 });
+    assertStringIncludes(port, " --allow-net-connect --allow-net-listen=127.0.0.1:8080 ");
+    assert(!/--allow-net( |=)/.test(port), port);
+    // compile.permissions' directions win (the manifest carries them).
+    const scoped = await unit(
+      {
+        ...manifest,
+        permissions: { ...manifest.permissions, net: { connect: ["db:5432"], listen: [":9000"] } },
+      },
+      { name: "shop", domain: "shop.example.com" },
+    );
+    assertStringIncludes(scoped, " --allow-net-connect=db:5432 --allow-net-listen=:9000 ");
+    // A Deno of the operator's choosing may be stock: the unscoped --allow-net stays.
+    const own = await unit(manifest, {
+      name: "shop",
+      domain: "shop.example.com",
+      deno: "/usr/local/bin/deno",
+    });
+    assertStringIncludes(own, "/usr/local/bin/deno run --allow-net --allow-read ");
+    // So does a manifest from a build before the field, or one under compile.permissions: "all".
+    const old = await unit(
+      { ...manifest, permissions: { ...manifest.permissions, net: null } },
+      { name: "shop", domain: "shop.example.com" },
+    );
+    assertStringIncludes(old, " run --allow-net --allow-read ");
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset generic-host: start.limits go on the toolchain server's ExecStart", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const flags = ["--max-memory=512m", "--max-cpu-time=3600"];
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return files.get("output/shop.service") ?? "";
+  };
+  try {
+    const on = { ...manifest, server: { ...manifest.server, limits: flags } };
+    const text = await unit(on);
+    // Right after `run`, on the toolchain `build.sh` links.
+    assertStringIncludes(
+      text,
+      "ExecStart=/srv/shop/.deno/bin/deno run --max-memory=512m --max-cpu-time=3600 --allow-net-connect",
+    );
+    // The marker that tells `denext start` it already runs under them, before the env file.
+    const marker = 'Environment="DENEXT_LIMITS_APPLIED=--max-memory=512m --max-cpu-time=3600"\n';
+    assertStringIncludes(text, marker);
+    assert(text.indexOf(marker) < text.indexOf("EnvironmentFile="), text);
+    // None configured, or a manifest from before the field: the unit is unchanged.
+    const none = await unit(manifest);
+    assert(!none.includes("--max-") && !none.includes("DENEXT_LIMITS_APPLIED"), none);
+    const { limits: _, ...older } = on.server;
+    assertEquals(await unit({ ...on, server: older }), none);
+    // A compiled executable has them baked in: nothing on its ExecStart.
+    const compiled = await unit({ ...on, compile: { output: "dist/shop", permissions: [] } });
+    assert(!compiled.includes("--max-") && !compiled.includes("DENEXT_LIMITS_APPLIED"), compiled);
+    // Another deno may be stock: not passed, and the unit says so.
+    const stock = await unit(on, { deno: "/usr/local/bin/deno" });
+    assertStringIncludes(stock, "# start.limits (--max-memory=512m --max-cpu-time=3600) are not");
+    assert(!stock.includes("run --max-") && !stock.includes("DENEXT_LIMITS_APPLIED="), stock);
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset fly: a heap limit not below the machine's memory warns", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const warns = async (limits: string[], memory?: string) => {
+    const m = { ...manifest, server: { ...manifest.server, limits } };
+    const { ctx, warnings } = recordingContext(m, paths.projectDir);
+    await fly({ app: "shop", ...(memory ? { memory } : {}) }).prepare(ctx);
+    return warnings.filter((w) => w.includes("start.limits.memory"));
+  };
+  try {
+    assertEquals((await warns(["--max-memory=512m"])).length, 1, "512m on the default 512mb");
+    assertEquals((await warns(["--max-memory=1g"], "1gb")).length, 1);
+    assertEquals(await warns(["--max-memory=384m"]), []);
+    assertEquals(await warns(["--max-memory=512m"], "1024"), []);
+    assertEquals(await warns(["--max-cpu-time=60"]), []);
+    assertEquals(await warns([]), []);
   } finally {
     await Deno.remove(paths.projectDir, { recursive: true });
   }

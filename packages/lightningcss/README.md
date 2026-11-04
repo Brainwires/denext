@@ -34,7 +34,9 @@ started at `1.0.0-rc.72`, matching the wrapped `lightningcss` crate
 `1.0.0-alpha.72` (the crate is pre-1.0 `alpha`; JSR requires a valid semver, so
 the pre-release tag is relabelled `rc`). The wrapped crate version is
 **documented, not encoded** (pinned as `=1.0.0-alpha.72` in `Cargo.toml`; see
-`CHANGELOG.md`).
+`CHANGELOG.md`). A rebuild that wraps the same crate version (a dependency or
+feature change) appends a counter, `1.0.0-rc.72.1`, which sorts after `1.0.0-rc.72` and
+before a future `1.0.0-rc.73`.
 
 ## Building
 

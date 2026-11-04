@@ -1,0 +1,7 @@
+diff --git a/colors.js b/colors.js
+deleted file mode 100644
+index 4444444..0000000
+--- a/colors.js
++++ /dev/null
+@@ -1 +0,0 @@
+-module.exports = {};

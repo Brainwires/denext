@@ -20,13 +20,16 @@ import { ensureDir, walk } from "@std/fs";
 import {
   absolutizeImports,
   frameworkImports,
+  frameworkRootUrl,
   minDepAgeConfig,
   readFrameworkJson,
 } from "./bundle.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { compileTailwind } from "./tailwind.ts";
 import { inRootContext } from "../server/root-context.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
 import { configAnchorsResolution } from "./module-config.ts";
+import { supplyChainConfig, workspaceImports, workspacePackageDirs } from "./workspace-imports.ts";
 import { recordSelfWrite, writeManagedFile } from "./self-writes.ts";
 import { appConfigBackupPath, guardRestore, isInjectedCssShimEntry } from "./css-config-guard.ts";
 
@@ -421,10 +424,31 @@ export async function generateCssAssets(
       : `export default {};\n`;
     const shimPath = join(shimDir, `css_${i}.js`);
     await Deno.writeTextFile(shimPath, shimBody);
-    importMap[toFileUrl(file).href] = toFileUrl(shimPath).href;
+    for (const spelling of await cssFileSpellings(file)) {
+      importMap[toFileUrl(spelling).href] = toFileUrl(shimPath).href;
+    }
   }));
 
   return { importMap, css, classMaps };
+}
+
+/**
+ * The paths a module graph may name the stylesheet at `file` by: `file` itself and, when a symlink
+ * lies on the way (macOS's `/var` → `/private/var` temp directories, a symlinked checkout), its
+ * real path. A process whose working directory is the project sees the real path (`getcwd`
+ * resolves symlinks), so its imports name that spelling while the walk found the other; the
+ * import map redirects both to the shim.
+ *
+ * @param file An absolute stylesheet path.
+ * @returns `file`, then its real path when that differs.
+ */
+export async function cssFileSpellings(file: string): Promise<string[]> {
+  try {
+    const real = await Deno.realPath(file);
+    return real === file ? [file] : [file, real];
+  } catch {
+    return [file]; // gone or unreadable: the walk's spelling alone
+  }
 }
 
 /** Concatenate transformed CSS in a stable (path-sorted) order. */
@@ -501,31 +525,38 @@ async function collectCssFiles(
   opts: BuildAppCssOptions,
   excluded: Set<string> | null,
 ): Promise<string[]> {
-  const cssFiles: string[] = [];
   const root = resolve(opts.projectDir);
   const shells = shellOutputDir(root);
-  for await (
-    const entry of walk(root, {
-      exts: [".css", ".scss", ".sass"],
-      includeDirs: false,
-      skip: [/[/\\](?:\.denext|node_modules|\.git)(?:[/\\]|$)/, shells],
-      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
-    })
-  ) {
-    if (excluded?.has(resolve(entry.path))) continue;
-    cssFiles.push(entry.path);
+  // The app's Deno workspace packages too (`packages/ui/styles.css`): a stylesheet a package
+  // exports is the app's own, and a module importing it needs its shim before any crawl (the
+  // CLI's CSS re-exec runs with no entry files). A shim nothing imports costs nothing.
+  const cssFiles: string[] = [];
+  for (const dir of [root, ...await workspacePackageDirs(root)]) {
+    cssFiles.push(...await walkStyleFiles(dir, [shells, shellOutputDir(dir)], excluded));
   }
   if (!opts.entryFiles || opts.entryFiles.length === 0) return cssFiles;
-  const seen = new Set(cssFiles.map((f) => resolve(f)));
-  for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath, opts.graph)) {
+  const crawled = await discoverCssFiles(opts.entryFiles, opts.configPath, opts.graph);
+  return [...cssFiles, ...crawledOnly(cssFiles, crawled, excluded, shells)];
+}
+
+/** The crawl's stylesheets the walk didn't find (no Tailwind input, built copy or partial). */
+function crawledOnly(
+  walked: readonly string[],
+  crawled: readonly string[],
+  excluded: Set<string> | null,
+  shells: RegExp,
+): string[] {
+  const seen = new Set(walked.map((f) => resolve(f)));
+  const out: string[] = [];
+  for (const found of crawled) {
     const abs = resolve(found);
     if (seen.has(abs) || excluded?.has(abs)) continue;
     if (shells.test(abs)) continue; // a copy of built CSS; vendored node_modules sheets stay
     if (/^_/.test(basename(found))) continue; // Sass partial — matches the walk's `(?!_)`
     seen.add(abs);
-    cssFiles.push(found);
+    out.push(found);
   }
-  return cssFiles;
+  return out;
 }
 
 /**
@@ -534,6 +565,26 @@ async function collectCssFiles(
  * `cap copy` fills with `public/_denext/client/index.css`). Walking them gave every build a
  * shim and an absolute-path css→shim redirect per copy, for files nothing imports.
  */
+/** The stylesheets under `dir` (not partials, build output or `skip`), less `excluded`. */
+async function walkStyleFiles(
+  dir: string,
+  skip: RegExp[],
+  excluded: Set<string> | null,
+): Promise<string[]> {
+  const out: string[] = [];
+  for await (
+    const entry of walk(dir, {
+      exts: [".css", ".scss", ".sass"],
+      includeDirs: false,
+      skip: [/[/\\](?:\.denext|node_modules|\.git)(?:[/\\]|$)/, ...skip],
+      match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
+    })
+  ) {
+    if (!excluded?.has(resolve(entry.path))) out.push(entry.path);
+  }
+  return out;
+}
+
 function shellOutputDir(root: string): RegExp {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped}[/\\\\](?:out|ios|android)(?:[/\\\\]|$)`);
@@ -600,10 +651,31 @@ async function writeCssConfig(
   redirects: Record<string, string>,
 ): Promise<string> {
   const fwConfig = await readFrameworkJson("deno.json");
+  // A workspace member's packages and root imports (see workspace-imports.ts).
+  const workspace = await workspaceImports(opts.configPath);
+  // A member's stylesheet export (`"@acme/ui/styles.css"`) maps to the file, and import-map
+  // resolution is single-pass: point the key at the file's shim directly.
+  const workspaceCss: Record<string, string> = {};
+  for (const [key, target] of Object.entries(workspace.imports)) {
+    if (Object.hasOwn(redirects, target)) workspaceCss[key] = redirects[target];
+  }
   const merged: Record<string, unknown> = {
     compilerOptions: fwConfig.compilerOptions,
-    imports: { ...await frameworkImports(), ...appImports, ...redirects },
+    imports: {
+      // The CLI re-execs the build under this config, so its deps count; a package the app owns
+      // stays the app's (see layeredFrameworkImports).
+      ...await layeredFrameworkImports(await frameworkImports(), {
+        root: frameworkRootUrl(),
+        appDir: opts.projectDir,
+        cli: true,
+      }),
+      ...workspace.imports,
+      ...appImports,
+      ...redirects,
+      ...workspaceCss,
+    },
   };
+  if (Object.keys(workspace.scopes).length > 0) merged.scopes = workspace.scopes;
   const appCfgRaw = await readJson(opts.configPath) as {
     nodeModulesDir?: unknown;
     minimumDependencyAge?: unknown;
@@ -613,6 +685,7 @@ async function writeCssConfig(
   const nmd = appCfgRaw?.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   Object.assign(merged, minDepAgeConfig(appCfgRaw?.minimumDependencyAge));
+  Object.assign(merged, await supplyChainConfig(opts.configPath));
   carryLinks(merged, appCfgRaw, dirname(opts.configPath), opts.outDir);
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));

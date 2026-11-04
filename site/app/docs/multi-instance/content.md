@@ -319,7 +319,8 @@ with the instance that holds the socket.
 `broadcastChannelTransport()` implements the interface over the Web
 `BroadcastChannel` API, which on **Deno Deploy** spans the isolates of one
 deployment — that is its purpose; on a self-host it reaches only the workers of
-one process, so it does not make two containers talk. Install either, or your own
+one process, so it does not make two containers talk (its `close()` closes the
+channel, which otherwise keeps the process alive). Install either, or your own
 two-method NATS transport, with `setChannelTransport(t)`; the hub re-subscribes.
 Delivery is at most once (an event published while a subscriber is reconnecting
 is not replayed) — except on a channel with `history`, whose subscribers resume
@@ -431,6 +432,11 @@ ceiling at the edge (see
   Replicas started from one build share it; replicas built separately need
   `DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (or Next.js's `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`) set
   to the same base64 key (`openssl rand -base64 32`), or a form rendered by one fails on another.
+  Action ids are salted the same way, with a secret new per build: replicas built separately (or
+  a `denext export` served beside a separate build) need `DENEXT_ACTION_ID_SECRET` set to one
+  value (at least 16 characters) where each `denext build` runs — a runtime-only value is
+  ignored — or every action posted from one is an unknown action on the other, which reloads the
+  page once ([Server Actions › Action ids](/docs/server-actions#action-ids-and-which-actions-are-exposed)).
 - `.env` files — each node reads its own; use the platform's secret store so
   they agree.
 - The client bundle — its chunks are content-hashed and served immutable, so a

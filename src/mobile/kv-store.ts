@@ -119,6 +119,11 @@ export interface KvDriver {
   clear(store: string, key?: string): Promise<void>;
   /** Whether it can keep an encrypted store (the native plugin with SQLCipher linked). */
   cipher?(): Promise<boolean>;
+  /**
+   * Re-encrypt encrypted store `store` from `key` to `newKey` (SQLCipher's `PRAGMA rekey`); absent
+   * where the plugin predates it.
+   */
+  rekey?(store: string, key: string, newKey: string): Promise<void>;
 }
 
 /** The SQLite file (native plugin fallback, desktop) and the IndexedDB database name. */
@@ -140,6 +145,8 @@ interface StoragePlugin {
   clear(o: { store: string } & Keyed): Promise<unknown>;
   /** Whether SQLCipher is linked (templates from denext 4.5 on; older ones lack it). */
   cipher?(): Promise<{ available?: unknown }>;
+  /** Re-encrypt a store under `newKey` (templates from denext 4.8.1 on; older ones lack it). */
+  rekey?(o: { store: string; key: string; newKey: string }): Promise<unknown>;
 }
 
 /** `items` in slices of at most `size`. */
@@ -201,6 +208,11 @@ function pluginDriver(plugin: StoragePlugin): KvDriver {
       if (typeof plugin.cipher !== "function") return false;
       return (await plugin.cipher())?.available === true;
     },
+    ...(typeof plugin.rekey === "function" && {
+      async rekey(store: string, key: string, newKey: string) {
+        await coded(() => plugin.rekey!({ store, key, newKey }));
+      },
+    }),
   };
 }
 
@@ -468,6 +480,12 @@ function checkValue(fn: string, key: string, value: unknown): string {
 
 /** The secureStore entry an encrypted store's key lives under. */
 const KEY_PREFIX = "denext.kv.key.";
+/**
+ * The secureStore entry a rotation keeps its new key under until the store is rekeyed and the
+ * key moved to {@linkcode KEY_PREFIX}: a process that dies in between leaves both, and the next
+ * use finds which one opens the store ({@linkcode settledKey}).
+ */
+const NEXT_KEY_PREFIX = "denext.kv.next-key.";
 
 /** Why `kind` cannot keep an encrypted store. */
 function noCipher(kind: KeyValueBackend): string {
@@ -503,14 +521,73 @@ async function readOrCreateKey(name: string, kind: KeyValueBackend): Promise<str
   }
   const saved = await secureStore.get(KEY_PREFIX + name);
   if (saved) return saved;
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const key = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  const { stored } = await secureStore.set(KEY_PREFIX + name, key);
-  if (stored !== "keychain") {
-    await secureStore.delete(KEY_PREFIX + name).catch(() => {});
+  const key = randomKey();
+  if (!(await keepKey(KEY_PREFIX + name, key))) {
     throw refuse("secureStore did not keep the key in the OS store");
   }
   return key;
+}
+
+/** A random 256-bit key, as hex. */
+function randomKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Keep `key` in secureStore under `entry`; false (and nothing kept) when it is not the OS store. */
+async function keepKey(entry: string, key: string): Promise<boolean> {
+  const { secureStore } = await import("./secure-store.ts");
+  const { stored } = await secureStore.set(entry, key);
+  if (stored === "keychain") return true;
+  await secureStore.delete(entry).catch(() => {});
+  return false;
+}
+
+/** Whether `key` opens encrypted store `name` (a `WRONG_KEY` is false; anything else throws). */
+async function opens(d: KvDriver, name: string, key: string): Promise<boolean> {
+  try {
+    await d.keys(name, key);
+    return true;
+  } catch (err) {
+    if (err instanceof KeyValueStoreError && err.code === "WRONG_KEY") return false;
+    throw err;
+  }
+}
+
+/**
+ * The key of encrypted store `name`, after finishing a rotation that a dead process left
+ * half-done: with a pending new key in secureStore, the current key is kept when it still opens
+ * the store (the rekey never ran; the pending key is dropped), else the pending key is promoted
+ * when it opens it (the rekey ran; the move of the key did not).
+ */
+async function settledKey(name: string, d: KvDriver): Promise<string> {
+  const { secureStore } = await import("./secure-store.ts");
+  const current = await readOrCreateKey(name, d.kind);
+  const next = await secureStore.get(NEXT_KEY_PREFIX + name);
+  if (!next || next === current) {
+    if (next) await secureStore.delete(NEXT_KEY_PREFIX + name);
+    return current;
+  }
+  if (await opens(d, name, current)) {
+    await secureStore.delete(NEXT_KEY_PREFIX + name);
+    return current;
+  }
+  if (!(await opens(d, name, next))) {
+    throw new KeyValueStoreError(
+      "WRONG_KEY",
+      `openKeyValueStore("${name}", { encrypted: true }): neither the store's key nor the key of ` +
+        "its unfinished rotation opens it.",
+    );
+  }
+  if (!(await keepKey(KEY_PREFIX + name, next))) {
+    throw new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `openKeyValueStore("${name}", { encrypted: true }): secureStore did not keep the key in ` +
+        "the OS store.",
+    );
+  }
+  await secureStore.delete(NEXT_KEY_PREFIX + name);
+  return next;
 }
 
 /** The key of encrypted store `name`, once `d` is known to encrypt it; refuses where it cannot. */
@@ -523,7 +600,7 @@ async function checkedKey(name: string, d: KvDriver): Promise<string> {
       }. Nothing was written.`,
     );
   }
-  return await readOrCreateKey(name, d.kind);
+  return await settledKey(name, d);
 }
 
 /**
@@ -581,6 +658,22 @@ export function openKeyValueStore(
     const d = await backing();
     return [d, encrypted ? await storeKey(name, d) : undefined];
   };
+  /**
+   * Run `call` on the backing with the store's key. A `WRONG_KEY` from a call that took the key
+   * just before a rotation ({@linkcode rekeyKeyValueStore}) changed it is retried once with the
+   * new key.
+   */
+  const withKey = async <T>(call: (d: KvDriver, key: string | undefined) => Promise<T>) => {
+    const [d, key] = await target();
+    try {
+      return await call(d, key);
+    } catch (err) {
+      if (!(err instanceof KeyValueStoreError) || err.code !== "WRONG_KEY") throw err;
+      const [, latest] = await target();
+      if (latest === key) throw err;
+      return await call(d, latest);
+    }
+  };
   const store: KeyValueStore = {
     name,
     encrypted,
@@ -589,8 +682,7 @@ export function openKeyValueStore(
     async getMany(keys) {
       const list = keys.map((k) => checkKey("getMany", k));
       if (list.length === 0) return [];
-      const [d, key] = await target();
-      return await d.getMany(name, list, key);
+      return await withKey((d, key) => d.getMany(name, list, key));
     },
     set: (key, value) => store.setMany([[key, value]]),
     async setMany(entries) {
@@ -599,20 +691,15 @@ export function openKeyValueStore(
         return [key, checkValue("setMany", key, v)];
       });
       if (list.length === 0) return;
-      const [d, key] = await target();
-      await d.setMany(name, list, key);
+      await withKey((d, key) => d.setMany(name, list, key));
     },
     remove: (key) => store.removeMany([key]),
     async removeMany(keys) {
       const list = keys.map((k) => checkKey("removeMany", k));
       if (list.length === 0) return;
-      const [d, key] = await target();
-      await d.removeMany(name, list, key);
+      await withKey((d, key) => d.removeMany(name, list, key));
     },
-    async keys() {
-      const [d, key] = await target();
-      return await d.keys(name, key);
-    },
+    keys: () => withKey((d, key) => d.keys(name, key)),
     async entries() {
       const keys = await store.keys();
       const values = await store.getMany(keys);
@@ -620,12 +707,103 @@ export function openKeyValueStore(
         values[i] === null ? [] : [[k, values[i]!] as [string, string]]
       );
     },
-    async clear() {
-      const [d, key] = await target();
-      await d.clear(name, key);
-    },
+    clear: () => withKey((d, key) => d.clear(name, key)),
   };
   return store;
+}
+
+/** Why a rotation can't run on `d`, or null when it can. */
+async function rekeyRefusal(name: string, d: KvDriver): Promise<KeyValueStoreError | null> {
+  const fn = `rekeyKeyValueStore("${name}")`;
+  if (!(await d.cipher?.())) {
+    return new KeyValueStoreError("ENCRYPTION_UNAVAILABLE", `${fn}: ${noCipher(d.kind)}.`);
+  }
+  if (!d.rekey) {
+    return new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `${fn}: this app's DenextStorage plugin predates key rotation: run \`denext mobile add ` +
+        "storage --encrypted`, then rebuild the app.",
+    );
+  }
+  return null;
+}
+
+/** {@linkcode rekeyKeyValueStore}'s work, once the store's current key is settled. */
+async function rotate(name: string, d: KvDriver, current: string): Promise<string> {
+  const { secureStore } = await import("./secure-store.ts");
+  const next = randomKey();
+  // The new key goes to its own entry first: the store's key stays the old one until the rekey
+  // has committed, and a process that dies at any point leaves a key that opens the store.
+  if (!(await keepKey(NEXT_KEY_PREFIX + name, next))) {
+    throw new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `rekeyKeyValueStore("${name}"): secureStore did not keep the new key in the OS store; ` +
+        "nothing changed.",
+    );
+  }
+  try {
+    await d.rekey!(name, current, next);
+  } catch (err) {
+    // Settle it now (normally the old key still opens it and the new one is dropped).
+    await settledKey(name, d).catch(() => {});
+    throw err;
+  }
+  if (!(await keepKey(KEY_PREFIX + name, next))) {
+    // Left in the pending entry: the next use promotes it.
+    throw new KeyValueStoreError(
+      "ENCRYPTION_UNAVAILABLE",
+      `rekeyKeyValueStore("${name}"): the store was rekeyed, but secureStore did not move its ` +
+        "key; the next use finishes the move.",
+    );
+  }
+  await secureStore.delete(NEXT_KEY_PREFIX + name);
+  return next;
+}
+
+/**
+ * Rotate the key of the encrypted store `name` (`openKeyValueStore(name, { encrypted: true })`):
+ * a new random 256-bit key, the store's SQLCipher database re-encrypted under it (`PRAGMA
+ * rekey`, one transaction in SQLCipher), and the key in secureStore replaced. A store that has
+ * no key yet is given one first, as its first use would.
+ *
+ * Crash safety: the new key is first kept in its own secureStore entry and the store's key stays
+ * the old one until the rekey has committed; only then does the new key replace it. A process
+ * that dies before the rekey commits leaves the store under the old key; one that dies after it
+ * leaves the new key waiting in that entry. Either way the next use of the store tries the
+ * current key, then the waiting one, and finishes the move — no data is lost.
+ *
+ * Calls on the store made while it rotates wait for the new key. Refused with
+ * {@linkcode KeyValueStoreError} `ENCRYPTION_UNAVAILABLE` wherever encrypted stores are (the
+ * browser, Deno Desktop, the fallbacks, a build without SQLCipher, a plugin from before 4.8.1,
+ * a secureStore that is not secret), and `WRONG_KEY` when the stored key does not open the store.
+ *
+ * @param name The store's name (default `"default"`).
+ * @example
+ * ```ts
+ * import { rekeyKeyValueStore } from "denext/mobile";
+ *
+ * await rekeyKeyValueStore("vault"); // e.g. after a sign-out, or on a schedule
+ * ```
+ */
+export async function rekeyKeyValueStore(name = "default"): Promise<void> {
+  if (typeof name !== "string" || name === "") {
+    throw new TypeError("rekeyKeyValueStore: the name must be a non-empty string");
+  }
+  const d = await backing();
+  const refusal = await rekeyRefusal(name, d);
+  if (refusal) throw refusal;
+  const previous = storeKeys.get(name);
+  const rotation = (async () => {
+    // Let calls that already have the key finish before the store changes under them.
+    const current = await (previous ?? storeKey(name, d)).catch(() => null) ??
+      await checkedKey(name, d);
+    return await rotate(name, d, current);
+  })();
+  storeKeys.set(name, rotation);
+  rotation.catch(() => {
+    if (storeKeys.get(name) === rotation) storeKeys.delete(name);
+  });
+  await rotation;
 }
 
 /** Forget the opened backing, the store keys read and the warning (tests). */

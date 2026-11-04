@@ -12,7 +12,9 @@
 //   3. SPLICE only the lines one operation touches, then RE-PARSE the result and compare it with
 //      the same change applied to the parsed model — a mismatch is a refusal, never a write.
 //
-// The operation set is closed: adding and removing a service; image, restart and build (a
+// The operation set is closed: adding and removing a service; image, restart, the plain-text
+// settings (container_name, hostname, working_dir, user, platform, stop_signal,
+// stop_grace_period) and build (a
 // context path, or a mapping's context / dockerfile / target / args); ports and volumes (a
 // long-syntax entry key by key); environment; depends_on with its conditions; networks;
 // commenting a whole service out or back in; and the top-level volume / network declarations. Every other byte of the file is left
@@ -67,6 +69,7 @@ import {
   isMapping,
   load,
   type Service,
+  type SettingField,
   type Span,
   spliceDoc,
   type State,
@@ -75,7 +78,8 @@ import {
   uncommentLine,
 } from "./compose-scan.ts";
 
-export type { ComposeModel, ComposeService } from "./compose-scan.ts";
+export type { ComposeModel, ComposeService, SettingField } from "./compose-scan.ts";
+export { SETTING_FIELDS } from "./compose-scan.ts";
 
 /** What a long-form dependency may wait for, the first being what a short one means. */
 export const DEPENDS_CONDITIONS = [
@@ -111,10 +115,16 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 /** One edit. {@linkcode applyComposeEdits} applies a list of them in order, all or nothing. */
 export type ComposeOp =
   /**
-   * Set `image`/`restart`/`build` (created when absent), or delete it with `value: null`.
-   * `build` is a context path; a service whose `build:` is a mapping is refused.
+   * Set `image`/`restart`/`build` or one of the plain-text {@linkcode SETTING_FIELDS} (created
+   * when absent), or delete it with `value: null`. `build` is a context path; over a mapping
+   * `build:` it sets the mapping's `context`.
    */
-  | { op: "set"; service: string; field: "image" | "restart" | "build"; value: string | null }
+  | {
+    op: "set";
+    service: string;
+    field: "image" | "restart" | "build" | SettingField;
+    value: string | null;
+  }
   /** Append a `"host:container"` mapping, or remove/replace the entry at `index`. */
   | {
     op: "ports";
@@ -474,7 +484,7 @@ const PLANNERS: { readonly [K in ComposeOp["op"]]: Planner<K> } = {
 
 // --- operations -------------------------------------------------------------
 
-/** `set`: write, create or delete `image` / `restart`. */
+/** `set`: write, create or delete `image` / `restart` / `build` / a plain-text setting. */
 function setScalar(state: State, op: SetOp): Change | string {
   const svc = serviceOf(state, op.service);
   if (typeof svc === "string") return svc;
@@ -489,6 +499,8 @@ function setScalar(state: State, op: SetOp): Change | string {
   };
   if (op.value === null) {
     if (field) return { ...cut(field), expect };
+    // Supplied by a merge key (<<): Compose has no way to drop a merged value for one service
+    // (its `!reset` leaves it in place, and a `null` fails validation).
     return Object.hasOwn(rawService(state.raw, op.service), op.field)
       ? `${op.field} of "${op.service}" comes from its merge key (<<) — set a value to override ` +
         "it, or edit the anchor by hand"

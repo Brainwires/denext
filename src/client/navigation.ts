@@ -6,11 +6,13 @@
 // inside functions so it can be imported safely on the server.
 
 import { BLUR_ATTR, clearBlur } from "../runtime/image-blur.ts";
+import { ERR_HREF_PARAMS_OFF, ERR_IMAGE_BLUR_OFF, reconcilerError } from "./fiber/errors.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { fillPattern, parsePattern, type RouteParams } from "../router/segments.ts";
 import type { StandardSchemaV1 } from "../runtime/define-action.ts";
 import { hydrateDocument, hydrateRoot } from "./reconciler.ts";
+import { setAccessSignalHandler } from "./fiber/boundaries.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -85,7 +87,9 @@ function stripBase(path: string): string {
   return path;
 }
 
-let current: LocationState = readLocation();
+// Pure: an app that never reads the location (a SPA importing only hooks from `denext`) drops the
+// read, and the base-path and hydration-data helpers behind it.
+let current: LocationState = /* @__PURE__ */ readLocation();
 
 function readLocation(): LocationState {
   if (typeof location === "undefined") return { pathname: "/", search: "" };
@@ -135,7 +139,7 @@ function serverLocation(): LocationState | null {
 // count (LRU) and a TTL so hovering/scrolling across a large site can't grow it
 // without limit or serve a long-stale prefetch. Map insertion order is the LRU.
 const PREFETCH_CACHE_MAX = 50;
-const PREFETCH_TTL_MS = 5 * 60_000; // completed entries expire after 5 minutes
+const PREFETCH_TTL_MS = 300_000; // completed entries expire after 5 minutes (a literal: droppable)
 
 interface PrefetchEntry {
   /** Prefetched body (HTML, or a Flight/iso JSON payload), "" while in flight. */
@@ -185,7 +189,7 @@ function prefetchStore(key: string, body: string, flight: boolean, iso: boolean)
  * server answered with a Flight JSON payload (`x-denext-flight`) rather than a
  * full HTML document. A non-OK, non-404 status rejects (caller hard-navigates).
  */
-async function fetchRoute(href: string, stream = false): Promise<RouteResponse> {
+async function fetchRoute(href: string, stream = false, signal = ""): Promise<RouteResponse> {
   // A registered request provider (the Remix compat's `shouldRevalidate` optimization) adds
   // per-request headers — and, for an over-large echo, a POST body — so the server can skip
   // unchanged loaders. Never overrides `x-denext-nav`.
@@ -198,16 +202,30 @@ async function fetchRoute(href: string, stream = false): Promise<RouteResponse> 
       "x-denext-nav": "1",
       // A navigation takes a Flight payload's deferred values as they settle (flight-nav-stream.ts).
       ...(stream ? { "x-denext-defer": "1" } : {}),
+      ...signalHeader(signal),
     },
     body: extra.body,
   });
-  if (!res.ok && res.status !== 404) throw new Error(`status ${res.status}`);
+  if (refusedRoute(res, signal)) throw new Error(`status ${res.status}`);
   // A redirect that landed on another origin (an auth provider, a marketing site) is not a
   // page of this app: never splice its body into the document — let the browser load it.
   if (res.url && new URL(res.url).origin !== location.origin) {
     throw new Error("cross-origin redirect");
   }
   return await readRoute(res);
+}
+
+/**
+ * Whether a soft-nav response failed: an error status other than the one the request expects (an
+ * access signal's own, else a 404, which renders the not-found UI).
+ */
+function refusedRoute(res: Response, signal: string): boolean {
+  return !res.ok && res.status !== (+signal || 404);
+}
+
+/** The header asking the server to raise a Server Action's access signal at the page, if any. */
+function signalHeader(signal: string): Record<string, string> {
+  return signal ? { "x-denext-signal": signal } : {};
 }
 
 /**
@@ -422,14 +440,26 @@ export async function navigate(
   }
 }
 
-/** The prefetched render for `url`, else a fresh fetch; null when the fetch failed. */
+/**
+ * The access signal (`404` / `403` / `401`) the next navigation asks the server to raise at the
+ * page, and the signal + URL whose UI that last showed (so a signal the UI raises again is not
+ * fetched in a loop). See {@linkcode startClient}.
+ */
+let pendingSignal = "";
+let shownSignal = "";
+
+/**
+ * The prefetched render for `url` (never for an access signal, which is rendered fresh), else a
+ * fresh fetch; null when the fetch failed.
+ */
 async function loadRoute(
   url: URL,
+  signal: string,
 ): Promise<RouteResponse | null> {
-  const prefetched = prefetchGet(prefetchKey(url.href));
+  const prefetched = signal ? null : prefetchGet(prefetchKey(url.href));
   if (prefetched && prefetched.body.length > 0) return prefetched;
   try {
-    return await fetchRoute(url.href, true);
+    return await fetchRoute(url.href, true, signal);
   } catch {
     return null;
   }
@@ -443,7 +473,10 @@ async function navigateSameOrigin(
   token: number,
 ): Promise<void> {
   const commit = loadDocumentNav(); // every soft-nav commit path needs it: load it alongside
-  const loaded = await loadRoute(url);
+  const signal = pendingSignal;
+  pendingSignal = "";
+  if (!signal) shownSignal = "";
+  const loaded = await loadRoute(url, signal);
   // Superseded while loading (the user clicked again): applying this response now would
   // clobber the newer navigation's document. The newer one owns the page.
   if (token !== navToken) return;
@@ -517,6 +550,20 @@ function installBlurClearing(): void {
   }, true);
 }
 
+/**
+ * The blur placeholders' clearing at boot — off (a define the build sets from a scan for
+ * `placeholder="blur"`) in an app that renders none, when the clearing and the image-blur helpers
+ * fold out of the bundle. A page that has one in such a build (a library's
+ * `<Image placeholder="blur">`) reports error 9 rather than leave the placeholder painted.
+ *
+ * @param doc The page's document.
+ * @internal Exported for tests.
+ */
+export function installBlurGate(doc: Document): void {
+  if (typeof __DENEXT_IMAGE_BLUR__ === "undefined" || __DENEXT_IMAGE_BLUR__) installBlurClearing();
+  else if (doc.querySelector(`img[${BLUR_ATTR}]`)) reportError(reconcilerError(ERR_IMAGE_BLUR_OFF));
+}
+
 /** Install global click + popstate handlers (idempotent per page load). */
 function installNavigation(): void {
   const w = globalThis as unknown as {
@@ -534,7 +581,7 @@ function installNavigation(): void {
     event.preventDefault();
     navigate((anchor as HTMLAnchorElement).href);
   });
-  installBlurClearing();
+  installBlurGate(document);
 
   committedHref = location.href;
   globalThis.addEventListener("popstate", (event) => {
@@ -597,6 +644,15 @@ export function startClient(container: Element, tree: VNode | null): void {
   // re-render the current route in place. Wired here (not via a static edge from the
   // isomorphic server-action module) so client navigation never enters the server graph.
   setActionRefreshHandler(() => void navigate(location.href, { history: false }));
+  // A Server Action's `notFound()` / `forbidden()` / `unauthorized()` reaching the client tree:
+  // re-render the current route with the signal raised at the page, so its nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx` renders in
+  // place under the layouts (Next's client boundaries). The URL stays; once per signal and URL.
+  setAccessSignalHandler((status) => {
+    if (shownSignal === status + location.href) return;
+    pendingSignal = status;
+    shownSignal = status + location.href;
+    void navigate(location.href, { history: false });
+  });
 }
 
 /**
@@ -688,7 +744,9 @@ function swapDocument(parsed: Document): void {
  * applies outside any Link, matching Next.js (where `useLinkStatus` is only
  * meaningful inside a Link).
  */
-const LinkStatusContext: Context<LinkStatus> = createContext<LinkStatus>({ pending: false });
+const LinkStatusContext: Context<LinkStatus> = /* @__PURE__ */ createContext<LinkStatus>({
+  pending: false,
+});
 
 /** Props for the {@link Link} client-side navigating anchor component. */
 /**
@@ -750,7 +808,14 @@ export type HrefInput =
 
 /** Fill a route-pattern pathname (`/blog/[slug]`, `/t/[...tags]`, `/d/[[...p]]`) from a params object. */
 function fillPathname(pathname: string, params: Record<string, string | string[]>): string {
-  return fillPattern(parsePattern(pathname), params as RouteParams);
+  // Folds to `pathname` in a build whose scan found no route-pattern href (the
+  // `__DENEXT_HREF_PARAMS__` define), taking the route-segment parser with it.
+  if (typeof __DENEXT_HREF_PARAMS__ === "undefined" || __DENEXT_HREF_PARAMS__) {
+    return fillPattern(parsePattern(pathname), params as RouteParams);
+  }
+  // A pattern the scan didn't see (a library's Link): say so rather than navigate to it literally.
+  if (pathname.includes("[")) reportError(reconcilerError(ERR_HREF_PARAMS_OFF, pathname));
+  return pathname;
 }
 
 /** Format a {@linkcode UrlObject}/{@linkcode TypedUrlObject} (or pass a string through). */

@@ -33,10 +33,30 @@ export interface PublishDeps {
   now(): number;
   /** Progress output. */
   log(line: string): void;
+  /** The state of `publish.yml`'s `publish` job for the run a pushed tag started. */
+  publishRun(tag: string): Promise<PublishRun>;
   /** The repository root (the members' `deno.json` files). */
   root?: string;
   /** How long to wait for JSR to list the corpus (default {@linkcode JSR_WAIT_MS}). */
   jsrWaitMs?: number;
+}
+
+/** The package a root release publishes. */
+export const RELEASE_PACKAGE = "@denext/denext";
+
+/**
+ * What the tag's publish job did: `success`; `failed` (failed, cancelled or timed out);
+ * `pending` (queued or running); `none` (no run for the tag yet); `unknown` (GitHub could not
+ * be asked).
+ */
+export interface PublishRun {
+  state: "success" | "failed" | "pending" | "none" | "unknown";
+  /** The run's id, for `gh run rerun`. */
+  id?: string;
+  /** The run's page. */
+  url?: string;
+  /** Why `unknown`, or the job's conclusion. */
+  detail?: string;
 }
 
 /**
@@ -232,11 +252,72 @@ async function pushStep(target: ReleaseTarget, deps: PublishDeps): Promise<void>
   await gitOrAbort(deps, ["push", "origin", target.tag], "git push (tag) failed", resume);
 }
 
-/** The PR step: what is left to do by hand. */
-function prStep(target: ReleaseTarget, deps: PublishDeps): void {
+/** The message for a publish run that failed: what to do for a transient cause and a real one. */
+export function publishFailedMessage(target: ReleaseTarget, run: PublishRun): string {
+  const rerun = run.id ? `gh run rerun ${run.id} --failed` : "gh run rerun <run-id> --failed";
+  return `the publish run for ${target.tag} FAILED${run.url ? ` (${run.url})` : ""}` +
+    `${run.detail ? `: ${run.detail}` : ""}, so ${RELEASE_PACKAGE}@${target.version} is not ` +
+    "released.\n" +
+    `  Transient cause (network, runner, JSR outage): rerun the failed run — ${rerun} — then ` +
+    `resume:\n    ${resumeCommand(target, "pr")}\n` +
+    `  Real defect: ${target.version} is burned (a tag is never moved or reused). Fix it on the ` +
+    "branch, cut the next patch, and do NOT merge main.";
+}
+
+/** Throw when the tag's publish run failed or cannot be read; a run in any other state goes on. */
+function refuseBadRun(target: ReleaseTarget, run: PublishRun): void {
+  if (run.state === "failed") throw new ReleaseAbort(publishFailedMessage(target, run));
+  if (run.state !== "unknown") return;
+  throw new ReleaseAbort(
+    `could not read the publish run for ${target.tag} (${run.detail ?? "gh failed"}), so ` +
+      `${target.version} is not confirmed released. Check publish.yml's run for ${target.tag} ` +
+      `and that jsr.io lists ${RELEASE_PACKAGE}@${target.version}, then resume:\n  ` +
+      resumeCommand(target, "pr"),
+  );
+}
+
+/** Whether JSR lists the release; a JSR that cannot be asked counts as "not yet". */
+function releaseListed(target: ReleaseTarget, deps: PublishDeps): Promise<boolean> {
+  return jsrHasVersion(RELEASE_PACKAGE, target.version, deps.fetch).catch((err: Error) => {
+    deps.log(`   jsr.io could not be asked (${err.message}); retrying`);
+    return false;
+  });
+}
+
+/**
+ * Stop unless `@denext/denext` <version> is on JSR and the tag's publish job succeeded, waiting
+ * (as the corpus step does) while the run is still going or JSR has not listed it yet.
+ */
+async function verifyPublished(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  const deadline = deps.now() + (deps.jsrWaitMs ?? JSR_WAIT_MS);
+  let delay = FIRST_POLL_MS;
+  for (;;) {
+    const run = await deps.publishRun(target.tag);
+    refuseBadRun(target, run);
+    const listed = await releaseListed(target, deps);
+    if (listed && run.state === "success") return;
+    const left = deadline - deps.now();
+    const seen = `publish run: ${run.state}; on jsr.io: ${listed ? "yes" : "no"}`;
+    if (left <= 0) {
+      throw new ReleaseAbort(
+        `${target.tag} is pushed but ${RELEASE_PACKAGE}@${target.version} is not confirmed ` +
+          `released (${seen}). Check publish.yml's run${run.url ? ` (${run.url})` : ""}, then ` +
+          `resume:\n  ${resumeCommand(target, "pr")}`,
+      );
+    }
+    const wait = Math.min(delay, left);
+    deps.log(`   waiting for the ${target.tag} publish (${seen}); next check in ${wait / 1000}s…`);
+    await deps.sleep(wait);
+    delay = Math.min(delay * 2, MAX_POLL_MS);
+  }
+}
+
+/** The PR step: confirm the release really published, then what is left to do by hand. */
+async function prStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  await verifyPublished(target, deps);
   deps.log(
-    `\n✓ Released ${target.version}. The ${target.tag} tag fires the JSR publish workflow ` +
-      "(it re-runs the gate, then publishes).\n" +
+    `\n✓ Released ${target.version}: ${RELEASE_PACKAGE}@${target.version} is on JSR and the ` +
+      `${target.tag} publish run succeeded.\n` +
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${target.branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
@@ -265,21 +346,167 @@ export async function publishFrom(
     if (step === "corpus") await corpusStep(target, deps);
     else if (step === "tag") await tagStep(target, deps);
     else if (step === "push") await pushStep(target, deps);
-    else prStep(target, deps);
+    else await prStep(target, deps);
   }
 }
 
 /** The real dependencies: git in `cwd`, the network, the clock and the console. */
 export function realPublishDeps(cwd: string): PublishDeps {
+  const git: PublishDeps["git"] = async (...args) => {
+    const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "inherit" })
+      .output();
+    return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
+  };
   return {
-    async git(...args) {
-      const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "inherit" })
-        .output();
-      return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
-    },
+    git,
     fetch: (url) => fetch(url),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     log: (line) => console.log(line),
+    publishRun: (tag) =>
+      ghPublishRun(tag, {
+        gh: (...args) => gh(cwd, ...args),
+        tagCommit: async (t) => {
+          const r = await git("rev-parse", "--verify", "--quiet", `refs/tags/${t}^{commit}`);
+          return r.code === 0 && r.out !== "" ? r.out : null;
+        },
+      }),
   };
+}
+
+/** Run `gh <args>` in `cwd`: stdout on success, else a thrown error with stderr. */
+async function gh(cwd: string, ...args: string[]): Promise<string> {
+  const r = await new Deno.Command("gh", {
+    args,
+    cwd,
+    stdout: "piped",
+    stderr: "piped",
+    stdin: "null",
+  }).output();
+  if (!r.success) {
+    throw new Error(new TextDecoder().decode(r.stderr).trim() || `gh exited ${r.code}`);
+  }
+  return new TextDecoder().decode(r.stdout);
+}
+
+/** What {@linkcode ghPublishRun} asks GitHub and git through (tests stub them). */
+export interface GhPublishRunDeps {
+  /** Run `gh <args>`: its stdout, else a thrown error. */
+  gh(...args: string[]): Promise<string>;
+  /** The commit the local tag points at, or `null` when it can't be read. */
+  tagCommit(tag: string): Promise<string | null>;
+}
+
+/** How many of the tag's newest publish.yml runs are looked through for one on the tag's commit. */
+const PUBLISH_RUNS_LOOKED_AT = 20;
+
+/**
+ * `publish.yml`'s newest run for `tag` that ran on the tag's own commit, and its `publish` job's
+ * state. A run on any other commit (a branch of the same name, a tag pushed again) is never
+ * taken: with none on the tag's commit the state is `none` (still waiting), and a tag whose commit
+ * can't be read is `unknown` (the release stops).
+ *
+ * @param tag The release tag (`v4.11.13`).
+ * @param deps `gh` and the tag's commit.
+ * @returns The run's state.
+ */
+export async function ghPublishRun(tag: string, deps: GhPublishRunDeps): Promise<PublishRun> {
+  try {
+    const commit = await deps.tagCommit(tag);
+    if (!commit) return { state: "unknown", detail: `the commit of tag ${tag} can't be read` };
+    const runs = JSON.parse(
+      await deps.gh(
+        ...["run", "list", "--workflow", "publish.yml", "--branch", tag],
+        ...["--limit", String(PUBLISH_RUNS_LOOKED_AT), "--json", "databaseId,url,headSha"],
+      ),
+    ) as Array<{ databaseId: number; url: string; headSha?: string }>;
+    const run = runs.find((r) => r.headSha === commit);
+    if (!run) return { state: "none" };
+    const { databaseId, url } = run;
+    const id = String(databaseId);
+    const view = JSON.parse(await deps.gh("run", "view", id, "--json", "jobs")) as {
+      jobs: Array<{ name: string; status: string; conclusion: string }>;
+    };
+    const job = view.jobs.find((j) => j.name === "publish");
+    if (!job) return { state: "pending", id, url };
+    if (job.status !== "completed") return { state: "pending", id, url };
+    if (job.conclusion === "success") return { state: "success", id, url };
+    return { state: "failed", id, url, detail: `the publish job ${job.conclusion}` };
+  } catch (err) {
+    return { state: "unknown", detail: (err as Error).message };
+  }
+}
+
+/**
+ * What a passed gate recorded (scripts/release.ts writes it when step 0's CI gate and step 5's
+ * local gate both pass): the release, the commit CI was green on, and the tree the local gate
+ * ran on — the tree the release commit must have.
+ */
+export interface GatePass {
+  version: string;
+  /** The commit step 0 found CI green on: HEAD before the release commit, its parent after. */
+  base: string;
+  /** The tree the local gate passed on (`git write-tree` of the prepared working tree). */
+  tree: string;
+}
+
+/** The marker's file name, kept in the git directory so `git add -A` can never sweep it in. */
+export function gateMarkerName(version: string): string {
+  return `denext-release-gate-${version}.json`;
+}
+
+/** Record a passed gate at `path`. */
+export async function writeGatePass(path: string, pass: GatePass): Promise<void> {
+  await Deno.writeTextFile(path, JSON.stringify(pass, null, 2) + "\n");
+}
+
+/** The gate pass recorded at `path`, or `null` when there is none (or it does not parse). */
+export async function readGatePass(path: string): Promise<GatePass | null> {
+  try {
+    const value = JSON.parse(await Deno.readTextFile(path));
+    const ok = typeof value?.version === "string" && typeof value?.base === "string" &&
+      typeof value?.tree === "string";
+    return ok ? value as GatePass : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The refusal for publishing `current` (the release's base commit and tree as they are now)
+ * without a matching gate pass, or `null` when `recorded` covers exactly that base and tree. A
+ * resume never skips the gates: a release commit made by hand after a failed gate, a tree changed
+ * since the gate, or a base CI never passed on all refuse here.
+ *
+ * @param recorded The marker {@linkcode readGatePass} found, or `null`.
+ * @param current The base and tree the release would publish.
+ * @param target The release.
+ * @param step The step being resumed (named in the message).
+ */
+export function gateRefusal(
+  recorded: GatePass | null,
+  current: GatePass,
+  target: ReleaseTarget,
+  step: PublishStep,
+): string | null {
+  const regate = `deno task release ${target.version} --confirm --resume-from ${step} --regate`;
+  const how =
+    `Re-run both gates on this tree (CI on ${current.base.slice(0, 12)}, then the local ` +
+    `gate) with:\n  ${regate}`;
+  if (!recorded) {
+    return `no passed gate is recorded for ${target.version}: refusing to publish a tree the CI ` +
+      `and local gates never passed. ${how}`;
+  }
+  if (recorded.version !== target.version) {
+    return `the recorded gate pass is for ${recorded.version}, not ${target.version}. ${how}`;
+  }
+  if (recorded.base !== current.base) {
+    return `the gates passed on base ${recorded.base.slice(0, 12)}, but this release is cut on ` +
+      `${current.base.slice(0, 12)}. ${how}`;
+  }
+  if (recorded.tree !== current.tree) {
+    return `the tree changed since the gates passed (gated ${recorded.tree.slice(0, 12)}, now ` +
+      `${current.tree.slice(0, 12)}). ${how}`;
+  }
+  return null;
 }

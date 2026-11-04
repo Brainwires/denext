@@ -9,13 +9,22 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { scanRoutes } from "../../router/manifest.ts";
-import { appUsesActivity, appUsesIsoIslands, appUsesViewTransition } from "../bundle.ts";
+import {
+  appUsesActivity,
+  appUsesFormActions,
+  appUsesHookBoundaries,
+  appUsesHrefParams,
+  appUsesImageBlur,
+  appUsesIsoIslands,
+  appUsesViewTransition,
+} from "../bundle.ts";
 import { resolveCacheComponents, resolveCacheLifeProfiles } from "../../server/config.ts";
 import { installCacheLifeProfiles } from "../../server/cache.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
 import type { ProjectPaths } from "../paths.ts";
-import { dirExists, setupPlugins } from "../pipeline-shared.ts";
+import { setupPlugins } from "../pipeline-shared.ts";
+import { dirExists } from "../paths.ts";
 import { exportSpa } from "../spa.ts";
 import {
   assertPlatformFilesResolve,
@@ -187,6 +196,10 @@ export async function prepareExport(
   const usesActivity = await appUsesActivity(paths.projectDir, outside);
   const usesViewTransition = await appUsesViewTransition(paths.projectDir, outside);
   const usesIsoIslands = await appUsesIsoIslands(paths.projectDir, outside);
+  const usesImageBlur = await appUsesImageBlur(paths.projectDir, outside);
+  const usesFormActions = await appUsesFormActions(paths.projectDir, outside);
+  const usesHrefParams = await appUsesHrefParams(paths.projectDir, outside);
+  const usesHookBoundaries = await appUsesHookBoundaries(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -213,6 +226,10 @@ export async function prepareExport(
     usesActivity,
     usesViewTransition,
     usesIsoIslands,
+    usesImageBlur,
+    usesFormActions,
+    usesHrefParams,
+    usesHookBoundaries,
     pages: 0,
     skipped: [],
   };

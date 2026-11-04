@@ -122,6 +122,7 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
           "0006_auth_sso_metadata_validity",
           "0007_auth_sso_session_records",
           "0008_auth_sessions_valid_after",
+          "0009_auth_sso_cookie_sessions",
         ]);
         for (let round = 0; round < 10; round++) {
           const ref = {
@@ -159,8 +160,6 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
   Deno.test({
     name: `Postgres via ${driver}: listen() receives a NOTIFY, unlisten() stops it${label}`,
     ignore: reason !== undefined,
-    sanitizeResources: false,
-    sanitizeOps: false,
     async fn() {
       const sql = await connect(driver);
       try {

@@ -1,6 +1,6 @@
 import { assert, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + `app/` files. */
 async function scaffoldApp(dir: string, files: Record<string, string>) {
@@ -38,7 +38,7 @@ Deno.test("staticExport renders a client-boundary page via Flight", async () => 
         `export default function Page(){ return <main>{DB.length}<Counter/></main>; }\n`,
     });
 
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     assert(result.pages >= 1);
 
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
@@ -91,7 +91,7 @@ Deno.test("staticExport ships zero JS for a purely static page", async () => {
       "page.tsx": `export default function Page(){ return <main><h1>STATIC_DOC</h1></main>; }\n`,
     });
 
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
     assertStringIncludes(html, "STATIC_DOC");
     // No hydration bootstrap and no data island — nothing to run in the browser.
@@ -124,7 +124,7 @@ Deno.test("staticExport emits hreflang + JSON-LD into per-locale static HTML", a
         `export default function Page(){ return <main><h1>HOME</h1></main>; }\n`,
     });
 
-    const result = await staticExport(dir, {
+    const result = await exportInChild(dir, {
       i18n: { locales: ["en", "fr"], defaultLocale: "en" },
     });
 
@@ -156,7 +156,7 @@ Deno.test("staticExport never bakes a request origin into metadata URLs", async 
       "page.tsx": `export default function Page(){ return <main><h1>HOME</h1></main>; }\n`,
       "opengraph-image.tsx": `export default function Og(){ return <div>og</div>; }\n`,
     });
-    const result = await staticExport(dir, {
+    const result = await exportInChild(dir, {
       i18n: { locales: ["en", "fr"], defaultLocale: "en" },
     });
     for (const file of ["index.html", join("fr", "index.html")]) {
@@ -195,13 +195,13 @@ Deno.test("staticExport gates the ViewTransition runtime on the current sources,
       "page.tsx":
         `import { Fancy } from "./Fancy.tsx";\nexport default () => <main><Fancy/></main>;\n`,
     });
-    const first = await staticExport(dir);
+    const first = await exportInChild(dir);
     assertStringIncludes(await clientJsOf(first.outDir), "view-transition-class");
     await Deno.writeTextFile(
       join(dir, "app", "Fancy.tsx"),
       island(`export function Fancy(){ return <b>plain</b>; }`),
     );
-    const second = await staticExport(dir);
+    const second = await exportInChild(dir);
     assert(
       !(await clientJsOf(second.outDir)).includes("view-transition-class"),
       "the stale export's runtime must not be shipped again",

@@ -8,26 +8,31 @@ import { forgetTaggedClients } from "../../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../../runtime/server-action.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import type { PluginPrepareContext } from "../../plugin/mod.ts";
 import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
 import { getUnbundled } from "./manifest.ts";
+import { reactNativeOptions } from "../../server/config.ts";
 import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
 import { watchPlatformFiles } from "./platform.ts";
 import { isSelfWrite } from "../self-writes.ts";
+import { startupReplay, watchProjectStructure } from "../platform-watch.ts";
+import { workspaceMemberDirs } from "../workspace-imports.ts";
 
 /**
  * Whether a change set can be handled by Fast Refresh (re-import the route entry,
  * preserving state) rather than a full reload. Only JSX component modules qualify:
  * `.css`/assets need a stylesheet refetch, and `.ts` server/config/middleware edits need
- * the server to re-render. Empty → reload.
+ * the server to re-render. Empty → reload. In React Native mode `.js` holds JSX too.
  */
 function refreshable(st: DevState, changedPaths: string[]): boolean {
   if (changedPaths.length === 0) return false;
   const { middlewarePath, publicDir } = st.paths;
+  const component = reactNativeOptions(st.paths.config) ? /\.(tsx|jsx|js)$/ : /\.(tsx|jsx)$/;
   return changedPaths.every((p) => {
-    if (!/\.(tsx|jsx)$/.test(p)) return false;
+    if (!component.test(p)) return false;
     if (middlewarePath && p === middlewarePath) return false;
     if (publicDir && p.startsWith(publicDir)) return false;
     return true;
@@ -50,8 +55,12 @@ function cssOnly(changedPaths: string[]): boolean {
  * ON an unbundled route that changed structurally (propagated to the route entry) needs a
  * full reload.
  */
-function applyUnbundledChange(st: DevState, changedPaths: string[]): void {
-  const { updates, reload, unknownOnly } = getUnbundled(st).onChange(changedPaths);
+async function applyUnbundledChange(st: DevState, changedPaths: string[]): Promise<void> {
+  const unbundled = getUnbundled(st);
+  const { updates, reload, unknownOnly } = unbundled.onChange(changedPaths);
+  // React Native mode: an edit importing a name its dependency bundle lacks rebuilds it, and the
+  // rebuild reloads the page — a hot-swap now would link against the old bundle.
+  if (await unbundled.refreshDeps()) return;
   if (updates.length > 0 && !reload) broadcastUpdate(st, updates);
   else if (unknownOnly) broadcast(st, "refresh");
   else broadcast(st, "reload");
@@ -94,9 +103,15 @@ function applyChanges(st: DevState, changedPaths: string[]): void {
   st.devCopies.markEdited(changedPaths);
   bumpGeneration(st);
   typeCheck(st, changedPaths);
+  // React Native mode: a changed dependency manifest drops the dependency bundle (the reload
+  // such an edit gets rebuilds it).
+  void st.unbundled?.depsInvalidated(changedPaths);
   if (cssOnly(changedPaths)) broadcast(st, "css");
   else if (st.unbundledActive && refreshable(st, changedPaths)) {
-    applyUnbundledChange(st, changedPaths);
+    void applyUnbundledChange(st, changedPaths).catch((err) => {
+      console.warn(`denext: hot update failed, reloading — ${err}`);
+      broadcast(st, "reload");
+    });
   } else {
     // Bundled path: source-only edits Fast-Refresh (whole route entry); everything else
     // (assets/middleware/server) needs a full reload.
@@ -208,6 +223,24 @@ function handleChangeSet(st: DevState, configBasenames: Set<string>, changedPath
 }
 
 /**
+ * Watch the other members of the app's Deno workspace (`packages/ui` beside `apps/web`): an edit
+ * to a package the app imports by name reaches the dev loop like an edit under `components/`.
+ * Each member is watched with the project-wide watch's skip rules (its `node_modules`, dot-folders
+ * and build output never report).
+ *
+ * @param st The dev state.
+ * @param onEdit Called with each burst of changed paths.
+ */
+async function watchWorkspaceMembers(
+  st: DevState,
+  onEdit: (paths: string[]) => void,
+): Promise<void> {
+  for (const dir of await workspaceMemberDirs(st.paths.projectDir)) {
+    watchProjectStructure(dir, () => {}, st.options.signal, onEdit);
+  }
+}
+
+/**
  * Watch app + public dirs (and middleware/config), and every other project source through the
  * project-wide watch, and invalidate on change. Closes cleanly on shutdown so the watchers and
  * live-reload streams don't outlive the server.
@@ -216,34 +249,42 @@ export async function watch(st: DevState): Promise<void> {
   const configFiles = configFilesOf(st);
   const configBasenames = new Set([...configFiles].map((p) => basename(p)));
   const watched = watchedPaths(st, configFiles);
+  // Before the watches open: a file written before this instant is not an edit (startupReplay).
+  const startedAt = Date.now();
   const watcher = Deno.watchFs(watched, { recursive: true });
   let debounce: ReturnType<typeof setTimeout> | undefined;
   // Accumulate the paths changed during a debounce window so the refresh-vs-reload
   // decision sees the whole burst.
   let changed: string[] = [];
-  const queue = (paths: readonly string[]) => {
+  const queue = (events: readonly string[]) => {
+    const now = Date.now();
+    const paths = events.filter((p) => !startupReplay(p, startedAt, now));
     if (paths.length === 0) return;
     changed.push(...paths);
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      const changedPaths = changed;
-      changed = [];
-      // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
-      // reload the change set triggers serves freshly generated types/store — then apply the set.
-      // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
-      void withBuildDirLock(
-        st.paths.projectDir,
-        () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
-      )
-        .catch(() => false)
-        .finally(() => handleChangeSet(st, configBasenames, changedPaths));
-    }, 60);
+    // Outside every lock task: a batch is its own rebuild, never part of one whose `import()`
+    // left its context behind (stock Deno).
+    debounce = setTimeout(() =>
+      outsideLockTasks(() => {
+        const changedPaths = changed;
+        changed = [];
+        // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
+        // reload the change set triggers serves freshly generated types/store — then apply the
+        // set. Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
+        void withBuildDirLock(
+          st.paths.projectDir,
+          () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
+        )
+          .catch(() => false)
+          .finally(() => handleChangeSet(st, configBasenames, changedPaths));
+      }), 60);
   };
   // The project-wide watch (one walk's skip rules: dot-folders, node_modules, build output) also
   // delivers content edits outside the watched folders — `components/X.tsx` — as the same
   // change sets an edit under `app/` makes.
   const outside = outsideEdits(st.paths.projectDir, watched);
   watchPlatformFiles(st, () => applyPlatformFilesChange(st), (paths) => queue(outside(paths)));
+  await watchWorkspaceMembers(st, (paths) => queue(outside(paths)));
   st.options.signal?.addEventListener("abort", () => {
     try {
       watcher.close();

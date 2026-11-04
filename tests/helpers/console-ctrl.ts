@@ -12,7 +12,10 @@
 export interface Stoppable {
   /** The process: the server itself on POSIX, this module's relay on Windows. */
   child: Deno.ChildProcess;
-  /** Ask for a graceful stop: SIGTERM on POSIX, the console event `kind` on Windows. */
+  /**
+   * Ask for a graceful stop: SIGTERM on POSIX, the console event `kind` on Windows (once; a second
+   * call does nothing there).
+   */
   stop(kind?: "c" | "break"): Promise<void>;
 }
 
@@ -53,10 +56,17 @@ export function spawnStoppable(
     stderr: "piped",
   }).spawn();
   const writer = child.stdin.getWriter();
+  // The relay's stdin is closed once it has the stop line (the relay reads to its end), or when
+  // the relay exits unstopped: the resource sanitizer fails a test that leaves it open.
+  let closing: Promise<void> | undefined;
+  const close = () => closing ??= writer.close().catch(() => {});
+  child.status.then(close, close);
   return {
     child,
     stop: async (kind = "c") => {
+      if (closing) return; // one stop: the event reached the server's console already
       await writer.write(new TextEncoder().encode(`${kind}\n`));
+      await close();
     },
   };
 }

@@ -12,7 +12,15 @@
  * control** (the secure-storage plugin has none), so it is weaker than Expo's: native code in
  * the app could read the item. On the web, which has no secret store, `isAvailableAsync()` is
  * `false` and a `requireAuthentication` value is refused rather than stored in plain IndexedDB.
- * The accessibility class and access group are accepted and ignored.
+ * `keychainAccessible` picks the iOS Keychain class (`secureStore.set`'s `accessibility`): the
+ * constants map as `WHEN_UNLOCKED` (default), `WHEN_UNLOCKED_THIS_DEVICE_ONLY`,
+ * `AFTER_FIRST_UNLOCK`, `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` and
+ * `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` one to one. The deprecated `ALWAYS*` classes (Apple
+ * deprecated `kSecAttrAccessibleAlways`, and recommends `AfterFirstUnlock`, as does Expo's own
+ * deprecation note) map to `AFTER_FIRST_UNLOCK` and `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`. A
+ * `requireAuthentication` value is always `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY`, and an unknown
+ * number keeps the default. On Android and the web the class has no effect (see
+ * `SecureStoreSetOptions.accessibility`). The access group is accepted and ignored.
  *
  * @example
  * ```ts
@@ -26,9 +34,13 @@
  */
 
 import { biometricPlugin } from "../mobile/biometrics.ts";
-import { secureStore, secureStoreIsSecret } from "../mobile/secure-store.ts";
+import {
+  secureStore,
+  type SecureStoreAccessibility,
+  secureStoreIsSecret,
+} from "../mobile/secure-store.ts";
 
-/** A Keychain accessibility class (accepted and ignored here). */
+/** A Keychain accessibility class (`keychainAccessible`). */
 export type KeychainAccessibilityConstant = number;
 
 /** Accessible after the first unlock following a restart. */
@@ -59,11 +71,25 @@ export interface SecureStoreOptions {
   requireConfirmation?: boolean;
   /** The biometric prompt's reason, when reading a gated value. */
   authenticationPrompt?: string;
-  /** The Keychain accessibility class (ignored here). */
+  /** The iOS Keychain accessibility class (default `WHEN_UNLOCKED`). */
   keychainAccessible?: KeychainAccessibilityConstant;
   /** The iOS access group (ignored here). */
   accessGroup?: string;
 }
+
+/**
+ * expo-secure-store's constants as `secureStore` classes. `ALWAYS*` are deprecated on iOS (Apple
+ * and Expo both point to `AfterFirstUnlock`), so they take that class.
+ */
+const ACCESSIBILITY: Readonly<Record<number, SecureStoreAccessibility>> = {
+  [AFTER_FIRST_UNLOCK]: "afterFirstUnlock",
+  [AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY]: "afterFirstUnlockThisDeviceOnly",
+  [ALWAYS]: "afterFirstUnlock",
+  [WHEN_PASSCODE_SET_THIS_DEVICE_ONLY]: "whenPasscodeSetThisDeviceOnly",
+  [ALWAYS_THIS_DEVICE_ONLY]: "afterFirstUnlockThisDeviceOnly",
+  [WHEN_UNLOCKED]: "whenUnlocked",
+  [WHEN_UNLOCKED_THIS_DEVICE_ONLY]: "whenUnlockedThisDeviceOnly",
+};
 
 /** Expo's key rule: letters, digits, `.`, `-` and `_`. */
 const VALID_KEY = /^[\w.-]+$/;
@@ -113,7 +139,7 @@ export async function getItemAsync(
  * @param key The key.
  * @param value The value (a string).
  * @param options `keychainService` namespaces it; `requireAuthentication` gates it behind
- * biometrics.
+ * biometrics; `keychainAccessible` picks the Keychain class.
  * @returns A promise that settles once stored.
  */
 export async function setItemAsync(
@@ -124,8 +150,13 @@ export async function setItemAsync(
   if (typeof value !== "string") {
     throw new Error("setItemAsync: the value must be a string (JSON.stringify it)");
   }
+  const gated = options?.requireAuthentication === true;
+  const accessibility = gated || options?.keychainAccessible === undefined
+    ? undefined
+    : ACCESSIBILITY[options.keychainAccessible];
   await secureStore.set(storeKey("setItemAsync", key, options), value, {
-    requireBiometric: options?.requireAuthentication === true,
+    requireBiometric: gated,
+    ...(accessibility && { accessibility }),
   });
 }
 

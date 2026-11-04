@@ -454,6 +454,9 @@ export function bundleGraph(meta: Metafile, cwd: string): BundleGraph {
   return { imports, importers, kept };
 }
 
+/** Each module's importers (all a trace walks). */
+export type Importers = Pick<BundleGraph, "importers">;
+
 /** Where each module was reached from, walking up from a violation's importer. */
 type Down = Map<string, { next: string; specifier: string }>;
 
@@ -467,7 +470,7 @@ interface Walk {
 }
 
 /** Queue the importers of `node` not reached yet; `node` itself when it is an entry. */
-function stepUp(graph: BundleGraph, node: string, walk: Walk) {
+function stepUp(graph: Importers, node: string, walk: Walk) {
   const from = graph.importers.get(node) ?? [];
   if (node !== walk.target && from.length === 0) return node;
   const depth = walk.depth.get(node) ?? 0;
@@ -486,7 +489,7 @@ function stepUp(graph: BundleGraph, node: string, walk: Walk) {
  * the specifier it imports the next one by, walking at most `maxDepth` importers up (Start's
  * `buildTrace`: with no entry within reach, the trace is `target` alone).
  */
-function shortestImportPath(graph: BundleGraph, target: string, maxDepth: number): TraceStep[] {
+function shortestImportPath(graph: Importers, target: string, maxDepth: number): TraceStep[] {
   const down: Down = new Map();
   const walk: Walk = { target, down, depth: new Map([[target, 0]]), queue: [target], maxDepth };
   let root: string | null = null;
@@ -502,9 +505,17 @@ function shortestImportPath(graph: BundleGraph, target: string, maxDepth: number
   }
 }
 
-/** The app modules (not packages, nor the plugin's generated entries) on the way to `target`. */
-function traceTo(
-  graph: BundleGraph,
+/**
+ * The app modules (not packages, nor the plugin's generated entries) on the way to `target`,
+ * entry first.
+ *
+ * @param graph Each module's importers (a bundle's, or what a build has resolved so far).
+ * @param target The module the trace ends at (absolute).
+ * @param cwd The build's working directory.
+ * @param maxDepth How many importers the walk goes up at most.
+ */
+export function traceTo(
+  graph: Importers,
   target: string,
   cwd: string,
   maxDepth = DEFAULT_MAX_TRACE_DEPTH,

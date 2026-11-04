@@ -13,23 +13,29 @@
 // the arity check rather than inventing a mismatch. This is the "internals may vary"
 // contract: name presence and value-ness are enforced; internal typing is not.
 
+import { boundedDeno } from "../deno-doc.ts";
 import { CATALOG } from "./spec.ts";
 import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** Run `deno doc --json` over one file and return its flat symbol list. */
-async function docFor(absFile: string): Promise<Json[]> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: ["doc", "--json", absFile],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (code !== 0) {
-    throw new Error(`deno doc failed for ${absFile}: ${new TextDecoder().decode(stderr)}`);
-  }
-  const parsed = JSON.parse(new TextDecoder().decode(stdout));
+/**
+ * Run `deno doc --json` over one file and return its flat symbol list. The child runs under
+ * {@linkcode boundedDeno}: read until it exits, killed at its deadline (120 s by default) and
+ * started once more, and a second stall fails naming it, with its CPU time and debug-log tail.
+ *
+ * `args` replaces the `deno` arguments (`doc --json <file>`); a test passes a child that can't
+ * finish in time, so the deadline path doesn't race a fast `deno doc`.
+ */
+export async function docFor(
+  absFile: string,
+  deadlineMs?: number,
+  args: string[] = ["doc", "--json", absFile],
+): Promise<Json[]> {
+  const { code, stdout, stderr } = await boundedDeno(args, { deadlineMs });
+  if (code !== 0) throw new Error(`deno doc failed for ${absFile}: ${stderr}`);
+  const parsed = JSON.parse(stdout);
   return Object.values(parsed.nodes ?? {}).flatMap((n: Json) => n.symbols ?? []);
 }
 

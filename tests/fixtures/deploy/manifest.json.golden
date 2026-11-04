@@ -126,7 +126,10 @@
       "ms": 10000,
       "env": "DENEXT_SHUTDOWN_DRAIN_MS"
     },
-    "buildDir": ".denext"
+    "buildDir": ".denext",
+    "idleTrim": true,
+    "limits": [],
+    "tls": null
   },
   "jobs": [
     {
@@ -166,6 +169,22 @@
       ]
     },
     {
+      "name": "DENEXT_ACTION_ID_SECRET",
+      "required": false,
+      "public": false,
+      "sources": [
+        "stack"
+      ]
+    },
+    {
+      "name": "DENEXT_CRASH_REPORT_URL",
+      "required": false,
+      "public": false,
+      "sources": [
+        "stack"
+      ]
+    },
+    {
       "name": "DENEXT_PUBLIC_SITE_NAME",
       "required": false,
       "public": true,
@@ -189,7 +208,15 @@
       "--allow-read",
       "--allow-write=.denext,data"
     ],
-    "allowAll": false
+    "allowAll": false,
+    "net": {
+      "connect": [
+        "*"
+      ],
+      "listen": [
+        "*"
+      ]
+    }
   },
   "images": {
     "optimizer": true,

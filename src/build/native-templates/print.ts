@@ -26,7 +26,10 @@ import UIKit
 /// - \`selectPrinter()\`: shows \`UIPrinterPickerController\` and resolves \`{ name, url }\`; rejects
 ///   \`E_PRINTER_SELECTION_CANCELLED\` when the user closes it.
 /// - \`printToPrinter({ printerUrl, html? | data? | path? })\`: prints straight to that printer
-///   (no dialog) with \`UIPrintInteractionController.print(to:)\`: HTML, base64 bytes, or a file.
+///   (no dialog) with \`UIPrintInteractionController.print(to:)\`: HTML, base64 bytes, or a file in
+///   the app's Documents, Caches or temporary folder (symlinks resolved; anything else, such as
+///   the app's databases under Library, rejects with \`E_PRINT_FAILED\`: with no dialog, page script
+///   must not be able to send any file the app can read to a printer it names).
 @objc(DenextPrintPlugin)
 public class DenextPrintPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextPrintPlugin"
@@ -141,7 +144,11 @@ public class DenextPrintPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable
             } else if let data {
                 controller.printingItem = data
             } else if let path {
-                controller.printingItem = path.hasPrefix("file:") ? URL(string: path) : URL(fileURLWithPath: path)
+                guard let file = DenextPrintPlugin.printableFile(path) else {
+                    call.reject("path must be a file in the app's Documents, Caches or temporary folder.", "E_PRINT_FAILED")
+                    return
+                }
+                controller.printingItem = file
             } else {
                 call.reject("Nothing to print: pass html, data or path.")
                 return
@@ -156,6 +163,27 @@ public class DenextPrintPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable
                 }
             }
         }
+    }
+
+    /// \`path\` (a \`file:\` URL or a plain path) as a file URL when it is inside the app's Documents,
+    /// Caches or temporary folder once symlinks are resolved, else nil.
+    static func printableFile(_ path: String) -> URL? {
+        guard let url = path.hasPrefix("file:") ? URL(string: path) : URL(fileURLWithPath: path),
+              url.isFileURL else {
+            return nil
+        }
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let fileManager = FileManager.default
+        let folders: [URL?] = [
+            fileManager.urls(for: .documentDirectory, in: .userDomainMask).first,
+            fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first,
+            fileManager.temporaryDirectory
+        ]
+        let inside = folders.compactMap { $0 }.contains { folder in
+            let root = folder.resolvingSymlinksInPath().standardizedFileURL.path
+            return resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        }
+        return inside ? URL(fileURLWithPath: resolved) : nil
     }
 }
 `,
@@ -244,6 +272,10 @@ public class DenextPrintPlugin extends Plugin {
             .build();
         getActivity().runOnUiThread(() -> {
             WebView webView = new WebView(getContext());
+            // The HTML is the page's: it must not read the app's files (file:// and content://);
+            // remote images still load.
+            webView.getSettings().setAllowFileAccess(false);
+            webView.getSettings().setAllowContentAccess(false);
             rendering.add(webView);
             if (textZoom != null) webView.getSettings().setTextZoom(textZoom);
             webView.setWebViewClient(new WebViewClient() {

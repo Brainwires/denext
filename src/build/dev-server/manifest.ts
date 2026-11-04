@@ -8,8 +8,9 @@ import {
   domListsEnabled,
   featureFlags,
   momentumSafeScrollEnabled,
-  reactNativeOptions,
+  nodeResolveEnabled,
 } from "../../server/config.ts";
+import { reactNativeBundleOptions } from "../react-native.ts";
 import { domListAliases } from "../dom-lists.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
@@ -34,12 +35,33 @@ import type { ModuleLoader } from "../../server/types.ts";
 import type { DevBoundary, DevState } from "./state.ts";
 import { npmBoundaryByImporter } from "../npm-boundary.ts";
 import type { NpmBoundaryFinder } from "../module-graph.ts";
-import { broadcast } from "./reload.ts";
+import { broadcast, broadcastError } from "./reload.ts";
 import { holdRequestDeadline } from "../../server/request-context.ts";
+
+/**
+ * React Native mode's part of the unbundled loop (null without `reactNative`): its resolvers run
+ * in the loop's dependency bundle, and its defines (`__DEV__`, …) apply to the app's modules, as
+ * in SPA mode's loop.
+ */
+function reactNativeDev(st: DevState) {
+  const rn = reactNativeBundleOptions(st.paths.config, st.paths.projectDir, true, true);
+  if (!rn) return null;
+  return {
+    define: { ...rn.define, "process.env.NODE_ENV": JSON.stringify("development") },
+    reactNative: {
+      plugins: rn.plugins,
+      platformExtensions: rn.platformExtensions,
+      define: rn.define,
+      resolveAllNodeModules: nodeResolveEnabled(st.paths.config),
+      appRouter: true,
+    },
+  };
+}
 
 /** The unbundled dev loop, created on first use (after compat detection settled). */
 export function getUnbundled(st: DevState): UnbundledDev {
   return st.unbundled ??= createUnbundledDev({
+    ...reactNativeDev(st),
     projectDir: st.paths.projectDir,
     appDir: st.paths.appDir,
     configPath: st.paths.configPath,
@@ -76,17 +98,22 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
     config: st.paths.config ?? {},
     mode: "dev",
     load: st.load,
+    reportDevError: (title, error) => broadcastError(st, title, error),
   });
   const manifest = await scanRoutes(st.paths.appDir);
   if (manifest !== st.lastEmittedManifest) {
     st.lastEmittedManifest = manifest;
     // Per-rebuild build-dir lock (Cargo's watch model): a concurrent `denext build` writing the
     // same typed modules is waited out, not interleaved.
-    void withBuildDirLock(
+    // Kept on the state (never awaited here) so a caller removing the project can let it land.
+    st.typedEmit = withBuildDirLock(
       st.paths.projectDir,
       () =>
         emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath }),
-    ).catch((err) => console.warn(`denext: typed modules not refreshed — ${err}`));
+    ).then(
+      () => {},
+      (err) => console.warn(`denext: typed modules not refreshed — ${err}`),
+    );
   }
   return manifest;
 }
@@ -103,11 +130,9 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
 async function resolveUnbundledMode(st: DevState): Promise<void> {
   st.unbundledCompat = await isCompat(st);
   const transformMaps = await getTransformMaps(st);
-  // React Native mode keeps the bundled compat loop too: the unbundled loop's React Native
-  // dependency bundle is built from an SPA entry (and expo-router's routes), not from the App
-  // Router's islands and route entries, so its client modules would miss react-native-web.
-  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0 &&
-    reactNativeOptions(st.paths.config) === null;
+  // React Native mode included: its dependency bundle covers what the route entries and the
+  // Flight islands reach (see `reactNativeDev`).
+  st.unbundledActive = st.unbundledOptIn && Object.keys(transformMaps).length === 0;
 }
 
 /** The current route manifest, with the boundary, CSS and dev-loop mode brought up to date. */

@@ -11,11 +11,16 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
+import { boundPort, untilServes } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
 const PG_URL = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const DRAIN_MS = 3000;
+
+/** What the slow route prints when its handler starts: the test signals only after it. */
+const SLOW_STARTED = "fixture: slow handler started";
 
 /** The fixture: a slow route and an instrumentation module that opens a pool at boot. */
 const FILES: Record<string, string> = {
@@ -39,6 +44,7 @@ const FILES: Record<string, string> = {
 }
 `,
   "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
+  console.log("${SLOW_STARTED}");
   await new Promise((r) => setTimeout(r, 1500));
   return new Response("slow done");
 }
@@ -65,24 +71,13 @@ export async function onShutdown() {
 `,
 };
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
 /** Run the CLI to completion; fail with its output. */
 async function cli(dir: string, args: string[]): Promise<void> {
-  const r = await new Deno.Command(Deno.execPath(), {
+  const r = await boundedOutput(Deno.execPath(), {
     args: ["run", "-A", "--config", join(dir, "deno.json"), join(FW, "cli.ts"), ...args],
     cwd: dir,
     env: { NO_COLOR: "1" },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const dec = new TextDecoder();
   assertEquals(r.code, 0, dec.decode(r.stdout) + dec.decode(r.stderr));
 }
@@ -97,7 +92,6 @@ async function startThenStop(
   env: Record<string, string>,
   kind: "c" | "break" = "c",
 ): Promise<{ text: string; exitMs: number; output: string }> {
-  const port = freePort();
   const server = spawnStoppable(
     Deno.execPath(),
     [
@@ -108,7 +102,7 @@ async function startThenStop(
       join(FW, "cli.ts"),
       "start",
       "--port",
-      String(port),
+      "0", // the port the OS picks, which the server prints: nothing another process can take
       dir,
     ],
     { cwd: dir, env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env } },
@@ -122,19 +116,19 @@ async function startThenStop(
   const reading = Promise.all([read(child.stdout), read(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
-  const origin = `http://127.0.0.1:${port}`;
   try {
-    for (let i = 0; i < 1200 && !exited; i++) {
-      try {
-        const res = await fetch(`${origin}/`);
-        await res.body?.cancel();
-        if (res.status === 200) break;
-      } catch { /* not listening yet */ }
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    const port = await boundPort(() => output, () => exited);
+    const origin = `http://127.0.0.1:${port}`;
+    const up = port === undefined ? undefined : await untilServes(`${origin}/`, () => exited);
+    await up?.body?.cancel();
     assert(!exited, `start exited early:\n${output}`);
     const inFlight = fetch(`${origin}/api/slow`).then((r) => r.text());
-    await new Promise((r) => setTimeout(r, 300)); // the handler is running
+    // Signal once the handler is running (it says so), not after a fixed wait a loaded machine
+    // may not have reached it by.
+    for (let i = 0; i < 600 && !output.includes(SLOW_STARTED) && !exited; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assertStringIncludes(output, SLOW_STARTED, "the slow handler never started");
     const signalled = performance.now();
     await server.stop(kind);
     const text = await inFlight;
@@ -160,8 +154,6 @@ Deno.test({
   name: "denext start: an open pool no longer holds the process past the drain deadline",
   // On Windows the stop is the console's Ctrl-C / Ctrl-Break (tests/helpers/console-ctrl.ts):
   // Windows has no SIGTERM, and `kill("SIGTERM")` there is `TerminateProcess`.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async (t) => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_shutdown_" }));
     const env: Record<string, string> = PG_URL ? { DATABASE_URL: PG_URL } : {};

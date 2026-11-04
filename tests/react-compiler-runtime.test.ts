@@ -16,8 +16,12 @@ import { bundleSpaInto } from "../src/build/spa/bundle.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { useMemoCache } from "../src/runtime/hooks.ts";
+import { useMemoCache } from "../src/runtime/hooks/use-memo-cache.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const ROOT = new URL("../", import.meta.url);
 
@@ -82,8 +86,6 @@ Deno.test("react/compiler-runtime entry: exactly React's surface, `c`, on denext
 
 Deno.test({
   name: "next-compat drop-in: a React-Compiler-precompiled library in node_modules renders on SSR",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compiler_rt_nc_" }));
   try {
@@ -143,8 +145,6 @@ async function localizeChunks(clientDir: string): Promise<void> {
 Deno.test({
   name:
     "compat SPA build: a React-Compiler-precompiled library resolves to the shared prebuilt runtime",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compiler_rt_spa_" }));
   try {

@@ -105,7 +105,25 @@ async function totpAt(secret: string, step: number): Promise<string> {
   return String(bin % 1_000_000).padStart(6, "0");
 }
 
+// Every test runs on a pinned clock, 15 s into one 30 s step: a code computed for
+// `nowStep() + k` must verify against the same current step it was computed from. On the
+// wall clock the step could roll over between computing a code and verifying it, which put
+// `nowStep() - 2` (the edge of the ±2 window) outside the window.
+const PINNED_MS = Math.floor(Date.now() / 30_000) * 30_000 + 15_000;
 const nowStep = (): number => Math.floor(Date.now() / 30_000);
+
+/** `Deno.test` with `Date.now` pinned to {@linkcode PINNED_MS} for the test's duration. */
+function test(name: string, fn: () => Promise<void>): void {
+  Deno.test(name, async () => {
+    const realNow = Date.now;
+    Date.now = () => PINNED_MS;
+    try {
+      await fn();
+    } finally {
+      Date.now = realNow;
+    }
+  });
+}
 
 function freshSession(userId: string): AuthSession {
   const now = Math.floor(Date.now() / 1000);
@@ -131,7 +149,7 @@ async function enroll(config: AuthConfig, userId: string): Promise<string> {
 
 // ---- the at-rest form --------------------------------------------------------------
 
-Deno.test("sqliteAuthAdapter: the raw factor row never holds the TOTP secret", async () => {
+test("sqliteAuthAdapter: the raw factor row never holds the TOTP secret", async () => {
   const path = tempDbPath();
   const adapter = sqliteAuthAdapter({ path });
   try {
@@ -156,7 +174,7 @@ Deno.test("sqliteAuthAdapter: the raw factor row never holds the TOTP secret", a
   }
 });
 
-Deno.test("seal / open round-trip; every seal draws a fresh nonce", async () => {
+test("seal / open round-trip; every seal draws a fresh nonce", async () => {
   const secret = generateTotpSecret();
   const one = await sealTotpSecret([KEY_A], "u1", secret);
   const two = await sealTotpSecret([KEY_A], "u1", secret);
@@ -175,7 +193,7 @@ for (
   ] as const
 ) {
   for (const sealed of [false, true]) {
-    Deno.test(`${name}: a legacy ${sealed ? "sealed" : "plaintext"} MfaRecord secret moves into a factor and is re-sealed for it`, async () => {
+    test(`${name}: a legacy ${sealed ? "sealed" : "plaintext"} MfaRecord secret moves into a factor and is re-sealed for it`, async () => {
       const { adapter } = make();
       try {
         const user = await adapter.createUser({ email: EMAIL });
@@ -213,7 +231,7 @@ for (
   }
 }
 
-Deno.test("a legacy plaintext PENDING enrollment confirms, and the confirm seals it", async () => {
+test("a legacy plaintext PENDING enrollment confirms, and the confirm seals it", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: EMAIL });
   const secret = generateTotpSecret();
@@ -231,7 +249,7 @@ Deno.test("a legacy plaintext PENDING enrollment confirms, and the confirm seals
   assertEquals((await openTotpSecret([KEY_A], factorAad(factor), factor.secret)).ok, true);
 });
 
-Deno.test("a legacy secret no configured key opens still moves — the user stays enrolled until the key returns", async () => {
+test("a legacy secret no configured key opens still moves — the user stays enrolled until the key returns", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: EMAIL });
   const secret = generateTotpSecret();
@@ -265,7 +283,7 @@ Deno.test("a legacy secret no configured key opens still moves — the user stay
   );
 });
 
-Deno.test("an adapter without replaceMfaSecret migrates through setMfa and keeps the backup codes", async () => {
+test("an adapter without replaceMfaSecret migrates through setMfa and keeps the backup codes", async () => {
   const full = inMemoryAuthAdapter();
   const { replaceMfaSecret: _swap, ...adapter } = full;
   const user = await adapter.createUser({ email: EMAIL });
@@ -285,7 +303,7 @@ Deno.test("an adapter without replaceMfaSecret migrates through setMfa and keeps
 
 // ---- failing closed ------------------------------------------------------------------
 
-Deno.test("a wrong key fails closed: no code verifies, the user stays enrolled, the row is untouched", async () => {
+test("a wrong key fails closed: no code verifies, the user stays enrolled, the row is untouched", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: EMAIL });
   const secret = await enroll(configFor(adapter, KEY_A), user.id);
@@ -317,7 +335,7 @@ Deno.test("a wrong key fails closed: no code verifies, the user stays enrolled, 
   assertFalse(warnings.join("\n").includes(sealed), "nor the sealed value");
 });
 
-Deno.test("a tampered ciphertext, a swapped owner, an unknown version and garbage are all refused", async () => {
+test("a tampered ciphertext, a swapped owner, an unknown version and garbage are all refused", async () => {
   const secret = generateTotpSecret();
   const sealed = await sealTotpSecret([KEY_A], "u1", secret);
   const [, , nonce, body] = sealed.split(".");
@@ -338,7 +356,7 @@ Deno.test("a tampered ciphertext, a swapped owner, an unknown version and garbag
   }
 });
 
-Deno.test("verifySecondFactor refuses a tampered factor and keeps the user enrolled", async () => {
+test("verifySecondFactor refuses a tampered factor and keeps the user enrolled", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: EMAIL });
   const config = configFor(adapter, KEY_A);
@@ -353,7 +371,7 @@ Deno.test("verifySecondFactor refuses a tampered factor and keeps the user enrol
   assertEquals((await mfaStatus(quiet, user.id)).enrolled, true);
 });
 
-Deno.test("another factor's ciphertext does not open under this one (the AAD binds the factor)", async () => {
+test("another factor's ciphertext does not open under this one (the AAD binds the factor)", async () => {
   const adapter = inMemoryAuthAdapter();
   const user = await adapter.createUser({ email: EMAIL });
   const config = configFor(adapter, KEY_A);
@@ -377,7 +395,7 @@ Deno.test("another factor's ciphertext does not open under this one (the AAD bin
 
 // ---- rotation --------------------------------------------------------------------------
 
-Deno.test("rotation: a secret sealed under a rotated-out key opens and is re-sealed under the current one", async () => {
+test("rotation: a secret sealed under a rotated-out key opens and is re-sealed under the current one", async () => {
   const path = tempDbPath();
   const adapter = sqliteAuthAdapter({ path });
   try {

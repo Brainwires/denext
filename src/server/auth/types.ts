@@ -59,6 +59,16 @@ export interface AuthSession {
    */
   sessionId?: string;
   /**
+   * A stateless cookie session's own random id (128 bits, base64url), minted with the session
+   * and sealed in its httpOnly cookie; `/auth/session` and the client hooks leave it out.
+   * SAML Single Logout names a session by it: an IdP's LogoutRequest puts exactly the sessions it
+   * names on the auth adapter's revocation list, and a revoked session reads as signed out. A
+   * cookie issued before denext minted it has none and can't be targeted. `revokeSession(sid)`
+   * ends the session through the same list, and `currentSessionId()` reads it on the server.
+   * (A store-backed session's id is {@linkcode sessionId}.)
+   */
+  sid?: string;
+  /**
    * The native-app session family this request authenticated with — present only when the
    * caller presented a native access token (`Authorization: Bearer nat_…`, see
    * {@link AuthNativeConfig}). Such a session is never slid forward and sets no cookie.
@@ -914,6 +924,17 @@ export interface AuthMfaConfig {
   freshness?: number;
 }
 
+/** An Android app in `passkeys.androidApps` (the shape `appLinks.android` takes). */
+export interface AuthPasskeyAndroidApp {
+  /** The application id (`com.example.app`). */
+  packageName: string;
+  /**
+   * The SHA-256 fingerprints of the certificates the app is signed with: `AB:CD:…` (32
+   * colon-separated hex pairs, as `keytool` and the Play Console print them) or 64 hex digits.
+   */
+  sha256CertFingerprints: string[];
+}
+
 /**
  * Passkeys (WebAuthn) — sign-in with a platform or roaming authenticator, as a first factor or
  * as the second. Every field is optional; the relying party defaults to `canonicalOrigin`.
@@ -930,10 +951,23 @@ export interface AuthPasskeyConfig {
   rpName?: string;
   /**
    * The origins a ceremony may come from, matched exactly against `clientDataJSON.origin`.
-   * Default: `[canonicalOrigin]`. Add an Android app's `android:apk-key-hash:…` origin or a
-   * second web origin here.
+   * Default: `[canonicalOrigin]`. Add a second web origin here; an Android app goes in
+   * {@linkcode androidApps} (an `android:apk-key-hash:<43 base64url characters>` entry here is
+   * accepted too, checked for that exact form).
    */
   origins?: string[];
+  /**
+   * Android apps whose passkey ceremonies are accepted: inside an app, Credential Manager
+   * reports `clientDataJSON.origin` as `android:apk-key-hash:<base64url SHA-256 of the signing
+   * certificate>`, and each listed fingerprint adds that exact origin to {@linkcode origins}.
+   * The app calls `/native/passkey/*` (with `native` sessions configured) or, from a page on
+   * this origin, the cookie rows. Android also requires the domain's `assetlinks.json` to
+   * delegate `get_login_creds` to the app: pass the same objects to `appLinks.android` in
+   * `denext.config.ts`. With Play App Signing, list Play's app signing key (Play Console → Test
+   * and release → App integrity) and the upload / debug keys you test with (`keytool -list -v
+   * -keystore <keystore>`).
+   */
+  androidApps?: AuthPasskeyAndroidApp[];
   /**
    * The web origins allowed to call the passkey endpoints from another origin — a front end
    * served apart from the auth server (`["https://www.example.com"]` for an auth server at
@@ -955,8 +989,9 @@ export interface AuthPasskeyConfig {
   timeout?: number;
   /**
    * Attestation policy for new passkeys. Off by default: any supported attestation (`none`,
-   * `packed`, `tpm`, `android-key`, `apple`, `fido-u2f`) registers once its statement verifies,
-   * and a certificate in it is not chained to anything.
+   * `packed`, `tpm`, `android-key`, `android-safetynet`, `apple`, `fido-u2f`, `compound`)
+   * registers once its statement verifies, and a certificate in it is not chained to anything
+   * (except `android-safetynet`'s, which must chain to Google's root).
    */
   attestation?: {
     /**
@@ -966,8 +1001,23 @@ export interface AuthPasskeyConfig {
      * {@link AuthPasskeyMdsConfig}.
      */
     mds?: AuthPasskeyMdsConfig;
+    /**
+     * What an unreachable revocation source means for a certificate of a path {@link mds}
+     * validates (the BLOB's signing chain, an attestation's `x5c` chain) that names an OCSP
+     * responder or a CRL distribution point. `"hard"` refuses the path (fail closed); `"soft"`
+     * goes on without a status, logging a warning. Default `"hard"`, or `"soft"` when `mds.blob`
+     * supplies the BLOB (a server without outbound network). A certificate a usable OCSP answer
+     * or CRL reports revoked is refused under both. `mds.revocation`, when set, takes precedence.
+     */
+    revocation?: AuthPasskeyRevocationPolicy;
   };
 }
+
+/**
+ * `passkeys.attestation.revocation`: `"soft"` goes on when no OCSP answer or CRL can be had,
+ * `"hard"` refuses.
+ */
+export type AuthPasskeyRevocationPolicy = "soft" | "hard";
 
 /** `passkeys.attestation.mds`: where the metadata comes from and what it lets through. */
 export interface AuthPasskeyMdsConfig {
@@ -982,11 +1032,13 @@ export interface AuthPasskeyMdsConfig {
    */
   blob?: string | (() => string | Promise<string>);
   /**
-   * What a certificate revocation list that can't be fetched or used means, for a certificate
-   * of the BLOB's or an attestation's path that names CRL distribution points: `"require"`
-   * refuses the path (fail closed), `"best-effort"` goes on without it (a CRL that lists the
-   * certificate still refuses it), `"off"` fetches no CRL. Default `"require"`, or
-   * `"best-effort"` when {@linkcode blob} supplies the BLOB (a server without outbound network).
+   * What a revocation status that can't be had (no usable OCSP answer, no usable CRL) means,
+   * for a certificate of the BLOB's or an attestation's path that names an OCSP responder or CRL
+   * distribution points: `"require"` refuses the path (fail closed), `"best-effort"` goes on
+   * without it (a certificate reported revoked is still refused), `"off"` asks nothing.
+   * Default: `passkeys.attestation.revocation` (`"hard"` is `"require"`, `"soft"` is
+   * `"best-effort"`); with neither, `"require"`, or `"best-effort"` when {@linkcode blob}
+   * supplies the BLOB.
    */
   revocation?: "require" | "best-effort" | "off";
   /** The fetch timeout, ms. Default `15000`. */

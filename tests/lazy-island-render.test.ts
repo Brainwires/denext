@@ -8,7 +8,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { clientRefOf, tagClientExports } from "../src/runtime/client-reference.ts";
 import { FOREIGN_PROP, ISLAND_MARKER_ATTR, ISLAND_TAG } from "../src/runtime/lazy-directive.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 function Counter(): VNode {

@@ -14,7 +14,7 @@ import { denoExecutable } from "../build/bundle.ts";
 import { DEV_TOKEN_ENV, newDevToken, withDevTokenParam } from "../build/dev-server/dev-token.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { cliInvocation } from "../ui/proc.ts";
-import { SHUTDOWN_SIGNALS } from "./shared.ts";
+import { SHUTDOWN_SIGNALS } from "./shutdown.ts";
 
 /**
  * A `denext dev` server a verb started or attached to. Structurally identical to (and assignable
@@ -32,7 +32,7 @@ export interface DevServerHandle {
 }
 
 /** A spawned child process reduced to `{ finished, stop }`, plus a synchronous exit probe. */
-export interface SpawnedChild {
+interface SpawnedChild {
   /** Resolves when the child exits (closed, or killed). */
   readonly finished: Promise<void>;
   /** SIGTERM the child and await its exit. */
@@ -84,7 +84,7 @@ export function devChildEnv(
  * @param args The `deno` arguments (e.g. `["dev", project, …]` or `["desktop", entry]`).
  * @param opts The child's cwd, stdin disposition, and any extra env.
  */
-export function spawnDenoChild(
+function spawnDenoChild(
   args: string[],
   opts: {
     cwd: string;
@@ -174,13 +174,27 @@ function runningDevToken(project: string): string | undefined {
   }
 }
 
-/** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */
-export function waitForShutdownSignal(): Promise<void> {
+/**
+ * Resolves on the first Ctrl-C / SIGTERM (and stops listening). A session that ends another way
+ * (its window closed, its server gone) aborts `until`: the listeners go then, and the promise never
+ * settles. A listener left behind keeps the process's event loop alive and swallows the next
+ * Ctrl-C.
+ *
+ * @param until Stops listening when it aborts.
+ * @returns Settles on the signal.
+ */
+export function waitForShutdownSignal(until?: AbortSignal): Promise<void> {
   return new Promise((done) => {
-    const handler = () => {
+    if (until?.aborted) return;
+    const remove = () => {
       for (const signal of SHUTDOWN_SIGNALS) Deno.removeSignalListener(signal, handler);
+      until?.removeEventListener("abort", remove);
+    };
+    const handler = () => {
+      remove();
       done();
     };
     for (const signal of SHUTDOWN_SIGNALS) Deno.addSignalListener(signal, handler);
+    until?.addEventListener("abort", remove, { once: true });
   });
 }

@@ -48,18 +48,19 @@ await run("bundle the better-sqlite3 compat", [
 // 2. Install deps and apply the link (materializes the compat as `better-sqlite3`).
 await run("install deps + apply the link", ["install"]);
 
-// 3. Generate the Prisma client (ESM, Deno runtime — no Rust engine).
-await run("prisma generate", ["run", "-A", "npm:prisma@^6.7.0", "generate"]);
+// 3. Generate the Prisma client (ESM, Deno runtime — no Rust engine). Prisma 7's
+//    `db push` no longer generates, so this step always runs.
+await run("prisma generate", ["run", "-A", "npm:prisma@7.10.1", "generate"]);
 
-// 4. Create the database schema.
+// 4. Create the database schema (the URL comes from prisma.config.ts). No
+//    `--accept-data-loss`: a schema change that would drop data stops with Prisma's
+//    warning instead (and Prisma refuses that flag from an AI agent without consent).
 await run("prisma db push", [
   "run",
   "-A",
-  "npm:prisma@^6.7.0",
+  "npm:prisma@7.10.1",
   "db",
   "push",
-  "--skip-generate",
-  "--accept-data-loss",
 ]);
 
 console.log("\n✓ setup complete — run `deno task dev` (or build && start).");

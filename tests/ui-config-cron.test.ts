@@ -12,6 +12,7 @@ import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import {
   cronPanel,
+  historyDeadlineReason,
   nextRuns,
   setCronDiscoveryBudget,
   setCronHistoryBudget,
@@ -19,6 +20,11 @@ import {
 import { jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The panel runs its discovery and history children from this process: a stalled one fails its
+// test instead of holding the CI job.
+watchTests();
 
 // What these tests check is what the panel renders FROM a listing, so the discovery child must
 // finish. The panel's own 15 s deadline is for a person waiting on a page; a release gate at load
@@ -110,6 +116,11 @@ async function call(
     events: new Set() as SseClients,
   };
   return await cronPanel(new Request(url, { method: ctx.method }), ctx);
+}
+
+/** The reason a refused write names in its page (`refuse()`), or the page's start without one. */
+function refusalOf(markup: string): string {
+  return /could not be cleared: [^<]*/.exec(markup)?.[0] ?? markup.slice(0, 2000);
 }
 
 /** The `_base` stamp the editor rendered, which a write has to post back. */
@@ -961,11 +972,37 @@ Deno.test("a history child past its deadline says so, not that it printed nothin
     const twin = await (await call(dir, { json: true })).json();
     assertEquals(twin.history.enabled, true);
     assertEquals(twin.history.available, false);
-    assertEquals(twin.history.reason, "denext job --history did not finish within 1 s");
+    // Where it stopped follows the deadline: its last line, or that it printed nothing.
+    assertMatch(
+      twin.history.reason,
+      /^denext job --history did not finish within 1 s \((?:it printed nothing|its last output: .+)\)$/,
+    );
   } finally {
     setCronHistoryBudget(previous);
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("a deadline-killed history child's reason names its last meaningful line", () => {
+  // A Windows child that ran into the deadline must say where it stopped: the last line that is
+  // more than Deno's chatter (colour codes stripped), or that it printed nothing at all.
+  assertEquals(
+    historyDeadlineReason("--history", 300_000, [
+      "loading the history store",
+      "\x1b[33mwaiting on the store's read\x1b[0m",
+      "Download https://jsr.io/@std/path/meta.json",
+      "",
+    ]),
+    "denext job --history did not finish within 300 s (its last output: waiting on the store's read)",
+  );
+  assertEquals(
+    historyDeadlineReason("--clear-history", 15_000, ["Check file:///app/denext.config.ts", " "]),
+    "denext job --clear-history did not finish within 15 s (it printed nothing)",
+  );
+  assertEquals(
+    historyDeadlineReason("--history", 1000, []),
+    "denext job --history did not finish within 1 s (it printed nothing)",
+  );
 });
 
 Deno.test("an app's own history store is read and cleared through it, never opened here", async () => {
@@ -997,7 +1034,9 @@ export default {
     await first.body?.cancel();
     assertEquals(readJobHistory({ path }).recent.length, 2, "step one deletes nothing");
     const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
-    assertEquals(second.status, 303);
+    // A refusal names its reason in the page: put it in the failure, not just the status.
+    const refusal = second.status === 303 ? "" : refusalOf(await second.text());
+    assertEquals(second.status, 303, refusal);
     await second.body?.cancel();
     assertEquals(readJobHistory({ path }).recent, [], "cleared through the store");
     let defaultDb = true;

@@ -299,7 +299,7 @@ Deno.test("full-app update SECURITY (rollback): a trial is confirmed only by the
       const token = injectedGlobal(html)!.token as string;
       // The page has been served, its assets fetched, the bridge used — but the window never loaded:
       // nothing confirms, so the runtime rolls this version back at the next launch.
-      await served.handler(get("http://127.0.0.1:1/app.js"), {});
+      await (await served.handler(get("http://127.0.0.1:1/app.js"), {})).body?.cancel(); // a file body
       await pageRpc(served, token)("window", "state");
       assertEquals(state.confirms, 0);
       // Forged beacons: no token, a wrong token, a GET.

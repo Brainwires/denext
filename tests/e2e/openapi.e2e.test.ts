@@ -11,7 +11,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { runDeno, startCliServer } from "./harness.ts";
+import { runDeno, startCliServer, statusOf } from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/openapi", import.meta.url));
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
@@ -23,8 +23,6 @@ const json = { "content-type": "application/json" };
 
 Deno.test({
   name: "e2e: examples/openapi serves an OpenAPI 3.1 document + Swagger UI, with bearer auth",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await t.step("build writes openapi.json with the security scheme", async () => {
     const built = await runDeno(["run", "-A", CLI, "build", "."], EXAMPLE, BUILD_TIMEOUT_MS);
@@ -99,8 +97,7 @@ Deno.test({
     });
 
     await t.step("reads are public; writes are 401 without a bearer token", async () => {
-      const list = await fetch(server.origin + "/api/pets");
-      assertEquals(list.status, 200, "GET is public");
+      assertEquals(await statusOf(fetch(server.origin + "/api/pets")), 200, "GET is public");
 
       const write = await fetch(server.origin + "/api/pets", {
         method: "POST",
@@ -118,7 +115,7 @@ Deno.test({
         headers: json,
         body: JSON.stringify({ username: "demo", password: "wrong" }),
       });
-      assertEquals(bad.status, 401);
+      assertEquals(await statusOf(bad), 401);
 
       const ok = await fetch(server.origin + "/api/login", {
         method: "POST",
@@ -138,7 +135,7 @@ Deno.test({
         headers: auth,
         body: JSON.stringify({ name: "" }),
       });
-      assertEquals(bad.status, 400, "a bad body is a 400 once past auth");
+      assertEquals(await statusOf(bad), 400, "a bad body is a 400 once past auth");
 
       const made = await fetch(server.origin + "/api/pets", {
         method: "POST",
@@ -154,7 +151,7 @@ Deno.test({
       assertEquals((await got.json()).name, "Nimbus");
 
       const missing = await fetch(server.origin + "/api/pets/does-not-exist");
-      assertEquals(missing.status, 404);
+      assertEquals(await statusOf(missing), 404);
     });
   } finally {
     await server.close();

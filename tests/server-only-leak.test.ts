@@ -6,10 +6,10 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { build } from "../src/build/build.ts";
 import { bundleRoutes } from "../src/build/bundle.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { serverOnlySignals } from "../src/build/server-only-scan.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
 
 // ── serverOnlySignals (pure) ─────────────────────────────────────────────────────
 
@@ -139,14 +139,12 @@ export default function Page() {
 Deno.test({
   name:
     "build fails when a hydrating route's tree would ship node:sqlite + Deno.env to the browser",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_" });
     try {
       await writeProject(dir, LEAKY_PAGE);
       resetModuleGraphCache();
-      const err = await assertRejects(() => build(dir), Error);
+      const err = await assertRejects(() => buildInChild(dir), Error);
       assertStringIncludes(err.message, "denext: server-only code would ship to the browser");
       // The module, why, and the route that shipped it.
       assertStringIncludes(
@@ -183,8 +181,6 @@ export function Counter({ count }: { count: number }) {
 
 Deno.test({
   name: "build succeeds once the db module is server-only and the interactive part is an island",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_fixed_" });
     try {
@@ -195,7 +191,7 @@ Deno.test({
         `import "server-only";\n${DB_MODULE}`,
       );
       resetModuleGraphCache();
-      const result = await build(dir);
+      const result = await buildInChild(dir);
       // The Flight islands bundle ships the island and nothing server-only.
       const client = join(result.outDir, "client");
       let all = "";
@@ -226,8 +222,6 @@ export default function Page() {
 
 Deno.test({
   name: "a pure server helper imported only by a non-shipped export is tree-shaken, not a leak",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_shaken_" });
     try {
@@ -239,7 +233,7 @@ Deno.test({
         `export const secret = () => Deno.env.get("SECRET");\n`,
       );
       resetModuleGraphCache();
-      const result = await build(dir);
+      const result = await buildInChild(dir);
       assertEquals(result.routes.length, 1);
     } finally {
       await Deno.remove(dir, { recursive: true });

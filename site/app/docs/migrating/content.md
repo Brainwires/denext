@@ -18,7 +18,7 @@ the work is in configuration and validating the edges.
 > [!NOTE]
 > This is the Next.js guide. `denext migrate` also converts other sources, each with its own
 > guide: [Remix and React Router v7](/docs/migrating-remix),
-> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact),
+> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact), [Lustre](/docs/migrating-lustre),
 > [TanStack Start](/docs/tanstack-start), [Expo and React Native](/docs/coming-from-react-native),
 > and a Vite, CRA or generic React SPA (§3b below).
 
@@ -56,15 +56,25 @@ address (see §7).
 `denext migrate --check` runs the migration as a dry run and writes nothing: it lists the files
 `denext migrate` would create, modify, move or delete, what won't migrate and why, and a verdict
 (`ready`, `review` or `blocked`). It needs read access to the project, run access to evaluate
-your `next.config.*` (in a `deno` subprocess that can only read the project) and jsr.io when run
-from JSR; add `--json` for a machine-readable report. Without `--allow-run` the report says the
+your `next.config.*` and jsr.io when run from JSR; add `--json` for a machine-readable report.
+The config runs in a `deno` subprocess that can read only the project (a workspace member's
+whole workspace root, so pnpm's store and sibling packages resolve), never through a symlink
+that leads out of it, and the machine's CPU, memory and OS release but not its hostname, user or
+home directory. A symlink in `node_modules` that leads out stops the evaluation, since Deno reads
+a `require()` there without a permission check. Without `--allow-run` the report says the
 config couldn't be evaluated, instead of listing its keys as not migrating. A config that
 never finishes is killed after 15 seconds (`DENEXT_NEXT_EVAL_TIMEOUT_MS` changes it), and the
 evaluator is also killed when the `migrate` that started it dies:
 
 ```sh
-deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
+deno run --no-config --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
+
+`--no-config` matters on a repository you don't trust: `deno run` applies the working directory's
+`deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs, so without
+the flag a repository's import map or registry can replace a module of the CLI, which then holds
+the permissions you granted (`--allow-run` starts any program). An installed `denext` doesn't read
+them. See [Running denext on a repository you don't trust](/docs/security#untrusted-repositories).
 
 [Fixed in denext](/docs/fixed) lists problems on Next.js, React, Vite and React Native stacks
 that denext handles, each with the test that proves it.
@@ -170,7 +180,7 @@ confirmation prompt), or run the standalone `denext codemod` later.
 > [!NOTE]
 > Migrating a project that already has `node_modules` installed (most real
 > apps) with the CLI run through `deno run`? Add `--node-modules-dir=none` to it:
-> `deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
+> `deno run --no-config --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
 > it, Deno runs in manual-`node_modules` mode and can't resolve the CLI's own
 > build dependencies. (Your app's `node_modules` is untouched either way — the
 > compat layer still loads your npm React libraries from it.) In a pnpm
@@ -207,6 +217,41 @@ entries).
 > through Deno's strict `npm:` loader (escape hatch). A library that ships its own
 > `"use client"` / `"use server"` files still resolves from `node_modules` in that
 > mode, so its client components hydrate as islands.
+
+### npm patches from pnpm and Bun
+
+A project that patches npm packages with pnpm (`pnpm.patchedDependencies` in `package.json`, or
+`patchedDependencies` in `pnpm-workspace.yaml`, the workspace root's for an app inside one) or
+Bun (`patchedDependencies` in `package.json`) keeps its patches. `denext migrate` copies each one
+to `patches/npm/<name>+<version>.patch` and registers it in `deno.json`'s `patchedDependencies`
+under the same key (`left-pad@1.3.0`, a range, or a bare name), which denext's Deno from runtime
+`3.0.0-denext.3` (the pinned toolchain has it) applies whenever it installs the package:
+
+```json
+{
+  "patchedDependencies": {
+    "left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch",
+    "@scope/util@^2.1.0": "patches/npm/@scope+util+_2.1.0.patch"
+  }
+}
+```
+
+The copy is the patch as pnpm or Bun wrote it, `diff --git` sections with paths inside the
+package; a patch whose paths start `node_modules/<pkg>/` is made package-relative, and a plain
+unified diff gets its `diff --git` lines. The original files and `package.json` are left as they
+are. A few patches are not carried and are listed for review instead, by `migrate` and by
+`migrate --check`, which lists every patch it would carry too:
+
+- one that **adds, deletes, renames or copies a file, or changes a binary one**: the runtime's
+  applier changes existing text files only. Record the change with
+  [`denext patch create <pkg>`](/docs/patches), which denext applies at boot;
+- every patch, when the Deno that installs the packages doesn't apply `patchedDependencies`
+  (`DENEXT_DENO=stock`, or an older runtime);
+- a key `deno.json` already maps to another file (yours is kept), and a patch file that can't be
+  read.
+
+A `deno.json` you wrote yourself is not edited: the copies are made and migrate prints the
+`patchedDependencies` entries to add.
 
 ---
 
@@ -273,6 +318,12 @@ A **Preact** app (Vite with `@preact/preset-vite`, preact-cli, WMR or esbuild) t
 with Preact, preact-iso and Preact Signals pointed at denext. See
 [Migrating from Preact](/docs/migrating-preact) and [Preact Signals](/docs/signals).
 
+### Lustre
+
+A **Lustre** app (Gleam, JavaScript target, built with lustre_dev_tools) keeps its Gleam source as
+it is: the `gleam()` plugin compiles it and a page mounts its `main` as an island. See
+[Migrating from Lustre](/docs/migrating-lustre).
+
 ---
 
 ## 3c. Adding an iOS / Android target (`--enable-capacitor`)
@@ -306,17 +357,22 @@ Then it installs the pinned Capacitor 8 packages it lacks (`@capacitor/cli`,
 `core`, and the platforms') as dev dependencies with the project's package manager
 without running the project's lifecycle scripts (a monorepo's own `prepare`, a
 `postinstall`): npm, pnpm and bun get `--ignore-scripts`, e.g.
-`pnpm add -D --ignore-scripts @capacitor/cli@^8.5.2 …`, and Yarn, which rejects
+`pnpm add -D --ignore-scripts --save-exact @capacitor/cli@8.6.0 …`, and Yarn, which rejects
 that flag in Berry, runs with `npm_config_ignore_scripts=true` (Yarn 1) and
 `YARN_ENABLE_SCRIPTS=0` (Berry) in its environment. With no lockfile it does not
 pick a manager for you: it prints the command. With `--platform ios,android` it
 also exports once and runs `npx cap add` for each platform that has no folder yet;
 without it, `cap add` is yours to run.
 
-`--platform` runs the project's own code by design: the export builds the app
-(its `vite.config.ts`, plugins and build-time imports) and `npx cap add` runs the
-installed Capacitor CLI, which reads `capacitor.config.ts`. Use it only on a
-checkout you would build anyway; `--check` lists the commands without running them.
+**These commands run the project's own code**, so migrate runs them only when you opt in.
+The install loads the package manager's project configuration (a `.pnpmfile.cjs`, a Yarn
+`yarnPath`), the export builds the app (its `vite.config.ts`, plugins and build-time imports)
+and `npx cap add` runs the Capacitor CLI from the project's `node_modules`, which loads
+`capacitor.config.ts`. On an untrusted clone that is arbitrary code execution. An interactive
+run lists the commands and asks before running them; a non-interactive run (CI, a script,
+`--json`) runs none of them unless you pass `--yes`, and prints each one with the reason
+instead, for you to run once you trust the project. `--check` lists the commands without
+running them.
 
 What migrate cannot know is listed for review: a build-time switch the phone build
 may need set differently (an env key such as `VITE_HOSTED_APP_CHANNEL`), backend
@@ -327,6 +383,13 @@ backend, and for an App Router app its route handlers and Server Actions (they
 need a server) and `denext mobile add export-routes`. `denext migrate --check
 --enable-capacitor` shows all of it, the files and the commands, without writing
 or running anything.
+
+**Hosted mode.** A kept Capacitor config that loads a hosted `server.url` (the shell shows a
+remote site instead of the bundled export) gets `plugins.DenextBridge.frameGuard: false`
+written into it, and a review item: the native bridge accepts plugin calls only from the app's
+own origin by default ([the bridge's origin guard](/docs/mobile#bridge-origin-guard)), and the
+hosted page would lose its plugins. Narrow it afterwards by listing the hosted origin in
+`plugins.DenextBridge.allowedOrigins` and removing `frameGuard: false`.
 
 ---
 
@@ -442,6 +505,12 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Crypto/auth** — `jose`, `bcryptjs`, WebAuthn load cleanly.
 - **Env/secrets** — use `Deno.env`; environment variables and CLI flags are
   trusted inputs.
+- **Files beside a module** — in a drop-in, each of the app's own server modules
+  keeps its source file's `import.meta.url` (`.filename`, `.dirname`,
+  `.resolve` too), as in Next.js, so a route that reads a file beside itself
+  (`fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url))` for an OG
+  image) works under `denext start`, in a container image and in a
+  `build --compile` binary.
 
 ---
 

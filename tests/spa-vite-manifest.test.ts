@@ -8,8 +8,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { Schema } from "effect";
-import { staticExport } from "../src/build/export.ts";
 import { collectViteManifest } from "../src/build/spa/vite-manifest.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -70,12 +70,10 @@ async function spaFixture(spaExtra: string): Promise<string> {
 
 Deno.test({
   name: "spa.viteManifest: export writes .vite/manifest.json a Vite-manifest server decodes",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(", viteManifest: true");
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const out = join(dir, "out");
     const json = await Deno.readTextFile(join(out, ".vite", "manifest.json"));
     const files = immutableBuildAssets(json);
@@ -103,12 +101,10 @@ Deno.test({
 
 Deno.test({
   name: "spa.viteManifest: off by default (no .vite/ in the export)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture("");
   try {
-    await staticExport(dir);
+    await exportInChild(dir);
     const exists = await Deno.stat(join(dir, "out", ".vite")).then(() => true, () => false);
     assertEquals(exists, false);
   } finally {

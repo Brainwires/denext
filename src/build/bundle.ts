@@ -5,11 +5,16 @@
 // as one module graph keeps shared module identity (e.g. context symbols)
 // intact, which separate dynamic imports would break.
 
+import { quietThenExplain, runToExit } from "./exited-output.ts";
+import { boundedSpawn } from "./child-probe.ts";
+import { childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
+import { frameworkFileUrl, frameworkRootUrl } from "./framework-root.ts";
+export { frameworkFileUrl, frameworkRootUrl };
 import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
-import { dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
 import {
@@ -18,7 +23,14 @@ import {
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import {
+  analyzeRequested,
+  attributeBytes,
+  pruneUnreachable,
+  recordAttribution,
+} from "./sourcemap-attribution.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { clientImportMap, type ClientImports, type ServerModules } from "./client-imports.ts";
 import { findInlineServerActions, inlineServerActionError } from "./inline-server-action.ts";
 import {
@@ -31,23 +43,6 @@ import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
 import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
 import { VERSION } from "../version.ts";
-
-/**
- * The framework root as a URL, in whatever scheme the framework itself runs under:
- * `file://…` from a local checkout, `https://jsr.io/@denext/denext/<ver>/` when a consumer
- * runs the CLI straight from JSR (`deno run -A jsr:@denext/denext/cli …`). Always ends with a
- * slash. This is the scheme-agnostic base — prefer it (+ {@link frameworkFileUrl} /
- * {@link readFrameworkText}) over {@link frameworkRoot}, whose filesystem path only exists for
- * a local checkout.
- */
-export function frameworkRootUrl(): string {
-  return new URL("../../", import.meta.url).href;
-}
-
-/** The URL of a file/module under the framework root, in the framework's own scheme. */
-export function frameworkFileUrl(relative: string): string {
-  return new URL(relative, frameworkRootUrl()).href;
-}
 
 /**
  * Read a text file under the framework root: `Deno.readTextFile` for a local checkout,
@@ -189,11 +184,11 @@ async function probeBundleSupport(): Promise<void> {
   const deno = denoExecutable();
   let versionText: string;
   try {
-    const out = await new Deno.Command(deno, {
+    const out = await runToExit(deno, {
       args: ["--version"],
       stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     versionText = new TextDecoder().decode(out.stdout);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -215,6 +210,98 @@ async function probeBundleSupport(): Promise<void> {
         `found ${match[0]}. Upgrade Deno, or set DENO_BIN to a newer deno binary.`,
     );
   }
+}
+
+let defineSupport: Promise<boolean> | undefined;
+
+/**
+ * Whether the resolved `deno`'s `deno bundle` takes `--define` (esbuild's `define`: replace a
+ * global identifier with a constant expression). denext's Deno toolchain has it; a stock Deno 2.x
+ * does not, and an upstream release that adds the same flag is picked up for free. A feature
+ * probe, not a version match: it runs `deno bundle --help` once per process (memoized) and looks
+ * for the flag. Never throws: any failure reads `false`, which keeps the seeded fallback
+ * (`DENEXT_DENO=stock`, `DENO_BIN` pointing at an older deno).
+ *
+ * @returns `true` when `deno bundle --define KEY=VALUE` is available.
+ */
+export function bundleSupportsDefine(): Promise<boolean> {
+  return defineSupport ??= probeBundleDefine();
+}
+
+/** {@linkcode bundleSupportsDefine}'s probe: `deno bundle --help` lists `--define`. */
+async function probeBundleDefine(): Promise<boolean> {
+  try {
+    const out = await runToExit(denoExecutable(), {
+      args: ["bundle", "--help"],
+      stdout: "piped",
+      stderr: "null",
+    });
+    return out.success && /--define\b/.test(new TextDecoder().decode(out.stdout));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Test seam: force {@linkcode bundleSupportsDefine}'s answer (`undefined` re-probes), so one
+ * process can exercise both the `--define` path and the seeded fallback.
+ *
+ * @param supported The answer to return, or `undefined` to clear the override and re-probe.
+ */
+export function __setBundleDefineForTests(supported: boolean | undefined): void {
+  defineSupport = supported === undefined ? undefined : Promise.resolve(supported);
+}
+
+/**
+ * The `define` that gates the class-component runtime (see src/runtime/class-flag.ts): a
+ * literal `true` / `false` for the bare `__DENEXT_CLASS_COMPONENTS__` reads, so an off build
+ * drops the class runtime and an on build drops the flag's `globalThis` default. Shared by the
+ * compat esbuild bundles and the native `deno bundle --define` path.
+ *
+ * @param classComponents Whether class components are compiled in.
+ * @returns The `define` entry.
+ */
+export function classDefine(classComponents?: boolean): Record<string, string> {
+  return { __DENEXT_CLASS_COMPONENTS__: JSON.stringify(!!classComponents) };
+}
+
+/**
+ * The `--define`s of a native client bundle: the class-component gate (on unless
+ * `classRuntime` is `"off"`) and, when `features` is given, the `denext/feature` flag map
+ * (the value the esbuild paths define, so an un-folded `feature()` call reads the configured
+ * flag). Used only when {@linkcode bundleSupportsDefine}; otherwise the Flight entry seeds the
+ * flags ({@linkcode featureSeedBlock}) and the class gate reads its runtime default (on).
+ *
+ * @param opts The bundle's class-runtime mode and feature flags.
+ * @returns The define map, `name → constant source text`.
+ */
+export function nativeBundleDefines(
+  opts: Pick<
+    BundleOptions,
+    | "classRuntime"
+    | "features"
+    | "usesImageBlur"
+    | "usesFormActions"
+    | "usesHrefParams"
+    | "usesHookBoundaries"
+  >,
+): Record<string, string> {
+  return {
+    ...classDefine(opts.classRuntime !== "off"),
+    ...(opts.features ? { __DENEXT_FEATURES__: JSON.stringify(opts.features) } : {}),
+    ...scanGateDefine("__DENEXT_IMAGE_BLUR__", opts.usesImageBlur),
+    ...scanGateDefine("__DENEXT_FORM_ACTIONS__", opts.usesFormActions),
+    ...scanGateDefine("__DENEXT_HREF_PARAMS__", opts.usesHrefParams),
+    ...scanGateDefine("__DENEXT_HOOK_BOUNDARIES__", opts.usesHookBoundaries),
+  };
+}
+
+/**
+ * One build-scan gate's define (see src/globals.d.ts): the scan's answer as a literal, or nothing
+ * when the caller ran no scan (dev, plugins), which keeps the guarded runtime on.
+ */
+function scanGateDefine(name: string, used: boolean | undefined): Record<string, string> {
+  return used === undefined ? {} : { [name]: JSON.stringify(used) };
 }
 
 /**
@@ -541,7 +628,7 @@ const SCAN_SKIP = new Set([".denext", ".git", "node_modules"]);
 /** Project-root folders that hold build output (`denext export`'s default, desktop/mobile builds). */
 const SCAN_SKIP_ROOT = new Set(["out", "dist"]);
 /** The source extensions a feature scan reads. */
-const SCAN_SOURCE = /\.(?:tsx?|jsx?|mjs)$/;
+const SCAN_SOURCE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
 /**
  * The app's source files under `dir`, for the feature scans. Build output is left out: the
@@ -672,6 +759,87 @@ export function appUsesIsoIslands(rootDir: string, extraFiles: string[] = []): P
 }
 
 /**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may render a `next/image` blur
+ * placeholder — the build-time signal that keeps the client boot's clearing of placeholders in
+ * server-only trees (`__DENEXT_IMAGE_BLUR__`). A placeholder needs `placeholder="blur"` (or a
+ * `data:` URL) or a `blurDataURL`, so the scan matches either name: `blurDataURL` anywhere, or a
+ * `placeholder` prop / key whose value is anything but a plain string other than `"blur"` /
+ * `data:…` (an input's `placeholder="Search"` does not count; `placeholder={p}` does). Comments
+ * are not code. npm packages are not scanned (as for every gate): a library that renders a blur
+ * placeholder from a server-only tree leaves it painted behind the loaded image.
+ */
+export function appUsesImageBlur(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => IMAGE_BLUR_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** `blurDataURL`, or a `placeholder` set to anything but a plain non-blur, non-`data:` string. */
+const IMAGE_BLUR_USE =
+  /\bblurDataURL\b|\bplaceholder["']?\s*[=:](?!=)\s*(?!\s)(?!(["'])(?!blur\1|data:)[^"'\n]*\1)/;
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may hand an element a
+ * function-valued form action — the build-time signal that keeps the reconciler's
+ * `<form action={fn}>` / `formAction={fn}` seam (`__DENEXT_FORM_ACTIONS__`). Such a prop can't be
+ * written without naming `action` or `formAction` (JSX, an `h()` props object, a prop passed
+ * down), so the scan matches either name followed by `=` or `:`, or as a shorthand property, in
+ * code. A build that drops the seam reports a function action it meets (error 6) rather than letting
+ * the form submit natively in silence. Comments are not code.
+ * npm packages are not scanned (as for every gate): a library that renders its own `<form>` with
+ * a function action from props it builds needs the app to name `action` once.
+ */
+export function appUsesFormActions(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => FORM_ACTION_USE.test(withoutComments(c)), extraFiles);
+}
+
+/**
+ * `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`), or as
+ * a shorthand property (`{ action }`, `h("form", { formAction, … })`).
+ */
+const FORM_ACTION_USE =
+  /\b(?:formAction|action)["']?\s*[=:](?!=)|[{,]\s*(?:formAction|action)\s*[,}]/;
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may navigate with a route-pattern
+ * href, `{ pathname: "/blog/[slug]", params: { slug } }` — the build-time signal that keeps the
+ * client's filling of the pattern from `params` (`__DENEXT_HREF_PARAMS__`, the route-segment
+ * parser it needs). The pattern has to be written somewhere as text, so the scan matches a string
+ * or template literal holding a `/[name]`, `/[...name]` or `/[[...name]]` segment. Comments are not
+ * code. npm packages are not scanned (as for every gate): a library that builds such a pattern
+ * itself needs the app to write the pattern once.
+ */
+export function appUsesHrefParams(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(
+    rootDir,
+    (c) => HREF_PATTERN_USE.test(withoutComments(c)),
+    extraFiles,
+  );
+}
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may make a function component an
+ * error boundary with Preact's `useErrorBoundary` — the build-time signal that keeps the
+ * reconciler's hook-boundary seam (`__DENEXT_HOOK_BOUNDARIES__`). The app names the hook, or
+ * imports preact-iso (whose `ErrorBoundary` is built on it). Comments are not code. npm packages
+ * are not scanned (as for every gate): a Preact library that calls `useErrorBoundary` itself needs
+ * the app to name it once.
+ */
+export function appUsesHookBoundaries(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => HOOK_BOUNDARY_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** Preact's `useErrorBoundary`, or a preact-iso import (its `ErrorBoundary` uses the hook). */
+const HOOK_BOUNDARY_USE = /\buseErrorBoundary\b|["'](?:denext\/)?preact-iso(?:\/[\w-]+)?["']/;
+
+/** A string or template literal holding a dynamic route segment (`/[id]`, `/[...p]`, `/[[...p]]`). */
+const HREF_PATTERN_USE = /["'`][^"'`\n]*\/\[\[?(?:\.\.\.)?[A-Za-z_$][\w$-]*\]/;
+
+/**
  * Whether any source file under `rootDir` renders a document tag (`<html>`, `<head>`, `<body>`)
  * — the build-time signal that decides if the generated entry installs the host-singleton
  * runtime (see {@linkcode singletonSupportBlock}): only a root layout rendered by client code puts
@@ -740,7 +908,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean, usesLiveView = false) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, readStreamedFlight, setActionCallLoader, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -873,18 +1041,35 @@ function viewTransitionSupportBlock(
 }
 
 /**
- * Seed the `denext/feature` flag map on the CLIENT for the native App Router path. The
- * compat/SPA esbuild paths inline `__DENEXT_FEATURES__` via `define`, but `deno bundle` has
- * no `define`, and the fold only reaches component (`.tsx`/`.jsx`) modules — so a `feature()`
- * call in a plain `.ts` util (or via a namespace import) would otherwise read the empty
- * `globalThis` default and disagree with the (seeded) server render. Seeding here makes the
- * fold a pure DCE optimization: any un-folded call still returns the configured value. Emitted
- * at the top of the entry, before any island module executes. Empty map → nothing emitted (the
- * runtime default `{}` already reads every flag as `false`).
+ * Seed the `denext/feature` flag map on the CLIENT for the native App Router path when the
+ * running `deno bundle` has no `--define` (stock Deno; see {@linkcode bundleSupportsDefine}).
+ * With `--define`, the bundler inlines `__DENEXT_FEATURES__` as the esbuild paths do and this
+ * seed is not emitted. A `feature()` call the fold leaves (a non-literal argument, a namespace
+ * import) would otherwise read the empty `globalThis` default and disagree with the (seeded)
+ * server render. Seeding here makes the fold a pure DCE optimization: any un-folded call still
+ * returns the configured value. Emitted at the top of the entry, before any island module
+ * executes. Empty map → nothing emitted (the runtime default `{}` already reads every flag as
+ * `false`).
  */
 function featureSeedBlock(features: Record<string, boolean>): string {
   if (Object.keys(features).length === 0) return "";
   return `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
+}
+
+/**
+ * {@linkcode featureSeedBlock} for a route (or global-error) entry: the same seed, needed only
+ * when the running `deno bundle` has no `--define`, but as a side-effect `import` of a `data:`
+ * module. A route entry imports the page statically, and ES imports are evaluated before the
+ * entry's own statements, so a page's module-level `feature()` call would otherwise read the
+ * empty default; an import prepended FIRST runs first (see {@linkcode momentumScrollSeedImport}).
+ *
+ * @param features The configured flags (`undefined`: none passed).
+ * @returns The import to prepend, or `""`.
+ */
+async function featureSeedImport(features: Record<string, boolean> | undefined): Promise<string> {
+  if (!features || Object.keys(features).length === 0 || await bundleSupportsDefine()) return "";
+  const code = `globalThis.__DENEXT_FEATURES__=${JSON.stringify(features)};`;
+  return `import ${JSON.stringify(`data:text/javascript,${encodeURIComponent(code)}`)};\n`;
 }
 
 /**
@@ -1033,6 +1218,9 @@ registry.ensure = (flight) => {
   return Promise.all(jobs).then(() => undefined);
 };
 ${enableRefresh}${liveRegister}
+// A Server Action reference in a payload calls through the on-demand action-call chunk (the
+// dispatch and the wire encoder), loaded by the first reference a page revives.
+setActionCallLoader(() => import("denext/action-call"));
 // Register the soft-nav Flight parser so a client navigation to another Flight
 // route reconstructs its tree through this app-wide registry (no bundle re-run) —
 // loading that route's island chunks first.
@@ -1134,12 +1322,38 @@ export interface BundleOptions {
    */
   usesSingletons?: boolean;
   /**
-   * Compile-time feature flags (`features`) to seed on the CLIENT for the native
-   * `deno bundle` path (which has no esbuild `define`). Baked into the flight entry so an
-   * un-folded `feature()` call reads the configured value instead of the empty default. Only
-   * the native flight bundler passes this; compat/SPA seed via `define` instead. Defaults `{}`.
+   * Compile-time feature flags (`features`) for the CLIENT on the native `deno bundle` path,
+   * so an un-folded `feature()` call reads the configured value instead of the empty default.
+   * Passed to `deno bundle --define __DENEXT_FEATURES__=…` when the running Deno supports it
+   * ({@linkcode bundleSupportsDefine}); otherwise the Flight, route and global-error entries seed
+   * them. Only the native App Router bundlers pass this (the dev server's too); compat and SPA
+   * builds handle the flags themselves. Unset: none.
    */
   features?: Record<string, boolean>;
+  /**
+   * Whether the app renders a `next/image` blur placeholder (an {@linkcode appUsesImageBlur}
+   * scan). `false` defines `__DENEXT_IMAGE_BLUR__` off on the `--define` path, so the client boot
+   * carries no placeholder clearing. Unset (no scan): kept.
+   */
+  usesImageBlur?: boolean;
+  /**
+   * Whether the app writes a form action (an {@linkcode appUsesFormActions} scan). `false`
+   * defines `__DENEXT_FORM_ACTIONS__` off on the `--define` path, so the reconciler carries no
+   * function-valued `action` seam. Unset (no scan): kept.
+   */
+  usesFormActions?: boolean;
+  /**
+   * Whether the app writes a route-pattern href (an {@linkcode appUsesHrefParams} scan). `false`
+   * defines `__DENEXT_HREF_PARAMS__` off on the `--define` path, so `Link` / `useRouter` carry no
+   * pattern filling (`{ pathname: "/blog/[slug]", params }`). Unset (no scan): kept.
+   */
+  usesHrefParams?: boolean;
+  /**
+   * Whether the app may use Preact's `useErrorBoundary` (an {@linkcode appUsesHookBoundaries}
+   * scan). `false` defines `__DENEXT_HOOK_BOUNDARIES__` off on the `--define` path, so the
+   * reconciler carries no hook-boundary seam. Unset (no scan): kept.
+   */
+  usesHookBoundaries?: boolean;
   /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
@@ -1158,10 +1372,12 @@ export { generateServerStub } from "./client-imports.ts";
  * @param opts Bundle config + minify flag.
  * @returns The bundled Flight entry (entry file + any dynamic-import chunks).
  */
-export function bundleFlightEntry(
+export async function bundleFlightEntry(
   boundary: BoundaryManifest,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
+  // With `deno bundle --define` the flags are defined (bundleSourceFiles); seed them only without.
+  const seeded = await bundleSupportsDefine() ? {} : opts.features ?? {};
   return bundleSourceFiles(
     generateFlightEntry(
       boundary,
@@ -1172,7 +1388,7 @@ export function bundleFlightEntry(
       opts.classRuntime ?? "lazy",
       opts.usesActivity ?? false,
       opts.usesViewTransition ?? false,
-      opts.features ?? {},
+      seeded,
       opts.usesSingletons ?? true,
       opts.usesLiveView ?? true,
     ),
@@ -1184,6 +1400,12 @@ export function bundleFlightEntry(
       redirects: opts.redirects,
       rewritten: opts.rewritten,
       server: opts.server ?? boundary.server,
+      classRuntime: opts.classRuntime,
+      features: opts.features,
+      usesImageBlur: opts.usesImageBlur,
+      usesFormActions: opts.usesFormActions,
+      usesHrefParams: opts.usesHrefParams,
+      usesHookBoundaries: opts.usesHookBoundaries,
     },
   );
 }
@@ -1365,6 +1587,11 @@ export async function prepareConfig(
     // Isomorphic `client:*` islands: the route entry's install and the island rewrite's
     // stand-in import it, only for an app that writes a directive.
     "denext/iso-island": frameworkFileUrl("src/iso-island.ts"),
+    // Server Actions in the browser: the generated `"use server"` stubs import `denext/action-stub`
+    // and the Flight entry loads `denext/action-call` on demand, each its own entry so the wire
+    // encoder they carry never sits in a startup chunk of an app that makes no call.
+    "denext/action-stub": frameworkFileUrl("src/action-stub.ts"),
+    "denext/action-call": frameworkFileUrl("src/action-call.ts"),
     // The GENERATED entries import their boot/HMR plumbing from `denext/client-runtime`
     // and the dev inspector from `denext/devtools`; an app's own import map need not
     // (and usually does not) list those subpaths, so resolve them against the framework.
@@ -1529,12 +1756,19 @@ interface DenoBundleRun {
   maps: Map<string, string>;
 }
 
+/**
+ * How long one `deno bundle` attempt may run before it is killed and started once more (see
+ * serial-child.ts).
+ */
+const DENO_BUNDLE_DEADLINE_MS = 300_000;
+
 async function runDenoBundle(
   entryPaths: string[],
   configPath: string,
   outDir: string,
   minify: boolean | undefined,
   sourcemap: boolean | undefined,
+  define: Record<string, string> = {},
 ): Promise<DenoBundleRun> {
   const args = [
     "bundle",
@@ -1559,15 +1793,29 @@ async function runDenoBundle(
   // the JS) is still produced and read for its `sources`: the exact module list that
   // survived tree-shaking, which the server-only leak check needs.
   args.push(sourcemap ? "--sourcemap=inline" : "--sourcemap=external");
+  // esbuild `define` source text, one flag per entry (no shell: no quoting).
+  for (const [name, value] of Object.entries(define)) args.push("--define", `${name}=${value}`);
   args.push(...entryPaths);
 
-  const { code, stderr } = await new Deno.Command(denoExecutable(), {
-    args,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (code !== 0) {
-    throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
+  // One `deno bundle` at a time per process, killed at the deadline and started once more when
+  // it stalls (see serial-child.ts). Each attempt starts with no `outDir`, as the first does. The
+  // output goes to `outDir`, so stdout is discarded, and stderr too unless the bundle fails (see
+  // quietThenExplain): a quiet pipe held for the bundle's whole life starves other children's
+  // reads on Windows. Under DENEXT_CHILD_PROBE a stall reports the bundler's debug log and CPU
+  // samples (child-probe.ts).
+  const output = await quietThenExplain((mode) =>
+    retryOnStall("deno bundle", args, async (deadline) => {
+      await Deno.remove(outDir, { recursive: true }).catch(() => {});
+      return await boundedSpawn(
+        denoExecutable(),
+        { args, stdin: "null", stdout: "null", stderr: mode },
+        deadline,
+        "deno bundle",
+      );
+    }, childDeadlineMs(DENO_BUNDLE_DEADLINE_MS))
+  );
+  if (output.code !== 0) {
+    throw new Error(bundleFailureMessage(output.code, new TextDecoder().decode(output.stderr)));
   }
   const files = new Map<string, string>();
   const maps = new Map<string, string>();
@@ -1580,7 +1828,33 @@ async function runDenoBundle(
       maps.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
     }
   }
+  // A chunk whose only `import()` site was tree-shaken after splitting is emitted anyway: no
+  // page can load it, so it is neither written nor shipped.
+  const entries = entryPaths.map((p) => basename(p).replace(/\.[cm]?[jt]sx?$/, ".js"));
+  for (const name of pruneUnreachable(files, entries)) maps.delete(`${name}.map`);
+  if (!sourcemap && analyzeRequested()) await recordBundleAttribution(outDir, files);
   return { files, sources: await bundledSources(outDir, files), maps };
+}
+
+/**
+ * `denext analyze --md` on the native path: attribute each emitted file's bytes to its modules
+ * from its external source map, for the report's per-module breakdown.
+ */
+async function recordBundleAttribution(outDir: string, files: Map<string, string>): Promise<void> {
+  for (const [name, code] of files) {
+    const json = await Deno.readTextFile(join(outDir, `${name}.map`)).catch(() => null);
+    if (json === null) continue;
+    const bytes = new Map<string, number>();
+    for (const [source, n] of attributeBytes(code, json)) {
+      const abs = source.startsWith("file:")
+        ? fromFileUrl(source)
+        : /^[a-z][a-z0-9+.-]+:/i.test(source) // a URL (`jsr:`, `https:`), kept as written
+        ? source
+        : await Deno.realPath(resolve(outDir, source)).catch(() => resolve(outDir, source));
+      bytes.set(abs, (bytes.get(abs) ?? 0) + n);
+    }
+    recordAttribution(name, code, bytes);
+  }
 }
 
 /**
@@ -1699,16 +1973,11 @@ function entryChunkClosure(entryFile: string, files: Map<string, string>): strin
 }
 
 /**
- * The project directory (the config's), realpath'd so it compares and displays against the
+ * The project directory (the config's), canonical so it compares and displays against the
  * realpath'd source-map paths (macOS `/var` vs `/private/var`, a symlinked checkout).
  */
-async function realProjectDir(configPath: string): Promise<string> {
-  const dir = dirname(configPath);
-  try {
-    return await Deno.realPath(dir);
-  } catch {
-    return dir;
-  }
+function realProjectDir(configPath: string): string {
+  return canonicalPath(dirname(configPath));
 }
 
 /**
@@ -1727,11 +1996,16 @@ interface BundleResolution {
   configPath: string;
 }
 
-/** Each shipped path of a rewritten copy → the app module it stands in for (real paths). */
+/**
+ * Each shipped path of a rewritten copy → the app module it stands in for, both canonical: the
+ * copies live in the bundle's temp dir, which `$TMPDIR` can name through a symlink (macOS
+ * `/var` → `/private/var`), while the source maps' paths are real, so as given a copy never
+ * matched and was neither named as its original nor scanned as an app module.
+ */
 function copyOriginals(client: ClientImports): Map<string, string> {
   const out = new Map<string, string>();
   for (const [copy, original] of Object.entries(client.originals)) {
-    out.set(fromFileUrl(copy), fromFileUrl(original));
+    out.set(canonicalPath(fromFileUrl(copy)), canonicalPath(fromFileUrl(original)));
   }
   return out;
 }
@@ -1822,7 +2096,7 @@ async function assertNoServerOnlyLeaks(
   opts: BundleOptions,
   resolution: BundleResolution,
 ): Promise<void> {
-  const projectDir = await realProjectDir(opts.configPath);
+  const projectDir = realProjectDir(opts.configPath);
   const originals = copyOriginals(resolution.client);
   const shippedBy: Array<{ label: string; entry: string; sources: Set<string> }> = [];
   for (const { source, file, path } of entries) {
@@ -1873,6 +2147,11 @@ async function bundleResolution(tmpDir: string, opts: BundleOptions): Promise<Bu
   return { client, configPath };
 }
 
+/** The `--define`s for a native bundle: {@linkcode nativeBundleDefines}, when Deno takes them. */
+async function bundleDefines(opts: BundleOptions): Promise<Record<string, string>> {
+  return await bundleSupportsDefine() ? nativeBundleDefines(opts) : {};
+}
+
 /**
  * A fresh `deno bundle` workspace (after checking the toolchain supports it): a temp dir with
  * an empty `src/` for the entry sources and the `out/` path the bundle writes to. The caller
@@ -1891,14 +2170,29 @@ async function bundleWorkspace(): Promise<{ tmpDir: string; srcDir: string; outD
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
  */
-export async function bundleSourceFiles(
+export function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
+): Promise<BundleOutput> {
+  return bundleEntry(entrySource, opts, "");
+}
+
+/**
+ * {@linkcode bundleSourceFiles} with `prelude` (a seed import) written ahead of the entry. The
+ * leak check still reads `entrySource` itself, which names the generated entry it labels.
+ */
+async function bundleEntry(
+  entrySource: string,
+  opts: BundleOptions,
+  prelude: string,
 ): Promise<BundleOutput> {
   const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   const entryPath = join(srcDir, "entry.tsx");
   try {
-    await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
+    await Deno.writeTextFile(
+      entryPath,
+      prelude + momentumScrollSeed(opts.momentumSafeScroll) + entrySource,
+    );
     const resolution = await bundleResolution(tmpDir, opts);
     const run = await runDenoBundle(
       [entryPath],
@@ -1906,6 +2200,7 @@ export async function bundleSourceFiles(
       outDir,
       opts.minify,
       opts.dev,
+      await bundleDefines(opts),
     );
     const { files } = run;
     const entry = "entry.js";
@@ -1969,10 +2264,10 @@ async function bundleRoutesNow(
     // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
     const bases = routeEntries.map((_, i) => `entry_${i}`);
     const entryPaths = bases.map((b) => join(srcDir, `${b}.tsx`));
+    const prelude = await featureSeedImport(opts.features) +
+      momentumScrollSeed(opts.momentumSafeScroll);
     await Promise.all(
-      routeEntries.map((re, i) =>
-        Deno.writeTextFile(entryPaths[i], momentumScrollSeed(opts.momentumSafeScroll) + re.source)
-      ),
+      routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], prelude + re.source)),
     );
     const resolution = await bundleResolution(tmpDir, opts);
     const run = await runDenoBundle(
@@ -1981,6 +2276,7 @@ async function bundleRoutesNow(
       outDir,
       opts.minify,
       opts.dev,
+      await bundleDefines(opts),
     );
     const { files } = run;
 
@@ -2019,11 +2315,11 @@ async function bundleRoutesNow(
  *   DevTools metadata, appended to a `dev` entry (see {@linkcode GenerateRouteEntryOptions}).
  * @returns The bundled entry and its chunks.
  */
-export function bundleRoute(
+export async function bundleRoute(
   route: PageRoute,
   opts: BundleOptions & { devMetaFooter?: string },
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(
+  return bundleEntry(
     generateRouteEntry(route, {
       dev: opts.dev,
       instrumentationClient: opts.instrumentationClient,
@@ -2035,17 +2331,19 @@ export function bundleRoute(
       devMetaFooter: opts.devMetaFooter,
     }),
     opts,
+    await featureSeedImport(opts.features),
   );
 }
 
 /** Bundle the `global-error.tsx` browser entry on its own (the dev server's on-demand path). */
-export function bundleGlobalError(
+export async function bundleGlobalError(
   globalErrorFile: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  return bundleSourceFiles(
+  return bundleEntry(
     generateGlobalErrorEntry(globalErrorFile, opts.instrumentationClient ?? null),
     opts,
+    await featureSeedImport(opts.features),
   );
 }
 

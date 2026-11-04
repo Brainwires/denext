@@ -18,11 +18,12 @@
  * 64 lists, the oldest dropped first); a failed fetch is remembered for
  * {@linkcode FAILURE_BACKOFF_MS}, so an unreachable distribution point is not hammered.
  *
- * **Failure policy** (`passkeys.attestation.mds.revocation`):
+ * **Failure policy** ({@linkcode CrlCache.check}; the MDS checks apply it once over OCSP and
+ * the CRL together, {@link ./revocation.ts}):
  * - `"require"` — a certificate that names distribution points needs one usable CRL from them,
- *   else the path is refused (fail closed). The default, unless the BLOB is supplied offline.
+ *   else the path is refused (fail closed).
  * - `"best-effort"` — a CRL that can't be fetched or used is skipped (and logged once per URL);
- *   a usable one that lists the certificate still refuses it. The default with `mds.blob`.
+ *   a usable one that lists the certificate still refuses it.
  * - `"off"` — no CRL is fetched.
  *
  * @module
@@ -33,6 +34,9 @@ import { derTime } from "./x509-chain.ts";
 
 /** How a missing CRL is treated (see the module doc). */
 export type RevocationMode = "require" | "best-effort" | "off";
+
+/** What one certificate's revocation status was found to be (by a CRL or an OCSP answer). */
+export type RevocationStatus = "good" | "revoked" | "unknown";
 
 /** What a revocation check needs to fetch. */
 export interface RevocationOptions {
@@ -309,7 +313,30 @@ export class CrlCache {
   }
 
   /**
-   * Check one certificate of a validated path against its issuer's CRL.
+   * The status one certificate of a validated path has in its issuer's CRL.
+   *
+   * @param cert The certificate.
+   * @param issuerSpki Its issuer's SubjectPublicKeyInfo.
+   * @param now The validation time, epoch ms.
+   * @returns `revoked` when a usable CRL lists it, `good` when one doesn't, `unknown` when no
+   *   distribution point gave a usable CRL.
+   */
+  async status(
+    cert: RevocableCertificate,
+    issuerSpki: Uint8Array,
+    now: number,
+  ): Promise<RevocationStatus> {
+    for (const url of cert.crlUrls) {
+      const crl = await this.load(url, now);
+      if (!crl || !(await this.usable(crl, cert, issuerSpki, now))) continue;
+      return crl.revoked.has(hex(cert.serial)) ? "revoked" : "good";
+    }
+    return "unknown";
+  }
+
+  /**
+   * Check one certificate of a validated path against its issuer's CRL, under this cache's
+   * failure policy.
    *
    * @param cert The certificate.
    * @param issuerSpki Its issuer's SubjectPublicKeyInfo.
@@ -318,14 +345,9 @@ export class CrlCache {
    */
   async check(cert: RevocableCertificate, issuerSpki: Uint8Array, now: number): Promise<void> {
     if (this.options.mode === "off" || cert.crlUrls.length === 0) return;
-    for (const url of cert.crlUrls) {
-      const crl = await this.load(url, now);
-      if (!crl || !(await this.usable(crl, cert, issuerSpki, now))) continue;
-      if (crl.revoked.has(hex(cert.serial))) {
-        throw new RevocationError("a certificate in the path is revoked");
-      }
-      return;
-    }
+    const status = await this.status(cert, issuerSpki, now);
+    if (status === "revoked") throw new RevocationError("a certificate in the path is revoked");
+    if (status === "good") return;
     if (this.options.mode === "require") {
       throw new RevocationError("no usable CRL for a certificate in the path");
     }

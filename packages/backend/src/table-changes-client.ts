@@ -47,8 +47,9 @@ export interface UseTableChangesOptions<Row> {
   /** Called with each batch of changes, in commit order. */
   onChange?: (changes: TableChange<Row>[]) => void;
   /**
-   * Called when changes may have been missed (a reconnect, a burst too large, the server's
-   * database connection dropped): re-read the rows and pass them as `initial`.
+   * Called when changes may have been missed (a reconnect the server could not replay, a burst
+   * too large, the server's database connection dropped): re-read the rows and pass them as
+   * `initial`.
    */
   onResync?: () => void;
 }
@@ -75,6 +76,13 @@ export interface TableChangesState<Row> {
   /** The failure, when `status` is `error`. */
   error?: TableChangesError;
 }
+
+/**
+ * How long a re-subscribe after a reconnect waits for the server's `resumed` (or `resync`)
+ * before treating the subscription as lost: the server answers in the same flush as its
+ * acknowledgement, so only a subscription it no longer holds (or a very slow link) reaches this.
+ */
+const RESUME_WAIT_MS = 10_000;
 
 /** The text key of a row. */
 function keyOf(row: unknown, column: string): string {
@@ -127,10 +135,12 @@ export function applyTableChanges<Row>(
  * }
  * ```
  *
- * Delivery is at-most-once: after a reconnect or a lost frame `stale` turns true (and
- * `onResync` runs) — re-read and pass the rows as `initial`. Rows are kept in arrival order;
- * sort them when you render. A row too large for one frame arrives with `truncated: true` and no
- * `row`: re-read it.
+ * After a reconnect the server replays what this viewer missed while the connection was down
+ * (re-read under their policies), when it still holds the subscription and its journal covers
+ * the gap (`realtime({ replay })`, 60 seconds by default). Otherwise — or after a lost frame —
+ * `stale` turns true (and `onResync` runs): re-read and pass the rows as `initial`. Rows are kept
+ * in arrival order; sort them when you render. A row too large for one frame arrives with
+ * `truncated: true` and no `row`: re-read it.
  *
  * @param table A table from `realtime({ tables })`.
  * @param options `filter`, `events`, `schema`, `initial`, `key`, `enabled`, `onChange`, `onResync`.
@@ -183,17 +193,23 @@ export function useTableChanges<Row = Record<string, unknown>>(
     }
     let lastSeq = 0;
     let readies = 0;
+    let resumeTimer: ReturnType<typeof setTimeout> | undefined;
     const markStale = () => {
       setState((s) => ({ ...s, stale: true }));
       callbacks.current.onResync?.();
     };
-    return subscribeChannel(
+    const settleResume = () => {
+      clearTimeout(resumeTimer);
+      resumeTimer = undefined;
+    };
+    const unsubscribe = subscribeChannel(
       REALTIME_CHANNEL_ID,
       key,
       (value) => {
         const frame = value as TableChangesFrame<Row>;
         const gap = lastSeq !== 0 && frame.seq !== lastSeq + 1;
         lastSeq = frame.seq;
+        if (frame.resumed || frame.resync) settleResume();
         if (frame.resync || gap) markStale();
         const wanted = callbacks.current.events;
         const changes = (frame.changes ?? []).filter((change) =>
@@ -216,12 +232,22 @@ export function useTableChanges<Row = Record<string, unknown>>(
           error: { code: info.code, message: info.reason ?? info.code },
         })),
       () => {
-        // A second acknowledgement is a re-subscribe after a reconnect: changes made while the
-        // socket was down were not delivered.
-        if (++readies > 1) markStale();
+        // A second acknowledgement is a re-subscribe after a reconnect: the server answers with
+        // `resumed` (what was missed follows) or `resync`; silence means it lost the subscription.
+        if (++readies > 1) {
+          settleResume();
+          resumeTimer = setTimeout(() => {
+            resumeTimer = undefined;
+            markStale();
+          }, RESUME_WAIT_MS);
+        }
         setState((s) => (s.status === "idle" ? { ...s, status: "subscribed" } : s));
       },
     );
+    return () => {
+      settleResume();
+      unsubscribe();
+    };
     // deno-lint-ignore no-explicit-any
   }, [table, options.schema, filterKey, eventsKey, enabled, column] as any);
 

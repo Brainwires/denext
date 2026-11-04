@@ -4,8 +4,9 @@
  * complete bundle directory (the `.exe`, its `.dll`s, and resources); this builds one or
  * both arches, Authenticode-signs every PE file in the bundle (the `.exe`, its `.dll`s, any
  * `.node`) when a code-signing certificate is provided, and
- * wraps each bundle in its installers (an `.msi` by default). Signing only runs where
- * `signtool` is available (Windows) and a cert is configured.
+ * wraps each bundle in its installers (an `.msi` by default). Signing needs `signtool`
+ * (Windows SDK): with a certificate configured and no signtool the run fails rather than ship an
+ * unsigned app (`--no-sign` builds unsigned on purpose).
  *
  *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign] [--format <list>]
  *
@@ -34,14 +35,16 @@
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
+ *   DENEXT_WINDOWS_CERT_THUMBPRINT a certificate in the Windows store instead of a .pfx.
  *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
  *   deno.json `version` is the MSI ProductVersion (numeric major.minor.build); denext.config.ts
  *   `desktop.installers.publisher` its Manufacturer.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
- * Deno version it was built for (`deno upgrade --version 2.9.7`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ * Deno version it was built for (`deno upgrade --version 2.9.8`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead, on a stock Deno CLI only
+ *                                    (DENEXT_DENO=stock; none of the above works)
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
@@ -92,7 +95,9 @@ const {
   desktopToolGate,
   desktopWindowsTargetNote,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   prepareDesktopPackage,
+  stampDesktopWindowsBundle: stampTreeManifest,
 } = await import("denext/desktop");
 
 const TARGETS: Record<string, string> = {
@@ -104,7 +109,8 @@ const TARGETS: Record<string, string> = {
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const OS = "windows";
 
-/** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon). */
+/** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon); its tree
+ * manifest is written by packageArch, after the VC++ runtime lands. */
 async function buildBundle(
   name: string,
   arch: "x86_64" | "arm64",
@@ -113,11 +119,13 @@ async function buildBundle(
     target: TARGETS[arch],
     out: `dist/${name}-${LABELS[arch]}`,
     icons: ["icons/app.ico", "desktop-icon.ico"],
+    treeManifest: false,
   });
 }
 
 /** Authenticode-sign `files` with DENEXT_WINDOWS_CERT through `signtool`, batched; without a
- * certificate or signtool, skip with a warning (see desktopSignWindows). Whether they were signed. */
+ * certificate, skip with a warning; with one but no signtool, fail (see desktopSignWindows).
+ * Whether they were signed. */
 async function sign(files: string[]): Promise<boolean> {
   return await desktopSignWindows(files);
 }
@@ -188,6 +196,9 @@ async function packageArch(
   // The VC++ runtime app-local (only the DLLs this arch imports, each checked to be its machine
   // type), so the target needs no redistributable; a warning names the one it needs otherwise.
   const vcBundled = await bundleDesktopVcRuntime(dir, arch);
+  // The tree manifest: the last write to the bundle, so it lists the VC++ DLLs signed or not
+  // (signing writes it again with the signed bytes before it signs the .exe).
+  await stampTreeManifest(import.meta.url, dir);
   if (signing) {
     await signBundle(dir, `${name}-${LABELS[arch]}.exe`, meta.backend);
   }
@@ -236,4 +247,4 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

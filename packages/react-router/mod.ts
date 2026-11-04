@@ -16,6 +16,7 @@
 //   export default { plugins: [reactRouter()] };
 
 import type { CommandSpec, DenextPlugin, PluginContext } from "@denext/denext/plugin-kit";
+import type { LoadContextProvider } from "@denext/denext/remix/server";
 import { join } from "@std/path";
 import { generateRoutes } from "./src/generate.ts";
 import { generateRouteTypes } from "./src/typegen.ts";
@@ -28,6 +29,13 @@ export type { ReactRouterConfig } from "./src/load-config.ts";
 export type { PrerenderConfig } from "./src/prerender.ts";
 export type { RouteNode } from "./src/route-tree.ts";
 export type { RouteConfig, RouteConfigEntry } from "./routes.ts";
+export type {
+  AppLoadContext,
+  LoadContextArgs,
+  LoadContextProvider,
+  RouterContext,
+  RouterContextProvider,
+} from "@denext/denext/remix/server";
 
 /** Options for {@link reactRouter}. */
 export interface ReactRouterOptions {
@@ -38,6 +46,15 @@ export interface ReactRouterOptions {
   appDirectory?: string;
   /** The routes config module relative to the app directory (default `routes.ts`). */
   routesFile?: string;
+  /**
+   * React Router's `getLoadContext`: computes, once per request, the `context` every loader,
+   * action and route middleware receives. Return a plain object (its properties are
+   * `context.x`) or a `RouterContextProvider` (`context.get(key)`); with none, each request
+   * starts with an empty `RouterContextProvider`. A `load-context.ts` module calling
+   * `defineLoadContext` (from `denext/remix/server`, imported by `instrumentation.ts`) does
+   * the same outside the config.
+   */
+  getLoadContext?: LoadContextProvider;
 }
 
 const CONFIG_FILES = [
@@ -57,6 +74,11 @@ export function reactRouter(options: ReactRouterOptions = {}): DenextPlugin {
   return {
     name: "@denext/react-router",
     async setup(ctx: PluginContext) {
+      if (options.getLoadContext) {
+        // Registered on the runtime's process-wide slot; loaded only when the app has one.
+        const { defineLoadContext } = await import("@denext/denext/remix/server");
+        defineLoadContext(options.getLoadContext);
+      }
       const rrConfig = resolveReactRouterConfig(
         await loadFirst(ctx, ctx.projectRoot, CONFIG_FILES),
       );

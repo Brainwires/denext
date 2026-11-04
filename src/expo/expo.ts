@@ -38,7 +38,8 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { Component } from "../jsx/types.ts";
 import { createRoot } from "../client/mod.ts";
 import type { DependencyList } from "../compat/react-types.ts";
-import { useEffect, useInsertionEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useInsertionEffect } from "../runtime/hooks/use-insertion-effect.ts";
 import {
   CodedError,
   createPermissionHook,

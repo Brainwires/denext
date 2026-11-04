@@ -133,6 +133,33 @@ export function biometricPlugin(): BiometricPlugin | undefined {
   ]);
 }
 
+/** Every {@linkcode BiometricErrorCode}, which denext's own native secret store rejects with. */
+const ERROR_CODES: readonly string[] = [
+  "cancelled",
+  "fallback",
+  "lockout",
+  "not-enrolled",
+  "unavailable",
+  "passcode-not-set",
+  "failed",
+  "unsupported",
+] satisfies readonly BiometricErrorCode[];
+
+/**
+ * A rejection of denext's native biometric secret store (`DenextSettings.biometricSecret*`) as a
+ * {@linkcode BiometricError}: its code when it already is one, else the plugin's mapping (`failed`
+ * for anything unknown). Internal to `denext/mobile`.
+ */
+export function nativeBiometricError(err: unknown, fn: string): BiometricError {
+  const raw = typeof err === "object" && err !== null
+    ? (err as { code?: unknown }).code
+    : undefined;
+  const code = typeof raw === "string" && ERROR_CODES.includes(raw)
+    ? raw as BiometricErrorCode
+    : codeOf(raw);
+  return biometricError(code, `${fn}: ${err instanceof Error ? err.message : String(err)}`);
+}
+
 /** A native error code as a {@linkcode BiometricErrorCode} (anything unknown is `failed`). */
 function codeOf(raw: unknown): BiometricErrorCode {
   return typeof raw === "string" && Object.hasOwn(NATIVE_CODES, raw) ? NATIVE_CODES[raw] : "failed";

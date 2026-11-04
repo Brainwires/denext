@@ -38,6 +38,7 @@ async function inProject(fn: (dir: string) => Promise<void>): Promise<void> {
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "out/index.html": "<!doctype html>\n",
     [PBXPROJ]: PBXPROJ_FIXTURE,
     "ios/App/App/Info.plist":
@@ -68,7 +69,7 @@ Deno.test("mobile add storage: DenextStorage on iOS + Android, registered, idemp
     }
     assert(!report.written.includes(ANDROID_CIPHER), "no SQLCipher without --encrypted");
     const ios = await read(dir, IOS);
-    assert(ios.startsWith("// denext-storage-template: 2 sha256="));
+    assert(ios.startsWith("// denext-storage-template: 3 sha256="));
     assertStringIncludes(ios, 'jsName = "DenextStorage"');
     assertStringIncludes(await read(dir, IOS_STORE), "import SQLite3");
     assert(!(await read(dir, PBXPROJ)).includes("SQLCipher"));

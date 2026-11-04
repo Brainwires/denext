@@ -10,6 +10,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { act, createTestApp, createTestClient, render, waitFor } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const REPO = new URL("../", import.meta.url);
 const DOC = "site/app/docs/tutorial/content.md";
@@ -104,16 +105,14 @@ Deno.test("docs: the tutorial's island chapter type-checks, keeps the no-JS path
   Deno.env.set("SESSION_SECRET", "tutorial-islands-test-secret-0123456789");
   try {
     await t.step("the snippets type-check against the framework", async () => {
-      const out = await new Deno.Command(Deno.execPath(), {
+      const out = await boundedOutput(Deno.execPath(), {
         args: [
           "check",
           "--config",
           join(dir, "deno.json"),
           ...blocks.map((b) => join(dir, b.path)),
         ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      });
       assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));
     });
 

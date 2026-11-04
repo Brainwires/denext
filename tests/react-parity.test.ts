@@ -13,17 +13,24 @@
 // then add/adjust waivers as needed. `deno task parity:drift` previews upstream changes
 // without writing.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
-import { assertCatalogMatchesExports, CATALOG } from "../scripts/parity/spec.ts";
-import { extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
+import { assertCatalogMatchesExports, CATALOG, readBaselines } from "../scripts/parity/spec.ts";
+import { docFor, extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.ts";
 import { WAIVERS } from "../scripts/parity/waivers.ts";
 import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
+import { watchTests } from "./helpers/watchdog.ts";
+import { DenoChildStallError } from "../scripts/deno-doc.ts";
+
+// The surface extraction runs `deno doc` children from this process, one per catalog module,
+// serially: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails it at the deadline, naming the
+// `deno doc` it waits on, instead of holding the CI job. About 20 s on a healthy runner but more
+// than 10 minutes on a machine at load 400, so the deadline is 30 minutes rather than the default.
+watchTests(1_800_000);
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
-const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
 
 interface Ledger {
@@ -31,7 +38,8 @@ interface Ledger {
 }
 
 async function loadBaseline(): Promise<Baseline> {
-  return JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;
+  // The React/Next baseline plus the Preact one (tests/fixtures/preact-surface.baseline.json).
+  return await readBaselines(ROOT);
 }
 
 async function loadKnownGaps(): Promise<Set<string>> {
@@ -79,4 +87,35 @@ Deno.test("parity: denext surface matches React/ReactDOM/Next", async (t) => {
       assert(result.ok, "\n" + formatReport(result));
     });
   }
+});
+
+Deno.test("parity: a deno doc past its deadline is killed, retried once and named, not awaited forever", async () => {
+  const file = `${ROOT}/src/compat/react-version.ts`;
+  // A child that can't finish in time: it beats a heartbeat file until killed. A real `deno doc`
+  // with a 1 ms deadline raced it, and lost whenever the thread was held between the spawn and the
+  // timer for longer than the `deno doc` ran (a CI macos-tests failure).
+  const beat = await Deno.makeTempFile({ prefix: "denext-parity-beat-" });
+  try {
+    const stub = `let n = 0; setInterval(() => Deno.writeTextFileSync(${
+      JSON.stringify(beat)
+    }, String(++n)), 25);`;
+    const err = await assertRejects(
+      () => docFor(file, 1_500, ["eval", stub]),
+      DenoChildStallError,
+    );
+    assert(
+      / stalled: still running after 1\.5 s on each of 2 attempts/.test(err.message),
+      err.message,
+    );
+    // Killed, not left running: the heartbeat stops.
+    await new Promise((r) => setTimeout(r, 500));
+    const before = await Deno.readTextFile(beat);
+    await new Promise((r) => setTimeout(r, 500));
+    assertEquals(await Deno.readTextFile(beat), before, "the timed-out child is still running");
+  } finally {
+    await Deno.remove(beat).catch(() => {});
+  }
+  // With room to finish it reads the module's symbols.
+  const syms = await docFor(file);
+  assert(syms.some((s: { name?: string }) => s.name === "REACT_COMPAT_VERSION"));
 });

@@ -115,8 +115,11 @@ await runDesktop({
         {" "}
         pushes an event to the page, where <code>onDesktopEvent(cap, event, handler)</code> from
         {" "}
-        <code>denext/desktop/client</code>{" "}
-        receives it. An event emitted before the page subscribes is kept and delivered then:
+        <code>denext/desktop/client</code> receives it (a fourth argument,{" "}
+        <code>{"{ window: id }"}</code>, sends it to one window). An extension module emits through
+        its own <code>setup</code>{" "}
+        host instead (<a href="#desktop-extension-events">below</a>). An event emitted before the
+        page subscribes is kept and delivered then:
       </p>
       <Code lang="ts">
         {`const { emit } = await runDesktop({
@@ -207,6 +210,55 @@ export default {
           Linux, written to <code>.deno-desktop/</code>. Only an app with no icon at all gets{" "}
           <code>deno desktop</code>&apos;s generic one. A configured icon that does not exist fails
           the build.
+        </li>
+      </ul>
+      <h3 id="desktop-backend">The window engine, per OS</h3>
+      <p>
+        <code>desktop.backend</code> picks the engine <code>deno desktop</code>{" "}
+        builds the window with: <code>"webview"</code>{" "}
+        (the default: the system WebView, WKWebView on macOS, WebView2 on Windows, WebKitGTK on
+        Linux) or <code>"cef"</code> (Chromium, bundled with the app). In{" "}
+        <code>denext.config.ts</code>{" "}
+        it takes one engine for every target, or one per OS with the keys{" "}
+        <code>desktop.installers</code> uses (<code>macos</code>, <code>windows</code>,{" "}
+        <code>linux</code>, and <code>default</code>{" "}
+        for an OS left out). An app that needs WebRTC on Linux, where no distribution builds
+        WebKitGTK with it, ships Chromium there and the system WebView elsewhere:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    backend: { linux: "cef" }, // macOS and Windows: "webview"
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          Each build resolves it for its own target: the package scripts pass <code>--backend</code>
+          {" "}
+          to <code>deno desktop</code>{" "}
+          for the OS they package, fetch that target&apos;s runtime flavour, and gate the CEF-only
+          steps (the Windows CEF signature check and target note, the Linux packages&apos;
+          dependencies) on it; <code>denext desktop run</code> and <code>dev</code>{" "}
+          use the host&apos;s; <code>denext desktop doctor</code> and <code>denext doctor</code>
+          {" "}
+          check the host&apos;s (the Keychain cookie store, the CEF sandbox).
+        </li>
+        <li>
+          deno.json&apos;s <code>desktop.backend</code>{" "}
+          still works as one engine for every target, and is used when the config sets none.{" "}
+          <code>deno desktop</code>{" "}
+          reads that key itself and takes only a string there, so a per-OS object belongs in{" "}
+          <code>denext.config.ts</code>; one in deno.json is refused with that fix.
+        </li>
+        <li>
+          A <code>scripts/package-macos.ts</code> written before per-OS backends passes no{" "}
+          <code>--backend</code>: both doctors flag it, and <code>denext desktop package</code>{" "}
+          refuses to run it while the config gives macOS an engine other than deno.json&apos;s (it
+          would fetch one engine&apos;s runtime and build the other). Regenerate it with{" "}
+          <code>denext desktop package --regenerate-scripts</code>. The Linux and Windows builds
+          read it through <code>denext/desktop</code>.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
@@ -321,9 +373,10 @@ denext desktop dev --inspect-renderer=127.0.0.1:9339  # on a port of your choice
         profile. With no address it picks a free loopback port. It prints the endpoint before the
         window opens and, on the Chrome DevTools Protocol, the page&apos;s{" "}
         <code>webSocketDebuggerUrl</code> and a <code>devtools://</code>{" "}
-        URL to open in Chrome once the page has loaded. What it opens depends on the webview backend
-        (deno.json <code>desktop.backend</code>), with the same environment the runtime&apos;s own
-        {" "}
+        URL to open in Chrome once the page has loaded. What it opens depends on the host&apos;s
+        backend (<a href="#desktop-backend">
+          <code>desktop.backend</code>
+        </a>), with the same environment the runtime&apos;s own{" "}
         <code>deno desktop --inspect-renderer</code> sets:
       </p>
       <table class="table">
@@ -778,6 +831,22 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         backend (WKWebView) keeps cookies in WebKit&apos;s own store; on Windows CEF uses DPAPI (
         <code>"os"</code>).
       </p>
+      <p id="desktop-cef-macos-x64-quit">
+        <strong>Known issue: CEF on an Intel Mac at quit.</strong>{" "}
+        Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
+        own teardown when it quits, about once in 5,600 launches. The app has already finished by
+        then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
+        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
+        next runtime.
+      </p>
+      <p>
+        The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
+        event may be absent: under CEF on a Wayland compositor without data-control,{" "}
+        <code>capabilities().changeEvents</code> is <code>false</code>{" "}
+        from runtime 3.0.0-denext.8 and the event never fires. Check it before relying on the event.
+        denext&apos;s <code>clipboard</code>{" "}
+        capability reads and writes without it, so it needs no change.
+      </p>
       <p>
         Linux&apos;s <code>clipboard</code>{" "}
         works whether or not the app has focus (on Wayland too), so an app in the background reads
@@ -1006,7 +1075,11 @@ denext desktop package --target-os windows --format msi,zip`}
 import { openAuthSession, runtimePlatform } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const desktop = runtimePlatform() === "desktop";
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set(
@@ -1014,6 +1087,8 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // required: pkce_required otherwise
+  authorize.searchParams.set("code_challenge_method", "S256");
   // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
@@ -1036,13 +1111,22 @@ export async function signIn() {
         </li>
         <li>
           <strong>
-            PKCE and <code>state</code> are your job,
+            PKCE S256 and <code>state</code> are required,
           </strong>{" "}
-          here more than anywhere. Any process on the machine can connect to the loopback port, and
-          the first request to the callback path wins, so a local program that finds the port can
-          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
-          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
-          is useless without your verifier.
+          here more than anywhere. Any process on the machine can connect to the loopback port, so a
+          local program that finds it can race a forged redirect in before the real browser (RFC
+          8252 §8.1). The runtime listens on <code>127.0.0.1</code> and <code>::1</code>{" "}
+          alike, on one port (IPv4 alone on a host without IPv6), so no other program can hold the
+          address a browser tries first. When the authorization URL carries a{" "}
+          <code>state</code>, only a callback with that exact <code>state</code>{" "}
+          completes the session; any other gets an error page and the session keeps waiting. The
+          authorization URL must carry a <code>code_challenge</code> and{" "}
+          <code>code_challenge_method=S256</code>, so an intercepted <code>code</code>{" "}
+          is useless without your verifier; without them the runtime refuses the session with{" "}
+          <code>pkce_required</code>, as on every other platform. A provider that binds the code to
+          the client another way takes <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, and then the URL must carry a <code>state</code>. Generate{" "}
+          <code>state</code> and re-check it on the callback too.
         </li>
         <li>
           <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
@@ -1073,10 +1157,11 @@ export async function signIn() {
   loopbackPort: 1455,      // redirect_uri: http://localhost:1455/auth/callback
 });`}
           </Code>
-          The listener binds <code>127.0.0.1</code> (<code>::1</code> for a <code>[::1]</code>{" "}
-          redirect; browsers reach a <code>localhost</code>{" "}
-          redirect over IPv4 when nothing answers on IPv6). If another program holds the port, the
-          call rejects <code>port_in_use</code>{" "}
+          The listener binds both <code>127.0.0.1</code> and <code>::1</code> on that port, so a
+          {" "}
+          <code>localhost</code>{" "}
+          redirect reaches it whichever address the browser tries (RFC 8252 §7.3). If another
+          program holds the port on either address, the call rejects <code>port_in_use</code>{" "}
           before the browser opens: ask the user to quit the other program (often another sign-in
           tool for the same provider) and retry. RFC 8252 allows a fixed port, but a known port is
           easier for a local program to take first, so <code>state</code>{" "}
@@ -1318,8 +1403,21 @@ export default {
           is required and must name the relying party your passkeys belong to (the instance's
           application domain, which is not the Frontend API host the publishable key encodes, so
           denext does not guess it); <code>passkeys: true</code>{" "}
-          is a config error, and an empty list refuses every request. On macOS the app's signature
-          needs the <code>com.apple.developer.associated-domains</code> entitlement{" "}
+          is a config error, and an empty list refuses every request.{" "}
+          <code>denext desktop add passkeys --rp-id clerk.example.com</code> writes the list (repeat
+          {" "}
+          <code>--rp-id</code>{" "}
+          for more; each must be a registrable domain, with no scheme, port or path, and a later run
+          adds to the list); without it the capability is added with an empty list. The list is
+          enforced twice: by the capability, and natively by the window&apos;s backend, which reads
+          it from the packaged <code>laufey-launch.json</code>{" "}
+          (<code>"passkeyRpIds"</code>) and refuses any other RP ID before the OS sees it. From
+          runtime 3.0.0-denext.1 that file also carries{" "}
+          <code>"strictPolicy": true</code>, so a launch file without the list fails closed: every
+          ceremony is <code>invalid_rp</code>. <code>denext doctor</code> and{" "}
+          <code>denext desktop doctor</code> flag passkeys enabled with no{" "}
+          <code>rpIds</code>. On macOS the app's signature needs the{" "}
+          <code>com.apple.developer.associated-domains</code> entitlement{" "}
           (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
           <code>apple-app-site-association</code> must list{" "}
           <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>
@@ -1345,6 +1443,15 @@ export default {
           <code>not_supported</code>: Linux has none). Otherwise (an older runtime, or a host
           without the library) it reports none, Clerk does not offer them, and the hosted browser
           sign-in is the way to use one.
+        </li>
+        <li>
+          On macOS the first passkey request after login can take noticeably longer than later ones:
+          about 0.5 s on Apple silicon and up to 2.5 s on Intel, measured on fresh CI machines. It
+          does not depend on the window backend. macOS starts its AuthenticationServices agent on
+          demand for that first request; later requests, from any app while the agent is running,
+          start in a few milliseconds. Your page stays responsive the whole time. Don&apos;t put a
+          short timeout on the first ceremony, and show your own pending state if you start one
+          without a user gesture.
         </li>
       </ul>
 
@@ -1428,8 +1535,9 @@ try {
         </li>
         <li>
           <code>applyDesktopUpdate(version, config)</code>{" "}
-          re-verifies the staged files and flips the active pointer with an atomic rename. The page
-          that is running keeps running; the next launch serves the new UI.
+          re-verifies the staged files, the sequence and the expiry, flips the active pointer with
+          an atomic rename, and deletes any other staged version. The page that is running keeps
+          running; the next launch serves the new UI.
         </li>
         <li>
           <code>desktopUpdateStatus(config)</code> reports <code>current</code>,{" "}
@@ -1461,7 +1569,26 @@ try {
         {" "}
         is not strictly greater than the highest one accepted, or that has none after a sequenced
         release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
-        default Unix time does that).
+        default Unix time does that). The bundled export's own manifest sequence is the floor before
+        any overlay was accepted, so an overlay older than the UI the app ships is refused. That is
+        why <code>denext desktop package</code> refuses an app with <code>desktop.update.ui</code>
+        {" "}
+        whose export has no <code>_denext/ota.json</code> with a{" "}
+        <code>sequence</code>: stamp a signed one with <code>spa.ota: true</code> and{" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code>, or run{" "}
+        <code>denext ota manifest out --sign ota.key</code> after the export.
+      </p>
+      <p>
+        <strong>Releases expire.</strong> <code>denext ota manifest --sign</code> stamps a signed
+        {" "}
+        <code>expiresAt</code> (30 days, or <code>--expires-in</code> /{" "}
+        <code>--expires-at</code>). From then on <code>checkForDesktopUpdate</code> and{" "}
+        <code>prepareDesktopUpdate</code>{" "}
+        refuse the manifest (<code>expired</code>), even when it names the overlay already running,
+        so a feed stuck on an old release is reported instead of read as "no update"; re-sign the
+        live release before then. An app whose bundled export's manifest carries an expiry also
+        refuses a release without one (<code>expired</code>); one bundled by older tooling keeps
+        taking them.
       </p>
       <p>
         <strong>The export is for this OS.</strong> A manifest that names another target (
@@ -1472,11 +1599,42 @@ try {
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
       <p>
+        <strong>The release is for this app.</strong> With <code>desktop.app.identifier</code>{" "}
+        set (which <code>desktop.update.ui</code> requires, and <code>runDesktop</code>{" "}
+        passes as the updater&apos;s <code>appId</code>), a manifest must name the app in its signed
+        {" "}
+        <code>appId</code> (its own{" "}
+        <code>appSignature</code>, payload v5): another app&apos;s release, or one that names no
+        app, is refused (<code>app_mismatch</code>), so a signing key shared by several apps cannot
+        move one app&apos;s UI onto another. A signed desktop <code>spa.ota</code> export stamps
+        {" "}
+        <code>desktop.app.identifier</code>; for a manifest written by{" "}
+        <code>denext ota manifest</code>, pass <code>--app-id &lt;identifier&gt; --sign</code>.
+      </p>
+      <p>
         <strong>Tied to the app it was installed over.</strong>{" "}
         The overlay folder records which bundled export the overlay belongs to (the export&apos;s
         stamped version, else its <code>index.html</code>{" "}
         hash). When the app itself is replaced (a full-app update, a reinstall), the next launch
         drops every overlay and staged version and serves the new app&apos;s own UI.
+      </p>
+      <p>
+        <strong>Verified on every launch and every read.</strong>{" "}
+        Each launch checks the active overlay again: its manifest&apos;s signature, every
+        file&apos;s SHA-256, and that the folder holds nothing else (an extra file or a symbolic
+        link fails). The window then reads each overlay file through the updater, which checks it
+        against the manifest when it is served: hashed the first time, and again whenever the
+        file&apos;s inode, size or change time moves. So a file another program adds or edits in the
+        overlay folder is never served, and the <code>desktop.preload</code>{" "}
+        comes only from a file the manifest lists. An overlay that fails is rolled back like one
+        that failed to boot (<code>rejected</code>, its folder deleted) and the bundled UI is
+        served; a read error (a permission, I/O) skips it for that launch only. The overlay folder,
+        a custom <code>dataDir</code> included, is out of reach of the page&apos;s <code>fs</code>,
+        {" "}
+        <code>shell</code> and <code>window</code>{" "}
+        capabilities. A server of your own takes the overlay from{" "}
+        <code>openDesktopUi(bundledOut, config)</code> and reads its files with{" "}
+        <code>overlay.read(path)</code>, not from its folder.
       </p>
       <p>
         <strong>Rollback.</strong> An applied version starts{" "}
@@ -1733,10 +1891,33 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes. <code>denext desktop package</code>{" "}
-        warns when a script is stale: one from before denext 3.1 builds on the stock runtime, and a
+        warns when a script is stale: one from before denext 3.1 builds on the stock runtime.{" "}
+        <code>desktopRuntimeDenoFlags</code> gives a build on a pinned runtime before{" "}
+        <code>3.0.0-rc.5</code> its <code>--unstable-no-legacy-abort</code>; from{" "}
+        <code>3.0.0-rc.5</code> that behavior is the runtime&apos;s default and it returns none.
+      </Callout>
+      <Callout kind="note">
+        <strong>The network grant by direction.</strong>{" "}
+        On the pinned runtime (3.0.0-rc.2 and later, built by denext&apos;s toolchain) the packaging
+        scripts and <code>desktop run</code> / <code>dev</code> bake{" "}
+        <code>--allow-net-connect</code> and <code>--allow-net-listen</code> in place of one{" "}
+        <code>--allow-net</code>: the app listens only on loopback (
+        <code>127.0.0.1</code>,{" "}
+        <code>localhost</code>, on the port it picks at launch) and connects to loopback plus the
+        hosts it needs (a non-loopback <code>spa.proxy</code> target, the update hosts,{" "}
+        <code>dev --lan</code>&apos;s dev server). A dependency can no longer open a listener of its
+        own. <code>desktop.extraPermissions.net</code> (and a sidecar&apos;s{" "}
+        <code>permissions.net</code>) still grants both directions; <code>netConnect</code> /{" "}
+        <code>netListen</code> grant one. <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local{" "}
+        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build or a stock <code>deno</code> keep the single
         {" "}
-        <code>scripts/package-macos.ts</code> that does not call{" "}
-        <code>desktopRuntimeDenoFlags</code> builds without <code>--unstable-no-legacy-abort</code>.
+        <code>--allow-net</code>, with the directional hosts folded into it. A hand-written
+        packaging script derives the same flags with{" "}
+        <code>desktopBuildFlags(config, os, {"{ netSplit: true }"})</code> from{" "}
+        <code>denext/desktop</code>: with <code>netSplit</code>{" "}
+        (the pinned runtime, 3.0.0-rc.2 or later) it bakes <code>--allow-net-connect</code> /{" "}
+        <code>--allow-net-listen</code>; without it (the default) it bakes the stock runtime&apos;s
+        single <code>--allow-net</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}
@@ -1972,7 +2153,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               (Touch ID / iCloud Keychain · Windows Hello · none on Linux; pinned runtime)
             </td>
             <td>
-              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>)
+              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>, or{" "}
+              <code>--rp-id &lt;domain&gt;</code>)
             </td>
             <td>none</td>
           </tr>
@@ -1984,12 +2166,36 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>downloadToFile</code> fetches only <code>http</code>/<code>https</code>{" "}
         URLs, refuses loopback and link-local targets (<code>localhost</code>,{" "}
         <code>127.0.0.0/8</code>, <code>::1</code>, <code>169.254.0.0/16</code>,{" "}
-        <code>fe80::/10</code>, checked after DNS and again on every redirect), stops after 100 MiB
-        or 10 minutes, and leaves nothing behind on failure or a cancel. It sends the page&apos;s
-        request headers except those a browser&apos;s <code>fetch</code>{" "}
-        refuses (<code>Cookie</code>, <code>Host</code>, <code>Origin</code>, the hop-by-hop and
-        {" "}
-        <code>Sec-</code> / <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
+        <code>fe80::/10</code>, checked after DNS and again on every redirect, a resume included),
+        stops after 100 MiB (counted over the whole file when it resumes) or 10 minutes, and leaves
+        nothing behind on a cancel. A pause, a network failure or a restart keeps the bytes so far
+        in <code>&lt;file&gt;.part</code>{" "}
+        beside the file, with a sidecar naming the URL; it is continued only for that URL and that
+        file, with an <code>If-Range</code>{" "}
+        request, else started over. A file the user picked on its own (a single-file{" "}
+        <code>picked</code>{" "}
+        handle) grants that file only, so its partial and sidecar go in the app&apos;s cache
+        directory instead (<code>denext-downloads/</code>, named by a hash of the destination):
+        nothing is created or removed beside the picked file. A download started with an{" "}
+        <code>id</code>{" "}
+        into an app folder is also recorded across restarts, as the mobile plugin records its
+        transfers: <code>fileTransfers()</code>{" "}
+        lists it after one (a download the app quit during as{" "}
+        <code>failed</code>, resumable from its partial file), <code>resumeFileTransfer</code>{" "}
+        continues it with the request headers it was started with, and a cancel drops its record
+        with its partial file; a done record is listed for 7 days unless forgotten first. The
+        record&apos;s file never holds a credential header (<code>Authorization</code>,{" "}
+        <code>Cookie</code>, an API key or token): those stay in memory for the launch, so after a
+        restart a download started with one is refused by{" "}
+        <code>resumeFileTransfer</code>; start it again with <code>downloadToFile</code>{" "}
+        and its headers (the same{" "}
+        <code>id</code>, URL and file) and it continues from its partial file. The file is readable
+        by the user only on macOS and Linux (mode{" "}
+        <code>0600</code>); Windows ignores the mode, and the file takes the user profile&apos;s
+        ACL. It sends the page&apos;s request headers except those a browser&apos;s{" "}
+        <code>fetch</code> refuses (<code>Cookie</code>, <code>Host</code>,{" "}
+        <code>Origin</code>, the hop-by-hop and <code>Sec-</code> / <code>Proxy-</code>{" "}
+        ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}
@@ -1998,8 +2204,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>.desktop</code>, an executable file, …), because the default app would run them.{" "}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
-        <code>ui-updates</code>, and the web engine's profile: <code>CEF</code>,{" "}
-        <code>WebKitGTK</code>,{" "}
+        <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
+        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
+        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
         <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
         trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
         <code>query</code>{" "}
@@ -2045,7 +2252,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
       <Callout kind="note">
         <strong>The secure store on Linux.</strong> <code>secure-store</code>{" "}
         is the pinned runtime&apos;s own: the Secret Service through libsecret, which every desktop
-        ships (the <code>.deb</code> / <code>.rpm</code> depend on <code>libsecret-1-0</code> /{" "}
+        ships. From runtime 3.0.0-denext.1 each item is also keyed by the app id (<code>
+          laufey-app-id
+        </code>, from{" "}
+        <code>desktop.app.identifier</code>), so two apps using the same service and account no
+        longer share it; an item an older build wrote under the shared attributes moves into the
+        app&apos;s namespace when the app first looks it up during its first run of the updated
+        build, and only when that app had run here before (a newly installed app never takes another
+        app&apos;s item). An app without an identifier has no namespace: it neither moves nor sees
+        the shared items. (The <code>.deb</code> / <code>.rpm</code> depend on{" "}
+        <code>libsecret-1-0</code> /{" "}
         <code>libsecret</code>; the stock runtime has no Linux secure store). It needs a Secret
         Service provider: GNOME Keyring, or KWallet with its Secret Service enabled. When there is
         none, or its keyring is locked, every call rejects with <code>backend_unavailable</code>
@@ -2123,8 +2339,13 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         response or a blob export opens the OS save dialog on every backend under denext&apos;s
         pinned runtime (from{" "}
         <code>2.9.7-denext.22</code>), only for the app&apos;s own origins, with a sanitized file
-        name and at most three save dialogs per window in 10 s. Under the stock runtime they stay
-        inert; use <code>saveFile</code> for a save that must work everywhere (see{" "}
+        name and at most three save dialogs per window in 10 s. From <code>3.0.0-rc.4</code>{" "}
+        that includes a custom-scheme app origin (<code>desktop.app.origin</code>) on every backend:
+        WebKit (WKWebView on macOS, WebKitGTK on Linux) downloads its{" "}
+        <code>Content-Disposition: attachment</code> responses, and CEF and WebView2 its{" "}
+        <code>{"<a download>"}</code> links. Under the stock runtime they stay inert; use{" "}
+        <code>saveFile</code> (or <code>downloadToFile</code>{" "}
+        into the app&apos;s folders) for a save that must work everywhere (see{" "}
         <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
       </p>
 
@@ -2201,6 +2422,7 @@ if (folder) {
         {`import {
   getWindowState,
   makeWindowDraggable,
+  hideWindow,
   onCloseRequested,
   onWindowStateChange,
   setWindowBackdrop,
@@ -2219,8 +2441,15 @@ onWindowStateChange(async () => {
 makeWindowDraggable(document.querySelector("header")!);
 await setWindowBackdrop("vibrancy", { material: "sidebar" });
 
-// Ask before closing (the close button, Cmd+W / Alt+F4, or quitApp()).
-onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));`}
+// Ask before closing (the close button, Cmd+W / Alt+F4, or the app quitting).
+onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));
+
+// Close to the tray, but let the app quit (Electron's before-quit + close).
+onCloseRequested(({ reason }) => {
+  if (reason === "quit") return true;
+  void hideWindow();
+  return false;
+});`}
       </Code>
       <ul>
         <li>
@@ -2271,12 +2500,39 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         <li>
           <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}
           handler is registered, the runtime holds every close and asks the page; the window closes
-          unless a handler returns{" "}
-          <code>false</code>. A page that never answers loses its hold: a close requested again 5
-          seconds later goes through. <code>closeWindow()</code> closes without asking;{" "}
-          <code>quitApp()</code> asks first (Electron&apos;s{" "}
-          <code>app.quit()</code>). Cmd+Q from the macOS app menu is never held. A reload drops the
-          hold.
+          unless a handler returns <code>false</code>. The handler gets an event whose{" "}
+          <code>reason</code> says why: <code>"close"</code> (the close button, Cmd+W / Alt+F4) or
+          {" "}
+          <code>"quit"</code> (the app is quitting: <code>quitApp()</code>,{" "}
+          <code>Deno.desktop.quit()</code>, the Quit item of a Windows tray menu), so a
+          close-to-tray window hides on a close and lets a quit through, as an Electron app checks
+          an <code>isQuitting</code> flag set in <code>before-quit</code>. A handler written as{" "}
+          <code>() =&gt; boolean</code>{" "}
+          keeps working. Once every guarded window lets a quit go, the app quits. A page that never
+          answers loses its hold: a close requested again 5 seconds later goes through.{" "}
+          <code>closeWindow()</code> closes without asking; <code>quitApp()</code>{" "}
+          asks first (Electron&apos;s{" "}
+          <code>app.quit()</code>). From runtime 3.0.0-denext.8 the OS&apos;s own quits ask too,
+          with{" "}
+          <code>reason: "quit"</code>: Cmd+Q, the Dock&apos;s Quit and a logout on macOS, the
+          session ending on Windows. A handler that refuses a session end asks the OS to stop it,
+          which the OS may not honour: on macOS 26 a logout stopped for an app with a Dock icon,
+          with an alert that offers to try again, and went on anyway for an accessory app (a real
+          Windows logoff is untested). The OS is never held for long: an unanswered quit goes ahead
+          after 5 seconds, a session end after 10 (macOS) or 4 (Windows). While a session end is
+          pending macOS takes no input for the app, so a prompt can&apos;t be answered: decide
+          without asking the user. On an older runtime Cmd+Q ends the app at once. A reload drops
+          the hold.
+        </li>
+        <li>
+          <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
+          {" "}
+          <code>before-quit</code>: it is asked when the app quits (never on a plain close) and
+          before the window&apos;s <code>onCloseRequested</code> handlers; a handler that returns
+          {" "}
+          <code>false</code>{" "}
+          keeps the app running, and no close handler is asked then. Use it to save state on the way
+          out. The OS&apos;s own quits reach it under the same runtime and limits as above.
         </li>
       </ul>
       <p>
@@ -2294,6 +2550,157 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
   },
 };`}
       </Code>
+      <h3 id="desktop-window-launch">How the app starts and ends</h3>
+      <p>
+        <code>desktop.window.show: false</code>{" "}
+        starts the app with no visible window and no flash: written to{" "}
+        <code>.deno-desktop/app.json</code>{" "}
+        (<code>initialWindow.showOnFirstLoad</code>), so the runtime never reveals the window it
+        starts with; its page still loads, and <code>showWindow()</code> reveals it.{" "}
+        <code>frameless</code>, <code>transparent</code> and <code>focusable: false</code>{" "}
+        are creation-time settings and go the same way. The app quits when its last window closes;
+        {" "}
+        <code>desktop.app.keepAlive: true</code>{" "}
+        keeps it running with none (on by default when it has a{" "}
+        <a href="#desktop-backend-tray">backend tray</a>), and a page&apos;s{" "}
+        <code>window.close()</code>{" "}
+        then closes its own window instead of quitting. On macOS a click on the Dock icon with no
+        window showing shows the main window again (<code>onDockReopen</code> in{" "}
+        <code>denext/desktop/app</code> hears it).
+      </p>
+      <h3 id="desktop-overlay-windows">Overlay windows</h3>
+      <p>
+        A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
+        the focus from the app the user is typing in, stays on top and lets clicks through where it
+        draws nothing:
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    // No Dock icon from the first frame (macOS); give the app a tray to come back through.
+    app: { activationPolicy: "accessory" },
+    window: {
+      width: 260, height: 300,
+      frameless: true,              // no title bar or chrome
+      transparent: true,            // macOS, Linux (WebKitGTK), Windows (WebView2); not CEF
+      focusable: false,             // a non-activating panel: never steals the focus
+      alwaysOnTop: "status",        // true ("floating") | "status" | "pop-up-menu" | "screen-saver"
+      visibleOnAllWorkspaces: true, // every Space / virtual desktop
+      skipTaskbar: true,            // Windows, Linux
+      opacity: 1,
+      overlay: true,                // Linux Wayland: a layer-shell surface (runtime 3.0.0-denext.7)
+    },
+  },
+};`}
+      </Code>
+      <p>
+        At runtime the page has the same controls for its own window:{" "}
+        <code>setAlwaysOnTop(true, level)</code>, <code>setWindowOpacity</code>,{" "}
+        <code>setIgnoreMouseEvents(ignore, {"{ forward }"})</code>{" "}
+        (Electron&apos;s click-through; without <code>forward</code>{" "}
+        it is refused unless the app has a tray, since the window could never be clicked again),
+        {" "}
+        <code>setHitRegion(rects)</code>{" "}
+        (only these rectangles, in page pixels, catch clicks: pass your character&apos;s{" "}
+        <code>getBoundingClientRect()</code>), <code>setVisibleOnAllWorkspaces</code> and{" "}
+        <code>setSkipTaskbar</code>, and <code>onWindowFocus</code> /{" "}
+        <code>onWindowBlur</code>. Each is reported by <code>windowCapabilities()</code>{" "}
+        (<code>transparent</code>, <code>nonActivating</code>, <code>opacity</code>,{" "}
+        <code>clickThrough</code>, <code>clickThroughForward</code>, <code>hitRegion</code>,{" "}
+        <code>visibleOnAllWorkspaces</code>, <code>skipTaskbar</code>,{" "}
+        <code>alwaysOnTopLevels</code>, <code>focusEvents</code>, <code>visibleOnFullScreen</code>,
+        {" "}
+        <code>layerShell</code>,{" "}
+        <code>activationPolicy</code>). Click-through, hit regions, every-workspace visibility (with
+        {" "}
+        <code>visibleOnFullScreen</code>, over other apps&apos; full-screen windows on macOS at a
+        {" "}
+        <code>"status"</code> level or above), the taskbar setter and levels above{" "}
+        <code>"floating"</code>{" "}
+        need runtime 3.0.0-denext.6 or later, which denext pins; an older runtime reports them{" "}
+        <code>false</code> and rejects <code>unsupported</code>, with no change to the app (a{" "}
+        <code>focusable: false</code>{" "}
+        window already joins every Space on macOS and stays off the taskbar elsewhere).{" "}
+        <code>openWindow({"{ overlay: true }"})</code>{" "}
+        makes a desktop overlay surface on a Wayland compositor with wlr-layer-shell (wlroots
+        compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
+        list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
+        recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <p>
+        On Wayland that is the only way a window stays on top, joins every workspace, keeps off the
+        taskbar or never takes the focus: the compositor ignores an ordinary window&apos;s requests
+        for them (KWin and Mutter focus a <code>focusable: false</code> window as it maps, so{" "}
+        <code>nonActivating</code> is reported only with <code>layerShell</code>).{" "}
+        <code>desktop.window.overlay: true</code>{" "}
+        makes the main window one from its first frame (written to{" "}
+        <code>.deno-desktop/app.json</code>; runtime 3.0.0-denext.7, left out with a warning on an
+        older one), and a tray panel is one wherever <code>layerShell</code>{" "}
+        is, opening at the click. GNOME has no layer-shell: there the window is an ordinary one the
+        compositor places.
+      </p>
+      <p>
+        A layer surface can be placed: <code>windowCapabilities().setPosition</code>{" "}
+        is true for an overlay window where <code>layerShell</code> is, and{" "}
+        <code>setWindowPosition(x, y)</code>{" "}
+        sets its offset from the top-left of the display&apos;s area outside the panels (the layer
+        surface&apos;s margins). GDK reports the whole display as the work area on Wayland, so keep
+        clear of the edges a taskbar may be on: a tray panel opened at a click keeps 64 px from each
+        edge of a display whose work area is the whole display.
+      </p>
+      <h3 id="desktop-multi-window">More windows</h3>
+      <p>
+        <code>openWindow</code> opens another window of the app on one of its pages (Electron&apos;s
+        {" "}
+        <code>new BrowserWindow()</code>, Tauri&apos;s{" "}
+        <code>WebviewWindow</code>): a settings window, a document, an overlay. The URL is a path of
+        the app, never another site. The new window&apos;s page has the app&apos;s desktop
+        capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
+        <code>denext/desktop/window</code>{" "}
+        calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+      </p>
+      <p>
+        A <code>capabilities</code>{" "}
+        subset limits what the page&apos;s own calls are routed to. It is not a security boundary:
+        every window shares the app&apos;s origin, storage and launch token, so script in a window
+        opened with a subset can still reach every capability the app has (for example by calling
+        the bridge as the main window). Open only the app&apos;s own trusted pages in it, and keep
+        untrusted content out of the app&apos;s windows.
+      </p>
+      <Code lang="ts">
+        {`import { getWindows, openWindow, windowHandle } from "denext/desktop/window";
+
+const settings = await openWindow({
+  url: "/settings", title: "Settings", width: 520, height: 420,
+  capabilities: ["secureStore"], // optional: only these (plus its own window)
+});
+settings.onClosed(() => console.log("closed"));
+await settings.setBounds({ x: 100, y: 100 });
+
+await windowHandle("main").show(); // the window the app started with
+console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, …]`}
+      </Code>
+      <p>
+        From <code>desktop.ts</code>, <code>runDesktop()</code> resolves with{" "}
+        <code>windows.open(…)</code>, <code>windows.get(id)</code> and{" "}
+        <code>windows.list()</code>. Each window learns its id through a binding the runtime gives
+        only the app&apos;s own documents in that window; a page that cannot say (a runtime without
+        bindings) acts as the main window. A reload releases only what that window&apos;s page held
+        (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
+        released when the main window&apos;s page reloads.
+      </p>
+      <p id="desktop-background-throttling">
+        A window&apos;s page keeps running while the window is hidden, minimized or covered, with
+        its timers slowed to about once a second (Electron&apos;s default). For a hidden window that
+        does the app&apos;s background work, <code>backgroundThrottling: false</code> (in{" "}
+        <code>openWindow</code> or{" "}
+        <code>windows.open</code>, at creation only) keeps its timers at their rate. Both need Deno
+        Desktop runtime 3.0.0-denext.8: before it, on macOS, the system WebView froze a page created
+        hidden about a second after it loaded (no timers, events or sockets until the window
+        showed), and an older runtime ignores the option. The Windows and Linux system WebViews and
+        the CEF backend throttle a hidden page without freezing it either way. The main window is
+        the one the runtime starts with, which is always throttled.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2310,7 +2717,15 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         <code>preventDefault()</code>) while the button is held. It takes picked handles or files in
         the app&apos;s own folders (<code>"data"</code>, <code>"cache"</code>,{" "}
         <code>"documents"</code>), never a raw path, and resolves <code>"dropped"</code>,{" "}
-        <code>"cancelled"</code> or <code>"failed"</code>.
+        <code>"cancelled"</code> or <code>"failed"</code>. On Wayland <code>"failed"</code>{" "}
+        is a normal outcome rather than an error: with runtime 3.0.0-denext.8 a drag with the
+        pointer off the app&apos;s windows reports it, where GTK used to end the process, and so
+        does every drag under CEF, which needs an X11 display to start one (<code>fileDragOut</code>
+        {" "}
+        in <code>windowCapabilities()</code> is <code>false</code> there; use the{" "}
+        <code>webview</code>{" "}
+        backend). With no button held, a WebKitGTK window under the pointer ends it{" "}
+        <code>"cancelled"</code> instead.
       </p>
       <Code lang="ts">
         {`import { onFileDrop, startFileDrag } from "denext/desktop/window";
@@ -2576,12 +2991,14 @@ await bounce({ critical: true }); // until the app is focused`}
           adds a status icon (the macOS menu bar, the Windows notification area, Linux&apos;s
           AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
           <code>getBounds</code> and <code>destroy</code>{" "}
-          are on the handle. A page load removes the trays the previous page created (their handlers
-          went with it), so create them at startup. Where no icon can be shown (a Linux session with
-          no tray host, such as stock GNOME without the AppIndicator extension),{" "}
-          <code>appCapabilities()</code> reports <code>tray: false</code> with a{" "}
-          <code>trayReason</code>, and <code>createTray</code> rejects <code>unsupported</code>{" "}
-          with that reason in{" "}
+          are on the handle. In a tray menu on Windows the <code>quit</code>{" "}
+          role is a "Quit" item that quits the app, and the macOS-only roles are left out. A page
+          load removes the trays the previous page created (their handlers went with it), so create
+          them at startup. Where no icon can be shown (a Linux session with no tray host, such as
+          stock GNOME without the AppIndicator extension), <code>appCapabilities()</code> reports
+          {" "}
+          <code>tray: false</code> with a <code>trayReason</code>, and <code>createTray</code>{" "}
+          rejects <code>unsupported</code> with that reason in{" "}
           <code>error.data.reason</code>. A tray-only app (its window hidden) gets its window shown
           instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
@@ -2602,7 +3019,119 @@ await bounce({ critical: true }); // until the app is focused`}
           home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
           none, and the call does nothing there).
         </li>
+        <li>
+          <code>setDockVisible(false)</code>{" "}
+          hides the app&apos;s Dock icon (an accessory app: a menu-bar app or a companion), and{" "}
+          <code>desktop.app.dock: false</code>{" "}
+          does it at launch. On Windows and Linux there is no app-level icon (the call answers{" "}
+          <code>false</code>).
+        </li>
+        <li>
+          <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
+          <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
+          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
+          only while it has a full window open, which also brings it to the front. Windows and Linux
+          have no policy: there <code>"regular"</code>{" "}
+          shows the main window&apos;s taskbar entry and the others hide it, as{" "}
+          <code>"accessory"</code> hides it at launch. <code>desktop.app.activationPolicy</code> (or
+          {" "}
+          <code>dock: false</code>, which means{" "}
+          <code>"accessory"</code>) is the policy the app starts in: denext writes it to the
+          packaged app&apos;s <code>laufey-launch.json</code> (<code>LAUFEY_ACTIVATION_POLICY</code>
+          {" "}
+          for <code>denext desktop run</code> /{" "}
+          <code>dev</code>), so no Dock icon flashes at launch. Both need runtime 3.0.0-denext.6
+          (<code>activationPolicy</code> in{" "}
+          <code>appCapabilities()</code>); on an older runtime the policy falls back to showing or
+          hiding the Dock icon once the backend starts.
+        </li>
       </ul>
+      <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
+      <p>
+        A tray-first app (a menu-bar app) wants its icon before any page loads and never removed by
+        a reload. <code>desktop.tray</code> makes it in{" "}
+        <code>runDesktop</code>, with an icon from the export, a tooltip, a menu and, optionally, a
+        panel at the icon: the runtime&apos;s{" "}
+        <code>Tray.attachPanel</code>, a frameless window that never activates the app, toggled by a
+        click on the icon and hidden when it loses the focus. denext places it under a menu-bar icon
+        or above a bottom taskbar icon, inside the display&apos;s work area (Linux reports no icon
+        position, so it opens where it last was).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: { dock: false },        // keepAlive is on with a tray
+    window: { show: false },     // no window at launch
+    tray: {
+      icon: "/tray.png",         // public/tray.png
+      tooltip: "Hangar",
+      menu: [{ id: "open", label: "Open Hangar" }, { separator: true }, { role: "quit" }],
+      panel: { url: "/panel", width: 360, height: 480 },
+    },
+  },
+};
+
+// desktop.ts: the backend hears the clicks first, and hears them with every window hidden
+const app = await runDesktop({
+  ...resolved,
+  tray: {
+    onMenuItem: (id) => id === "open" && app.windows.get("main")?.show(),
+    onDoubleClick: () => app.windows.open({ url: "/images" }).onClosed(() => syncDock()),
+  },
+});
+app.tray?.update({ tooltip: "2 VMs running" });
+app.tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)
+
+// any page (while its window shows)
+import { getTray, toggleTrayPanel } from "denext/desktop/app";
+const tray = await getTray(); // the same tray in every window; null without one
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu`}
+      </Code>
+      <p>
+        From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
+        <code>button</code>, <code>modifiers</code>, <code>x</code> / <code>y</code>,{" "}
+        <code>double</code>; <code>null</code> on an older runtime): <code>onClick</code>{" "}
+        hears the primary button, a right click is <code>contextmenu</code>, a middle click{" "}
+        <code>auxclick</code>, and hover is <code>mouseenter</code> / <code>mouseleave</code>{" "}
+        (macOS, Windows), through <code>tray.on(type, handler)</code> in a page or the handle&apos;s
+        {" "}
+        <code>on</code> (and <code>runDesktop({"{ tray: { onContextMenu } }"})</code>) in{" "}
+        <code>desktop.ts</code>. A right click opens the tray&apos;s menu by itself;{" "}
+        <code>popUpMenu()</code>{" "}
+        opens it from another gesture, a Control-click say (not on Linux, where the tray host opens
+        it). <code>appCapabilities()</code> says what this OS delivers (<code>trayRightClick</code>,
+        {" "}
+        <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
+        <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only. On
+        macOS a tray with a menu and no panel opens its menu on a plain left click as well, as an
+        Electron tray does; a click handler in <code>desktop.ts</code> (
+        <code>runDesktop({"{ tray: { onClick } }"})</code> or the handle&apos;s{" "}
+        <code>onClick</code>) takes the left click instead.
+      </p>
+      <p>
+        Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
+        <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
+        drive the panel. A page hears them only while it runs, though: before Deno Desktop runtime
+        3.0.0-denext.8 a window that does not show may have its page suspended until it shows again
+        (WKWebView does that on macOS), so a menu item handled by a hidden main window&apos;s page
+        does nothing there. From 3.0.0-denext.8 a hidden page is only throttled (
+        <a href="#desktop-background-throttling">background throttling</a>) and keeps handling
+        events, so a tray app can rely on its hidden pages again; on an older runtime, or to act
+        with no page at all, answer the menu items and the double click in{" "}
+        <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
+        <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
+        to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
+        {" "}
+        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
+        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
+        no <code>onMenuItem</code> in{" "}
+        <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
+        app gets no icon, its main window is shown instead, and it is no longer kept alive by the
+        tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
+      </p>
       <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
       <p>
         On macOS, under runtime 2.9.7-denext.20, <code>setUserActivity</code>{" "}
@@ -2739,8 +3268,9 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         (the same keys: <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>,
         {" "}
         <code>sys</code>, <code>run</code>, <code>ffi</code>; <code>"*"</code>{" "}
-        bakes the unscoped flag). The scripts union it into the flags they bake, and{" "}
-        <code>--regenerate-scripts</code>{" "}
+        bakes the unscoped flag; each entry is one value, so an entry with a comma, an empty one or
+        a URL as a host is refused, by config validation and again by the package scripts). The
+        scripts union it into the flags they bake, and <code>--regenerate-scripts</code>{" "}
         keeps it because it lives in the config, not in the script. Events that fire before a
         handler subscribes (a notification click that launched the app, a deep link) are kept by the
         runtime and delivered to the first subscriber.
@@ -2750,6 +3280,97 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
 desktop: {
   capabilities: { extensions: ["./desktop/extensions/scanner.ts"] },
   extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
+},`}
+      </Code>
+
+      <h3 id="desktop-extension-events">Events no page call started</h3>
+      <p>
+        A method&apos;s <code>ctx.emit(event, data)</code>{" "}
+        lives as long as its call. For work the extension or <code>desktop.ts</code>{" "}
+        starts on its own (a long job a tray item started, a file watcher), give the extension a
+        {" "}
+        <code>setup(host)</code>: it runs once when the app starts, before any page can call, and
+        {" "}
+        <code>host.emit(event, data)</code>{" "}
+        streams to the page with no call in flight. Both emits are limited to the capability&apos;s
+        declared <code>events</code>, and both keep an event until the page subscribes, like{" "}
+        <code>runDesktop</code>&apos;s <code>emit(cap, event, data)</code>. Pass{" "}
+        <code>{'{ window: "panel" }'}</code>{" "}
+        (a window id) as a third argument to reach one window instead of every one.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/jobs.ts
+import { defineDesktopExtension, type DesktopExtensionHost } from "denext/desktop";
+let host: DesktopExtensionHost | undefined;
+export function reportProgress(percent: number) {
+  host?.emit("progress", { percent }); // from desktop.ts, a tray item, a timer
+}
+export default defineDesktopExtension({
+  name: "jobs",
+  events: ["progress"],
+  setup: (h) => (host = h),
+  methods: {},
+});
+
+// a "use client" component
+onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPercent(percent));`}
+      </Code>
+
+      <h3 id="desktop-picked-path">A picked file&apos;s path, for a host program</h3>
+      <p>
+        The <code>path</code> a pick returns to the page (<code>pickDocument</code>,{" "}
+        <code>openFile</code>, <code>pickFolder</code>,{" "}
+        <code>onFileDrop</code>) is for display: page script could send back any string, so an
+        extension never trusts a path from the page. Send the pick&apos;s <code>handle</code>{" "}
+        instead, and resolve it on the Deno side with <code>ctx.pickedPath(handle)</code>{" "}
+        (also on the <code>setup</code>{" "}
+        host): it returns the absolute path of a file or folder the user chose in a dialog, dropped
+        on a window or opened with the app in this launch, and throws <code>forbidden</code>{" "}
+        for anything else (a path, a made-up or expired handle). <code>{"{ write: true }"}</code>
+        {" "}
+        also refuses a read-only handle (an opened or dropped file). Keep the path in the Deno
+        process; the page already has its display copy.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/tools.ts
+info: {
+  handler: async (args, ctx) => {
+    const input = ctx.pickedPath((args as { handle?: unknown }).handle); // forbidden unless picked
+    const out = await new Deno.Command("qemu-img", { args: ["info", "--output=json", input] })
+      .output();
+    return JSON.parse(new TextDecoder().decode(out.stdout));
+  },
+},
+
+// the page
+const doc = await pickDocument();
+if (doc?.handle) await tools.info({ handle: doc.handle });`}
+      </Code>
+
+      <h3 id="desktop-validate-input">Validate what the page sends</h3>
+      <p>
+        An extension runs with the app&apos;s permissions, so treat every argument as untrusted,
+        whatever page you wrote. Declare an <code>input</code>{" "}
+        schema that lists the keys a page may send and refuses the rest (Zod&apos;s{" "}
+        <code>.strict()</code>, Valibot&apos;s{" "}
+        <code>strictObject</code>), and never spread the page&apos;s object into a settings store.
+        Settings that guard the machine (a program the app runs, a resource budget, a confirmation
+        step) stay out of the page&apos;s reach, or within bounds the extension checks against the
+        current value.{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/hangar">
+          examples/hangar
+        </a>
+        &apos;s <code>setSettings</code>{" "}
+        is a worked example: a page may not change the QEMU prefix, and may raise the RAM budget
+        only to 90%.
+      </p>
+      <Code lang="ts">
+        {`setSettings: {
+  input: z.object({
+    libraryRoot: z.string().startsWith("/").optional(),
+    ramBudgetPercent: z.number().int().min(10).max(90).optional(), // the file may go higher
+  }).strict(), // an unknown key is a validation error, not silently kept
+  handler: (args) => saveSettings(args as PageSettings),
 },`}
       </Code>
 
@@ -2862,8 +3483,17 @@ export default defineDesktopExtension({
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
           <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder. It gets the sidecar&apos;s
-          variables, and one JSON line on stdin (
+          embedded and run from a copy in the app&apos;s cache folder (
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
+          <code>--allow-run</code> and a broad{" "}
+          <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
+          machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
+          <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,
+          {" "}
+          <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
+          every <code>--allow-run</code>{" "}
+          path, so a run grant on the copy would leave the app unable to write it. It gets the
+          sidecar&apos;s variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>
@@ -2901,6 +3531,14 @@ desktop: {
         writes such an entry (with <code>permissions.ffi</code> when the <code>node_modules</code>
         {" "}
         holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
+      </p>
+      <p>
+        An <code>"auto"</code>{" "}
+        port is picked by binding a free loopback port and releasing it, so another process can take
+        it before the sidecar binds it. A start that ends before it is ready while another process
+        holds the port starts again at once on a fresh port (up to 3 times, outside{" "}
+        <code>restart</code>); the <code>spa.proxy</code> target, <code>sidecarInfo()</code>{" "}
+        and the status follow the new port.
       </p>
       <p>
         Inside a module sidecar, <code>process.argv.slice(2)</code> is its <code>args</code>,{" "}
@@ -2993,7 +3631,10 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           and in a packaged app on macOS, Windows and Linux; under <code>deno run desktop.ts</code>
           {" "}
           the child is <code>deno run</code>{" "}
-          with the permissions the app holds unscoped. An unmodified{" "}
+          with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
+          <code>--unstable-*</code>,{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
+          the app holds unscoped on an older one. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.
@@ -3103,7 +3744,7 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         build on denext&apos;s pinned Deno Desktop runtime: a prebuilt <code>libdenort</code>{" "}
         and laufey backend hosts from{" "}
         <a href="https://github.com/Brainwires/deno/releases">Brainwires/deno</a>{" "}
-        (Deno 2.9.7 plus the patches behind the stable app origin, per-app web storage, deep links
+        (Deno 2.9.8 plus the patches behind the stable app origin, per-app web storage, deep links
         and single instance). The build runs on{" "}
         <a href="/docs/toolchain">
           denext&apos;s Deno toolchain
@@ -3118,7 +3759,7 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
       </p>
       <ul>
         <li>
-          <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
+          <strong>Deno 2.9.8 exactly.</strong> The runtime is built from Deno 2.9.8, and{" "}
           <code>deno desktop</code> embeds it. The toolchain is built from that release (as{" "}
           <code>2.9.7-denext.N</code> or, from{" "}
           <code>3.0.0-rc.1</code>, under the fork&apos;s own version), so this holds by itself; on
@@ -3126,17 +3767,20 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
             DENEXT_DENO=stock
           </code>, or no toolchain for the host) of any other version{" "}
           <code>denext desktop package</code> fails before the build with the fix:{" "}
-          <code>deno upgrade --version 2.9.7</code> (or <code>DENO_BIN</code>{" "}
-          pointing at a 2.9.7 binary for <code>run</code> / <code>dev</code>).{" "}
+          <code>deno upgrade --version 2.9.8</code> (or <code>DENO_BIN</code>{" "}
+          pointing at a 2.9.8 binary for <code>run</code> / <code>dev</code>).{" "}
           <code>denext desktop run</code> and <code>dev</code>{" "}
           warn and open the window on the stock runtime instead. Every download error ends with the
-          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or{" "}
-          <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
+          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or, on a stock Deno CLI (<code>
+            DENEXT_DENO=stock
+          </code>), <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
-          The archive for your target and backend (<code>desktop.backend</code> in{" "}
-          <code>deno.json</code>, <code>webview</code> by default, or{" "}
+          The archive for your target and its backend (<a href="#desktop-backend">
+            <code>desktop.backend</code>
+          </a>{" "}
+          for that OS, <code>webview</code> by default, or{" "}
           <code>cef</code>) is pinned in denext by URL, size and SHA-256. It streams to a temp file,
           is refused the moment it outgrows its pinned size, and is extracted only after its size
           and SHA-256 match. Extraction refuses absolute paths, <code>..</code>{" "}
@@ -3149,18 +3793,21 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           <strong>Offline after the first download.</strong>{" "}
           A cached runtime is reused without the network (a size check against the marker;{" "}
           <code>--verify-runtime</code>{" "}
-          re-hashes every file). With no cache and no network the build stops and says so.
+          re-hashes every file, as does the first use a week after the last full check). With no
+          cache and no network the build stops and says so.
         </li>
         <li>
-          <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
+          <strong>Provenance.</strong> A fresh download is also checked with{" "}
           <code>gh attestation verify</code>{" "}
-          on a fresh download (it needs the GitHub CLI; the SHA-256 pin is enforced either way).
+          whenever the GitHub CLI is signed in, and the build says so when it is not (the SHA-256
+          pin is enforced either way). <code>--attest-runtime</code> makes the check required;{" "}
+          <code>DENEXT_DESKTOP_RUNTIME_ATTEST=0</code> turns it off.
         </li>
         <li>
           <strong>Targets.</strong>{" "}
           macOS (arm64, x86_64), Linux (x86_64, arm64) and Windows (x86_64), each with the{" "}
           <code>webview</code> and <code>cef</code>{" "}
-          backends. Linux and Windows apps package from any host: Deno 2.9.7&apos;s CLI looks a
+          backends. Linux and Windows apps package from any host: Deno 2.9.8&apos;s CLI looks a
           prebuilt backend up under the host&apos;s executable name, so for a Windows app on macOS
           or Linux (or a Linux app on Windows) denext hard-links the backend&apos;s directory beside
           the verified runtime with the binary under that name (<code>
@@ -3187,8 +3834,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         </li>
       </ul>
       <Code lang="sh">
-        {`DENEXT_DESKTOP_RUNTIME=stock denext desktop package   # the stock runtime (no app origin,
-                                                      # deep links or single instance)
+        {`DENEXT_DENO=stock DENEXT_DESKTOP_RUNTIME=stock denext desktop package
+                                                      # the stock runtime, on a stock Deno CLI
+                                                      # (no app origin, deep links or single
+                                                      # instance); denext's Deno refuses it
 DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local runtime build,
                                                       # unverified (runtime development)`}
       </Code>
@@ -3244,8 +3893,24 @@ export default {
           handlers) serves the app origin only. To let another document call a binding, such as an
           identity provider page the window navigates to, list its origin in{" "}
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
-          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
-          <code>dev</code> write the same <code>app.json</code>.
+          <code>bind(name, fn, {"{ origins }"})</code>. Two wildcard forms exist:{" "}
+          <code>"&lt;scheme&gt;://*"</code> (every origin of that scheme, such as{" "}
+          <code>"https://*"</code>) and <code>"*"</code>{" "}
+          (every document the window loads). Each widens the bridge past the app, so config
+          validation warns about them; list exact origins unless you need one.{" "}
+          From runtime 3.0.0-denext.1 the file also sets{" "}
+          <code>"strictPolicy": true</code>: whatever policy it leaves out fails closed, so a launch
+          file without <code>bridgeOrigins</code>{" "}
+          (and without a custom scheme) gives the bridge to no document, and one without{" "}
+          <code>"passkeyRpIds"</code> (the <code>passkeys</code> capability&apos;s{" "}
+          <code>rpIds</code>) refuses every passkey ceremony. denext&apos;s packaging always writes
+          {" "}
+          <code>bridgeOrigins</code>, and <code>passkeyRpIds</code> whenever <code>passkeys</code>
+          {" "}
+          is on; <code>denext doctor</code> and <code>denext desktop doctor</code>{" "}
+          flag a project whose launch file would lack either (or whose package scripts don&apos;t
+          write it: <code>denext desktop package --regenerate-scripts</code>).{" "}
+          <code>denext desktop run</code> and <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           <strong>The window stays on the app origin</strong>{" "}
@@ -3329,7 +3994,7 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
         and the package scripts use by default. A packaged app with an origin and an identifier
         keeps its <code>localStorage</code>{" "}
         across launches (checked on macOS, Linux and Windows with the webview backend). Under{" "}
-        <code>DENEXT_DESKTOP_RUNTIME=stock</code>{" "}
+        <code>DENEXT_DESKTOP_RUNTIME=stock</code> (on a stock Deno CLI){" "}
         the stock runtime ignores the origin and serves the window on a loopback port (the desktop
         entry logs that the origin is not in effect). Nothing breaks either way: the security gates
         detect which runtime they are under.
@@ -3502,6 +4167,112 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           handler's stack, and the token never appear in it.
         </li>
       </ul>
+
+      <h3 id="desktop-baked-permissions">The permissions a package bakes</h3>
+      <p>
+        The package scripts derive the binary&apos;s <code>--allow-*</code>{" "}
+        flags from the config, never{" "}
+        <code>-A</code>: loopback networking, read and the environment as the baseline, plus what
+        the enabled capabilities, sidecars, the updater and <code>desktop.extraPermissions</code>
+        {" "}
+        need. The app&apos;s own folders (the <code>fs</code>, <code>sqlite</code> and{" "}
+        <code>updates</code> capabilities, a sidecar&apos;s log file, the UI overlay&apos;s{" "}
+        <code>ui-updates</code>) have a per-user path that is only known on the user&apos;s machine,
+        so a binary that writes there is baked an unscoped <code>--allow-write</code>.
+      </p>
+      <p>
+        From Deno Desktop runtime 3.0.0-denext.8, an app with <code>desktop.app.identifier</code>
+        {" "}
+        is baked those writes as the folders themselves: <code>$DENO_DESKTOP_DATA</code> (and{" "}
+        <code>$DENO_DESKTOP_DATA/logs</code>, <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
+        <code>$DENO_DESKTOP_CACHE</code>, which the runtime expands at launch to the app&apos;s data
+        folder (<code>~/Library/Application Support/&lt;id&gt;</code> on macOS,{" "}
+        <code>%APPDATA%\&lt;id&gt;</code> on Windows, <code>$XDG_DATA_HOME/&lt;id&gt;</code>{" "}
+        on Linux) and cache folder. The token counts only at the start of a value, a value with a
+        {" "}
+        <code>..</code>{" "}
+        component is dropped, and with no folder to expand to the entry is dropped rather than
+        widened. In <code>desktop.extraPermissions.write</code>, <code>$APPDATA/…</code> and{" "}
+        <code>$CACHE/…</code>{" "}
+        become those tokens and an absolute path is kept as written. A write that has no token (a
+        picked path under <code>dialogs</code>, <code>$DOCUMENTS</code> in{" "}
+        <code>fs</code>, a relative path) keeps the unscoped <code>--allow-write</code>
+        . Code of the app that writes anywhere else needs that path in{" "}
+        <code>desktop.extraPermissions.write</code>. The runtime reads the identifier from the
+        binary, where only denext&apos;s Deno writes it, so the tokens are baked only when
+        denext&apos;s Deno compiles the app (<code>denext desktop package</code>{" "}
+        does; the package scripts run <code>deno desktop</code>{" "}
+        on the Deno that runs them). A build by stock Deno keeps the unscoped grants.
+      </p>
+
+      <h3 id="desktop-strict-permissions">Strict permissions</h3>
+      <p>
+        By default the binary can read any file and every environment variable (
+        <code>--allow-read</code>, <code>--allow-env</code>
+        ). <code>desktop.permissions: &quot;strict&quot;</code>{" "}
+        narrows both, from Deno Desktop runtime 3.0.0-denext.8 in an app with{" "}
+        <code>desktop.app.identifier</code>. It never falls back to the unscoped grants:{" "}
+        <code>denext desktop package</code>{" "}
+        fails, naming the reason and the fix, when the identifier is missing or the runtime cannot
+        scope them (older than 3.0.0-denext.8, <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local
+        {" "}
+        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build, or stock Deno compiling the app).{" "}
+        <code>denext desktop run</code> and{" "}
+        <code>dev</code>, which build a local test copy, print a warning and bake the default
+        instead.
+      </p>
+      <ul>
+        <li>
+          <code>--allow-read</code> covers the app&apos;s data and cache folders (
+          <code>$DENO_DESKTOP_DATA</code>, <code>$DENO_DESKTOP_CACHE</code>
+          ), the folders the capabilities read and{" "}
+          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A read
+          with no folder token (<code>$APPDATA</code>,{" "}
+          <code>$CACHE</code>) that is not an absolute path fails the build, naming the entry: a
+          capability that reads a path picked at run time (<code>dialogs</code>),{" "}
+          <code>$DOCUMENTS</code> in <code>fs</code>
+          , a relative path or a <code>&quot;*&quot;</code>{" "}
+          entry. An app that reads picked files or files the OS opens with it keeps the default
+          mode.
+        </li>
+        <li>
+          <code>--allow-env</code>{" "}
+          covers the variables denext&apos;s desktop runtime reads (its own settings,{" "}
+          <code>HOME</code>, <code>APPDATA</code>, <code>XDG_*</code>, the proxy variables,{" "}
+          <code>PORT</code>, …) plus the ones the app declares in{" "}
+          <code>desktop.permissions.env</code> or <code>desktop.extraPermissions.env</code>
+          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code> ones,{" "}
+          <code>SESSION_SECRET</code>{" "}
+          and a module sidecar&apos;s included, must be declared: an undeclared read throws{" "}
+          <code>NotCapable</code>. A <code>&quot;*&quot;</code>{" "}
+          entry fails the build. The packaging tools&apos; signing and credential variables (
+          <code>DENEXT_WINDOWS_CERT*</code>, <code>DENEXT_OTA_SIGNING_KEY</code>,{" "}
+          <code>DENEXT_NOTARY_*</code>, <code>DENEXT_CODESIGN_IDENTITY</code>, any{" "}
+          <code>*_TOKEN</code> / <code>*_SECRET</code> / <code>*_PASSWORD</code> /{" "}
+          <code>*_KEY</code>
+          ) are never in the list, so the app can&apos;t read a signing key from the environment of
+          the machine that tests it. A granted name can also be set (<code>Deno.env.set</code>
+          ), the listed <code>PATH</code> and <code>DENO_DIR</code>{" "}
+          included, as under the default mode.
+        </li>
+        <li>
+          A program sidecar (<code>run.exec</code>) and <code>loginShellEnv</code>{" "}
+          start a child with the app&apos;s whole environment, which a scoped{" "}
+          <code>--allow-env</code>{" "}
+          cannot read, so a config with either is refused in strict mode. A module sidecar&apos;s
+          {" "}
+          <code>spawnSelf()</code> copies the whole environment too; pass it an <code>env</code>
+          {" "}
+          of its own.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.notes" },
+  permissions: { mode: "strict", env: ["NOTES_API_URL"] }, // or permissions: "strict"
+},`}
+      </Code>
 
       <h2 id="desktop-react-native">React Native on desktop</h2>
       <p>
@@ -3726,7 +4497,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>WebView2Loader.dll</code>, the app-local VC++ runtime, CEF&apos;s DLLs and helpers,
           any <code>.node</code>, found by their header, third-party ones included), then the{" "}
           <code>.msi</code>. A full-app update of a signed app is refused unless every PE file in it
-          carries the running app&apos;s signature. Unset, nothing is signed.{" "}
+          carries the running app&apos;s signature. Unset, nothing is signed; set, the run fails
+          where <code>signtool</code> is not on <code>PATH</code>{" "}
+          rather than ship an unsigned app (<code>--no-sign</code> builds unsigned on purpose).{" "}
+          <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+          names a certificate in the Windows store instead of a <code>.pfx</code>.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
           an RFC 3161 timestamp server (default DigiCert&apos;s). A CEF app must be signed with a
@@ -3775,10 +4550,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         task, on denext&apos;s pinned runtime from any host). The <code>.msi</code>{" "}
         needs WiX 5 and Authenticode needs{" "}
         <code>signtool</code>, both on a Windows host: elsewhere the default <code>.msi</code>{" "}
-        falls back to a <code>.zip</code> per architecture and the <code>.exe</code>{" "}
-        stays unsigned. On Windows both are signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
-        <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
-        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
+        falls back to a <code>.zip</code>{" "}
+        per architecture, and a certificate in the environment fails the run unless it is given{" "}
+        <code>--no-sign</code>{" "}
+        (an unsigned build is then on purpose). On Windows both are signed when{" "}
+        <code>DENEXT_WINDOWS_CERT</code> (+ <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
+        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) or <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+        is set.
       </Callout>
     </DocsShell>
   );

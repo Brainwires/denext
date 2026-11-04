@@ -5,14 +5,24 @@
 // was made, so the CLI and the `denext ui` Docker panel can say why a service is in the stack,
 // and an explicit flag (`--postgres` / `--no-postgres`, …) overrides what was detected.
 //
-// Build-time only; never imported by a shipped bundle. It only reads text (no config is
-// imported or executed), so it is safe on any project.
+// Build-time only; never imported by a shipped bundle. It only reads files (no config is
+// imported or executed: the idle trim's opt-out comes from the last build's deploy manifest,
+// else the config's text), so it is safe on any project.
 
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { isStack, type StackOptions } from "./docker-stack.ts";
-import { detectDockerMode, type DockerOptions } from "./docker-template.ts";
+import { detectDockerMode, type DockerMode, type DockerOptions } from "./docker-template.ts";
 import { usesPostgres } from "./generate-ops.ts";
+import { configDisablesIdleTrim, pinnedIdleTrim, readEnv } from "./idle-trim.ts";
+import { configuredLimitFlags, pinnedLimitFlags, withLimitFlags } from "./resource-limits.ts";
+import {
+  configuredTls,
+  projectUnstableNet,
+  tlsServesLocalhost,
+  tlsUnstableNetWarnings,
+} from "./start-tls-deploy.ts";
+import type { DeployServerTls } from "../deploy/manifest.ts";
 
 /**
  * A requested app port (a whole number, 1–65535) and `denoland/deno` image tag (an image-tag-safe
@@ -421,6 +431,57 @@ function dashboardLogsOf(
 }
 
 /**
+ * The server image's resource limits (`start.limits`, on the pinned toolchain), with a warning
+ * when the start task is no `deno run` line they could go on.
+ */
+async function dockerLimits(
+  dir: string,
+  startCommand: readonly string[] | undefined,
+  warnings: string[],
+): Promise<{ limits?: readonly string[] }> {
+  const limits = pinnedLimitFlags(await configuredLimitFlags(dir));
+  if (limits.length === 0) return {};
+  if (!startCommand || !withLimitFlags(startCommand, limits)) {
+    warnings.push(
+      "start.limits are not applied in the Docker image: its start task is no plain `deno run` " +
+        "line for them to go on (make it one, without shell syntax)",
+    );
+  }
+  return { limits };
+}
+
+/**
+ * The server image's `start.tls` (read as the deploy manifest or the config's text has it), with
+ * warnings: several certificates without `"unstable": ["net"]` in deno.json, and a health probe
+ * whose `localhost` handshake no certificate serves. The static image serves files with Deno's
+ * std file server, which `start.tls` does not reach: a warning says so.
+ */
+async function dockerTls(
+  dir: string,
+  mode: DockerMode,
+  warnings: string[],
+): Promise<{ tls?: DeployServerTls }> {
+  const tls = await configuredTls(dir);
+  if (!tls) return {};
+  if (mode === "static") {
+    warnings.push(
+      "start.tls is not used by the static (SPA) image (Deno's std file server serves it): put a " +
+        "TLS proxy in front, or use the server image (`denext generate docker server`).",
+    );
+    return {};
+  }
+  warnings.push(...tlsUnstableNetWarnings(tls, await projectUnstableNet(dir), "docker"));
+  if (!tlsServesLocalhost(tls)) {
+    warnings.push(
+      'docker: no start.tls certificate lists "localhost" or "*", so the HEALTHCHECK\'s handshake ' +
+        "(server name localhost) is refused and the container reports unhealthy: add one of them " +
+        "to a certificate's hostnames.",
+    );
+  }
+  return { tls };
+}
+
+/**
  * Resolve a Docker request against the project: the image mode, the detected stack, and the
  * explicit switches on top. A static (SPA) image has no server for a database or a store to
  * serve, so detected services are dropped there with a warning — and asking for one explicitly
@@ -448,6 +509,11 @@ export async function resolveDocker(
     ...(request.exposeDb ? { exposeDb: true } : {}),
     ...(request.dev ? { dev: true } : {}),
     ...dashboardLogsOf(request, stack, warnings),
+    ...(mode === "server"
+      ? { idleTrim: pinnedIdleTrim(await configDisablesIdleTrim(dir), readEnv) }
+      : {}),
+    ...(mode === "server" ? await dockerLimits(dir, stack.startCommand, warnings) : {}),
+    ...await dockerTls(dir, mode, warnings),
   };
   return { options, detection, warnings };
 }

@@ -5,15 +5,28 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.5.2**; 4.x patch and minor releases are cut from
+> The current release is denext **4.12.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
+>
+> Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
+> lands, then it is deleted); the **5.x** sections are everything else, grouped by area, each with
+> the reason it is not a 5.0 item.
 
-## Deno toolchain
+# Before 5.0
 
-- **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
-  replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
+## Runtime fork (Brainwires/deno, `3.0.0-denext.N`)
 
-## Deno Desktop
+- **A one-commit re-pin runbook** (the pin, the symbols, the revert) before 5.0.
+
+## Breaking changes for 5.0
+
+- denext's runtime is required; the `DENEXT_DENO=stock` text in
+  KNOWN-LIMITATIONS goes with it.
+- The `@denext/auth` package and its follow-ups.
+
+## Needs a device, hardware or credentials (the 5.0 gate lets each become a dated
+
+KNOWN-LIMITATIONS entry)
 
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a
   Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
@@ -22,22 +35,13 @@
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
   too (an exact match would fail the sign-in closed).
-- **Back to stock Deno once it carries the runtime changes.** Upstreaming them to denoland/deno
-  and littledivy/laufey is the maintainer's own work, not tracked here. When stock Deno carries
-  them, drop the runtime download, the Deno 2.9.7 pin and the cross-host backend directory
-  (2.9.7's CLI looks a prebuilt backend up under the host's executable name), and archive the
-  forks.
-
-## Mobile and React Native
-
 - **Android on a real device.** Every Android half (`denext/mobile`, the `denext mobile add`
   generators, React Native mode's shell-backed APIs, `mobile dev`, the storage plugin,
   `NativeViewSlot`'s `scrollPassthrough`) is compiled and unit-tested only, and the OTA plugin's
   Android templates are compiled and run in CI against JDK stand-ins for Android and Capacitor
   (`tests/ota-reverify.test.ts`), not built with Gradle there. The emulator comparison has Capacitor missing
   vsync on 67–70% of fling frames against React Native's 25–28%; run on a device (a device farm
-  is an option), then profile the WebView list (layers, `content-visibility`) if the gap holds.
-  No Android parity claim before that.
+  is an option). No Android parity claim before that.
 - **iPhone validation still to run:** the bottom safe-area inset and the example's button-row
   layout, biometrics with Face ID enrolled, native social login, a sandbox purchase, Sentry,
   background tasks and location, native modules, context menus, `<SystemIcon>`, font scale, bold
@@ -51,8 +55,6 @@
   brightness and the `WRITE_SETTINGS` screen, iOS's change events) are compiled and type-checked
   only, Android's split of a repeating event from one occurrence on (`futureEvents` with
   `instanceStartDate`) included.
-- **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
-- **Capabilities:** a notification service extension and badges.
 - **On a device:** encrypted key-value stores (`denext mobile add storage --encrypted`: SQLCipher
   linked into the iOS and Android builds, a store moved out of the plain database, its key in the
   Keychain / Keystore) and `PRAGMA key` through `@capacitor-community/sqlite`, background file
@@ -63,10 +65,75 @@
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone; React Native Skia with
   Reanimated and inside the Capacitor shell's WebViews.
-- **Managed fastlane on macOS arm64:** run `denext toolchain install --with fastlane` and one lane
-  (`denext fastlane ios build`) on an Apple-silicon Mac. The Ruby there is
-  pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
-  clause once it passes.
+- **Signing the CLI and `denort`:** the workflow steps exist and warn without secrets; they wait on
+  an Authenticode certificate.
+
+# 5.x
+
+Not blocking 5.0; each item says why.
+
+## Supply chain (lifecycle-script jail)
+
+- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
+  `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
+  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
+  _Why 5.x: Low, and only legacy package versions hit it (`bcrypt` 5 already has advice)._
+- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
+  (and where the OS can't confine) a jailed install check can't load the package's own native
+  addon; say to leave the package unapproved. _Why 5.x: diagnostics only, and narrower once 5.0
+  drops runtimes older than denext.1._
+
+## Deno Desktop
+
+- **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
+  - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
+    parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
+    command line. _Why 5.x: Low, the CLI-dev path only._
+  - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
+    copy's path in the cache folder is only known at launch). Scope it once the runtime can take
+    a launch-time path. _Why 5.x: needs a runtime launch-time path grant._
+- **`requireBiometric` on Deno Desktop:** the desktop keychain items have no biometric access
+  control, so the gate is in the page there; it needs a runtime capability (macOS
+  `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
+  plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
+- **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
+- **Native passkey rows:** a step-up of a pending native sign-in, and list / delete. _Why 5.x: a
+  fixable gap on a new surface._
+- **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
+  `NEEDED` check). _Why 5.x: coverage work, no known failure._
+- **The AppImage non-exchange swap fallback window** (a documented risk). _Why 5.x: Low._
+- **WKWebView passkey refusal latency** (laufey). _Why 5.x: slow, not wrong._
+
+## Mobile and React Native
+
+- **Profiling the WebView list on a device** (layers, `content-visibility`) if the Android fling gap
+  holds once it is measured. _Why 5.x: follows the device run above._
+- **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
+  _Why 5.x: docs; the docs have SSR and desktop numbers only._
+- **Capabilities:** a notification service extension and badges. _Why 5.x: a new capability._
+- **A device check of the OTA isa-swap runtime.** _Why 5.x: needs a device._
+
+## Backend (`@denext/backend`)
+
+Low findings of the 4.8 backend audit (realtime and storage):
+
+- **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
+  detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
+  so the server answers one that recreated the subscription with an explicit `resync`.
+  _Why 5.x: Low, latency only._
+- **`@prisma/adapter-mssql` against a live SQL Server** (or a CI service container). _Why 5.x: a
+  test gap on an adapter that is wired and unit-tested._
+
+## Framework compatibility surfaces
+
+- **`@denext/graphql` reloads only a schema it can trace.** _Why 5.x: dev-server restart works._
+- **Fresh partial navigation:** `f-view-transition`, region history replay and the rest listed in
+  KNOWN-LIMITATIONS. _Why 5.x: fixable gaps, none blocking._
+- **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,
+  `unmountComponentAtNode`, callbacks, the precompile JSX helpers and render-to-string streaming
+  (the parity gate lists them). _Why 5.x: small, independent gaps._
+- **One-bundle (iso) routes keep the page on an action signal.** _Why 5.x: documented in
+  KNOWN-LIMITATIONS._
 
 ## Build toolchain: waiting on `deno bundle`
 
@@ -76,19 +143,43 @@ next-compat and SPA-compat builds and the unbundled dev loop's dependency pre-bu
 rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 transforms
 (`?url` assets, CSS shims, MDX, `use cache`, Node-builtin stubs, `import.meta.env`, pnpm
 `catalog:`, Prisma externals, `jsr:` loading). The native App Router path already builds with
-`deno bundle`. Deno 2.9.7 has neither hook below.
+`deno bundle`, and where `deno bundle --define` exists (denext's Deno toolchain from runtime
+`3.0.0-rc.1`; probed, so an upstream release with the flag is picked up too) it defines the
+class-component gate and the `features` map instead of seeding them; a stock Deno keeps the
+seeded fallback. No Deno has the hook below yet.
 
-- **When `deno bundle` gets `--define`** ([denoland/deno#35347](https://github.com/denoland/deno/issues/35347),
-  closed as completed, awaiting a release): add a capability probe to `probeBundleSupport`
-  (`src/build/bundle.ts`), pass the esbuild `classDefine()` map and `__DENEXT_FEATURES__`
-  verbatim, and retire `featureSeedBlock`. This folds the `__DENEXT_CLASS_COMPONENTS__` guards
-  and lets `feature()` dead-code-eliminate in plain `.ts` modules on the native path (today it
-  folds only in component modules there, and is a runtime read on the compat path). Degrade
-  cleanly on older Deno.
 - **When it gets a resolver / loader plugin API** (no committed issue yet): port
   `appResolverPlugin` / `denextRuntimePlugin` first, then the transforms one hook at a time;
   the compat e2es (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.
-- **Not taking yet:** esbuild compiled to wasm as `@denext/esbuild`. It removes the npm download
-  but runs several times slower on every compat build and dev session.
-- **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
-  regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
+  _Why 5.x: the fork could own the hook now, but it is large and unscheduled._
+
+## Server and CLI features
+
+- **A compiled binary disarms baked limits for `job` / `db`** (depends on `compile.limits`). _Why
+  5.x: follows `compile.limits`._
+- **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
+  11-24); 5.0 only if it ships after that._
+- **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by
+  design or document it. _Why 5.x: no user impact._
+- **spa-dev-self-write's 700 ms settles** (a test). _Why 5.x: test flake._
+- **expo-app's zod / decode-uri-component highs** (example only; fixed by Expo SDK 58). _Why 5.x:
+  upstream._
+
+## Runtime fork
+
+- **A Windows console close, logoff or shutdown cuts the drain short** (the handler may block about
+  5 s for CLOSE and longer for SHUTDOWN). _Why 5.x: fixable only in part._
+- **V8 cadence:** the next major (16.0, about 12-15) and patch bumps, once the Extended Stable line
+  exists. _Why 5.x: recurring._
+- **CEF bump cadence** after the one 5.0 bump. _Why 5.x: no owner yet._
+- **Bit-level reproducible runtime builds** (floating setup-deno / brew / apt, rust-cache on tags).
+  _Why 5.x: Low._
+- **Node compatibility, continuing:** `node:test`, `async_hooks`, TLS, CLI flags, HTTP edge cases,
+  the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the compile
+  cache, `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).
+  _Why 5.x: a continuous track with no 5.0 promise._
+- **Upstream carries:** the npm side-effects cache, deterministic mode (seeded `randomInt` /
+  `randomFillSync` first: a correctness bug under `--seed`, and cheap), the `deno compile` `--`
+  warning, native image operations. _Why 5.x: separate runtime features._
+- **Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15 Linux-only enabled node tests
+  that need a macOS / Windows check.** _Why 5.x: Small, no user report._

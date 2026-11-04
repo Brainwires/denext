@@ -53,9 +53,15 @@ export function constantsFoldTransform(constants: BuildConstants): SourceTransfo
   };
 }
 
-/** SPA mode's `client:*` rewrite as a per-module transform (deferred mounts, split chunks). */
-export async function spaIslandsTransform(source: string): Promise<string | null> {
-  const { code, changed } = await transformSpaIslands(source);
+/**
+ * SPA mode's `client:*` rewrite as a per-module transform (deferred mounts, split chunks).
+ * `path` (the module's own) is where a module-level `hydrate` default is looked up from.
+ */
+export async function spaIslandsTransform(
+  source: string,
+  path?: string,
+): Promise<string | null> {
+  const { code, changed } = await transformSpaIslands(source, { importer: path || undefined });
   return changed ? code : null;
 }
 

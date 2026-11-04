@@ -22,6 +22,7 @@ import {
   UNSUPPORTED,
 } from "./auth-providers/classify.ts";
 import {
+  assertModuleName,
   type ProviderManifest,
   providerModules,
   PROVIDERS_DIR,
@@ -36,6 +37,7 @@ import {
   type ProfileExpr,
 } from "../src/compat/next-auth/providers/generated.ts";
 import { OAUTH_CHECKS } from "../src/server/auth/oauth.ts";
+import { boundedDeno } from "./deno-doc.ts";
 import type { OAuthCheck } from "../src/server/auth/types.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
@@ -749,8 +751,9 @@ async function buildManifest(): Promise<ProviderManifest> {
 async function listProviders(): Promise<string[]> {
   // Load one provider so the package is in Deno's npm cache, then read its export map there.
   await import(`npm:@auth/core@${AUTHJS_CORE_VERSION}/providers/github`);
-  const info = await new Deno.Command(Deno.execPath(), { args: ["info", "--json"] }).output();
-  const { npmCache } = JSON.parse(new TextDecoder().decode(info.stdout)) as { npmCache: string };
+  const info = await boundedDeno(["info", "--json"]);
+  if (!info.success) throw new Error(`gen:auth-providers: deno info failed: ${info.stderr}`);
+  const { npmCache } = JSON.parse(info.stdout) as { npmCache: string };
   const dir = join(npmCache, "registry.npmjs.org/@auth/core", AUTHJS_CORE_VERSION, "providers");
   const ids: string[] = [];
   for await (const entry of Deno.readDir(dir)) {
@@ -763,14 +766,16 @@ async function listProviders(): Promise<string[]> {
 // ---- deno.json -----------------------------------------------------------------------------
 
 /**
- * `deno.json`'s text with its `next-auth/providers/*` exports and the doc-lint entry list set to
- * `modules` (the block's position and every other line kept).
+ * `deno.json`'s text with its `next-auth/providers/*` exports set to `modules` (the block's
+ * position and every other line kept). `deno task doc-lint` (scripts/doc-lint.ts) lints the
+ * modules those exports name.
  *
  * @param text The current `deno.json`.
  * @param modules The provider module names.
  * @returns The new text.
  */
 export function patchDenoJson(text: string, modules: readonly string[]): string {
+  modules.forEach(assertModuleName);
   const lines = text.split("\n");
   const isProvider = (line: string) => /^\s*"\.\/next-auth\/providers\/[^"]+":/.test(line);
   const first = lines.findIndex(isProvider);
@@ -782,12 +787,6 @@ export function patchDenoJson(text: string, modules: readonly string[]): string 
     `${indent}"./next-auth/providers/${m}": "./${PROVIDERS_DIR}/${m}.ts",`
   );
   lines.splice(first, last - first + 1, ...block);
-  const docs = modules.map((m) => `${PROVIDERS_DIR}/${m}.ts`).join(" ");
-  const docLint = lines.findIndex((line) => /^\s*"doc-lint":/.test(line));
-  lines[docLint] = lines[docLint].replace(
-    new RegExp(`(?:${PROVIDERS_DIR}/(?!index\\.ts)[\\w-]+\\.ts ?)+`),
-    `${docs} `,
-  );
   return lines.join("\n");
 }
 

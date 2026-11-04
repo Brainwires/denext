@@ -58,8 +58,6 @@ async function assertNoActionBodyShipped(dir: string): Promise<void> {
 
 Deno.test({
   name: "e2e: native inline Server Actions work with JavaScript off",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_native_inline_e2e_" });
   await writeNativeActionFormFixture(dir, { closure: true });
@@ -104,8 +102,6 @@ Deno.test({
 
 Deno.test({
   name: "e2e: native inline Server Actions beside a client component submit through the client",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_native_inline_island_e2e_" });
   await writeNativeActionFormFixture(dir, { island: true, closure: true });

@@ -43,7 +43,7 @@ import {
   updateBucket,
 } from "./storage-ops.ts";
 import { type BucketRow, type ObjectRow, SERVICE } from "./storage-meta.ts";
-import { trackSignedUpload } from "./storage-tus.ts";
+import { sweepExpiredUploads, trackSignedUpload } from "./storage-tus.ts";
 import { commitStaged, type Location, locationOf, stagingLocation } from "./storage-versions.ts";
 import type {
   BucketAccessOptions,
@@ -256,7 +256,15 @@ export async function planUpload(
   const parts = await Promise.all(
     Array.from({ length: count }, async (_, i) => ({
       partNumber: i + 1,
-      url: await direct.presignPart(staged.bucket, staged.key, uploadId, i + 1, expiresIn),
+      // Each part's exact size is signed: the store refuses a part with more (or fewer) bytes.
+      url: await direct.presignPart(
+        staged.bucket,
+        staged.key,
+        uploadId,
+        i + 1,
+        expiresIn,
+        Math.min(partSize, size - i * partSize),
+      ),
     })),
   );
   const grant: UploadGrant = {
@@ -297,6 +305,7 @@ export interface CompletedPart {
 export async function completeUpload(token: unknown, parts?: CompletedPart[]): Promise<ObjectInfo> {
   const rt = runtime();
   const grant = await openGrant(token, secretsOf(rt));
+  sweepExpiredUploads(rt);
   const bucket = await resolveBucket(rt, grant.b);
   const staged = stagingLocation(grant.b, grant.v);
   if (grant.u) {
@@ -375,6 +384,7 @@ async function verifyContent(
 export async function abortUpload(token: unknown): Promise<void> {
   const rt = runtime();
   const grant = await openGrant(token, secretsOf(rt));
+  sweepExpiredUploads(rt);
   const staged = stagingLocation(grant.b, grant.v);
   if (grant.u) await rt.driver.direct!.abortMultipart(staged.bucket, staged.key, grant.u);
   await rt.driver.remove(staged.bucket, staged.key).catch(() => {});

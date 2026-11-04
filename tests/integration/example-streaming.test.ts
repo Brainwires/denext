@@ -4,11 +4,12 @@
 // fallback first, then swapping in the boundary's content out of order.
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/streaming", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("streaming");
 
 async function dashboardResolvesBuffered(origin: string) {
   const html = await (await fetch(`${origin}/dashboard`)).text();
@@ -61,13 +62,11 @@ async function streamFlushesShellBeforeBoundary(origin: string) {
 
 Deno.test({
   name: "examples/streaming: buffered Suspense resolution + out-of-order streaming",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const { origin } = started;

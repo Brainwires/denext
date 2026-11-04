@@ -5,6 +5,8 @@ export interface CreateEventResult {
     /**
      * An `.ics` file (`text/calendar`) with one `VEVENT`.
      * Always `null` on Android and iOS.
+     * On Web, the plugin does not write to a calendar store or start a download;
+     * use `downloadIcsFile(...)` or pass the `File` to another API.
      *
      * @platform Web
      * @since 8.5.0

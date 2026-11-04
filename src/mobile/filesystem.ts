@@ -20,16 +20,14 @@ import { nativePlugin } from "./plugin.ts";
 import { capabilityError, type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { WEB_HANDLE_PREFIX, webHandle, webHandleWritable } from "./picked-web.ts";
 import {
+  desktopDownload,
   type DownloadSink,
-  FileTransferError,
-  type FileTransferErrorCode,
   type FileTransferEvent,
   type FileTransferOptions,
   nativeTransfer,
   type NativeTransferStart,
   pageDownload,
   pageUpload,
-  trackedDownload,
   transferPlugin,
   type UploadFileResult,
 } from "./file-transfer.ts";
@@ -481,6 +479,9 @@ function fromNativeEntry(
   return typeof info.mtime === "number" ? { ...entry, mtime: info.mtime } : entry;
 }
 
+/** The OPFS `cache` folder where page downloads keep their bytes until they are done. */
+const PART_DIR = ".denext-part";
+
 /** An OPFS directory's entries as {@linkcode FileEntry} values. */
 async function opfsEntries(dir: FileSystemDirectoryHandle): Promise<FileEntry[]> {
   const out: FileEntry[] = [];
@@ -526,17 +527,64 @@ export async function listDir(
     : native
     ? ((await native.plugin.readdir({ path: rel, directory: native.directory })).files ?? [])
       .map(fromNativeEntry)
-    : await opfsEntries(
+    : (await opfsEntries(
       await resolveDir(await webDirectory("listDir", directory, false, false), rel, false),
-    );
+    )).filter((e) => directory !== "cache" || rel !== "" || e.name !== PART_DIR);
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The OPFS (or picked) file a page download writes, opened anew or to append. */
+/**
+ * Where a page download to `rel` keeps its bytes until it is done, so the file already there keeps
+ * its contents through a pause, a cancel or a failure: a file in OPFS's `cache/.denext-part/`,
+ * named for the target (its directory, or the picked handle's id, and path). Never beside the
+ * target, where it could take the name of a file of the user's or show in a listing (and a picked
+ * file may have no reachable parent). The next download to the same file starts that entry over,
+ * so one a reload left behind is reused.
+ */
+function webPart(directory: FileDirectory, rel: string): [FileDirectory, string] {
+  const target = isPicked(directory) ? directory.picked : directory;
+  return ["cache", `${PART_DIR}/${encodeURIComponent(`${target}/${rel}`)}`];
+}
+
+/**
+ * Move an OPFS part file to `rel` under `directory`, replacing the file there
+ * (`FileSystemHandle.move(directory, name)`); `false` when the browser has no `move` or refuses
+ * it.
+ */
+async function movePart(
+  handle: FileSystemFileHandle,
+  directory: AppFileDirectory,
+  rel: string,
+): Promise<boolean> {
+  type Move = (to: FileSystemDirectoryHandle, name: string) => Promise<void>;
+  const move = (handle as { move?: Move }).move;
+  if (typeof move !== "function") return false;
+  try {
+    const parts = splitPath(rel);
+    const root = await webDirectory("downloadToFile", directory, true, true);
+    const into = await resolveDir(root, parts.slice(0, -1).join("/"), true);
+    await move.call(handle, into, parts.at(-1)!);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The file a page download writes: its part file ({@linkcode webPart}), opened anew or to append,
+ * then moved into place. Writes land in the stream's own copy until `close()` commits them; a
+ * cancel `abort()`s that copy and removes the part file, which a browser refuses while a writable
+ * on it is still open. Done, the part file is moved over an OPFS file ({@linkcode movePart}); a
+ * picked file, or a browser without `move` or that refuses it, gets the bytes copied in through a
+ * writable whose `close()` swaps them in, and the part file is removed.
+ */
 function webSink(directory: FileDirectory, rel: string): DownloadSink {
+  if (isPicked(directory) && !opfsSupported()) return pickedDirectSink(directory, rel);
+  let part: WebFile | undefined;
   return {
     async open(at) {
-      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      part = await webFile("downloadToFile", ...webPart(directory, rel), true, true, true);
+      const { handle } = part;
       const writable = at > 0
         ? await handle.createWritable({ keepExistingData: true })
         : await handle.createWritable();
@@ -544,6 +592,47 @@ function webSink(directory: FileDirectory, rel: string): DownloadSink {
       return {
         write: (chunk) => writable.write(chunk),
         close: () => writable.close(),
+        abort: () => writable.abort(),
+      };
+    },
+    async commit() {
+      const from = part!;
+      if (!isPicked(directory) && await movePart(from.handle, directory, rel)) return;
+      const to = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = await to.handle.createWritable();
+      try {
+        await writable.write(await from.handle.getFile());
+        await writable.close();
+      } catch (err) {
+        await writable.abort().catch(() => {});
+        throw err;
+      }
+      await from.remove().catch(() => {});
+    },
+    remove: () => part?.remove() ?? Promise.resolve(),
+  };
+}
+
+/**
+ * A page download into a picked file or folder where there is no OPFS to stage it in (no secure
+ * context, no `navigator.storage.getDirectory`): the bytes go through the picked file's own
+ * `createWritable()`, whose stream stages them and swaps them in only on `close()`. A cancel or a
+ * failure `abort()`s the stream, so the file keeps its contents; with no partial bytes kept, the
+ * download cannot pause ({@linkcode DownloadSink.direct}). (An app-folder download needs OPFS and
+ * still fails without it.)
+ */
+function pickedDirectSink(directory: PickedDirectory, rel: string): DownloadSink {
+  return {
+    direct: true,
+    async open() {
+      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = await handle.createWritable();
+      return {
+        write: (chunk) => writable.write(chunk),
+        // A stop before the end: drop the staged writes, the file keeps its contents.
+        close: () => writable.abort(),
+        abort: () => writable.abort(),
+        finish: () => writable.close(),
       };
     },
   };
@@ -602,12 +691,24 @@ function urlOf(fn: string, url: string): string {
  * - In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime
  *   fetches in the Deno process (with the request `headers`; CORS does not apply) and writes
  *   under the app's folder, with progress. {@linkcode fileTransfers} lists it and
- *   {@linkcode onFileTransfer} reports it; {@linkcode cancelFileTransfer} or aborting `signal`
- *   cancels it and drops the partial file. It cannot pause ({@linkcode pauseFileTransfer}
- *   rejects with code `"unsupported"`).
+ *   {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far
+ *   and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that
+ *   answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it
+ *   and drops the partial file. The runtime keeps the download's record across restarts, so
+ *   {@linkcode fileTransfers} lists it after one and {@linkcode resumeFileTransfer} continues it
+ *   from its partial file (one running at quit is listed as failed, resumable).
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
- *   request (a server that answers 200 starts it over).
+ *   request (a server that answers 200 starts it over). The bytes go to a part file in OPFS's
+ *   `cache/.denext-part/` folder (hidden from `listDir`) that replaces the file only once the
+ *   download is done, so a file already at `path` keeps its contents until then.
+ *   {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it and deletes the part
+ *   file, never the file it would have replaced. A reload forgets the transfer: downloading to
+ *   the same file again starts over in the same part file. Without OPFS (no secure context), a
+ *   download into a picked file or folder writes through the picked file's own writable stream,
+ *   which swaps the bytes in only when the download is done (a cancel or a failure leaves the
+ *   file as it was); such a download cannot pause ({@linkcode pauseFileTransfer} resolves
+ *   `false`). An app-folder download needs OPFS.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.
@@ -640,96 +741,26 @@ export async function downloadToFile(
     method: "GET",
   });
   if (done) return { path: done.file ?? rel };
+  const shown = isPicked(directory) ? "picked" : directory;
   const desktop = onDesktop() &&
     await viaDesktopFs(
       "downloadToFile",
       directory,
-      (d) => desktopDownload(d, href, rel, directory, options),
+      (d) =>
+        desktopDownload(
+          d,
+          { id: options.id, url: href, directory: shown, path: rel, options },
+          directory,
+        ),
     );
   if (desktop) return desktop.value;
   const native = await filesystemDownload(href, rel, directory, options);
   if (native) return native;
-  const shown = isPicked(directory) ? "picked" : directory;
   await pageDownload(
     { id: options.id, url: href, directory: shown, path: rel, options },
     webSink(directory, rel),
   );
   return { path: isPicked(directory) ? rel : `${directory}/${rel}` };
-}
-
-/** The runtime's `fs.download` failure codes, as the {@linkcode FileTransferError} codes. */
-const DESKTOP_TRANSFER_CODES: Readonly<Record<string, FileTransferErrorCode>> = {
-  download_failed: "HTTP",
-  network: "NETWORK",
-  io: "IO",
-  too_large: "IO",
-  validation: "INVALID",
-  exists: "EXISTS",
-  cancelled: "CANCELLED",
-};
-
-/**
- * A desktop download's failure as the mobile path's: a {@linkcode FileTransferError} for the
- * transfer failures (`HTTP` with the status and body, `NETWORK`, `IO`, `INVALID`, `EXISTS`,
- * `CANCELLED`); anything else (`unavailable`, `forbidden`, …) unchanged.
- */
-function desktopTransferError(err: unknown, id: string): unknown {
-  const e = err as { code?: unknown; message?: unknown; data?: unknown } | null;
-  const code = transferCodeOf(e?.code);
-  if (!code) return err;
-  const message = String(e?.message ?? "failed").replace(/^desktop fs\.download: \w+: /, "");
-  return new FileTransferError(`downloadToFile: ${message}`, { code, id, ...httpDetail(e?.data) });
-}
-
-/** The {@linkcode FileTransferError} code for a runtime `fs.download` code, if it has one. */
-function transferCodeOf(code: unknown): FileTransferErrorCode | undefined {
-  return typeof code === "string" && Object.hasOwn(DESKTOP_TRANSFER_CODES, code)
-    ? DESKTOP_TRANSFER_CODES[code]
-    : undefined;
-}
-
-/** An HTTP failure's `status` and `body` from the runtime's error data. */
-function httpDetail(raw: unknown): { status?: number; body?: string } {
-  const data = (raw ?? {}) as { status?: unknown; body?: unknown };
-  const out: { status?: number; body?: string } = {};
-  if (typeof data.status === "number") out.status = data.status;
-  if (typeof data.body === "string") out.body = data.body;
-  return out;
-}
-
-/**
- * A download in a Deno Desktop window: the runtime fetches it with the request `headers` and
- * reports progress. It is a tracked transfer (`fileTransfers()`, `onFileTransfer`,
- * `cancelFileTransfer`); a cancel, or `signal` aborting, sends `fs.cancelDownload` (the partial
- * file is dropped). The runtime keeps no partial file to resume, so a pause rejects
- * `unsupported`. Its failures are the mobile path's {@linkcode FileTransferError}s.
- */
-function desktopDownload(
-  desktop: DesktopNative,
-  href: string,
-  rel: string,
-  directory: FileDirectory,
-  options: DownloadToFileOptions,
-): Promise<{ path: string }> {
-  const shown = isPicked(directory) ? "picked" : directory;
-  return trackedDownload({ id: options.id, url: href, directory: shown, path: rel, options }, {
-    run: ({ id, signal, onProgress }) =>
-      desktop.fsDownload(href, rel, directory, {
-        id,
-        headers: headersOf(options.headers),
-        signal,
-        onProgress,
-      }),
-    error: desktopTransferError,
-    absent: (err) => (err as { code?: unknown } | null)?.code === "unavailable",
-    pauseRefusal: () =>
-      capabilityError(
-        "pauseFileTransfer",
-        "unsupported",
-        "a Deno Desktop download cannot pause (the runtime keeps no partial file to resume); " +
-          "cancel it and download it again",
-      ),
-  });
 }
 
 /**

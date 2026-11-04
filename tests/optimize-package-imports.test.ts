@@ -35,6 +35,10 @@ import {
 import { buildNextCompatClientEntries } from "../src/build/next-compat-build.ts";
 import { validateDenextConfig, warnUnknownConfigKeys } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 const FIXTURES = fromFileUrl(new URL("./fixtures/optimize-package-imports/", import.meta.url));
 const BARRELS = join(FIXTURES, "barrels");

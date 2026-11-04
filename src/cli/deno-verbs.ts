@@ -23,7 +23,7 @@ export interface DenoVerb {
 }
 
 /**
- * Every subcommand `deno --help` lists for the pinned Deno (2.9.7), in Deno's order. `help` is
+ * Every subcommand `deno --help` lists for the pinned Deno (2.9.8), in Deno's order. `help` is
  * Deno's too, but `denext help` is denext's own (see {@linkcode FORWARDABLE_EXCLUDED}).
  */
 export const DENO_VERBS: readonly DenoVerb[] = [

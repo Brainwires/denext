@@ -24,6 +24,7 @@ import {
 } from "../src/build/partytown.ts";
 import { createProdHandler } from "../src/build/prod-server/handler.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const LIB = "/_denext/~partytown/";
 const ON: DenextConfig = { nextScriptWorkers: true };
@@ -403,7 +404,6 @@ Deno.test("the production handler serves the build's Partytown files below baseP
 
 Deno.test({
   name: "denext export publishes Partytown below basePath and the pages point at it",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-pt-export-" });
   try {
@@ -452,12 +452,10 @@ export default function About() {
     );
     await fakePartytown(dir, "@builder.io/partytown");
     const cli = fromFileUrl(new URL("../cli.ts", import.meta.url));
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", cli, "export", dir],
       cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
     assert(out.success, log);
     const outDir = join(dir, "out");

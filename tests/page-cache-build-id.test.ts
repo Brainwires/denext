@@ -6,7 +6,7 @@
 import { assert, assertEquals, assertMatch, assertNotEquals } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import {

@@ -34,20 +34,53 @@
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
 import { encodeHex } from "@std/encoding/hex";
-import { join, resolve } from "@std/path";
+import { dirname, join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
-import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
+import { lockTask } from "./file-lock.ts";
+import {
+  denoCacheDir,
+  DESKTOP_RUNTIME_PIN,
+  type DesktopRuntimePin,
+  renameRetrying,
+} from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import {
+  assertTrustedCacheDirs,
+  cacheDirChain,
+  DownloadIdleError,
   type DownloadProgress,
   downloadProgress,
+  fetchWithConnectDeadline,
   readJsonFile,
+  responseBody,
   sha256File,
   streamHashed,
   sweepLeftovers,
+  withDownloadRetries,
 } from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  denoVersionOutput,
+  isDenextDenoVersion,
+  isPinnedDenextDeno,
+  parseDenoVersionOutput,
+} from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
+import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
+import {
+  decideRevocation,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+  REVOCATION_NOTICED_ENV,
+  type RevocationMode,
+  revocationNotice,
+  revocationStatus,
+  type RevocationSubject,
+  type RuntimeComponent,
+  type RuntimeRevocationStatus,
+} from "./runtime-revocations.ts";
 
 /** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
 export interface DenoToolchainEsbuild {
@@ -138,6 +171,22 @@ export interface DenoToolchainPin {
    * The release's `denort` zips (holding `denort[.exe]`), keyed like `targets`; absent before
    * 2.9.7-denext.20.
    */
+  readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
+  /**
+   * The previous pin, run instead of this one when the signed revoked-runtimes list revokes this
+   * one for the host (src/build/runtime-revocations.ts). Never nests another `rollback`.
+   */
+  readonly rollback?: DenoToolchainRollback;
+}
+
+/** A pin's `rollback`: the previous pinned release, as the pin named it. */
+export interface DenoToolchainRollback {
+  readonly version: string;
+  readonly tag?: string;
+  readonly deno?: string;
+  /** The glibc its Linux builds need (see `minGlibcFor`). */
+  readonly minGlibc?: string;
+  readonly targets: Readonly<Record<string, DenoToolchainArtifact>>;
   readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
 }
 
@@ -236,6 +285,84 @@ export function loadDenoToolchainPin(env: EnvGet = processEnv): DenoToolchainPin
     throw new Error(`denext: ${TOOLCHAIN_PIN_FILE_ENV}=${file} is not a schema-1 toolchain pin`);
   }
   return pin;
+}
+
+/**
+ * The pin's `rollback` as a pin of its own (no `rollback` of its own), or `null` when it names none.
+ *
+ * @param pin The pin.
+ * @returns The previous release's pin.
+ */
+export function rollbackToolchainPin(pin: DenoToolchainPin): DenoToolchainPin | null {
+  if (!pin.rollback) return null;
+  return {
+    schema: 1,
+    ...(pin.repository ? { repository: pin.repository } : {}),
+    ...pin.rollback,
+  };
+}
+
+/**
+ * The pin of the toolchain this process runs on: the pin in force, or its `rollback` when the
+ * toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`, set by the command that started this one) names the
+ * rollback's version — the parent ran the rollback because the pinned release is revoked, and
+ * everything this process takes from the pin (its esbuild, TypeScript, `denort`) must match it.
+ *
+ * @param env Env reader.
+ * @returns The pin.
+ */
+export function activeToolchainPin(env: EnvGet = processEnv): DenoToolchainPin {
+  const pin = loadDenoToolchainPin(env);
+  const rollback = rollbackToolchainPin(pin);
+  const marker = env(TOOLCHAIN_ACTIVE_ENV);
+  return rollback && marker === rollback.version ? rollback : pin;
+}
+
+/** What {@linkcode shippingToolchainPin} reads (tests pass a fixture pin and its list). */
+export interface ShippingToolchainOptions {
+  /** The pin in force (default {@linkcode loadDenoToolchainPin}). */
+  readonly pin?: DenoToolchainPin;
+  /** The host's pin key (default {@linkcode denoToolchainTarget}). */
+  readonly target?: string;
+  /** The toolchain cache, where the list is cached (default {@linkcode denoToolchainCacheRoot}). */
+  readonly cacheRoot?: string;
+  /** How the list is read (default: `fetch`). */
+  readonly revocations?: ToolchainRevocationOptions;
+}
+
+/**
+ * The pin of the toolchain a command that SHIPS a runtime runs on (`build --compile` builds onto
+ * its `denort`): {@linkcode activeToolchainPin}, but a toolchain marker naming the pin's rollback
+ * is believed only when the revoked-runtimes list, read now, still picks the rollback here — a
+ * marker leaked from a parent shell or a copied CI env never makes a release ship the older
+ * runtime.
+ *
+ * @param env Env reader.
+ * @param options The pin, target, cache and list seams.
+ * @returns The pin.
+ * @throws {Error} When the marker names the rollback but the list does not pick it.
+ */
+export async function shippingToolchainPin(
+  env: EnvGet = processEnv,
+  options: ShippingToolchainOptions = {},
+): Promise<DenoToolchainPin> {
+  const pin = options.pin ?? loadDenoToolchainPin(env);
+  const rollback = rollbackToolchainPin(pin);
+  if (!rollback || env(TOOLCHAIN_ACTIVE_ENV) !== rollback.version) return pin;
+  const unmarked: EnvGet = (name) => name === TOOLCHAIN_ACTIVE_ENV ? undefined : env(name);
+  const selected = await selectToolchainPin(
+    pin,
+    unmarked,
+    { ...(options.pin ? { pin } : {}), revocations: options.revocations ?? {} },
+    options.target ?? denoToolchainTarget(),
+    options.cacheRoot ?? denoToolchainCacheRoot(env),
+  );
+  if (selected.pin.version === rollback.version) return rollback;
+  throw new Error(
+    `denext: ${TOOLCHAIN_ACTIVE_ENV}=${rollback.version} names the toolchain pin's rollback, but ` +
+      `the revoked-runtimes list does not revoke ${pin.version} here: refusing to ship ` +
+      `${rollback.version}. Unset ${TOOLCHAIN_ACTIVE_ENV} and run the command again.`,
+  );
 }
 
 /**
@@ -428,10 +555,15 @@ async function netDenied(url: string): Promise<boolean> {
   return state === "denied";
 }
 
-/** GET `artifact`, mapping a network failure / HTTP error to a download error. */
+/**
+ * GET `artifact`, mapping a network failure / HTTP error to a download error (its `cause` says
+ * whether a retry may help). A server that sends no response headers within the connect deadline
+ * is given up on.
+ */
 async function openDownload(
   slot: DownloadNames,
   fetchImpl: typeof fetch,
+  connectMs: number,
 ): Promise<ReadableStream<Uint8Array>> {
   const { artifact, what } = slot;
   const hint = slot.offlineHint ? ` ${slot.offlineHint}` : "";
@@ -443,22 +575,19 @@ async function openDownload(
   }
   let res: Response;
   try {
-    res = await fetchImpl(artifact.url, {
-      redirect: "follow",
-      ...(artifact.headers ? { headers: { ...artifact.headers } } : {}),
-    });
+    res = await fetchWithConnectDeadline(fetchImpl, artifact.url, artifact.headers, connectMs);
   } catch (err) {
     throw new DenoToolchainDownloadError(
       `denext: could not download denext's ${what} (${artifact.file}) from ` +
         `${artifact.url}: ${err instanceof Error ? err.message : err}. Are you offline?${hint}`,
+      { cause: err },
     );
   }
-  if (res.ok && res.body) return res.body;
-  await res.body?.cancel();
-  throw new DenoToolchainDownloadError(
-    `denext: downloading denext's ${what} failed: GET ${artifact.url} → ` +
-      `${res.status} ${res.statusText}`,
-  );
+  return await responseBody(res, artifact.url, (status) =>
+    new DenoToolchainDownloadError(
+      `denext: downloading denext's ${what} failed: ${status.message}`,
+      { cause: status },
+    ));
 }
 
 /** What a download's messages call it: the artifact, its name, and the way to fetch it ahead. */
@@ -470,22 +599,42 @@ export interface DownloadNames {
   readonly offlineHint?: string;
 }
 
-/** Stream the download into the new file `dest`; its size and SHA-256. */
-async function download(
+/**
+ * Stream the download into the new file `dest`; its size and SHA-256. A stalled or broken
+ * connection is retried on a new one (`withDownloadRetries`), the partial file deleted first.
+ */
+function download(
   slot: DownloadNames,
   dest: string,
   fetchImpl: typeof fetch,
+  log?: (line: string) => void,
 ): Promise<{ size: number; sha256: string }> {
   const { artifact, what } = slot;
-  const body = await openDownload(slot, fetchImpl);
   const cap = artifact.size ?? MAX_DOWNLOAD;
-  // A progress line on a terminal (bytes and percent); nothing in a log or CI.
-  const progress = downloadProgress(`${what} ${artifact.file}`, artifact.size);
-  try {
-    return await streamHashedTo(body, dest, cap, slot, progress);
-  } finally {
-    progress.done();
-  }
+  const hint = slot.offlineHint ? ` ${slot.offlineHint}` : "";
+  return withDownloadRetries(
+    `${what} ${artifact.file}`,
+    async ({ fetch: fetchOnce, deadlines }) => {
+      const body = await openDownload(slot, fetchOnce, deadlines.connectMs);
+      // A progress line on a terminal (bytes and percent); nothing in a log or CI.
+      const progress = downloadProgress(`${what} ${artifact.file}`, artifact.size);
+      try {
+        return await streamHashedTo(body, dest, cap, slot, progress, deadlines.idleMs);
+      } catch (err) {
+        await Deno.remove(dest).catch(() => {});
+        throw err;
+      } finally {
+        progress.done();
+      }
+    },
+    fetchImpl,
+    (report) =>
+      new DenoToolchainDownloadError(
+        `denext: could not download denext's ${what} (${artifact.file}) from ` +
+          `${artifact.url}${report}\n  Are you offline?${hint}`,
+      ),
+    { log },
+  );
 }
 
 /** {@linkcode streamHashed} with the toolchain's refusals. */
@@ -495,19 +644,32 @@ function streamHashedTo(
   cap: number,
   { artifact, what }: DownloadNames,
   progress: DownloadProgress,
+  idleMs: number,
 ): Promise<{ size: number; sha256: string }> {
-  return streamHashed(body, dest, cap, {
-    tooLarge: () =>
-      new DenoToolchainDownloadError(
-        `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
-          `${cap} bytes`,
-      ),
-    interrupted: (size, err) =>
-      new DenoToolchainDownloadError(
-        `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
-          `${err instanceof Error ? err.message : err}`,
-      ),
-  }, (bytes) => progress.update(bytes));
+  return streamHashed(
+    body,
+    dest,
+    cap,
+    {
+      tooLarge: () =>
+        new DenoToolchainDownloadError(
+          `denext: refusing denext's ${what} ${artifact.file}: larger than its pinned ` +
+            `${cap} bytes`,
+        ),
+      interrupted: (size, err) =>
+        new DenoToolchainDownloadError(
+          `denext: the ${what} download was interrupted (${artifact.file}, ${size} bytes): ` +
+            `${err instanceof Error ? err.message : err}${
+              err instanceof DownloadIdleError
+                ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
+                : ""
+            }`,
+          { cause: err },
+        ),
+    },
+    (bytes) => progress.update(bytes),
+    idleMs,
+  );
 }
 
 /** Check a finished download against the pin; throws (the caller deletes the file). */
@@ -556,7 +718,7 @@ export async function downloadPinned(
   for (const [i, source] of sources.entries()) {
     const one = { ...names, artifact: { ...artifact, url: source.url, headers: source.headers } };
     try {
-      checkDownload(one, await download(one, dest, fetchImpl));
+      checkDownload(one, await download(one, dest, fetchImpl, log));
       return;
     } catch (err) {
       await Deno.remove(dest).catch(() => {});
@@ -621,6 +783,8 @@ export interface EnsureDenoToolchainOptions {
   readonly log?: (line: string) => void;
   /** Test seam. */
   readonly fetch?: typeof fetch;
+  /** Test seam: the host OS and C library the Linux check sees ({@linkcode assertLinuxLibc}). */
+  readonly host?: { readonly os?: string; readonly libc?: LinuxLibc };
 }
 
 /** A verified toolchain binary. */
@@ -822,6 +986,11 @@ async function install(
   opts: EnsureDenoToolchainOptions,
 ): Promise<void> {
   const { dir, exe, version, target, artifact } = slot;
+  // A Linux build of denext's Deno on a host that can't run it (musl, an older glibc): say so
+  // before downloading it, rather than after, when it fails to exec.
+  if (slot.minGlibc !== undefined && slot.os === "linux") {
+    await assertLinuxLibc(`denext's ${slot.what} ${version}`, slot.minGlibc, opts.host);
+  }
   await Deno.mkdir(dir, { recursive: true });
   await sweepLeftovers(dir);
   const scratch = await Deno.makeTempDir({ dir, prefix: ".tmp-" });
@@ -863,24 +1032,39 @@ export interface CacheSlot extends DownloadNames {
   readonly os: string;
   readonly version: string;
   readonly target: string;
+  /**
+   * The glibc a Linux binary needs ({@linkcode minGlibcFor}), checked against the host before a
+   * download; absent for a binary with no such need (the static musl Gleam).
+   */
+  readonly minGlibc?: string;
 }
 
 /**
  * Make `slot`'s binary available and verified in the cache (see the module header): reuse it when
  * its stamp matches, else download, verify and install it under the cache lock. Resolves whether
  * it was already cached. The pinned Gleam compiler (gleam-toolchain.ts) is cached the same way.
+ * Refuses a cache another user can write ({@linkcode assertTrustedCacheDirs}).
  *
  * @param slot The binary, its cache directory and its pinned archive.
  * @param options The download seams (`fetch`, `log`).
  * @returns Whether it was already cached.
  */
-export async function ensureCached(
+export function ensureCached(
+  slot: CacheSlot,
+  options: EnsureDenoToolchainOptions,
+): Promise<boolean> {
+  return lockTask(() => ensureCachedInTask(slot, options));
+}
+
+async function ensureCachedInTask(
   slot: CacheSlot,
   options: EnsureDenoToolchainOptions,
 ): Promise<boolean> {
   const { root, dir, exe, version, target, artifact } = slot;
   const descr = slot.what === "Deno toolchain" ? CACHE_DESCR : `${slot.what} cache`;
   await Deno.mkdir(root, { recursive: true });
+  // Before the lock files are opened or a cached binary is trusted: nobody else may write here.
+  await assertTrustedCacheDirs(cacheDirChain(dirname(root), dir));
   {
     using _shared = await acquireCacheLock(root, "shared", descr);
     if (await cacheVerdict(dir, exe, version, target, artifact, false) === "ok") return true;
@@ -947,7 +1131,17 @@ export async function ensureDenoToolchain(
   const dir = binaryDir(root, version, target);
   const os = options.os ?? Deno.build.os;
   const exe = exeName(os);
-  const slot = { root, dir, exe, os, version, target, artifact, what: "Deno toolchain" };
+  const slot = {
+    root,
+    dir,
+    exe,
+    os,
+    version,
+    target,
+    artifact,
+    what: "Deno toolchain",
+    minGlibc: minGlibcFor(pin),
+  };
   const cached = await ensureCached(slot, options);
   return { deno: join(dir, exe), version, target, cached };
 }
@@ -981,6 +1175,17 @@ const COMPILE_TARGET_KEYS: Readonly<Record<string, string>> = {
  */
 export function denortTargetKey(triple: string): string | undefined {
   return COMPILE_TARGET_KEYS[triple];
+}
+
+/**
+ * The Rust target triple of a pin key (`linux-x86_64` → `x86_64-unknown-linux-gnu`), the naming the
+ * revoked-runtimes list uses; `undefined` for a key denext's toolchain is not built for.
+ *
+ * @param key The pin key (`<os>-<arch>`).
+ * @returns The triple, or `undefined`.
+ */
+export function toolchainTargetTriple(key: string): string | undefined {
+  return Object.keys(COMPILE_TARGET_KEYS).find((triple) => COMPILE_TARGET_KEYS[triple] === key);
 }
 
 /**
@@ -1022,11 +1227,24 @@ export type DenoToolchainChoice =
     readonly version: string;
     /** Say this once before running (the unverified `DENEXT_DENO=<path>` override). */
     readonly warning?: string;
+    /**
+     * Set for a `DENEXT_DENO=<path>` binary whose `deno --version` carries no denext identity: it
+     * is stock Deno (a deprecated path: 5.0 refuses it). Unset when it is denext's, or when its
+     * version can't be read.
+     */
+    readonly stock?: true;
+    /**
+     * What the revoked-runtimes list said about the pinned toolchain, when it was checked
+     * (src/build/runtime-revocations.ts): `runningRollback` when `deno` is the pin's `rollback`.
+     */
+    readonly revocation?: RuntimeRevocationStatus;
   }
   | {
     readonly kind: "stock";
     /** Why stock Deno runs. */
     readonly reason: string;
+    /** Set for the explicit `DENEXT_DENO=stock` opt-out (a deprecated path: 5.0 refuses it). */
+    readonly optedOut?: true;
     /** Say this once (a failure or a missing grant), or nothing (an opt-out, no pin yet). */
     readonly warning?: string;
     /**
@@ -1046,6 +1264,27 @@ export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions 
    * `run`, and `read` + `write` on the cache root; never prompts).
    */
   readonly missingGrants?: (cacheRoot: string) => Promise<string[]>;
+  /** `<bin> --version`'s output for a `DENEXT_DENO=<path>` binary, or null (default: run it). */
+  readonly versionOutput?: (bin: string) => Promise<string | null>;
+  /**
+   * How the revoked-runtimes list is consulted. Absent: the built-in pin is checked in `fetch` mode
+   * (a pin given as `pin` or by `DENEXT_TOOLCHAIN_PIN_FILE` is not checked); given, it is checked
+   * whatever the pin (tests).
+   */
+  readonly revocations?: ToolchainRevocationOptions;
+}
+
+/** {@linkcode ResolveDenoToolchainOptions.revocations}. */
+export interface ToolchainRevocationOptions extends Omit<LoadRevocationsOptions, "env" | "mode"> {
+  /** Default `fetch`; `cache-only` for `start` / `job` (no network at boot). */
+  readonly mode?: RevocationMode;
+  /**
+   * The runtimes that must roll back together: `["cli"]` (default), or `["cli", "desktop"]` for
+   * the desktop verbs, whose `deno desktop` CLI and libdenort must come from one release.
+   */
+  readonly components?: readonly RuntimeComponent[];
+  /** The Deno Desktop runtime pin (default the built-in one). */
+  readonly desktopPin?: Pick<DesktopRuntimePin, "version" | "targets" | "rollback">;
 }
 
 /** The `--allow-*` grants this process lacks for `cacheRoot` (queried, never prompted). */
@@ -1129,7 +1368,10 @@ function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "pat
  * against the directory denext started in, so a child run in another directory (`--cwd`, a
  * forwarded verb) still finds it.
  */
-async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
+async function pathChoice(
+  raw: string,
+  versionOutput: (bin: string) => Promise<string | null>,
+): Promise<DenoToolchainChoice> {
   const path = resolve(raw);
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
     throw new DenoToolchainRequiredError(
@@ -1138,12 +1380,15 @@ async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
         "denext's own Deno toolchain.",
     );
   }
+  const identity = parseDenoVersionOutput(await versionOutput(path) ?? "");
   return {
     kind: "toolchain",
     deno: path,
     version: "path",
     warning: `denext: using the Deno at ${path} (${TOOLCHAIN_ENV}); it is not downloaded, ` +
       "pinned or verified.",
+    // Stock by the identity marker, not the version alone (src/build/deno-version.ts).
+    ...(identity && !isDenextDenoVersion(identity) ? { stock: true as const } : {}),
   };
 }
 
@@ -1167,8 +1412,12 @@ export async function resolveDenoToolchain(
 ): Promise<DenoToolchainChoice> {
   const env = options.env ?? processEnv;
   const mode = toolchainMode(env);
-  if (mode.mode === "stock") return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock` };
-  if (mode.mode === "path") return await pathChoice(mode.path);
+  if (mode.mode === "stock") {
+    return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock`, optedOut: true };
+  }
+  if (mode.mode === "path") {
+    return await pathChoice(mode.path, options.versionOutput ?? denoVersionOutput);
+  }
   let pin: DenoToolchainPin;
   try {
     pin = options.pin ?? loadDenoToolchainPin(env);
@@ -1234,19 +1483,131 @@ async function pinnedChoice(
 ): Promise<DenoToolchainChoice> {
   const target = options.target ?? denoToolchainTarget();
   const cacheRoot = options.cacheRoot ?? denoToolchainCacheRoot(env);
-  const obstacle = await pinnedObstacle(
-    pin,
-    target,
-    cacheRoot,
-    options.missingGrants ?? queryMissingGrants,
-  );
+  // The list is read (and, when stale, fetched within its budget) while the grants are queried.
+  const [obstacle, selected] = await Promise.all([
+    pinnedObstacle(pin, target, cacheRoot, options.missingGrants ?? queryMissingGrants),
+    selectToolchainPin(pin, env, options, target, cacheRoot),
+  ]);
   if (obstacle) return obstacle;
   try {
-    const rt = await ensureDenoToolchain({ ...options, pin, target, cacheRoot });
-    return { kind: "toolchain", deno: rt.deno, version: rt.version };
+    const rt = await ensureDenoToolchain({ ...options, pin: selected.pin, target, cacheRoot });
+    return {
+      kind: "toolchain",
+      deno: rt.deno,
+      version: rt.version,
+      ...(selected.warning ? { warning: selected.warning } : {}),
+      ...(selected.revocation ? { revocation: selected.revocation } : {}),
+    };
   } catch (err) {
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
+}
+
+/** The pin {@linkcode selectToolchainPin} chose, and what to say about it. */
+export interface ToolchainSelection {
+  /** The pin to install and run: the pin in force, or its `rollback`. */
+  readonly pin: DenoToolchainPin;
+  /** The one-line notice, when the pinned toolchain is revoked and it was not said yet. */
+  readonly warning?: string;
+  /** What the list said, when it was consulted. */
+  readonly revocation?: RuntimeRevocationStatus;
+}
+
+/**
+ * Whether the revoked-runtimes list is consulted for `options`: never for a pin file override
+ * (fork development), nor for a pin a caller passed without asking for the check (tests).
+ */
+function revocationsApply(env: EnvGet, options: ResolveDenoToolchainOptions): boolean {
+  if (env(TOOLCHAIN_PIN_FILE_ENV)) return false;
+  return options.pin === undefined || options.revocations !== undefined;
+}
+
+/** The runtimes a command on `target` runs, as the list names them. */
+function toolchainSubjects(
+  pin: DenoToolchainPin,
+  rollback: DenoToolchainPin | null,
+  target: string,
+  options: ToolchainRevocationOptions,
+): RevocationSubject[] {
+  const triple = toolchainTargetTriple(target);
+  const usable = rollback?.targets[target] ? rollback.version : null;
+  const subjects: RevocationSubject[] = [
+    { component: "cli", version: pin.version!, rollback: usable, triple },
+  ];
+  if (!(options.components ?? ["cli"]).includes("desktop")) return subjects;
+  // libdenort must match the `deno desktop` CLI: the desktop runtime rolls back only to the same
+  // release as the toolchain.
+  const desktop = options.desktopPin ?? DESKTOP_RUNTIME_PIN;
+  const same = desktop.rollback?.version === usable && triple !== undefined &&
+    desktop.rollback?.targets[triple] !== undefined;
+  subjects.push({
+    component: "desktop",
+    version: desktop.version,
+    rollback: same ? usable : null,
+    triple,
+  });
+  return subjects;
+}
+
+/**
+ * The toolchain to run for `pin` (see src/build/runtime-revocations.ts): the pin in force, or its
+ * `rollback` when the revoked-runtimes list revokes it for this host and the rollback is not
+ * revoked too. The toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`) decides nothing: it can leak from
+ * a parent shell or a copied CI env, so the list is consulted whatever it says (the processes a
+ * command starts stay quiet through `DENEXT_REVOCATION_NOTICED`). Never throws.
+ *
+ * @param pin The pin in force.
+ * @param env Env reader.
+ * @param options The resolver's options (`revocations` configures the check).
+ * @param target The host's pin key.
+ * @param cacheRoot The toolchain cache (where the list is cached).
+ * @returns The pin to run, and what to say.
+ */
+export async function selectToolchainPin(
+  pin: DenoToolchainPin,
+  env: EnvGet,
+  options: ResolveDenoToolchainOptions,
+  target: string,
+  cacheRoot: string,
+): Promise<ToolchainSelection> {
+  const rollback = rollbackToolchainPin(pin);
+  if (pin.version === null || !revocationsApply(env, options)) return { pin };
+  const r = options.revocations ?? {};
+  const loaded = await loadRuntimeRevocations({ ...r, env, cacheRoot });
+  const decision = decideRevocation(loaded.list, toolchainSubjects(pin, rollback, target, r));
+  const revocation = revocationStatus(loaded, decision, pin.version, rollback?.version ?? null);
+  if (!decision.hit) return loaded.configured ? { pin, revocation } : { pin };
+  const chosen = decision.useRollback ? rollback! : pin;
+  if (env(REVOCATION_NOTICED_ENV) === "1") return { pin: chosen, revocation };
+  const warning = revocationNotice(
+    decision.hit,
+    decision.triple,
+    decision.useRollback ? chosen.version : null,
+  );
+  return { pin: chosen, revocation, warning };
+}
+
+/**
+ * The toolchain this machine would run for the pin in force — the pin, or its rollback when the
+ * revoked-runtimes list revokes it here — as `toolchain status` / `install` / `path` and `doctor`
+ * report it: the list read in `mode`, whatever toolchain marker this process inherited.
+ *
+ * @param mode How the list is read (`force` fetches now, within its 5 s budget).
+ * @param env Env reader.
+ * @returns The selection.
+ */
+export function toolchainSelection(
+  mode: RevocationMode,
+  env: EnvGet = processEnv,
+): Promise<ToolchainSelection> {
+  const unmarked: EnvGet = (name) => name === TOOLCHAIN_ACTIVE_ENV ? undefined : env(name);
+  return selectToolchainPin(
+    loadDenoToolchainPin(env),
+    unmarked,
+    { revocations: { mode } },
+    denoToolchainTarget(),
+    denoToolchainCacheRoot(env),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1290,8 +1651,11 @@ export interface DenoToolchainStatusOptions {
   readonly cacheRoot?: string;
   /** Re-hash a cached binary even when its size and mtime match. */
   readonly verify?: boolean;
-  /** This process's Deno version (default `Deno.version.deno`). */
-  readonly running?: string;
+  /**
+   * This process's Deno (default {@linkcode currentDenoIdentity}: `Deno.version.deno` and its
+   * `Deno.build.denext` marker).
+   */
+  readonly running?: DenoIdentity;
   /**
    * Whether this process is a compiled `denext` executable (default: `Deno.build.standalone`).
    * Its own embedded Deno never runs a command: every child it starts runs on the toolchain.
@@ -1375,16 +1739,19 @@ export async function denoToolchainStatus(
   options: DenoToolchainStatusOptions = {},
 ): Promise<DenoToolchainStatus> {
   const env = options.env ?? processEnv;
-  const running = options.running ?? Deno.version.deno;
+  const identity = options.running ?? currentDenoIdentity();
+  const running = identity.deno;
   const target = options.target ?? denoToolchainTarget();
   const mode = toolchainMode(env);
   const pin = options.pin ?? loadDenoToolchainPin(env);
-  // From the running version alone (an inherited marker or an older `-denext.N` build — a stale
-  // `toolchain link` — is not the pinned toolchain); a `DENEXT_DENO=<path>` binary has no version
-  // to check, so there the marker its own launch set ("path") counts.
+  // From the running Deno alone: denext's Deno (its `Deno.build.denext` marker, or a pre-marker
+  // build's version) of the pin's version. An inherited marker, an older `-denext.N` build (a stale
+  // `toolchain link`) or upstream Deno of the pinned number is not the pinned toolchain; a
+  // `DENEXT_DENO=<path>` binary has no version to check, so there the marker its own launch set
+  // ("path") counts.
   const active = mode.mode === "path"
     ? env(TOOLCHAIN_ACTIVE_ENV) === "path"
-    : pin.version !== null && running === pin.version;
+    : isPinnedDenextDeno(identity, pin.version);
   const standalone = options.standalone ??
     (Deno.build as { standalone?: boolean }).standalone === true;
   const runningText = runningLine(standalone, mode.mode, active, running);
@@ -1515,7 +1882,9 @@ async function stepQuery(options: DenoToolchainStatusOptions): Promise<StepQuery
   const env = options.env ?? processEnv;
   const mode = toolchainMode(env).mode;
   if (mode !== "pinned") return { mode: mode === "stock" ? "stock" : "<path>" };
-  const pin = options.pin ?? loadDenoToolchainPin(env);
+  // The pin of the toolchain this process runs: its rollback, when the command that started it
+  // ran that one.
+  const pin = options.pin ?? activeToolchainPin(env);
   const target = options.target ?? denoToolchainTarget();
   const artifact = pinnedTargetArtifact(pin, target);
   const root = options.cacheRoot ?? denoToolchainCacheRoot(env);
@@ -1683,8 +2052,14 @@ export interface DenoToolchainLinkOptions {
   readonly cacheRoot?: string;
 }
 
-/** Where the link goes: `~/.denext/bin`. */
+/**
+ * Where the link goes: the `bin/` of the install directory, `$DENEXT_INSTALL` (as the installers
+ * read it) or `~/.denext` — so a custom-prefix install's `deno` lands beside its `denext`, in the
+ * directory the installer put on PATH.
+ */
 function denoToolchainLinkDir(env: EnvGet = processEnv): string {
+  const install = env("DENEXT_INSTALL");
+  if (install) return join(install, "bin");
   const home = env("HOME") ?? env("USERPROFILE");
   if (!home) throw new Error("denext: neither HOME nor USERPROFILE is set");
   return join(home, ".denext", "bin");
@@ -1695,6 +2070,16 @@ function linkPath(env: EnvGet, os: string): string {
   return join(denoToolchainLinkDir(env), os === "windows" ? "deno.cmd" : "deno");
 }
 
+/**
+ * Whether `path` is `dir` or below it, compared up to a separator: `…/denext-deno-other/x` is
+ * not inside `…/denext-deno`.
+ */
+function isUnder(dir: string, path: string): boolean {
+  const base = dir.replace(/[\\/]+$/, "");
+  if (path === base) return true;
+  return path.startsWith(base) && (path[base.length] === "/" || path[base.length] === "\\");
+}
+
 /** Whether the file at `path` is a link this module created. */
 async function isOurLink(path: string, os: string, cacheRoot: string): Promise<boolean> {
   if (os === "windows") {
@@ -1702,7 +2087,15 @@ async function isOurLink(path: string, os: string, cacheRoot: string): Promise<b
     return text !== null && text.includes(SHIM_MARK);
   }
   const target = await Deno.readLink(path).catch(() => null);
-  return target !== null && target.startsWith(cacheRoot);
+  return target !== null && isUnder(cacheRoot, target);
+}
+
+/**
+ * The `.cmd` shim's line for `deno`: cmd expands `%…%` even inside quotes, so each `%` in the path
+ * is doubled (a batch file reads `%%` as one `%`).
+ */
+function shimLine(deno: string): string {
+  return `"${deno.replaceAll("%", "%%")}" %*`;
 }
 
 /** The PATH line the user adds once. */
@@ -1713,8 +2106,9 @@ function pathLine(dir: string, os: string): string {
 }
 
 /**
- * Point `~/.denext/bin/deno` (Windows: `deno.cmd`) at the toolchain binary `deno`. Replaces only
- * a link it made itself; anything else at that path is refused.
+ * Point `~/.denext/bin/deno` (Windows: `deno.cmd`; `$DENEXT_INSTALL/bin` when that is set) at
+ * the toolchain binary `deno`. Replaces only a link it made itself; anything else at that path is
+ * refused.
  *
  * @param deno The toolchain binary.
  * @param options Seams.
@@ -1738,7 +2132,7 @@ export async function linkDenoToolchain(
   await Deno.mkdir(denoToolchainLinkDir(env), { recursive: true });
   if (existing) await Deno.remove(link);
   if (os === "windows") {
-    await Deno.writeTextFile(link, `@echo off\r\n${SHIM_MARK}\r\n"${deno}" %*\r\n`);
+    await Deno.writeTextFile(link, `@echo off\r\n${SHIM_MARK}\r\n${shimLine(deno)}\r\n`);
   } else {
     await Deno.symlink(deno, link);
   }
@@ -1752,7 +2146,7 @@ async function linkedBinary(link: string, os: string, cacheRoot: string): Promis
   }
   if (os !== "windows") return await Deno.readLink(link);
   const text = await Deno.readTextFile(link);
-  return /^"([^"]+)" %\*/m.exec(text)?.[1] ?? null;
+  return /^"([^"]+)" %\*/m.exec(text)?.[1]?.replaceAll("%%", "%") ?? null;
 }
 
 /**
@@ -1773,7 +2167,7 @@ export async function staleToolchainLink(
   const link = linkPath(env, os);
   const target = await linkedBinary(link, os, root);
   if (target === null || pin.version === null) return null;
-  if (target.startsWith(join(root, pin.version))) return null;
+  if (isUnder(join(root, pin.version), target)) return null;
   return `denext: ${link} points at ${target}, not the pinned toolchain ${pin.version}; ` +
     "run `denext toolchain link` again (or `denext toolchain unlink`).";
 }

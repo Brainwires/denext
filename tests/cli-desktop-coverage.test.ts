@@ -32,7 +32,8 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix });
+  // Real path: a build names the project by its real path (macOS `/var` -> `/private/var`).
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix }));
   await Deno.writeTextFile(join(dir, "deno.json"), "{}");
   return dir;
 }
@@ -283,7 +284,56 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
   }
 }
 
-const STOCK = { DENEXT_DESKTOP_RUNTIME: "stock" };
+const STOCK_MODE = { DENEXT_DESKTOP_RUNTIME: "stock" };
+
+// A stand-in local runtime, so a window's build reaches `deno desktop` with no download on any host.
+// `deno desktop` type-checks the entry first, and these tests' entries fail there.
+const localRuntimeDir = await Deno.makeTempDir({ prefix: "denext_desktop_local_runtime_" });
+await Deno.mkdir(join(localRuntimeDir, "laufey"));
+await Deno.writeTextFile(
+  join(
+    localRuntimeDir,
+    Deno.build.os === "windows"
+      ? "denort.dll"
+      : Deno.build.os === "darwin"
+      ? "libdenort.dylib"
+      : "libdenort.so",
+  ),
+  "",
+);
+globalThis.addEventListener("unload", () => {
+  Deno.removeSync(localRuntimeDir, { recursive: true });
+});
+const LOCAL_RUNTIME = { DENEXT_DESKTOP_RUNTIME_DIR: localRuntimeDir };
+
+const onDenextDeno = Boolean((Deno.build as { denext?: string }).denext);
+
+Deno.test({
+  name:
+    "desktop run / package: DENEXT_DESKTOP_RUNTIME=stock on denext's Deno stops before any work",
+  ignore: !onDenextDeno,
+  fn: async () => {
+    const dir = await tempDir("denext_desktop_stock_refused_");
+    try {
+      await Deno.writeTextFile(join(dir, "desktop.ts"), "export {};\n");
+      await Deno.mkdir(join(dir, "scripts"));
+      await Deno.writeTextFile(
+        join(dir, "scripts", `package-${Deno.build.os === "darwin" ? "macos" : Deno.build.os}.ts`),
+        'console.log("the script ran");\n',
+      );
+      for (const verb of ["run", "package"]) {
+        const r = await withEnv(STOCK_MODE, () => runVerb([verb], dir));
+        assertEquals(r.code, 1, r.err);
+        assertStringIncludes(r.err, `denext desktop ${verb}: denext: DENEXT_DESKTOP_RUNTIME=stock`);
+        assertStringIncludes(r.err, "DENEXT_DENO=stock");
+        assert(!r.out.includes("exporting SPA"), r.out);
+        assert(!r.out.includes("the script ran"), r.out);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
 
 Deno.test("desktop build exports the SPA to out/", async () => {
   const dir = await tempDir("denext_desktop_build_");
@@ -304,7 +354,7 @@ Deno.test("desktop run: a failing export stops before any window is opened", asy
     await Deno.writeTextFile(join(dir, "desktop.ts"), "throw new Error('must not run');\n");
     await Deno.mkdir(join(dir, "app"));
     await Deno.writeTextFile(join(dir, "app", "page.ts"), 'throw new Error("page boom");\n');
-    const r = await withEnv(STOCK, () => runVerb(["run"], dir));
+    const r = await withEnv(LOCAL_RUNTIME, () => runVerb(["run"], dir));
     assert(r.thrown instanceof Error);
     assertStringIncludes(r.thrown.message, "denext: desktop export failed — page boom");
     assertStringIncludes(r.out, "exporting SPA");
@@ -323,11 +373,11 @@ Deno.test("desktop run / dev: a bad desktop.app config fails with the verb's pre
       join(dir, "denext.config.ts"),
       'export default { desktop: { app: { origin: "not a url" } } };\n',
     );
-    const run = await withEnv(STOCK, () => runVerb(["run"], dir));
+    const run = await withEnv(LOCAL_RUNTIME, () => runVerb(["run"], dir));
     assertEquals(run.code, 1);
     assertStringIncludes(run.err, "denext desktop run: ");
     assertStringIncludes(run.err, "desktop.app.origin");
-    const dev = await withEnv(STOCK, () => runVerb(["dev"], dir));
+    const dev = await withEnv(LOCAL_RUNTIME, () => runVerb(["dev"], dir));
     assertEquals(dev.code, 1);
     assertStringIncludes(dev.err, "denext desktop dev: ");
     assertStringIncludes(dev.err, "desktop.app.origin");
@@ -362,7 +412,7 @@ Deno.test("desktop dev: a desktop.preload that does not bundle fails before the 
       join(dir, "denext.config.ts"),
       'export default { desktop: { preload: "./missing-preload.ts" } };\n',
     );
-    const r = await withEnv(STOCK, () => runVerb(["dev"], dir, { port: 47_311 }));
+    const r = await withEnv(LOCAL_RUNTIME, () => runVerb(["dev"], dir, { port: 47_311 }));
     assertEquals(r.code, 1);
     assertStringIncludes(r.err, "denext desktop dev:");
     assertStringIncludes(r.err, "missing-preload.ts");
@@ -466,14 +516,14 @@ Deno.test("packageScriptAge reads the current templates as current", () => {
   for (const name of ["package-macos.ts", "package-linux.ts", "package-windows.ts"]) {
     assertEquals(
       packageScriptAge(templateFor(name)),
-      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true },
+      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true, backend: true },
       name,
     );
   }
   assertEquals(
     packageScriptWarnings(
       "package-linux.ts",
-      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true },
+      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true, backend: true },
       "deb",
     ),
     [],
@@ -489,8 +539,17 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
     .replace("    ...desktopRuntimeDenoFlags(env, denoFlags),\n", "");
   assert(stale !== current && !stale.includes("desktopRuntimeDenoFlags"), "template shape moved");
   const age = packageScriptAge(stale);
-  assertEquals(age, { runtime: true, formats: true, runtimeFlags: false, vcRuntime: true });
-  const lines = packageScriptWarnings("package-macos.ts", age, undefined);
+  assertEquals(age, {
+    runtime: true,
+    formats: true,
+    runtimeFlags: false,
+    vcRuntime: true,
+    backend: true,
+  });
+  // Under a pinned runtime before 3.0.0-rc.5 the flag matters, so the script is flagged.
+  const lines = packageScriptWarnings("package-macos.ts", age, undefined, {
+    version: "3.0.0-rc.4",
+  });
   assertEquals(lines.length, 1);
   assertStringIncludes(
     lines[0],
@@ -498,10 +557,16 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
   );
   assertStringIncludes(lines[0], "--unstable-no-legacy-abort");
   assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+  // From 3.0.0-rc.5 (the current pin) the new abort is the runtime's default: nothing to warn of.
+  assertEquals(packageScriptWarnings("package-macos.ts", age, undefined), []);
+  assertEquals(
+    packageScriptWarnings("package-macos.ts", age, undefined, { version: "3.0.0-rc.5" }),
+    [],
+  );
   // A pre-3.1 script gets the older warning only (regenerating fixes both).
   const legacy = packageScriptWarnings(
     "package-macos.ts",
-    { runtime: false, formats: false, runtimeFlags: false, vcRuntime: true },
+    { runtime: false, formats: false, runtimeFlags: false, vcRuntime: true, backend: false },
     undefined,
   );
   assertEquals(legacy.length, 1);
@@ -517,12 +582,78 @@ Deno.test("packageScriptAge flags a Windows script that copies the VC++ runtime 
       "async function main(",
   );
   const age = packageScriptAge(stale);
-  assertEquals(age, { runtime: true, formats: true, runtimeFlags: true, vcRuntime: false });
+  assertEquals(age, {
+    runtime: true,
+    formats: true,
+    runtimeFlags: true,
+    vcRuntime: false,
+    backend: true,
+  });
   const lines = packageScriptWarnings("package-windows.ts", age, undefined);
   assertEquals(lines.length, 1);
   assertStringIncludes(lines[0], "scripts/package-windows.ts copies the VC++ runtime");
   assertStringIncludes(lines[0], "vcruntime140_1.dll");
   assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+});
+
+/** The macOS template as it was before desktopBackendArgs: it never passes desktop.backend. */
+function macosScriptBeforeBackendArgs(): string {
+  const current = templateFor("package-macos.ts");
+  const stale = current
+    .replace(/^.*desktop\.backend.*\n.*desktopBackendArgs.*\n/m, "")
+    .replace(/^.*The macOS engine.*\n.*desktopBackendArgs.*\n/m, "");
+  assert(stale !== current && !stale.includes("desktopBackendArgs"), "template shape moved");
+  return stale;
+}
+
+Deno.test("packageScriptAge flags a macOS script that never passes desktop.backend", () => {
+  const age = packageScriptAge(macosScriptBeforeBackendArgs());
+  assertEquals(age, {
+    runtime: true,
+    formats: true,
+    runtimeFlags: true,
+    vcRuntime: true,
+    backend: false,
+  });
+  const lines = packageScriptWarnings("package-macos.ts", age, undefined);
+  assertEquals(lines.length, 1);
+  assertStringIncludes(lines[0], "scripts/package-macos.ts does not pass desktop.backend");
+  assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+  // The Linux and Windows scripts pass it through buildDesktopBundle: never this warning.
+  assertEquals(packageScriptWarnings("package-linux.ts", age, undefined), []);
+});
+
+Deno.test("desktop package refuses a stale macOS script while macOS's engine differs from deno.json's", async () => {
+  if (Deno.build.os !== "darwin") return; // macOS packaging only runs on macOS
+  const dir = await tempDir("denext_desktop_pkg_backend_");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const seen = join(dir, "seen.json");
+    // A stale script that would record its run instead of packaging.
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-macos.ts"),
+      "// desktopRuntimeEnv(…) / desktopRuntimeDenoFlags(…) / parseDesktopPackageArgs(…)\n" +
+        `await Deno.writeTextFile(${JSON.stringify(seen)}, "[]");\n`,
+    );
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { desktop: { backend: { macos: "cef" } } };\n',
+    );
+    const refused = await runVerb(["package"], dir, { "target-os": "macos" });
+    assertEquals(refused.code, 1, refused.err);
+    assertStringIncludes(refused.err, 'would build deno.json\'s "webview" engine on the "cef"');
+    assertStringIncludes(refused.err, "--regenerate-scripts");
+    assertEquals(await exists(seen), false, "the stale script must not run");
+    // The engines agree (deno.json names macOS's engine too): warned, but it runs. (The config
+    // module stays cached for the process, so deno.json changes here.)
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "cef" } }');
+    const ran = await runVerb(["package"], dir, { "target-os": "macos" });
+    assertEquals(ran.code, 0, ran.err);
+    assertStringIncludes(ran.err, "does not pass desktop.backend");
+    assertEquals(await exists(seen), true);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("desktop package --target-os macos is refused off macOS", async () => {
@@ -551,9 +682,6 @@ Deno.test("desktop add --list is dispatched from the desktop verb", async () => 
 Deno.test({
   name:
     "desktop dev: attaches to a running dev server, opens the window in proxy mode, ends with it",
-  // The session listens for Ctrl-C for its whole life; that listener outlives this test.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await tempDir("denext_desktop_dev_attach_");
     const withPreload = await tempDir("denext_desktop_dev_preload_ok_");
@@ -567,7 +695,7 @@ Deno.test({
       // window opens: the session ends with the verb's error, leaving the attached server up.
       await Deno.writeTextFile(join(dir, "desktop.ts"), 'const n: number = "not a number";\n');
       const r = await withEnv(
-        STOCK,
+        LOCAL_RUNTIME,
         () => runVerb(["dev"], dir, { host: "127.0.0.1", port: server.addr.port }),
       );
       assertEquals(r.code, 1, r.err);
@@ -588,7 +716,7 @@ Deno.test({
         'export default { desktop: { preload: "./preload.ts" } };\n',
       );
       const p = await withEnv(
-        STOCK,
+        LOCAL_RUNTIME,
         () => runVerb(["dev"], withPreload, { host: "127.0.0.1", port: server.addr.port }),
       );
       assertEquals(p.code, 1, p.err);
@@ -665,6 +793,44 @@ Deno.test("desktop add: --json reports the result; --list --json is the catalog;
   }
 });
 
+Deno.test("desktop add at a monorepo root: the app gets the capability, never the root", async () => {
+  // `denext create --monorepo` puts the app (and its native shells) in apps/web. Run at the root,
+  // `desktop add` used to write a denext.config.ts there, a config no app reads.
+  const dir = await tempDir("denext_desktop_add_ws_");
+  try {
+    const write = (rel: string, text: string) =>
+      Deno.mkdir(join(dir, rel, ".."), { recursive: true }).then(() =>
+        Deno.writeTextFile(join(dir, rel), text)
+      );
+    await write("deno.json", JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }));
+    await write("apps/web/deno.json", "{}");
+    await write("apps/web/app/page.tsx", "export default () => null;\n");
+    await write("packages/ui/deno.json", JSON.stringify({ name: "@x/ui", exports: "./mod.ts" }));
+    const one = await runAdd(dir, ["clipboard"]);
+    assertEquals(one.code, 0, one.err);
+    assertStringIncludes(one.err, "running on its app apps/web");
+    assertEquals(await exists(join(dir, "denext.config.ts")), false);
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "apps/web/denext.config.ts")),
+      "clipboard",
+    );
+    // A second app: the root names both and changes nothing.
+    await write("apps/admin/deno.json", "{}");
+    await write("apps/admin/app/page.tsx", "export default () => null;\n");
+    await write(
+      "deno.json",
+      JSON.stringify({ workspace: ["./apps/web", "./apps/admin", "./packages/ui"] }),
+    );
+    const two = await runAdd(dir, ["device"]);
+    assertEquals(two.code, 1);
+    assertStringIncludes(two.err, "several apps (apps/web, apps/admin)");
+    assertStringIncludes(two.err, "denext desktop add device --cwd apps/web");
+    assertEquals(await exists(join(dir, "denext.config.ts")), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop: the project dir and the lock plan per action", () => {
   const ctx = (positionals: string[], flags: Record<string, boolean> = {}, cwd?: string) =>
     makeCtx({ positionals, flags, global: cwd ? { cwd } : {} });
@@ -704,7 +870,7 @@ Deno.test("desktop doctor is dispatched with the dir positional and --json", asy
   const exit = stubExit();
   let code = 0;
   try {
-    await withEnv(STOCK, async () => {
+    await withEnv(STOCK_MODE, async () => {
       try {
         await desktopCommand.run(makeCtx({ positionals: ["doctor", dir], global: { json: true } }));
       } catch (e) {

@@ -8,13 +8,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import {
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useState,
-} from "../src/runtime/hooks.ts";
+import { useContext, useLayoutEffect, useMemo, useState } from "../src/runtime/hooks.ts";
+import { useReducer } from "../src/runtime/hooks/use-reducer.ts";
 import { createContext } from "../src/runtime/context.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";

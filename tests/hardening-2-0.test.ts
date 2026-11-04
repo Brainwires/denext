@@ -13,7 +13,7 @@ import { actionIdFor, describeActionId } from "../src/runtime/server-action.ts";
 import { denoReleaseVersion, denoVersionOk, MIN_DENO_VERSION } from "../src/build/deno-version.ts";
 import { envAll, envGet } from "../src/runtime/env-safe.ts";
 import { devErrorPage } from "../src/build/dev-server/error-page.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -179,8 +179,8 @@ Deno.test("Deno version floor is minor-aware", () => {
   assert(!denoVersionOk("2.8.9") && !denoVersionOk("2.1.0") && !denoVersionOk("1.46.0"));
   // denext's toolchain (`2.9.7-denext.15`) is the release it is built from, not a prerelease.
   assert(denoVersionOk("2.9.7-denext.15", "2.9.7"));
-  assertEquals(denoReleaseVersion("2.9.7-denext.15"), "2.9.7");
-  assertEquals(denoReleaseVersion("2.9.6"), "2.9.6");
+  assertEquals(denoReleaseVersion({ deno: "2.9.7-denext.15" }), "2.9.7");
+  assertEquals(denoReleaseVersion({ deno: "2.9.6" }), "2.9.6");
 });
 
 Deno.test("dev 500 page renders the recorded error with its codeframe", () => {

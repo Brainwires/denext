@@ -5,13 +5,8 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, resolve } from "@std/path";
-import {
-  commandCwd,
-  ensureAppDir,
-  projectDir,
-  runBuildStep,
-  SHUTDOWN_SIGNALS,
-} from "../src/cli/shared.ts";
+import { commandCwd, ensureAppDir, projectDir, runBuildStep } from "../src/cli/shared.ts";
+import { SHUTDOWN_SIGNALS } from "../src/cli/shutdown.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 
 /** Build a minimal CommandContext with optional overrides. */
@@ -161,6 +156,35 @@ Deno.test("ensureAppDir exits(1) and prints when no routable tree exists", async
     assertEquals(errors.length, 1);
     assertStringIncludes(errors[0], "no app directory found");
     assertStringIncludes(errors[0], "App Router");
+  } finally {
+    Deno.exit = realExit;
+    console.error = realError;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ensureAppDir at a monorepo's root names its apps instead", async () => {
+  const dir = await Deno.makeTempDir();
+  const realExit = Deno.exit;
+  const realError = console.error;
+  const errors: string[] = [];
+  (Deno as { exit: (code?: number) => never }).exit = ((code?: number) => {
+    throw new Error(`EXIT:${code}`);
+  }) as typeof Deno.exit;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ workspace: ["./apps/web", "./packages/ui"] }),
+    );
+    await Deno.mkdir(join(dir, "apps", "web", "app"), { recursive: true });
+    await Deno.mkdir(join(dir, "packages", "ui"), { recursive: true });
+    await assertRejects(() => ensureAppDir(join(dir, "app"), dir), Error, "EXIT:1");
+    assertEquals(errors.length, 1);
+    assertStringIncludes(errors[0], "is a Deno workspace root; its denext app is apps/web.");
+    assertStringIncludes(errors[0], "`denext dev apps/web`");
   } finally {
     Deno.exit = realExit;
     console.error = realError;

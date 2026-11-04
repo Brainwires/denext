@@ -184,12 +184,152 @@ Deno.test("transform: a bare `yield` (no argument) in an async generator is inst
   assertEquals(mod.v.get(), undefined);
 });
 
-Deno.test("transform: an async generator using `yield*` delegation is left uninstrumented", async () => {
-  // Delegation suspends through a sub-iterator, which needs different bracketing —
-  // leave it alone (graceful) rather than mis-instrument it.
-  const src = `export async function* g(sub) { yield* sub; await h(); }\n`;
-  const { changed } = await transformAsyncContext(src, { runtime: RUNTIME });
-  assertEquals(changed, false);
+Deno.test("transform: an async generator's context survives a `yield*` delegation", async () => {
+  // The outer frame is "G" (its first .next); the caller resumes it under "H", "I" and "J". The
+  // delegate (an uninstrumented async iterable, then a sync one) sees the frame's context on
+  // every step, and the body after each delegation is back in the frame's.
+  const mod = await transformAndImport(`
+    import { Variable } from ${JSON.stringify(RUNTIME)};
+    export const v = new Variable();
+    export function inner(seen) {
+      let i = 0;
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => (seen.push("inner:" + v.get()), Promise.resolve(
+              i++ < 2 ? { value: i, done: false } : { value: "ret", done: true },
+            )),
+          };
+        },
+      };
+    }
+    async function* gen(seen) {
+      const r = yield* inner(seen);
+      seen.push("after:" + r + ":" + v.get());
+      yield* [Promise.resolve(3)];
+      seen.push("end:" + v.get());
+    }
+    export async function run() {
+      const seen = [];
+      const it = gen(seen);
+      const got = [];
+      got.push((await v.run("G", () => it.next())).value);
+      seen.push("caller:" + v.get());
+      got.push((await v.run("H", () => it.next())).value);
+      got.push((await v.run("I", () => it.next())).value);
+      got.push((await v.run("J", () => it.next())).done);
+      return { seen, got };
+    }
+  `);
+  const { seen, got } = await mod.run();
+  assertEquals(got, [1, 2, 3, true]);
+  assertEquals(seen, [
+    "inner:G",
+    "caller:undefined", // the caller never sees the frame's context
+    "inner:G",
+    "inner:G",
+    "after:ret:G",
+    "end:G",
+  ]);
+  assertEquals(mod.v.get(), undefined); // no trailing leak
+});
+
+Deno.test("transform: `yield*` forwards return and throw to the delegate in the frame's context", async () => {
+  const mod = await transformAndImport(`
+    import { Variable } from ${JSON.stringify(RUNTIME)};
+    export const v = new Variable();
+    function sub(log) {
+      const step = (name, result) => (log.push(name + " in " + v.get()), Promise.resolve(result));
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: () => step("next", { value: 1, done: false }),
+          throw: (e) => step("throw " + e, { value: 9, done: false }),
+          return: (r) => step("return " + r, { value: r, done: true }),
+        }),
+      };
+    }
+    async function* gen(log, it) {
+      try {
+        yield* it;
+      } finally {
+        log.push("gen finally in " + v.get());
+      }
+    }
+    export async function run() {
+      const log = [];
+      const a = gen(log, sub(log));
+      await v.run("A", () => a.next());
+      const thrown = await v.run("X", () => a.throw("boom"));
+      const ret = await v.run("Y", () => a.return("done"));
+      log.push("caller in " + v.get());
+      // A delegate with no throw: closed, and the TypeError thrown into the body.
+      const noThrow = { [Symbol.asyncIterator]: () => ({
+        next: () => Promise.resolve({ value: 1, done: false }),
+        return: () => (log.push("closed in " + v.get()), Promise.resolve({ done: true })),
+      }) };
+      const b = gen(log, noThrow);
+      await v.run("B", () => b.next());
+      const err = await v.run("Z", () => b.throw("x")).catch((e) => e.constructor.name);
+      return { log, thrown, ret, err };
+    }
+  `);
+  const { log, thrown, ret, err } = await mod.run();
+  assertEquals(thrown, { value: 9, done: false });
+  assertEquals(ret, { value: "done", done: true });
+  assertEquals(err, "TypeError");
+  assertEquals(log, [
+    "next in A",
+    "throw boom in A",
+    "return done in A",
+    "gen finally in A",
+    "caller in undefined",
+    "closed in B",
+    "gen finally in B",
+  ]);
+  assertEquals(mod.v.get(), undefined);
+});
+
+Deno.test("transform: a top-level await keeps the module's context", async () => {
+  const src = `
+    import { Variable } from "./var.ts";
+    export const seen = [v.get()];
+    await v.run("other", () => Promise.resolve());
+    seen.push(v.get());
+    for await (const _ of [Promise.resolve(1)]) seen.push(v.get());
+    export const last = await Promise.resolve(v.get());
+    seen.push(last);
+  `;
+  const { code, changed } = await transformAsyncContext(src, { runtime: RUNTIME });
+  assert(changed, "a module with a top-level await is instrumented");
+  assert(/^const __dnxAc0 = __asyncScope\(\);$/m.test(code), code);
+  assert(code.trimEnd().endsWith("__asyncScopeEnd(__dnxAc0);"), code);
+  const parse = await swcParse();
+  await parse(code);
+  // A module's evaluation can't be started inside a context from a test, so run its statements
+  // as an async function body (imports and exports dropped, the helpers passed in) under "M":
+  // the code after each top-level await must still see "M".
+  const helpers = await import(RUNTIME);
+  const body = code
+    .replace(/^\s*import [^\n]*$/gm, "")
+    .replace(/^\s*export const /gm, "const ")
+    .concat("\nreturn seen;");
+  const AsyncFunction = (async () => {}).constructor as new (...args: string[]) => (
+    ...a: unknown[]
+  ) => Promise<unknown[]>;
+  const names = ["v", "__asyncScope", "__asyncScopeEnd", "__asyncAwait", "__asyncIter"];
+  const run = new AsyncFunction(...names, body);
+  const v = new Variable<string>();
+  const seen = await v.run("M", () => run(v, ...names.slice(1).map((n) => helpers[n])));
+  assertEquals(seen, ["M", "M", "M", "M"]);
+  assertEquals(v.get(), undefined);
+});
+
+Deno.test("transform: an async generator that only yields is instrumented", async () => {
+  const { changed } = await transformAsyncContext(
+    `export async function* g(sub) { yield* sub; }\n`,
+    { runtime: RUNTIME },
+  );
+  assert(changed);
 });
 
 Deno.test("compileAsyncContextModules: redirects changed modules + flips the mode module", async () => {

@@ -6,11 +6,14 @@
 // `import "drizzle-orm"` in an app server module is "not a dependency and not in
 // import map". This module builds that config; cli.ts drives the re-exec.
 
+import { runToExit } from "./exited-output.ts";
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { carryLinks } from "./config-links.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
+import { supplyChainConfig, type WorkspaceImports, workspaceImports } from "./workspace-imports.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
@@ -26,6 +29,8 @@ export interface DenoConfigView {
   links?: unknown;
   /** The pre-2.2 spelling of {@link links}. */
   patch?: unknown;
+  /** The lockfile setting (`false`, a path, or `{ path, frozen }`). */
+  lock?: unknown;
 }
 
 /**
@@ -139,16 +144,20 @@ export async function readImportsAbsolute(configPath: string): Promise<Record<st
  * @param frameworkImports The framework's absolutized import map.
  * @param appImports The app's absolutized import map.
  * @param appCfg The app's parsed config (for compilerOptions + nodeModulesDir).
+ * @param workspace The app's Deno workspace as entries (between the framework's and the app's),
+ *   so a member package (`"@acme/ui"`) and the root's imports resolve under the merged config.
  */
 export function mergeModuleConfig(
   frameworkImports: Record<string, string>,
   appImports: Record<string, string>,
   appCfg: DenoConfigView,
+  workspace: WorkspaceImports = { imports: {}, scopes: {} },
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = {
     compilerOptions: appCfg.compilerOptions,
-    imports: { ...frameworkImports, ...appImports },
+    imports: { ...frameworkImports, ...workspace.imports, ...appImports },
   };
+  if (Object.keys(workspace.scopes).length > 0) merged.scopes = workspace.scopes;
   const nmd = appCfg.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   Object.assign(merged, minDepAgeConfig(appCfg.minimumDependencyAge));
@@ -339,12 +348,12 @@ async function installFwdeps(fwDir: string, nm: string, denoJson: string): Promi
   if (!(await acquireFwdepsInstall(lockPath, isCached))) return true;
   try {
     await Deno.writeTextFile(join(fwDir, "deno.json"), denoJson);
-    const { code, stderr } = await new Deno.Command(denoExecutable(), {
+    const { code, stderr } = await runToExit(denoExecutable(), {
       args: ["install", "--quiet"],
       cwd: fwDir,
       stdout: "null",
       stderr: "piped",
-    }).output();
+    });
     if (code !== 0) {
       console.error(
         "denext: could not materialize the framework's build deps (esbuild/sass/…) " +
@@ -403,11 +412,22 @@ export async function writeMergedModuleConfig(
   frameworkConfigPath: string,
 ): Promise<string> {
   const appCfg = await readConfig(appConfigPath);
+  // The CLI runs under this config, so its deps count; a package the app owns stays the app's
+  // (denext's root map lists a test-only `effect@^3` that shadowed an app's Effect 4).
+  const framework = await layeredFrameworkImports(await readImportsAbsolute(frameworkConfigPath), {
+    root: toFileUrl(dirname(resolve(frameworkConfigPath)) + "/").href,
+    configPath: frameworkConfigPath,
+    appDir: dirname(appConfigPath),
+    cli: true,
+  });
   const merged = mergeModuleConfig(
-    await readImportsAbsolute(frameworkConfigPath),
+    framework,
     await readImportsAbsolute(appConfigPath),
     appCfg,
+    await workspaceImports(appConfigPath),
   );
+  // the project's npm supply-chain policy (paranoid, advisoryCheck, the jail) holds in the child
+  Object.assign(merged, await supplyChainConfig(appConfigPath));
   await ensureDir(outDir);
   carryLinks(merged, appCfg, dirname(appConfigPath), outDir);
   const configPath = join(outDir, "module-config.json");

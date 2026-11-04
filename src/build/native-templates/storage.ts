@@ -31,7 +31,8 @@ public class DenextStoragePlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendab
         CAPPluginMethod(name: "removeMany", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "keys", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "cipher", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "cipher", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "rekey", returnType: CAPPluginReturnPromise)
     ]
 
     private let queue = DispatchQueue(label: "dev.denext.storage")
@@ -105,6 +106,20 @@ public class DenextStoragePlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendab
         let key = call.getString("key")
         run(call) {
             try self.store.clear(name, key: key)
+            return [:]
+        }
+    }
+
+    /// Re-encrypt an encrypted store from \`key\` to \`newKey\` (\`rekeyKeyValueStore()\`).
+    @objc func rekey(_ call: CAPPluginCall) {
+        let name = storeName(call)
+        let key = call.getString("key")
+        let newKey = call.getString("newKey")
+        run(call) {
+            guard let key, let newKey, !newKey.isEmpty else {
+                throw DenextStorageError(code: "STORAGE_ERROR", description: "rekey needs key and newKey")
+            }
+            try self.store.rekey(name, key: key, newKey: newKey)
             return [:]
         }
     }
@@ -383,6 +398,29 @@ final class DenextStorageStore {
             DenextStorageStore.bind(stmt, 1, name)
         }
     }
+
+    /// Re-encrypt \`store\`'s database from \`key\` to \`newKey\` with \`PRAGMA rekey\`. SQLCipher
+    /// rewrites every page in one transaction whose rollback journal holds the old pages, so a
+    /// process that dies part-way leaves the file under the old key. Rekey does not run in WAL
+    /// mode: the log is folded into the file and the journal switched to DELETE for it, then
+    /// the file is reopened under the new key (which proves it took) and back in WAL.
+    func rekey(_ store: String, key: String, newKey: String) throws {
+        let db = try encryptedDatabase(store, key)
+        if key == newKey { return }
+        do {
+            try DenextStorageStore.exec(db, "PRAGMA wal_checkpoint(TRUNCATE)")
+            try DenextStorageStore.exec(db, "PRAGMA journal_mode=DELETE")
+            let quoted = newKey.replacingOccurrences(of: "'", with: "''")
+            try DenextStorageStore.exec(db, "PRAGMA rekey = '\\(quoted)'")
+        } catch {
+            sqlite3_close(db)
+            encrypted[store] = nil
+            throw error
+        }
+        sqlite3_close(db)
+        encrypted[store] = nil
+        _ = try encryptedDatabase(store, newKey)
+    }
 }
 `,
 };
@@ -458,6 +496,12 @@ public class DenextStoragePlugin extends Plugin {
         void adopt(String store, List<String[]> pairs);
 
         void clear(String store);
+
+        /**
+         * Re-encrypt this database under {@code newKey} (an encrypted store's; the plain database
+         * refuses).
+         */
+        void rekey(String newKey);
 
         void close();
     }
@@ -607,6 +651,11 @@ public class DenextStoragePlugin extends Plugin {
             try (Cursor cursor = db.rawQuery(sql, null)) {
                 cursor.moveToFirst();
             }
+        }
+
+        @Override
+        public void rekey(String newKey) {
+            throw new UnsupportedOperationException("the plain database has no key");
         }
 
         @Override
@@ -816,6 +865,32 @@ public class DenextStoragePlugin extends Plugin {
             return new JSObject();
         });
     }
+
+    /** Re-encrypt an encrypted store from {@code key} to {@code newKey} ({@code rekeyKeyValueStore()}). */
+    @PluginMethod
+    public void rekey(PluginCall call) {
+        String store = storeName(call);
+        String key = call.getString("key");
+        String newKey = call.getString("newKey");
+        run(call, () -> {
+            if (key == null || newKey == null || newKey.isEmpty()) {
+                throw new Coded("STORAGE_ERROR", "rekey needs key and newKey");
+            }
+            Db db = cipherDb(store, key);
+            if (!key.equals(newKey)) {
+                try {
+                    db.rekey(newKey);
+                } catch (RuntimeException e) {
+                    // The rekey rolled back (the file is still under the old key): reopen on use.
+                    db.close();
+                    encrypted.remove(store);
+                    throw e;
+                }
+                encrypted.put(store, new Object[] { newKey, db });
+            }
+            return new JSObject();
+        });
+    }
 }
 `,
 };
@@ -984,6 +1059,22 @@ public final class DenextStorageCipher implements DenextStoragePlugin.Db {
     @Override
     public void clear(String store) {
         db.delete("kv", "store = ?", new String[] { store });
+    }
+
+    /**
+     * Re-encrypt the file under {@code newKey} ({@code PRAGMA rekey}). SQLCipher rewrites every page
+     * in one transaction whose rollback journal holds the old pages, so a process that dies
+     * part-way leaves the file under the old key. Rekey does not run in WAL mode, so the log is
+     * folded into the file and WAL turned off for it, then back on.
+     */
+    @Override
+    public void rekey(String newKey) {
+        db.disableWriteAheadLogging();
+        try {
+            db.changePassword(newKey);
+        } finally {
+            db.enableWriteAheadLogging();
+        }
     }
 
     @Override

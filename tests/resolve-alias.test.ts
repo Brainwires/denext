@@ -9,9 +9,9 @@ import * as esbuild from "../src/build/esbuild/mod.ts";
 import { BROWSER_CONDITIONS, catalogResolverPlugin } from "../src/build/next-compat.ts";
 import { reactNativeWebPlugin } from "../src/build/react-native.ts";
 import { aliasRules, isPackageFile, resolveAliasPlugins } from "../src/build/resolve-alias.ts";
-import { staticExport } from "../src/build/export.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { ResolveAliasConfig } from "../src/server/config.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
   for (const [rel, text] of Object.entries(files)) {
@@ -117,8 +117,6 @@ Deno.test("resolveAlias: an importer-sensitive alias wraps the module it replace
 
 Deno.test({
   name: "resolveAlias: a SPA compat export applies the configured aliases",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_resolve_alias_spa_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -147,7 +145,7 @@ Deno.test({
       "src/main.ts": `import { kit, wrappedKit } from "kit";\n` +
         `(globalThis as Record<string, unknown>).k = [kit, wrappedKit];\n`,
     });
-    const { outDir } = await staticExport(dir);
+    const { outDir } = await exportInChild(dir);
     const client = join(outDir, "_denext", "client");
     let js = "";
     for await (const e of Deno.readDir(client)) {
@@ -162,8 +160,6 @@ Deno.test({
 
 Deno.test({
   name: "resolveAlias: a target that is an import-map entry resolves (a npm package gets it too)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_resolve_alias_map_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -197,7 +193,7 @@ Deno.test({
       "src/main.ts": `import { kit } from "kit";\nimport { viaLib } from "lib";\n` +
         `(globalThis as Record<string, unknown>).k = [kit, viaLib];\n`,
     });
-    const { outDir } = await staticExport(dir);
+    const { outDir } = await exportInChild(dir);
     const client = join(outDir, "_denext", "client");
     let js = "";
     for await (const e of Deno.readDir(client)) {

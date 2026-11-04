@@ -39,12 +39,14 @@ import {
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
 import { compareDenoVersions, denoReleaseVersion } from "./deno-version.ts";
+import type { LaunchPolicyProblem } from "./desktop-launch-policy.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
   certificateTrust,
   type PowerShellRunner,
 } from "./desktop-windows-trust.ts";
+import { runToExitText } from "./exited-output.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -219,6 +221,11 @@ export interface DesktopDoctorOptions {
   readonly pin?: DesktopRuntimePin;
   /** Runs PowerShell for the Windows CEF signing check (default: `powershell.exe`). */
   readonly powershell?: PowerShellRunner;
+  /**
+   * The project's packaged launch-policy gaps (`launchPolicyProblems`); the `launch-policy` check
+   * runs only when given and it answers a list (`null`: not a desktop project).
+   */
+  readonly launchPolicy?: () => Promise<readonly LaunchPolicyProblem[] | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -261,15 +268,11 @@ const LAUNCHER_BADGE_READERS = ["com.canonical.Unity", "org.kde.plasmashell"];
 /** The default runner: `Deno.Command`, stdout and stderr captured, killed after 8 s. */
 export const defaultDoctorRunner: DoctorRunner = async (cmd, args) => {
   try {
-    const out = await new Deno.Command(cmd, {
+    const { code, stdout, stderr } = await runToExitText(cmd, {
       args: [...args],
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
       signal: AbortSignal.timeout(8_000),
-    }).output();
-    const text = new TextDecoder();
-    return { code: out.code, stdout: text.decode(out.stdout), stderr: text.decode(out.stderr) };
+    });
+    return { code, stdout, stderr };
   } catch {
     return null;
   }
@@ -912,22 +915,37 @@ export async function probeLinuxSession(
   };
 }
 
+/** The finding for `DENEXT_DESKTOP_RUNTIME=stock`: `usable` is false on denext's Deno. */
+function stockRuntimeFinding(usable: boolean): DesktopDoctorFinding {
+  return usable
+    ? {
+      check: "runtime",
+      level: "warning",
+      message: "DENEXT_DESKTOP_RUNTIME=stock: the stock runtime has no session probe, so tray " +
+        "and keyring problems show only as failures",
+      fix: "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime",
+    }
+    : {
+      check: "runtime",
+      level: "error",
+      message: "DENEXT_DESKTOP_RUNTIME=stock needs a stock Deno CLI; denext's Deno builds only " +
+        "on denext's runtime",
+      fix: "unset DENEXT_DESKTOP_RUNTIME, or set DENEXT_DENO=stock with a stock `deno` on PATH",
+    };
+}
+
 /** The findings about the pinned runtime. */
 function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopDoctorFinding[] {
   const s = runtime.status;
   const out: DesktopDoctorFinding[] = [];
   const add = (level: DesktopDoctorFinding["level"], message: string, fix: string) =>
     out.push({ check: "runtime", level, message, fix });
-  if (s.mode === "stock") {
-    add(
-      "warning",
-      "DENEXT_DESKTOP_RUNTIME=stock: the stock runtime has no session probe, so tray and " +
-        "keyring problems show only as failures",
-      "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime",
-    );
-  }
+  if (s.mode === "stock") out.push(stockRuntimeFinding(s.ok));
   if (s.mode !== "pinned") return out;
-  if (s.deno.found === null || denoReleaseVersion(s.deno.found) !== s.deno.required) {
+  const found = s.deno.found === null
+    ? null
+    : { deno: s.deno.found, ...(s.deno.denext ? { denext: s.deno.denext } : {}) };
+  if (found === null || denoReleaseVersion(found) !== s.deno.required) {
     add(
       "error",
       `the runtime ${s.version} needs Deno ${s.deno.required} exactly (stock, or denext's ` +
@@ -940,7 +958,8 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
     add(
       "error",
       `no pinned runtime build for ${s.target}`,
-      "set DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime",
+      "on a stock Deno CLI (DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock to use the stock " +
+        "runtime",
     );
   } else if (s.cache === "invalid") {
     add(
@@ -1284,7 +1303,8 @@ export async function runDesktopDoctor(
     )
     : null;
   const cefSigning = os === "windows" && runtime.status.backend === "cef";
-  const checks = ["runtime", ...(linux ? linuxCheckNames(runtime) : [])];
+  const policy = await launchPolicyFindings(options);
+  const checks = ["runtime", ...policy.checks, ...(linux ? linuxCheckNames(runtime) : [])];
   if (cefSigning) checks.push("cef-signing");
   return {
     os,
@@ -1293,11 +1313,29 @@ export async function runDesktopDoctor(
     checks,
     findings: [
       ...runtimeFindings(runtime, linuxChecks),
+      ...policy.findings,
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
     ],
+  };
+}
+
+/** The `launch-policy` check: none without `options.launchPolicy` or off a desktop project. */
+async function launchPolicyFindings(
+  options: DesktopDoctorOptions,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  const problems = options.launchPolicy ? await options.launchPolicy() : null;
+  if (problems === null) return { checks: [], findings: [] };
+  return {
+    checks: ["launch-policy"],
+    findings: problems.map((p) => ({
+      check: "launch-policy",
+      level: "warning",
+      message: p.message,
+      fix: p.fix,
+    })),
   };
 }
 

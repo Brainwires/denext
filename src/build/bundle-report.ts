@@ -101,7 +101,8 @@ function chunkTotals(chunks: BundleChunk[]): { raw: number; gz: number; ranked: 
 /**
  * The slice of an esbuild metafile the markdown report reads: per-output `inputs` with the
  * bytes each contributes, so a chunk can be attributed to the modules that dominate it.
- * Only present on the esbuild (compat/SPA) path — the native `deno bundle` path emits none.
+ * esbuild writes it on the compat/SPA path; on the native `deno bundle` path `denext analyze`
+ * builds the same shape from each file's source map (sourcemap-attribution.ts).
  */
 export interface BundleMetafile {
   outputs: Record<string, { inputs?: Record<string, { bytesInOutput: number }> }>;
@@ -137,11 +138,12 @@ function topModules(
 
 /**
  * A markdown bundle report for `denext analyze --md` (Bun 1.4's `--metafile-md`): a per-chunk
- * size table + per-role subtotals + the per-island breakdown (both bundler paths), and — when an esbuild `metafile` is
- * given (the compat/SPA path) — a per-chunk breakdown of the modules that dominate each chunk.
+ * size table + per-role subtotals + the per-island breakdown, and — when a `metafile` is given
+ * (either bundler path) — a per-chunk breakdown of the modules that dominate each chunk.
  *
  * @param chunks The emitted client chunks and their sizes.
- * @param metafile The esbuild metafile, when captured (esbuild path only).
+ * @param metafile The per-module attribution, when captured (an esbuild metafile, or the native
+ *   path's source-map attribution).
  * @returns Markdown lines.
  */
 export function bundleReportMarkdown(chunks: BundleChunk[], metafile?: BundleMetafile): string[] {

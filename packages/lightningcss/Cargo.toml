@@ -3,7 +3,7 @@
 # (1.0.0-alpha.72, relabelled rc.72 for JSR) — the same codec `lightningcss-wasm`
 # builds from. See README for the versioning rule.
 name = "denext-lightningcss"
-version = "1.0.0-rc.72"
+version = "1.0.0-rc.72.1"
 edition = "2021"
 license = "MPL-2.0"
 description = "Deno/JSR wasm build of the lightningcss transform subset denext's CSS pipeline uses"
@@ -15,7 +15,11 @@ crate-type = ["cdylib"]
 [dependencies]
 # The core codec. Pin exact; `serde` enables Serialize on CssModuleExports so the
 # `transform` result's `exports` map crosses to JS with the same shape lightningcss-wasm emits.
-lightningcss = { version = "=1.0.0-alpha.72", features = ["serde"] }
+# Default features off: they are `bundler` + `sourcemap` (+ `nodejs`, a subset of
+# `serde`), none of which `transform` uses. `sourcemap` pulls `parcel_sourcemap`,
+# whose unconditional `rkyv` 0.7 dependency is RUSTSEC-2026-0235; dropping it
+# keeps rkyv out of the build and the lockfile.
+lightningcss = { version = "=1.0.0-alpha.72", default-features = false, features = ["serde"] }
 # wasmbuild pins the wasm-bindgen CLI; the crate dep must match (as @denext/photon does).
 wasm-bindgen = "=0.2.108"
 serde = "1"

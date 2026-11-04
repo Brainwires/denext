@@ -293,7 +293,14 @@ Deno.test("STACK_ENV: the app's secrets reach the app and migrations; required o
 });
 
 Deno.test("the secrets follow the features: auth, backend, storage", () => {
-  const names = (o: StackOptions) => stackEnv(o).map((v) => v.name);
+  // DENEXT_ACTION_ID_SECRET is listed for every stack (any app may have Server Actions), and so
+  // is DENEXT_CRASH_REPORT_URL (any server's Deno may panic).
+  const every = ["DENEXT_ACTION_ID_SECRET", "DENEXT_CRASH_REPORT_URL"];
+  const all = (o: StackOptions) => stackEnv(o).map((v) => v.name);
+  for (const o of [{}, { postgres: true }, { auth: true }, { backend: true }]) {
+    for (const name of every) assert(all(o).includes(name), `${name} ${JSON.stringify(o)}`);
+  }
+  const names = (o: StackOptions) => all(o).filter((n) => !every.includes(n));
   assertEquals(names({ postgres: true }), [
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
@@ -448,7 +455,12 @@ Deno.test("shutdown: the server is tini's direct child, so docker stop's SIGTERM
       },
     }),
   });
-  const file = renderDockerfile({ mode: "server", denoTag: "2.9.7", ...resolveStack(d) });
+  const file = renderDockerfile({
+    mode: "server",
+    denoTag: "2.9.7",
+    netSplit: false,
+    ...resolveStack(d),
+  });
   assertStringIncludes(
     file,
     'CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-env", "--allow-write=.denext", "jsr:@denext/denext@^4.0.0/cli", "start", "."]',
@@ -613,7 +625,11 @@ Deno.test("migrations alone: no empty environment block (compose rejects a null 
   const text = renderCompose({ mode: "server", migrate: true });
   const doc = parse(text) as ComposeDoc;
   assertEquals(Object.keys(doc.services), ["web", "migrate"]);
-  assert(!("environment" in doc.services.migrate), "no `environment:` with nothing under it");
+  // Only the variables every stack lists (never an empty `environment:` mapping).
+  assertEquals(Object.keys(doc.services.migrate.environment ?? {}), [
+    "DENEXT_ACTION_ID_SECRET",
+    "DENEXT_CRASH_REPORT_URL",
+  ]);
   assertEquals(doc.services.migrate.command, ["deno", "task", "migrate"]);
   assertEquals(doc.services.web.depends_on, {
     migrate: { condition: "service_completed_successfully" },
@@ -690,4 +706,28 @@ Deno.test("a Gleam app's image installs CA certificates before its build fetches
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test(".env.example lists DENEXT_ACTION_ID_SECRET for every stack: build and runtime, one value, left empty", async () => {
+  for (const options of [FULL, { mode: "server", postgres: true } as DockerOptions]) {
+    const example = renderEnvExample(options);
+    const at = example.indexOf("\nDENEXT_ACTION_ID_SECRET=\n");
+    assert(at > 0, "listed, and written empty");
+    const comment = example.slice(example.lastIndexOf("\n\n", at) + 2, at).replaceAll("\n# ", " ");
+    assertStringIncludes(comment, "Set it at build time and at runtime, the same value on every");
+    assertStringIncludes(comment, "instance");
+    // No `# Generate:` hint: `denext stack up` must not fill in a value the image was not built
+    // with (a runtime-only value is ignored with a warning).
+    assert(!comment.includes("# Generate:"), comment);
+    // The app container receives it under its own name, optional.
+    assertStringIncludes(
+      renderCompose(options),
+      "DENEXT_ACTION_ID_SECRET: ${DENEXT_ACTION_ID_SECRET:-",
+    );
+  }
+  // The stack's .env generation keeps it empty rather than inventing one.
+  const { fillEnv } = await import("../src/cli/commands/stack.ts");
+  const { text, filled } = await fillEnv(renderEnvExample(FULL));
+  assert(!filled.includes("DENEXT_ACTION_ID_SECRET"));
+  assertStringIncludes(text, "\nDENEXT_ACTION_ID_SECRET=\n");
 });

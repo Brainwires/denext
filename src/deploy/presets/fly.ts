@@ -7,7 +7,9 @@
 import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { writeDockerFiles } from "./docker.ts";
-import { appName, header, marker, requiredSecrets } from "./shared.ts";
+import { memoryLimitBytes } from "../../server/config-validate/limits.ts";
+import { appName, drainMsOf, header, marker, requiredSecrets, stopTimeoutSec } from "./shared.ts";
+import { tlsEnvNames } from "../../build/start-tls-deploy.ts";
 
 /** Options for {@linkcode fly}. */
 export interface FlyPresetOptions {
@@ -21,10 +23,24 @@ export interface FlyPresetOptions {
   memory?: string;
   /** The `denoland/deno` image tag (default: the Deno version running the build). */
   denoTag?: string;
+  /**
+   * The shutdown drain (ms; `0`: as long as Fly allows). Default: `DENEXT_SHUTDOWN_DRAIN_MS` in
+   * the environment `prepare` runs in, else 10 s. `kill_timeout` is the drain plus 20 s (Fly's
+   * most is 300 s).
+   */
+  drainMs?: number;
 }
 
-/** The kill timeout: above the default 10 s drain, so `SIGTERM` lets in-flight requests finish. */
-const KILL_TIMEOUT = "30s";
+/** The machine's memory when the preset sets none. */
+const DEFAULT_VM_MEMORY = "512mb";
+
+/** Fly's longest `kill_timeout` (seconds). */
+const FLY_MAX_KILL_TIMEOUT_S = 300;
+
+/** The kill timeout: above the drain, so `SIGTERM` lets in-flight requests finish. */
+function killTimeout(drainMs: number): string {
+  return `${Math.min(stopTimeoutSec(drainMs) ?? FLY_MAX_KILL_TIMEOUT_S, FLY_MAX_KILL_TIMEOUT_S)}s`;
+}
 
 /** The port, checked: it goes into fly.toml unquoted. */
 function flyPort(port: unknown): number {
@@ -51,7 +67,7 @@ function alwaysOn(manifest: DeployManifest): boolean {
  */
 function renderFlyToml(
   manifest: DeployManifest,
-  options: FlyPresetOptions & { app: string },
+  options: FlyPresetOptions & { app: string; drain: number },
 ): string {
   const port = flyPort(options.port ?? manifest.server.port);
   const secrets = requiredSecrets(manifest);
@@ -60,7 +76,7 @@ function renderFlyToml(
 app = ${toml(options.app)}
 primary_region = ${toml(options.region ?? "iad")}
 kill_signal = "SIGTERM"
-kill_timeout = "${KILL_TIMEOUT}"
+kill_timeout = "${killTimeout(options.drain)}"
 ${
     secrets.length
       ? `\n# Secrets the app needs — set them with \`fly secrets set NAME=value\`:\n#   ${
@@ -74,12 +90,24 @@ ${
 [env]
   PORT = "${port}"
   DENEXT_LOG = "json"
-  # fly-proxy connects from a private address: trust it, and key the per-address limits
+${manifest.server.tls ? "" : PROXY_ENV}  ${manifest.server.drain.env} = "${options.drain}"
+${manifest.server.tls ? tlsService(manifest, port, on) : httpService(manifest, port, on)}
+[[vm]]
+  memory = ${toml(options.memory ?? DEFAULT_VM_MEMORY)}
+`;
+}
+
+/** Behind Fly's HTTP proxy: trust it, and key the per-address limits on the address it sends. */
+const PROXY_ENV =
+  `  # fly-proxy connects from a private address: trust it, and key the per-address limits
   # (rateLimit(), auth's per-IP budgets, Live's per-IP cap) on the client address it sends.
   DENEXT_TRUST_PROXY = "1"
   DENEXT_RATE_LIMIT_HEADER = "fly-client-ip"
-  ${manifest.server.drain.env} = "${manifest.server.drain.ms}"
+`;
 
+/** Fly's HTTP service: its edge terminates TLS and checks `/_denext/health`. */
+function httpService(manifest: DeployManifest, port: number, on: boolean): string {
+  return `
 [http_service]
   internal_port = ${port}
   force_https = true
@@ -98,15 +126,61 @@ ${
     method = "GET"
     path = "${manifest.server.healthPath}"
     timeout = "3s"
-
-[[vm]]
-  memory = ${toml(options.memory ?? "512mb")}
 `;
 }
 
+/**
+ * With `start.tls` the server terminates TLS itself, so Fly passes the connection through as
+ * TCP (no handlers: no HTTP proxy, no forwarded headers) on 443, and checks the port is open.
+ */
+function tlsService(manifest: DeployManifest, port: number, on: boolean): string {
+  const names = manifest.server.tls ? tlsEnvNames(manifest.server.tls) : [];
+  return `
+# start.tls: the server serves HTTPS itself, so Fly passes TLS through untouched (raw TCP). Put
+# the PEM files on the machine (a [[files]] entry from a secret, or a volume) and set
+# ${names.join(", ")} to their paths.
+[[services]]
+  protocol = "tcp"
+  internal_port = ${port}
+  auto_stop_machines = "${on ? "off" : "stop"}"
+  auto_start_machines = true
+  min_machines_running = ${on ? 1 : 0}
+
+  [[services.ports]]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "15s"
+    interval = "15s"
+    timeout = "3s"
+`;
+}
+
+/** A Fly `[[vm]] memory` value in bytes (`"512mb"`, `"1gb"`, a number of megabytes), or `null`. */
+function vmMemoryBytes(memory: string): number | null {
+  const m = /^\s*(\d+)\s*(mb|gb)?\s*$/i.exec(memory);
+  if (!m) return null;
+  return Number(m[1]) * 1024 ** ((m[2] ?? "mb").toLowerCase() === "gb" ? 3 : 2);
+}
+
+/**
+ * The warning when `start.limits.memory` (the server's heap limit) is not below the machine's
+ * memory: the kernel's OOM killer would end the server before the heap limit could.
+ */
+function heapLimitWarning(manifest: DeployManifest, vmMemory: string): string | null {
+  const flag = (manifest.server.limits ?? []).find((f) => f.startsWith("--max-memory="));
+  const heap = flag ? memoryLimitBytes(flag.slice("--max-memory=".length)) : null;
+  const vm = vmMemoryBytes(vmMemory);
+  if (heap === null || vm === null || heap < vm) return null;
+  return `fly: start.limits.memory (${flag}) is not below the machine's memory (${vmMemory}); ` +
+    "the OOM killer ends the server first — lower the limit or raise the preset's memory";
+}
+
 /** Warn about what Fly changes for this app. */
-function flyWarnings(ctx: DeployContext): void {
+function flyWarnings(ctx: DeployContext, vmMemory: string): void {
   const { manifest } = ctx;
+  const heap = heapLimitWarning(manifest, vmMemory);
+  if (heap) ctx.warn(heap);
   if (manifest.schedules.length) {
     ctx.warn(
       "fly: every machine runs the schedules — keep one machine (`fly scale count 1`) or a " +
@@ -151,11 +225,12 @@ export function fly(options: FlyPresetOptions = {}): DeployAdapter {
     prepare: async (ctx) => {
       await writeDockerFiles(ctx, options);
       const app = appName(options.app, ctx.projectDir);
-      await ctx.writeFile("fly.toml", renderFlyToml(ctx.manifest, { ...options, app }), {
+      const drain = drainMsOf(ctx.manifest, ctx.env, options.drainMs);
+      await ctx.writeFile("fly.toml", renderFlyToml(ctx.manifest, { ...options, app, drain }), {
         in: "project",
         marker: marker("fly"),
       });
-      flyWarnings(ctx);
+      flyWarnings(ctx, options.memory ?? DEFAULT_VM_MEMORY);
     },
     deploy: flyDeploy,
   };

@@ -91,8 +91,6 @@ for (const compat of [false, true]) {
     name: `e2e: a stale SPA chunk fires vite:preloadError + denext:chunkError once (${
       compat ? "esbuild" : "deno bundle"
     } path)`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async (t) => {
     const dir = await fixture(compat);
     const server = await buildAndServe(dir);

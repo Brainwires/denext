@@ -4,17 +4,20 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import {
   actionEndpoint,
   actionIdFor,
-  clientActionStub,
   decodeActionArgs,
-  encodeActionArgs,
   forgetTaggedServers,
   getServerAction,
   isServerAction,
-  serverAction,
   setActionRefreshHandler,
   tagServerExports,
   tagServerModules,
 } from "../src/runtime/server-action.ts";
+import { encodeActionArgs as encodeWith } from "../src/client/action-dispatch.ts";
+import { clientActionStub, serverAction } from "../src/runtime/action-stub.ts";
+import { prepareWire } from "../src/runtime/wire-encode.ts";
+
+/** The client's argument encoding, with the wire encoder the stubs hand it. */
+const encodeActionArgs = (args: unknown[]) => encodeWith(args, prepareWire);
 import { handleAction } from "../src/server/action-handler.ts";
 import { decodeWire } from "../src/runtime/wire-codec.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
@@ -208,16 +211,19 @@ Deno.test("action honors an allowedOrigins entry for a proxied host", async () =
 
 // ---- SECURITY: no leakage / bounded dispatch -------------------------------
 
-Deno.test("unknown action id returns 404 without detail", async () => {
+Deno.test("unknown action id returns 409 + x-denext-action: unknown, without detail", async () => {
+  // Distinct from a plain 404: a page from an older build posts ids a new build re-minted, and
+  // the client reloads the page once on this answer.
   const res = await dispatch(actionRequest("does_not_exist", {
     headers: { origin: "http://localhost", "x-denext-action": "1" },
     json: { args: [] },
   }));
-  assertEquals(res.status, 404);
-  assertEquals((await res.json()).error, "unknown action");
+  assertEquals(res.status, 409);
+  assertEquals(res.headers.get("x-denext-action"), "unknown");
+  assertEquals(await res.json(), { error: "unknown action" });
 });
 
-Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part C)", async () => {
+Deno.test("a malformed action id (bad percent-escape) is an unknown action, not a 500 (Part C)", async () => {
   // `%ZZ` is not a valid percent-escape — decodeURIComponent throws URIError.
   // It must be treated as a miss (unknown action), never an unhandled 500.
   const req = new Request("http://localhost/_denext/action/%ZZ", {
@@ -226,7 +232,8 @@ Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part 
     body: JSON.stringify({ args: [] }),
   });
   const res = await dispatch(req);
-  assertEquals(res.status, 404);
+  assertEquals(res.status, 409);
+  assertEquals(res.headers.get("x-denext-action"), "unknown");
   assertEquals((await res.json()).error, "unknown action");
 });
 

@@ -96,7 +96,7 @@ Deno.test("otaChannelsProblem: the file's shape is validated", () => {
 async function release(
   root: string,
   name: string,
-  meta: { sequence?: number } = {},
+  meta: { sequence?: number; expiresAt?: number } = {},
   key?: CryptoKey,
 ): Promise<string> {
   const dir = join(root, name);
@@ -410,6 +410,29 @@ Deno.test("promoteOtaRelease: the refusal rules, and force", async () => {
       force: true,
     });
     assertEquals(forced.channels.production, { release: "unsigned" });
+  });
+});
+
+Deno.test("promoteOtaRelease SECURITY (AU6-L1): an expired release is refused unless forced", async () => {
+  await inTemp(async (root) => {
+    const { privateKeyPem } = await generateOtaKeyPair();
+    const key = await importOtaSigningKey(privateKeyPem);
+    await release(root, "current", { sequence: 100 }, key);
+    await release(root, "stale", { sequence: 200, expiresAt: 1 }, key);
+    const file = join(root, "ota-channels.json");
+    await setOtaChannel({ file, channel: "production", release: join(root, "current") });
+    await assertRejects(
+      () => promoteOtaRelease({ file, from: { release: join(root, "stale") }, to: "production" }),
+      Error,
+      "code expired",
+    );
+    const forced = await promoteOtaRelease({
+      file,
+      from: { release: join(root, "stale") },
+      to: "production",
+      force: true,
+    });
+    assertEquals(forced.channels.production, { release: "stale" });
   });
 });
 

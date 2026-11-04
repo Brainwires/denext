@@ -98,12 +98,26 @@ export const decodeNumeric: Decoder = (b) => {
   return sign === 0x4000 ? `-${digits}` : digits;
 };
 
-/** `money`: a 64-bit count of cents, as a decimal string (two fractional digits). */
-export const decodeMoney: Decoder = (b) => {
-  const cents = view(b).getBigInt64(0);
-  const abs = cents < 0n ? -cents : cents;
-  return `${cents < 0n ? "-" : ""}${abs / 100n}.${pad(abs % 100n)}`;
-};
+/**
+ * `money`: a 64-bit count of the currency's smallest unit, as a decimal string with `fracDigits`
+ * fractional digits — the server's `lc_monetary` decides how many (2 for `C` / `en_US`, 0 for
+ * `ja_JP`, 3 for `ar_KW`).
+ *
+ * @param fracDigits The fractional digits of the session's `lc_monetary`.
+ * @returns The decoder.
+ */
+export function moneyDecoder(fracDigits: number): Decoder {
+  const unit = 10n ** BigInt(fracDigits);
+  return (b) => {
+    const count = view(b).getBigInt64(0);
+    const abs = count < 0n ? -count : count;
+    const int = `${count < 0n ? "-" : ""}${abs / unit}`;
+    return fracDigits === 0 ? int : `${int}.${pad(abs % unit, fracDigits)}`;
+  };
+}
+
+/** `money` under a two-digit `lc_monetary` (`C`, `en_US`): a count of cents. */
+export const decodeMoney: Decoder = moneyDecoder(2);
 
 /** `bytea`, as the number array Prisma reads. */
 export const decodeBytea: Decoder = (b) => Array.from(b);

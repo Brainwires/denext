@@ -27,7 +27,9 @@ import { nativePlugin } from "./plugin.ts";
  * Deno Desktop's custom-scheme callbacks add:
  *
  * - `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;
- * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;
+ * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every
+ *   platform: the iOS / Android shell, the web popup and Deno Desktop's loopback flow too), and
+ *   `pkce: "not-applicable"` was not given;
  * - `scheme_owned_by_other_app`: another app handles the scheme (its identity in
  *   {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call
  *   `claimDeepLinkScheme` (`denext/desktop/client`);
@@ -94,23 +96,27 @@ export interface AuthSessionOptions {
    */
   readonly timeoutMs?: number;
   /**
-   * Deno Desktop, custom-scheme callback: where the callback lands (`"myapp://auth/callback"`) when
-   * the URL's own `redirect_uri` is not a `callbackScheme` URL (a provider that redirects through
-   * its own server first). It is matched exactly on scheme, host and path.
+   * Custom-scheme callback (Deno Desktop, and the iOS / Android shell): where the callback lands
+   * (`"myapp://auth/callback"`) when the URL's own `redirect_uri` is not a `callbackScheme` URL (a
+   * provider that redirects through its own server first). It is matched exactly on scheme, host
+   * and path; a callback elsewhere is refused.
    */
   readonly callbackPrefix?: string;
   /**
-   * Deno Desktop, custom-scheme callback: PKCE (S256) is mandatory unless this is
-   * `"not-applicable"`, for a provider that binds the callback to the initiating client another
-   * way; then {@linkcode AuthSessionOptions.reason} says how.
+   * PKCE (S256) is mandatory (the iOS / Android shell, the web popup, and Deno Desktop's
+   * loopback and custom-scheme callbacks) unless this is `"not-applicable"`, for a provider that
+   * binds the callback to the initiating client another way; then
+   * {@linkcode AuthSessionOptions.reason} says how. Without PKCE another app that registers the
+   * same callback scheme, or another local process that answers the loopback redirect, could take
+   * the `code` and redeem it.
    */
   readonly pkce?: "not-applicable";
   /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
   readonly reason?: string;
   /**
-   * Deno Desktop, custom-scheme callback with a {@linkcode AuthSessionOptions.callbackPrefix}: the
-   * `state` the callback must carry. (When the callback is the URL's own `redirect_uri`, the URL's
-   * `state` is checked automatically.)
+   * Custom-scheme callback (Deno Desktop, and the iOS / Android shell): the `state` the callback
+   * must carry. When the URL itself carries a `state`, it is checked automatically (in the
+   * callback's query or, on mobile, its fragment).
    */
   readonly state?: string;
   /**
@@ -265,6 +271,55 @@ function checkTimeout(timeoutMs: unknown): number | undefined {
   return timeoutMs;
 }
 
+/** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding. */
+const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** The longest `reason` kept for a `pkce: "not-applicable"` session. */
+const MAX_PKCE_REASON = 500;
+
+/** The single value of `name` in `url`'s query, or null when absent or repeated. */
+function singleParam(url: URL, name: string): string | null {
+  const all = url.searchParams.getAll(name);
+  return all.length === 1 ? all[0] : null;
+}
+
+/**
+ * PKCE S256 in the URL (one `code_challenge`, a SHA-256's base64url, and one
+ * `code_challenge_method=S256`), unless `pkce: "not-applicable"` with a `reason`. Without it,
+ * any app that registers the same callback scheme could take the `code` and redeem it. Throws
+ * `pkce_required` or `invalid`.
+ */
+function checkPkce(url: string, options: AuthSessionOptions | undefined): void {
+  const pkce = options?.pkce as unknown;
+  if (pkce !== undefined && pkce !== "not-applicable") {
+    throw authSessionError("invalid", 'pkce must be "not-applicable" when given');
+  }
+  if (pkce === "not-applicable") return checkPkceReason(options?.reason);
+  if (!hasS256Challenge(new URL(url))) {
+    throw authSessionError(
+      "pkce_required",
+      "the URL must carry PKCE: one code_challenge (a 43-character base64url SHA-256) and " +
+        'code_challenge_method=S256 (or pass pkce: "not-applicable" with a reason)',
+    );
+  }
+}
+
+/** A `pkce: "not-applicable"` waiver's reason: present and bounded, else `invalid`. */
+function checkPkceReason(reason: unknown): void {
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (text === "" || text.length > MAX_PKCE_REASON) {
+    throw authSessionError(
+      "invalid",
+      'pkce: "not-applicable" needs a reason (how the provider binds the callback)',
+    );
+  }
+}
+
+/** Whether `url` carries one S256 `code_challenge` and one `code_challenge_method=S256`. */
+function hasS256Challenge(url: URL): boolean {
+  return S256_CHALLENGE.test(singleParam(url, "code_challenge") ?? "") &&
+    singleParam(url, "code_challenge_method") === "S256";
+}
+
 /** A session that failed before it started. */
 function failed(error: AuthSessionError): RunningSession {
   return { result: Promise.reject(error), stop: () => {} };
@@ -292,8 +347,63 @@ function releaseClaim(url: string | undefined): void {
   claimedUntil = Date.now() + CLAIM_MS;
 }
 
+/**
+ * Why a native callback must not be trusted, or `null` when it may be: it must land exactly (scheme,
+ * host, path) on the URL's own `redirect_uri` (or `callbackPrefix`) when that is a callback-scheme
+ * URL, and carry the URL's `state` (or the `state` option) in its query or fragment. Any app on
+ * the device can open a callback-scheme link while the session is open (an explicit intent to the
+ * app's activity on Android), so a callback the session did not ask for is refused, never handed
+ * to the app as its sign-in.
+ */
+function nativeCallbackMismatch(
+  target: string,
+  callback: string,
+  scheme: string,
+  options: Pick<AuthSessionOptions, "callbackPrefix" | "state"> = {},
+): string | null {
+  const got = parseUrl(callback);
+  if (!got) return "the callback is not a URL";
+  const asked = new URL(target).searchParams;
+  return redirectMismatch(
+    got,
+    parseUrl(options.callbackPrefix ?? asked.get("redirect_uri")),
+    scheme,
+  ) ??
+    stateMismatch(got, options.state ?? asked.get("state"));
+}
+
+/** Why `got` is not the callback-scheme `expected` (scheme, host, path), or `null`. */
+function redirectMismatch(got: URL, expected: URL | undefined, scheme: string): string | null {
+  if (!expected || expected.protocol !== `${scheme}:`) return null; // redirected via a server
+  const same = got.protocol === expected.protocol && got.host === expected.host &&
+    got.pathname === expected.pathname;
+  return same ? null : "the callback does not land on the URL's redirect_uri";
+}
+
+/** Why `got` does not carry `state` (query, or fragment for an implicit flow), or `null`. */
+function stateMismatch(got: URL, state: string | null | undefined): string | null {
+  if (state === null || state === undefined) return null;
+  const carried = got.searchParams.get("state") ??
+    new URLSearchParams(got.hash.slice(1)).get("state");
+  return carried === state ? null : "the callback's state does not match the URL's state";
+}
+
+/** `value` as a URL, or `undefined` when it is absent or not one. */
+function parseUrl(value: string | null | undefined): URL | undefined {
+  if (typeof value !== "string" || value === "") return undefined;
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** The native session through the shell's `DenextAuthSession` plugin. */
-function startNative(url: string, scheme: string, ephemeral: boolean): RunningSession {
+function startNative(
+  url: string,
+  scheme: string,
+  options: AuthSessionOptions,
+): RunningSession {
   const plugin = nativePlugin<DenextAuthSessionPlugin>(PLUGIN_NAME, ["start"]);
   if (!plugin) {
     return failed(authSessionError(
@@ -303,11 +413,22 @@ function startNative(url: string, scheme: string, ephemeral: boolean): RunningSe
   }
   claimedScheme = scheme;
   const result = Promise.resolve()
-    .then(() => plugin.start({ url, callbackScheme: scheme, preferEphemeral: ephemeral }))
+    .then(() =>
+      plugin.start({
+        url,
+        callbackScheme: scheme,
+        preferEphemeral: options.preferEphemeral === true,
+      })
+    )
     .then((answer) => {
       const callback = answer?.url;
       if (typeof callback !== "string" || !callback.toLowerCase().startsWith(`${scheme}:`)) {
         throw authSessionError("unsupported", "the shell answered without a callback URL");
+      }
+      const mismatch = nativeCallbackMismatch(url, callback, scheme, options);
+      if (mismatch !== null) {
+        releaseClaim(callback); // swallowed by deep-link routing too, never routed as a link
+        throw authSessionError("invalid", mismatch);
       }
       releaseClaim(callback);
       return callback;
@@ -422,17 +543,18 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows
  *   and Linux the system browser, and the callback comes back as a deep link. While the system
  *   browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser
- *   reports no cancellation. Either way `callbackScheme` must be declared in
- *   `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: "not-applicable"` with a
- *   `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry
- *   the same `state`, and another app handling the scheme is refused
- *   (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches
- *   {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,
- *   denext's pinned runtime).
+ *   reports no cancellation. Both flows require PKCE S256 in the URL (unless
+ *   `pkce: "not-applicable"` with a `reason`; `pkce_required` otherwise). With a custom scheme,
+ *   `callbackScheme` must be declared in `desktop.app.deepLinks`, the callback must match the
+ *   `redirect_uri` (or `callbackPrefix`) exactly and carry the same `state`, and another app
+ *   handling the scheme is refused (`scheme_owned_by_other_app`) rather than handed the callback.
+ *   The callback never reaches {@linkcode onDeepLink}. Needs `denext desktop add auth-session`
+ *   (and, for a custom scheme, denext's pinned runtime).
  *
- * Only one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this
- * only opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)
- * before the call, compare `state` after it, and exchange the `code` on your server.
+ * Only one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a
+ * `code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless
+ * `pkce: "not-applicable"` with a `reason`. Generate `state` and the PKCE verifier before the
+ * call, compare `state` after it, and exchange the `code` (with the verifier) on your server.
  *
  * @param url The provider's authorization URL (absolute `https:`).
  * @param options The callback scheme, and the iOS ephemeral and timeout options.
@@ -449,11 +571,19 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
  *   authorize.searchParams.set("response_type", "code");
  *   authorize.searchParams.set("state", state);
- *   // (add code_challenge / code_challenge_method for PKCE)
+ *   const verifier = crypto.randomUUID() + crypto.randomUUID();
+ *   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+ *   const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+ *     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+ *   authorize.searchParams.set("code_challenge", challenge);
+ *   authorize.searchParams.set("code_challenge_method", "S256");
  *   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
  *   const params = new URL(url).searchParams;
  *   if (params.get("state") !== state) throw new Error("state mismatch");
- *   await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+ *   await fetch("/api/auth/exchange", {
+ *     method: "POST",
+ *     body: JSON.stringify({ code: params.get("code"), verifier }),
+ *   });
  * }
  * ```
  */
@@ -463,31 +593,44 @@ export async function openAuthSession(
 ): Promise<AuthSessionResult> {
   const target = checkUrl(url);
   const timeoutMs = checkTimeout(options?.timeoutMs);
+  // PKCE S256 on every platform, Deno Desktop's loopback and custom-scheme flows included (the
+  // runtime checks it again).
+  checkPkce(target, options);
   // Deno Desktop: the system browser, with the callback coming back either to a loopback listener
   // (a loopback `redirect_uri`; the default) or as a deep link with a scheme from
   // `desktop.app.deepLinks`. Dynamic import keeps the desktop client out of web/mobile bundles.
   if (runtimePlatform() === "desktop") {
-    const desktop = await import("../desktop/auth-session.ts");
-    return desktop.usesSchemeCallback(target, options)
-      ? await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs })
-      : await desktop.startDesktopAuthSession(target, {
-        timeoutMs,
-        ...(options?.signal ? { signal: options.signal } : {}),
-        ...(options?.cancelOverlay !== undefined ? { cancelOverlay: options.cancelOverlay } : {}),
-        ...(options?.loopbackPort !== undefined ? { loopbackPort: options.loopbackPort } : {}),
-      });
+    return await openDesktopAuthSession(target, options, timeoutMs);
   }
   const scheme = checkScheme(options?.callbackScheme);
   if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {
-    const session = isNativeShell()
-      ? startNative(target, scheme, options.preferEphemeral === true)
-      : startWeb(target);
+    const session = isNativeShell() ? startNative(target, scheme, options) : startWeb(target);
     return { url: await within(session, timeoutMs) };
   } finally {
     active = false;
   }
+}
+
+/** {@linkcode openAuthSession} in a Deno Desktop window: the custom-scheme or the loopback flow. */
+async function openDesktopAuthSession(
+  target: string,
+  options: AuthSessionOptions,
+  timeoutMs: number | undefined,
+): Promise<AuthSessionResult> {
+  const desktop = await import("../desktop/auth-session.ts");
+  if (desktop.usesSchemeCallback(target, options)) {
+    return await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs });
+  }
+  const { signal, cancelOverlay, loopbackPort, pkce, reason } = options ?? {};
+  return await desktop.startDesktopAuthSession(target, {
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+    ...(cancelOverlay !== undefined ? { cancelOverlay } : {}),
+    ...(loopbackPort !== undefined ? { loopbackPort } : {}),
+    ...(pkce !== undefined ? { pkce, reason } : {}),
+  });
 }
 
 /**

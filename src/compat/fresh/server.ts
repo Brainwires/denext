@@ -20,7 +20,14 @@ import { h } from "../../jsx/jsx-runtime.ts";
 import { currentContext, type RequestContext } from "../../server/request-context.ts";
 import { type MiddlewareResult, next, rewrite } from "../../server/middleware.ts";
 import { isControlSignal, notFound, redirect } from "../../runtime/error-boundary.ts";
-import { type App, type AppHandler, constructedApps } from "./app.ts";
+import {
+  type App,
+  type AppHandler,
+  type AppPageRoute,
+  type AppRouteObject,
+  constructedApps,
+  underPattern,
+} from "./app.ts";
 import {
   type Context,
   CONTINUE_HEADER,
@@ -97,6 +104,11 @@ export interface FreshAppSpec {
   layouts: FreshLayoutEntry[];
   /** The file routes, in Fresh's match order. */
   routes: FreshRouteEntry[];
+  /**
+   * The internal path of the generated page that renders what `main.ts` registered in code: an
+   * `app.route()` page, a handler's `ctx.render()` / `page()`, an `app.onError()` component.
+   */
+  appRoute?: string;
 }
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -146,7 +158,7 @@ function underPrefix(pathname: string, prefix: string): boolean {
 }
 
 /** The `App` a `main.ts` module built: its `app` / default export, else the last one constructed. */
-function appOf(main: unknown): App<unknown> | null {
+export function appOf(main: unknown): App<unknown> | null {
   if (main === undefined) return null;
   const mod = main as { app?: unknown; default?: unknown };
   for (const candidate of [mod.app, mod.default]) {
@@ -204,6 +216,58 @@ function matchAppRoute(
   return null;
 }
 
+/** Each lazy `app.route()` route, once loaded. */
+const loadedRoutes = new WeakMap<AppPageRoute, AppRouteObject>();
+
+/** A code page route's route object (loading a lazy one). */
+async function loadPageRoute(p: AppPageRoute): Promise<AppRouteObject> {
+  if (typeof p.route !== "function") return p.route;
+  let loaded = loadedRoutes.get(p);
+  if (!loaded) loadedRoutes.set(p, loaded = await p.route());
+  return loaded;
+}
+
+/** A route object as a route module (`component` is the page, `handler` its handler). */
+function routeModule(route: AppRouteObject, config?: RouteConfig): FreshModule {
+  return { default: route.component, handler: route.handler, config: config ?? route.config };
+}
+
+/**
+ * A route registered in code, as a file route entry: a page renders at the generated app-route
+ * page (`spec.appRoute`), a handler-only route is answered by the middleware.
+ */
+function codeEntry(spec: FreshAppSpec, id: string, pattern: string, mod: FreshModule) {
+  const page = typeof mod.default === "function";
+  const where = page ? (spec.appRoute ? { internal: spec.appRoute } : {}) : { inMiddleware: true };
+  return { id, pattern, mod, page, middlewares: [], layouts: [], ...where } as FreshRouteEntry;
+}
+
+/**
+ * The URL pattern of a code page route: its `routeOverride` (from the config beside it, or a
+ * loaded route's own), else its path.
+ */
+function pagePattern(p: AppPageRoute): string {
+  const own = typeof p.route === "function" ? undefined : p.route.config;
+  return (p.config ?? own)?.routeOverride ?? p.pattern;
+}
+
+/** The first `app.route()` page route matching `pathname`, with its parameters. */
+async function matchPageRoute(
+  spec: FreshAppSpec,
+  app: App<unknown> | null,
+  pathname: string,
+): Promise<{ entry: FreshRouteEntry; params: Record<string, string> } | null> {
+  for (const p of app?._pages ?? []) {
+    const pattern = pagePattern(p);
+    const params = matchPattern(pattern, pathname);
+    if (!params) continue;
+    const route = await loadPageRoute(p);
+    const mod = routeModule(route, p.config);
+    return { entry: codeEntry(spec, `app:${pattern}`, pattern, mod), params };
+  }
+  return null;
+}
+
 /**
  * Run `fns` as a middleware chain around `terminal`: each one's `ctx.next()` runs the rest. A
  * middleware that returns no response continues with the rest of the chain.
@@ -242,6 +306,42 @@ function pageResult(fr: FreshRequest, route: FreshRouteEntry, result: unknown): 
   return continueResponse(fr);
 }
 
+/** Whether a code handler rendered a page (`ctx.render(<jsx />)`, `page(data)`). */
+function renderedPage(fr: FreshRequest, out: unknown): boolean {
+  return isPageResponse(out) || (out instanceof Response && isContinue(fr, out));
+}
+
+/**
+ * A handler registered in code (`app.get()`, …), after its route middleware. A page it renders
+ * goes to the generated app-route page.
+ */
+function dispatchAppRoute(
+  fr: FreshRequest,
+  spec: FreshAppSpec,
+  appRoute: NonNullable<ReturnType<typeof matchAppRoute>>,
+): Promise<Response> {
+  const v1 = spec.v1 === true;
+  const handler = appRoute.fns.at(-1) as AnyFn | undefined;
+  const before = appRoute.fns.slice(0, -1) as AnyFn[];
+  return runChain(fr.ctx, before, v1, () => appHandlerResult(fr, spec, appRoute.pattern, handler));
+}
+
+/** What a code handler answers: its Response, or the page it rendered (at the app-route page). */
+async function appHandlerResult(
+  fr: FreshRequest,
+  spec: FreshAppSpec,
+  pattern: string,
+  handler: AnyFn | undefined,
+): Promise<Response> {
+  const out = handler ? await call(handler, fr.ctx, spec.v1 === true) : undefined;
+  if (spec.appRoute && renderedPage(fr, out)) {
+    adoptCodePage(fr, spec, `app:${pattern}`, pattern, {});
+    return out instanceof Response ? out : pageResult(fr, entries.get(fr)!, out);
+  }
+  if (out instanceof Response) return out;
+  throw new Error(`app route ${pattern}: a handler registered in code must return a Response`);
+}
+
 /** The route step of the chain: a code route, a file route's handler, or the page / 404. */
 async function dispatchRoute(
   fr: FreshRequest,
@@ -251,17 +351,7 @@ async function dispatchRoute(
 ): Promise<Response> {
   const { ctx } = fr;
   const v1 = spec.v1 === true;
-  if (appRoute) {
-    const handler = appRoute.fns.at(-1) as AnyFn | undefined;
-    const before = appRoute.fns.slice(0, -1) as AnyFn[];
-    return await runChain(ctx, before, v1, async () => {
-      const out = handler ? await call(handler, ctx, v1) : undefined;
-      if (out instanceof Response) return out;
-      throw new Error(
-        `app route ${appRoute.pattern}: a handler registered in code must return a Response`,
-      );
-    });
-  }
+  if (appRoute) return await dispatchAppRoute(fr, spec, appRoute);
   if (!route) return continueResponse(fr);
   // A handler-only route the `app/` tree holds runs in its generated `route.ts`.
   if (!route.page && !route.inMiddleware) return continueResponse(fr);
@@ -273,6 +363,55 @@ async function dispatchRoute(
     return continueResponse(fr);
   }
   return pageResult(fr, route, await call(fn, ctx, v1));
+}
+
+/** The `app.onError()` handler for `pathname`: the one with the most specific path. */
+function errorRouteFor(app: App<unknown> | null, pathname: string): AppRouteObject | null {
+  let best: { route: AppRouteObject; depth: number } | null = null;
+  for (const e of app?._errors ?? []) {
+    if (!underPattern(pathname, e.path)) continue;
+    const depth = e.path.replace(/\/?\*$/, "").split("/").filter(Boolean).length;
+    if (!best || depth >= best.depth) best = { route: e.route, depth };
+  }
+  return best?.route ?? null;
+}
+
+/**
+ * Answer an error with `main.ts`'s `app.onError()` handler (a 404 renders the not-found page
+ * instead): its handler's Response, else what it rendered or its component (with `ctx.error`) at
+ * the generated app-route page. Null: no handler applies.
+ */
+async function codeErrorResult(
+  fr: FreshRequest,
+  spec: FreshAppSpec,
+  builder: App<unknown> | null,
+  error: unknown,
+  rc: RequestContext | undefined,
+): Promise<MiddlewareResult | null> {
+  const status = error instanceof HttpError ? error.status : 500;
+  const route = status === 404 ? null : errorRouteFor(builder, fr.ctx.url.pathname);
+  if (!route) return null;
+  if (!(error instanceof HttpError)) console.error(error);
+  fr.ctx.error = error;
+  const out = await callRouteObject(fr, route, spec.v1 === true);
+  if (out instanceof Response && !isContinue(fr, out)) return out;
+  const rendered = out instanceof Response; // `ctx.render(<jsx />)`: the outcome is set
+  if (!spec.appRoute || (!rendered && typeof route.component !== "function")) return null;
+  const outcome = fr.outcome;
+  adoptCodePage(fr, spec, "app:error", fr.ctx.url.pathname, routeModule(route));
+  fr.outcome = rendered ? outcome : { kind: "page", data: pageData(out) };
+  return finish(fr, continueResponse(fr, status), rc);
+}
+
+/** Call a route object's handler for the request's method (undefined: it has none). */
+async function callRouteObject(fr: FreshRequest, route: AppRouteObject, v1: boolean) {
+  const fn = handlerFor({ handler: route.handler }, fr.ctx.req.method.toUpperCase());
+  return fn ? await call(fn, fr.ctx, v1) : undefined;
+}
+
+/** The page data a handler returned: `page(data)`'s data, else the value itself. */
+function pageData(out: unknown): unknown {
+  return isPageResponse(out) ? out.data : out;
 }
 
 /** The answer to an error thrown by a handler or middleware. */
@@ -340,7 +479,9 @@ async function runFresh(app: FreshAppSpec, request: Request): Promise<Middleware
   const builder = appOf(app.main);
   const pathname = fr.ctx.url.pathname;
   const appRoute = matchAppRoute(builder, request.method.toUpperCase(), pathname);
-  const matched = appRoute ? null : matchRoute(app, pathname);
+  const matched = appRoute
+    ? null
+    : (await matchPageRoute(app, builder, pathname)) ?? matchRoute(app, pathname);
   if (appRoute) setRoute(fr.ctx, appRoute.params, appRoute.pattern);
   else if (matched) recordMatch(fr, app, matched.entry, matched.params);
   const fns = chainFor(app, builder, matched?.entry, pathname);
@@ -349,8 +490,24 @@ async function runFresh(app: FreshAppSpec, request: Request): Promise<Middleware
     return finish(fr, await runChain(fr.ctx, fns, app.v1 === true, route), rc);
   } catch (error) {
     if (isControlSignal(error)) throw error;
-    return errorResult(fr, error, rc);
+    return (await codeErrorResult(fr, app, builder, error, rc)) ?? errorResult(fr, error, rc);
   }
+}
+
+/** Point the request at a page registered in code, rendered at the generated app-route page. */
+function adoptCodePage(
+  fr: FreshRequest,
+  spec: FreshAppSpec,
+  id: string,
+  pattern: string,
+  mod: FreshModule,
+): void {
+  const entry = codeEntry(spec, id, pattern, mod);
+  entry.page = true;
+  entry.internal = spec.appRoute;
+  delete entry.inMiddleware;
+  const params = fr.ctx.params;
+  recordMatch(fr, spec, entry, params);
 }
 
 /** Point the context at a matched route. */
@@ -375,6 +532,8 @@ function recordMatch(
     page: entry.page,
     layouts: wrap.layouts,
     skipApp: wrap.skipApp,
+    skipLayouts: (entry.mod.config as RouteConfig | undefined)?.skipInheritedLayouts === true,
+    code: entry.id.startsWith("app:"),
   } satisfies MatchedRoute;
   entries.set(fr, entry);
   setRoute(fr.ctx, params, entry.pattern);
@@ -393,7 +552,7 @@ function chainFor(
 ): AnyFn[] {
   const fns: AnyFn[] = [];
   for (const m of builder?._middlewares ?? []) {
-    if (underPrefix(pathname, m.path)) fns.push(...(m.fns as AnyFn[]));
+    if (underPattern(pathname, m.path)) fns.push(...(m.fns as AnyFn[]));
   }
   const files = entry
     ? entry.middlewares.map((i) => app.middlewares[i])
@@ -558,15 +717,51 @@ async function renderOutcome(
 
 /** Options of a generated layout. */
 export interface FreshLayoutOptions extends FreshFileOptions {
-  /** This is the `_app` wrapper (the root layout). */
+  /** This is the root layout: the `_app` wrapper, `main.ts`'s app wrapper and code layouts. */
   app?: boolean;
+  /** The `main.ts` module (Fresh 2), for its `app.appWrapper()` and `app.layout()`. */
+  main?: unknown;
+}
+
+/** The `app.layout()` layouts wrapping this request's page, and whether they skip the wrapper. */
+function codeLayouts(
+  builder: App<unknown> | null,
+  pathname: string,
+  match: MatchedRoute | undefined,
+): { layouts: unknown[]; skipApp: boolean } {
+  let layouts: unknown[] = [];
+  let skipApp = false;
+  const applying = match?.skipLayouts ? [] : builder?._layouts ?? [];
+  for (const l of applying.filter((l) => underPattern(pathname, l.path))) {
+    const config = l.config ?? {};
+    if (config.skipInheritedLayouts) layouts = [];
+    skipApp ||= config.skipAppWrapper === true;
+    layouts.push(l.component);
+  }
+  return { layouts, skipApp };
+}
+
+/** `children` inside `layouts` (outermost first), each given the content as `Component`. */
+async function wrapIn(
+  layouts: unknown[],
+  children: unknown,
+  ctx: Context,
+  v1: boolean,
+): Promise<unknown> {
+  let content = children;
+  for (const layout of layouts.toReversed()) {
+    const inner = content;
+    content = await renderComponent(layout, ctx, v1, { Component: () => inner });
+  }
+  return content;
 }
 
 /**
- * A generated `layout.tsx`: renders a Fresh `_layout` (or the `_app` wrapper) around the page,
- * as its `Component`. A route (or a layout) whose config skips it renders without it.
+ * A generated `layout.tsx`: renders a Fresh `_layout` (or, with `app`, the root: `main.ts`'s
+ * `app.layout()` layouts inside the `_app` wrapper or `app.appWrapper()`) around the page, as
+ * its `Component`. A route (or a layout) whose config skips it renders without it.
  *
- * @param mod The layout module.
+ * @param mod The layout module (the root layout of an app with no `_app`: `{}`).
  * @param opts The layout's id.
  * @returns The layout component.
  */
@@ -576,31 +771,84 @@ export function freshLayout(
 ): (props: { children?: unknown }) => Promise<unknown> {
   return async function FreshLayout(props) {
     const fr = freshRequest(opts.v1);
-    const children = props.children;
+    const v1 = opts.v1 === true;
     const match = fr.dispatched ? fr.match : undefined;
-    const applies = !match || (opts.app ? !match.skipApp : match.layouts.includes(opts.id));
-    if (!applies) return children;
-    const Component = () => children;
-    return await renderComponent(mod.default, fr.ctx, opts.v1 === true, { Component });
+    if (!opts.app) {
+      if (match && !match.layouts.includes(opts.id)) return props.children;
+      const children = props.children;
+      return await renderComponent(mod.default, fr.ctx, v1, { Component: () => children });
+    }
+    const builder = appOf(opts.main);
+    const code = codeLayouts(builder, fr.ctx.url.pathname, match);
+    const children = await wrapIn(code.layouts, props.children, fr.ctx, v1);
+    const wrapper = mod.default ?? builder?._appWrapper;
+    if (wrapper === undefined || match?.skipApp || code.skipApp) return children;
+    return await renderComponent(wrapper, fr.ctx, v1, { Component: () => children });
   };
 }
 
 /**
- * The generated `not-found.tsx`: renders the app's `_404` page (or its `_error` page with a 404
- * `HttpError`).
+ * The generated `app/fresh-app-route/page.tsx`: renders a page `main.ts` registered in code —
+ * an `app.route()` page, what a code handler rendered (`ctx.render()`), an `app.onError()`
+ * component. The middleware rewrites those requests here; a direct visit is a 404.
  *
- * @param mod The `_404` or `_error` module.
- * @param opts The page's id.
+ * @param opts Whether the app is a Fresh 1.x app.
+ * @returns The page component.
+ */
+export function freshAppPage(opts: { v1?: boolean } = {}): () => Promise<unknown> {
+  return async function FreshAppPage() {
+    const fr = freshRequest(opts.v1);
+    const match = fr.dispatched ? fr.match : undefined;
+    if (!match?.code) notFound();
+    return await renderOutcome(fr, match.mod, { id: match.id, v1: opts.v1 });
+  };
+}
+
+/** Options of the generated not-found page. */
+export interface FreshNotFoundOptions extends FreshFileOptions {
+  /** The `main.ts` module (Fresh 2), for its `app.notFound()`. */
+  main?: unknown;
+}
+
+/**
+ * Render `main.ts`'s `app.notFound()` route: its handler first (a redirect is followed; another
+ * Response's text is the page's content, at its status), then its component.
+ */
+async function renderNotFoundRoute(
+  fr: FreshRequest,
+  route: AppRouteObject,
+  v1: boolean,
+): Promise<unknown> {
+  const out = await callRouteObject(fr, route, v1);
+  if (out instanceof Response && !isContinue(fr, out)) {
+    const location = out.headers.get("location");
+    if (location && out.status >= 300 && out.status < 400) componentResponse(out);
+    setStatus(out.status);
+    return await out.text();
+  }
+  if (fr.outcome?.kind === "vnode") return fr.outcome.vnode;
+  fr.ctx.data = pageData(out);
+  return await renderComponent(route.component, fr.ctx, v1);
+}
+
+/**
+ * The generated `not-found.tsx`: renders the app's `_404` page (or its `_error` page with a 404
+ * `HttpError`), else `main.ts`'s `app.notFound()`.
+ *
+ * @param mod The `_404` or `_error` module (none: only `app.notFound()`).
+ * @param opts The page's id and the `main.ts` module.
  * @returns The not-found component.
  */
 export function freshNotFound(
-  mod: FreshModule,
-  opts: FreshFileOptions,
+  mod: FreshModule | undefined,
+  opts: FreshNotFoundOptions,
 ): () => Promise<unknown> {
   return async function FreshNotFound() {
     const fr = freshRequest(opts.v1);
     fr.ctx.error = new HttpError(404);
-    return await renderComponent(mod.default, fr.ctx, opts.v1 === true);
+    const route = mod?.default === undefined ? appOf(opts.main)?._notFound : undefined;
+    if (route) return await renderNotFoundRoute(fr, route, opts.v1 === true);
+    return await renderComponent(mod?.default, fr.ctx, opts.v1 === true);
   };
 }
 

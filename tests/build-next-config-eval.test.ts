@@ -2,12 +2,18 @@
 // `denext migrate` and `denext ui`'s `/config/next` panel both drive with their own program.
 
 import { assert, assertEquals, assertFalse, assertMatch, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { dirname, join, toFileUrl } from "@std/path";
+import {
+  configIsolation,
+  discoversDenoConfig,
+  projectImportMap,
+} from "../src/build/eval-config-isolation.ts";
 import {
   evalNextConfigProgram,
   LOAD_NEXT_CONFIG,
   type NextConfigEvalResult,
 } from "../src/build/next-config-eval.ts";
+import { inChild } from "./helpers/isolated.ts";
 
 const MARKER = "__TEST_NEXT_CONFIG__";
 
@@ -255,6 +261,202 @@ export default { wrote, fetched, readOutside, readInside };
   });
 });
 
+Deno.test({
+  name: "a symlink committed in the project can't read outside it, however the path is spelled",
+  // Creating symlinks on Windows needs a privilege CI accounts don't hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+    try {
+      const dir = join(parent, "app");
+      const outside = join(parent, "outside");
+      await Deno.mkdir(join(dir, "b"), { recursive: true });
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "s.txt"), "OUTSIDE-SECRET");
+      await Deno.writeTextFile(join(dir, "in.txt"), "inside");
+      // A file link and a directory link out of the project, a link to a project directory
+      // that holds one (`a/u` reaches `outside` without naming the escaping link), and a
+      // link that stays inside.
+      await Deno.symlink(join("..", "outside", "s.txt"), join(dir, "link.txt"));
+      await Deno.symlink(join("..", "outside"), join(dir, "u"));
+      await Deno.symlink(join("..", "..", "outside"), join(dir, "b", "u"));
+      await Deno.symlink("b", join(dir, "a"));
+      await Deno.symlink("in.txt", join(dir, "ok.txt"));
+      const probe = `
+import { readFileSync } from "node:fs";
+const read = (p) => { try { return Deno.readTextFileSync(p); } catch (e) { return e.name; } };
+const nodeRead = (p) => { try { return readFileSync(p, "utf8"); } catch (e) { return e.name; } };
+export default {
+  env: {
+    file: read("link.txt"),
+    dir: read("u/s.txt"),
+    caseVariant: read("U/s.txt"),
+    nested: read("b/u/s.txt"),
+    viaInsideLink: read("a/u/s.txt"),
+    node: nodeRead("link.txt"),
+    absolute: read(${JSON.stringify(join(dir, "u", "s.txt"))}),
+    inside: read("in.txt"),
+    insideLink: read("ok.txt"),
+  },
+};
+`;
+      await Deno.writeTextFile(join(dir, "next.config.mjs"), probe);
+      const value = valueOf(await evalIn(dir, "next.config.mjs")) as {
+        env: Record<string, string>;
+      };
+      assertFalse(JSON.stringify(value).includes("OUTSIDE-SECRET"), JSON.stringify(value));
+      for (
+        const key of ["file", "dir", "caseVariant", "nested", "viaInsideLink", "node", "absolute"]
+      ) {
+        assertMatch(value.env[key], /NotCapable|PermissionDenied|NotFound/, key);
+      }
+      assertEquals(value.env.inside, "inside");
+      assertEquals(value.env.insideLink, "inside");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+});
+
+/**
+ * A pnpm workspace under a temp dir: the app in `apps/web`, its `node_modules/x` linking into
+ * the root's `.pnpm` store, a sibling file at the root, and `outside/` beside the workspace.
+ * `listed` says whether pnpm-workspace.yaml lists the app.
+ */
+async function pnpmWorkspace(
+  listed: boolean,
+  fn: (root: string, app: string, outside: string) => Promise<void>,
+): Promise<void> {
+  const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+  try {
+    const root = join(parent, "repo");
+    const app = join(root, "apps", "web");
+    const outside = join(parent, "outside");
+    const store = join(root, "node_modules", ".pnpm", "x@1.0.0", "node_modules", "x");
+    await Deno.mkdir(store, { recursive: true });
+    await Deno.mkdir(join(app, "node_modules"), { recursive: true });
+    await Deno.mkdir(outside);
+    await Deno.writeTextFile(join(outside, "s.txt"), "OUTSIDE-SECRET");
+    await Deno.writeTextFile(join(root, "root.txt"), "root");
+    await Deno.writeTextFile(
+      join(root, "pnpm-workspace.yaml"),
+      `packages:\n  - "${listed ? "apps/*" : "packages/*"}"\n`,
+    );
+    await Deno.writeTextFile(join(store, "package.json"), '{"name":"x","main":"index.js"}');
+    await Deno.writeTextFile(join(store, "index.js"), 'module.exports = "from-the-store";\n');
+    await Deno.writeTextFile(join(app, "package.json"), '{"dependencies":{"x":"1.0.0"}}');
+    await Deno.symlink(
+      join("..", "..", "..", "node_modules", ".pnpm", "x@1.0.0", "node_modules", "x"),
+      join(app, "node_modules", "x"),
+    );
+    await Deno.symlink(join("..", "..", "..", "outside"), join(app, "home"));
+    await fn(root, app, outside);
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+}
+
+const WORKSPACE_PROBE = `
+const read = (p) => { try { return Deno.readTextFileSync(p); } catch (e) { return e.name; } };
+let x;
+try { x = (await import("x")).default; } catch (e) { x = e.name; }
+export default {
+  env: { x, out: read("home/s.txt"), root: read("../../root.txt"), list: read("package.json") },
+};
+`;
+
+Deno.test({
+  name: "a pnpm workspace member imports from the root's store; a link out of the root is refused",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await pnpmWorkspace(true, async (_root, app) => {
+      await Deno.writeTextFile(join(app, "next.config.mjs"), WORKSPACE_PROBE);
+      const value = valueOf(await evalIn(app, "next.config.mjs")) as {
+        env: Record<string, string>;
+      };
+      assertEquals(value.env.x, "from-the-store");
+      assertEquals(value.env.root, "root");
+      assertMatch(value.env.out, /NotCapable|PermissionDenied|NotFound/);
+      assertFalse(JSON.stringify(value).includes("OUTSIDE-SECRET"));
+    });
+  },
+});
+
+Deno.test({
+  name: "a pnpm-workspace.yaml that doesn't list the app widens nothing",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await pnpmWorkspace(false, async (_root, app) => {
+      // The app is contained in its own directory, so its node_modules link into the root's
+      // store leads out of it, and a require() would read through it: refused outright.
+      await Deno.writeTextFile(join(app, "next.config.mjs"), WORKSPACE_PROBE);
+      const reason = reasonOf(await evalIn(app, "next.config.mjs"));
+      assertStringIncludes(reason, "node_modules");
+      assertStringIncludes(reason, "require()");
+    });
+  },
+});
+
+Deno.test({
+  name: "a node_modules link out of the project refuses the evaluation (require() ignores grants)",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+    try {
+      const dir = join(parent, "app");
+      const outside = join(parent, "outside");
+      await Deno.mkdir(join(dir, "node_modules"), { recursive: true });
+      await Deno.mkdir(join(dir, "src"));
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "config.json"), '{"token":"OUTSIDE-SECRET"}');
+      await Deno.writeTextFile(join(dir, "package.json"), '{"dependencies":{"evil":"1"}}');
+      // Through a link into a project directory that holds the link out, too.
+      await Deno.symlink(join("..", "..", "outside"), join(dir, "src", "u"));
+      await Deno.symlink(join("..", "src"), join(dir, "node_modules", "evil"));
+      await Deno.writeTextFile(
+        join(dir, "next.config.mjs"),
+        `import { createRequire } from "node:module";
+let token = "none";
+try { token = createRequire(import.meta.url)("evil/u/config.json").token; } catch {}
+export default { env: { token } };
+`,
+      );
+      const result = await evalIn(dir, "next.config.mjs");
+      assertFalse(JSON.stringify(result).includes("OUTSIDE-SECRET"), JSON.stringify(result));
+      assertStringIncludes(reasonOf(result), "node_modules");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+});
+
+Deno.test("the child reads the machine's sizing through node:os, not its name, user or home", async () => {
+  const probe = `
+import os from "node:os";
+const ask = (f) => { try { f(); return "allowed"; } catch (e) { return e.name; } };
+export default {
+  cpus: ask(() => os.cpus()),
+  totalmem: ask(() => os.totalmem()),
+  release: ask(() => os.release()),
+  hostname: ask(() => os.hostname()),
+  userInfo: ask(() => os.userInfo()),
+  homedir: ask(() => os.homedir()),
+  interfaces: ask(() => os.networkInterfaces()),
+};
+`;
+  await withConfig("next.config.mjs", probe, async (dir) => {
+    const value = valueOf(await evalIn(dir, "next.config.mjs")) as Record<string, string>;
+    assertEquals(
+      [value.cpus, value.totalmem, value.release],
+      ["allowed", "allowed", "allowed"],
+      JSON.stringify(value),
+    );
+    for (const key of ["hostname", "userInfo", "homedir", "interfaces"]) {
+      assert(value[key] !== "allowed", `${key} was readable`);
+    }
+  });
+});
+
 Deno.test("a project path with a comma is refused, not spawned with a widened read grant", async () => {
   // `--allow-read=<dir>` is a comma-separated LIST: `/a/project,etc` grants `/a/project` AND
   // `etc` (relative to the cwd — which is the project). The `,,` escape is refused by Deno 2.9.
@@ -378,4 +580,302 @@ Deno.test("an npm import reaches no registry, and the parent's environment stays
     Deno.env.delete("NEXT_PUBLIC_EVAL_TEST");
     await server.shutdown();
   }
+});
+
+Deno.test({
+  name:
+    "evalNextConfigProgram: returns once the evaluator exits while a process it left holds its output",
+  // The stand-in `deno` is a shell script. On Windows the holder is a process another thread of
+  // the test process spawned meanwhile (it inherits the pipe); the read is the same.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_next_eval_held_" });
+    const app = join(dir, "app");
+    await Deno.mkdir(app);
+    await Deno.writeTextFile(join(app, "next.config.mjs"), "export default {};\n");
+    const pidFile = join(dir, "pid");
+    // The reaper (`deno eval`) waits on its stdin until dismissed. The evaluator (`deno run -`)
+    // answers on the run's marker line and exits, leaving a process with its stdout and stderr.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\nif [ "$1" = eval ]; then exec cat > /dev/null; fi\n` +
+        `m=$(cat | grep -o '${MARKER}[0-9a-f-]*:' | head -n 1)\n` +
+        `sleep 120 &\necho $! > '${pidFile}'\nprintf '%s{"held":true}\\n' "$m"\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value } = await inChild<NextConfigEvalResult>({
+        imports: `import { evalNextConfigProgram } from "@repo/src/build/next-config-eval.ts";`,
+        body: `return await evalNextConfigProgram({ dir: ${JSON.stringify(app)}, ` +
+          `file: "next.config.mjs", marker: ${JSON.stringify(MARKER)}, timeoutMs: 50_000, ` +
+          `program: ${JSON.stringify(echo())} });`,
+        env: { DENO_BIN: fake },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, { ok: true, value: { held: true } });
+      assert(Date.now() - t0 < 45_000, `took ${Date.now() - t0} ms`);
+    } finally {
+      try {
+        Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+      } catch { /* gone, or never started */ }
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/** Run `fn` with a project in `<parent>/app` and a sibling `<parent>/outside`, both real paths. */
+async function withHostile(
+  files: Record<string, string>,
+  fn: (dir: string, outside: string) => Promise<void>,
+): Promise<void> {
+  const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+  try {
+    const dir = join(parent, "app");
+    const outside = join(parent, "outside");
+    await Deno.mkdir(outside);
+    await Deno.mkdir(dir);
+    for (const [name, source] of Object.entries(files)) {
+      const path = join(parent, name);
+      await Deno.mkdir(dirname(path), { recursive: true });
+      await Deno.writeTextFile(path, source);
+    }
+    await fn(dir, outside);
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+}
+
+/** A config that reports what `specifier` resolves to, or that it doesn't. */
+function resolveProbe(specifier: string): string {
+  return `let v;
+try { v = import.meta.resolve(${JSON.stringify(specifier)}); } catch { v = "unresolved"; }
+export default { v };
+`;
+}
+
+const RUNS_ON_TOOLCHAIN = "denext" in Deno.build;
+
+const LOCKFILE = '{"version":"5","workspace":{"dependencies":["npm:old@1"]}}\n';
+
+Deno.test("deno.json's importMap can't read an import map outside the project", async () => {
+  await withHostile({
+    "outside/map.json": '{"imports":{"leak":"file:///SECRET-VALUE/"}}',
+    "app/deno.json": '{"importMap":"../outside/map.json"}',
+    "app/next.config.mjs": resolveProbe("leak"),
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "unresolved" });
+  });
+});
+
+Deno.test("deno.json's links can't read a package manifest outside the project", async () => {
+  await withHostile({
+    "outside/p/deno.json": '{"name":"@x/y","version":"1.0.0","exports":"./SECRET-VALUE.js"}',
+    "app/deno.json": '{"links":["../outside/p"]}',
+    "app/next.config.mjs": resolveProbe("@x/y"),
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "unresolved" });
+  });
+});
+
+Deno.test("deno.json's lock can't rewrite a lockfile outside the project", async () => {
+  await withHostile({
+    "outside/deno.lock": LOCKFILE,
+    "app/deno.json": '{"lock":"../outside/deno.lock","imports":{"x":"npm:attacker-text@1"}}',
+    "app/next.config.mjs": "export default { v: 1 };\n",
+  }, async (dir, outside) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: 1 });
+    assertEquals(await Deno.readTextFile(join(outside, "deno.lock")), LOCKFILE);
+  });
+});
+
+Deno.test("the evaluator leaves the project's own deno.lock alone", async () => {
+  await withHostile({
+    "app/deno.lock": LOCKFILE,
+    "app/deno.json": '{"imports":{"x":"npm:new@1"}}',
+    "app/next.config.mjs": "export default { v: 1 };\n",
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: 1 });
+    assertEquals(await Deno.readTextFile(join(dir, "deno.lock")), LOCKFILE);
+  });
+});
+
+Deno.test("deno.json's unstable list turns on no API for the config", async () => {
+  await withHostile({
+    "app/deno.json": '{"unstable":["kv","ffi","cron"]}',
+    "app/next.config.mjs": "export default { v: typeof Deno.openKv };\n",
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "undefined" });
+  });
+});
+
+Deno.test("a deno.json in a directory above the project is not read either", async () => {
+  await withHostile({
+    "outside/map.json": '{"imports":{"leak":"file:///SECRET-VALUE/"}}',
+    "deno.json": '{"importMap":"./outside/map.json"}',
+    "app/next.config.mjs": resolveProbe("leak"),
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "unresolved" });
+  });
+});
+
+Deno.test("deno.json's imports can't load a module from outside the project", async () => {
+  await withHostile({
+    "outside/mod.mjs": 'export default "OUTSIDE";\n',
+    "app/deno.json": '{"imports":{"o":"../outside/mod.mjs"}}',
+    "app/next.config.mjs": 'let v;\ntry { v = (await import("o")).default; } catch (e) ' +
+      "{ v = e.message.includes('read access') ? 'refused' : e.message; }\n" +
+      "export default { v };\n",
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "refused" });
+  });
+});
+
+Deno.test({
+  name: "a deno.json linked out of the project gives the import map nothing",
+  // Creating symlinks on Windows needs a privilege CI accounts don't hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withHostile({
+      "outside/deno.json": '{"imports":{"leak":"file:///SECRET-VALUE/"}}',
+      "app/next.config.mjs": resolveProbe("leak"),
+    }, async (dir, outside) => {
+      await Deno.symlink(join(outside, "deno.json"), join(dir, "deno.json"));
+      assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "unresolved" });
+    });
+  },
+});
+
+Deno.test("a config still resolves through its project's deno.json imports", async () => {
+  await withHostile({
+    "app/deno.jsonc": '// a comment\n{"imports":{"@/":"./src/","x":"./src/x.mjs"}}',
+    "app/src/x.mjs": 'export default "x";\n',
+    "app/next.config.mjs": 'import a from "@/x.mjs";\nimport b from "x";\n' +
+      "export default { v: a + b };\n",
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "xx" });
+  });
+});
+
+Deno.test("a config still resolves through deno.json scopes and a contained importMap", async () => {
+  await withHostile({
+    "app/deno.json": '{"importMap":"./conf/map.json"}',
+    "app/conf/map.json":
+      '{"imports":{"a":"../src/a.mjs"},"scopes":{"../src/":{"b":"../src/b.mjs"}}}',
+    "app/src/a.mjs": 'import b from "b";\nexport default "a" + b;\n',
+    "app/src/b.mjs": 'export default "b";\n',
+    "app/next.config.mjs": 'import a from "a";\nexport default { v: a };\n',
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { v: "ab" });
+  });
+});
+
+Deno.test("a deno.json project's config still imports node_modules, without an extension too", async () => {
+  await withHostile({
+    "app/deno.json": '{"imports":{"mapped":"npm:foo@1"}}',
+    "app/package.json": '{"dependencies":{"foo":"1"}}',
+    "app/node_modules/foo/package.json": '{"name":"foo","version":"1.0.0","main":"index.js"}',
+    "app/node_modules/foo/index.js": 'module.exports = "foo";\n',
+    "app/lib/x.ts": 'export default "x";\n',
+    "app/next.config.ts":
+      'import a from "foo";\nimport b from "mapped";\nimport c from "./lib/x";\n' +
+      'import { sep } from "path";\nexport default { v: a + b + c + typeof sep };\n',
+  }, async (dir) => {
+    assertEquals(valueOf(await evalIn(dir, "next.config.ts")), { v: "foofoox" + "string" });
+  });
+});
+
+Deno.test("a workspace member's config still imports another member by name", async () => {
+  await withHostile({
+    "app/deno.json": '{"workspace":["apps/web","packages/ui"],"imports":{"r":"./root.mjs"}}',
+    "app/root.mjs": 'export default "r";\n',
+    "app/packages/ui/deno.json":
+      '{"name":"@acme/ui","version":"1.0.0","exports":"./m.mjs","imports":{"in":"./in.mjs"}}',
+    "app/packages/ui/m.mjs": 'import i from "in";\nexport default "ui" + i;\n',
+    "app/packages/ui/in.mjs": 'export default "in";\n',
+    "app/apps/web/deno.json": '{"imports":{"@/":"./src/"}}',
+    "app/apps/web/src/x.mjs": 'export default "x";\n',
+    "app/apps/web/next.config.mjs":
+      'import u from "@acme/ui";\nimport r from "r";\nimport x from "@/x.mjs";\n' +
+      "export default { v: u + r + x };\n",
+  }, async (dir) => {
+    const web = join(dir, "apps", "web");
+    assertEquals(valueOf(await evalIn(web, "next.config.mjs")), { v: "uiinrx" });
+  });
+});
+
+Deno.test({
+  name: "a package.json project keeps Deno's discovery: paths, extensionless imports",
+  // The toolchain's Node-style resolution; denext 5.0 drops the stock Deno this skips.
+  ignore: !RUNS_ON_TOOLCHAIN,
+  fn: async () => {
+    await withHostile({
+      "app/package.json": '{"dependencies":{"foo":"1"}}',
+      "app/tsconfig.json": '{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}',
+      "app/node_modules/foo/package.json": '{"name":"foo","version":"1.0.0","main":"index.js"}',
+      "app/node_modules/foo/index.js": 'module.exports = "foo";\n',
+      "app/src/x.ts": 'export default "x";\n',
+      "app/next.config.ts":
+        'import a from "foo";\nimport b from "./src/x";\nimport c from "@/x.ts";\n' +
+        "export default { v: a + b + c };\n",
+    }, async (dir) => {
+      assertEquals(valueOf(await evalIn(dir, "next.config.ts")), { v: "fooxx" });
+    });
+  },
+});
+
+Deno.test({
+  name: "a workspace member's deno.json linked out of the project gives the import map nothing",
+  // Creating symlinks on Windows needs a privilege CI accounts don't hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withHostile({
+      "outside/deno.json": '{"name":"@x/y","exports":"./SECRET-VALUE.js"}',
+      "app/deno.json": '{"workspace":["apps/web","packages/evil"],"imports":{"r":"./r.mjs"}}',
+      "app/apps/web/deno.json": '{"imports":{"own":"./own.mjs"}}',
+      "app/apps/web/next.config.mjs": `${resolveProbe("@x/y")}`,
+    }, async (dir, outside) => {
+      await Deno.mkdir(join(dir, "packages", "evil"), { recursive: true });
+      await Deno.symlink(
+        join(outside, "deno.json"),
+        join(dir, "packages", "evil", "deno.json"),
+      );
+      const web = join(dir, "apps", "web");
+      // The link leads out, so the evaluation is refused or the name stays unresolved.
+      const result = await evalIn(web, "next.config.mjs");
+      if (result.ok) assertEquals(result.value, { v: "unresolved" });
+      else assertStringIncludes(result.reason, "symlink");
+    });
+  },
+});
+
+Deno.test("projectImportMap: a deno.json's relative scope, target and name stay absolute", async () => {
+  await withHostile({
+    "app/deno.json":
+      '{"imports":{"a":"./a/","b":"npm:b@1","n":7},"scopes":{"./s/":{"c":"./c.mjs"}}}',
+  }, async (dir) => {
+    const map = await projectImportMap(dir, dir);
+    const base = toFileUrl(dir).href;
+    assertEquals(map.imports, { a: `${base}/a/`, b: "npm:b@1" });
+    assertEquals(map.scopes, { [`${base}/s/`]: { c: `${base}/c.mjs` } });
+  });
+});
+
+Deno.test("configIsolation: no config keeps discovery, a config gets no-config and removes its map", async () => {
+  await withHostile({ "app/package.json": "{}" }, async (dir) => {
+    if (await discoversDenoConfig(dir)) return; // a deno.json above the temp directory
+    assertEquals((await configIsolation(dir, dir)).flags, ["--no-lock"]);
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    const empty = await configIsolation(dir, dir);
+    assert(empty.flags.includes("--no-config"));
+    assertFalse(empty.flags.some((flag) => flag.startsWith("--import-map=")));
+    await Deno.writeTextFile(join(dir, "deno.json"), '{"imports":{"a":"./a.mjs"}}');
+    const isolation = await configIsolation(dir, dir);
+    const flag = isolation.flags.find((f) => f.startsWith("--import-map="))!;
+    const path = flag.slice("--import-map=".length);
+    assertStringIncludes(await Deno.readTextFile(path), "a.mjs");
+    await isolation.dispose();
+    assertFalse(await Deno.stat(path).then(() => true, () => false));
+  });
 });

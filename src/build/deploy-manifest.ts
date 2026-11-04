@@ -38,6 +38,9 @@ import {
 import { compileBuildFlags } from "./compile-app.ts";
 import { detectDockerStack, resolveStack } from "./docker-detect.ts";
 import { stackEnv } from "./docker-stack.ts";
+import { pinnedIdleTrim, readEnv } from "./idle-trim.ts";
+import { resourceLimitFlags } from "./resource-limits.ts";
+import { deployTls } from "./start-tls-deploy.ts";
 import type { ProjectPaths } from "./paths.ts";
 
 /** The `Cache-Control` the production server sends for content-hashed client files. */
@@ -208,6 +211,15 @@ async function serverCommand(projectDir: string, flags: string[]): Promise<strin
   return ["deno", "run", ...flags, ...detection.cli, "start", "."];
 }
 
+/** `DeployPermissions.net` from `compile.permissions` (`null` under `"all"`). */
+function deployNet(compile: DenextConfig["compile"]): DeployManifest["permissions"]["net"] {
+  const p = compile?.permissions;
+  if (p === "all") return null;
+  const list = (values: readonly string[] | undefined) =>
+    !values || values.length === 0 || values.includes("*") ? ["*"] : [...new Set(values)].sort();
+  return { connect: list(p?.netConnect), listen: list(p?.netListen) };
+}
+
 /** Which app shape this is. */
 async function modeOf(paths: ProjectPaths): Promise<DeployManifest["mode"]> {
   if (paths.config?.mode === "spa") return "spa";
@@ -274,6 +286,9 @@ export async function collectDeployManifest(
       healthPath: "/_denext/health",
       drain: { ms: DEFAULT_DRAIN_MS, env: "DENEXT_SHUTDOWN_DRAIN_MS" },
       buildDir: rel(paths.projectDir, paths.outDir),
+      idleTrim: pinnedIdleTrim(config.start?.idleTrim === false, readEnv),
+      limits: resourceLimitFlags(config.start?.limits),
+      tls: deployTls(config.start?.tls),
     },
     ...await collectJobs(paths, config),
     services: (await conventionModules(join(paths.projectDir, "services"))).map((m) => ({
@@ -281,7 +296,11 @@ export async function collectDeployManifest(
       source: rel(paths.projectDir, m.path),
     })),
     env: await collectEnv(paths.projectDir),
-    permissions: { flags, allowAll: flags.includes("--allow-all") },
+    permissions: {
+      flags,
+      allowAll: flags.includes("--allow-all"),
+      net: deployNet(config.compile),
+    },
     images: imagesOf(config, mode),
     cache: cacheOf(config),
     compile: options.compile ?? null,

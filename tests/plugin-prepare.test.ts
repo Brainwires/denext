@@ -10,7 +10,7 @@ import {
   runPluginPrepareSteps,
 } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import type { DenextPlugin } from "../src/plugin/mod.ts";
+import type { DenextPlugin, PluginContext } from "../src/plugin/mod.ts";
 import { join } from "@std/path";
 
 const ROOT = "/proj";
@@ -72,6 +72,57 @@ Deno.test("addPrepareStep: runMatchingPrepareSteps runs only when a changed path
   // A matching change re-runs the step.
   assertEquals(await runMatchingPrepareSteps(ctx, ["/proj/content/blog/hello.md"]), true);
   assertEquals(runs, 1);
+  resetPlugins();
+});
+
+Deno.test("addPrepareStep: a re-run is told the changed paths its globs matched; a startup run none", async () => {
+  resetPlugins();
+  const seen: (readonly string[] | undefined)[] = [];
+  await applyPlugins({
+    projectRoot: ROOT,
+    appDir: "/proj/app",
+    config: {
+      plugins: [{
+        name: "test-changed",
+        setup(c) {
+          c.addPrepareStep((p) => void seen.push(p.changed), { watch: ["content/**/*.md"] });
+        },
+      }],
+    } as DenextConfig,
+    mode: "dev",
+    load: () => Promise.resolve({}),
+  });
+  await runPluginPrepareSteps(ctx);
+  await runMatchingPrepareSteps(ctx, [
+    "/proj/app/page.tsx",
+    "/proj/content/a.md",
+    "/proj/content/b/c.md",
+  ]);
+  assertEquals(seen, [undefined, ["/proj/content/a.md", "/proj/content/b/c.md"]]);
+  resetPlugins();
+});
+
+Deno.test("applyPlugins: reportDevError reaches a plugin only where the pipeline provides it", async () => {
+  resetPlugins();
+  const contexts: PluginContext[] = [];
+  const reported: string[] = [];
+  const plugin: DenextPlugin = { name: "test-report", setup: (c) => void contexts.push(c) };
+  const base = {
+    projectRoot: ROOT,
+    appDir: "/proj/app",
+    config: { plugins: [plugin] } as DenextConfig,
+    load: () => Promise.resolve({}),
+  };
+  await applyPlugins({ ...base, mode: "build" });
+  assertEquals(contexts[0].reportDevError, undefined);
+  resetPlugins();
+  await applyPlugins({
+    ...base,
+    mode: "dev",
+    reportDevError: (title) => void reported.push(title),
+  });
+  contexts[1].reportDevError?.("boom", new Error("x"));
+  assertEquals(reported, ["boom"]);
   resetPlugins();
 });
 

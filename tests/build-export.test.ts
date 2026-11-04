@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));
 const HELLO = join(REPO, "examples", "hello");
@@ -31,13 +31,11 @@ async function readIfPresent(path: string): Promise<string | null> {
 
 Deno.test({
   name: "staticExport: App Router example pre-renders every route to out/",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const outName = `out-test-${crypto.randomUUID().slice(0, 8)}`;
   const outDir = join(HELLO, outName);
   try {
-    const result = await staticExport(HELLO, { outDir: outName });
+    const result = await exportInChild(HELLO, { outDir: outName });
 
     await t.step("result reports the pages it wrote and its outDir", () => {
       assertEquals(result.outDir, outDir);
@@ -90,13 +88,11 @@ Deno.test({
 
 Deno.test({
   name: "staticExport: SPA-mode example emits a single shell + client bundle",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const outName = `out-test-${crypto.randomUUID().slice(0, 8)}`;
   const outDir = join(SPA, outName);
   try {
-    const result = await staticExport(SPA, { outDir: outName });
+    const result = await exportInChild(SPA, { outDir: outName });
     // exportSpa reports exactly one "page" (the shell) and skips nothing.
     assertEquals(result.pages, 1);
     assertEquals(result.skipped.length, 0);
@@ -130,8 +126,6 @@ async function jsFiles(dir: string): Promise<string[]> {
 
 Deno.test({
   name: "staticExport: instrumentation-client is bundled into the exported client entries",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_export_instr_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -164,7 +158,7 @@ export default function Page() {
 }
 `,
     );
-    const result = await staticExport(dir, { outDir: "out" });
+    const result = await exportInChild(dir, { outDir: "out" });
     const bundles = await jsFiles(result.outDir);
     assert(bundles.length > 0, "the export emitted client JavaScript");
     let found = false;

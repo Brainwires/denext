@@ -8,7 +8,7 @@ import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { resolveDocker } from "../src/build/docker-detect.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
-import { denoReleaseVersion } from "../src/build/deno-version.ts";
+import { pinnedDenoReleaseVersion } from "../src/build/deno-version.ts";
 import { denoJson } from "../src/build/scaffold.ts";
 import { VERSION } from "../src/version.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
@@ -31,7 +31,7 @@ async function generatedDockerfile(): Promise<string> {
     const json = denoJson({ dir }).replaceAll(`@^${VERSION}/`, `@^${major}.0.0/`);
     await Deno.writeTextFile(join(dir, "deno.json"), json);
     const { options } = await resolveDocker(dir, {
-      denoTag: denoReleaseVersion(toolchainPin.version),
+      denoTag: pinnedDenoReleaseVersion(toolchainPin.version),
     });
     return renderDockerfile(options);
   } finally {

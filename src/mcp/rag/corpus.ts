@@ -4,9 +4,11 @@
 // than a megabyte; @denext/denext has a 20 MiB cap), loaded by a DYNAMIC import with a literal
 // specifier: it stays in denext's module graph (`deno publish` pins it, `deno cache` caches it, so
 // it works offline) without being loaded by every `denext` CLI start — only the first docs
-// search/read pays for it.
+// search/read pays for it. Run from a checkout, it reads the same commit's file instead
+// ({@linkcode corpusModule}).
 
 import { decodeBase64 } from "@std/encoding/base64";
+import { checkoutFile } from "../../build/checkout-file.ts";
 
 /** One docs page (or root guide) in the corpus. */
 export interface DocPage {
@@ -34,6 +36,8 @@ export interface DocChunk {
 
 /** The loaded corpus plus derived lookups. */
 export interface Corpus {
+  /** The authoring guide (AGENTS.md minus its repo-process tail), verbatim: `denext://guide`. */
+  guide: string;
   pages: DocPage[];
   chunks: DocChunk[];
   pageBySlug: Map<string, DocPage>;
@@ -50,7 +54,7 @@ export const DOCS_ORIGIN = "https://denext.dev";
 let loaded: Promise<Corpus> | null = null;
 
 /** Index the raw corpus json. */
-function build(raw: { pages: DocPage[]; chunks: DocChunk[] }): Corpus {
+function build(raw: { pages: DocPage[]; chunks: DocChunk[] }): Omit<Corpus, "guide"> {
   const pageBySlug = new Map(raw.pages.map((p) => [p.slug, p]));
   const sectionsOf = new Map<string, DocChunk[]>();
   const byId = new Map<string, DocChunk>();
@@ -78,11 +82,34 @@ export async function decodeCorpus(brotliBase64: string): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64))));
 }
 
+/**
+ * The corpus module. From a published @denext/denext, `@denext/docs-corpus` at exactly denext's
+ * version (every release publishes it first). From a checkout — the repository, a checkout an app
+ * links by path or CI runs from another directory, a `deno compile` binary built from one — the
+ * same commit's file, read by path: the docs-corpus release with that commit's corpus may not
+ * exist yet, or be younger than Deno's minimum dependency age (the 24 h after a release), and
+ * resolving it through the caller's import map would fail the docs search. A vendored copy
+ * (`"vendor": true`) is `file:` too but no checkout: it imports the package, as published.
+ *
+ * @param base The URL this module is loaded from (production: `import.meta.url`).
+ */
+export function corpusModule(
+  base: string = import.meta.url,
+): Promise<{ CORPUS_BROTLI_BASE64: string }> {
+  const local = checkoutFile("../../../packages/docs-corpus/mod.ts", base);
+  return local ? import(local) : import("@denext/docs-corpus");
+}
+
 /** Load (once) and index the shipped docs corpus. */
 export function loadCorpus(): Promise<Corpus> {
-  loaded ??= import("@denext/docs-corpus").then(async (m) =>
-    build(await decodeCorpus(m.CORPUS_BROTLI_BASE64) as { pages: DocPage[]; chunks: DocChunk[] })
-  );
+  loaded ??= corpusModule().then(async (m) => {
+    const raw = await decodeCorpus(m.CORPUS_BROTLI_BASE64) as {
+      guide?: string;
+      pages: DocPage[];
+      chunks: DocChunk[];
+    };
+    return { ...build(raw), guide: raw.guide ?? "" };
+  });
   return loaded;
 }
 

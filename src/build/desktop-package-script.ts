@@ -9,10 +9,16 @@ import {
   desktopNpmArgs,
   type DesktopOs,
   desktopPackageFlags,
+  DesktopStrictPermissionsError,
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
-import { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
+import {
+  desktopNetSplitFor,
+  desktopRuntimeDenoFlags,
+  desktopRuntimeEnv,
+  projectDesktopBackend,
+} from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
   desktopInstallerPlan,
@@ -26,13 +32,16 @@ import {
   stampDenoJsonVersion,
 } from "./desktop-installers.ts";
 import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import { readDesktopTreeManifest, stampDesktopTreeManifest } from "./desktop-tree-manifest.ts";
 import {
   DEFAULT_TIMESTAMP_URL,
   signtoolArgs,
+  type SigntoolCertificateDeps,
   windowsCertificate,
-  windowsCertificateSecrets,
+  withSigntoolCertificate,
 } from "./code-signing.ts";
-import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, toFileUrl } from "@std/path";
+import { runToExit } from "./exited-output.ts";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -241,12 +250,7 @@ const WIX_MAJOR = 5;
 /** `wix --version` (e.g. `5.0.2+aa65968c`), or `null` when `wix` does not run. */
 async function wixVersion(): Promise<string | null> {
   try {
-    const out = await new Deno.Command("wix", {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "null",
-    })
-      .output();
+    const out = await runToExit("wix", { args: ["--version"], stderr: "null" });
     return out.code === 0 ? new TextDecoder().decode(out.stdout).trim() : null;
   } catch {
     return null;
@@ -347,8 +351,8 @@ export async function prepareDesktopPackage(
   await Deno.mkdir("dist", { recursive: true });
   if (args.export) await desktopRun(["deno", "task", "export"], desktopExportEnv(os));
   await syncDesktopAppConfig(entryUrl);
-  const meta = await desktopPackageMeta(entryUrl, appName);
-  for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
+  const meta = await desktopPackageMeta(entryUrl, appName, os);
+  for (const line of await desktopPackageMetaWarnings(entryUrl, meta, os)) console.warn(line);
   return { name: desktopSlug(appName), plan, meta };
 }
 
@@ -373,8 +377,26 @@ export interface DesktopRunOptions {
 }
 
 /**
+ * Run a package script's `main`, printing a `desktop.permissions: "strict"` refusal
+ * ({@linkcode DesktopStrictPermissionsError}) as its one-line message and exiting 1. Any other error
+ * keeps its stack.
+ *
+ * @param main The script's entry point.
+ */
+export async function runDesktopPackageMain(main: () => Promise<void>): Promise<void> {
+  try {
+    await main();
+  } catch (err) {
+    if (!(err instanceof DesktopStrictPermissionsError)) throw err;
+    console.error(err.message);
+    Deno.exit(1);
+  }
+}
+
+/**
  * Run a command with inherited stdio; throws on a non-zero exit. The error names the command
- * line with every {@linkcode DesktopRunOptions.secrets} value redacted.
+ * line with every {@linkcode DesktopRunOptions.secrets} value redacted. A `deno` command runs on
+ * this script's own Deno (`Deno.execPath()`), not the first `deno` on PATH.
  *
  * @param cmd The command and its arguments.
  * @param env Extra environment variables.
@@ -385,7 +407,9 @@ export async function desktopRun(
   env?: Record<string, string>,
   options: DesktopRunOptions = {},
 ): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
+  // `deno` is this script's own Deno, not the first one on PATH: the token gates
+  // (desktopDataTokenRuntime) judge the compiler by this process's identity.
+  const p = new Deno.Command(cmd[0] === "deno" ? Deno.execPath() : cmd[0], {
     args: cmd.slice(1),
     env,
     stdout: "inherit",
@@ -500,6 +524,22 @@ export async function desktopIconArgs(
 }
 
 /**
+ * The `--backend <engine>` args for `deno desktop` on `os`: the project's `desktop.backend` for
+ * that OS (`denext.config.ts`, one engine or per OS, else deno.json's, else `"webview"`). Always
+ * passed, so the engine built is the one the runtime was fetched for, whatever deno.json says.
+ *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
+ * @param os The target OS.
+ * @returns `["--backend", "webview" | "cef"]`.
+ * @throws {Error} When the configured value is not a backend setting.
+ */
+export async function desktopBackendArgs(entryUrl: string, os: DesktopOs): Promise<string[]> {
+  const config = await loadConfigBeside(entryUrl);
+  const root = new URL(entryUrl).protocol === "file:" ? projectRootOf(entryUrl) : ".";
+  return ["--backend", await projectDesktopBackend(root, { target: os, config })];
+}
+
+/**
  * A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
  *
  * @param name The app name.
@@ -520,6 +560,13 @@ export interface DesktopBundleOptions {
    * `denext.config.ts` nor deno.json sets `desktop.app.icons.<os>` (see {@linkcode desktopIconArgs}).
    */
   readonly icons: readonly string[];
+  /**
+   * Windows: write the tree manifest into the bundle's `.exe` as the bundle's last file (default
+   * `true`, for package scripts from before {@linkcode stampDesktopWindowsBundle}). The current
+   * `package-windows.ts` passes `false` and calls {@linkcode stampDesktopWindowsBundle} after the
+   * VC++ runtime's DLLs land, so the manifest lists them even when the bundle is not signed.
+   */
+  readonly treeManifest?: boolean;
 }
 
 /**
@@ -544,9 +591,14 @@ export async function desktopBundleCommand(
     "deno",
     "desktop",
     "--no-prompt",
-    ...await desktopPackageFlags(entryUrl, os),
+    // The split network grant only on the pinned runtime (a non-empty runtime env), 3.0.0-rc.2+.
+    ...await desktopPackageFlags(
+      entryUrl,
+      os,
+      Boolean(runtimeEnv.DENORT_DESKTOP_BIN) && await desktopNetSplitFor(),
+    ),
     ...denoFlags,
-    // The pinned runtime's own flags (`--unstable-no-legacy-abort`).
+    // The pinned runtime's own flags (`--unstable-no-legacy-abort` before 3.0.0-rc.5; none after).
     ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),
     "--include",
     "out",
@@ -554,6 +606,8 @@ export async function desktopBundleCommand(
     ...await desktopNpmArgs(entryUrl),
     "--target",
     o.target,
+    // The target OS's engine (a per-OS `desktop.backend` can differ from deno.json's).
+    ...await desktopBackendArgs(entryUrl, os),
     ...await desktopIconArgs(entryUrl, os, o.icons),
   ];
   cmd.push("--output", o.out, "desktop.ts");
@@ -588,7 +642,10 @@ export async function desktopWithAppVersion<T>(
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
  * existing icon, then
- * the webview backend's `laufey-launch.json` beside the executable.
+ * the webview backend's `laufey-launch.json` beside the executable, and on Windows the tree
+ * manifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and
+ * version; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it
+ * signs the executable).
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
@@ -605,20 +662,72 @@ export async function buildDesktopBundle(
   const env = await desktopRuntimeEnv(entryUrl, o.target);
   const cmd = await desktopBundleCommand(entryUrl, os, o, env);
   await desktopWithAppVersion(entryUrl, () => desktopRun(cmd, env));
-  if (os === "windows") {
-    await desktopWindowsCefLayout(
-      o.out,
-      await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl)),
-    );
-  }
+  const meta = os === "windows"
+    ? await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl), "windows")
+    : undefined;
+  if (meta) await desktopWindowsCefLayout(o.out, meta);
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
+  // The last file written (after laufey-launch.json): see stampWindowsBundleTree. The current
+  // package-windows.ts stamps after the VC++ runtime instead (stampDesktopWindowsBundle).
+  if (meta) await stampWindowsBundleTreeUnlessDeferred(o, meta);
   return o.out;
+}
+
+/** {@linkcode stampWindowsBundleTree}, unless the script stamps it itself (`treeManifest: false`). */
+async function stampWindowsBundleTreeUnlessDeferred(
+  o: DesktopBundleOptions,
+  meta: DesktopPackageMeta,
+): Promise<void> {
+  if (o.treeManifest !== false) await stampWindowsBundleTree(o.out, meta);
+}
+
+/**
+ * Write the tree manifest of a finished Windows bundle into its `.exe`
+ * ({@linkcode stampDesktopTreeManifest}, for the app's identifier and version): the package
+ * script's last write to the bundle before it signs it, after the VC++ runtime's DLLs are copied
+ * in, so an unsigned bundle (`--no-sign`, no `DENEXT_WINDOWS_CERT`) carries a manifest that lists
+ * every file it ships and `denext desktop publish-update` takes it. {@linkcode desktopSignWindows}
+ * writes it again with the signed DLLs' bytes before it signs the `.exe`. Without
+ * `desktop.app.identifier` no manifest is written (the full-app updater needs one).
+ *
+ * @param entryUrl `import.meta.url` of the script.
+ * @param dir The bundle directory ({@linkcode buildDesktopBundle} with `treeManifest: false`).
+ */
+export async function stampDesktopWindowsBundle(entryUrl: string, dir: string): Promise<void> {
+  const meta = await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl), "windows");
+  await stampWindowsBundleTree(dir, meta);
+}
+
+/**
+ * The tree manifest of the app's identifier and version and every file but the .exe goes into the
+ * .exe before the package script signs it, so the .exe's Authenticode signature covers
+ * laufey-launch.json, CEF's resources, sidecar JS and the DLLs as shipped, and the runtime refuses
+ * an update whose files differ from it. The current package script writes it after the VC++
+ * runtime's DLLs ({@linkcode stampDesktopWindowsBundle}); the DLLs' own signatures are taken in by
+ * the stamp `desktopSignWindows` writes again before it signs the .exe. Without an identifier the updater is off for the app (it needs one), and no manifest
+ * is written.
+ *
+ * @param out The Windows bundle directory.
+ * @param meta The app's package metadata.
+ */
+async function stampWindowsBundleTree(out: string, meta: DesktopPackageMeta): Promise<void> {
+  if (!meta.identifier) {
+    console.warn(
+      "  no desktop.app.identifier: the bundle's .exe gets no tree manifest (the full-app " +
+        "updater needs an identifier anyway).",
+    );
+    return;
+  }
+  await stampDesktopTreeManifest(out, `${basename(out)}.exe`, {
+    appId: meta.identifier,
+    version: meta.version,
+  });
 }
 
 /**
  * The Windows CEF bundle layout behind CEF's bootstrap. A runtime whose laufey runs web content
  * in Chromium's sandbox on Windows ships CEF's `bootstrap.exe` as laufey's CEF executable and the
- * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.7) names the executable
+ * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.8) names the executable
  * `<App>.exe` and writes the runtime to `<App>.dll`, but the bootstrap loads its client, the
  * host, as `<App>.dll`, and the host loads the runtime as `<App>.runtime.dll`. So this moves
  * `<App>.dll` to `<App>.runtime.dll` and `laufey.dll` to `<App>.dll`, and gives `<App>.exe` the
@@ -716,10 +825,23 @@ export function desktopWindowsTargetNote(
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
 const SIGN_BATCH = 32;
 
+/** Fills `buf` from `file`'s current position; `false` when the file ends first (Rust's `read_exact`). */
+async function readExact(file: Deno.FsFile, buf: Uint8Array): Promise<boolean> {
+  let at = 0;
+  while (at < buf.length) {
+    const n = await file.read(buf.subarray(at));
+    if (n === null || n === 0) return false;
+    at += n;
+  }
+  return true;
+}
+
 /**
  * Whether `path` holds a PE image: `MZ`, then `PE\0\0` at the offset the DOS header's
  * `e_lfanew` names. The header decides, not the extension: an `.exe`, a `.dll`, a CEF helper or a
- * native `.node` addon are all PE files, and a renamed one still is.
+ * native `.node` addon are all PE files, and a renamed one still is. The rule is exactly the
+ * runtime's (`is_pe_image`, which picks the files an update's signature check covers): any
+ * `e_lfanew`, with no bounds, so every file the runtime will check is a file denext signs.
  */
 async function isPeFile(path: string): Promise<boolean> {
   let file: Deno.FsFile;
@@ -730,12 +852,11 @@ async function isPeFile(path: string): Promise<boolean> {
   }
   try {
     const dos = new Uint8Array(64);
-    if ((await file.read(dos)) !== 64 || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
+    if (!(await readExact(file, dos)) || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
     const peAt = new DataView(dos.buffer).getUint32(0x3c, true);
-    if (peAt < 64 || peAt > 64 * 1024 * 1024) return false;
     await file.seek(peAt, Deno.SeekMode.Start);
     const sig = new Uint8Array(4);
-    if ((await file.read(sig)) !== 4) return false;
+    if (!(await readExact(file, sig))) return false;
     return sig[0] === 0x50 && sig[1] === 0x45 && sig[2] === 0 && sig[3] === 0;
   } finally {
     file.close();
@@ -775,14 +896,25 @@ export interface DesktopSignWindowsDeps {
   readonly env?: (name: string) => string | undefined;
   /** Prints a warning (default `console.warn`). */
   readonly warn?: (message: string) => void;
+  /** The certificate-store import a password-protected `.pfx` goes through. */
+  readonly store?: SigntoolCertificateDeps;
 }
 
 /**
  * Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password
- * `DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few
- * dozen files per `signtool sign` call. Without a certificate, or without `signtool` (off
- * Windows), nothing is signed and a warning says so. The password, which signtool takes only as
- * `/p`, is redacted from a failure message.
+ * `DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,
+ * timestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.
+ * Without a certificate nothing is signed and a warning says so. With one but without `signtool`
+ * (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the
+ * script's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as
+ * `/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's
+ * certificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).
+ *
+ * An executable among `files` that carries a tree manifest ({@linkcode stampDesktopTreeManifest})
+ * is signed last: every other file is signed first, the manifest is written again so it lists the
+ * other PE images as signed, and then the executable is signed, whatever order the caller listed
+ * the files in. (The manifest lists every file of the bundle but the executable, DLLs included;
+ * signing a DLL after the manifest was written would make the installed app refuse the update.)
  *
  * @param files The files to sign (a bundle's PE files from {@linkcode desktopPeFiles}, or an .msi).
  * @param deps The command runner, tool probe, environment and warning sink.
@@ -796,23 +928,58 @@ export async function desktopSignWindows(
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   if (files.length === 0) return false;
   const what = files.length === 1 ? files[0] : `${files.length} files`;
-  // The shared certificate settings (./code-signing.ts); a store thumbprint is the compiled
-  // binary's option only, so this path keeps reading the .pfx alone.
-  const cert = windowsCertificate(env, false);
+  const carriers = await treeManifestCarriers(files);
+  const others = files.filter((f) => !carriers.includes(f));
+  // The shared certificate settings (./code-signing.ts): a .pfx, else a store thumbprint.
+  const cert = windowsCertificate(env);
   if (!cert) {
     warn(`  no DENEXT_WINDOWS_CERT set — ${what} not Authenticode-signed.`);
     return false;
   }
   if (!(await (deps.has ?? desktopHasTool)("signtool"))) {
-    warn(`  signtool not found (Windows SDK) — ${what} not signed; sign on a Windows host/CI.`);
-    return false;
+    // A configured certificate means the app ships signed: fail closed, never package it unsigned.
+    const variable = cert.kind === "pfx" ? "DENEXT_WINDOWS_CERT" : "DENEXT_WINDOWS_CERT_THUMBPRINT";
+    throw new Error(
+      `denext: ${variable} is set but signtool (Windows SDK) is not on PATH, so ${what} can't ` +
+        "be Authenticode-signed here. Package on a Windows host with the Windows SDK, or pass " +
+        "--no-sign to build unsigned on purpose.",
+    );
   }
   const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
   const run = deps.run ?? desktopRun;
-  for (let i = 0; i < files.length; i += SIGN_BATCH) {
-    await run(signtoolArgs(files.slice(i, i + SIGN_BATCH), cert, timestamp), undefined, {
-      secrets: windowsCertificateSecrets(cert),
-    });
-  }
+  await withSigntoolCertificate(cert, async (signer) => {
+    const sign = async (batch: readonly string[]) => {
+      for (let i = 0; i < batch.length; i += SIGN_BATCH) {
+        await run(signtoolArgs(batch.slice(i, i + SIGN_BATCH), signer, timestamp));
+      }
+    };
+    await sign(others);
+    for (const exe of carriers) {
+      const current = readDesktopTreeManifest(await Deno.readFile(exe))!;
+      await stampDesktopTreeManifest(dirname(exe), basename(exe), {
+        appId: current.appId,
+        version: current.version,
+      });
+    }
+    await sign(carriers);
+  }, deps.store);
   return true;
+}
+
+/** The executables among `files` that carry a tree manifest (an unreadable file carries none). */
+async function treeManifestCarriers(files: readonly string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const f of files) {
+    if (!f.toLowerCase().endsWith(".exe")) continue;
+    const bytes = await Deno.readFile(f).catch(() => undefined);
+    if (!bytes) continue;
+    let carries = false;
+    try {
+      carries = readDesktopTreeManifest(bytes) !== null;
+    } catch {
+      // Not a PE image, or a resource that is not a manifest: signed like any other file.
+    }
+    if (carries) out.push(f);
+  }
+  return out;
 }

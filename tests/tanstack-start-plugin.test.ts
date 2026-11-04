@@ -81,6 +81,10 @@ import { loadBundleRef } from "../src/build/next-compat-loader.ts";
 import { stopNextCompat } from "../src/build/next-compat.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import type { PluginBuildContext, PluginContext } from "../src/plugin/mod.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// Builds in this process: a stalled one fails its test instead of holding the CI job.
+watchTests();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -444,8 +448,6 @@ Deno.test("tanstack-start server functions: the scan finds them before the build
 
 Deno.test({
   name: "tanstack-start server bundle: extra plugins and defines reach the build",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_bundle_" }));
   try {
@@ -593,8 +595,6 @@ exports.Generator = class {
 
 Deno.test({
   name: 'tanstack-start server bundle: a module Start\'s compiler rewrote still gets "use cache"',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_cache_" }));
   try {
@@ -909,8 +909,6 @@ Deno.test("tanstack-start client guard: denext's server-only scan reads modules 
 
 Deno.test({
   name: "tanstack-start client bundle: the build fails on server code the browser would get",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_guard_" }));
   try {
@@ -992,8 +990,6 @@ Deno.test({
 Deno.test({
   name:
     'tanstack-start client bundle: an inline "use server" function in a route module never ships',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_inline_" }));
   try {
@@ -1073,8 +1069,6 @@ Deno.test({
 
 Deno.test({
   name: "tanstack-start server bundle: the build fails on browser code the server would run",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_tss_sguard_" }));
   try {

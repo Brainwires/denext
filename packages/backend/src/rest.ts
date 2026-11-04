@@ -144,16 +144,20 @@ export interface RestOptions {
    * address (`clientIpForLimits()`'s rule — skipped for an untrusted loopback/private peer), the
    * secret key never. Past it a request is answered 429 `over_request_rate_limit` with
    * `Retry-After`, before any statement runs. Default `{ max: 1200, windowMs: 60_000 }` — 20
-   * requests a second on average, far above what a page of supabase-js calls needs — counted per
-   * process unless `store` is shared; `false` turns it off.
+   * requests a second on average, far above what a page of supabase-js calls needs — counted in
+   * `store`, else in the shared store `denextAuth({ rateLimit: { store } })` configures (Redis,
+   * Postgres, Deno KV), else per process; `false` turns it off.
    */
   rateLimit?: RestRateLimitOptions | false;
   /**
    * Describe the routes in `@denext/openapi`'s document (default `true`): with that plugin
    * installed, `/openapi.json` (and its docs page, `denext openapi emit`, and the clients
-   * generated from it) lists every relation and function of the default schema the `anon` and
-   * `authenticated` roles can use — what the secret key alone reaches is left out — with typed
-   * rows, PostgREST's filters and its error body. `false` keeps them out.
+   * generated from it) lists every relation and function of every schema in `schemas` that the
+   * `anon` and `authenticated` roles can use — what the secret key alone reaches is left out —
+   * with typed rows, PostgREST's filters and its error body. A route of another schema than the
+   * default takes the `Accept-Profile` / `Content-Profile` header that picks it; where two
+   * schemas share a name, the path describes the first in `schemas` order. `false` keeps them
+   * out.
    */
   openapi?: boolean;
 }
@@ -1231,7 +1235,7 @@ const OPENAPI_SOURCES = Symbol.for("denext.openapi.sources");
 const OPENAPI_SOURCE_NAME = "@denext/backend rest";
 
 /**
- * Register the auto-REST routes as a source of `@denext/openapi`'s document: the default schema
+ * Register the auto-REST routes as a source of `@denext/openapi`'s document: every schema
  * of the catalog the RLS roles see, under the app's `basePath` + `rest.basePath`.
  *
  * @param rest The resolved options.
@@ -1244,7 +1248,7 @@ export function registerOpenApi(rest: ResolvedRest, read: () => Promise<RestCata
   const source = {
     name: OPENAPI_SOURCE_NAME,
     describe: async ({ basePath }: { basePath: string }) =>
-      openApiContribution(await read(), rest.schemas[0], basePath + rest.basePath),
+      openApiContribution(await read(), rest.schemas, basePath + rest.basePath),
   };
   sources.set(OPENAPI_SOURCE_NAME, source);
   return () => {

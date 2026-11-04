@@ -890,3 +890,158 @@ Deno.test("passkeys: an SSO user registers none, and one from before it became o
   assertEquals(await b.session(), null);
   assert(a.failures.includes("invalid_passkey"));
 });
+
+// ---- sign-in refusals, table-driven ------------------------------------------------------------
+
+/** A usernameless sign-in that must be refused: the request, and the exact answer and reason. */
+interface PasskeyRefusal {
+  name: string;
+  /** Post the refused request from `b` (a fresh browser); `auth` holds the registered key. */
+  send: (a: App, auth: Authenticator, b: Browser) => Promise<Response>;
+  status: number;
+  body: Record<string, unknown>;
+  /** The WebAuthn reason the server logs (`undefined`: refused before verification). */
+  code?: string;
+  /** The `signInFailed` reason it reports (`undefined`: none). */
+  failure?: string;
+  /** The stored signature counter afterwards (default: the one registration left, 0). */
+  signCount?: number;
+}
+
+const PASSKEY_REFUSALS: PasskeyRefusal[] = [
+  {
+    name: "a wrong origin in the client data",
+    send: async (_a, auth, b) =>
+      b.send("POST", "/passkey/authenticate", {
+        credential: await auth.assert(await signInOptions(b), { origin: "https://evil.test" }),
+      }),
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "origin",
+    failure: "invalid_passkey",
+  },
+  {
+    name: "an assertion for another RP ID",
+    send: async (_a, auth, b) =>
+      b.send("POST", "/passkey/authenticate", {
+        credential: await auth.assert({ ...(await signInOptions(b)), rpId: "evil.test" }),
+      }),
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "rp_id",
+    failure: "invalid_passkey",
+  },
+  {
+    name: "a replayed challenge (the assertion already signed another browser in)",
+    send: async (a, auth, b) => {
+      const first = new Browser(a);
+      const options = await signInOptions(first);
+      const credential = await auth.assert(options);
+      const ok = await first.send("POST", "/passkey/authenticate", { credential });
+      assertEquals(ok.status, 200);
+      a.failures.length = 0;
+      return await b.send("POST", "/passkey/authenticate", {
+        credential,
+        ceremonyId: options.ceremonyId,
+      });
+    },
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "challenge",
+    failure: "invalid_passkey",
+    signCount: 1,
+  },
+  {
+    name: "a bad signature",
+    send: async (_a, auth, b) => {
+      const forged = await auth.assert(await signInOptions(b));
+      const sig = fromB64u(forged.response.signature);
+      sig[sig.length - 1] ^= 1;
+      forged.response.signature = b64u(sig);
+      return await b.send("POST", "/passkey/authenticate", { credential: forged });
+    },
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "signature",
+    failure: "invalid_passkey",
+  },
+  {
+    name: "a counter regression (a cloned authenticator)",
+    send: async (a, auth, b) => {
+      const first = new Browser(a);
+      const ok = await first.send("POST", "/passkey/authenticate", {
+        credential: await auth.assert(await signInOptions(first), { counter: 10 }),
+      });
+      assertEquals(ok.status, 200);
+      a.failures.length = 0;
+      return await b.send("POST", "/passkey/authenticate", {
+        credential: await auth.assert(await signInOptions(b), { counter: 9 }),
+      });
+    },
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "counter",
+    failure: "invalid_passkey",
+    signCount: 10,
+  },
+  {
+    name: "an unregistered credential",
+    send: async (_a, _auth, b) =>
+      b.send("POST", "/passkey/authenticate", {
+        credential: await (await Authenticator.create()).assert(await signInOptions(b)),
+      }),
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "signature", // an unknown credential is reported as a signature failure
+    failure: "invalid_passkey",
+  },
+  {
+    name: "a user handle that isn't the credential's owner",
+    send: async (_a, auth, b) =>
+      b.send("POST", "/passkey/authenticate", {
+        credential: await auth.assert(await signInOptions(b), {
+          userHandle: b64u(new TextEncoder().encode("someone-else")),
+        }),
+      }),
+    status: 401,
+    body: { error: "invalid passkey" },
+    code: "signature", // the owner check, before the (valid) signature is verified
+    failure: "invalid_passkey",
+  },
+  {
+    name: "a cross-origin POST",
+    send: (_a, _auth, b) => b.send("POST", "/passkey/authenticate", {}, "https://evil.test"),
+    status: 403,
+    body: { error: "forbidden" },
+  },
+];
+
+for (const row of PASSKEY_REFUSALS) {
+  Deno.test(`passkeys refusal: ${row.name} is ${row.status}, no session minted`, async () => {
+    const codes: string[] = [];
+    const base = await app();
+    const a = withConfig(base, {
+      logger: {
+        debug: () => {},
+        error: () => {},
+        warn: (_message: string, data?: unknown) =>
+          void codes.push(String((data as { code?: string } | undefined)?.code)),
+      },
+    });
+    const auth = await Authenticator.create();
+    await registered(a, auth);
+    a.failures.length = 0;
+    const b = new Browser(a);
+    const res = await row.send(a, auth, b);
+    assertEquals([res.status, await res.json()], [row.status, row.body]);
+    assertEquals(codes.at(-1), row.code, `logged reasons: ${codes.join(", ")}`);
+    assertEquals(a.failures, row.failure ? [row.failure] : []);
+    assertEquals(await b.session(), null, "no session for the refused browser");
+    assert(!/(^|; )[^=]*denext_auth=/.test(b.cookie), `no session cookie (${b.cookie})`);
+    assertEquals(
+      (await a.adapter.getPasskey!(auth.id))!.signCount,
+      row.signCount ?? 0,
+      "the refused assertion didn't move the stored counter",
+    );
+  });
+}

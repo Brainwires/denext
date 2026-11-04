@@ -52,6 +52,7 @@ import { json } from "./typed-response.ts";
 import { decodeWire, WIRE_HEADER } from "../runtime/wire-codec.ts";
 import { isReturnedErr } from "../runtime/result-brand.ts";
 import type { Err } from "../result.ts";
+import type { IsAny } from "../runtime/api-infer.ts";
 
 /**
  * How a declared error code maps to HTTP: a status, or a status with a default message. The
@@ -143,16 +144,18 @@ export type ApiHandlerResult<D extends ApiDefinition> = D extends { response: in
 /**
  * `unknown` when every `err(...)` a handler returns uses a declared code; otherwise a type the
  * handler can't satisfy, whose one key names the offending code — so `return err("typo")` is a
- * compile error even on an endpoint without a `response` schema.
+ * compile error even on an endpoint without a `response` schema. A handler whose result is
+ * `any` (an untyped `JSON.parse` / `res.json()`) can't be told apart from an `err()`, so it is
+ * accepted rather than reported as an undeclared code.
  */
-export type ApiErrGuard<D extends ApiDefinition, R> =
-  Exclude<Extract<Awaited<R>, Err<unknown, unknown>>, ApiErr<D>> extends infer U
+export type ApiErrGuard<D extends ApiDefinition, R> = IsAny<Awaited<R>> extends true ? unknown
+  : Exclude<Extract<Awaited<R>, Err<unknown, unknown>>, ApiErr<D>> extends infer U
     ? [U] extends [never] ? unknown
     : {
       readonly "denext: err() code is not declared in this endpoint's `errors`": U extends
         Err<infer C, unknown> ? C : never;
     }
-    : never;
+  : never;
 
 /**
  * The route handler `defineApi` returns: a plain {@link ApiHandler} at runtime, carrying the

@@ -13,10 +13,15 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
-import { actionEndpoint, actionIdFor, encodeActionArgs } from "../../src/runtime/server-action.ts";
+import { actionEndpoint, actionIdFor } from "../../src/runtime/server-action.ts";
+import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
+import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
+import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
+import { boundPort, listenedPort } from "../helpers/port.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 /** The checkout as a file URL: an import map's target (a `C:\…` path is no specifier on Windows). */
@@ -114,10 +119,24 @@ export function Island() {
   return dir;
 }
 
-/** The action's stable id, as the server registers it and its stub names it. */
+/**
+ * The secret every CLI child here mints action ids under: ids are salted per build, so this
+ * process (which calls the action by id) and the separate build, export and dev processes agree
+ * only through it, as a deploy that builds more than once does.
+ */
+const ACTION_ID_SECRET = "server-action-stubs-shared-secret";
+
+/** The action's id, as the server registers it and its stub names it. */
 async function actionId(dir: string): Promise<string> {
   const url = toFileUrl(await Deno.realPath(join(dir, "app/actions.ts"))).href;
-  return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  const prev = Deno.env.get(ACTION_ID_SECRET_ENV);
+  Deno.env.set(ACTION_ID_SECRET_ENV, ACTION_ID_SECRET);
+  try {
+    return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  } finally {
+    if (prev === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
+    else Deno.env.set(ACTION_ID_SECRET_ENV, prev);
+  }
 }
 
 /** The CLI under the app's own config, the way `denext` runs a project. */
@@ -127,13 +146,11 @@ function cliArgs(dir: string, args: string[]): string[] {
 
 /** Run a CLI verb to completion. */
 async function cli(dir: string, args: string[]): Promise<{ code: number; output: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: cliArgs(dir, args),
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-    env: { NO_COLOR: "1" },
-  }).output();
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
+  });
   const dec = new TextDecoder();
   return { code, output: dec.decode(stdout) + dec.decode(stderr) };
 }
@@ -165,36 +182,34 @@ async function assertNoSecret(root: string): Promise<Map<string, string>> {
   return files;
 }
 
-/** A free localhost port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
-
-/** A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`. */
+/**
+ * A long-running CLI server (`start` / `dev`) on `--port 0`, ready to answer `/` on the port it
+ * says it bound (nothing picks a port another process could take first).
+ */
 async function server(dir: string, verb: "start" | "dev") {
-  const port = freePort();
   const child = new Deno.Command(Deno.execPath(), {
-    args: cliArgs(dir, [verb, "--port", String(port)]),
+    args: cliArgs(dir, [verb, "--port", "0"]),
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
   }).spawn();
   // Keep what the server prints (drained, so a full pipe never stalls it) for a failure message.
   let output = "";
+  let port: number | undefined; // read before the tail is cut
   const drain = async (stream: ReadableStream<Uint8Array>) => {
     const decoder = new TextDecoder();
     for await (const chunk of stream) {
-      output = (output + decoder.decode(chunk, { stream: true })).slice(-8000);
+      output += decoder.decode(chunk, { stream: true });
+      port ??= listenedPort(output);
+      output = output.slice(-8000);
     }
   };
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   const exited = child.status.then((s) => s);
   let exitCode: number | null = null;
   exited.then((s) => exitCode = s.code);
+  await boundPort(() => port, () => exitCode !== null);
   // `localhost`: `denext dev` binds it, which a runner may resolve to `::1` only (`start` binds
   // 0.0.0.0); the client tries each address the name resolves to.
   const origin = `http://localhost:${port}`;
@@ -202,7 +217,7 @@ async function server(dir: string, verb: "start" | "dev") {
   let ready = false;
   for (
     const deadline = Date.now() + 300_000;
-    !ready && exitCode === null && Date.now() < deadline;
+    !ready && port !== undefined && exitCode === null && Date.now() < deadline;
   ) {
     try {
       const res = await fetch(`${origin}/`);
@@ -227,7 +242,7 @@ async function server(dir: string, verb: "start" | "dev") {
 
 /** Call the action the way its stub does (same-origin POST to its endpoint). */
 async function callAction(origin: string, id: string): Promise<unknown> {
-  const { body, headers } = encodeActionArgs(["hi"]);
+  const { body, headers } = encodeActionArgs(["hi"], prepareWire);
   const res = await fetch(`${origin}${actionEndpoint(id)}`, {
     method: "POST",
     headers: { ...headers, origin, "x-denext-action": "1" },
@@ -271,12 +286,9 @@ async function devModules(origin: string): Promise<Map<string, string>> {
 
 const SPELLINGS: Spelling[] = ["alias", "hash", "barrel", "platform"];
 
-const opts = { sanitizeOps: false, sanitizeResources: false };
-
 for (const spelling of SPELLINGS) {
   Deno.test({
     name: `denext build + start: an action imported by ${spelling} ships as its stub`,
-    ...opts,
   }, async () => {
     const dir = await app(spelling);
     try {
@@ -300,7 +312,7 @@ for (const spelling of SPELLINGS) {
   });
 
   Deno.test(
-    { name: `denext export: an action imported by ${spelling} ships as its stub`, ...opts },
+    { name: `denext export: an action imported by ${spelling} ships as its stub` },
     async () => {
       const dir = await app(spelling);
       try {
@@ -320,7 +332,6 @@ for (const spelling of SPELLINGS) {
 
   Deno.test({
     name: `denext dev: an action imported by ${spelling} is served as its stub`,
-    ...opts,
   }, async () => {
     const dir = await app(spelling);
     const srv = await server(dir, "dev");
@@ -347,7 +358,6 @@ for (const spelling of SPELLINGS) {
 // it imports, even relatively, ships as its stub and is called on the server.
 Deno.test({
   name: "denext build: a whole-route bundle ships an action it imports as its stub",
-  ...opts,
 }, async () => {
   const dir = await app("alias");
   try {
@@ -375,7 +385,7 @@ Deno.test({
 });
 
 Deno.test(
-  { name: 'SPA mode: a bundle that reaches a "use server" module is refused', ...opts },
+  { name: 'SPA mode: a bundle that reaches a "use server" module is refused' },
   async () => {
     const dir = await app("alias", true);
     try {
@@ -394,7 +404,7 @@ Deno.test(
   },
 );
 
-Deno.test({ name: "SPA dev: the action module is served as its stub", ...opts }, async () => {
+Deno.test({ name: "SPA dev: the action module is served as its stub" }, async () => {
   const dir = await app("alias", true);
   const srv = await server(dir, "dev");
   try {
@@ -434,7 +444,6 @@ async function variantApp(): Promise<string> {
 for (const verb of ["start", "dev"] as const) {
   Deno.test({
     name: `denext ${verb}: an action whose module reaches a .web variant runs the variant`,
-    ...opts,
   }, async () => {
     const dir = await variantApp();
     try {

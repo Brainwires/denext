@@ -18,9 +18,10 @@ import {
   renderToReadableStream as compatRenderToReadableStream,
 } from "../src/compat/react-dom-server.ts";
 import { Suspense, use } from "../src/runtime/suspense.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
-import type { RouteManifest } from "../src/router/manifest.ts";
+import type { RouteManifest, SegmentLevel } from "../src/router/manifest.ts";
+import { forbidden, unauthorized } from "../src/runtime/error-boundary.ts";
 import type { VNode, VNodeChildren } from "../src/jsx/types.ts";
 import { stuckHoles } from "../src/testing/conformance.ts";
 import { flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
@@ -226,6 +227,115 @@ Deno.test("a streamed page whose boundaries never suspend is served whole, reada
   assert(!html.includes("data-dnx-b"), "no placeholder");
   assert(!html.includes("<template data-dnx-r"), "no template");
 });
+
+// ---- forbidden() / unauthorized() inside a Suspense boundary, end to end ----------------------
+//
+// The page's level carries a real `forbidden.tsx` / `unauthorized.tsx`. Where the boundary's
+// content finished before anything was sent (inline in a streamed shell, or any boundary on a
+// buffered page) the signal is the whole response: its status and the level's UI in place of the
+// page. Where the boundary streamed (the status line already went out with the shell), the
+// level's UI is revealed in the hole and the status stays 200, as `notFound()` does there.
+
+const SIGNALS = [
+  ["forbidden", forbidden, 403, "forbidden.tsx"],
+  ["unauthorized", unauthorized, 401, "unauthorized.tsx"],
+] as const;
+
+/** A one-page app whose root level owns `file` for `name`, rendering `content` in a boundary. */
+function signalApp(
+  name: (typeof SIGNALS)[number][0],
+  file: string,
+  content: () => VNode,
+  streaming: boolean,
+) {
+  const Page = (): VNode =>
+    h(
+      "main",
+      null,
+      h("h2", null, "page heading"),
+      boundary(h(content, null), h("p", null, "Loading…")),
+    );
+  const SignalUi = (): VNode => h("section", { class: name }, `Custom ${name}`);
+  const level: SegmentLevel = {
+    depth: 0,
+    layout: null,
+    template: null,
+    loading: null,
+    error: null,
+    notFound: null,
+    forbidden: name === "forbidden" ? file : null,
+    unauthorized: name === "unauthorized" ? file : null,
+  };
+  const base = manifest();
+  const modules: Record<string, unknown> = {
+    "home.tsx": { default: Page },
+    [file]: { default: SignalUi },
+  };
+  return createApp({
+    getManifest: () => ({ ...base, pages: [{ ...base.pages[0], levels: [level] }] }),
+    load: (fp: string) => Promise.resolve(modules[fp]),
+    streaming,
+    csp: "off",
+  });
+}
+
+/** Run `fn` with `console.error` silenced (a signal in a streamed hole is logged as a failure). */
+async function quietly<T>(fn: () => Promise<T>): Promise<T> {
+  const origError = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = origError;
+  }
+}
+
+for (const [name, signal, status, file] of SIGNALS) {
+  const Now = (): VNode => signal();
+  // A fresh promise per app, read on every retry of the boundary (a new one per render would
+  // never settle the boundary).
+  const later5 = (): () => VNode => {
+    const p = later("x", 5);
+    return () => {
+      use(p);
+      return signal();
+    };
+  };
+
+  Deno.test(`${name}() in an inline boundary of a streamed page is the whole page's ${status}`, async () => {
+    const res = await signalApp(name, file, Now, true)(new Request("http://localhost/"));
+    assertEquals(res.status, status, "decided before the shell was sent");
+    const html = await res.text();
+    assertStringIncludes(html, `<section class="${name}">Custom ${name}</section>`);
+    assert(!html.includes("page heading"), "the level's UI replaces the page");
+    assert(!html.includes("Loading…"), "no fallback");
+    assert(!html.includes("data-dnx-b"), "no streamed hole");
+  });
+
+  for (const [label, content] of [["does not suspend", () => Now], ["suspends", later5]] as const) {
+    Deno.test(`${name}() in a boundary that ${label} on a buffered page is a ${status}`, async () => {
+      const res = await signalApp(name, file, content(), false)(new Request("http://localhost/"));
+      assertEquals(res.status, status);
+      const html = await res.text();
+      assertStringIncludes(html, `<section class="${name}">Custom ${name}</section>`);
+      assert(!html.includes("page heading"), "the level's UI replaces the page");
+      assert(!html.includes("Loading…"), "no fallback");
+      assert(!html.includes("data-dnx-r"), "nothing streamed");
+    });
+  }
+
+  Deno.test(`${name}() in a streamed boundary reveals ${file} in the hole (200)`, async () => {
+    const res = await quietly(() =>
+      signalApp(name, file, later5(), true)(new Request("http://localhost/"))
+    );
+    assertEquals(res.status, 200, "the status line went out with the shell, as in Next");
+    const html = await quietly(() => res.text());
+    assertStringIncludes(html, "page heading", "the shell is the page's");
+    assertStringIncludes(html, '<div data-dnx-b="dnx0"><p>Loading…</p></div>');
+    const hole = /<template data-dnx-r="dnx0"[^>]*>([\s\S]*?)<\/template>/.exec(html)?.[1];
+    assertEquals(hole, `<section class="${name}">Custom ${name}</section>`);
+  });
+}
 
 // ---- Flight: inline boundaries fill their holes in the shell's tree --------------------------
 
@@ -438,4 +548,60 @@ Deno.test("renderShell: a control signal in a nested inline boundary is the shel
   } finally {
     console.error = origError;
   }
+});
+
+// ---- Per-request cost: deciding the tokens compiles nothing ------------------------------------
+//
+// Each render's boundary tokens carry a fresh nonce. Matching them with a `RegExp` built from it
+// compiled a new pattern for every render — about 7% of a streamed page's server CPU. The tokens
+// are scanned with `indexOf` instead; the count of `RegExp`s a render builds is the guard.
+
+/** Runs `fn` with `globalThis.RegExp` counting the patterns built through it. */
+async function countRegExps(fn: () => Promise<void>): Promise<number> {
+  const Original = globalThis.RegExp;
+  let built = 0;
+  globalThis.RegExp = new Proxy(Original, {
+    construct(target, args, newTarget) {
+      built++;
+      return Reflect.construct(target, args, newTarget);
+    },
+    apply(target, self, args) {
+      built++;
+      return Reflect.apply(target, self, args);
+    },
+  });
+  try {
+    await fn();
+  } finally {
+    globalThis.RegExp = Original;
+  }
+  return built;
+}
+
+Deno.test("a streamed render with boundaries builds no RegExp, inline or streamed", async () => {
+  const tree = () =>
+    h(
+      "div",
+      null,
+      boundary(h("p", null, "x", boundary("nested"))),
+      boundary(h(Use, { p: later("T", 5) })),
+    );
+  let html = "";
+  const built = await countRegExps(async () => {
+    for (let i = 0; i < 3; i++) html = await streamToString(renderToReadableStream(tree()));
+  });
+  assertEquals(built, 0, "no pattern compiled per render");
+  assertStringIncludes(html, "<!--$--><p>x<!--$-->nested<!--/$--></p><!--/$-->");
+  assertStringIncludes(html, '<div data-dnx-b="');
+  assertStringIncludes(html, "<b>T</b>");
+});
+
+Deno.test("text that imitates a boundary token is left alone; the real tokens still decide", async () => {
+  const fake = "\u0000dnx-sb:0123456789abcdef:dnx0";
+  const html = await streamToString(
+    renderToReadableStream(h("div", null, fake, boundary(h("p", null, "x")), `${fake}\u0000`)),
+  );
+  assertStringIncludes(html, "<!--$--><p>x</p><!--/$-->", "the real boundary is inline");
+  assert(!html.includes('data-dnx-b="'), "nothing streamed or replaced by the imitation");
+  assertEquals(html.split("dnx-sb:0123456789abcdef").length, 3, "both imitations kept");
 });

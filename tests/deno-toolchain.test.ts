@@ -11,7 +11,8 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { dirname, join, toFileUrl } from "@std/path";
+import { parse as parseYaml } from "@std/yaml";
 import {
   DENO_TOOLCHAIN,
   denortTargetKey,
@@ -33,6 +34,7 @@ import {
   unlinkDenoToolchain,
 } from "../src/build/deno-toolchain.ts";
 import { denoToolchainCheck } from "../src/cli/commands/doctor.ts";
+import { downloadTimeoutMs } from "../src/build/verified-download.ts";
 import { DESKTOP_RUNTIME_PIN, desktopRuntimeStatus } from "../src/build/desktop-runtime.ts";
 import { sha256Hex, zip } from "./_archive-fixtures.ts";
 
@@ -150,6 +152,43 @@ Deno.test("ci.yml's backend-integration toolchain matches the checked-in linux-x
   assertEquals(env("DENEXT_DENO_RELEASE"), `denext-runtime-v${DENO_TOOLCHAIN.version}`);
   assertEquals(env("DENEXT_DENO_ZIP"), pin.file);
   assertEquals(env("DENEXT_DENO_SHA256"), pin.sha256, "re-pin ci.yml's hash with the toolchain");
+});
+
+/** A ci.yml step, as parsed. */
+interface CiStep {
+  name?: string;
+  uses?: string;
+  run?: string;
+}
+
+Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno only for fmt / lint / doc-lint", async () => {
+  const ci = parseYaml(
+    await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url)),
+  ) as { jobs: Record<string, { steps: CiStep[] }> };
+  const onPath = (s: CiStep) => s.run?.includes("scripts/ci/toolchain-on-path.ts") ?? false;
+  // A step that runs project code under `deno`: a test, a task that tests or builds, a type-check.
+  const runsDeno = (s: CiStep) =>
+    /\bdeno (?:test|check|task (?!doc-lint\b))/.test(s.run ?? "") && !onPath(s);
+  const stockOnly = (s: CiStep) => /\bdeno (?:fmt|lint|task doc-lint)\b/.test(s.run ?? "");
+  const switched: string[] = [];
+  for (const [name, job] of Object.entries(ci.jobs)) {
+    const setup = job.steps.findIndex((s) => s.uses?.startsWith("denoland/setup-deno@") ?? false);
+    // coverage: stock Deno starts scripts/test-run.ts, which runs every pass on the toolchain under
+    // --coverage; backend-integration installs the toolchain itself (the test above); cargo-audit
+    // runs only scripts/cargo-audit.ts (cargo-audit over the wasm packages' lockfiles), no project
+    // code, so it stays on the stock Deno.
+    if (setup === -1 || name === "coverage" || name === "cargo-audit") continue;
+    const at = job.steps.findIndex(onPath);
+    assert(at > setup, `${name}: puts the toolchain on PATH after setting up the stock Deno`);
+    job.steps.forEach((s, i) => {
+      if (runsDeno(s)) assert(i > at, `${name}: "${s.name}" runs on the toolchain`);
+      if (stockOnly(s)) assert(i < at, `${name}: "${s.name}" stays on the stock Deno`);
+    });
+    switched.push(name);
+  }
+  for (const job of ["check", "integration", "windows-tests", "macos-tests"]) {
+    assert(switched.includes(job), `${job} runs on the toolchain`);
+  }
 });
 
 Deno.test("ensureDenort: the pinned denort, verified into its own cache dir; a mismatch is refused", async () => {
@@ -324,6 +363,14 @@ Deno.test("ensureDenoToolchain refuses an oversized or truncated download, and o
   }
 });
 
+Deno.test("downloadTimeoutMs: the variable's milliseconds, 0 for none, else the default", () => {
+  const env = (v?: string) => () => v;
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env()), 60_000);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("5000")), 5_000);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("0")), Infinity);
+  assertEquals(downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", 60_000, env("1m")), 60_000);
+});
+
 Deno.test("ensureDenoToolchain refuses a verified zip without a top-level deno", async () => {
   const f = await fixture(await zip([{ name: "bin/deno", data: BINARY }]));
   try {
@@ -441,6 +488,7 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
     assertEquals(await resolveDenoToolchain({ ...base, env: envOf({ DENEXT_DENO: "stock" }) }), {
       kind: "stock",
       reason: "DENEXT_DENO=stock",
+      optedOut: true,
     });
     const unpinned = await resolveDenoToolchain({
       ...base,
@@ -544,6 +592,7 @@ Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Win
       assertEquals(await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: stock }) }), {
         kind: "stock",
         reason: "DENEXT_DENO=stock",
+        optedOut: true,
       });
     }
     // Mismatched quotes stay part of the value: a path that is not a file.
@@ -560,24 +609,32 @@ Deno.test("denoToolchainStatus: each cache state, the opt-outs, and whether this
   const f = await fixture(await zipped());
   const opts = { pin: f.pin, target: TARGET, os: "linux", cacheRoot: f.root };
   try {
-    const missing = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.6" });
+    const missing = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.6" },
+    });
     assertEquals([missing.state, missing.ok, missing.active], ["missing", true, false]);
     assertStringIncludes(missing.detail, `toolchain ${VERSION} for ${TARGET}`);
     assertStringIncludes(missing.detail, "running on deno 2.9.6");
     const rt = await ensure(f);
-    const cached = await denoToolchainStatus({ ...opts, env: envOf({}), running: VERSION });
+    const cached = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: VERSION },
+    });
     assertEquals([cached.state, cached.path, cached.active], ["cached", rt.deno, true]);
     assertStringIncludes(cached.detail, "running on it");
     const marked = await denoToolchainStatus({
       ...opts,
       env: envOf({ DENEXT_TOOLCHAIN_ACTIVE: VERSION }),
-      running: "2.9.7",
+      running: { deno: "2.9.7" },
     });
     assertFalse(marked.active, "a marker on a Deno of another version is not the toolchain");
     const older = await denoToolchainStatus({
       ...opts,
       env: envOf({}),
-      running: "2.9.7-denext.14",
+      running: { deno: "2.9.7-denext.14" },
     });
     assertFalse(older.active, "an older -denext.N build (a stale link) is not the toolchain");
     // A same-size rewrite keeps the mtime check honest only with --verify.
@@ -613,23 +670,105 @@ Deno.test("denoToolchainStatus: a compiled executable names the Deno its command
   const opts = { pin: f.pin, target: TARGET, os: "linux", cacheRoot: f.root, standalone: true };
   try {
     // The executable's embedded Deno (2.9.7 here) runs only the CLI; every child runs the toolchain.
-    const missing = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    const missing = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.7" },
+    });
     assertStringIncludes(missing.detail, "downloaded on the first denext command");
     assertStringIncludes(missing.detail, "denext runs every command on it");
     assertStringIncludes(missing.detail, "embeds deno 2.9.7 for itself only");
     assertFalse(missing.detail.includes("running on deno"), missing.detail);
     await ensure(f);
-    const cached = await denoToolchainStatus({ ...opts, env: envOf({}), running: "2.9.7" });
+    const cached = await denoToolchainStatus({
+      ...opts,
+      env: envOf({}),
+      running: { deno: "2.9.7" },
+    });
     assertEquals(cached.state, "cached");
     assertStringIncludes(cached.detail, "denext runs every command on it");
     const stock = await denoToolchainStatus({
       ...opts,
       env: envOf({ DENEXT_DENO: "stock" }),
-      running: "2.9.7",
+      running: { deno: "2.9.7" },
     });
     assertStringIncludes(stock.detail, "commands run on the `deno` on PATH");
   } finally {
     await f.close();
+  }
+});
+
+Deno.test("link / unlink use $DENEXT_INSTALL/bin, the custom-prefix install's bin", async () => {
+  const home = await Deno.makeTempDir();
+  const root = join(home, "cache", "denext-deno");
+  const bin = join(root, VERSION, TARGET, "deno");
+  await Deno.mkdir(join(root, VERSION, TARGET), { recursive: true });
+  await Deno.writeTextFile(bin, BINARY);
+  const prefix = join(home, "opt", "denext");
+  const env = envOf({ HOME: home, DENEXT_INSTALL: prefix });
+  try {
+    for (const os of Deno.build.os === "windows" ? ["windows"] : ["windows", "linux"]) {
+      const made = await linkDenoToolchain(bin, { env, os, cacheRoot: root });
+      const name = os === "windows" ? "deno.cmd" : "deno";
+      assertEquals(made.link, join(prefix, "bin", name));
+      assertStringIncludes(made.pathLine, join(prefix, "bin"));
+      assertEquals(
+        await Deno.lstat(join(home, ".denext")).catch(() => null),
+        null,
+        "not ~/.denext",
+      );
+      const pin = { schema: 1 as const, version: "9.9.9-denext.2", targets: {} };
+      assertStringIncludes(
+        (await staleToolchainLink({ env, os, cacheRoot: root, pin })) ?? "",
+        join(prefix, "bin", name),
+      );
+      assertEquals(await unlinkDenoToolchain({ env, os, cacheRoot: root }), made.link);
+    }
+    // An empty DENEXT_INSTALL is unset, as `${DENEXT_INSTALL:-…}` reads it in install.sh.
+    const fallback = await linkDenoToolchain(bin, {
+      env: envOf({ HOME: home, DENEXT_INSTALL: "" }),
+      os: "windows",
+      cacheRoot: root,
+    });
+    assertEquals(fallback.link, join(home, ".denext", "bin", "deno.cmd"));
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});
+
+Deno.test("link / unlink: a sibling directory's link is not ours; a % in the shim's path is literal", async () => {
+  const home = await Deno.makeTempDir();
+  const root = join(home, "cache", "denext-deno");
+  const env = envOf({ HOME: home });
+  try {
+    if (Deno.build.os !== "windows") {
+      // `…/denext-deno-other/deno` merely starts with the cache root's path: someone else's.
+      const other = join(home, "cache", "denext-deno-other", "deno");
+      await Deno.mkdir(dirname(other), { recursive: true });
+      await Deno.writeTextFile(other, BINARY);
+      const link = join(home, ".denext", "bin", "deno");
+      await Deno.mkdir(dirname(link), { recursive: true });
+      await Deno.symlink(other, link);
+      await assertRejects(
+        () => unlinkDenoToolchain({ env, os: "linux", cacheRoot: root }),
+        Error,
+        "left alone",
+      );
+      assertEquals(await Deno.readLink(link), other, "left in place");
+      await Deno.remove(link);
+    }
+    // cmd expands `%…%` even inside quotes: the shim doubles each `%`, and reads it back as one.
+    const bin = join(root, "50%HOME%", "deno.exe");
+    const shim = await linkDenoToolchain(bin, { env, os: "windows", cacheRoot: root });
+    const text = await Deno.readTextFile(shim.link);
+    assertStringIncludes(text, `"${bin.replaceAll("%", "%%")}" %*`);
+    const pin = { schema: 1 as const, version: "9.9.9-denext.2", targets: {} };
+    assertStringIncludes(
+      (await staleToolchainLink({ env, os: "windows", cacheRoot: root, pin })) ?? "",
+      `points at ${bin}`,
+    );
+  } finally {
+    await Deno.remove(home, { recursive: true });
   }
 });
 
@@ -776,10 +915,18 @@ Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, 
     const stamp = JSON.parse(await Deno.readTextFile(join(f.root, OWN, TARGET, TOOLCHAIN_STAMP)));
     assertEquals(stamp.version, OWN);
     const opts = { pin, target: TARGET, os: "linux", cacheRoot: f.root, env: envOf({}) };
-    const on = await denoToolchainStatus({ ...opts, running: OWN });
+    const on = await denoToolchainStatus({ ...opts, running: { deno: OWN } });
     assertEquals([on.state, on.active], ["cached", true]);
     // A run on the last old-scheme toolchain (a stale link) is not this pin.
-    assertFalse((await denoToolchainStatus({ ...opts, running: "2.9.7-denext.22" })).active);
+    assertFalse(
+      (await denoToolchainStatus({ ...opts, running: { deno: "2.9.7-denext.22" } })).active,
+    );
+    // From 3.0.0-rc.3 the pin is recognised by the identity marker: upstream Deno of the pinned
+    // version (no Deno.build.denext) is not the toolchain.
+    const marked = { ...opts, pin: { ...pin, version: "3.0.0-rc.3" } };
+    const withMarker = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
+    assert((await denoToolchainStatus({ ...marked, running: withMarker })).active);
+    assertFalse((await denoToolchainStatus({ ...marked, running: { deno: "3.0.0-rc.3" } })).active);
     const choice = await resolveDenoToolchain({
       pin,
       target: TARGET,
@@ -800,7 +947,8 @@ Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, 
 Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-rc.N)", async () => {
   const root = await Deno.makeTempDir();
   try {
-    for (const found of ["3.0.0-rc.1", "3.0.0-rc.1+ci.42"]) {
+    const marked = (v: string) => ({ deno: v, denext: v });
+    for (const found of [marked("3.0.0-rc.3"), marked("3.0.0-rc.3+ci.42"), marked("3.0.0")]) {
       const status = await desktopRuntimeStatus({
         projectDir: root,
         target: "x86_64-unknown-linux-gnu",
@@ -809,7 +957,21 @@ Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.
         env: () => undefined,
         denoVersion: () => Promise.resolve(found),
       });
-      assert(status.ok, `${found}: ${status.detail}`);
+      assert(status.ok, `${found.deno}: ${status.detail}`);
+      assertEquals(status.deno.denext, found.denext);
+    }
+    // Upstream Deno's 3.0.0-rc.N / 3.0.0 (no identity line) is not the runtime's Deno 2.9.7.
+    for (const found of ["3.0.0-rc.3", "3.0.0-rc.4", "3.0.0"]) {
+      const status = await desktopRuntimeStatus({
+        projectDir: root,
+        target: "x86_64-unknown-linux-gnu",
+        backend: "webview",
+        cacheRoot: root,
+        env: () => undefined,
+        denoVersion: () => Promise.resolve(found),
+      });
+      assertFalse(status.ok, found);
+      assertStringIncludes(status.detail, `deno ${found} ✗`);
     }
   } finally {
     await Deno.remove(root, { recursive: true });

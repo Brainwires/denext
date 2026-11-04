@@ -9,11 +9,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../../src/build/build.ts";
-import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { serveEphemeral } from "../../src/build/prod-server.ts";
 import { GLOBAL_ERROR_BUNDLE_FILE } from "../../src/build/build-pipeline/context.ts";
+import { buildInChild, exportInChild } from "../helpers/bounded-build.ts";
 
 const GE_ENTRY = `/_denext/client/${GLOBAL_ERROR_BUNDLE_FILE}`;
 
@@ -115,13 +114,11 @@ function assertHydratedGlobalError(html: string, marker: string, entry = GE_ENTR
 
 Deno.test({
   name: "next-compat build: global-error.tsx gets a hydration entry the 500 document loads",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_compat_build_" });
   try {
     await writeCompatFixture(dir);
-    await build(dir);
+    await buildInChild(dir);
     const entry = await Deno.readTextFile(join(dir, ".denext", "client", GLOBAL_ERROR_BUNDLE_FILE));
     // The entry rebuilds the error from the server's data island and hydrates the document.
     assertStringIncludes(entry, "__denext_ge_data");
@@ -147,13 +144,11 @@ Deno.test({
 
 Deno.test({
   name: "export (next-compat): global-error.tsx is pre-rendered to 500.html and hydrates",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_compat_export_" });
   try {
     await writeCompatFixture(dir);
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     assert(result.skipped.includes("/boom"), "the force-dynamic route is skipped");
     const html = await Deno.readTextFile(join(result.outDir, "500.html"));
     assertHydratedGlobalError(html, "GE_COMPAT_UI:Internal Server Error");
@@ -174,13 +169,11 @@ Deno.test({
 
 Deno.test({
   name: "export (native): global-error.tsx is pre-rendered to 500.html and hydrates",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_native_export_" });
   try {
     await writeNativeFixture(dir);
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const html = await Deno.readTextFile(join(result.outDir, "500.html"));
     assertHydratedGlobalError(html, "GE_NATIVE_UI:Internal Server Error");
     const entry = await Deno.readTextFile(
@@ -194,14 +187,12 @@ Deno.test({
 
 Deno.test({
   name: "export: an app without global-error.tsx writes no 500.html and no entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_none_export_" });
   try {
     await writeNativeFixture(dir);
     await Deno.remove(join(dir, "app", "global-error.tsx"));
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const exists = (p: string) => Deno.stat(p).then(() => true, () => false);
     assertEquals(await exists(join(result.outDir, "500.html")), false);
     assertEquals(
@@ -215,8 +206,6 @@ Deno.test({
 
 Deno.test({
   name: "native build: a route at /global-error keeps its own bundle beside the global-error entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_route_collision_" });
   try {
@@ -233,7 +222,7 @@ export default function Page() {
 }
 `,
     );
-    await build(dir);
+    await buildInChild(dir);
     const client = join(dir, ".denext", "client");
     const route = await Deno.readTextFile(join(client, "global-error.js"));
     assertStringIncludes(route, "GE_ROUTE_PAGE", "the route's bundle was overwritten");

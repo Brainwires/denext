@@ -21,6 +21,7 @@
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("../../", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
@@ -996,24 +997,20 @@ Deno.test("an explicit --port is required exactly, and a short --token is refuse
   const held = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const taken = (held.addr as Deno.NetAddr).port;
   try {
-    const busy = await new Deno.Command(Deno.execPath(), {
+    const busy = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", String(taken)],
       cwd: ROOT,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     assert(busy.code !== 0, "an explicit --port that is taken fails instead of falling forward");
     assertStringIncludes(
       new TextDecoder().decode(busy.stderr),
       `port ${taken} is already in use`,
     );
 
-    const short = await new Deno.Command(Deno.execPath(), {
+    const short = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", CLI, "ui", dir, "--no-open", "--json", "--port", "0", "--token", "tiny"],
       cwd: ROOT,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     assert(short.code !== 0, "a guessable --token is refused at startup");
     assertStringIncludes(new TextDecoder().decode(short.stderr), "--token must be at least");
   } finally {

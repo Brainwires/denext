@@ -122,7 +122,10 @@ multipart upload reads it).
 
 **`fs({ dir })`** stores objects as files under `dir` (relative to the project root), for
 development and single-server self-hosting. Uploads and downloads go through the plugin's own
-endpoint with signed, expiring URLs; downloads answer `Range` requests. Writes land in a temporary
+endpoint with signed, expiring URLs; downloads answer `Range` requests (up to 8 ranges in one
+request as `multipart/byteranges`; more get the whole object, a `200`, as nginx's `max_ranges` does,
+since each part is a separate driver read). A `206` carries exactly the range it names, even
+from an S3-compatible store that ignores `Range`. Writes land in a temporary
 file and are renamed into place, so a refused upload leaves nothing behind.
 
 ### From the command line
@@ -237,15 +240,24 @@ bytes before anything is stored. On S3 the bytes go to the store directly, so co
 what arrived: the size against the cap and the declared length, the stored content type, and the
 first bytes against the declared type. An object that fails is deleted.
 
-**An S3 upload that is never completed** has been checked by nobody: a client can `PUT` to its
-presigned URL and skip the completion call. Such bytes can still only be served with the type the
-URL pinned, and every presigned `GET` the plugin signs carries `response-content-type` (the stored
-type) and `response-content-disposition`: `inline` only for raster images, audio, video, PDF and
-plain text, `attachment` for everything else — the same rule the plugin's own object route
-applies — so an HTML or SVG file downloads instead of rendering. Record the keys
-`uploadFile` / completion returned (in your own table) and sign download URLs only for those, and
-give the S3 bucket a lifecycle rule that removes what was never recorded, plus one that aborts
-incomplete multipart uploads after a day (`AbortIncompleteMultipartUpload`).
+**An upload that is never completed** is never an object. Every signed upload URL (a presigned
+`PUT`, presigned multipart parts, the fs driver's signed `PUT`) points at a staging place
+(`.denext-staging/<bucket>/<version>`), not at the key, and no object row exists until the
+completion has checked the staged bytes and moved them to the key. A client that `PUT`s to the URL
+and skips the completion call leaves bytes that nothing serves, signs, lists or reports. The
+store enforces what it can before then: a presigned `PUT` signs `content-type`, and with a `size`
+its exact `content-length`, and every presigned multipart part signs its own exact length, so S3
+refuses a body of any other size or type. Without a `size` a single `PUT` is not length-pinned
+(S3 has no length range for a presigned `PUT`), so oversized bytes can reach the staging place,
+where the completion refuses them. Each signed upload is tracked with an expiry (the URL's lifetime
+plus an hour's grace); once that passes, its staged bytes, or its incomplete multipart upload, are
+swept the next time an upload is signed, completed or aborted. A store lifecycle rule on the
+`.denext-staging/` prefix (expire after a day or two, and `AbortIncompleteMultipartUpload` after a
+day) frees them even if no upload ever happens again. Every presigned `GET` the plugin signs also
+carries `response-content-type` (the stored type) and `response-content-disposition`: `inline`
+only for raster images, audio, video, PDF and plain text, `attachment` for everything else — the
+same rule the plugin's own object route applies — so an HTML or SVG file downloads instead of
+rendering.
 
 ### Image transforms
 
@@ -401,7 +413,9 @@ assembled object's size and first bytes again at the end. It expires 24 hours af
 (`Upload-Expires`). On S3 the bytes become parts of a multipart upload as they arrive (a remainder
 under S3's 5 MiB minimum waits as a tail object); on the filesystem each `PATCH` is a chunk,
 joined through the usual checks at the end. Progress lives in the metadata store, so any replica
-can take the next `PATCH`.
+can take the next `PATCH`. A `PATCH` holds a five-minute lease on the upload: a second one meanwhile
+is a `409`, and one that stalls past its lease and is taken over saves nothing (it is refused
+with a `409` and removes what it wrote), so a resumed client continues from the newer offset.
 
 ### Object versioning
 
@@ -668,6 +682,25 @@ a `begin` inside it is a savepoint. A thrown error rolls back the transaction an
 `backend({ postgres: { rls: { claims: (session) => ({ tenant: … }) } } })` and read them as
 `auth.jwt() ->> 'tenant'`; `sub`, `role` and `email` cannot be overridden.
 
+### MFA and row-level security
+
+Row-level security trusts an access token's own claims, as Supabase does. A user who has enrolled
+a second factor but signed in with only a password holds an `aal1` token until they verify it,
+and under RLS that token is `authenticated` like any other: `db()`, auto-REST, Realtime and
+Storage's `rls: true` all run its queries as the user. This differs from [`auth()`](/docs/auth),
+which reads such a token as `null` (it owes a factor, so `requireSession` and Server Actions
+refuse it). A table that must stay behind the second factor needs a policy that checks for it;
+Supabase's pattern is a restrictive policy:
+
+```sql
+create policy "second factor required" on notes
+  as restrictive to authenticated
+  using ((select auth.jwt() ->> 'aal') = 'aal2');
+```
+
+A denext session (the cookie) is never `aal1` while it owes a factor: it is pending, and RLS sees it
+as signed out (`anon`) until the factor is verified.
+
 ### Setup: the roles and `auth.*`
 
 The first scoped query applies the migration `backend_rls_0001` (recorded in `backend_migrations`):
@@ -765,7 +798,7 @@ export function NoteList({ initial }: { initial: Note[] }) {
 | `key`      | The rows' key column, as configured for the table (default `"id"`).                                                                                                                                                                                    |
 | `schema`   | The table's schema, for a table outside `public` (one the publication lists, or a configured table with a `schema`).                                                                                                                                   |
 | `onChange` | Called with each batch: `{ op: "insert" \| "update", key, row }`, `{ op: "update", key, oldKey, row }` when the key changed, `{ op: "delete", key }`, `{ op: "truncate" }`; `update` and `delete` carry `old` for a table configured `old: "full"`.    |
-| `onResync` | Called when changes may have been missed: re-read and pass the rows as `initial`.                                                                                                                                                                      |
+| `onResync` | Called when changes may have been missed (a reconnect the server could not replay, a lost frame): re-read and pass the rows as `initial`.                                                                                                              |
 | `enabled`  | `false` keeps the hook idle.                                                                                                                                                                                                                           |
 
 From a subscriber's side, `insert` means a row entered their view — inserted, or updated so their
@@ -773,6 +806,17 @@ policies or filter now match it — and `delete` means one left it: deleted, or 
 policies or filter. `truncate` empties the list (it reaches only subscribers who could see rows of
 the table). Rows keep arrival order; sort them when you render. The same tables also serve
 [`supabase.channel()`](#supabase-realtime-supabasechannel), with Supabase's own event semantics.
+
+**A reconnect is replayed.** When the viewer's connection drops (a train tunnel, a laptop lid) and
+comes back within `replay.retentionSeconds` (60 by default), the server sends what changed in
+between — re-read as that viewer, under their policies, with deletes only for rows they could see —
+and `stale` stays `false`. Each server instance journals the changes it receives (keys only) and
+each subscription the last change it was delivered, so nothing runs while the viewer is away: the
+missed changes are coalesced and re-read once, when they return. When the gap can't be replayed —
+older than the retention, more than `replay.maxChangesPerTable` (10 000 by default) changes of the table, the
+database listener was lost meanwhile, the reconnect reached another instance (no sticky
+sessions), or the viewer came back with other claims than they left with (a changed role, team or
+tenant; a refreshed token is the same claims) — `stale` turns true and `onResync` runs, as before.
 
 ### How it works
 
@@ -796,20 +840,26 @@ the table). Rows keep arrival order; sort them when you render. The same tables 
    every subscriber. Changing a table's `events`, `key` or `old` installs a
    new migration that replaces its triggers; a table removed from the options keeps them until you
    `drop trigger denext_realtime on <table>` (and `denext_realtime_truncate`).
-2. **One listener per server instance.** A single connection `LISTEN`s (the driver re-listens after
-   a lost connection, and every subscriber is told to re-read, since changes sent meanwhile are
-   lost). Notifications are coalesced for 16 ms, as Live coalesces its own pushes: within a burst
-   the latest change per key wins. One burst is delivered at a time: changes that arrive while its
-   re-reads run go out together in the next.
-3. **Re-read as each subscriber.** Subscribers with the same identity, table and filter form a
-   group, and each group's changed rows are read back with one query
+2. **One listener per server instance.** A single connection `LISTEN`s and feeds every
+   subscriber of every table (the driver re-listens after a lost connection, and every subscriber
+   is told to re-read, since changes sent meanwhile are lost). Notifications are coalesced for
+   16 ms, as Live coalesces its own pushes: within a burst the latest change per key wins. One
+   burst is delivered at a time: changes that arrive while its re-reads run go out together in the
+   next.
+3. **Re-read once per identity.** Subscriptions with the same role and claims to one table form a
+   group, whatever their filters, and each group's changed rows are read back with one query
    (`select … where key = any(…)`, 1 000 keys per statement) through the RLS-scoped client — `role`
-   and `request.jwt.claims` set for that identity, exactly as `db()` does. A burst costs one query
-   per identity, not one per subscriber per row: a 500-row transaction watched by two users is one
-   flush and two re-reads. Keys and the filter value are compared in the column's own type (read
-   once from the catalog), so the primary key — and an index on a filter column — serves the
-   re-read, and each query runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a
-   re-read that fails or times out becomes a "re-read" signal for that group.
+   and `request.jwt.claims` set for that identity, exactly as `db()` does. With one filter it is
+   the query's `WHERE`; with several, each is a boolean column of the same query (`coalesce(<filter>,
+   false) as m0, …`), so a burst costs one query per identity, not one per subscriber, filter or
+   row: a 500-row transaction watched by two users is one flush and two re-reads, and so is one
+   watched by those users through 36 subscriptions over 17 filters. Two tabs of one session share
+   the claims; two devices (two sessions, each with its own `session_id`) are two identities here.
+   Keys and filter values are compared in the column's own type (read once from the catalog), so
+   the primary key — and an index on a single filter column — serves the re-read, and each query
+   runs under a transaction-local `statement_timeout` (`queryTimeoutMs`); a re-read that fails or
+   times out becomes a "re-read" signal for that group (a combined one is retried filter by filter
+   first, so a bad filter value affects only its own subscribers).
 4. **Deletes go only to those who could see the row.** A deleted row cannot be re-read against a
    policy, so each subscription tracks the keys it may know about: the rows it could see when it
    subscribed (one key-only query under its own policies, up to `maxTrackedKeys`) plus every row
@@ -818,14 +868,32 @@ the table). Rows keep arrival order; sort them when you render. The same tables 
    deletes are not sent: keep subscriptions narrow with a `filter`, or raise the limit.
 5. **Frames.** Changes ride the Live socket on the backend's own channel, split to fit its payload
    cap (a row too large for one frame arrives with `truncated: true` and no `row`) and numbered per
-   subscription; a gap, a burst over the queue limit, or a reconnect sets `stale` and calls
-   `onResync`. Delivery is at-most-once, like every Live channel.
+   subscription; a gap, a burst over the queue limit, or a reconnect that can't be replayed sets
+   `stale` and calls `onResync`.
+6. **Replay after a reconnect.** Every change an instance receives is journaled (its keys only,
+   never an `old: "full"` table's old row; a key over 1 024 characters is journaled as a resync of
+   its table) for `replay.retentionSeconds`, at most `replay.maxChangesPerTable` per table (expired
+   entries are dropped on the next flush), and each subscription keeps the journal position it was
+   delivered up to. A subscription whose connection closed is kept for the retention; frames not
+   yet sent wait for it. When the same key subscribes again the server sends `{ resumed: true }`,
+   then — in the next flush, on its own — the journal's changes after its position, coalesced and
+   re-read as the subscriber through the same tracked-key rules as live changes, numbered on from
+   the frames before the drop. A position the journal no longer covers, or a journaled listener
+   loss, or a reconnect re-authorized under other claims (the frames kept for it were read under
+   the old ones, and are dropped), is `{ resync: true }` instead; a reconnect answered by neither
+   within 10 seconds (the subscription was dropped, or the socket reached another instance) marks
+   the hook `stale`. Every frame is published under a digest of the grant (role and claims) it was
+   read as, and every subscriber is admitted under the grant it has, so the Live hub — on any
+   instance, behind a shared channel transport too — never sends a frame read under other claims
+   than the subscriber's; one it drops that way is a sequence gap, which the hook answers with
+   `stale`.
 
 **Who receives what.** The subscription key holds the table, the filter and a 128-bit random value
-the browser picks; the first subscriber binds it to their identity (the user's id, or anon), and
-anyone else presenting it is refused. The binding is re-checked every 60 seconds of traffic, so a
-signed-out session stops receiving. A table needs `grant select … to authenticated` (and to `anon`
-if signed-out visitors may watch it) for its rows to be readable at all.
+the browser picks; the first subscriber binds it to their identity (the user's id, or anon; for a
+token without a subject, its whole set of claims), and anyone else presenting it is refused. The
+binding is re-checked every 60 seconds of traffic, so a signed-out session stops receiving. A
+table needs `grant select … to authenticated` (and to `anon` if signed-out visitors may watch it)
+for its rows to be readable at all.
 
 **Limits.** Each identity — a signed-in user across all their connections, or the signed-out
 visitors at one client address (`clientIpForLimits({ bucket: true })`, an IPv6 address counting
@@ -835,9 +903,10 @@ known, or when it is a loopback/private socket peer — a reverse proxy every vi
 from `rateLimitTrustedProxies`, or a loopback/private peer under `trustForwardedHeaders`), to key
 on each visitor's address; `rateLimitLocalAddresses` counts such a peer as itself) — may hold
 `maxSubscriptionsPerIdentity` subscriptions (default 64), which also bounds
-the distinct filters (re-read groups) it adds to a burst; the instance holds `maxSubscribers`. An
-unsubscribed key is forgotten at once. One whose connection closed is kept for 15 seconds so a
-reconnect resumes it, but only while there is room: at either cap the oldest such subscription
+the filters it adds to a burst's re-reads; the instance holds `maxSubscribers`. An
+unsubscribed key is forgotten at once. One whose connection closed is kept for
+`replay.retentionSeconds` (15 seconds with `replay: false`) so a reconnect resumes it, but only
+while there is room: at either cap the oldest such subscription
 gives way, and only live subscriptions refuse a new one (the browser sees `denied`). Subscribing
 runs one key-only query; at most four run at a time, and each identity may start 32 in a burst,
 then 8 a second. Server-side `tableChanges` subscriptions count toward `maxSubscribers` only.
@@ -1084,11 +1153,12 @@ logical when many connections write realtime tables at once.
 | `logical`                     | —                     | `{ pollMs?: 50, maxChanges?: 10000 }`: the logical source's read interval and batch.                                                                                         |
 | `revalidate`                  | `false`               | `revalidateTag("table:<name>")` per burst; `{ owner: "one" }`: on one instance per database.                                                                                 |
 | `migrate`                     | `true`                | Install the triggers on first use. `false` when a DBA runs `realtimeSetupSql(options)` instead.                                                                              |
-| `maxSubscribers`              | 10 000                | Subscriptions per server instance (a closed tab's is kept 15 s for a reconnect, while there is room).                                                                        |
+| `maxSubscribers`              | 10 000                | Subscriptions per server instance (a closed tab's is kept for the replay retention, while there is room).                                                                    |
 | `maxSubscriptionsPerIdentity` | 64                    | Subscriptions per signed-in user, or per signed-out client address (and so its distinct filters).                                                                            |
 | `maxTrackedKeys`              | 10 000                | Keys tracked per subscription, for deletes.                                                                                                                                  |
 | `queryTimeoutMs`              | 5 000                 | `statement_timeout` of each re-read and subscribe-time query (transaction-local).                                                                                            |
 | `socket`                      | `true`                | Serve `/realtime/v1/*` for supabase-js; `false` turns it off; an object sets its [limits](#supabase-realtime-supabasechannel).                                               |
+| `replay`                      | `true`                | `{ retentionSeconds?: 60, maxChangesPerTable?: 10000 }`: replay a `useTableChanges` reconnect from the journal; `false`: a reconnect is always a re-read.                    |
 
 Realtime needs a Postgres client with `listen`: `Deno.SQL` (denext's
 [Deno toolchain](/docs/toolchain)), or the npm `postgres` package through
@@ -1230,7 +1300,8 @@ and `count=estimated` counts exactly only while the estimate is at most `maxRows
 
 **Rate limits.** Each client has a request budget across the routes: 1200 requests a minute by
 default (20 a second on average — far above a page of supabase-js calls). A signed-in user is
-counted by their user id, so users behind one address don't share a budget; anyone else by their
+counted by their user id, so users behind one address don't share a budget (an anonymous sign-in
+counts against its address as well, so minting sign-ins can't mint budgets); anyone else by their
 client address (`clientIpForLimits()`'s rule: the socket peer, a trusted proxy's hop or the
 `rateLimitHeader` address, an IPv6 address by its `/64`). The secret key is never limited. A
 request whose credential is refused (a `401`) counts against its address too, so forged tokens
@@ -1249,8 +1320,13 @@ can't get round it. Past the budget a request is answered `429` before any state
 As with every per-address limit in denext, a request from a loopback or private peer with no
 trusted proxy hop has no address of its own (it is most likely the proxy every visitor shares)
 and is not counted by address: set `trustForwardedHeaders` (or `rateLimitHeader`) behind a proxy,
-or `rateLimitLocalAddresses: true` where such peers are real clients. Counts live in memory, per
-process; behind several replicas pass a shared store:
+or `rateLimitLocalAddresses: true` where such peers are real clients. By default the counts live in
+the routes' own bounded in-memory store, per process (10 000 clients; one over its budget is kept
+until its window ends). They never go to the store `denextAuth({ rateLimit: { store } })`
+configures: every REST request would write to it, and its lockout rules are the sign-in limiters'.
+For one budget across replicas, give the routes a shared store of their own
+(`redisRateLimitStore()`, `postgresRateLimitStore()` or `denoKvRateLimitStore()` from
+`denext/server`):
 
 ```ts
 import { postgresRateLimitStore } from "denext/server";
@@ -1333,20 +1409,20 @@ the plugin says so, keeps an earlier generated file, or writes a stub under whic
 
 ### Options
 
-| Option             | Default                           | What it does                                                                                                                                                                                                      |
-| ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemas`          | `["public"]`                      | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                                 |
-| `tables`           | `"*"`                             | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).                             |
-| `basePath`         | `"/rest/v1"`                      | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                                    |
-| `maxRows`          | 1000                              | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                                                |
-| `maxBodyBytes`     | 1 MiB                             | The largest request body.                                                                                                                                                                                         |
-| `statementTimeout` | 5000                              | Each request's `statement_timeout`, in milliseconds.                                                                                                                                                              |
-| `maxConcurrent`    | half the pool's `max`, else 5     | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                                             |
-| `exactCount`       | `"authenticated"`                 | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                                 |
-| `explain`          | `false`                           | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                                               |
-| `aggregates`       | `false`                           | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost.                  |
-| `rateLimit`        | `{ max: 1200, windowMs: 60_000 }` | Each client's request budget (a user by id, else an address; never the secret key); past it `429` `over_request_rate_limit` with `Retry-After`. `store` shares the counts between replicas; `false` turns it off. |
-| `openapi`          | `true`                            | List the routes in `@denext/openapi`'s document (when that plugin is installed): the default schema's relations and functions the RLS roles can use.                                                              |
+| Option             | Default                           | What it does                                                                                                                                                                                                                                                                           |
+| ------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas`          | `["public"]`                      | The schemas served, the default first; `Accept-Profile` / `Content-Profile` pick another. `schema: "api"` is a shorthand for one.                                                                                                                                                      |
+| `tables`           | `"*"`                             | `"*"`: the reachable RLS tables and `security_invoker` views; or a list of names (`"notes"` or `"api.notes"`), served as named (a listed table the roles cannot reach gets no route).                                                                                                  |
+| `basePath`         | `"/rest/v1"`                      | Where the routes live (app-relative; `basePath` is prepended).                                                                                                                                                                                                                         |
+| `maxRows`          | 1000                              | The most rows one read (or set-returning call) returns, whatever `limit` asks for.                                                                                                                                                                                                     |
+| `maxBodyBytes`     | 1 MiB                             | The largest request body.                                                                                                                                                                                                                                                              |
+| `statementTimeout` | 5000                              | Each request's `statement_timeout`, in milliseconds.                                                                                                                                                                                                                                   |
+| `maxConcurrent`    | half the pool's `max`, else 5     | The most REST statements at once; past it a request waits up to 1 s, then gets `503` + `Retry-After`.                                                                                                                                                                                  |
+| `exactCount`       | `"authenticated"`                 | Who may send `Prefer: count=exact`: `"authenticated"`, `"all"` or `"never"` (refused with `400`).                                                                                                                                                                                      |
+| `explain`          | `false`                           | Serve execution plans (`Accept: application/vnd.pgrst.plan`). Plans show table sizes and indexes: development only.                                                                                                                                                                    |
+| `aggregates`       | `false`                           | Allow aggregate functions in `select=` (PostgREST's `db-aggregates-enabled`). An aggregate reads every matching row whatever `limit` says; enable it when the statement timeout bounds the cost.                                                                                       |
+| `rateLimit`        | `{ max: 1200, windowMs: 60_000 }` | Each client's request budget (a user by id, else an address; never the secret key); past it `429` `over_request_rate_limit` with `Retry-After`. `store` (default: `denextAuth`'s shared `rateLimit.store`, else per process) shares the counts between replicas; `false` turns it off. |
+| `openapi`          | `true`                            | List the routes in `@denext/openapi`'s document (when that plugin is installed): every schema's relations and functions the RLS roles can use, another schema's behind its `Accept-Profile` / `Content-Profile`.                                                                       |
 
 Two features are off until you turn them on, because each can cost a lot or reveal a lot:
 aggregates (`aggregates: true`) and execution plans (`explain: true`). Everything else on this page
@@ -1356,10 +1432,15 @@ computed by an expression has no origin, so a key that needs it is not inherited
 The routes are described twice. `GET /rest/v1` is PostgREST's own Swagger 2.0 document, per
 requester and per `Accept-Profile`. With the `@denext/openapi` plugin installed, the app's
 `/openapi.json` (its docs page, `denext openapi emit` and the clients generated from it) lists them
-too, as OpenAPI 3.1 operations beside the route handlers: every relation and function of the
-default schema that the `anon` and `authenticated` roles can use (what only the secret key reaches
-is left out), typed rows as `rest.<table>` schemas, the row filters and shaping parameters, and the
-PostgREST error body. Nothing to configure; `rest: { openapi: false }` keeps them out (and
+too, as OpenAPI 3.1 operations beside the route handlers: every relation and function of each
+schema in `rest.schemas` that the `anon` and `authenticated` roles can use (what only the secret
+key reaches is left out), typed rows as `rest.<table>` schemas, the row filters and shaping
+parameters, and the PostgREST error body. A schema other than the default is named in its
+operations and row schemas (`rest.api.things`, `rest_select_api.things`) and its operations
+require the header that picks it (`Accept-Profile: api` on reads, `Content-Profile: api` on
+writes). One URL serves every schema, so where two schemas have a relation or function of the same
+name the path describes the first of them in `rest.schemas` order; `GET /rest/v1` with the other's
+`Accept-Profile` still describes it. Nothing to configure; `rest: { openapi: false }` keeps them out (and
 `openapi({ sources: false })` leaves out every plugin's routes). The catalog is read when the
 document is built; without a reachable database the routes are left out with a `source-failed`
 lint warning.

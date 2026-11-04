@@ -5,12 +5,13 @@
 // are the files the real run would create, modify, move or delete, and the findings come from
 // the same result object the real run prints. Nothing is written, so it needs read access plus
 // run access for the `next.config.*` evaluator, which is a `deno` subprocess
-// (`deno run --allow-read --allow-env --allow-run …/cli migrate --check`). Without
+// (`deno run --no-config --allow-read --allow-env --allow-run …/cli migrate --check`). Without
 // `--allow-run` the config is reported as not evaluated, not as unportable.
 
 import { VERSION } from "../../mod.ts";
 import { type MigrateOptions, migrateProject, type MigrateResult } from "./migrate.ts";
 import { dryRunMigration, type PlannedChange } from "./migrate-io.ts";
+import { describeClash } from "./local-checkout-imports.ts";
 import { NEXT_CONFIG_NEEDS_RUN } from "./next-config-eval.ts";
 import { COMPUTED_ICON_FIX } from "./mobile-icon-source.ts";
 
@@ -26,7 +27,8 @@ export type MigrateSource =
   | "expo"
   | "tanstack-start"
   | "fresh"
-  | "preact";
+  | "preact"
+  | "lustre";
 
 /** Something the migration leaves to the user, with the reason. */
 export interface MigrateFinding {
@@ -70,6 +72,11 @@ export interface MigrateCheckReport {
    * print for the user to run.
    */
   commands?: string[];
+  /**
+   * `--denext-local-path`: the packages the app maps at another major than the checkout (each
+   * also a `review` finding); absent when there are none.
+   */
+  importClashes?: MigrateResult["importClashes"];
   /** How the app's dependencies are handled; null when blocked. */
   dependencies: Pick<MigrateResult, "aliased" | "passthrough" | "dropped" | "flagged"> | null;
   /** Why the migration would fail (verdict `blocked`). */
@@ -301,11 +308,12 @@ function tanstackStartFindings(r: MigrateResult): MigrateFinding[] {
   ];
 }
 
-/** What a Fresh or Preact app leaves to the user (the migration's findings). */
+/** What a Fresh, Preact or Lustre app leaves to the user (the migration's findings). */
 function freshFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
+  const infos = [r.fresh, r.preact, r.lustre];
   return {
-    wont: [...r.fresh?.wontMigrate ?? [], ...r.preact?.wontMigrate ?? []],
-    review: [...r.fresh?.review ?? [], ...r.preact?.review ?? []],
+    wont: infos.flatMap((i) => i?.wontMigrate ?? []),
+    review: infos.flatMap((i) => i?.review ?? []),
   };
 }
 
@@ -366,6 +374,54 @@ function capacitorFindings(r: MigrateResult): { wont: MigrateFinding[]; review: 
   return { wont: [], review: r.capacitor?.review ?? [] };
 }
 
+/**
+ * The lifecycle-script jail exceptions to review: each one written into deno.json (or a package.json
+ * project's `"deno"` object; it widens the jail for that package) or left for the user to add.
+ */
+function jailFindings(r: MigrateResult): MigrateFinding[] {
+  const j = r.jailScripts;
+  if (j?.action !== "written" && j?.action !== "manual") return [];
+  return j.missing.map((req) => ({
+    item: `lifecycle-script jail: ${req.entry.name}`,
+    reason:
+      (j.action === "written"
+        ? `exception ${JSON.stringify(req.exception)} written to ${j.home}`
+        : `add the exception ${JSON.stringify(req.exception)} to ${j.home} by hand`) +
+      `: ${req.entry.reason}`,
+  }));
+}
+
+/**
+ * The pnpm / Bun patches: each one carried into deno.json's `patchedDependencies` (or to add by
+ * hand), and each one the runtime can't apply.
+ */
+function patchFindings(r: MigrateResult): MigrateFinding[] {
+  const p = r.patches;
+  if (!p) return [];
+  return [
+    ...p.carried.map((c) => ({
+      item: `npm patch: ${c.key}`,
+      reason: `${c.from} copied to ${c.to}${
+        p.action === "manual" ? "; add it to deno.json's patchedDependencies by hand" : " and " +
+          "registered in deno.json's patchedDependencies (the runtime applies it on install)"
+      }`,
+    })),
+    ...p.review.map((c) => ({ item: `npm patch: ${c.key}`, reason: `${c.from}: ${c.reason}` })),
+  ];
+}
+
+/**
+ * `--denext-local-path`: each package the app maps (import map or package.json) at another major
+ * than the local checkout. The app's entry is kept; denext's modules then load the app's version.
+ */
+function importClashFindings(r: MigrateResult): MigrateFinding[] {
+  return (r.importClashes ?? []).map((c) => ({
+    item: `local denext import: ${c.name}`,
+    reason: `${describeClash(c)}; the app's entry is kept (denext's would shadow the app's ` +
+      "version), so denext's modules load the app's version: check they work with it",
+  }));
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
@@ -391,6 +447,9 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...expo.review,
       ...appIconFindings(r),
       ...cap.review,
+      ...jailFindings(r),
+      ...patchFindings(r),
+      ...importClashFindings(r),
     ],
   };
 }
@@ -445,6 +504,7 @@ export async function checkMigration(
         },
       }
       : {}),
+    ...(r.importClashes ? { importClashes: r.importClashes } : {}),
     dependencies: {
       aliased: r.aliased,
       passthrough: r.passthrough,

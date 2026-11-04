@@ -15,6 +15,7 @@ import {
 } from "../src/mcp/server.ts";
 import { activeTools, resolveToolNames, TOOL_GROUPS, TOOLS } from "../src/mcp/tools.ts";
 import { VERSION } from "../src/version.ts";
+import { publicGuide } from "../src/mcp/guide.ts";
 
 // ── dispatch: every method + error path ───────────────────────────────────────
 
@@ -58,6 +59,16 @@ Deno.test("dispatch: resources/read serves the AGENTS.md guide body", async () =
   assertEquals(doc.uri, "denext://guide");
   assertEquals(doc.mimeType, "text/markdown");
   assertStringIncludes(doc.text, "The 6 rules that make code denext");
+  // Verbatim AGENTS.md minus its repo-process tail, from the docs corpus: AGENTS.md itself is
+  // not published (deno.json `publish.exclude`), so the guide never reads it at run time.
+  const agents = await Deno.readTextFile(new URL("../AGENTS.md", import.meta.url));
+  assertEquals(doc.text, publicGuide(agents));
+  assert(!doc.text.includes("## Releasing:"), "the repo-process tail stays out");
+});
+
+Deno.test("AGENTS.md is not in the published package; the guide ships in the docs corpus", async () => {
+  const deno = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)));
+  assert((deno.publish.exclude as string[]).includes("AGENTS.md"));
 });
 
 Deno.test("dispatch: resources/read of an unknown URI is an invalid-params error", async () => {

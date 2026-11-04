@@ -15,6 +15,7 @@ import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import {
   denoLoaderPlugins,
+  packageJsonImports,
   windowsWasmPath,
   withLoaderMap,
   withWindowsWasmPaths,
@@ -202,6 +203,160 @@ for (const loader of ["portable", "native"] as const) {
     }
   });
 }
+
+for (const loader of ["portable", "native"] as const) {
+  Deno.test(`denoLoaderPlugins (${loader}): an app a glob member names imports its siblings by name`, async () => {
+    // `"workspace": ["./apps/*", "./packages/*"]`: the loader's discovery can't expand a glob, so
+    // the app used to build on its own config alone and `@x/lib` was "not in import map".
+    const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-loader-glob-" }));
+    try {
+      await Deno.mkdir(join(root, "packages", "lib"), { recursive: true });
+      await Deno.writeTextFile(
+        join(root, "deno.json"),
+        JSON.stringify({
+          workspace: ["./apps/*", "./packages/*"],
+          imports: { "#root": "./root.ts" },
+        }),
+      );
+      await Deno.writeTextFile(join(root, "root.ts"), 'export const r = "ROOT_IMPORT";\n');
+      await Deno.writeTextFile(
+        join(root, "packages", "lib", "deno.json"),
+        JSON.stringify({ name: "@x/lib", version: "0.0.0", exports: "./mod.ts" }),
+      );
+      await Deno.writeTextFile(
+        join(root, "packages", "lib", "mod.ts"),
+        'export const v = "GLOB_SIBLING";\n',
+      );
+      const app = join(root, "apps", "web");
+      await Deno.mkdir(app, { recursive: true });
+      await Deno.writeTextFile(
+        join(app, "deno.json"),
+        JSON.stringify({ imports: { "#greet": "./greet.ts" } }),
+      );
+      await Deno.writeTextFile(join(app, "greet.ts"), 'export const g = "OWN_IMPORT";\n');
+      await Deno.writeTextFile(
+        join(app, "main.ts"),
+        'import { v } from "@x/lib";\nimport { r } from "#root";\nimport { g } from "#greet";\n' +
+          "console.log(v, r, g);\n",
+      );
+      const result = await esbuild.build({
+        entryPoints: [join(app, "main.ts")],
+        absWorkingDir: app,
+        bundle: true,
+        write: false,
+        format: "esm",
+        logLevel: "silent",
+        plugins: denoLoaderPlugins({ configPath: join(app, "deno.json"), loader }),
+      });
+      const text = result.outputFiles[0].text;
+      for (const marker of ["GLOB_SIBLING", "ROOT_IMPORT", "OWN_IMPORT"]) {
+        assert(text.includes(marker), marker);
+      }
+      await esbuild.stop();
+      dispatchEvent(new Event("unload"));
+      assertEquals(
+        [...Deno.readDirSync(app)].map((e) => e.name).sort(),
+        ["deno.json", "greet.ts", "main.ts"],
+      );
+    } finally {
+      await esbuild.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
+for (const loader of ["portable", "native"] as const) {
+  Deno.test(`denoLoaderPlugins (${loader}): a glob member's package.json dependency resolves from the root's node_modules`, async () => {
+    // A root deno.json `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, `ms` hoisted
+    // into the root's node_modules, apps/web/package.json depending on it: Deno runs the app, but
+    // the loader read package.json dependencies only beside a config named deno.json (not the
+    // stand-in) and looked for packages only in the app's own node_modules, so a bare `ms` was
+    // "not in import map".
+    const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-loader-hoist-" }));
+    try {
+      await Deno.writeTextFile(
+        join(root, "deno.json"),
+        JSON.stringify({ workspace: ["./apps/*"], nodeModulesDir: "manual" }),
+      );
+      await Deno.writeTextFile(
+        join(root, "package.json"),
+        JSON.stringify({ name: "root", private: true, workspaces: ["apps/*"] }),
+      );
+      const pkg = join(root, "node_modules", "ms");
+      await Deno.mkdir(pkg, { recursive: true });
+      await Deno.writeTextFile(
+        join(pkg, "package.json"),
+        JSON.stringify({ name: "ms", version: "2.1.3", main: "index.js" }),
+      );
+      await Deno.writeTextFile(join(pkg, "index.js"), "module.exports = () => 'HOISTED_MS';\n");
+      const app = join(root, "apps", "web");
+      await Deno.mkdir(app, { recursive: true });
+      await Deno.writeTextFile(join(app, "deno.json"), JSON.stringify({ imports: {} }));
+      await Deno.writeTextFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "web", dependencies: { ms: "^2.1.3" } }),
+      );
+      await Deno.writeTextFile(join(app, "main.ts"), "import ms from 'ms';\nconsole.log(ms());\n");
+      const result = await esbuild.build({
+        entryPoints: [join(app, "main.ts")],
+        absWorkingDir: app,
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        logLevel: "silent",
+        plugins: denoLoaderPlugins({ configPath: join(app, "deno.json"), loader }),
+      });
+      assert(result.outputFiles[0].text.includes("HOISTED_MS"), "ms was bundled");
+      await esbuild.stop();
+      dispatchEvent(new Event("unload"));
+      assertEquals(
+        [...Deno.readDirSync(app)].map((e) => e.name).sort(),
+        ["deno.json", "main.ts", "package.json"],
+      );
+    } finally {
+      await esbuild.stop();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
+Deno.test("packageJsonImports: registry dependencies as npm: imports; other protocols left alone", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-loader-pkg-" });
+  try {
+    assertEquals(packageJsonImports(dir), {}, "no package.json");
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          ms: "^2.1.3",
+          "@scope/pkg": "1.0.0",
+          alias: "npm:real@^3",
+          any: "",
+          sibling: "workspace:*",
+          local: "file:../x",
+          gh: "user/repo",
+          git: "git+https://example.com/x.git",
+        },
+        devDependencies: { ms: "9.9.9", dev: "latest" },
+      }),
+    );
+    assertEquals(packageJsonImports(dir), {
+      ms: "npm:ms@^2.1.3",
+      "ms/": "npm:/ms@^2.1.3/",
+      "@scope/pkg": "npm:@scope/pkg@1.0.0",
+      "@scope/pkg/": "npm:/@scope/pkg@1.0.0/",
+      alias: "npm:real@^3",
+      "alias/": "npm:/real@^3/",
+      any: "npm:any@*",
+      "any/": "npm:/any@*/",
+      dev: "npm:dev@latest",
+      "dev/": "npm:/dev@latest/",
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("denoLoaderPlugins: a workspace member builds through its workspace, no stand-in", async () => {
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-loader-member-" }));

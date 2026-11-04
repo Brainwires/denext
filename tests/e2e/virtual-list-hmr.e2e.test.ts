@@ -246,13 +246,11 @@ for (const sc of SCENARIOS) {
   if (ONLY !== undefined && sc.name !== ONLY) continue;
   const name = `e2e: Fast Refresh keeps a VirtualList's scroll and row state — ${sc.name}`;
   if (sc.isolate && ONLY === undefined) {
-    Deno.test({ name, sanitizeOps: false, sanitizeResources: false }, () => runIsolated(sc));
+    Deno.test({ name }, () => runIsolated(sc));
     continue;
   }
   Deno.test({
     name,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async (t) => {
     const dir = await Deno.makeTempDir({ prefix: "denext_vl_hmr_" });
     const file = await sc.setup(dir);

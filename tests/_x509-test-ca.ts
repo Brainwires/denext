@@ -1,7 +1,8 @@
 // Test helpers for X.509 path validation and the FIDO Metadata Service checks: a throwaway
 // certificate authority built at test time (ECDSA P-256 keys from Web Crypto, certificates
-// encoded here in DER and really signed), and a signed metadata BLOB (an ES256 JWS whose `x5c`
-// chain is the caller's).
+// encoded here in DER and really signed), a signed metadata BLOB (an ES256 JWS whose `x5c`
+// chain is the caller's), CRLs and OCSP responses (RFC 6960) signed by the CA or a delegated
+// responder.
 
 import { der, derOid } from "./_saml-helpers.ts";
 
@@ -32,7 +33,7 @@ function derUint(bytes: Uint8Array): Uint8Array {
 }
 
 /** An ECDSA P-256 / SHA-256 signature, DER-encoded as X.509 carries it. */
-async function signDer(key: CryptoKey, data: Uint8Array): Promise<Uint8Array> {
+export async function signDer(key: CryptoKey, data: Uint8Array): Promise<Uint8Array> {
   const raw = new Uint8Array(
     await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, data as BufferSource),
   );
@@ -81,6 +82,12 @@ export interface CertOptions {
   crlUrls?: string[];
   /** The serial number (1–127; default: the next one). */
   serial?: number;
+  /** OCSP responder URIs (Authority Information Access, `id-ad-ocsp`). */
+  ocspUrls?: string[];
+  /** Extended key usage `id-kp-OCSPSigning` (a delegated OCSP responder). */
+  ocspSigning?: boolean;
+  /** The whole subject Name, DER (default: one CN, {@linkcode CertOptions.subject}). */
+  subjectName?: Uint8Array;
 }
 
 /** The optional extensions of {@linkcode makeCert}. */
@@ -100,10 +107,27 @@ function extensionsFor(o: CertOptions): Uint8Array[] {
     out.push(extension("2.5.29.17", false, der(0x30, ...o.dns.map((d) => der(0x82, utf8(d))))));
   }
   if (o.unknownCritical) out.push(extension(o.unknownCritical, true, der(0x05, [])));
+  out.push(...ocspExtensions(o));
   if (o.crlUrls) {
     // SEQUENCE OF DistributionPoint { [0] distributionPoint { [0] fullName { [6] URI } } }
     const points = o.crlUrls.map((u) => der(0x30, der(0xa0, der(0xa0, der(0x86, utf8(u))))));
     out.push(extension("2.5.29.31", false, der(0x30, ...points)));
+  }
+  return out;
+}
+
+/** The OCSP extensions of {@linkcode makeCert}: AIA responders, OCSPSigning. */
+function ocspExtensions(o: CertOptions): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  if (o.ocspUrls) {
+    // SEQUENCE OF AccessDescription { id-ad-ocsp, [6] URI }
+    const access = o.ocspUrls.map((u) =>
+      der(0x30, derOid("1.3.6.1.5.5.7.48.1"), der(0x86, utf8(u)))
+    );
+    out.push(extension("1.3.6.1.5.5.7.1.1", false, der(0x30, ...access)));
+  }
+  if (o.ocspSigning) {
+    out.push(extension("2.5.29.37", false, der(0x30, derOid("1.3.6.1.5.5.7.3.9"))));
   }
   return out;
 }
@@ -140,7 +164,7 @@ export async function makeCert(o: CertOptions): Promise<Uint8Array> {
       utcTime(o.notBefore ?? now - 3650 * 86_400_000),
       utcTime(o.notAfter ?? now + 3650 * 86_400_000),
     ),
-    nameOf(o.subject),
+    o.subjectName ?? nameOf(o.subject),
     o.key.spki,
     ...(extensions.length ? [der(0xa3, der(0x30, ...extensions))] : []),
   );
@@ -241,6 +265,27 @@ export interface CrlOptions {
   nextUpdate?: number | null;
   /** A critical CRL extension OID this reader doesn't know (a delta CRL indicator, say). */
   unknownCritical?: string;
+  /**
+   * A critical issuingDistributionPoint (RFC 5280 §5.2.5): one scoping the CRL to some reasons
+   * (`onlySomeReasons`), an indirect CRL, or one that only says it covers end-entity
+   * certificates (`userCertsOnly`, which doesn't partition the revocations a reader needs).
+   */
+  issuingDistributionPoint?: "onlySomeReasons" | "indirect" | "userCertsOnly";
+}
+
+/** The DER of an issuingDistributionPoint extension value of `kind`. */
+function issuingDistributionPointOf(kind: NonNullable<CrlOptions["issuingDistributionPoint"]>) {
+  switch (kind) {
+    case "onlySomeReasons":
+      // [3] IMPLICIT ReasonFlags BIT STRING: keyCompromise only.
+      return der(0x30, der(0x83, [0x06, 0x40]));
+    case "indirect":
+      // [4] IMPLICIT BOOLEAN TRUE.
+      return der(0x30, der(0x84, [0xff]));
+    case "userCertsOnly":
+      // [1] IMPLICIT BOOLEAN TRUE (onlyContainsUserCerts).
+      return der(0x30, der(0x81, [0xff]));
+  }
 }
 
 /**
@@ -261,10 +306,133 @@ export async function makeCrl(o: CrlOptions): Promise<Uint8Array> {
     utcTime(o.thisUpdate ?? TEST_NOW - 86_400_000),
     ...(o.nextUpdate === null ? [] : [utcTime(o.nextUpdate ?? TEST_NOW + 7 * 86_400_000)]),
     ...(entries.length ? [der(0x30, ...entries)] : []),
-    ...(o.unknownCritical
-      ? [der(0xa0, der(0x30, extension(o.unknownCritical, true, der(0x02, [1]))))]
+    ...(o.unknownCritical || o.issuingDistributionPoint
+      ? [der(
+        0xa0,
+        der(
+          0x30,
+          ...(o.unknownCritical ? [extension(o.unknownCritical, true, der(0x02, [1]))] : []),
+          ...(o.issuingDistributionPoint
+            ? [extension("2.5.29.28", true, issuingDistributionPointOf(o.issuingDistributionPoint))]
+            : []),
+        ),
+      )]
       : []),
   );
   const signature = await signDer(o.issuer.key.privateKey, tbs);
   return der(0x30, tbs, algId, der(0x03, [0, ...signature]));
+}
+
+/** `YYYYMMDDHHMMSSZ` GeneralizedTime of an epoch-ms time. */
+function generalizedTime(ms: number): Uint8Array {
+  const iso = new Date(ms).toISOString();
+  return der(0x18, utf8(iso.slice(0, 19).replace(/[-:T]/g, "") + "Z"));
+}
+
+/** One answer of a test OCSP response. */
+export interface OcspEntry {
+  /** The serial number asked about. */
+  serial: number;
+  /** Its status. */
+  status: "good" | "revoked" | "unknown";
+  /** `thisUpdate` (default: an hour before TEST_NOW). */
+  thisUpdate?: number;
+  /** `nextUpdate` (default: a day after TEST_NOW); `null` leaves it out. */
+  nextUpdate?: number | null;
+  /** The `CertID` hash (default SHA-1). */
+  hash?: "SHA-1" | "SHA-256";
+  /** The issuer the `CertID` names (default: the response's `issuer`). */
+  issuer?: { cn: string; key: TestKeyPair };
+}
+
+/** What a test OCSP response says. */
+export interface OcspResponseOptions {
+  /** The CA whose certificates are answered for. */
+  issuer: { cn: string; key: TestKeyPair };
+  /** The key that signs it (default: the issuer's). */
+  signer?: TestKeyPair;
+  /** Certificates to include (a delegated responder's). */
+  certs?: Uint8Array[];
+  /** The answers. */
+  entries: OcspEntry[];
+  /** A non-zero `responseStatus` (e.g. 3, tryLater) sends no response bytes. */
+  responseStatus?: number;
+}
+
+const digest = async (hash: string, data: Uint8Array) =>
+  new Uint8Array(await crypto.subtle.digest(hash, data as BufferSource));
+
+/** A `CertID` for `serial` issued by `issuer`. */
+async function certId(
+  issuer: { cn: string; key: TestKeyPair },
+  serial: number,
+  hash: "SHA-1" | "SHA-256",
+): Promise<Uint8Array> {
+  const oid = hash === "SHA-1" ? "1.3.14.3.2.26" : "2.16.840.1.101.3.4.2.1";
+  // A P-256 SPKI ends with its 65-byte uncompressed point: the subjectPublicKey's bits.
+  const key = issuer.key.spki.subarray(issuer.key.spki.length - 65);
+  return der(
+    0x30,
+    der(0x30, derOid(oid), der(0x05)),
+    der(0x04, await digest(hash, nameOf(issuer.cn))),
+    der(0x04, await digest(hash, key)),
+    der(0x02, [serial]),
+  );
+}
+
+/**
+ * A DER `OCSPResponse` (RFC 6960 §4.2) carrying a `BasicOCSPResponse`, really signed.
+ *
+ * @param o What it says.
+ * @returns The DER.
+ */
+export async function makeOcspResponse(o: OcspResponseOptions): Promise<Uint8Array> {
+  if (o.responseStatus) return der(0x30, der(0x0a, [o.responseStatus]));
+  const singles: Uint8Array[] = [];
+  for (const e of o.entries) {
+    const status = e.status === "good"
+      ? der(0x80)
+      : e.status === "revoked"
+      ? der(0xa1, generalizedTime(TEST_NOW - 86_400_000))
+      : der(0x82);
+    const next = e.nextUpdate === null ? [] : [
+      der(0xa0, generalizedTime(e.nextUpdate ?? TEST_NOW + 86_400_000)),
+    ];
+    singles.push(der(
+      0x30,
+      await certId(e.issuer ?? o.issuer, e.serial, e.hash ?? "SHA-1"),
+      status,
+      generalizedTime(e.thisUpdate ?? TEST_NOW - 3_600_000),
+      ...next,
+    ));
+  }
+  const signer = o.signer ?? o.issuer.key;
+  const tbs = der(
+    0x30,
+    der(0xa2, der(0x04, await digest("SHA-1", signer.spki.subarray(signer.spki.length - 65)))),
+    generalizedTime(TEST_NOW - 3_600_000),
+    der(0x30, ...singles),
+  );
+  const algId = der(0x30, derOid("1.2.840.10045.4.3.2"));
+  const signature = await signDer(signer.privateKey, tbs);
+  const basic = der(
+    0x30,
+    tbs,
+    algId,
+    der(0x03, [0, ...signature]),
+    ...(o.certs?.length ? [der(0xa0, der(0x30, ...o.certs))] : []),
+  );
+  return der(
+    0x30,
+    der(0x0a, [0]),
+    der(0xa0, der(0x30, derOid("1.3.6.1.5.5.7.48.1.1"), der(0x04, basic))),
+  );
+}
+
+/** A Name of the given attributes (`[oid, value]`, one RDN each, UTF8String). */
+export function nameWith(attributes: [string, string][]): Uint8Array {
+  return der(
+    0x30,
+    ...attributes.map(([oid, v]) => der(0x31, der(0x30, derOid(oid), der(0x0c, utf8(v))))),
+  );
 }

@@ -14,14 +14,8 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useReducer,
-  useRef,
-  useState,
-} from "../runtime/hooks.ts";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useReducer } from "../runtime/hooks/use-reducer.ts";
 import { Activity } from "../runtime/react-extras.ts";
 import { type BackProgressEvent, onBackProgress, useBackHandler } from "../mobile/back-handler.ts";
 import { nativePlatform } from "../mobile/bridge.ts";
@@ -318,6 +312,8 @@ interface GestureRun {
   width: number;
   /** Set once the pop has been handed to the owner (the next change must not animate). */
   committed: boolean;
+  /** The fallback that restores the screens if a committed pop never lands. */
+  fallback?: ReturnType<typeof setTimeout>;
 }
 
 /** The view's state that lives across renders outside React state. */
@@ -495,7 +491,9 @@ function commitRender(rt: StackRt, plan: RenderPlan, revealed: string | null): v
   if (!plan.change) return;
   const g = rt.gesture;
   if (g?.committed) {
-    // A gesture pop already moved the screens: clear its inline styles now the pop landed.
+    // A gesture pop already moved the screens: clear its inline styles now the pop landed (and
+    // the fallback for a pop that never would).
+    clearTimeout(g.fallback);
     rt.gesture = null;
     applyGestureStyle(rt.sections.get(g.belowId), null);
     if (revealed) rt.setRevealed(null);
@@ -538,6 +536,7 @@ function beginGesture(
 
 /** Put the gesture's screens back and hide the one below. */
 function endGesture(rt: StackRt, g: GestureRun): void {
+  clearTimeout(g.fallback);
   if (rt.gesture === g) rt.gesture = null;
   applyGestureStyle(rt.sections.get(g.topId), null);
   applyGestureStyle(rt.sections.get(g.belowId), null);
@@ -548,7 +547,7 @@ function endGesture(rt: StackRt, g: GestureRun): void {
 function commitGesturePop(rt: StackRt, g: GestureRun, cleanup?: () => void): void {
   g.committed = true;
   rt.props.onPop(rt.props.entries.length - 2, { animated: false });
-  setTimeout(() => {
+  g.fallback = setTimeout(() => {
     if (rt.gesture !== g) return;
     cleanup?.();
     endGesture(rt, g);
@@ -956,7 +955,11 @@ export function StackView(props: StackViewProps): VNode {
   useEffect(() => {
     const onHandle = rt.props.onHandle;
     onHandle?.(ownerHandle(rt));
-    return () => onHandle?.(null);
+    return () => {
+      onHandle?.(null);
+      // Unmounted mid-gesture (a pop handed over that never landed): no fallback runs later.
+      clearTimeout(rt.gesture?.fallback);
+    };
   }, []);
   useStackAnnouncer(rt, props);
   useStackFocus(rt, props);

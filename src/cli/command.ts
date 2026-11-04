@@ -130,7 +130,8 @@ export interface CommandLocks {
   readonly projectDir: string;
   /**
    * The build directory (`.denext/`): `exclusive` for a verb that writes it (`build`,
-   * `export`), `shared` for one that only reads it (`doctor`); omitted, it is not locked.
+   * `export`), `shared` for one that only reads it (`doctor`, unless its probe may run plugin prepare
+   * steps); omitted, it is not locked.
    */
   readonly buildDir?: "shared" | "exclusive";
   /** Output directories the verb writes (locked exclusive): `out`, `coverage`. */
@@ -177,13 +178,22 @@ export interface CommandSpec {
    */
   readonly moduleDir?: (ctx: CommandContext) => string;
   /**
+   * Whether this invocation of a {@linkcode loadsModules} verb loads no user modules (an action
+   * that only inspects the project), so it runs without `.env` loading and the re-execs, which
+   * import the project's config.
+   */
+  readonly inspectsOnly?: (ctx: CommandContext) => boolean;
+  /**
    * The project directories this invocation writes or reads, locked Cargo-style for the whole
    * of {@linkcode run} (OS file locks in `.denext/`; a second invocation prints `Blocking
    * waiting for file lock on build directory .denext` and waits). Return `undefined` for an
    * invocation that touches no build output. Taken after the re-exec gate, in the process that
-   * runs the command.
+   * runs the command. It may resolve asynchronously (a verb whose lock mode depends on the
+   * project, such as `doctor`).
    */
-  readonly locks?: (ctx: CommandContext) => CommandLocks | undefined;
+  readonly locks?: (
+    ctx: CommandContext,
+  ) => CommandLocks | undefined | Promise<CommandLocks | undefined>;
   /**
    * When true, unrecognized flags are collected into {@linkcode CommandContext.rest}
    * instead of erroring — for verbs that forward to a `deno` subcommand.
@@ -249,6 +259,8 @@ export type ParseOutcome =
      * hand the invocation to Deno (`denext compile …`, `denext main.ts`) before reporting it.
      */
     readonly unknownVerb?: { readonly name: string; readonly index: number };
+    /** A further line of advice, printed under the suggestion. */
+    readonly hint?: string;
   };
 
 /** Coerce a raw string to a flag's declared type, or throw a usage error. */

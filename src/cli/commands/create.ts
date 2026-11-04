@@ -12,8 +12,16 @@ import {
   type ScaffoldTemplate,
 } from "../../build/scaffold.ts";
 import { pinEligible } from "../../build/eligible-pins.ts";
+import {
+  MONOREPO_APP_DIR,
+  MONOREPO_CONFIGS,
+  monorepoConfigText,
+  scaffoldMonorepo,
+} from "../../build/scaffold-monorepo.ts";
 import { applyUpgrade } from "../../build/upgrade.ts";
 import { multiSelect } from "../../build/multi-select.ts";
+import { applyJailExceptions } from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** One scaffold-time feature toggle: the option it sets, its flag, and its label. */
 export interface ScaffoldFeature {
@@ -69,30 +77,10 @@ export const FEATURES: readonly ScaffoldFeature[] = [
     label: "denext MCP server for coding agents (Claude Code, VS Code, Cursor)",
     defaultOn: true,
   },
-];
-
-const SCAFFOLD_FLAGS = [
-  ...FEATURES.map((f) => ({
-    name: f.flag,
-    type: "boolean" as const,
-    help: f.label,
-  })),
   {
-    name: "template",
-    type: "string" as const,
-    valueName: "<name>",
-    help: `Starter template (${SCAFFOLD_TEMPLATES.join(" | ")}; default: default)`,
-  },
-  {
-    name: "no-vscode",
-    type: "boolean" as const,
-    help: "Don't write .vscode/settings.json + extensions.json (Deno LSP)",
-  },
-  {
-    name: "yes",
-    alias: "y",
-    type: "boolean" as const,
-    help: "Skip prompts, use flags/defaults",
+    key: "monorepo",
+    flag: "monorepo",
+    label: "Monorepo: a Deno workspace with apps/web + shared packages/ui and packages/shared",
   },
 ];
 
@@ -126,23 +114,32 @@ async function runCreate(
     vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
   };
-  const { written, notes: held } = await scaffoldEligible(options, mode);
+  const monorepo = monorepoMode(on("monorepo"), mode);
+  const { written, notes: held } = await scaffoldEligible(options, mode, monorepo);
   for (const p of written) console.log(`   + ${p}`);
   for (const note of held) console.log(`\n  ${note}`);
+  // `init` scaffolds next to an existing package.json: its dependencies may need exceptions.
+  const [jail, ...jailMore] = (await applyJailExceptions(dir)).lines;
+  if (jail) console.log(`\n  ${[jail, ...jailMore.map((l) => `    ${l}`)].join("\n")}`);
   const cd = mode === "init" ? "" : `    cd ${target}\n`;
-  const notes = featureNotes(on);
-  if (template === "lustre") {
-    notes.push(
-      "  The Lustre template compiles gleam/ with denext's pinned Gleam: the first dev/build\n" +
-        "  downloads the compiler, then Lustre from Hex.",
-    );
-  }
+  const notes = [...featureNotes(on), ...(template === "lustre" ? [LUSTRE_NOTE] : [])];
   console.log(
     `\n  Done. Next steps:\n${cd}    denext task dev\n` +
       `\n  (\`deno task dev\` does the same with Deno installed. The first run downloads the framework\n` +
       `  from JSR — a few seconds; later runs are cached.)\n` +
       (notes.length ? "\n" + notes.join("\n") + "\n" : ""),
   );
+}
+
+/** Whether to scaffold a monorepo: `--monorepo` on `create`; `init` refuses it (exit 1). */
+function monorepoMode(selected: boolean, mode: "create" | "init"): boolean {
+  if (selected && mode === "init") {
+    console.error(
+      "denext init: --monorepo scaffolds a new directory; use `denext create <dir> --monorepo`.",
+    );
+    Deno.exit(1);
+  }
+  return selected;
 }
 
 /**
@@ -153,16 +150,21 @@ async function runCreate(
 async function scaffoldEligible(
   options: ScaffoldOptions,
   mode: "create" | "init",
+  monorepo: boolean,
 ): Promise<{ written: string[]; notes: readonly string[] }> {
-  const eligible = await pinEligible(denoJson(options), options.dir);
+  // A monorepo's configs (root, app, packages) are planned together: their pins move as one.
+  const text = monorepo ? monorepoConfigText(options) : denoJson(options);
+  const eligible = await pinEligible(text, options.dir);
   if (!eligible.ok) {
     console.error(`denext ${mode}: ${eligible.error}`);
     Deno.exit(1);
   }
-  console.log(`\n  Scaffolding a denext app in ${options.dir}\n`);
-  const written = await scaffoldProject(options);
-  if (eligible.steps.length && written.includes("deno.json")) {
-    const path = join(options.dir, "deno.json");
+  console.log(`\n  Scaffolding a denext ${monorepo ? "monorepo" : "app"} in ${options.dir}\n`);
+  const written = monorepo ? await scaffoldMonorepo(options) : await scaffoldProject(options);
+  const configs = monorepo ? MONOREPO_CONFIGS : ["deno.json"];
+  for (const config of eligible.steps.length ? configs : []) {
+    if (!written.includes(config)) continue;
+    const path = join(options.dir, config);
     await Deno.writeTextFile(path, applyUpgrade(await Deno.readTextFile(path), eligible.steps));
   }
   return { written, notes: eligible.notes };
@@ -174,7 +176,7 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--fastlane] [--compatibility] [--fallow] [--mcp] [--no-vscode]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--fastlane] [--compatibility] [--fallow] [--mcp] [--monorepo] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);
@@ -216,47 +218,56 @@ function selectFeatures(ctx: CommandContext): Set<string> {
 
 /** Post-scaffold notes for the selected features. */
 function featureNotes(on: (key: string) => boolean): string[] {
-  return [
-    on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
-    on("desktop") ? "  Desktop: `denext task desktop`." : "",
-    on("capacitor") || on("fastlane")
-      ? "  Mobile: `denext install`, then `denext task mobile:sync` (needs Xcode/Android Studio).\n" +
-        "  Over-the-air UI updates: after `cap add ios|android`, `denext task mobile:add-ota`."
-      : "",
-    on("fastlane")
-      ? "  fastlane: `denext fastlane ios|android build|beta|release` (fastlane/Fastfile). The first\n" +
-        "  run installs denext's pinned fastlane (macOS / Linux, needs a C compiler; not Windows)."
-      : "",
-    on("compatibility")
-      ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
-      : "",
-    on("fallow")
-      ? "  fallow: `denext task fallow:audit` runs the gate; `git init`, then `denext task hooks:install`\n" +
-        "  runs it before every commit (AGENTS.md tells coding agents the same)."
-      : "",
-    on("mcp")
-      ? "  MCP: .mcp.json, .vscode/mcp.json and .cursor/mcp.json run `deno task mcp` (the pinned\n" +
-        "  denext); approve the `denext` server when your agent asks."
-      : "",
-  ].filter(Boolean);
+  return FEATURE_NOTES.filter(([keys]) => keys.some(on)).map(([, note]) => note);
 }
 
+/** Each post-scaffold note, with the features (any one of them) that print it. */
+const FEATURE_NOTES: readonly (readonly [readonly string[], string])[] = [
+  [["tailwind"], "  Tailwind is compiled automatically by denext dev/build."],
+  [["desktop"], "  Desktop: `denext task desktop`."],
+  [
+    ["capacitor", "fastlane"],
+    "  Mobile: `denext install`, then `denext task mobile:sync` (needs Xcode/Android Studio).\n" +
+    "  Over-the-air UI updates: after `cap add ios|android`, `denext task mobile:add-ota`.",
+  ],
+  [
+    ["fastlane"],
+    "  fastlane: `denext fastlane ios|android build|beta|release` (fastlane/Fastfile). The first\n" +
+    "  run installs denext's pinned fastlane (macOS / Linux, needs a C compiler; not Windows).",
+  ],
+  [
+    ["compatibility"],
+    '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.',
+  ],
+  [
+    ["fallow"],
+    "  fallow: `denext task fallow:audit` runs the gate; `git init`, then `denext task hooks:install`\n" +
+    "  runs it before every commit (AGENTS.md tells coding agents the same).",
+  ],
+  [
+    ["mcp"],
+    "  MCP: .mcp.json, .vscode/mcp.json and .cursor/mcp.json run `deno task mcp` (the pinned\n" +
+    "  denext); approve the `denext` server when your agent asks.",
+  ],
+  [
+    ["monorepo"],
+    `  Monorepo: the app is ${MONOREPO_APP_DIR} (the root's dev/build/start tasks delegate to it);\n` +
+    "  packages/ui and packages/shared are imported by name. `denext task check` runs fmt, lint\n" +
+    "  and every member's tests.",
+  ],
+];
+
+/** The Lustre template's note. */
+const LUSTRE_NOTE =
+  "  The Lustre template compiles gleam/ with denext's pinned Gleam: the first dev/build\n" +
+  "  downloads the compiler, then Lustre from Hex.";
+
 export const createCommand: CommandSpec = {
-  name: "create",
-  summary: "Scaffold a new app",
-  usage: "Scaffolds a denext app. Deno's `deno create` (a project from a template):\n" +
-    "`denext deno create`.",
-  flags: SCAFFOLD_FLAGS,
-  positionals: [{ name: "dir", help: "New app directory", required: true }],
+  ...commandMeta("create"),
   run: (ctx) => runCreate(ctx, "create"),
 };
 
 export const initCommand: CommandSpec = {
-  name: "init",
-  summary: "Scaffold into the current directory",
-  usage: "Scaffolds a denext app into an existing directory. Deno's `deno init`:\n" +
-    "`denext deno init`.",
-  flags: SCAFFOLD_FLAGS,
-  positionals: [{ name: "dir", help: "Existing directory (default: .)" }],
+  ...commandMeta("init"),
   run: (ctx) => runCreate(ctx, "init"),
 };

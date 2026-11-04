@@ -37,8 +37,11 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * Generation 5: the bridge forwards the OS's low-memory warning to the page
  * (`DenextMemoryWarning`, see bridge-memory-warning-native-template.ts: React Native mode's
  * `AppState` `memoryWarning`); the bump keeps an older denext from rewriting it away.
+ * Generation 6: the frame guard also refuses a main frame on another origin than the app's
+ * (`plugins.DenextBridge.allowedOrigins` / `frameGuard: false` in the Capacitor config); the bump
+ * keeps an older denext from rewriting that check away.
  */
-export const AUTH_SESSION_TEMPLATE_VERSION = 5;
+export const AUTH_SESSION_TEMPLATE_VERSION = 6;
 
 /**
  * A template as the installer writes it: a first line

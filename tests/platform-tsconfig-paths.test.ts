@@ -8,9 +8,9 @@ import { join, toFileUrl } from "@std/path";
 import { readTsPathAliases, resolveTsPaths, tsPathAliases } from "../src/build/tsconfig-paths.ts";
 import { readImportAliases, resolveImportAlias } from "../src/build/platform-extensions.ts";
 import { readLocalAliases } from "../src/build/bundle.ts";
-import { staticExport } from "../src/build/export.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
 import { platformResolution } from "../src/build/platform-extensions.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -140,12 +140,10 @@ async function spaApp(): Promise<string> {
 for (const [platform, want] of [["ios", "IOS_LABEL"], ["web", "WEB_LABEL"]] as const) {
   Deno.test({
     name: `SPA compat export --platform ${platform}: a tsconfig paths import bundles ${want}`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await spaApp();
     try {
-      const out = (await staticExport(dir, { platform })).outDir;
+      const out = (await exportInChild(dir, { platform })).outDir;
       const client = join(out, "_denext", "client");
       let js = "";
       for await (const e of Deno.readDir(client)) {

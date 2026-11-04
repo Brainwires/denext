@@ -15,14 +15,28 @@ import {
   bundleRoleLines,
   readClientChunks,
 } from "../../build/bundle-report.ts";
+import { frameworkRoot } from "../../build/bundle.ts";
+import { nativeAnalyzeMeta } from "../../build/sourcemap-attribution.ts";
+import { commandMeta } from "../command-meta.ts";
 
-/** Read the esbuild metafile `denext analyze --md` asked the build to emit, if any. */
-async function readAnalyzeMeta(outDir: string): Promise<BundleMetafile | undefined> {
+/**
+ * The per-module attribution `denext analyze --md` asked the build for: the esbuild metafile the
+ * compat/SPA bundles wrote, merged with what the native `deno bundle` runs recorded from their
+ * source maps (see sourcemap-attribution.ts). Undefined when neither has any.
+ */
+async function readAnalyzeMeta(
+  outDir: string,
+  projectDir: string,
+): Promise<BundleMetafile | undefined> {
+  let esbuild: BundleMetafile | undefined;
   try {
-    return JSON.parse(await Deno.readTextFile(join(outDir, "analyze-meta.json"))) as BundleMetafile;
+    esbuild = JSON.parse(await Deno.readTextFile(join(outDir, "analyze-meta.json")));
   } catch {
-    return undefined; // native `deno bundle` path emits none, or --md wasn't set
+    esbuild = undefined; // the native `deno bundle` path writes none
   }
+  const native = await nativeAnalyzeMeta(join(outDir, "client"), projectDir, frameworkRoot());
+  if (!esbuild || !native) return esbuild ?? native;
+  return { outputs: { ...native.outputs, ...esbuild.outputs } };
 }
 
 /**
@@ -52,18 +66,9 @@ async function buildForAnalyze(dir: string, md: boolean): Promise<string> {
 }
 
 export const analyzeCommand: CommandSpec = {
-  name: "analyze",
-  summary: "Build, then break down client bundle sizes by chunk",
-  loadsModules: true,
+  ...commandMeta("analyze"),
   // analyze runs a full build into `.denext/` (Cargo's `check` likewise locks the build dir).
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [{
-    name: "md",
-    type: "boolean",
-    help:
-      "Print a markdown bundle report (per-module breakdown on the esbuild path); pipe to a file",
-  }],
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const md = ctx.flags.md === true;
@@ -78,7 +83,7 @@ export const analyzeCommand: CommandSpec = {
     const outDir = await buildForAnalyze(dir, md);
     const chunks = await readClientChunks(join(outDir, "client"));
     if (md) {
-      console.log(bundleReportMarkdown(chunks, await readAnalyzeMeta(outDir)).join("\n"));
+      console.log(bundleReportMarkdown(chunks, await readAnalyzeMeta(outDir, dir)).join("\n"));
       return;
     }
     if (ctx.global.json) {

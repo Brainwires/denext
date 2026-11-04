@@ -18,6 +18,7 @@
     "denext/client": "../../../src/client/mod.ts",
     "denext/live": "../../../src/live.ts",
     "denext/mvu": "../../../src/mvu.ts",
+    "denext/compiler-runtime": "../../../src/runtime/compiler-runtime.ts",
     "react": "../../../src/compat/react.ts"
   }
 }

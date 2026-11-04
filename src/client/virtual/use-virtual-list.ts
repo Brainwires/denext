@@ -7,13 +7,8 @@
  * @module
  */
 
-import {
-  useEffect,
-  useImperativeHandle,
-  useLayoutEffect,
-  useReducer,
-  useRef,
-} from "../../runtime/hooks.ts";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from "../../runtime/hooks.ts";
+import { useReducer } from "../../runtime/hooks/use-reducer.ts";
 import { type LayoutMode, VirtualController } from "./controller.ts";
 import { px } from "./shared.ts";
 import type { UseVirtualListResult, VirtualItem, VirtualListOptions } from "./types.ts";

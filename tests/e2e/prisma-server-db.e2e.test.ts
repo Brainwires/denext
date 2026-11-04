@@ -1,6 +1,6 @@
 // Networked e2e for `denext migrate` on a Prisma app whose datasource is a database SERVER
-// (Postgres, CockroachDB, MySQL): migrate a Node-shaped Next + Prisma app (tests/fixtures/prisma-server-db),
-// run the `prisma:setup` task it writes (install → `prisma generate` → `prisma migrate deploy`
+// (Postgres, CockroachDB, MySQL): migrate a Node-shaped Next + Prisma 6 app (tests/fixtures/prisma-server-db)
+// to Prisma 7, run the `prisma:setup` task it writes (install → `prisma generate` → `prisma migrate deploy`
 // of a real SQL migration), drive the migrated client against the live database (CRUD over
 // JSON / Decimal / BigInt / Bytes / DateTime, relations, interactive + batch transactions,
 // P2002, raw queries), then build and serve the app: a Server Component page reads through
@@ -19,12 +19,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { startCliServer } from "./harness.ts";
+import { startCliServer, withEnv } from "./harness.ts";
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
 const CLI = join(REPO, "cli.ts");
 const FIXTURE = join(REPO, "tests/fixtures/prisma-server-db");
-const PRISMA = "npm:prisma@6.19.3";
+const PRISMA = "npm:prisma@7.10.1";
 
 const SETUP_TIMEOUT_MS = 300_000;
 const STEP_TIMEOUT_MS = 180_000;
@@ -54,8 +54,8 @@ async function run(
   }
 }
 
-/** Copy the fixture, set its provider and write the initial SQL migration Prisma generates. */
-async function prepareApp(provider: string, env: Record<string, string>): Promise<string> {
+/** Copy the fixture and set its provider. */
+async function prepareApp(provider: string): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: `denext-prisma-${provider}-` });
   await copy(FIXTURE, dir, { overwrite: true });
   const schemaPath = join(dir, "prisma/schema.prisma");
@@ -66,9 +66,17 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
     schema = schema.replaceAll("@default(autoincrement())", "@default(sequence())");
   }
   await Deno.writeTextFile(schemaPath, schema);
+  return dir;
+}
+
+/**
+ * Write the initial SQL migration Prisma generates and empty the database. Runs on the migrated
+ * app: Prisma 7 takes the datasource URL from the `prisma.config.ts` migrate wrote.
+ */
+async function writeInitialMigration(dir: string, provider: string, env: Record<string, string>) {
   const diff = await run(
     ["run", "-A", "--no-config", PRISMA, "migrate", "diff", "--from-empty"]
-      .concat(["--to-schema-datamodel", "prisma/schema.prisma", "--script"]),
+      .concat(["--to-schema", "prisma/schema.prisma", "--script"]),
     dir,
     env,
   );
@@ -86,14 +94,12 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
     "DROP TABLE IF EXISTS posts, users, _prisma_migrations;\n",
   );
   const reset = await run(
-    ["run", "-A", "--no-config", PRISMA, "db", "execute", "--file", "reset.sql"]
-      .concat(["--schema", "prisma/schema.prisma"]),
+    ["run", "-A", "--no-config", PRISMA, "db", "execute", "--file", "reset.sql"],
     dir,
     env,
   );
   assert(reset.ok, "resetting the database failed:\n" + reset.out);
   await Deno.remove(join(dir, "reset.sql"));
-  return dir;
 }
 
 for (
@@ -107,11 +113,9 @@ for (
   Deno.test({
     name: `e2e: a migrated Prisma app runs on ${provider} through ${adapter}`,
     ignore: !url,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async (t) => {
     const env = { DATABASE_URL: url!, PRISMA_PROVIDER: provider };
-    const dir = await prepareApp(provider, env);
+    const dir = await prepareApp(provider);
     try {
       await t.step("denext migrate wires the adapter", async () => {
         const migrated = await run(
@@ -123,6 +127,11 @@ for (
         const db = await Deno.readTextFile(join(dir, "lib/db.ts"));
         assertStringIncludes(db, `from "${adapter}"`);
         assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+        assertStringIncludes(
+          await Deno.readTextFile(join(dir, "prisma.config.ts")),
+          "datasource: { url: process.env.DATABASE_URL },",
+        );
+        await writeInitialMigration(dir, provider, env);
       });
 
       await t.step("prisma:setup installs, generates and runs `migrate deploy`", async () => {
@@ -141,24 +150,26 @@ for (
       await t.step("build, serve, read through a page and write through a route", async () => {
         const built = await run(["run", "-A", CLI, "build", "."], dir, env, SETUP_TIMEOUT_MS);
         assert(built.ok, "denext build failed:\n" + built.out);
-        Deno.env.set("DATABASE_URL", url!);
-        const server = await startCliServer(dir, READY_TIMEOUT_MS);
-        try {
-          const html = await (await fetch(server.origin + "/")).text();
-          assertStringIncludes(html, "Prisma on a database server");
-          const posted = await fetch(server.origin + "/api/posts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: "inserted-by-e2e" }),
-          });
-          assertEquals(posted.status, 201, await posted.text());
-          const listed = await (await fetch(server.origin + "/api/posts")).json();
-          assertEquals(listed, [{ title: "inserted-by-e2e", author: "Web" }]);
-          const after = await (await fetch(server.origin + "/")).text();
-          assertStringIncludes(after, "inserted-by-e2e");
-        } finally {
-          await server.close();
-        }
+        // The server child reads it; restored after, so it never reaches the e2e files after this.
+        await withEnv({ DATABASE_URL: url! }, async () => {
+          const server = await startCliServer(dir, READY_TIMEOUT_MS);
+          try {
+            const html = await (await fetch(server.origin + "/")).text();
+            assertStringIncludes(html, "Prisma on a database server");
+            const posted = await fetch(server.origin + "/api/posts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: "inserted-by-e2e" }),
+            });
+            assertEquals(posted.status, 201, await posted.text());
+            const listed = await (await fetch(server.origin + "/api/posts")).json();
+            assertEquals(listed, [{ title: "inserted-by-e2e", author: "Web" }]);
+            const after = await (await fetch(server.origin + "/")).text();
+            assertStringIncludes(after, "inserted-by-e2e");
+          } finally {
+            await server.close();
+          }
+        });
       });
     } finally {
       await Deno.remove(dir, { recursive: true }).catch(() => {});

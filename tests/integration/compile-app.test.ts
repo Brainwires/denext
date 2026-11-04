@@ -19,6 +19,8 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
+import { boundPort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -63,7 +65,12 @@ import postgres from "postgres";
 
 const url = Deno.env.get("DATABASE_URL");
 export default {
-  compile: { include: ["lib/motto.txt"], permissions: { write: ["app.db", ".storage"] } },
+  compile: {
+    include: ["lib/motto.txt"],
+    // On the toolchain the network grant is baked by direction: listen on the server's own hosts
+    // (any port: the binary binds the one the OS picks), connect anywhere.
+    permissions: { write: ["app.db", ".storage"], netListen: ["0.0.0.0", "127.0.0.1", "localhost"] },
+  },
   plugins: [
     backend(
       url
@@ -125,6 +132,15 @@ export function GET(): Response {
   }
 }
 `,
+    "app/api/listen/route.ts": `export function GET(): Response {
+  try {
+    Deno.listen({ hostname: "127.0.0.2", port: 0 }).close();
+    return Response.json({ listened: true });
+  } catch (err) {
+    return Response.json({ listened: false, error: (err as Error).name });
+  }
+}
+`,
     "app/api/backend/route.ts": `import { db, storage } from "@denext/backend/server";
 export async function GET(): Promise<Response> {
   if (Deno.env.get("DATABASE_URL")) {
@@ -138,10 +154,15 @@ export async function GET(): Promise<Response> {
 }
 `,
     "app/api/runtime/route.ts": `export function GET(): Response {
-  return Response.json({ sql: typeof (Deno as { SQL?: unknown }).SQL, deno: Deno.version.deno });
+  return Response.json({
+    sql: typeof (Deno as { SQL?: unknown }).SQL,
+    deno: Deno.version.deno,
+    denext: (Deno.build as { denext?: string }).denext,
+  });
 }
 `,
     "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
+  console.log("${SLOW_STARTED}");
   await new Promise((r) => setTimeout(r, 1500));
   return new Response("slow done");
 }
@@ -174,13 +195,8 @@ async function writeFixture(dir: string): Promise<void> {
   }
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
+/** What the fixture's slow route prints when its handler starts: a stop waits for it. */
+const SLOW_STARTED = "fixture: slow handler started";
 
 const dec = new TextDecoder();
 
@@ -191,15 +207,71 @@ async function run(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<{ code: number; out: string }> {
-  const r = await new Deno.Command(cmd, {
+  const r = await boundedOutput(cmd, {
     args,
     cwd,
     env: { NO_COLOR: "1", ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+    // A compile build on a loaded runner: a failure bound, not a latency claim.
+    timeoutMs: 900_000,
+  });
   return { code: r.code, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
+}
+
+/**
+ * npm packages that are build tooling (the CLI's bundler, CSS, MDX and router-codegen chains): a
+ * compiled server embeds none of them. Before the standalone entry was split from the build
+ * modules, a hello app's binary carried 47 MB of these.
+ */
+const BUILD_ONLY_NPM = [
+  "prettier",
+  "@babel",
+  "sass",
+  "zod",
+  "@tanstack",
+  "jiti",
+  "caniuse-lite",
+  "@mdx-js",
+  "esbuild",
+  "typescript",
+  "browserslist",
+  "unplugin",
+];
+
+/**
+ * The most the fixture's binary may embed (`deno compile`'s `Files:` total, the backend plugin and
+ * `npm:postgres` included): about 19 MB, where the CLI's build modules once added ~90 MB.
+ */
+const EMBEDDED_FILES_CEILING_MB = 26;
+
+/**
+ * Check `deno compile`'s listing of what it embedded (`out`): no build-only npm package, none of
+ * the build wasm (swc, lightningcss), and a bounded total.
+ */
+function assertSlimEmbed(out: string): void {
+  const lines = out.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.includes(".deno_compile_node_modules"));
+  const npm: string[] = [];
+  if (start >= 0) {
+    // A single package collapses onto the entry's own line (`…node_modules/localhost/postgres/…`).
+    const own = /\.deno_compile_node_modules[\\/]localhost[\\/](@?[\w.-]+)/.exec(lines[start]);
+    if (own) npm.push(own[1]);
+    for (const line of lines.slice(start + 1)) {
+      if (/^[├└]/.test(line) || line.trim() === "") break; // the next top-level entry
+      const name = /[─┬] (@?[\w.-]+)[/ ]/.exec(line)?.[1];
+      if (name) npm.push(name);
+    }
+  }
+  const embedded = BUILD_ONLY_NPM.filter((p) => npm.includes(p));
+  assertEquals(embedded, [], `build-only npm packages embedded:\n${out}`);
+  for (const wasm of ["denext_swc.wasm", "denext_lightningcss.wasm"]) {
+    assert(!out.includes(wasm), `${wasm} embedded:\n${out}`);
+  }
+  const files = /^Files: ([\d.]+)(KB|MB|GB)/m.exec(out);
+  assert(files, `no embedded-files total in:\n${out}`);
+  const mb = Number(files[1]) * ({ KB: 1 / 1024, MB: 1, GB: 1024 } as const)[
+    files[2] as "KB" | "MB" | "GB"
+  ];
+  assert(mb < EMBEDDED_FILES_CEILING_MB, `${mb} MB embedded:\n${out}`);
 }
 
 /** A running binary: fetch its pages, then stop it. */
@@ -217,14 +289,16 @@ interface Served {
 /** The drain deadline the shutdown checks run with. */
 const DRAIN_MS = 3000;
 
-/** Start the binary on a free port and wait until `/` answers. */
+/**
+ * Start the binary on `--port 0` and wait until `/` answers on the port it says it bound (nothing
+ * picks a port another process could take first).
+ */
 async function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
-  const port = freePort();
   // On Windows the stop is the console's Ctrl-C (tests/helpers/console-ctrl.ts): `kill("SIGTERM")`
   // there is `TerminateProcess`, which no handler sees.
-  const server = spawnStoppable(bin, [], {
+  const server = spawnStoppable(bin, ["--port", "0"], {
     cwd,
-    env: { NO_COLOR: "1", PORT: String(port), DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
+    env: { NO_COLOR: "1", DENEXT_SHUTDOWN_DRAIN_MS: String(DRAIN_MS), ...env },
   });
   const child = server.child;
   let output = "";
@@ -235,6 +309,7 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  const port = await boundPort(() => output, () => exited);
   const origin = `http://127.0.0.1:${port}`;
   const get = async (path: string) => {
     const res = await fetch(origin + path);
@@ -261,8 +336,16 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
     return output;
   };
   const stopDuring = async (path: string) => {
+    const before = output.split(SLOW_STARTED).length;
     const inFlight = fetch(origin + path).then((r) => r.text());
-    await new Promise((r) => setTimeout(r, 300)); // the handler is running
+    // Signal once the handler is running (it says so), not after a fixed wait a loaded machine
+    // may not have reached it by.
+    for (let i = 0; i < 600 && output.split(SLOW_STARTED).length === before && !exited; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (output.split(SLOW_STARTED).length === before) {
+      throw new Error(`${path}'s handler never started:\n${output}`);
+    }
     const at = performance.now();
     await server.stop();
     signalled = true;
@@ -270,7 +353,7 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
     const out = await stop(DRAIN_MS + 10_000);
     return { text, exitMs: performance.now() - at, output: out };
   };
-  for (let i = 0; i < 1200 && !exited; i++) {
+  for (let i = 0; i < 1200 && port !== undefined && !exited; i++) {
     try {
       if ((await get("/")).status === 200) return { get, stop, stopDuring };
     } catch { /* not listening yet */ }
@@ -281,8 +364,6 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
 
 Deno.test({
   name: "denext build --compile: one executable serves the app with its project deleted",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async (t) => {
     const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compile_" }));
     const project = join(root, "project");
@@ -313,7 +394,15 @@ Deno.test({
         );
         assertEquals(r.code, 0, r.out);
         assertStringIncludes(r.out, "--allow-write=.denext,.storage,app.db");
+        // The toolchain (3.0.0-rc.2+) compiling onto its own denort bakes the split network grant.
+        if (ON_TOOLCHAIN) {
+          assertStringIncludes(
+            r.out,
+            "--allow-net-connect --allow-net-listen=0.0.0.0,127.0.0.1,localhost",
+          );
+        }
         assert(!r.out.includes("--allow-all"), r.out);
+        assertSlimEmbed(r.out);
         // Every local module the binary loads is reached by a relative path, so it resolves to
         // its embedded copy: an absolute one would read this checkout from disk instead.
         const compileDir = join(project, ".denext", "compile");
@@ -367,13 +456,18 @@ Deno.test({
             });
             const outside = JSON.parse((await app.get("/api/outside")).text);
             assertEquals(outside, { wrote: false, error: "NotCapable" });
+            // A listener outside compile.permissions.netListen is refused (the split grant).
+            if (ON_TOOLCHAIN) {
+              const listen = JSON.parse((await app.get("/api/listen")).text);
+              assertEquals(listen, { listened: false, error: "NotCapable" });
+            }
             const stored = JSON.parse((await app.get("/api/backend")).text);
             assertEquals(stored, { text: "stored in the binary's data dir" });
             // Compiled onto the toolchain's own denort (the pinned release): Deno.SQL is there.
             const runtime = JSON.parse((await app.get("/api/runtime")).text);
             if (ON_TOOLCHAIN) {
               assertEquals(runtime.sql, "function", JSON.stringify(runtime));
-              assert(isDenextDenoVersion(runtime.deno), runtime.deno);
+              assert(isDenextDenoVersion(runtime), JSON.stringify(runtime));
             }
             // A handle nothing closes holds the process after the drain: the in-flight request
             // still finishes, and the process exits at the drain deadline anyway (on Windows after

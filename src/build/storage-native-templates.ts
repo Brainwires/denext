@@ -26,7 +26,9 @@
 // The JS contract (src/mobile/kv-store.ts): `getMany({ store, keys, key? })` → `{ values }` (a
 // string or null per key, in order), `setMany({ store, entries: [[key, value], …], key? })`,
 // `removeMany({ store, keys, key? })`, `keys({ store, key? })` → `{ keys }`,
-// `clear({ store, key? })`, and `cipher()` → `{ available }`. A write batch is one transaction.
+// `clear({ store, key? })`, `cipher()` → `{ available }`, and `rekey({ store, key, newKey })`
+// (an encrypted store re-encrypted with SQLCipher's `PRAGMA rekey`, the WAL folded in and off for
+// it; a death part-way leaves it under the old key). A write batch is one transaction.
 // A failure rejects with code `STORAGE_ERROR` (or the two above).
 //
 // Edit these as source in native-templates/storage.ts:
@@ -45,7 +47,7 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 
 /** The generation of the templates, stamped into every file the installer writes. */
-export const STORAGE_TEMPLATE_VERSION = 2;
+export const STORAGE_TEMPLATE_VERSION = 3;
 
 /**
  * A template as the installer writes it: a first line

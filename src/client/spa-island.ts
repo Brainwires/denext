@@ -17,7 +17,12 @@
 // a Flight island replays it on its hydrated DOM: every event of the gesture (pointerdown →
 // focusin → click) that lands on the placeholder before the component commits is dispatched again
 // to the element at the same position in the component's DOM (its first element when the
-// placeholder has no such element), and a focus moves there.
+// placeholder has no such element), and a focus moves there. A press (pointerdown / touchstart /
+// keydown) starts the import at once but holds the mount until it is released: a component
+// committed mid-press would take the release, and the browser's click would then target the
+// removed placeholder and never fire, so the click that completes the press is held and replayed
+// with the rest (the mount waits for that click, or `CLICK_GRACE_MS` past a release
+// that brings none, and at most `PRESS_CAP_MS` for a release that never comes).
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeType } from "../jsx/types.ts";
@@ -66,6 +71,61 @@ interface Gesture {
   start: number;
   tail: number;
   events: Array<[Event, number[]]>;
+}
+
+/** Events that start a press: the mount waits for its release (and the click it brings). */
+const PRESS_EVENTS: ReadonlySet<string> = new Set(["pointerdown", "touchstart", "keydown"]);
+
+/** Events that end a press, wherever they land (a press dragged off the placeholder too). */
+const RELEASE_EVENTS = ["pointerup", "pointercancel", "touchend", "touchcancel", "keyup"] as const;
+
+/** How long past a release the mount waits for its click (a tap's click follows its touchend). */
+const CLICK_GRACE_MS = 100;
+
+/** The longest a press holds the mount when no release reaches the page. */
+const PRESS_CAP_MS = 3000;
+
+/** A press in progress: `done` ends it (the click came, or the release's grace or the cap ran out). */
+interface Press {
+  readonly ended: Promise<void>;
+  readonly done: () => void;
+}
+
+/** A listener target: the document, or (a test DOM without one) the placeholder's top ancestor. */
+type ListenerHost = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+/** Where a press's release is heard: the placeholder's document, else its topmost ancestor. */
+function releaseHost(el: Element): ListenerHost {
+  const doc = el.ownerDocument as Partial<ListenerHost> | null;
+  if (typeof doc?.addEventListener === "function") return doc as ListenerHost;
+  let top: Node = el;
+  while (top.parentNode) top = top.parentNode;
+  return top;
+}
+
+/**
+ * Start a press on `el`: it ends at the click that completes it, `CLICK_GRACE_MS` past a
+ * release that brings no click, or `PRESS_CAP_MS` after it began.
+ */
+function startPress(el: Element): Press {
+  const host = releaseHost(el);
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  let finish!: () => void;
+  const ended = new Promise<void>((resolve) => (finish = resolve));
+  const release = (): void => {
+    clearTimeout(grace);
+    grace = setTimeout(done, CLICK_GRACE_MS);
+  };
+  const cap = setTimeout(done, PRESS_CAP_MS);
+  function done(): void {
+    clearTimeout(grace);
+    clearTimeout(cap);
+    for (const type of RELEASE_EVENTS) host.removeEventListener(type, release, true);
+    finish();
+  }
+  // Capture phase: a handler that stops the release's propagation still ends the press.
+  for (const type of RELEASE_EVENTS) host.addEventListener(type, release, true);
+  return { ended, done };
 }
 
 const indexIn = (list: ArrayLike<Node>, node: Node): number =>
@@ -117,10 +177,15 @@ function replay(g: Gesture): void {
 }
 
 /**
- * Fire the island's interaction trigger on the first interaction inside `el`, and hold that
- * gesture's events (`held`) until the component commits.
+ * Fire the island's interaction trigger on the first interaction inside `el`, hold that
+ * gesture's events (`held`) until the component commits, and track a press in progress (`press`)
+ * so the mount waits for its release.
  */
-function listenForInteraction(el: Element, held: { current: Gesture | null }): () => void {
+function listenForInteraction(
+  el: Element,
+  held: { current: Gesture | null },
+  press: { current: Press | null },
+): () => void {
   const on = (e: Event): void => {
     const target = e.target as Element | null;
     const parent = el.parentNode;
@@ -131,6 +196,14 @@ function listenForInteraction(el: Element, held: { current: Gesture | null }): (
     // The wrapper is `display: contents` around the placeholder (or empty): its children are
     // the placeholder's top-level elements.
     held.current?.events.push([e, pathTo(el, target)]);
+    if (e.type === "click") press.current?.done();
+    else if (PRESS_EVENTS.has(e.type) && !press.current) {
+      const p = startPress(el);
+      press.current = p;
+      void p.ended.then(() => {
+        if (press.current === p) press.current = null;
+      });
+    }
     void dispatchInteraction(target);
   };
   // Passive: the listener only starts the mount, and a non-passive touchstart would hold every
@@ -138,6 +211,7 @@ function listenForInteraction(el: Element, held: { current: Gesture | null }): (
   for (const type of INTERACTION_EVENTS) el.addEventListener(type, on, { passive: true });
   return () => {
     for (const type of INTERACTION_EVENTS) el.removeEventListener(type, on);
+    press.current?.done();
   };
 }
 
@@ -157,6 +231,7 @@ export function SpaIsland(props: SpaIslandProps): VNode | null {
   const [loaded, setLoaded] = useState<Loaded>({});
   const box = useRef<Element | null>(null);
   const held = useRef<Gesture | null>(null);
+  const press = useRef<Press | null>(null);
   // The component committed: replay the gesture that mounted it on its DOM.
   useLayoutEffect(() => {
     const g = held.current;
@@ -167,15 +242,19 @@ export function SpaIsland(props: SpaIslandProps): VNode | null {
     const el = box.current;
     if (!el) return;
     let live = true;
-    // An island unmounted before its trigger never imports.
+    // An island unmounted before its trigger never imports. The import starts at once; the
+    // mount waits for a press in progress to end (its click is then held for the replay).
     const mount = (): Promise<void> | undefined =>
       live
         ? load(loader).then(
-          (C) => void (live && setLoaded({ C })),
+          async (C) => {
+            await press.current?.ended;
+            if (live) setLoaded({ C });
+          },
           (error) => void (live && setLoaded({ error })),
         )
         : undefined;
-    const off = strategy === "interaction" ? listenForInteraction(el, held) : undefined;
+    const off = strategy === "interaction" ? listenForInteraction(el, held, press) : undefined;
     registerLazyIsland({ container: el, strategy: strategy ?? "load", param, hydrate: mount });
     return () => {
       live = false;

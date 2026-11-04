@@ -4,7 +4,7 @@
 #   0. The desktop test suites (`deno task test:desktop`: `tests/desktop-*`, `tests/safe-extract*`,
 #      the desktop CLI verbs, the notification trigger math, the Cargo-style project locks over real
 #      OS locks (`flock` / `LockFileEx`), install.sh, React Native's desktop additions and the
-#      per-file coverage floor script) on all three OSes, with Deno 2.9.7 exactly — the version
+#      per-file coverage floor script) on all three OSes, with Deno 2.9.8 exactly — the version
 #      denext's pinned Deno Desktop runtime is built against. On Linux the same run is measured and
 #      held to the per-file 85% floor (`deno task coverage:desktop` → `scripts/coverage-floor.ts`),
 #      so every push to `development` checks the floor before a release is cut from it.
@@ -65,10 +65,15 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/runtime-revocation*.ts" # the revoked-runtimes list the runtime pins are checked against
+      - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
+      - "src/build/stock-deprecation.ts"
+      - "src/build/net-permissions.ts"
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
       - "src/build/scaffold.ts"
+      - "src/build/project-confine.ts"
       - "src/build/fallow-template.ts"
       - "src/build/pe-resources.ts"
       - "src/build/code-signing.ts"
@@ -81,11 +86,18 @@ on:
       - "src/build/png-raster.ts"
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
+      - "src/build/exited-output.ts"
+      - "scripts/deno-doc.ts" # bounded `deno doc` / `deno info` children
+      - "src/build/child-probe.ts" # their stall probe (and the build's, under DENEXT_CHILD_PROBE)
+      - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
+      - "src/build/config-files.ts"
+      - "src/build/config-static.ts"
+      - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"
       - "src/build/dev-proxy.ts"
@@ -94,6 +106,13 @@ on:
       - "src/build/doctor-format.ts"
       - "src/build/spa/shared.ts"
       - "src/build/react-native-desktop.ts"
+      # The pack readers the desktop runtime graph must keep lazy (tests/desktop-runtime-graph.test.ts).
+      - "src/build/packed-text.ts"
+      - "scripts/lib/pack-texts.ts"
+      # The scaffolded packaging scripts ship in the docs-corpus pack (scaffold.ts reads them).
+      - "src/build/native-templates.packed.ts"
+      - "src/build/native-templates/desktop-package-scripts.ts"
+      - "packages/docs-corpus/native-templates.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/doctor.ts"
       - "src/client/live-client.ts"
@@ -107,6 +126,7 @@ on:
       - "src/build/dev-server.ts"
       - "src/build/react-native.ts"
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
       - "src/cli/dev-attach.ts"
@@ -165,10 +185,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7" # exactly: the pinned Deno Desktop runtime's Deno
-      - name: Deno is 2.9.7
+          deno-version: "2.9.8" # exactly: the pinned Deno Desktop runtime's Deno
+      - name: Deno is 2.9.8
         shell: bash
-        run: deno --version | head -1 | grep -q '^deno 2\.9\.7 ' || { deno --version; exit 1; }
+        run: deno --version | head -1 | grep -q '^deno 2\.9\.8 ' || { deno --version; exit 1; }
       # The test list lives in deno.json (`test:desktop`); deno task expands its globs the same way
       # on every OS.
       - name: Desktop test suites
@@ -188,11 +208,12 @@ jobs:
         # Linux has no CLI backend: its store is the pinned runtime's (the window test covers it).
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7" # `deno desktop` and the desktop runtime target 2.9.7+
+          deno-version: "2.9.8" # `deno desktop` and the desktop runtime target 2.9.8+
       - name: secureStore round-trip
         run: deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
 
@@ -203,6 +224,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: examples/native
@@ -210,7 +232,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       # Build only (no launch), so no WebView runtime deps are needed. deno desktop appends `.app` on
       # macOS (fixed in the packaging template); this pins that `deno desktop --output <base>` lands a
       # single artifact at the base name on Windows/Linux, which the packaging scripts rely on.
@@ -299,7 +321,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7" # exactly: the pinned runtime refuses another deno for `package`
+          deno-version: "2.9.8" # exactly: the pinned runtime refuses another deno for `package`
       # The TARGET's runtime archive (and its cross-host mirror) under the host's Deno cache; a cache
       # hit is re-hashed against the pin (DENEXT_DESKTOP_RUNTIME_VERIFY=1).
       - name: Cache the Deno Desktop runtime
@@ -361,7 +383,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cross-${{ matrix.label }}
@@ -398,7 +420,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - name: tests/integration/scaffold.test.ts
         run: deno test -A --unstable-kv tests/integration/scaffold.test.ts
 
@@ -418,7 +440,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - name: Cache the Deno Desktop runtime
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -474,7 +496,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       # WiX 5.0.2: the last release under MS-RL alone (WiX 6+ adds the OSMF EULA).
       - name: WiX 5
         run: dotnet tool install --global wix --version 5.0.2 && wix --version
@@ -509,7 +531,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - name: rpmbuild
         run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
       # A deep link, and secure-store (the packages then depend on libsecret, which the runtime
@@ -601,7 +623,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - run: deno install
       # No signing secrets here: an ad-hoc .app, an unsigned .pkg.
       - name: Package (.app + .dmg + .pkg)
@@ -643,7 +665,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - name: The installer's own tests (Windows PowerShell 5.1 and pwsh)
         shell: bash
         run: deno test -A tests/install-ps1.test.ts
@@ -656,6 +678,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -692,7 +719,7 @@ jobs:
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
 
-  # Windows on Arm (windows-11-arm), natively: Deno 2.9.7's aarch64-pc-windows-msvc build, the
+  # Windows on Arm (windows-11-arm), natively: Deno 2.9.8's aarch64-pc-windows-msvc build, the
   # desktop suites, install.ps1 (its tests, this commit's Arm64 binary with the toolchain step, the
   # real latest release) and the Arm64 package on the pinned runtime — the bundle's PE files are
   # Arm64 and its .msi installs, upgrades and uninstalls per user and per machine. Required for a
@@ -705,13 +732,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7" # exactly: the pinned Deno Desktop runtime's Deno
-      - name: Deno is 2.9.7, built for Arm64
+          deno-version: "2.9.8" # exactly: the pinned Deno Desktop runtime's Deno
+      - name: Deno is 2.9.8, built for Arm64
         shell: pwsh
         run: |
           deno --version
           $v = (deno --version | Select-Object -First 1)
-          if ($v -notmatch '^deno 2\.9\.7 .*aarch64-pc-windows-msvc') { throw "unexpected: $v" }
+          if ($v -notmatch '^deno 2\.9\.8 .*aarch64-pc-windows-msvc') { throw "unexpected: $v" }
       - name: Desktop test suites
         shell: pwsh
         run: deno task test:desktop
@@ -754,6 +781,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -804,27 +836,37 @@ jobs:
         working-directory: examples/native
         run: ../../scripts/ci/msi-roundtrip.ps1 -PerMachine -Msi dist/old.msi -AppName "denext native" -Exe denext-native-arm64.exe -Scheme denextnative -Upgrade dist/denext-native-arm64.msi -UpgradeVersion 1.0.1
 
-  # install.sh end to end on Linux: this commit's binary (a local release, the toolchain step
-  # included), then the real latest release, which may predate the `toolchain` verb (denext < 4.0).
+  # install.sh end to end on Linux and macOS (Apple Silicon): this commit's binary (a local
+  # release, the toolchain step included), then the real latest release, which may predate the
+  # `toolchain` verb (denext < 4.0). macOS is where the installer strips the download's
+  # quarantine and writes a login shell's profile; Homebrew users get the same binary.
   install-sh:
-    name: install.sh (ubuntu-latest — this commit's build + the real latest one)
-    runs-on: ubuntu-latest
+    name: install.sh (${{ matrix.os }} — this commit's build + the real latest one)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.7"
+          deno-version: "2.9.8"
       - name: Install this commit's binary build, toolchain included, run it
         shell: bash
         run: |
           set -euo pipefail
-          asset=denext-x86_64-unknown-linux-gnu.tar.gz
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) asset=denext-x86_64-unknown-linux-gnu.tar.gz ;;
+            Darwin-arm64) asset=denext-aarch64-apple-darwin.tar.gz ;;
+            *) echo "::error::no install.sh leg for $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
           art="$RUNNER_TEMP/art"
           mkdir -p "$art"
           deno run -A scripts/compile-cli.ts --output "$RUNNER_TEMP/denext"
           tar czf "$art/$asset" -C "$RUNNER_TEMP" denext
-          (cd "$art" && sha256sum "$asset" > SHA256SUMS)
+          (cd "$art" && { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } > SHA256SUMS)
           out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh 2>&1)"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep -F "installing denext's Deno toolchain" >/dev/null
@@ -841,5 +883,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          latest="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)"
+          case "$latest" in v[0-3].* | v4.[0-9].*) export DENEXT_INSECURE=1 ;; esac
           DENEXT_INSTALL="$RUNNER_TEMP/denext-latest" sh scripts/install.sh
           "$RUNNER_TEMP/denext-latest/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'

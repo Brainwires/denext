@@ -59,6 +59,10 @@ android {
     namespace = "com.example.app"
 }
 
+dependencies {
+    implementation project(':capacitor-android')
+}
+
 apply from: 'capacitor.build.gradle'
 `;
 

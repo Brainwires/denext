@@ -26,6 +26,7 @@
 import type { Plugin } from "./esbuild/mod.ts";
 import { walk } from "@std/fs";
 import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
+import { canonicalPath } from "./canonical-path.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { frameworkRootUrl, minDepAgeArgs } from "./bundle.ts";
 import { JSR_DENEXT_ROOT } from "./app-framework-root.ts";
@@ -40,6 +41,9 @@ import {
   reverseFileDiff,
 } from "./patch-diff.ts";
 import { absolutizeSpecifiers, applyEdits, type Edit, parseModule } from "./swc-ast.ts";
+import { runToExit } from "./exited-output.ts";
+import { supportsPatchedDependencies } from "./deno-version.ts";
+import { loadDenoToolchainPin, toolchainEnvValue } from "./deno-toolchain.ts";
 
 /** The project-relative directory patches live in. */
 const PATCHES_DIR = "patches";
@@ -49,6 +53,12 @@ export const DENEXT_PATCH_NAME = "denext";
 const WORK_DIR = ".work";
 /** Under `patches/`: the materialized (import-map-referenced) framework files. */
 const MATERIALIZED_DIR = "denext";
+/**
+ * Under `patches/`: the package-relative copies of npm patches that deno.json's
+ * `patchedDependencies` names, for the runtime to apply on install (see
+ * {@link registerPatchedDependency}).
+ */
+const RUNTIME_PATCHES_DIR = "npm";
 /** The import-map value prefix that marks an entry as managed by `denext patch`. */
 const MANAGED_PREFIX = `./${PATCHES_DIR}/${MATERIALIZED_DIR}/`;
 
@@ -74,6 +84,12 @@ export interface PatchOptions {
   npmPristine?: (pkg: string, version: string) => Promise<string>;
   /** Progress/warning sink (default: `console.warn`). */
   log?: (line: string) => void;
+  /**
+   * The version of denext's Deno that installs the project's npm packages, which decides whether
+   * an npm patch is also registered in deno.json's `patchedDependencies` (default:
+   * {@link patchRuntime}; `null`: a Deno that doesn't apply them).
+   */
+  runtime?: string | null;
 }
 
 /** `left-pad` @ `1.3.0` → `left-pad+1.3.0.patch`; `@scope/name` → `@scope+name+1.2.3.patch`. */
@@ -125,8 +141,16 @@ export async function readPatch(entry: PatchEntry): Promise<FileDiff[]> {
 
 // ── npm packages ──────────────────────────────────────────────────────────────
 
+/** An npm package name, scoped or not (the registry's characters; never `.` or `..` alone). */
+const NPM_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
+
 /** The installed package directory (symlinks resolved), or a clear error. */
 export async function npmPackageDir(projectDir: string, pkg: string): Promise<string> {
+  if (!NPM_NAME.test(pkg)) {
+    // `../../x` (typed, or a patch file named `..+1.0.0.patch`) must never name a directory
+    // outside node_modules: the patch file and the package's files are written from it.
+    throw new Error(`denext patch: ${JSON.stringify(pkg)} is not an npm package name`);
+  }
   const path = join(projectDir, "node_modules", ...pkg.split("/"));
   try {
     return await Deno.realPath(path);
@@ -149,11 +173,7 @@ async function packageVersion(dir: string): Promise<string> {
 let denoDirPromise: Promise<string> | undefined;
 function denoDir(): Promise<string> {
   return denoDirPromise ??= (async () => {
-    const out = await new Deno.Command(denoExecutable(), {
-      args: ["info", "--json"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
+    const out = await runToExit(denoExecutable(), { args: ["info", "--json"], stderr: "null" });
     return String(JSON.parse(new TextDecoder().decode(out.stdout)).denoDir);
   })();
 }
@@ -166,11 +186,10 @@ async function npmPristineDir(pkg: string, version: string): Promise<string> {
   const dir = join(await denoDir(), "npm", "registry.npmjs.org", ...pkg.split("/"), version);
   if (await exists(join(dir, "package.json"))) return dir;
   const spec = `npm:${pkg}@${version}`;
-  const res = await new Deno.Command(denoExecutable(), {
+  const res = await runToExit(denoExecutable(), {
     args: ["cache", "--node-modules-dir=none", ...minDepAgeArgs(), spec],
     stdout: "null",
-    stderr: "piped",
-  }).output();
+  });
   if (!res.success || !(await exists(join(dir, "package.json")))) {
     throw new Error(
       `denext patch: could not fetch a pristine ${spec} into Deno's cache:\n` +
@@ -254,6 +273,11 @@ export interface CreatedPatch {
   file: string;
   /** The files that differ (package-relative). */
   files: string[];
+  /**
+   * The deno.json `patchedDependencies` key the patch was registered under (npm patches on a
+   * runtime that applies them; see {@link createNpmPatch}).
+   */
+  registered?: string;
 }
 
 /**
@@ -268,31 +292,231 @@ export async function createNpmPatch(
   const installed = await npmPackageDir(projectDir, pkg);
   const version = await packageVersion(installed);
   const pristine = await (opts.npmPristine ?? npmPristineDir)(pkg, version);
-  const root = `node_modules/${pkg}/`;
-  const log = opts.log ?? console.warn;
-  const diffs: string[] = [];
-  const files: string[] = [];
-  const installedFiles = await packageTextFiles(installed);
-  for (const rel of installedFiles) {
-    const before = await readMaybe(join(pristine, rel));
-    const after = await Deno.readTextFile(join(installed, rel));
-    if (tooLargeToDiff(rel, before ?? "", after, log)) continue;
-    // A file the pristine package lacks is a creation: `--- /dev/null`.
-    const oldPath = before === null ? DEV_NULL : `a/${root}${rel}`;
-    const diff = createUnifiedDiff(before ?? "", after, oldPath, `b/${root}${rel}`);
-    if (diff === "") continue;
-    diffs.push(diff);
-    files.push(rel);
-  }
-  for (const [rel, diff] of await deletionDiffs(pristine, installedFiles, root, log)) {
-    diffs.push(diff);
-    files.push(rel);
-  }
+  const { diffs, files, runtimeDiffs } = await collectNpmDiffs(
+    installed,
+    pristine,
+    `node_modules/${pkg}/`,
+    opts.log ?? console.warn,
+  );
   if (diffs.length === 0) {
     throw new Error(`denext patch: node_modules/${pkg}@${version} has no changes to record`);
   }
   const file = await writePatchFile(projectDir, pkg, version, diffs.join(""));
-  return { file, files };
+  // An earlier registration (another version, or a patch the runtime can apply no more) goes first.
+  await unregisterPatchedDependency(projectDir, pkg);
+  const registered = await registerPatchedDependency(
+    projectDir,
+    pkg,
+    version,
+    runtimeDiffs?.join("") ?? null,
+    opts,
+  );
+  return registered ? { file, files, registered } : { file, files };
+}
+
+/** An npm package's edits: patch-package's diffs, and the runtime's form of them. */
+interface NpmDiffs {
+  /** One diff per changed file, paths under `node_modules/<pkg>/`. */
+  diffs: string[];
+  /** The changed files (package-relative). */
+  files: string[];
+  /**
+   * The same edits as the runtime's `patchedDependencies` reads them: package-relative paths, a
+   * `diff --git` section per file; null when a file is added or deleted, which it can't apply.
+   */
+  runtimeDiffs: string[] | null;
+}
+
+/**
+ * One file's diff in both forms (`runtime` null for a file the pristine package lacks), or null
+ * when it is unchanged or too large to diff.
+ */
+async function npmFileDiff(
+  installed: string,
+  pristine: string,
+  root: string,
+  rel: string,
+  log: (line: string) => void,
+): Promise<{ diff: string; runtime: string | null } | null> {
+  const before = await readMaybe(join(pristine, rel));
+  const after = await Deno.readTextFile(join(installed, rel));
+  if (tooLargeToDiff(rel, before ?? "", after, log)) return null;
+  // A file the pristine package lacks is a creation: `--- /dev/null`.
+  const oldPath = before === null ? DEV_NULL : `a/${root}${rel}`;
+  const diff = createUnifiedDiff(before ?? "", after, oldPath, `b/${root}${rel}`);
+  if (diff === "") return null;
+  const runtime = before === null
+    ? null
+    : `diff --git a/${rel} b/${rel}\n` + createUnifiedDiff(before, after, `a/${rel}`, `b/${rel}`);
+  return { diff, runtime };
+}
+
+/** Diff every file of `installed` against `pristine` (`root`: the paths' prefix in the patch). */
+async function collectNpmDiffs(
+  installed: string,
+  pristine: string,
+  root: string,
+  log: (line: string) => void,
+): Promise<NpmDiffs> {
+  const out: NpmDiffs = { diffs: [], files: [], runtimeDiffs: [] };
+  const installedFiles = await packageTextFiles(installed);
+  for (const rel of installedFiles) {
+    const file = await npmFileDiff(installed, pristine, root, rel, log);
+    if (!file) continue;
+    out.diffs.push(file.diff);
+    out.files.push(rel);
+    out.runtimeDiffs = file.runtime === null
+      ? null
+      : out.runtimeDiffs?.concat(file.runtime) ?? null;
+  }
+  for (const [rel, diff] of await deletionDiffs(pristine, installedFiles, root, log)) {
+    out.diffs.push(diff);
+    out.files.push(rel);
+    out.runtimeDiffs = null;
+  }
+  return out;
+}
+
+/**
+ * The version of denext's Deno that will install the project's npm packages: the pinned toolchain
+ * the project's verbs run on, or `null` when `DENEXT_DENO` picks stock Deno or another binary
+ * (whose support is not known).
+ *
+ * @param env Reads an environment variable.
+ * @returns The version, or `null`.
+ */
+export function patchRuntime(
+  env: (name: string) => string | undefined = (name) => Deno.env.get(name),
+): string | null {
+  const choice = toolchainEnvValue(env);
+  if (choice !== "" && choice.toLowerCase() !== "pinned") return null;
+  try {
+    return loadDenoToolchainPin(env).version;
+  } catch {
+    return null; // an unreadable pin override: the toolchain resolution reports it
+  }
+}
+
+/** The workspace root of `projectDir` (a parent declaring a workspace), else `projectDir`. */
+async function workspaceRoot(projectDir: string): Promise<string> {
+  const roots = await patchRoots(projectDir);
+  return roots[roots.length - 1];
+}
+
+/** Why the runtime can't apply npm patches in the project at `root`, or null when it can. */
+async function patchedDependenciesBlocker(root: string): Promise<string | null> {
+  const text = await readMaybe(join(root, "deno.json"));
+  if (text === null) return `${join(root, "deno.json")} not found (deno.jsonc is not supported)`;
+  const config = JSON.parse(text) as { nodeModulesDir?: unknown };
+  // The runtime applies patches to a project's own node_modules copy, and refuses to resolve
+  // without one.
+  if (config.nodeModulesDir === "auto" || config.nodeModulesDir === "manual") return null;
+  if (config.nodeModulesDir === undefined && await exists(join(root, "package.json"))) return null;
+  return 'the project has no node_modules directory (deno.json "nodeModulesDir": "auto")';
+}
+
+/**
+ * Register an npm patch in the workspace root deno.json's `patchedDependencies`
+ * (`"<name>@<version>": "patches/npm/<name>+<version>.patch"`, a package-relative copy of the
+ * patch), so denext's Deno from runtime 3.0.0-denext.3 applies it whenever it installs the
+ * package — a `deno install`, a Docker build, `deno compile` — and records its hash in
+ * `deno.lock`. denext keeps applying `patches/*.patch` at boot either way (a no-op once the
+ * runtime did). Skipped, with a line saying why, when the runtime doesn't apply them, the project
+ * has no node_modules directory, or the patch adds or deletes a file (the runtime changes existing
+ * files only). An older registration of the package is replaced.
+ *
+ * @param projectDir The project.
+ * @param pkg The package name.
+ * @param version Its installed version.
+ * @param body The package-relative patch, or null when the runtime can't apply it.
+ * @param opts `runtime` and `log`.
+ * @returns The registered key, or undefined.
+ */
+async function registerPatchedDependency(
+  projectDir: string,
+  pkg: string,
+  version: string,
+  body: string | null,
+  opts: PatchOptions,
+): Promise<string | undefined> {
+  const runtime = opts.runtime === undefined ? patchRuntime() : opts.runtime;
+  if (runtime === null || !supportsPatchedDependencies(runtime)) return undefined;
+  const log = opts.log ?? console.warn;
+  const skip = (why: string) =>
+    void log(`denext patch: not registered in deno.json "patchedDependencies": ${why}`);
+  const root = await workspaceRoot(projectDir);
+  const blocker = await patchedDependenciesBlocker(root);
+  if (blocker) return skip(blocker);
+  if (body === null) return skip("the patch adds or deletes a file, which the runtime can't apply");
+  const dir = join(projectDir, PATCHES_DIR, RUNTIME_PATCHES_DIR);
+  await Deno.mkdir(dir, { recursive: true });
+  const file = join(dir, patchFileName(pkg, version));
+  await Deno.writeTextFile(file, body);
+  const key = `${pkg}@${version}`;
+  // The root is a real path (patchRoots): relate the copy's real path to it.
+  const path = relative(root, await Deno.realPath(file)).replaceAll(SEPARATOR, "/");
+  await updatePatchedDependencies(root, pkg, [key, path]);
+  return key;
+}
+
+/** Whether a `patchedDependencies` path is one `denext patch` wrote (under `patches/npm/`). */
+function managedPatchPath(value: unknown): value is string {
+  return typeof value === "string" &&
+    new RegExp(`(^|/)${PATCHES_DIR}/${RUNTIME_PATCHES_DIR}/[^/]+\\.patch$`).test(value);
+}
+
+/** The package name of a `patchedDependencies` key (`pkg@1.2.3`, `@scope/pkg@^2`, `pkg`). */
+function patchedDependencyName(key: string): string {
+  const at = key.indexOf("@", key.startsWith("@") ? 1 : 0);
+  return at === -1 ? key : key.slice(0, at);
+}
+
+/** `entries` without the ones `denext patch` wrote for `pkg`, whose paths go to `dropped`. */
+function dropManagedEntries(
+  entries: Record<string, unknown>,
+  pkg: string,
+  dropped: string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (managedPatchPath(value) && patchedDependencyName(key) === pkg) dropped.push(value);
+    else out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Drop the root deno.json's `patchedDependencies` entries `denext patch` wrote for `pkg`, then add
+ * `entry` (when given). The user's own entries are left alone. Writes only on a change.
+ *
+ * @returns The dropped entries' paths (relative to `root`).
+ */
+async function updatePatchedDependencies(
+  root: string,
+  pkg: string,
+  entry?: [string, string],
+): Promise<string[]> {
+  const path = join(root, "deno.json");
+  const text = await readMaybe(path);
+  if (text === null) return [];
+  const config = JSON.parse(text) as { patchedDependencies?: Record<string, unknown> };
+  const before = config.patchedDependencies ?? {};
+  const dropped: string[] = [];
+  const next = dropManagedEntries(before, pkg, dropped);
+  if (entry) next[entry[0]] = entry[1];
+  if (JSON.stringify(next) === JSON.stringify(before)) return dropped;
+  if (Object.keys(next).length === 0) delete config.patchedDependencies;
+  else config.patchedDependencies = next;
+  await Deno.writeTextFile(path, JSON.stringify(config, null, 2) + "\n");
+  return dropped;
+}
+
+/** Remove `pkg`'s `patchedDependencies` registration and the patch copy it names, if any. */
+async function unregisterPatchedDependency(projectDir: string, pkg: string): Promise<void> {
+  const root = await workspaceRoot(projectDir);
+  for (const rel of await updatePatchedDependencies(root, pkg)) {
+    await removeIfPresent(join(root, rel));
+  }
 }
 
 /** Files the pristine package has that the install no longer does: deletions (`+++ /dev/null`). */
@@ -358,13 +582,108 @@ function npmPatchTarget(projectDir: string, entry: PatchEntry, newPath: string):
   return containedPath(root, relative(root, join(projectDir, newPath)), entry.name);
 }
 
+/** Whether `path` is `root` or below it (both real paths). */
+function isWithin(root: string, path: string): boolean {
+  const inside = relative(root, path);
+  return inside === "" || (!inside.startsWith("..") && !isAbsolute(inside));
+}
+
+/** Whether `dir` declares a workspace (deno.json `workspace`, npm `workspaces`, pnpm's file). */
+async function declaresWorkspace(dir: string): Promise<boolean> {
+  if (await exists(join(dir, "pnpm-workspace.yaml"))) return true;
+  for (
+    const [file, key] of [["deno.json", "workspace"], ["deno.jsonc", "workspace"], [
+      "package.json",
+      "workspaces",
+    ]] as const
+  ) {
+    const text = await readMaybe(join(dir, file));
+    // A key test, not a parse: deno.jsonc may hold comments, and a false positive only widens
+    // the root to a directory that declares itself one.
+    if (text !== null && new RegExp(`"${key}"\\s*:`).test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * The real directories a patched package may live in: the project's, and the workspace root's
+ * when the project is a member of one (pnpm links a workspace package from there).
+ */
+async function patchRoots(projectDir: string): Promise<string[]> {
+  const project = await Deno.realPath(projectDir);
+  const roots = [project];
+  for (let dir = dirname(project); dir !== dirname(dir); dir = dirname(dir)) {
+    if (await declaresWorkspace(dir)) {
+      roots.push(dir);
+      break;
+    }
+  }
+  return roots;
+}
+
+/**
+ * The real path a patch writes for `target` (a path inside `node_modules/<pkg>`), once every link
+ * on the way is resolved, refused unless it stays inside the package's real directory `pkgReal`:
+ * a link inside the package (a file, or a folder) must never carry a write to `~/.bashrc`. A
+ * dangling link is refused too (writing it would create its target, wherever that is).
+ */
+async function confinedRealTarget(pkgReal: string, target: string, what: string): Promise<string> {
+  const rest: string[] = [];
+  let probe = target;
+  let real = await realIfPresent(probe, what);
+  while (real === undefined) {
+    const parent = dirname(probe);
+    if (parent === probe) throw new Error(`denext patch: ${what}: ${target} does not exist`);
+    rest.unshift(probe.slice(parent.length).replace(/^[\\/]+/, ""));
+    probe = parent;
+    real = await realIfPresent(probe, what);
+  }
+  const resolved = rest.length ? join(real, ...rest) : real;
+  if (!isWithin(pkgReal, resolved) || resolved === pkgReal) {
+    throw new Error(
+      `denext patch: ${what} names ${JSON.stringify(target)}, which a link resolves to ` +
+        `${resolved}, outside the package (${pkgReal})`,
+    );
+  }
+  return resolved;
+}
+
+/** `path`'s real path, `undefined` when nothing is there; a dangling link is refused. */
+async function realIfPresent(path: string, what: string): Promise<string | undefined> {
+  try {
+    return await Deno.realPath(path);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  if (await Deno.lstat(path).then(() => true, () => false)) {
+    throw new Error(`denext patch: ${what} reaches a dangling link (${path}); not following it`);
+  }
+  return undefined;
+}
+
+/**
+ * The installed package's real directory, refused when it resolves outside the project and its
+ * workspace (a `node_modules` link to anywhere else on the machine).
+ */
+async function confinedPackageDir(projectDir: string, entry: PatchEntry): Promise<string> {
+  const installed = await npmPackageDir(projectDir, entry.name);
+  const roots = await patchRoots(projectDir);
+  if (!roots.some((root) => isWithin(root, installed))) {
+    throw new Error(
+      `denext patch: node_modules/${entry.name} resolves to ${installed}, outside the project ` +
+        `and its workspace (${roots.join(", ")}); not patching it`,
+    );
+  }
+  return installed;
+}
+
 export async function applyNpmPatch(
   projectDir: string,
   entry: PatchEntry,
   opts: PatchOptions = {},
 ): Promise<ApplyOutcome> {
   const log = opts.log ?? console.warn;
-  const installed = await npmPackageDir(projectDir, entry.name);
+  const installed = await confinedPackageDir(projectDir, entry);
   const version = await packageVersion(installed);
   if (version !== entry.version) {
     log(
@@ -373,7 +692,8 @@ export async function applyNpmPatch(
   }
   let outcome: ApplyOutcome = "already-applied";
   for (const diff of await readPatch(entry)) {
-    const path = npmPatchTarget(projectDir, entry, diff.newPath);
+    const lexical = npmPatchTarget(projectDir, entry, diff.newPath);
+    const path = await confinedRealTarget(installed, lexical, entry.name);
     if (diff.deleted) {
       if (await removeIfPresent(path)) outcome = "applied";
       continue;
@@ -390,8 +710,13 @@ export async function applyNpmPatch(
 /** Undo an npm patch in `node_modules` (best effort: a file the reverse doesn't fit is left). */
 export async function revertNpmPatch(projectDir: string, entry: PatchEntry): Promise<string[]> {
   const left: string[] = [];
+  const installed = await confinedPackageDir(projectDir, entry);
   for (const diff of await readPatch(entry)) {
-    const path = npmPatchTarget(projectDir, entry, diff.newPath);
+    const path = await confinedRealTarget(
+      installed,
+      npmPatchTarget(projectDir, entry, diff.newPath),
+      entry.name,
+    );
     const reverse = reverseFileDiff(diff);
     if (reverse.deleted) { // the patch CREATED this file: undoing it removes it
       await removeIfPresent(path);
@@ -672,6 +997,7 @@ export async function deletePatch(projectDir: string, ref: string): Promise<Patc
         `denext patch: ${file} no longer matches the patch — left as is (reinstall to reset it)`,
       );
     }
+    await unregisterPatchedDependency(projectDir, entry.name);
   } else await removeDenextPatchFiles(projectDir);
   await Deno.remove(entry.file);
   return entry;
@@ -716,9 +1042,13 @@ export function patchPlugin(set: DenextPatchSet, frameworkRoot = frameworkRootUr
       for (const namespace of ["file", "https"]) {
         build.onLoad({ filter, namespace }, async (args) => {
           const root = namespace === "file" ? fileRoot : httpsRoot;
-          if (!root || !args.path.startsWith(root)) return undefined;
+          // A file is compared by its real path too: esbuild reports the path as it reached it,
+          // which is not always the real one (a Windows 8.3 short name such as `RUNNER~1`, a
+          // preserved symlink), while the root is the real path.
+          const path = namespace === "file" ? canonicalPath(args.path) : args.path;
+          if (!root || !path.startsWith(root)) return undefined;
           // The patch set is keyed `/`-separated; a Windows file path is not.
-          const rel = args.path.slice(root.length).split(SEPARATOR).join("/");
+          const rel = path.slice(root.length).split(SEPARATOR).join("/");
           const diff = set.get(rel);
           if (!diff) return undefined;
           const pristine = namespace === "file"

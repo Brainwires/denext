@@ -428,6 +428,7 @@ export async function renderFlightShell(
     throw err;
   } finally {
     sink.end();
+    renderer.release();
   }
   const shellHtml = renderer.boundaries.expand(shell.html, renderer.streamed, head);
   return {

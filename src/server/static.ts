@@ -47,7 +47,7 @@ export async function serveStatic(
       return gz;
     }
   }
-  return rangeOrFull(file, info, type, validators, request?.headers.get("range") ?? null);
+  return rangeOrFull(file, info, type, validators, request);
 }
 
 /** Open `path` for reading, or null when it vanished. */
@@ -85,26 +85,35 @@ function notModified(req: Headers, info: Deno.FileInfo, etag: string): boolean {
     Math.floor(info.mtime.getTime() / 1000) <= Math.floor(since / 1000);
 }
 
-/** The full body (200), or a single byte range (206 / 416) when `Range` is present. */
+/**
+ * The full body (200); a byte range (206) or several as `multipart/byteranges` (206, RFC 9110
+ * §14.6) when `Range` asks for them and `If-Range` (when sent) still holds; 416 when none of
+ * the ranges can be satisfied.
+ */
 async function rangeOrFull(
   file: Deno.FsFile,
   info: Deno.FileInfo,
   type: string,
   validators: Headers,
-  rangeHeader: string | null,
+  request: Request | undefined,
 ): Promise<Response> {
   const headers = new Headers(validators);
   headers.set("content-type", type);
-  const range = rangeHeader === null ? undefined : parseRange(rangeHeader, info.size);
-  if (range === null) {
+  const rangeHeader = request?.headers.get("range") ?? null;
+  const ranges = rangeHeader === null || !ifRangeHolds(request!.headers, info)
+    ? undefined
+    : parseRanges(rangeHeader, info.size);
+  if (ranges === null) {
     file.close();
     headers.set("content-range", `bytes */${info.size}`);
     return new Response(null, { status: 416, headers });
   }
-  if (range === undefined) {
+  if (ranges === undefined) {
     headers.set("content-length", String(info.size));
     return new Response(file.readable, { status: 200, headers });
   }
+  if (ranges.length > 1) return multipartRanges(file, info.size, type, headers, ranges);
+  const [range] = ranges;
   await file.seek(range.start, Deno.SeekMode.Start);
   const length = range.end - range.start + 1;
   headers.set("content-length", String(length));
@@ -113,9 +122,25 @@ async function rangeOrFull(
 }
 
 /**
+ * `If-Range` (RFC 9110 §13.1.5): absent, or a validator that still names this file, lets the
+ * range through; anything else asks for the whole file. An entity tag needs a strong match,
+ * which the weak `ETag` here (one tag for the identity and the gzipped file) never gives — a
+ * client keeps a weak tag out of `If-Range` — so only the `Last-Modified` date can match, to the
+ * second.
+ */
+function ifRangeHolds(req: Headers, info: Deno.FileInfo): boolean {
+  const value = req.get("if-range")?.trim();
+  if (value === undefined) return true;
+  if (value.startsWith('"') || value.startsWith("W/")) return false;
+  const date = Date.parse(value);
+  return info.mtime !== null && Number.isFinite(date) &&
+    Math.floor(info.mtime.getTime() / 1000) === Math.floor(date / 1000);
+}
+
+/**
  * One `bytes=start-end` / `bytes=start-` / `bytes=-suffix` range against `size`:
  * `undefined` = ignore the header (unsupported form or multiple ranges → serve the whole
- * file), `null` = unsatisfiable (416).
+ * file), `null` = unsatisfiable (416). {@linkcode parseRanges} reads a header with several.
  *
  * @param header The request's `Range` header.
  * @param size The resource's size in bytes.
@@ -136,6 +161,117 @@ export function parseRange(
   const end = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
   if (start >= size || start > end) return null;
   return { start, end };
+}
+
+/** More range specs than this in one `Range` header and it is ignored (the whole file, 200). */
+const MAX_RANGES = 64;
+
+/**
+ * Every `bytes=` range of a `Range` header against `size` (RFC 9110 §14.1.2), sorted and with
+ * overlapping or adjacent ranges coalesced: `undefined` = ignore the header (a malformed or
+ * non-`bytes` header, or more than {@linkcode MAX_RANGES} specs → serve the whole file),
+ * `null` = none satisfiable (416). An unsatisfiable spec among satisfiable ones is dropped.
+ *
+ * @param header The request's `Range` header.
+ * @param size The resource's size in bytes.
+ * @returns The inclusive byte ranges, `undefined` to serve it all, or `null` for a 416.
+ */
+export function parseRanges(
+  header: string,
+  size: number,
+): { start: number; end: number }[] | null | undefined {
+  const m = /^bytes\s*=\s*(.*)$/i.exec(header.trim());
+  if (!m) return undefined;
+  const specs = m[1].split(",").map((spec) => spec.trim()).filter((spec) => spec !== "");
+  if (specs.length === 0 || specs.length > MAX_RANGES) return undefined;
+  const ranges: { start: number; end: number }[] = [];
+  for (const spec of specs) {
+    const range = parseRange(`bytes=${spec}`, size);
+    if (range === undefined) return undefined;
+    if (range !== null) ranges.push(range);
+  }
+  if (ranges.length === 0) return null;
+  ranges.sort((a, b) => a.start - b.start);
+  const merged = [ranges[0]];
+  for (const range of ranges.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (range.start <= last.end + 1) last.end = Math.max(last.end, range.end);
+    else merged.push(range);
+  }
+  return merged;
+}
+
+/**
+ * Several ranges as one `multipart/byteranges` body: each part carries its own `Content-Type`
+ * and `Content-Range`, read from the open file in turn. The length is known up front.
+ */
+function multipartRanges(
+  file: Deno.FsFile,
+  size: number,
+  type: string,
+  headers: Headers,
+  ranges: { start: number; end: number }[],
+): Response {
+  const boundary = `denext-${crypto.randomUUID().replaceAll("-", "")}`;
+  const encoder = new TextEncoder();
+  const heads = ranges.map((r, i) =>
+    encoder.encode(
+      `${i === 0 ? "" : "\r\n"}--${boundary}\r\ncontent-type: ${type}\r\n` +
+        `content-range: bytes ${r.start}-${r.end}/${size}\r\n\r\n`,
+    )
+  );
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const length = ranges.reduce((n, r, i) => n + heads[i].byteLength + r.end - r.start + 1, 0) +
+    tail.byteLength;
+  headers.set("content-type", `multipart/byteranges; boundary=${boundary}`);
+  headers.set("content-length", String(length));
+  return new Response(rangeParts(file, ranges, heads, tail), { status: 206, headers });
+}
+
+/** The parts' bytes: each head, then its range read from `file` in chunks; the file is closed after. */
+function rangeParts(
+  file: Deno.FsFile,
+  ranges: { start: number; end: number }[],
+  heads: Uint8Array[],
+  tail: Uint8Array,
+): ReadableStream<Uint8Array> {
+  const CHUNK = 64 * 1024;
+  let part = 0;
+  let at = -1; // the next byte of the current part's range, or -1 before its head is sent
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        if (part === ranges.length) {
+          controller.enqueue(tail);
+          controller.close();
+          file.close();
+          return;
+        }
+        const range = ranges[part];
+        if (at < 0) {
+          controller.enqueue(heads[part]);
+          at = range.start;
+          await file.seek(at, Deno.SeekMode.Start);
+          return;
+        }
+        const buf = new Uint8Array(Math.min(CHUNK, range.end - at + 1));
+        const n = await file.read(buf);
+        if (n === null) throw new Error("the file ended before its range");
+        controller.enqueue(buf.subarray(0, n));
+        at += n;
+        if (at > range.end) {
+          part++;
+          at = -1;
+        }
+      } catch (error) {
+        file.close();
+        controller.error(error);
+      }
+    },
+    cancel() {
+      file.close();
+    },
+  });
 }
 
 /** Pass through exactly `length` bytes, then close (the file's readable keeps going otherwise). */

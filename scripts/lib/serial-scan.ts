@@ -34,7 +34,7 @@ export function parallelSuiteFiles(): Promise<Map<string, string>> {
 }
 
 /** The repo's own import-map aliases (`denext/server` → `src/server/mod.ts`). */
-const ALIASES: Record<string, string> = Object.fromEntries(
+export const ALIASES: Record<string, string> = Object.fromEntries(
   Object.entries(
     (JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
       imports: Record<string, string>;

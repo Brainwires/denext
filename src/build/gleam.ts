@@ -16,6 +16,7 @@
 // depends on Lustre also gets the Lustre kit modules (lustre-kit.ts) after each build, and the
 // post-build fixes for Lustre's server-component and client runtimes (lustre-patch.ts).
 
+import { runToExit } from "./exited-output.ts";
 import { dirname, join, relative } from "@std/path";
 import { appendGitignore } from "./gitignore.ts";
 import type { DenextPlugin, PluginContext } from "../plugin/mod.ts";
@@ -75,8 +76,7 @@ const locateGleam: GleamLocator = async (options) => {
 /** The default {@link GleamRunner}: a child process, its output collected. */
 const runCommand: GleamRunner = async (cmd, args, cwd) => {
   try {
-    const out = await new Deno.Command(cmd, { args, cwd, stdout: "piped", stderr: "piped" })
-      .output();
+    const out = await runToExit(cmd, { args, cwd, stdout: "piped", stderr: "piped" });
     const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
     return { success: out.success, output: text };
   } catch (err) {

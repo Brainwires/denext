@@ -14,7 +14,9 @@
 // `<style id="react-native-stylesheet">` once the page's shell has rendered
 // (../runtime/server-style-sheets.ts, read by ../server/render-page.ts). react-native-web on the
 // client adopts the element by that id, so the first paint is styled and hydration reuses the
-// rules.
+// rules. The rules a Suspense boundary that streams later adds go out ahead of it
+// (../server/late-style-sheets.ts). In `dev` the per-module loop serves these apps as SPA mode's
+// (./dev-unbundled/react-native.ts), covering the route entries and Flight islands.
 //
 // Not on the App Router: expo-router (it is a router; `app/` is the App Router's — an import
 // fails the build, naming the App Router equivalents), uniwind (its stylesheet pass is the SPA

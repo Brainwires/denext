@@ -5,7 +5,9 @@
 // so importing a packed module costs nothing until a text is used.
 //
 // The native templates are packed this way (scripts/gen-native-templates.ts →
-// src/build/native-templates.packed.ts).
+// src/build/native-templates.packed.ts, which loads the pack from @denext/docs-corpus). A single
+// generated text (the CLI's verb table, the config schema, the Google Fonts families) is packed
+// whole and read back with `unpackText`.
 
 import { decodeBase64 } from "@std/encoding/base64";
 import { brotliDecompressSync } from "node:zlib";
@@ -18,11 +20,65 @@ export type PackedRecords<L extends PackLayout> = {
   readonly [G in keyof L]: { readonly [R in keyof L[G]]: Readonly<Record<string, string>> };
 };
 
+/**
+ * Decode one packed text (written by scripts/lib/pack-texts.ts `brotliBase64`): base64, then
+ * Brotli, then UTF-8.
+ *
+ * @param brotliBase64 The packed text.
+ * @returns The text.
+ */
+export function unpackText(brotliBase64: string): string {
+  return new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64)));
+}
+
+/**
+ * A packed JSON document (scripts/gen-packed-texts.ts), decoded on the first call and kept.
+ *
+ * Generated modules whose values are data tables read them through this (and
+ * {@linkcode packedObject}) rather than decoding when imported: a module graph that only imports
+ * them (the config validator's, and through it the packaged desktop app's) then never runs
+ * `node:zlib`'s Brotli. In a Linux WebKitGTK window on a runtime before `3.0.0-denext.7` (still the
+ * rollback pin) that call binds to the system `libbrotlidec` the web view loads and never returns,
+ * so an eager decode kept the app from starting (tests/desktop-runtime-graph.test.ts).
+ *
+ * @param brotliBase64 The packed document.
+ * @returns The decoder: the document's values by name.
+ */
+export function lazyPack(brotliBase64: string): () => Readonly<Record<string, unknown>> {
+  let values: Readonly<Record<string, unknown>> | undefined;
+  return () => values ??= JSON.parse(unpackText(brotliBase64));
+}
+
+/**
+ * An object value of a pack whose keys are known up front (written beside the pack by its
+ * generator): each key is an enumerable getter, and the first read of any of them decodes the
+ * pack. `Object.keys`, `in` and `Object.hasOwn` decode nothing.
+ *
+ * @param pack The pack's decoder ({@linkcode lazyPack}).
+ * @param name The value's name in the pack.
+ * @param keys The value's own keys, in order.
+ * @returns The object.
+ */
+export function packedObject<T>(
+  pack: () => Readonly<Record<string, unknown>>,
+  name: string,
+  keys: readonly string[],
+): T {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    Object.defineProperty(out, key, {
+      enumerable: true,
+      get: () => (pack()[name] as Record<string, unknown>)[key],
+    });
+  }
+  return out as T;
+}
+
 /** Decode a pack (written by scripts/lib/pack-texts.ts): Brotli, then base64, then JSON. */
 function unpackTexts(
   brotliBase64: string,
 ): Record<string, Record<string, Record<string, string>>> {
-  return JSON.parse(new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64))));
+  return JSON.parse(unpackText(brotliBase64));
 }
 
 /**
@@ -59,4 +115,31 @@ export function packedRecords<const L extends PackLayout>(
     }
   }
   return out as PackedRecords<L>;
+}
+
+/** A hole in a packed template: `{{=name}}`. */
+const HOLE = /\{\{=([A-Za-z][A-Za-z0-9]*)\}\}/g;
+
+/**
+ * A packed template with its holes filled. A template that interpolates (a function of the app's
+ * names in its readable source) is packed with each `${expr}` written as a hole, `{{=name}}`, and
+ * the published function fills them. Every hole must have a value and every value a hole, so a
+ * template and the code that fills it cannot drift apart silently. Values are inserted as they
+ * are, in one pass: a value that looks like a hole stays text.
+ *
+ * @param template The packed text.
+ * @param values Each hole's text, by name.
+ * @returns The filled text.
+ */
+export function fillTemplate(template: string, values: Readonly<Record<string, string>>): string {
+  const used = new Set<string>();
+  const out = template.replace(HOLE, (_, name: string) => {
+    if (!Object.hasOwn(values, name)) throw new Error(`template hole {{=${name}}} has no value`);
+    used.add(name);
+    return values[name];
+  });
+  for (const name of Object.keys(values)) {
+    if (!used.has(name)) throw new Error(`the template has no hole {{=${name}}}`);
+  }
+  return out;
 }

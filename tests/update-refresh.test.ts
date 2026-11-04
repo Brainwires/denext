@@ -10,8 +10,9 @@ import {
   updateTag,
 } from "../src/server/cache.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { createApp } from "../src/server/app.ts";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { createApp } from "./helpers/released-app.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 

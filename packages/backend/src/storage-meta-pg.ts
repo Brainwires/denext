@@ -846,13 +846,24 @@ export function postgresMetaStore(): MetaStore {
       );
       return rows.length > 0;
     },
-    saveResumable(row) {
-      return exec(
+    async saveResumable(row, lease, keepUntil) {
+      const rows = await query<{ id: string }>(
         { kind: "service" },
-        `update storage.denext_resumable_uploads set state = $2::jsonb, lease = null,
-           lease_until = null where id = $1`,
-        [row.id, stateJson(row)],
+        dml(
+          `update storage.denext_resumable_uploads set state = $2::jsonb, lease = $4,
+             lease_until = $5 where id = $1 and lease = $3`,
+          "id",
+        ),
+        [
+          row.id,
+          stateJson(row),
+          lease,
+          keepUntil === undefined ? null : lease,
+          keepUntil ?? null,
+        ],
+        false,
       );
+      return rows.length > 0;
     },
     deleteResumable(id) {
       return exec(

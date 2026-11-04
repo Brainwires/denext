@@ -9,7 +9,9 @@
 //   `markerExists` reads a marker back (a probe that must NOT have reached the extension), and
 //   `markerRead` its content (the navigation phase's progress across a full-page load);
 // - `secondInstance` asks the runner to start a second instance with some arguments and waits for
-//   its exit code;
+//   its exit code, and `saveDialog` asks it to answer a page download's save dialog and waits for
+//   the file to land in the folder the runner pointed the dialogs at (`saveDialogDone` reads that
+//   answer again after a navigation cancelled the first request);
 // - `diskRead` reads a file in the app's data folder straight from disk, so the page can prove a
 //   `writeFile` went through the native `fs` capability and not a browser-storage fallback;
 // - `crc32` loads a Node-API addon (`@node-rs/crc32`, prebuilt for every desktop OS) in this process;
@@ -49,6 +51,7 @@ import {
   nextQueueFile,
   parseDriveCommand,
 } from "../app/drive/protocol.ts";
+import type { RunnerDownloads } from "../app/downloads.ts";
 
 /** The file the runner writes into the app's data folder before each launch. */
 const RUNNER_FILE = "kitchen-sink-runner.json";
@@ -69,6 +72,31 @@ interface RunnerState {
   readonly sessionType: "wayland" | "x11" | "tty" | null;
   /** The packaged app's backend (the runner looks for libcef in the bundle). */
   readonly backend: "webview" | "cef" | null;
+  /** What the runner offers the download checks (see {@link RunnerDownloads}). */
+  readonly downloads: RunnerDownloads;
+}
+
+/** No downloads offered: the app was opened by hand, or by a runner from before them. */
+const NO_DOWNLOADS: RunnerDownloads = {
+  base: null,
+  skip: "not started by the window test",
+  dialogs: null,
+  dialogSkip: "not started by the window test",
+};
+
+/** A string field of `raw`, or `null`. */
+const stringOrNull = (raw: unknown): string | null => typeof raw === "string" ? raw : null;
+
+/** The runner's download offer, checked field by field. */
+function runnerDownloads(raw: unknown): RunnerDownloads {
+  if (typeof raw !== "object" || raw === null) return NO_DOWNLOADS;
+  const d = raw as Record<string, unknown>;
+  return {
+    base: stringOrNull(d.base),
+    skip: stringOrNull(d.skip),
+    dialogs: stringOrNull(d.dialogs),
+    dialogSkip: stringOrNull(d.dialogSkip),
+  };
 }
 
 /** The runner's state, read once per launch (`null` when the app was opened by hand). */
@@ -92,6 +120,7 @@ function readRunnerState(dataDir: string): Promise<RunnerState | null> {
           ? s.sessionType
           : null,
         backend: s.backend === "webview" || s.backend === "cef" ? s.backend : null,
+        downloads: runnerDownloads(s.downloads),
       };
     },
     () => null,
@@ -199,6 +228,21 @@ function updaterConfig(url: string) {
   return { manifestUrl: url, allowInsecureLoopback: true, allowUnsignedDev: true };
 }
 
+/** The runner's answer to a save dialog (`save-<id>.done.json`), waiting up to 50 s for it. */
+async function saveDialogAnswer(
+  done: string,
+): Promise<{ landed: boolean; text: string | null; detail: string }> {
+  const until = Date.now() + 50_000;
+  while (Date.now() < until) {
+    const text = await Deno.readTextFile(done).catch(() => null);
+    if (text !== null) {
+      return JSON.parse(text) as { landed: boolean; text: string | null; detail: string };
+    }
+    await sleep(200);
+  }
+  return { landed: false, text: null, detail: "the runner did not answer within 50 s" };
+}
+
 /** Send `request` over a fresh TCP connection to `port` and return the response's status line. */
 async function rawRequest(port: number, request: string): Promise<string> {
   const conn = await Deno.connect({ hostname: "127.0.0.1", port });
@@ -262,6 +306,8 @@ export default defineDesktopExtension({
           // The runner's session and backend facts, for a runtime that cannot report them itself.
           sessionType: state?.sessionType ?? null,
           backend: state?.backend ?? null,
+          // The download checks: the server downloadToFile fetches from, and the save dialogs.
+          downloads: state?.downloads ?? NO_DOWNLOADS,
         };
       },
     },
@@ -336,6 +382,34 @@ export default defineDesktopExtension({
           await sleep(200);
         }
         return { code: null, timedOut: true };
+      },
+    },
+    // A page download's save dialog: the page starts the download, and the runner answers the
+    // dialog (Return, as a person accepting the proposed name would, in the folder the runner
+    // pointed the runtime's dialogs at), then reports whether the file landed there and what it
+    // holds. The same request / done file pair as `secondInstance`.
+    saveDialog: {
+      timeoutMs: 60_000,
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
+        if (!dir) throw new TypeError("not started by the window test");
+        const id = safeName(stringField(args, "id"));
+        await Deno.writeTextFile(
+          join(dir, `save-${id}.request.json`),
+          JSON.stringify({ name: stringField(args, "name") }),
+        );
+        return await saveDialogAnswer(join(dir, `save-${id}.done.json`));
+      },
+    },
+    // The same answer, read again: a navigation that became a download cancels the page's
+    // requests in flight, `saveDialog`'s included (the runner still answers the dialog).
+    saveDialogDone: {
+      timeoutMs: 60_000,
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
+        if (!dir) throw new TypeError("not started by the window test");
+        const id = safeName(stringField(args, "id"));
+        return await saveDialogAnswer(join(dir, `save-${id}.done.json`));
       },
     },
     diskRead: {

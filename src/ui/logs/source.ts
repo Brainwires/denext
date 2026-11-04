@@ -10,6 +10,7 @@
 // secret-looking variable the process (or the project's `.env`) holds — a log is not a place a
 // dashboard should show a key from.
 
+import { runToExit } from "../../build/exited-output.ts";
 import { join } from "@std/path";
 import { lineLevel, type ServiceHealth, serviceHealth } from "../../cli/commands/stack-health.ts";
 import { parsePs } from "../../cli/commands/stack-io.ts";
@@ -71,15 +72,15 @@ export type DockerRunner = (
 const realDocker: DockerRunner = async (args, cwd, signal) => {
   let out: Deno.CommandOutput;
   try {
-    // `output()` throws a missing binary synchronously, so a `.catch()` on it never sees one.
-    out = await new Deno.Command("docker", {
+    // A missing binary rejects as NotFound; read until exit (an inherited pipe can't stall it).
+    out = await runToExit("docker", {
       args,
       cwd,
       stdout: "piped",
       stderr: "piped",
       stdin: "null",
       signal,
-    }).output();
+    });
   } catch (error) {
     throw error instanceof Deno.errors.NotFound
       ? new Error("docker is not on PATH: logs need Docker (or the stack's dashboard-logs relay)")

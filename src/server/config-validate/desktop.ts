@@ -11,8 +11,34 @@ import {
   parseDesktopAppOrigin,
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
+import { desktopBackendProblem } from "../../desktop/engine-backend.ts";
+import { permissionListError } from "../../desktop/permission-entries.ts";
+import {
+  desktopPermissionsMode,
+  desktopPermissionsProblem,
+  strictPermissionsSidecarError,
+} from "../../desktop/permissions-mode.ts";
+import { desktopTrayProblem } from "../../desktop/tray-config.ts";
+import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
-import { type Fail, isPlainObject, num, oneOf } from "./shared.ts";
+import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
+
+/** The kinds `desktop.extraPermissions` takes. */
+const EXTRA_PERMISSION_KINDS = [
+  "read",
+  "write",
+  "net",
+  "netConnect",
+  "netListen",
+  "run",
+  "ffi",
+  "env",
+  "sys",
+];
+
+/** Whether `v` is an array of strings. */
+const isStringList = (v: unknown): boolean =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
 
 /** `desktop.extraPermissions`: an object of permission kinds to string arrays. */
 function validateExtraPermissions(extra: unknown, fail: Fail): void {
@@ -21,15 +47,34 @@ function validateExtraPermissions(extra: unknown, fail: Fail): void {
     fail("desktop.extraPermissions", "must be an object of permission kinds to string arrays");
     return;
   }
-  const KINDS = ["read", "write", "net", "run", "ffi", "env", "sys"];
-  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
-    if (!(KINDS.includes(k) && Array.isArray(v) && v.every((s) => typeof s === "string"))) {
-      fail(
-        `desktop.extraPermissions.${k}`,
-        "must be an array of strings (kinds: read, write, net, run, ffi, env, sys)",
-      );
-    }
+  validatePermissionLists(
+    "desktop.extraPermissions",
+    extra as Record<string, unknown>,
+    EXTRA_PERMISSION_KINDS,
+    isStringList,
+    fail,
+  );
+}
+
+/**
+ * `desktop.permissions`: `"default"`, `"strict"` or `{ mode, env? }`; strict needs
+ * `desktop.app.identifier` (the runtime names the app's folders after it) and no sidecar that
+ * hands a child the whole environment.
+ */
+function validateDesktopPermissions(desktop: Record<string, unknown>, fail: Fail): void {
+  const problem = desktopPermissionsProblem(desktop.permissions);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
+  if (!desktopPermissionsMode(desktop.permissions).strict) return;
+  const identifier = (desktop.app as { identifier?: unknown } | undefined)?.identifier;
+  if (typeof identifier !== "string" || identifier.trim() === "") {
+    fail(
+      "desktop.permissions",
+      '"strict" needs desktop.app.identifier: the runtime expands $DENO_DESKTOP_DATA and ' +
+        "$DENO_DESKTOP_CACHE to the app's folders named after it",
+    );
   }
+  const conflict = strictPermissionsSidecarError(desktop.sidecars);
+  if (conflict) fail("desktop.permissions", conflict);
 }
 
 /** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */
@@ -88,8 +133,30 @@ function validateBridgeOrigins(origins: unknown, fail: Fail): void {
         `desktop.app.bridgeOrigins[${i}]`,
         'must be an origin ("https://idp.example"), "<scheme>://*" or "*"',
       );
+    } else if (entry.trim() === "*" || /:\/\/\*$/.test(entry.trim())) {
+      warnOnce(bridgeWildcardWarning(i, entry.trim()));
     }
   });
+}
+
+/** The warning for a wildcard `desktop.app.bridgeOrigins` entry (`*`, `<scheme>://*`). */
+function bridgeWildcardWarning(index: number, entry: string): string {
+  const what = entry === "*"
+    ? "every document the window loads"
+    : `every ${entry.slice(0, -4)} origin`;
+  return `denext.config: desktop.app.bridgeOrigins[${index}] is "${entry}": the native bridge ` +
+    `answers ${what}, not only the app's own origin. Each binding still has to list the origin ` +
+    "(bind(…, { origins })), but list exact origins here unless you need the wildcard.";
+}
+
+/** Warnings already printed by this process (a config is validated more than once). */
+const warned = new Set<string>();
+
+/** `console.warn` a message once per process. */
+function warnOnce(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  console.warn(message);
 }
 
 /** `desktop.app.allowedNavigationOrigins`: exact origins (no wildcards). */
@@ -117,13 +184,31 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
-    fail("desktop.app.singleInstance", "must be a boolean");
+  for (const key of ["singleInstance", "keepAlive", "dock"]) {
+    if (a[key] !== undefined && typeof a[key] !== "boolean") {
+      fail(`desktop.app.${key}`, "must be a boolean");
+    }
   }
   if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
     fail("desktop.app.name", "must be a non-empty string");
   }
+  validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/** `desktop.app.activationPolicy`: `"regular"` or `"accessory"`, and not regular with no Dock. */
+function validateActivationPolicy(a: Record<string, unknown>, fail: Fail): void {
+  const policy = a.activationPolicy;
+  if (policy === undefined) return;
+  if (policy !== "regular" && policy !== "accessory") {
+    fail("desktop.app.activationPolicy", 'must be "regular" or "accessory"');
+  }
+  if (policy === "regular" && a.dock === false) {
+    fail(
+      "desktop.app.activationPolicy",
+      'is "regular" (a Dock icon) but desktop.app.dock is false: drop one of them',
+    );
+  }
 }
 
 /** `desktop.app.icons`: `{ macos?, windows?, linux? }` file paths. */
@@ -161,7 +246,10 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
   num(fail, `${field}.height`, size.height, { min: 1 });
 }
 
-/** `desktop.window`: optional width/height (≥ 1), title, resizable. */
+/**
+ * `desktop.window`: optional width/height (≥ 1), title, and the flags (resizable, show, frameless,
+ * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
+ */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
   if (!isPlainObject(win)) fail("desktop.window", "must be an object");
@@ -171,14 +259,21 @@ function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (w.title !== undefined && typeof w.title !== "string") {
     fail("desktop.window.title", "must be a string");
   }
-  if (w.resizable !== undefined && typeof w.resizable !== "boolean") {
-    fail("desktop.window.resizable", "must be a boolean");
-  }
+  const problem = desktopWindowKeyProblem(w);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
+}
+
+/** `desktop.tray`: an icon path in the export, optional texts, a menu and a panel. */
+function validateDesktopTray(tray: unknown, fail: Fail): void {
+  if (tray === undefined) return;
+  const problem = desktopTrayProblem(tray);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
 }
 
 /** The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload. */
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
+  validateDesktopTray(d.tray, fail);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);
@@ -217,11 +312,19 @@ function validateDesktopSidecars(sidecars: unknown, spaProxy: unknown, fail: Fai
   }
 }
 
+/** `desktop.update.hosts`: each entry one host of the baked `--allow-net`. */
+function validateUpdateHosts(hosts: unknown, fail: Fail): void {
+  const error = hosts === undefined ? null : permissionListError("net", hosts);
+  if (error) fail("desktop.update.hosts", error);
+}
+
 /**
- * `desktop.update.autoConfirm`: a boolean; `desktop.update.ui`: a feed URL and a public key (the
- * other `desktop.update` keys are checked at package).
+ * `desktop.update.autoConfirm`: a boolean; `desktop.update.hosts`: network hosts baked into the
+ * binary's `--allow-net`, each one value (`permissionListError`); `desktop.update.ui`: a feed URL
+ * and a public key (the other `desktop.update` keys are checked at package).
  */
 function validateDesktopUpdate(update: unknown, fail: Fail): void {
+  validateUpdateHosts((update as { hosts?: unknown } | undefined)?.hosts, fail);
   const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
   if (autoConfirm !== undefined && typeof autoConfirm !== "boolean") {
     fail("desktop.update.autoConfirm", "must be a boolean");
@@ -316,6 +419,12 @@ function validateUserActivityTypes(types: unknown, fail: Fail): void {
   }
 }
 
+/** `desktop.backend`: `"webview"`, `"cef"` or a per-OS `{ macos?, windows?, linux?, default? }`. */
+function validateDesktopBackend(backend: unknown, fail: Fail): void {
+  const problem = desktopBackendProblem(backend);
+  if (problem !== null) fail(problem.field, problem.message);
+}
+
 /** `desktop.windows`: `{ proxy?: "system" | "direct" }`. */
 function validateDesktopWindows(windows: unknown, fail: Fail): void {
   if (windows === undefined) return;
@@ -355,11 +464,13 @@ export function validateDesktop(
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
+  validateDesktopBackend((desktop as { backend?: unknown }).backend, fail);
   validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
   validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
   validateDesktopWindows((desktop as { windows?: unknown }).windows, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
+  validateDesktopPermissions(desktop as Record<string, unknown>, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {

@@ -14,6 +14,7 @@ import { CAPACITOR_CONFIGS, readCapacitorConfig } from "./capacitor-config.ts";
 import { nativeDirsOf } from "./capacitor-native-dirs.ts";
 import { CAPACITOR_VERSION, capacitorBuildIgnores, YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
 import type { CommandRunner, PlannedCommand } from "./mobile-capabilities.ts";
+import { assertCapacitorCli, capCommand, capSubcommand } from "./capacitor-cli.ts";
 
 /** A native platform Capacitor adds. */
 export type CapacitorPlatform = "ios" | "android";
@@ -45,6 +46,12 @@ export interface CapacitorStep {
   line: string;
   /** Why migrate does not run it (the line is printed for the user instead). */
   skip?: string;
+  /**
+   * The project's own code the command runs (its build, its Capacitor config, its package
+   * manager's hooks). On an untrusted clone that is arbitrary code execution, so
+   * {@linkcode runCapacitorSteps} runs such a step only when the user opted in.
+   */
+  projectCode: string;
 }
 
 /** Where the app id came from. */
@@ -124,6 +131,31 @@ export interface CapacitorPlan {
   ignores: string[];
   /** Write `capacitor.config.ts` (false when a config of another name is kept). */
   writeConfig: boolean;
+  /**
+   * The kept config to write `plugins.DenextBridge.frameGuard: false` into: it loads a hosted
+   * `server.url` whose page calls native plugins, which the bridge's origin guard would refuse
+   * (AU6-L8). Null when there is nothing to opt out of (or the config already decides).
+   */
+  frameGuardOptOut: string | null;
+}
+
+/**
+ * Whether a kept Capacitor config loads a hosted app: a `server.url` on a host other than
+ * loopback, with no `plugins.DenextBridge` decision of its own.
+ */
+export function needsFrameGuardOptOut(values: Record<string, unknown> | null): boolean {
+  const server = values?.server as Record<string, unknown> | undefined;
+  const url = typeof server?.url === "string" ? server.url : undefined;
+  if (url === undefined) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  if (["localhost", "127.0.0.1", "[::1]", "::1"].includes(host)) return false;
+  const plugins = values?.plugins as Record<string, unknown> | undefined;
+  return typeof plugins?.DenextBridge !== "object" || plugins.DenextBridge === null;
 }
 
 /** A Capacitor app id: Java package form (Android's rule, which Capacitor enforces). */
@@ -240,7 +272,7 @@ function missingPackages(
 }
 
 /**
- * The install command for `specs` as dev dependencies. It never runs the project's own
+ * The install command for `specs` as dev dependencies, saved exactly. It never runs the project's own
  * lifecycle scripts (a monorepo's `prepare`, a `postinstall`): the Capacitor packages need no
  * install script. npm, pnpm and bun take `--ignore-scripts`; Yarn gets
  * {@link YARN_NO_SCRIPTS_ENV}.
@@ -250,12 +282,14 @@ function installCommand(
   specs: string[],
   cwd: string,
 ): PlannedCommand {
+  // Saved exactly, as pinned: a range in package.json would let a later install take a newer
+  // release, past the project's minimum dependency age.
   if (pm === "yarn") {
-    return { cmd: pm, args: ["add", "-D", ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
+    return { cmd: pm, args: ["add", "-D", "--exact", ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
   }
   const args = pm === "npm"
-    ? ["install", "-D", "--ignore-scripts"]
-    : ["add", "-D", "--ignore-scripts"];
+    ? ["install", "-D", "--ignore-scripts", "--save-exact"]
+    : ["add", "-D", "--ignore-scripts", pm === "bun" ? "--exact" : "--save-exact"];
   return { cmd: pm, args: [...args, ...specs], cwd };
 }
 
@@ -266,10 +300,19 @@ function commandLine(c: PlannedCommand): string {
   return [...env, ...[c.cmd, ...c.args].map(quote)].join(" ");
 }
 
-/** A step from a command. */
-function step(label: string, command: PlannedCommand, skip?: string): CapacitorStep {
-  return { label, command, line: commandLine(command), ...(skip ? { skip } : {}) };
+/** A step from a command that runs `projectCode` (see {@linkcode CapacitorStep.projectCode}). */
+function step(
+  label: string,
+  command: PlannedCommand,
+  projectCode: string,
+  skip?: string,
+): CapacitorStep {
+  return { label, command, line: commandLine(command), projectCode, ...(skip ? { skip } : {}) };
 }
+
+/** What the install runs of the project's own: its package manager's config and hooks. */
+const INSTALL_RUNS = "its package manager's configuration, such as a .pnpmfile.cjs or a " +
+  "Yarn yarnPath";
 
 /** The install, export and `cap add` steps. */
 async function capacitorSteps(
@@ -281,9 +324,10 @@ async function capacitorSteps(
   const steps: CapacitorStep[] = [];
   if (packages.length) {
     steps.push(
-      pm ? step("install", installCommand(pm, packages, dir)) : step(
+      pm ? step("install", installCommand(pm, packages, dir), INSTALL_RUNS) : step(
         "install",
         installCommand("npm", packages, dir),
+        INSTALL_RUNS,
         "no lockfile, so migrate does not pick a package manager: run this, or your " +
           "manager's equivalent",
       ),
@@ -296,12 +340,19 @@ async function capacitorSteps(
   steps.push(step(
     "export",
     { cmd: "deno", args: [...input.run.split(" ").slice(1), input.cli, "export", "."], cwd: dir },
+    "`denext export` builds and renders the app",
     notInstalled,
   ));
   for (const p of platforms) {
     const there = await exists(join(dir, p)) ? `${p}/ already exists` : undefined;
     steps.push(
-      step(`add ${p}`, { cmd: "npx", args: ["cap", "add", p], cwd: dir }, there ?? notInstalled),
+      step(
+        `add ${p}`,
+        capCommand(["add", p], dir),
+        "`cap add` loads the app's capacitor.config and runs the Capacitor CLI from its " +
+          "node_modules",
+        there ?? notInstalled,
+      ),
     );
   }
   return steps;
@@ -310,15 +361,15 @@ async function capacitorSteps(
 /**
  * The `mobile:*` tasks a Capacitor target gets: export + OTA stamp + `cap sync`, open each
  * native IDE, and a signed store build per platform. `cap` runs the app's installed Capacitor
- * CLI (`npx cap`, as `denext mobile` does) when a package manager installs it, else Capacitor's
- * CLI from Deno's npm cache.
+ * CLI (`npx --no cap`, as `denext mobile` does: `--no` never fetches the unrelated registry
+ * package `cap`) when a package manager installs it, else Capacitor's CLI from Deno's npm cache.
  */
 export function capacitorTasks(
   cli: string,
   o: { run: string; installed: boolean },
 ): Record<string, string> {
   const cap = o.installed
-    ? "npx cap"
+    ? "npx --no cap"
     : `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR_VERSION}`;
   return {
     // `mobile sync` keeps the iOS shell's plugin paths off pnpm's store (installed Capacitor).
@@ -420,6 +471,14 @@ function configFindings(
     });
   }
   if (!kept || kept.generated) return out;
+  if (needsFrameGuardOptOut(kept.values)) {
+    out.push({
+      item: kept.file,
+      reason: "it loads a hosted server.url, whose page would lose the native plugins to the " +
+        "bridge's origin guard: migrate set plugins.DenextBridge.frameGuard: false; prefer " +
+        "listing the origin in plugins.DenextBridge.allowedOrigins instead",
+    });
+  }
   const webDir = kept.values?.webDir;
   if (webDir !== CAPACITOR_WEB_DIR) {
     out.push({
@@ -477,6 +536,9 @@ export async function planCapacitor(input: CapacitorPlanInput): Promise<Capacito
     tasks: capacitorTasks(input.cli, { run: input.run, installed: input.pm !== null }),
     ignores: capacitorBuildIgnores(nativeDirsOf(kept?.values)),
     writeConfig: !kept || kept.generated,
+    frameGuardOptOut: kept && !kept.generated && needsFrameGuardOptOut(kept.values)
+      ? kept.file
+      : null,
   };
 }
 
@@ -506,22 +568,54 @@ export async function appRouterServerFiles(dir: string): Promise<string[]> {
 export interface CapacitorStepsOutcome {
   /** The lines that ran and succeeded. */
   ran: string[];
-  /** The step that failed, and its exit code. */
-  failed?: { line: string; code: number };
+  /**
+   * The step that failed, and its exit code; `reason` when it never started (a `cap` step whose
+   * `@capacitor/cli` is not installed: denext never fetches `cap` from the registry).
+   */
+  failed?: { line: string; code: number; reason?: string };
   /** Steps not run: skipped ones (with the reason), and every step after a failure. */
   pending: Array<{ line: string; reason: string }>;
 }
 
+/** Whether {@linkcode runCapacitorSteps} may run the steps that run the project's own code. */
+export interface CapacitorRunOptions {
+  /**
+   * The user opted in to running the project's own code (`--yes`, or a confirmed prompt).
+   * Without it those steps are left to the user, with the reason.
+   */
+  readonly allowProjectCode: boolean;
+}
+
+/** The pending reason of a step left out because the user did not opt in to running it. */
+function projectCodeReason(step: CapacitorStep): string {
+  return `runs the project's own code (${step.projectCode}); run it once you trust the ` +
+    "project, or re-run migrate with --yes";
+}
+
+/** Why a `cap` step cannot start (its `@capacitor/cli` is not installed), or undefined. */
+async function capacitorCliMissing(command: PlannedCommand): Promise<string | undefined> {
+  if (capSubcommand(command) === undefined) return undefined;
+  try {
+    await assertCapacitorCli(command.cwd);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 /**
- * Run the planned steps in order. A skipped step is left to the user; a failed step stops the
+ * Run the planned steps in order. A skipped step is left to the user, and so is every step
+ * that runs the project's own code unless `options.allowProjectCode`; a failed step stops the
  * run, and the rest are left to the user too.
  *
  * @param steps The plan's steps.
  * @param run Runs one command and resolves its exit code.
+ * @param options Whether the user opted in to running the project's own code.
  */
 export async function runCapacitorSteps(
   steps: readonly CapacitorStep[],
   run: CommandRunner,
+  options: CapacitorRunOptions,
 ): Promise<CapacitorStepsOutcome> {
   const out: CapacitorStepsOutcome = { ran: [], pending: [] };
   for (const s of steps) {
@@ -531,6 +625,15 @@ export async function runCapacitorSteps(
     }
     if (s.skip) {
       out.pending.push({ line: s.line, reason: s.skip });
+      continue;
+    }
+    if (!options.allowProjectCode) {
+      out.pending.push({ line: s.line, reason: projectCodeReason(s) });
+      continue;
+    }
+    const missing = await capacitorCliMissing(s.command);
+    if (missing !== undefined) {
+      out.failed = { line: s.line, code: 1, reason: missing };
       continue;
     }
     const { code } = await run(s.command);

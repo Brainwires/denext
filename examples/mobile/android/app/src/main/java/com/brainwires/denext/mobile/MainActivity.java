@@ -1,4 +1,4 @@
-// denext-main-activity-template: 5 sha256=2cc21543442b0d33eeee28b362b870b657190f7a15e4c7b02ef90ba881903c30
+// denext-main-activity-template: 6 sha256=d42237d806eec22a3e5cadd223bb1b797d57cf94ab97c8f6c4363ef53db6f1c4
 package com.brainwires.denext.mobile;
 
 import android.os.Bundle;
@@ -40,6 +40,8 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         // denext: a dead WebView renderer recreates the activity instead of ending the app.
         if (bridge != null) bridge.addWebViewListener(new RendererRecovery(this));
+        // denext: native plugin calls only from the app's own origin (see BridgeOriginGuard).
+        if (bridge != null) BridgeOriginGuard.install(this, bridge);
     }
 
     /**
@@ -106,6 +108,104 @@ public class MainActivity extends BridgeActivity {
 
     private void memoryWarning() {
         if (bridge != null) bridge.triggerWindowJSEvent("denext:memorywarning");
+    }
+
+    /**
+     * denext: native plugin calls only from the app's own origin. Capacitor gives its bridge to
+     * every server.url and server.allowNavigation origin; this narrows it to the app's local
+     * origin (plus server.url in a debuggable build, for live reload) and the Capacitor config's
+     * plugins.DenextBridge.allowedOrigins. plugins.DenextBridge.frameGuard: false turns it off.
+     */
+    static final class BridgeOriginGuard {
+        private static final String BRIDGE_NAME = "androidBridge";
+
+        static void install(android.app.Activity activity, com.getcapacitor.Bridge bridge) {
+            com.getcapacitor.PluginConfig config = bridge.getConfig().getPluginConfiguration("DenextBridge");
+            if (!config.getBoolean("frameGuard", true)) return;
+            if (
+                bridge.getConfig().isUsingLegacyBridge() ||
+                !androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.WEB_MESSAGE_LISTENER)
+            ) {
+                android.util.Log.w("denext", "the native bridge is not limited to the app's origin: the legacy bridge is in use");
+                return;
+            }
+            final com.getcapacitor.MessageHandler handler = messageHandler(bridge);
+            if (handler == null) {
+                android.util.Log.w("denext", "the native bridge is not limited to the app's origin: no MessageHandler found");
+                return;
+            }
+            android.webkit.WebView webView = bridge.getWebView();
+            androidx.webkit.WebViewCompat.WebMessageListener listener = (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                String data = message.getData();
+                if (isMainFrame && data != null) {
+                    handler.postMessage(data);
+                } else {
+                    android.util.Log.w("denext", "refused a native plugin call from a frame that is not the main one");
+                }
+            };
+            androidx.webkit.WebViewCompat.removeWebMessageListener(webView, BRIDGE_NAME);
+            try {
+                androidx.webkit.WebViewCompat.addWebMessageListener(webView, BRIDGE_NAME, allowedOrigins(activity, bridge, config), listener);
+            } catch (RuntimeException e) {
+                // A rule WebView refused (a malformed allowedOrigins entry): the app's own origin alone.
+                android.util.Log.e("denext", "plugins.DenextBridge.allowedOrigins was refused: " + e.getMessage());
+                androidx.webkit.WebViewCompat.addWebMessageListener(
+                    webView,
+                    BRIDGE_NAME,
+                    java.util.Collections.singleton(localOrigin(bridge)),
+                    listener
+                );
+            }
+        }
+
+        /** The origins plugin calls are accepted from. */
+        static java.util.Set<String> allowedOrigins(
+            android.app.Activity activity,
+            com.getcapacitor.Bridge bridge,
+            com.getcapacitor.PluginConfig config
+        ) {
+            java.util.Set<String> rules = new java.util.LinkedHashSet<>();
+            rules.add(localOrigin(bridge));
+            boolean debuggable = (activity.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            String server = debuggable ? origin(bridge.getServerUrl()) : null;
+            if (server != null) rules.add(server);
+            for (String entry : config.getArray("allowedOrigins", new String[0])) {
+                String allowed = origin(entry);
+                if (allowed != null) rules.add(allowed);
+            }
+            return rules;
+        }
+
+        /** The origin Capacitor's local server answers on (https://localhost by default). */
+        static String localOrigin(com.getcapacitor.Bridge bridge) {
+            return bridge.getScheme() + "://" + bridge.getHost();
+        }
+
+        /** {@code scheme://host[:port]} of {@code url} (lower-cased), or null. */
+        static String origin(String url) {
+            if (url == null) return null;
+            android.net.Uri uri = android.net.Uri.parse(url);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            if (scheme == null || host == null || host.isEmpty() || uri.getUserInfo() != null) return null;
+            int port = uri.getPort();
+            return scheme.toLowerCase(java.util.Locale.ROOT) + "://" + host.toLowerCase(java.util.Locale.ROOT) +
+                (port == -1 ? "" : ":" + port);
+        }
+
+        /** Capacitor's MessageHandler, which the bridge keeps in a private field (found by type). */
+        static com.getcapacitor.MessageHandler messageHandler(com.getcapacitor.Bridge bridge) {
+            for (java.lang.reflect.Field field : com.getcapacitor.Bridge.class.getDeclaredFields()) {
+                if (field.getType() != com.getcapacitor.MessageHandler.class) continue;
+                try {
+                    field.setAccessible(true);
+                    return (com.getcapacitor.MessageHandler) field.get(bridge);
+                } catch (Exception e) {
+                    return null;
+                }
+            }
+            return null;
+        }
     }
 
     /**

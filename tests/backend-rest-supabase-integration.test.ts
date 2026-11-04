@@ -23,7 +23,7 @@ import { builtinSql } from "../src/server/postgres.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
@@ -161,8 +161,6 @@ const SCHEMA = `
 Deno.test({
   name: `auto-REST × supabase-js on a real Postgres${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-sb-" });
@@ -868,8 +866,6 @@ const gisReason = !GIS_URL
 Deno.test({
   name: `auto-REST × supabase-js: GeoJSON on PostGIS${gisReason ? ` (skipped: ${gisReason})` : ""}`,
   ignore: gisReason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment(true, undefined, GIS_URL);
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-gis-" });

@@ -6,9 +6,9 @@ import { renderToString } from "../src/jsx/render-to-string.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
-import { useId } from "../src/runtime/hooks.ts";
+import { useId } from "../src/runtime/hooks/use-id.ts";
 import { makeDom } from "./helpers/dom.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { clientIdFor } from "../src/build/module-graph.ts";
 import { toFileUrl } from "@std/path";
@@ -195,7 +195,7 @@ Deno.test("a function prop from a Server Component to a client component warns o
 });
 
 Deno.test("a Server Action prop does not warn (it crosses as a reference)", async () => {
-  const { serverAction } = await import("../src/runtime/server-action.ts");
+  const { serverAction } = await import("../src/runtime/action-stub.ts");
   const save = serverAction("picker-save", () => 1);
   const warnings = await withWarnings(true, async () => {
     const { flight } = await renderToHtmlFlight(h(Picker, { save, label: "c" }));

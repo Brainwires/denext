@@ -18,6 +18,7 @@
 // /json/list endpoint and the domains used), and adb's `forward` (tcp:0 prints the chosen port).
 
 import { adbDevices } from "../build/mobile-inspect.ts";
+import { runToExit } from "../build/exited-output.ts";
 import { profilePage } from "./core.ts";
 import type { ProfileOptions, ProfileResult } from "./types.ts";
 
@@ -66,8 +67,8 @@ export function adbRunner(adb = Deno.env.get("ADB") || "adb"): AdbRunner {
   return async (args) => {
     let out: Deno.CommandOutput;
     try {
-      out = await new Deno.Command(adb, { args: [...args], stdout: "piped", stderr: "piped" })
-        .output();
+      // Until adb exits: the adb server it may start on first use keeps its pipes open.
+      out = await runToExit(adb, { args: [...args] });
     } catch {
       throw new Error(
         `denext profile --android: ${adb} is not on the PATH (install the Android SDK ` +
@@ -80,6 +81,25 @@ export function adbRunner(adb = Deno.env.get("ADB") || "adb"): AdbRunner {
 }
 
 const PREFIX = "denext profile --android:";
+
+/** A Java package name, the only shape an Android application id takes (`com.example.app`). */
+const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+
+/**
+ * Refuse a package that is not a Java package name. `adb shell pidof <package>` joins its
+ * arguments into one command line the device's `sh` parses, so anything else (`;`, `$(…)`,
+ * spaces) would run on the device.
+ *
+ * @param pkg The `--package` flag or the Capacitor config's appId.
+ * @throws {Error} When `pkg` is not a package name.
+ */
+export function assertAndroidPackage(pkg: string): void {
+  if (ANDROID_PACKAGE.test(pkg)) return;
+  throw new Error(
+    `${PREFIX} ${JSON.stringify(pkg)} is not an Android package name (letters, digits and _ ` +
+      "in two or more dot-separated parts, each starting with a letter, such as com.example.app)",
+  );
+}
 
 /** Run adb and return its stdout, or throw with its stderr. */
 async function adb(run: AdbRunner, args: readonly string[]): Promise<string> {
@@ -400,6 +420,8 @@ export async function profileAndroid(
   options: AndroidProfileOptions = {},
   deps: AndroidProfileDeps = {},
 ): Promise<ProfileResult> {
+  // Before any adb use: `adb shell` hands its arguments to the device's shell as one line.
+  if (options.package !== undefined) assertAndroidPackage(options.package);
   const run = deps.run ?? adbRunner();
   const fetchFn = deps.fetch ?? fetch;
   const serial = await pickDevice(run, options.serial);

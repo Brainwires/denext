@@ -2,7 +2,13 @@
 // code + `{@link}` cross-references) and the per-symbol badges. Server-only, zero JS.
 
 import type { VNodeChild, VNodeChildren } from "denext";
-import { type ApiSymbol, hrefForName, kindLabel } from "../lib/api.ts";
+import {
+  type ApiMember,
+  type ApiParent,
+  type ApiSymbol,
+  hrefForName,
+  kindLabel,
+} from "../lib/api.ts";
 
 /** Render one JSDoc `{@link}` target as a cross-link (or plain code when unresolved). */
 function LinkTag({ raw }: { raw: string }) {
@@ -100,5 +106,82 @@ export function DenextOnlyCallout({ children }: { children?: VNodeChildren }) {
       No React or Next.js API shares this name, so there's nothing upstream to cross-reference —
       this is native denext.{children}
     </aside>
+  );
+}
+
+/**
+ * One parent as code, linked to its page when documented. A utility type (`Omit<X, "k">`) links
+ * only the name it takes its members from.
+ */
+function ParentType({ parent: p }: { parent: ApiParent }) {
+  if (!p.ref) return <code>{p.type}</code>;
+  const href = `/docs/api/${p.ref}`;
+  const at = p.refName ? p.type.indexOf(p.refName, p.type.indexOf("<")) : -1;
+  if (!p.refName || at < 0) {
+    return (
+      <a href={href}>
+        <code>{p.type}</code>
+      </a>
+    );
+  }
+  const end = at + p.refName.length;
+  return (
+    <code>
+      {p.type.slice(0, at)}
+      <a href={href}>{p.refName}</a>
+      {p.type.slice(end)}
+    </code>
+  );
+}
+
+/**
+ * The parents an interface or class inherits members from, or the interfaces a class implements,
+ * each linked to its page when documented.
+ */
+export function ApiParents(
+  { parents, label = "Inherits the members of" }: { parents: ApiParent[]; label?: string },
+) {
+  if (!parents.length) return null;
+  return (
+    <p class="api-parents">
+      {label} {parents.map((p, i) => (
+        <span key={p.type}>
+          {i ? ", " : ""}
+          <ParentType parent={p} />
+        </span>
+      ))}.
+    </p>
+  );
+}
+
+/** An interface's or class's own members: each signature, its prose, then its `@param` / `@returns` tags. */
+export function ApiMembers({ members }: { members: ApiMember[] }) {
+  if (!members.length) return null;
+  return (
+    <dl class="api-members">
+      {members.map((m, i) => (
+        <div key={i} class="api-member">
+          <dt>
+            <code>{m.signature}</code>
+          </dt>
+          <dd>
+            {m.doc ? <DocText text={m.doc} /> : null}
+            {m.params?.length
+              ? (
+                <ul>
+                  {m.params.map((p) => (
+                    <li key={p.name}>
+                      <code>{p.name}</code>
+                      {p.doc ? ` — ${p.doc}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )
+              : null}
+            {m.returns ? <p>Returns {m.returns}</p> : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

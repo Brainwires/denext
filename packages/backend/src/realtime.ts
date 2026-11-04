@@ -24,6 +24,15 @@
 // one whose connection closed is kept for a reconnect, but only while there is room — at a cap,
 // the oldest such one goes first, and only live subscriptions refuse a new one.
 //
+// A subscription whose connection closed is resumed when it comes back (replay, on by default):
+// the engine journals every change it receives (realtime-journal.ts) and each subscription the
+// position it was delivered up to; a reactivated one is first sent `resumed`, then — in the next
+// flush, on its own — the journaled changes after its position, re-read as its subscriber and run
+// through the same tracked-key rules as live changes. Frames still queued at the drop are kept
+// and sent first. A gap the journal no longer covers (dropped for age or count, or a lost
+// listener's resync) is a `resync` frame. A reconnect that finds no subscription (swept, or on
+// another instance) is answered by neither, and the browser re-reads.
+//
 // Re-reads compare keys and filters in the column's own type (read once from the catalog), so a
 // primary-key or filter index serves them; each runs under a transaction-local
 // `statement_timeout`, and flushes are single-flight: a burst arriving while one runs is
@@ -43,6 +52,7 @@ import {
   bootDdlEnabled,
   bootMigrate,
   BootSchemaError,
+  type ChannelAdmission,
   clientIpForLimits,
   createChannel,
   type Migration,
@@ -52,6 +62,7 @@ import {
   withMigrationLock,
 } from "@denext/denext/server";
 import { type DbIdentity, ensureRlsMigrated, type RlsScope } from "./rls.ts";
+import { quoteIdent } from "./rest-query.ts";
 import { resolveScope, rlsReady, scopedFor } from "./postgres.ts";
 import {
   decodeSubscriptionKey,
@@ -79,6 +90,7 @@ import {
   triggerArgs,
 } from "./realtime-sql.ts";
 import { LogicalSource, releaseReserved, type Reserved } from "./realtime-logical.ts";
+import { ChangeJournal } from "./realtime-journal.ts";
 
 /** A change as the database reported it — keys only, before any re-read. */
 export interface TableChangeEvent {
@@ -133,6 +145,12 @@ type Sink = { channel: string } | { fn: (frame: TableChangesFrame) => void };
  */
 type AudienceMode = "view" | "raw";
 
+/** A frame queued for an audience, with the grant it was read under (its publish's stamp). */
+interface Queued {
+  frame: TableChangesFrame;
+  grant: string;
+}
+
 /** One subscription. */
 interface Audience {
   key: string;
@@ -152,6 +170,12 @@ interface Audience {
    */
   owner: string;
   scope: RlsScope;
+  /**
+   * The stamp of `scope`'s grant ({@linkcode grantStampOf}): what its frames are published under,
+   * and what its subscriber is admitted under — the Live hub delivers a frame only where the two
+   * match, on any instance.
+   */
+  grant: string;
   /** Keys this subscriber may know about (see the module comment). */
   tracked: Set<string>;
   active: boolean;
@@ -160,8 +184,19 @@ interface Audience {
   idleSince: number;
   seq: number;
   sink: Sink;
-  queue: TableChangesFrame[];
+  queue: Queued[];
   pumping: boolean;
+  /** The journal position this subscription was delivered up to. */
+  position: number;
+  /** It came back after a disconnect: the next flush replays what it missed. */
+  resume: boolean;
+  /**
+   * It was re-authorized while disconnected with other claims than it was read under: its kept
+   * frames and journal position are not the new grant's, so its return is a `resync`.
+   */
+  regranted: boolean;
+  /** When its last frame was published (epoch ms; 0: none yet). */
+  sentAt: number;
 }
 
 /** The burst's change to a key after one more notification (`previous`: the burst's so far). */
@@ -226,6 +261,8 @@ export interface RealtimeStats {
   listens: number;
   /** `revalidateTag` calls this instance made (one per table per burst it owned). */
   revalidations: number;
+  /** Reconnected subscriptions resumed from the journal. */
+  replays: number;
 }
 
 /** The burst window: Live's own flush interval. */
@@ -242,12 +279,14 @@ const KEYS_PER_QUERY = 1_000;
 const FRAME_BYTES = 12_000;
 /** A `raw` audience's frame size (a server callback: no channel cap); larger rows are truncated. */
 export const RAW_FRAME_BYTES = 1024 * 1024;
-/** How long an audience with no subscriber is kept (a reconnect resumes it). */
+/** How long an audience with no subscriber is kept with replay off (a reconnect resyncs it). */
 const IDLE_GRACE_MS = 15_000;
 /** How often the publication's tables are read again. */
 const PUBLICATION_POLL_MS = 10_000;
 /** The publication `source: "logical"` keeps the configured tables in. */
 const DENEXT_PUBLICATION = "denext_realtime";
+/** Distinct filters one combined re-read statement evaluates (more go in further statements). */
+const FILTERS_PER_QUERY = 64;
 /** Group re-reads run at once. */
 const REREAD_CONCURRENCY = 4;
 /** Subscribe-time seed queries run at once (more wait their turn). */
@@ -328,6 +367,7 @@ export class RealtimeEngine {
     frames: 0,
     listens: 0,
     revalidations: 0,
+    replays: 0,
   };
   #client: () => SqlClient;
   #audiences = new Map<string, Audience>();
@@ -341,7 +381,9 @@ export class RealtimeEngine {
   #listening: Promise<void> | null = null;
   #listener: SqlListener | null = null;
   #migrated: Promise<void> | null = null;
-  #publish: (key: string, frame: TableChangesFrame) => Promise<void>;
+  #publish: (key: string, frame: TableChangesFrame, grant: string) => Promise<void>;
+  /** Drops the frames of a key not yet fanned out by the Live hub (a regranted reconnect). */
+  #discard: (key: string) => void;
   #stopped = false;
   #warned = false;
   /** The reserved connection that holds (or tries for) the owner lock; `null` until needed. */
@@ -363,20 +405,32 @@ export class RealtimeEngine {
   #seedWaiters: Array<() => void> = [];
   /** Each owner's seed budget: tokens left, as of `at`. */
   #budgets = new Map<string, { tokens: number; at: number }>();
+  /** The reconnect journal (`null`: replay is off). */
+  #journal: ChangeJournal<TableNotification> | null;
+  /** Subscriptions being replayed by the flush in progress (live delivery skips them). */
+  #replaying = new Set<Audience>();
 
   /**
    * @param options The realtime options.
    * @param client The connecting role's client (throws when Postgres is unavailable).
-   * @param publish Publishes a frame on the realtime channel.
+   * @param publish Publishes a frame on the realtime channel, stamped with the grant it was read
+   *   under (the hub delivers it only to a subscriber admitted under that grant).
+   * @param discard Drops a key's published frames the Live hub has not fanned out yet.
    */
   constructor(
     options: RealtimeOptions,
     client: () => SqlClient,
-    publish: (key: string, frame: TableChangesFrame) => Promise<void>,
+    publish: (key: string, frame: TableChangesFrame, grant: string) => Promise<void>,
+    discard: (key: string) => void = () => {},
   ) {
     this.config = resolveRealtime(options);
     this.#client = client;
     this.#publish = publish;
+    this.#discard = discard;
+    const replay = this.config.replay;
+    this.#journal = replay
+      ? new ChangeJournal(replay.retentionSeconds * 1000, replay.maxChangesPerTable)
+      : null;
   }
 
   /** The client, checked for `listen`. */
@@ -649,9 +703,12 @@ export class RealtimeEngine {
     this.#logical = source;
   }
 
-  /** Every table: changes may have been missed. */
+  /** Every table: changes may have been missed (journaled, so a replay over it resyncs too). */
   #resyncAll(): void {
-    for (const name of this.config.tables.keys()) this.#resyncTables.add(name);
+    for (const name of this.config.tables.keys()) {
+      this.#resyncTables.add(name);
+      this.#journal?.append({ table: name, op: "resync" });
+    }
     this.#schedule();
   }
 
@@ -684,6 +741,7 @@ export class RealtimeEngine {
     // The triggers fire only for the table's `events`; the WAL carries every change, so a kind
     // the table does not send is dropped here (a resync always passes).
     if (event.op !== "resync" && !table.events.includes(event.op)) return;
+    this.#journal?.append(journaled(event));
     if (event.op === "truncate") {
       // Changes earlier in the burst are moot (the rows are gone); later ones follow it.
       const dropped = this.#pending.get(event.table)?.size ?? 0;
@@ -700,13 +758,9 @@ export class RealtimeEngine {
 
   /** Fold one change into the burst: the latest op per key wins (an insert stays an insert). */
   #coalesce(table: string, key: string, event: TableNotification): void {
-    const op = event.op as Pending["op"];
     let byKey = this.#pending.get(table);
     if (!byKey) this.#pending.set(table, byKey = new Map());
-    const previous = byKey.get(key);
-    if (previous) byKey.delete(key); // re-inserted below: commit order of the LAST change
-    else this.#pendingCount++;
-    byKey.set(key, merge(previous, op, event));
+    if (coalesceInto(byKey, key, event)) this.#pendingCount++;
   }
 
   #schedule(): void {
@@ -743,19 +797,26 @@ export class RealtimeEngine {
     return this.#flushing;
   }
 
-  /** Deliver the burst gathered so far. */
+  /** Deliver the burst gathered so far, and replay what reconnected subscriptions missed. */
   async #flushOnce(): Promise<void> {
     const pending = this.#pending;
     const resync = this.#resyncTables;
     const truncated = this.#truncated;
+    // Every change of this burst is journaled at or before `head`.
+    const head = this.#journal?.head ?? 0;
     this.#pending = new Map();
     this.#resyncTables = new Set();
     this.#truncated = new Map();
     this.#pendingCount = 0;
-    if (pending.size === 0 && resync.size === 0 && truncated.size === 0) return;
+    const resuming = this.#takeResuming(head);
+    if (pending.size === 0 && resync.size === 0 && truncated.size === 0 && !resuming.length) {
+      return;
+    }
     this.stats.flushes++;
     this.#sweep();
-    const work: Array<() => Promise<void>> = [];
+    const work: Array<() => Promise<void>> = resuming.map((audience) => () =>
+      this.#replay(audience, head).finally(() => this.#replaying.delete(audience))
+    );
     for (const [name, ts] of truncated) this.#truncateTable(name, ts);
     for (const name of resync) work.push(...this.#resyncTable(name));
     for (const [name, changes] of pending) {
@@ -766,11 +827,64 @@ export class RealtimeEngine {
     await runLimited(work, REREAD_CONCURRENCY);
   }
 
+  /**
+   * The reconnected subscriptions this flush replays (marked as replaying, so live delivery skips
+   * them); every other live one is current as of `head` once this burst is delivered.
+   */
+  #takeResuming(head: number): Audience[] {
+    const resuming: Audience[] = [];
+    for (const audience of this.#audiences.values()) {
+      if (!audience.active) continue;
+      if (audience.resume) {
+        audience.resume = false;
+        this.#replaying.add(audience);
+        resuming.push(audience);
+      } else if (!this.#replaying.has(audience)) {
+        audience.position = head;
+      }
+    }
+    return resuming;
+  }
+
+  /** Whether live delivery reaches the audience now (live, and not resuming or replaying). */
+  #live(audience: Audience): boolean {
+    return audience.active && !audience.resume && !this.#replaying.has(audience);
+  }
+
+  /**
+   * Replay what a reconnected subscription missed: the journal's changes of its table after its
+   * position (up to `head`), coalesced as one burst and re-read as its subscriber — or a `resync`
+   * when the journal no longer covers the gap, or it holds a lost listener's resync.
+   */
+  async #replay(audience: Audience, head: number): Promise<void> {
+    const entries = this.#journal?.since(audience.table.name, audience.position, head) ?? null;
+    audience.position = head;
+    if (!entries || entries.some((entry) => entry.event.op === "resync")) {
+      return this.#enqueue(audience, { resync: true });
+    }
+    this.stats.replays++;
+    let changes = new Map<string, Pending>();
+    let truncated = false;
+    for (const { event } of entries) {
+      if (event.op === "truncate") {
+        changes = new Map(); // the rows are gone: only what follows the truncate matters
+        truncated = true;
+      } else {
+        coalesceInto(changes, event.key!, event);
+      }
+    }
+    if (truncated && audience.tracked.size > 0) {
+      audience.tracked.clear();
+      this.#enqueue(audience, { changes: [{ op: "truncate" }] });
+    }
+    if (changes.size > 0) await this.#deliverGroup([audience], changes);
+  }
+
   /** A table whose changes were lost: tell its hooks and subscribers to re-read. */
   #resyncTable(name: string): Array<() => Promise<void>> {
     this.#runHooks({ table: name, op: "resync" });
     for (const audience of this.#audiences.values()) {
-      if (audience.table.name === name && audience.active) {
+      if (audience.table.name === name && this.#live(audience)) {
         this.#enqueue(audience, { resync: true });
       }
     }
@@ -787,7 +901,9 @@ export class RealtimeEngine {
     );
     for (const audience of this.#audiences.values()) {
       // Only a subscriber who could see rows hears of it: there is nothing to clear otherwise.
-      if (audience.table.name !== name || !audience.active || audience.tracked.size === 0) continue;
+      if (audience.table.name !== name || !this.#live(audience) || audience.tracked.size === 0) {
+        continue;
+      }
       audience.tracked.clear();
       if (audience.mode === "raw" && !audience.events?.has("truncate")) continue;
       const change: TableChange = audience.mode === "raw" && ts !== undefined
@@ -806,7 +922,7 @@ export class RealtimeEngine {
     }
     const groups = new Map<string, Audience[]>();
     for (const audience of this.#audiences.values()) {
-      if (audience.table.name !== name || !audience.active) continue;
+      if (audience.table.name !== name || !this.#live(audience)) continue;
       const id = groupId(audience);
       const group = groups.get(id);
       if (group) group.push(audience);
@@ -888,41 +1004,88 @@ export class RealtimeEngine {
     } catch { /* never reserved: nothing is held */ }
   }
 
-  /** Re-read the burst's rows once for the group, then work out each audience's changes. */
+  /**
+   * Re-read the burst's rows once for the group — one identity's subscriptions to one table,
+   * whatever their filters — then work out each audience's changes. A failure with several
+   * filters is retried filter by filter, so one bad filter value costs only its own audiences.
+   */
   async #deliverGroup(group: Audience[], changes: Map<string, Pending>): Promise<void> {
     const [first] = group;
+    // The group shares one role and claims: read as them, and stamp every frame with that grant
+    // (a rebind meanwhile changes an audience's scope, not what these rows were read under).
+    const { scope, grant } = first;
     const keys = [...changes].filter(([, c]) => c.op !== "delete").map(([key]) => key);
-    let rows: Map<string, unknown>;
+    const byFilter = byFilterOf(group);
+    let rows: Map<string, Map<string, unknown>>;
     let open = false;
     try {
-      rows = await this.#reread(first, keys);
+      rows = await this.#reread(first, scope, [...byFilter.values()].map(([a]) => a.filter), keys);
       open = (await this.#catalog(first.table)).open;
     } catch (error) {
-      this.#types.delete(first.table.name); // the table may have changed: read its types again
-      console.error(`[@denext/backend] realtime re-read of ${first.table.name} failed`, error);
-      for (const audience of group) this.#enqueue(audience, { resync: true });
-      return;
+      return await this.#rereadFailed(group, byFilter, changes, error);
     }
     for (const audience of group) {
+      const seen = rows.get(filterId(audience.filter))!;
       const out = audience.mode === "raw"
-        ? rawChanges(audience, changes, rows, this.config.maxTrackedKeys, open)
-        : audienceChanges(audience, changes, rows, this.config.maxTrackedKeys);
-      for (const frame of toFrames(out, audience.frameBytes)) this.#enqueue(audience, frame);
+        ? rawChanges(audience, changes, seen, this.config.maxTrackedKeys, open)
+        : audienceChanges(audience, changes, seen, this.config.maxTrackedKeys);
+      for (const frame of toFrames(out, audience.frameBytes)) {
+        this.#enqueue(audience, frame, grant);
+      }
     }
   }
 
-  /** The rows among `keys` the audience's scope (and filter) can SELECT, as parsed JSON. */
-  async #reread(audience: Audience, keys: string[]): Promise<Map<string, unknown>> {
-    const rows = new Map<string, unknown>();
+  /**
+   * A group's re-read failed: with several filters, each is retried on its own (one bad filter
+   * value then costs only its own audiences); otherwise the group is told to re-read.
+   */
+  async #rereadFailed(
+    group: Audience[],
+    byFilter: Map<string, Audience[]>,
+    changes: Map<string, Pending>,
+    error: unknown,
+  ): Promise<void> {
+    if (byFilter.size > 1) {
+      for (const same of byFilter.values()) await this.#deliverGroup(same, changes);
+      return;
+    }
+    const { table } = group[0];
+    this.#types.delete(table.name); // the table may have changed: read its types again
+    console.error(`[@denext/backend] realtime re-read of ${table.name} failed`, error);
+    for (const audience of group) this.#enqueue(audience, { resync: true });
+  }
+
+  /**
+   * The rows among `keys` the audience's scope can SELECT, as parsed JSON, for each of `filters`
+   * (by {@linkcode filterId}). One filter is one query (the filter in its WHERE); several share
+   * one, each matched by a boolean column — so an identity's burst is one re-read per 1 000 keys
+   * however many filters its subscriptions use.
+   */
+  async #reread(
+    audience: Audience,
+    scope: RlsScope,
+    filters: Array<ParsedFilter | undefined>,
+    keys: string[],
+  ): Promise<Map<string, Map<string, unknown>>> {
+    const out = new Map(filters.map((filter) => [filterId(filter), new Map<string, unknown>()]));
     const { types } = await this.#catalog(audience.table);
+    // One filter: its WHERE. Several: up to FILTERS_PER_QUERY boolean columns per statement.
+    const batches = filters.length === 1 ? [filters] : Array.from(
+      { length: Math.ceil(filters.length / FILTERS_PER_QUERY) },
+      (_, n) => filters.slice(n * FILTERS_PER_QUERY, (n + 1) * FILTERS_PER_QUERY),
+    );
     for (let i = 0; i < keys.length; i += KEYS_PER_QUERY) {
       const chunk = keys.slice(i, i + KEYS_PER_QUERY);
-      const { text, params } = rereadQuery(audience.table, audience.filter, chunk, types);
-      this.stats.rereads++;
-      const result = await this.#timed<{ k: string; r: string }>(audience.scope, text, params);
-      for (const row of result) rows.set(String(row.k), JSON.parse(String(row.r)));
+      for (const batch of batches) {
+        const { text, params } = batch.length === 1
+          ? rereadQuery(audience.table, batch[0], chunk, types)
+          : groupRereadQuery(audience.table, batch, chunk, types);
+        this.stats.rereads++;
+        const result = await this.#timed<Record<string, unknown>>(scope, text, params);
+        for (const row of result) sortRow(row, batch, out);
+      }
     }
-    return rows;
+    return out;
   }
 
   /**
@@ -970,34 +1133,55 @@ export class RealtimeEngine {
     return await read;
   }
 
-  /** Queue a frame and make sure the audience's pump runs. */
-  #enqueue(audience: Audience, frame: Omit<TableChangesFrame, "seq">): void {
+  /**
+   * Queue a frame, stamped with the grant it was read under (the audience's current one for a
+   * control frame), and make sure the audience's pump runs.
+   */
+  #enqueue(
+    audience: Audience,
+    frame: Omit<TableChangesFrame, "seq">,
+    grant: string = audience.grant,
+  ): void {
     if (audience.queue.length >= MAX_QUEUE) {
       audience.queue.length = 0;
-      audience.queue.push({ seq: 0, resync: true });
+      audience.queue.push({ frame: { seq: 0, resync: true }, grant: audience.grant });
     } else {
-      audience.queue.push({ seq: 0, ...frame });
+      audience.queue.push({ frame: { seq: 0, ...frame }, grant });
     }
     if (!audience.pumping) void this.#pump(audience);
   }
 
-  /** Send queued frames one by one, spaced so the Live hub never merges two of them. */
+  /**
+   * Send queued frames one by one, spaced so the Live hub never merges two of them — also a frame
+   * queued just after the pump went idle (a truncate and the burst's re-read rows, a `resumed`
+   * and its replay). A Live subscription whose subscriber is gone keeps the rest queued for its
+   * reconnect.
+   */
   async #pump(audience: Audience): Promise<void> {
     audience.pumping = true;
+    const channel = "channel" in audience.sink;
     try {
       while (audience.queue.length > 0 && !this.#stopped) {
-        const frame = audience.queue.shift()!;
+        if (channel && !audience.active) break;
+        const wait = audience.sentAt + PACE_MS - Date.now();
+        if (channel && wait > 0) {
+          await sleep(wait);
+          continue; // the subscriber may have left meanwhile
+        }
+        const { frame, grant } = audience.queue.shift()!;
         frame.seq = ++audience.seq;
-        if (!(await this.#send(audience, frame))) continue;
-        if ("channel" in audience.sink && audience.queue.length > 0) await sleep(PACE_MS);
+        if (await this.#send(audience, frame, grant)) audience.sentAt = Date.now();
       }
     } finally {
       audience.pumping = false;
     }
   }
 
-  /** Deliver one frame; a frame over the channel's cap is split (and requeued) instead. */
-  async #send(audience: Audience, frame: TableChangesFrame): Promise<boolean> {
+  /**
+   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
+   * requeued, under the same grant) instead.
+   */
+  async #send(audience: Audience, frame: TableChangesFrame, grant: string): Promise<boolean> {
     this.stats.frames++;
     if ("fn" in audience.sink) {
       try {
@@ -1011,7 +1195,7 @@ export class RealtimeEngine {
       return true;
     }
     try {
-      await this.#publish(audience.key, frame);
+      await this.#publish(audience.key, frame, grant);
       return true;
     } catch (error) {
       if (!(error instanceof RangeError)) {
@@ -1020,15 +1204,17 @@ export class RealtimeEngine {
       }
       audience.seq--; // the frame was not sent: its parts take its number
       this.stats.frames--;
-      audience.queue.unshift(...splitFrame(frame));
+      audience.queue.unshift(...splitFrame(frame).map((part) => ({ frame: part, grant })));
       return false;
     }
   }
 
   /** Drop audiences that have had no subscriber for the grace period, and full budgets. */
   #sweep(): void {
+    this.#journal?.prune();
     const now = Date.now();
-    const cutoff = now - IDLE_GRACE_MS;
+    const grace = this.config.replay ? this.config.replay.retentionSeconds * 1000 : IDLE_GRACE_MS;
+    const cutoff = now - grace;
     for (const [key, audience] of this.#audiences) {
       if (!audience.active && audience.idleSince < cutoff) this.#audiences.delete(key);
     }
@@ -1105,20 +1291,27 @@ export class RealtimeEngine {
    * @param key The subscription key.
    * @param peer Whose quota a signed-out subscriber counts against: its client address, or its
    *   Live connection's id when the address is unknown.
-   * @returns Whether the subscriber may receive it.
+   * @returns `false` when it may not; else the admission, under the stamp of its grant — the hub
+   *   then delivers it only the frames published under that stamp, wherever they were read.
    */
-  async authorize(key: string, peer = ""): Promise<boolean> {
+  async authorize(key: string, peer = ""): Promise<false | ChannelAdmission> {
     const parts = decodeSubscriptionKey(key);
     if (!parts) return false;
     try {
       const table = await this.#resolve(parts.table);
       if (!table) return false;
       const scope = await resolveScope();
+      const grant = await grantStampOf(scope);
       const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
-      if (existing) return this.#rebind(existing, scope, owner);
+      if (existing) {
+        if (!this.#rebind(existing, scope, grant, owner)) return false;
+        if (existing.regranted) await this.#reseed(existing, scope);
+        return { allow: true, grant };
+      }
       const sink = { channel: key };
-      return await this.#admit({ key, table, filter: parts.filter, scope, sink }, owner);
+      const ok = await this.#admit({ key, table, filter: parts.filter, scope, grant, sink }, owner);
+      return ok ? { allow: true, grant } : false;
     } catch (error) {
       this.#warnOnce(error);
       return false;
@@ -1129,14 +1322,43 @@ export class RealtimeEngine {
    * Re-authorization of a known key: same identity only; the claims are refreshed. A signed-out
    * subscriber back on a new connection takes the subscription into that connection's quota.
    */
-  #rebind(audience: Audience, scope: RlsScope, owner: string): boolean {
+  #rebind(audience: Audience, scope: RlsScope, grant: string, owner: string): boolean {
     if (identityOf(scope) !== audience.identity) return false;
     if (owner !== audience.owner) {
       if (!this.#roomFor(owner, audience)) return false;
       audience.owner = owner;
     }
+    // A reconnect under other claims (a role, a tenant, a group changed): what was read and kept
+    // for it was read under the old ones, so it is dropped and the return is a resync.
+    // The keys it tracked were seen under the old grant too: none of them may yield a delete
+    // (with an `old: "full"` row image) to the new one, so they go now and are re-seeded under it.
+    // The frames already handed to this instance's Live hub before the drop (its coalescing
+    // window) are discarded too; one published here or on another instance that the hub still
+    // fans out is stamped with the old grant, so the hub does not send it to the new one.
+    if (audience.everActive && !audience.active && grant !== audience.grant) {
+      this.#discard(audience.key);
+      audience.queue.length = 0;
+      audience.tracked = new Set();
+      audience.regranted = true;
+    }
     audience.scope = scope;
+    audience.grant = grant;
     return true;
+  }
+
+  /**
+   * Re-seed a regranted audience's tracked keys under its new scope (what it can see now). A
+   * failed read leaves the set empty: no delete is then sent for a row seen before.
+   */
+  async #reseed(audience: Audience, scope: RlsScope): Promise<void> {
+    try {
+      const tracked = await this.#seedSlot(() =>
+        this.#seed(audience.table, audience.filter, scope)
+      );
+      if (audience.scope === scope) audience.tracked = tracked;
+    } catch (error) {
+      this.#warnOnce(error);
+    }
   }
 
   /**
@@ -1149,6 +1371,7 @@ export class RealtimeEngine {
     table: ResolvedTable;
     filter?: ParsedFilter;
     scope: RlsScope;
+    grant: string;
     sink: Sink;
     mode?: AudienceMode;
     events?: ReadonlySet<TableEvent>;
@@ -1176,6 +1399,10 @@ export class RealtimeEngine {
       seq: 0,
       queue: [],
       pumping: false,
+      position: this.#journal?.head ?? 0,
+      resume: false,
+      regranted: false,
+      sentAt: 0,
     });
     return true;
   }
@@ -1201,16 +1428,33 @@ export class RealtimeEngine {
     );
   }
 
-  /** A key's first subscriber arrived (the channel's `onActive`). */
+  /**
+   * A key's first subscriber arrived (the channel's `onActive`). One coming back after a
+   * disconnect is told `resumed` — and what it missed is replayed by the next flush — or, when
+   * the journal no longer covers its gap (or replay is off), `resync`.
+   */
   activate(key: string): void {
     const audience = this.#audiences.get(key);
-    if (audience) audience.active = audience.everActive = true;
+    if (!audience) return;
+    const again = audience.everActive && !audience.active;
+    audience.active = audience.everActive = true;
+    if (!again) return;
+    const regranted = audience.regranted;
+    audience.regranted = false;
+    if (regranted || !this.#journal?.covers(audience.table.name, audience.position)) {
+      audience.queue.length = 0; // superseded: the subscriber re-reads everything
+      audience.position = this.#journal?.head ?? 0;
+      return this.#enqueue(audience, { resync: true });
+    }
+    this.#enqueue(audience, { resumed: true });
+    audience.resume = true;
+    this.#schedule();
   }
 
   /**
    * A key's last subscriber left (the channel's `onIdle`). Unsubscribed (or revoked): forgotten
-   * at once. Disconnected: kept for a reconnect of the same identity — swept after
-   * {@linkcode IDLE_GRACE_MS}, or sooner when a cap needs the room.
+   * at once. Disconnected: kept for a reconnect of the same identity — swept after the replay
+   * retention ({@linkcode IDLE_GRACE_MS} with replay off), or sooner when a cap needs the room.
    *
    * @param key The subscription key.
    * @param reason Why it went idle (an older hub passes none: kept, as for a disconnect).
@@ -1225,7 +1469,8 @@ export class RealtimeEngine {
     }
     audience.active = false;
     audience.idleSince = Date.now();
-    audience.queue.length = 0;
+    // With replay the frames not yet sent wait for the reconnect; without, it resyncs anyway.
+    if (!this.#journal) audience.queue.length = 0;
   }
 
   /**
@@ -1249,6 +1494,7 @@ export class RealtimeEngine {
       table: resolved,
       filter,
       scope,
+      grant: await grantStampOf(scope),
       sink: { fn: options.onChange },
     }, "");
     if (!ok) {
@@ -1278,6 +1524,7 @@ export class RealtimeEngine {
       table: init.table,
       filter: init.filter,
       scope: init.scope,
+      grant: await grantStampOf(init.scope),
       sink: { fn: init.onFrame },
       mode: "raw",
       events: init.events,
@@ -1285,6 +1532,8 @@ export class RealtimeEngine {
     if (!ok) return null;
     return {
       stop: () => void this.#audiences.delete(key),
+      // A binding's frames go to its own socket's callback in this process, never over the
+      // channel transport, so its grant stamp is not what gates them; the scope alone moves.
       rescope: (scope: RlsScope) => {
         const audience = this.#audiences.get(key);
         if (!audience || identityOf(scope) !== audience.identity) return false;
@@ -1328,6 +1577,11 @@ export class RealtimeEngine {
     return this.#audiences.size;
   }
 
+  /** How many changes the reconnect journal holds (0 when replay is off). */
+  get journalSize(): number {
+    return this.#journal?.size ?? 0;
+  }
+
   /** Stop: UNLISTEN, cancel the burst, forget every subscription and hook. */
   async stop(): Promise<void> {
     this.#stopped = true;
@@ -1336,6 +1590,7 @@ export class RealtimeEngine {
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();
+    this.#journal?.clear();
     if (this.#publicationTimer !== null) clearInterval(this.#publicationTimer);
     this.#publicationTimer = null;
     await this.#listening?.catch(() => {});
@@ -1368,11 +1623,65 @@ export interface TableChangesOptions {
   onChange: (frame: TableChangesFrame) => void;
 }
 
-/** The identity a scope binds: `anon` or `authenticated:<sub>`. */
-function identityOf(scope: RlsScope): string {
+/**
+ * The identity a subscription key is bound to: `anon`, `authenticated:<sub>`, or — a token with
+ * no subject — its whole grant ({@linkcode grantOf}).
+ *
+ * @param scope The subscriber's scope.
+ * @returns The identity.
+ */
+export function identityOf(scope: RlsScope): string {
   if (scope.role === "anon") return "anon";
   const claims = JSON.parse(scope.claims) as { sub?: unknown };
-  return `authenticated:${String(claims.sub)}`;
+  if (typeof claims.sub === "string" && claims.sub !== "") return `authenticated:${claims.sub}`;
+  // No subject (a custom token): the grant itself is the identity, so two such callers with
+  // different claims never share a subscription.
+  return `authenticated?${grantOf(scope)}`;
+}
+
+/** Claims that change with every token refresh or session slide, not with what it may read. */
+const VOLATILE_CLAIMS = new Set(["exp", "iat", "nbf", "jti"]);
+
+/**
+ * What a scope may read: its role and claims, canonical (keys sorted at every depth) and without
+ * the claims a token refresh changes ({@linkcode VOLATILE_CLAIMS}). Two scopes with the same
+ * grant see the same rows under any policy that does not read the time.
+ *
+ * @param scope The scope.
+ * @returns The grant, as text.
+ */
+export function grantOf(scope: RlsScope): string {
+  const claims = JSON.parse(scope.claims) as Record<string, unknown>;
+  const kept = Object.fromEntries(
+    Object.entries(claims ?? {}).filter(([name]) => !VOLATILE_CLAIMS.has(name)),
+  );
+  return `${scope.role}:${canonical(kept)}`;
+}
+
+/**
+ * The stamp of a scope's grant: the SHA-256 (hex) of {@linkcode grantOf}. Published with every
+ * frame read under the scope and answered by `authorize` for every subscriber admitted under it,
+ * so the Live hub can match the two on any instance without carrying the claims themselves.
+ *
+ * @param scope The scope.
+ * @returns The stamp (64 hex characters).
+ */
+export async function grantStampOf(scope: RlsScope): Promise<string> {
+  const bytes = new TextEncoder().encode(grantOf(scope));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** JSON with every object's keys sorted. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 /** Whether a re-read of the publication changed nothing about a table. */
@@ -1453,16 +1762,82 @@ async function runStatements(tx: SqlClient, script: string): Promise<void> {
   for (const statement of statements) await tx.unsafe(statement);
 }
 
-/** Audiences that see exactly the same rows share a re-read. */
+/**
+ * Audiences re-read as the same role and claims share a re-read — one query for all their
+ * filters (see `#reread`).
+ */
 function groupId(audience: Audience): string {
-  const f = audience.filter;
-  return JSON.stringify([
-    audience.scope.role,
-    audience.scope.claims,
-    f?.column ?? null,
-    f?.op ?? "eq",
-    f?.value ?? null,
-  ]);
+  return JSON.stringify([audience.scope.role, audience.scope.claims]);
+}
+
+/**
+ * File one re-read row under each of `filters` it matches: all of them for a single-filter
+ * query (its WHERE already matched), else those whose `m<n>` column is true.
+ */
+function sortRow(
+  row: Record<string, unknown>,
+  filters: Array<ParsedFilter | undefined>,
+  out: Map<string, Map<string, unknown>>,
+): void {
+  const parsed = JSON.parse(String(row.r));
+  filters.forEach((filter, n) => {
+    if (filters.length === 1 || row[`m${n}`] === true) {
+      out.get(filterId(filter))!.set(String(row.k), parsed);
+    }
+  });
+}
+
+/** A group's audiences by filter (in first-seen order). */
+function byFilterOf(group: Audience[]): Map<string, Audience[]> {
+  const byFilter = new Map<string, Audience[]>();
+  for (const audience of group) {
+    const id = filterId(audience.filter);
+    const same = byFilter.get(id);
+    if (same) same.push(audience);
+    else byFilter.set(id, [audience]);
+  }
+  return byFilter;
+}
+
+/** A filter's identity within a group (`""`: none). */
+function filterId(filter: ParsedFilter | undefined): string {
+  return filter ? JSON.stringify([filter.column, filter.op ?? "eq", filter.value]) : "";
+}
+
+/** The longest key the reconnect journal keeps (a longer one is journaled as a resync). */
+const JOURNAL_KEY_CHARS = 1_024;
+
+/**
+ * What the reconnect journal keeps of a change: its keys and time only — never the old row a
+ * `old: "full"` table carries (a replay re-reads rows; it never sends an old image) — and a
+ * change whose key is longer than {@linkcode JOURNAL_KEY_CHARS} (the logical source does not
+ * bound it) as a resync of its table, so a write cannot make the journal hold large values.
+ *
+ * @param event The change as received.
+ * @returns What the journal keeps of it.
+ */
+export function journaled(event: TableNotification): TableNotification {
+  const { table, op, key, oldKey, ts } = event;
+  if (op === "resync" || (key?.length ?? 0) > JOURNAL_KEY_CHARS) return { table, op: "resync" };
+  if ((oldKey?.length ?? 0) > JOURNAL_KEY_CHARS) return { table, op: "resync" };
+  const entry: TableNotification = { table, op };
+  if (key !== undefined) entry.key = key;
+  if (oldKey !== undefined) entry.oldKey = oldKey;
+  if (ts !== undefined) entry.ts = ts;
+  return entry;
+}
+
+/**
+ * Fold one change into a burst's changes by key: the latest op per key wins (an insert stays an
+ * insert), moved to the end so the map keeps the commit order of each key's LAST change.
+ *
+ * @returns Whether the key is new to the burst.
+ */
+function coalesceInto(byKey: Map<string, Pending>, key: string, event: TableNotification): boolean {
+  const previous = byKey.get(key);
+  if (previous) byKey.delete(key);
+  byKey.set(key, merge(previous, event.op as Pending["op"], event));
+  return previous === undefined;
 }
 
 /** A notification payload, validated (malformed → `null`; overflow or no key → `resync`). */
@@ -1519,13 +1894,15 @@ function filterSql(filter: ParsedFilter, param: string, types: Map<string, strin
   const type = types.get(column);
   if (filter.op === "in") {
     return type
-      ? `t."${column}" = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
-      : `t."${column}"::text in (select jsonb_array_elements_text(${param}::jsonb))`;
+      ? `t.${
+        quoteIdent(column)
+      } = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
+      : `t.${quoteIdent(column)}::text in (select jsonb_array_elements_text(${param}::jsonb))`;
   }
   const op = OPERATORS[filter.op ?? "eq"];
   return type
-    ? `t."${column}" ${op} ${param}::text::${type}`
-    : `t."${column}"::text ${op} ${param}`;
+    ? `t.${quoteIdent(column)} ${op} ${param}::text::${type}`
+    : `t.${quoteIdent(column)}::text ${op} ${param}`;
 }
 
 /**
@@ -1539,8 +1916,8 @@ function filterSql(filter: ParsedFilter, param: string, types: Map<string, strin
  */
 function keyText(column: string, type: string | undefined): string {
   const value = type === "timestamp with time zone"
-    ? `t."${column}" AT TIME ZONE 'UTC'`
-    : `t."${column}"`;
+    ? `t.${quoteIdent(column)} AT TIME ZONE 'UTC'`
+    : `t.${quoteIdent(column)}`;
   return `to_jsonb(${value}) #>> '{}'`;
 }
 
@@ -1556,17 +1933,61 @@ export function rereadQuery(
   types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [JSON.stringify(keys)];
-  const type = types.get(table.key);
-  const match = type
-    ? `t."${table.key}" = any(array(select jsonb_array_elements_text($1::jsonb)::${type}))`
-    : `t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
-  let text = `select ${keyText(table.key, type)} as k, to_jsonb(t)::text as r ` +
-    `from ${table.qualified} t where ${match}`;
+  const where = [keyMatch(table.key, "$1", types)];
   if (filter) {
     params.push(filter.value);
-    text += ` and ${filterSql(filter, "$2", types)}`;
+    where.push(filterSql(filter, "$2", types));
   }
-  return { text, params };
+  return { text: rereadSelect(table, types, [], where), params };
+}
+
+/**
+ * The key column of `t` against the keys in the JSON array bound at `param`, cast to the column's
+ * type (an index scan on the key); compared as text only when the type is unknown.
+ */
+function keyMatch(key: string, param: string, types: Map<string, string>): string {
+  const type = types.get(key);
+  return type
+    ? `t.${
+      quoteIdent(key)
+    } = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
+    : `t.${quoteIdent(key)}::text in (select jsonb_array_elements_text(${param}::jsonb))`;
+}
+
+/**
+ * A re-read's statement, assembled from its parts: the key and the row, then `extra` select
+ * columns, from the table, under every `where` condition. Each part is SQL this module wrote
+ * (validated identifiers, catalog types, `$n` placeholders); no value is ever spliced in.
+ */
+function rereadSelect(
+  table: ResolvedTable,
+  types: Map<string, string>,
+  extra: string[],
+  where: string[],
+): string {
+  const columns = [`${keyText(table.key, types.get(table.key))} as k`, "to_jsonb(t)::text as r"];
+  return `select ${[...columns, ...extra].join(", ")} from ${table.qualified} t ` +
+    `where ${where.join(" and ")}`;
+}
+
+/**
+ * `select key, row, m0, m1, …` for the given keys under the caller's scope, where `m<n>` says
+ * whether the row matches `filters[n]` (`false` for a NULL comparison): one re-read for several
+ * subscriptions of one identity with different filters. Each filter value is its own parameter.
+ */
+export function groupRereadQuery(
+  table: ResolvedTable,
+  filters: Array<ParsedFilter | undefined>,
+  keys: string[],
+  types: Map<string, string>,
+): { text: string; params: unknown[] } {
+  const params: unknown[] = [JSON.stringify(keys)];
+  const columns = filters.map((filter, n) => {
+    if (!filter) return `true as m${n}`;
+    params.push(filter.value);
+    return `coalesce(${filterSql(filter, `$${params.length}`, types)}, false) as m${n}`;
+  });
+  return { text: rereadSelect(table, types, columns, [keyMatch(table.key, "$1", types)]), params };
 }
 
 /** `select key` of every visible row (bounded), under the caller's scope (and the filter). */
@@ -1857,13 +2278,14 @@ function subscriberAddress(): string | undefined {
  * reload) takes over the same channel id.
  */
 export function createRealtimeChannel(): {
-  publish(key: string, frame: TableChangesFrame): Promise<void>;
+  publish(key: string, frame: TableChangesFrame, grant: string): Promise<void>;
+  discard(key: string): void;
 } {
   const engine = (): RealtimeEngine | undefined => {
     const slot = (globalThis as Holder)[SLOT];
     return slot && !("error" in slot) ? slot : undefined;
   };
-  return createChannel<TableChangesFrame>({
+  const channel = createChannel<TableChangesFrame>({
     id: REALTIME_CHANNEL_ID,
     key: (key) => decodeSubscriptionKey(key) !== null,
     authorize: (ctx, key) => {
@@ -1871,6 +2293,10 @@ export function createRealtimeChannel(): {
       return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId) : false;
     },
     authTtlSeconds: 60,
+    // Each frame is a batch of changes, numbered: the hub must deliver every one, in order, not
+    // the latest in its coalescing window or while a re-authorization holds the subscriber's
+    // frames (that dropped whole frames on a loaded machine).
+    ordered: true,
     onActive: (key) => {
       const current: RealtimeEngine | undefined = engine();
       if (current) current.activate(key);
@@ -1880,6 +2306,12 @@ export function createRealtimeChannel(): {
       if (current) current.deactivate(key, reason);
     },
   });
+  // A denext before `Channel.discard` has none: its hub's window stays open (no worse than before).
+  const { discard } = channel as { discard?: (key: string) => void };
+  return {
+    publish: (key, frame, grant) => channel.publish(key, frame, { grant }),
+    discard: (key) => discard?.call(channel, key),
+  };
 }
 
 /**

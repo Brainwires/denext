@@ -10,12 +10,14 @@
  * markup is hoisted) writes each registered sheet into the `<head>` as `<style id="…">`. It is
  * read there, not in the JSX renderers, which also ship in client bundles. The registry is a `globalThis` map under a `Symbol.for` key,
  * so a sheet registered by a separately bundled copy of the library (the compat server bundle)
- * reaches the renderer; registering an id again replaces its reader (a dev rebuild).
+ * reaches the renderer; registering an id again replaces its reader (a dev rebuild). The rules a
+ * sheet gains while a streamed Suspense boundary renders are streamed ahead of the boundary
+ * (../server/late-style-sheets.ts).
  * @module
  */
 
 /** A registered sheet's current contents. */
-interface ServerStyleSheet {
+export interface ServerStyleSheet {
   /** The `<style>` element's id (the one the library's client adopts). */
   readonly id: string;
   /** The sheet's CSS text. */
@@ -38,19 +40,36 @@ function attr(value: string): string {
 }
 
 /**
+ * Every registered sheet's current contents, in registration order (a reader that has nothing
+ * yields nothing). Empty when no sheet is registered (every app without such a library).
+ */
+export function readServerStyleSheets(): ServerStyleSheet[] {
+  const sheets = registry();
+  if (!sheets || sheets.size === 0) return [];
+  const out: ServerStyleSheet[] = [];
+  for (const [id, read] of sheets) {
+    const sheet = read();
+    if (sheet) out.push({ id: sheet.id || id, textContent: sheet.textContent });
+  }
+  return out;
+}
+
+/** Whether any sheet is registered (React Native mode on the App Router). */
+export function hasServerStyleSheets(): boolean {
+  return (registry()?.size ?? 0) > 0;
+}
+
+/**
  * The registered sheets as `<style>` elements, in registration order; "" when none is
  * registered (every app without such a library). A `</style` inside the CSS is escaped so it
  * cannot close the element.
  */
 export function serverStyleSheetsHtml(): string {
-  const sheets = registry();
-  if (!sheets || sheets.size === 0) return "";
   let html = "";
-  for (const [id, read] of sheets) {
-    const sheet = read();
-    if (!sheet || sheet.textContent === "") continue;
+  for (const sheet of readServerStyleSheets()) {
+    if (sheet.textContent === "") continue;
     const css = sheet.textContent.replace(/<\/(style)/gi, "<\\/$1");
-    html += `<style id="${attr(sheet.id || id)}">${css}</style>`;
+    html += `<style id="${attr(sheet.id)}">${css}</style>`;
   }
   return html;
 }

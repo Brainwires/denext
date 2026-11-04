@@ -6,10 +6,9 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import { build } from "../../src/build/build.ts";
-import { staticExport } from "../../src/build/export.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { compatModuleMapFromManifest, loadBundleRef } from "../../src/build/next-compat-loader.ts";
+import { buildInChild, exportInChild } from "../helpers/bounded-build.ts";
 
 /** A compat app: a Server Component page rendering a `"use client"` island that imports react. */
 async function writeFixture(dir: string): Promise<void> {
@@ -47,13 +46,11 @@ export default function Page() {
 Deno.test({
   name:
     "export (next-compat): the Flight bundle is the compat one, and the island hydrates from it",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_export_" });
   try {
     await writeFixture(dir);
-    const result = await staticExport(dir);
+    const result = await exportInChild(dir);
     const html = await Deno.readTextFile(join(result.outDir, "index.html"));
     assertStringIncludes(html, "EXPORT_SERVER_TEXT");
     assertStringIncludes(html, "EXPORT_ISLAND:0");
@@ -83,8 +80,6 @@ Deno.test({
 
 Deno.test({
   name: "export (next-compat): a previous `denext build`'s server bundle still loads afterwards",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // The desktop and mobile package scripts run `deno task export` in a project that may hold a
   // `denext build`. The export used to rebuild the compat server bundle into `.denext/server/`
@@ -97,11 +92,11 @@ Deno.test({
       join(dir, "middleware.ts"),
       "export function middleware(_req: Request) {\n  return undefined;\n}\n",
     );
-    await build(dir);
+    await buildInChild(dir);
     const outDir = join(dir, ".denext");
     const bundle = join(outDir, "server", "app.js");
     const built = await Deno.readTextFile(bundle);
-    await staticExport(dir);
+    await exportInChild(dir);
     const manifest = JSON.parse(await Deno.readTextFile(join(outDir, "manifest.json")));
     const refs = compatModuleMapFromManifest(dir, outDir, manifest.compatServerModules);
     assert(refs.size > 0, "the build mapped its server modules");

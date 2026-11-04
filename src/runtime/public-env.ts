@@ -1,5 +1,5 @@
 // Public environment variables — the client/server isolation boundary for env.
-import { envAll } from "./env-safe.ts";
+import { envAll, envGet } from "./env-safe.ts";
 //
 // SECURITY: server code sees the full process environment (`Deno.env`), but the
 // browser must only ever receive variables explicitly marked public via a
@@ -11,9 +11,14 @@ import { envAll } from "./env-safe.ts";
 /**
  * Prefixes that mark an environment variable as safe to expose to the browser.
  * `NEXT_PUBLIC_` matches Next.js for drop-in compatibility; `DENEXT_PUBLIC_` is
- * the denext-native prefix. Any other variable stays server-only.
+ * the denext-native prefix; `FRESH_PUBLIC_` is Fresh's, for a migrated Fresh app. Any other
+ * variable stays server-only.
  */
-export const PUBLIC_ENV_PREFIXES: readonly string[] = ["NEXT_PUBLIC_", "DENEXT_PUBLIC_"];
+export const PUBLIC_ENV_PREFIXES: readonly string[] = [
+  "NEXT_PUBLIC_",
+  "DENEXT_PUBLIC_",
+  "FRESH_PUBLIC_",
+];
 
 /** The DOM id of the JSON island holding the public env for client hydration. */
 export const PUBLIC_ENV_ID = "__denext_public_env";
@@ -51,7 +56,7 @@ export function filterPublicEnv(env: Record<string, string>): Record<string, str
  * @returns The distinct referenced public-env names.
  */
 export function extractPublicEnvRefs(source: string): string[] {
-  const re = /\b(?:NEXT_PUBLIC_|DENEXT_PUBLIC_)[A-Za-z0-9_]+/g;
+  const re = /\b(?:NEXT_PUBLIC_|DENEXT_PUBLIC_|FRESH_PUBLIC_)[A-Za-z0-9_]+/g;
   return [...new Set(source.match(re) ?? [])];
 }
 
@@ -73,6 +78,28 @@ export function restrictPublicEnv(
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (allow.has(k)) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The public env a server-rendered page embeds: {@linkcode restrictPublicEnv} of
+ * {@linkcode publicEnv}, read without copying the process environment when the names are known.
+ * A production build records the names its client bundle references (plus the `publicEnv`
+ * config allowlist), so only those are read, one `Deno.env.get` each and none for an app that
+ * references none, instead of `Deno.env.toObject()` on every render. The values stay live. With
+ * no names (dev), every public-prefixed variable.
+ *
+ * @param keys The allowed keys, or undefined for no restriction.
+ * @returns The public variables to embed.
+ */
+export function documentPublicEnv(keys?: readonly string[]): Record<string, string> {
+  if (!keys) return publicEnv();
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    if (!isPublicEnvKey(key)) continue;
+    const value = envGet(key);
+    if (value !== undefined) out[key] = value;
   }
   return out;
 }

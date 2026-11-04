@@ -310,6 +310,7 @@ export function gotrueOAuthCallback(deps: GoTrueCallbackDeps) {
         tx: flow,
         redirectUri: redirectUriFor(ctx, provider),
         callbackParams,
+        iss: params.get("iss"),
       });
       if (!result.profile.id) throw new Error("provider profile had no id");
       return await finish(ctx, deps, provider, flow, result);

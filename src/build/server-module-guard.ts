@@ -11,6 +11,7 @@
 // `"use server"` inside a function body, and a string that merely mentions the directive are
 // not flagged.
 
+import { runToExit } from "./exited-output.ts";
 import { fromFileUrl, toFileUrl } from "@std/path";
 import { readDirective } from "./directives.ts";
 import { posixRelative } from "./mobile-paths.ts";
@@ -72,7 +73,7 @@ async function infoModules(
   configPath: string,
   runner: DenoInfoRunner,
 ): Promise<InfoModule[]> {
-  const { code, stdout } = await new Deno.Command(runner.deno, {
+  const { code, stdout } = await runToExit(runner.deno, {
     args: [
       "info",
       "--unstable-sloppy-imports",
@@ -84,7 +85,7 @@ async function infoModules(
     ],
     stdout: "piped",
     stderr: "null",
-  }).output();
+  });
   if (code !== 0) return [];
   return (JSON.parse(new TextDecoder().decode(stdout)) as { modules?: InfoModule[] }).modules ??
     [];

@@ -171,8 +171,6 @@ const SOURCES = [
 
 Deno.test({
   name: "next-auth v4 app: a Next.js app on NextAuth.js v4 migrates and runs unchanged",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-next-auth-v4-app-" });
     try {

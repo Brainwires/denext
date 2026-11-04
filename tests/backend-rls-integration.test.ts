@@ -99,7 +99,6 @@ type Note = { owner: string; body: string };
 Deno.test({
   name: `RLS on a real Postgres: policies per user, anon, service, with check, nesting${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -197,7 +196,6 @@ Deno.test({
 Deno.test({
   name: `RLS on a real Postgres: 200 interleaved queries of two users, nothing left behind${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -259,7 +257,6 @@ Deno.test({
 Deno.test({
   name: `RLS on a real Postgres: db() in a request acts as the denextAuth user${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -290,7 +287,6 @@ Deno.test({
   name:
     `RLS on a real Postgres: a role that may not grant itself the roles is told the fix${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     // Make sure the roles exist (created by someone else), then connect as a role without them.
     const first = await environment();
@@ -322,7 +318,6 @@ Deno.test({
   name:
     `RLS on a real Postgres: legacy claim settings never override; db() follows the request${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     const role = new URL(env.url).username;
@@ -361,7 +356,6 @@ Deno.test({
   name:
     `RLS on a real Postgres: inside a request, db({ as }) and db.service() outrank the session${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {

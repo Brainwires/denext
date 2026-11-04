@@ -14,6 +14,7 @@ import {
   streamPageDocument,
 } from "./document.ts";
 import { type CspSetting, resolveCsp, resolveStreamingCsp } from "./csp.ts";
+import { streamLateStyleSheets } from "./late-style-sheets.ts";
 import {
   augmentPageMetadata,
   documentOptions,
@@ -40,7 +41,8 @@ function dynamicHeaders(pr: PageRequest): Record<string, string> | undefined {
 /**
  * The streamed response. Its CSP is computed from the buffered shell prefix (head +
  * shell): that holds every framework inline `<style>`, and the streamed holes add no
- * inline style/script, while the swap runtime is a hashed constant.
+ * inline style/script, while the swap runtime (and the late-styles runtime, see
+ * ./late-style-sheets.ts) is a hashed constant.
  */
 async function streamedResponse(
   pr: PageRequest,
@@ -51,7 +53,9 @@ async function streamedResponse(
 ): Promise<Response> {
   pr.state.ctx.renderStreamed = true; // dev render-mode telemetry: Suspense holes stream
   const csp = await resolveStreamingCsp(shellPrefix, routeCsp, pr.state.app.config.csp);
-  return htmlResponse(pr.state, stream, status, csp, NO_STORE);
+  // Render-time style sheets (React Native mode): a late boundary's rules stream ahead of it.
+  const body = streamLateStyleSheets(stream, shellPrefix);
+  return htmlResponse(pr.state, body, status, csp, NO_STORE);
 }
 
 /**

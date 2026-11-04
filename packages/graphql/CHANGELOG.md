@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.7.0
+
+### Security
+
+- **`graphql-yoga` is required at `^5.24.6`** (was `^5.10.0`). Yoga 5.24.4 and later depend on
+  `@graphql-tools/utils@^12.0.3`, which fixes two prototype-pollution advisories:
+  [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) (`mergeDeep`, through
+  12.0.0) and [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3)
+  (`mergeIncrementalResult`, 10.10.1 to 12.0.1). Yoga 5.22 to 5.24.3 pinned the vulnerable
+  `@graphql-tools/utils@^11`. The old range already admitted the fixed releases, so an app that
+  updates its lockfile was covered; the new floor keeps a stale lock from resolving an older Yoga.
+  Yoga 6 is not adopted here: it removes `createGraphQLError`, which the plugin uses and
+  re-exports alongside Yoga's options.
+
+### Added
+
+- **A dev schema reload says what it did.** Each reload logs one line naming the edited files
+  (`[@denext/graphql] schema reloaded after an edit to app/graphql/schema.ts`). A reload that fails
+  logs the error with the same files and shows it in the dev error overlay (through the plugin
+  kit's `reportDevError`, denext 4.9); requests answer with that error until the next edit. On an
+  older denext the overlay part is skipped.
+
+### Fixed
+
+- **`@denext/openapi` is required at `^0.7.0`**, the version the workspace builds against: the
+  `^0.6.0` range did not match it, so a plain `deno test` in the repository rewrote `deno.lock`.
+
 ## 0.6.0
 
 ### Added

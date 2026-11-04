@@ -21,11 +21,16 @@ import {
 } from "./build-pipeline/routes.ts";
 import { buildCss, clientTransforms } from "./build-pipeline/transforms.ts";
 import { resolveProject } from "./paths.ts";
+import { canonicalPath } from "./canonical-path.ts";
 
 export type { BuildResult } from "./build-pipeline/context.ts";
 
 /** Build the project at `projectDir` into its `.denext/` output dir. */
-export async function build(projectDir: string): Promise<BuildResult> {
+export async function build(dir: string): Promise<BuildResult> {
+  // The project's real path: Deno resolves the app's imports from the real location of its
+  // `deno.json`, so a project named through a symlink would otherwise reach some modules under
+  // two spellings, bundled twice and misread by every path-prefix test (see canonical-path.ts).
+  const projectDir = canonicalPath(dir);
   const paths = await timed("resolveProject", () => resolveProject(projectDir));
   const early = await buildWithoutAppRouter(paths);
   if (early) return early;

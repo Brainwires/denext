@@ -161,13 +161,14 @@ Deno.test("next-auth passkey: the provider turns denext's passkeys on, with its 
   );
 });
 
-Deno.test("next-auth passkey: listed as webauthn, and not a form on the built-in page", async () => {
+Deno.test("next-auth passkey: listed as webauthn, a button (not a form) on the built-in page", async () => {
   const a = app();
   const providers = await (await a.call("/api/auth/providers")).json();
   assertEquals(providers.passkey.type, "webauthn");
   const page = await (await a.call("/api/auth/signin")).text();
   assert(page.includes("/api/auth/callback/credentials"));
   assert(!page.includes("/signin/passkey"), "no plain form for a WebAuthn provider");
+  assert(page.includes('data-denext-passkey hidden data-base="/api/auth"'), "a passkey button");
 });
 
 Deno.test("next-auth passkey: register, sign out, sign back in with the passkey", async () => {

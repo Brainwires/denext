@@ -3,7 +3,7 @@
 // security and caching headers, conditional and ranged answers, and the transformable-source
 // check.
 
-import { parseRange } from "@denext/denext/server";
+import { parseRanges } from "@denext/denext/server";
 import { isStorageError, StorageError } from "./errors.ts";
 import { normalizeKey } from "./keys.ts";
 import { essence } from "./mime.ts";
@@ -65,45 +65,156 @@ export function objectHeaders(
 
 /**
  * The answer an object request gets before its body is read: `304` for a matching
- * `If-None-Match`, `416` for an unsatisfiable range — else the range to read (or none).
+ * `If-None-Match`, `416` when none of the requested ranges can be satisfied — else the ranges to
+ * read (none for the whole object). `Range` is read as the static file handler reads it (several
+ * ranges, sorted and coalesced; {@linkcode parseRanges}), and an `If-Range` that no longer names
+ * the object asks for all of it. More than {@linkcode MAX_STORAGE_RANGES} ranges after coalescing
+ * are answered with the whole object (a `200`, as nginx's `max_ranges` does): each part is a
+ * separate driver read (an S3 GET), so a long `Range` list would fan one request out.
  *
  * @param info The object.
  * @param headers Its headers (a 416 adds `Content-Range`).
  * @param request The request.
- * @returns A response to send now, or the range.
+ * @returns A response to send now, or the ranges.
  */
 export function preflight(
   info: ObjectInfo,
   headers: Headers,
   request: Request,
-): Response | { range?: ByteRange } {
+): Response | { ranges?: ByteRange[] } {
   if (info.etag && request.headers.get("if-none-match") === `"${info.etag}"`) {
     return new Response(null, { status: 304, headers });
   }
   const header = request.headers.get("range");
-  const range = header === null ? undefined : parseRange(header, info.size);
-  if (range === null) {
+  const ranges = header === null || !ifRangeHolds(request.headers, info)
+    ? undefined
+    : parseRanges(header, info.size);
+  if (ranges === null) {
     headers.set("content-range", `bytes */${info.size}`);
     return new Response(null, { status: 416, headers });
   }
-  return { range };
+  if (ranges && ranges.length > MAX_STORAGE_RANGES) return {};
+  return { ranges };
+}
+
+/** The most ranges one storage request is served in parts; more get the whole object. */
+const MAX_STORAGE_RANGES = 8;
+
+/**
+ * `If-Range` (RFC 9110 §13.1.5): absent, or a validator that still names this object, lets the
+ * range through; anything else asks for the whole object. An entity tag must match strongly (a
+ * weak one never does), a date must equal `Last-Modified` to the second.
+ */
+function ifRangeHolds(req: Headers, info: ObjectInfo): boolean {
+  const value = req.get("if-range")?.trim();
+  if (value === undefined) return true;
+  if (value.startsWith("W/")) return false;
+  if (value.startsWith('"')) return info.etag !== undefined && value === `"${info.etag}"`;
+  const date = Date.parse(value);
+  return info.lastModified !== undefined && Number.isFinite(date) &&
+    Math.floor(info.lastModified.getTime() / 1000) === Math.floor(date / 1000);
+}
+
+/** Reads an object's bytes, or one range of them; rejects when the object is gone. */
+export type ObjectReader = (range?: ByteRange) => Promise<ReadableStream<Uint8Array>>;
+
+/**
+ * The bytes a {@linkcode ObjectReader} serves from what the driver read: exactly `range` (when
+ * one was asked for) of the object `info` describes. A store that ignored `Range` (answered the
+ * whole object) is sliced here, so a `206` never carries the whole object; one that answered
+ * another range is a driver error. An object that changed since `info` was read (another size or
+ * entity tag: overwritten between the `HEAD` and the `GET`) is refused rather than served under
+ * the old headers.
+ *
+ * @param info The object as `preflight` saw it.
+ * @param object What the driver's `get` returned.
+ * @param range The range asked for, if any.
+ * @returns The body to serve.
+ */
+export function servedBytes(
+  info: ObjectInfo,
+  object: StoredObject,
+  range?: ByteRange,
+): ReadableStream<Uint8Array> {
+  const refuse = (error: StorageError): never => {
+    object.body.cancel().catch(() => {});
+    throw error;
+  };
+  if (object.size !== info.size || (info.etag && object.etag && object.etag !== info.etag)) {
+    refuse(new StorageError("conflict", "the object changed while it was read; retry"));
+  }
+  if (!range) return object.body;
+  if (object.range) {
+    if (object.range.start === range.start && object.range.end === range.end) return object.body;
+    refuse(
+      new StorageError(
+        "driver_error",
+        `the store answered bytes ${object.range.start}-${object.range.end} for ${range.start}-` +
+          `${range.end}`,
+      ),
+    );
+  }
+  return sliceStream(object.body, range.start, range.end - range.start + 1);
+}
+
+/** `length` bytes of `body` from `skip` on; the rest of `body` is cancelled. */
+function sliceStream(
+  body: ReadableStream<Uint8Array>,
+  skip: number,
+  length: number,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let toSkip = skip;
+  let left = length;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (left > 0) {
+        const next = await reader.read();
+        if (next.done) {
+          return controller.error(new StorageError("driver_error", "the object ended early"));
+        }
+        let chunk = next.value;
+        if (toSkip >= chunk.byteLength) {
+          toSkip -= chunk.byteLength;
+          continue;
+        }
+        chunk = chunk.subarray(toSkip, toSkip + Math.min(left, chunk.byteLength - toSkip));
+        toSkip = 0;
+        left -= chunk.byteLength;
+        controller.enqueue(chunk);
+        if (left === 0) {
+          await reader.cancel().catch(() => {});
+          controller.close();
+        }
+        return;
+      }
+      controller.close();
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
 }
 
 /**
- * A `200` with the whole object, or a `206` with the range.
+ * A `200` with the whole object, a `206` with one range, or a `206` with several as one
+ * `multipart/byteranges` body (RFC 9110 §14.6), each part read in turn.
  *
  * @param info The object.
  * @param headers Its headers.
- * @param range The range served, if any.
- * @param body The bytes (`null` for HEAD).
+ * @param ranges The ranges served ({@linkcode preflight}'s), if any.
+ * @param read Reads the bytes (`null` for HEAD).
  * @returns The response.
  */
-export function objectResponse(
+export async function objectResponse(
   info: ObjectInfo,
   headers: Headers,
-  range: ByteRange | undefined,
-  body: ReadableStream<Uint8Array> | null,
-): Response {
+  ranges: ByteRange[] | undefined,
+  read: ObjectReader | null,
+): Promise<Response> {
+  if (ranges && ranges.length > 1) return await multipartResponse(info, headers, ranges, read);
+  const range = ranges?.[0];
+  const body = read ? await read(range) : null;
   if (range) {
     headers.set("content-range", `bytes ${range.start}-${range.end}/${info.size}`);
     headers.set("content-length", String(range.end - range.start + 1));
@@ -111,6 +222,59 @@ export function objectResponse(
   }
   headers.set("content-length", String(info.size));
   return new Response(body, { status: 200, headers });
+}
+
+/** Several ranges as `multipart/byteranges`: the first part is read before the answer starts. */
+async function multipartResponse(
+  info: ObjectInfo,
+  headers: Headers,
+  ranges: ByteRange[],
+  read: ObjectReader | null,
+): Promise<Response> {
+  const type = headers.get("content-type") ?? "application/octet-stream";
+  const dash = `--denext-${crypto.randomUUID().replaceAll("-", "")}`;
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  // Each part: its delimiter line (CRLF-led after the first), its headers, a blank line.
+  const heads = ranges.map(({ start, end }, i) =>
+    bytes(
+      [i > 0 ? "\r\n" : "", dash, "\r\n", "content-type: ", type, "\r\n"].join("") +
+        `content-range: bytes ${start}-${end}/${info.size}\r\n\r\n`,
+    )
+  );
+  const tail = bytes(`\r\n${dash}--\r\n`);
+  let length = tail.byteLength;
+  for (const [i, { start, end }] of ranges.entries()) {
+    length += heads[i].byteLength + end - start + 1;
+  }
+  headers.set("content-type", `multipart/byteranges; boundary=${dash.slice(2)}`);
+  headers.set("content-length", String(length));
+  if (!read) return new Response(null, { status: 206, headers });
+  const first = await read(ranges[0]);
+  // Until its bytes are being copied, `first` is ours to close: a client that goes away before
+  // then (the generator not even started) would otherwise leave its file handle open.
+  let firstTaken = false;
+  async function* parts(): AsyncGenerator<Uint8Array> {
+    for (let i = 0; i < ranges.length; i++) {
+      yield heads[i];
+      if (i === 0) firstTaken = true;
+      // Cancelling the answer mid-part returns this `yield*`, which cancels that part's stream.
+      yield* i === 0 ? first : await read!(ranges[i]);
+    }
+    yield tail;
+  }
+  const it = parts();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await it.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await it.return(undefined);
+      if (!firstTaken) await first.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(body, { status: 206, headers });
 }
 
 /**

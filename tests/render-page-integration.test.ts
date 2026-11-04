@@ -18,10 +18,11 @@ import {
 } from "../src/server/render-page.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { Metadata, ModuleLoader } from "../src/server/types.ts";
-import { fromFileUrl } from "@std/path";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
-const ISLANDS = fromFileUrl(new URL("../examples/islands", import.meta.url));
+// A private copy: this test builds into (and edits) the app, which other test files read.
+const HELLO = await copyExample("hello");
+const ISLANDS = await copyExample("islands");
 
 // ── End-to-end via the no-JS client (drives renderPage + layout chain) ─────────
 

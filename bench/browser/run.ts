@@ -18,6 +18,7 @@
 import { join } from "@std/path";
 import { launch } from "@astral/astral";
 import { serveDenext, serveNext } from "../lib/serve.ts";
+import { prepareMigratedNext } from "../lib/migrated.ts";
 import { gzipSize } from "../lib/sizes.ts";
 
 console.log = (...a: unknown[]) => console.error(...a); // keep stdout JSON-only
@@ -39,6 +40,8 @@ const INTERACTION_SAMPLES = Number(
 );
 // Bytes are deterministic; timing-focused runs can skip them to go faster.
 const SKIP_BYTES = Deno.env.get("BENCH_SKIP_BYTES") === "1";
+// Bytes-only runs (a loaded machine, or the report's layers do not include 3).
+const SKIP_TIMING = Deno.env.get("BENCH_SKIP_TIMING") === "1";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,11 +54,18 @@ const DISK_ROOTS = [
   { prefix: "/_denext/", root: join(DENEXT_APP, ".denext") },
   { prefix: "/_next/", root: join(NEXT_APP, ".next") },
 ];
+// The migrated Next app is served by denext (same /_denext/ prefix, other root),
+// so its disk root is selected per measured framework.
+let denextRoot = join(DENEXT_APP, ".denext");
+
+function diskRoots(): typeof DISK_ROOTS {
+  return DISK_ROOTS.map((d) => d.prefix === "/_denext/" ? { ...d, root: denextRoot } : d);
+}
 
 async function diskSize(
   pathname: string,
 ): Promise<{ raw: number; gzip: number } | null> {
-  for (const { prefix, root } of DISK_ROOTS) {
+  for (const { prefix, root } of diskRoots()) {
     if (!pathname.startsWith(prefix)) continue;
     try {
       const bytes = await Deno.readFile(
@@ -208,33 +218,38 @@ async function measureInteraction(
  * the uniform disk gzip. Shared = files loaded on EVERY route.
  */
 async function analyzeFramework(bytes: PageBytes[]) {
-  const gzipCache = new Map<string, number>();
-  const gz = async (p: string): Promise<number> => {
-    if (gzipCache.has(p)) return gzipCache.get(p)!;
-    const d = await diskSize(p);
-    const v = d?.gzip ?? 0;
-    gzipCache.set(p, v);
-    return v;
+  const cache = new Map<string, { raw: number; gzip: number }>();
+  const sz = async (p: string) => {
+    if (cache.has(p)) return cache.get(p)!;
+    const d = (await diskSize(p)) ?? { raw: 0, gzip: 0 };
+    cache.set(p, d);
+    return d;
   };
 
-  const total = async (files: string[]): Promise<number> => {
-    let sum = 0;
-    for (const f of files) sum += await gz(f);
-    return sum;
+  const total = async (files: string[]) => {
+    let raw = 0, gzip = 0;
+    for (const f of files) {
+      const d = await sz(f);
+      raw += d.raw;
+      gzip += d.gzip;
+    }
+    return { raw, gzip };
   };
   const sharedFiles = sharedAcross(bytes.map((b) => b.jsFiles));
-  const sharedGzip = await total(sharedFiles);
+  const shared = await total(sharedFiles);
   const routes = [];
   for (const b of bytes) {
+    const first = await total(b.jsFiles);
+    const nav = await total(b.jsFiles.filter((f) => !sharedFiles.includes(f)));
     routes.push({
       routePath: b.routePath,
-      firstLoadGzip: await total(b.jsFiles),
-      perNavGzip: await total(
-        b.jsFiles.filter((f) => !sharedFiles.includes(f)),
-      ),
+      firstLoadGzip: first.gzip,
+      firstLoadRaw: first.raw,
+      perNavGzip: nav.gzip,
+      perNavRaw: nav.raw,
     });
   }
-  return { sharedGzip, routes };
+  return { sharedGzip: shared.gzip, sharedRaw: shared.raw, routes };
 }
 
 /** The files present in EVERY list (the intersection). */
@@ -263,6 +278,16 @@ async function measureFramework(name: string, origin: string) {
   }
   const analysis = await analyzeFramework(bytes);
 
+  if (SKIP_TIMING) {
+    const none = { p50: 0, p95: 0, min: 0, max: 0, n: 0 };
+    return {
+      framework: name,
+      bytes,
+      analysis,
+      hydration: none,
+      interaction: none,
+    };
+  }
   console.error(
     `[${name}] measuring timings on / (hydration ×${HYDRATION_SAMPLES}, interaction ×${INTERACTION_SAMPLES})…`,
   );
@@ -290,6 +315,17 @@ try {
   await denextServer.close();
 }
 
+// The UNMODIFIED Next fixture, migrated with `denext migrate` and served by denext.
+const migratedDir = await prepareMigratedNext();
+denextRoot = join(migratedDir, ".denext");
+const migratedServer = await serveDenext(migratedDir);
+let migrated;
+try {
+  migrated = await measureFramework("migrated", migratedServer.origin);
+} finally {
+  await migratedServer.close();
+}
+
 const nextServer = await serveNext(NEXT_APP, NEXT_BIN);
 try {
   next = await measureFramework("next", nextServer.origin);
@@ -298,6 +334,6 @@ try {
 }
 
 await Deno.stdout.write(
-  new TextEncoder().encode(JSON.stringify({ denext, next }, null, 2)),
+  new TextEncoder().encode(JSON.stringify({ denext, migrated, next }, null, 2)),
 );
 Deno.exit(0);

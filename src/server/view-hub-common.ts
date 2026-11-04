@@ -7,6 +7,8 @@
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 import { verifyLiveViewToken } from "../runtime/live-view.ts";
 import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { sha256Hex } from "./auth/hash.ts";
+import { auth, peekActiveAuthConfig } from "./auth/mod.ts";
 
 /** The caps a view hub reads (a subset of `live.limits`). */
 export interface ViewLimits {
@@ -22,6 +24,14 @@ export interface ViewLimits {
   maxSubscriptionInputBytes: number;
   /** Seconds before `authorize` runs again. */
   channelAuthTtlSeconds: number;
+  /** Seconds a view's signed props token is accepted after the page rendered it. */
+  viewTokenMaxAgeSeconds: number;
+  /**
+   * Seconds one mount (its token check, `authorize`, the viewer's identity, the resume) may hold
+   * its connection's mount queue before it is refused with `failed` and the next mount runs: the
+   * Live render deadline (`renderTimeoutSeconds`). Default 30.
+   */
+  renderTimeoutSeconds?: number;
 }
 
 /** What the Live hub lends a view half. */
@@ -143,6 +153,7 @@ export interface AdmitPolicy<D> {
  * @param conn The connection.
  * @param shape The mount frame.
  * @param policy The view half's lookups.
+ * @param ticket The mount's place in its queue: a cancelled mount's refusal is not answered.
  * @returns The view and its decoded props, or `null`.
  */
 async function admitView<C, D>(
@@ -150,10 +161,11 @@ async function admitView<C, D>(
   conn: C,
   shape: MountShape,
   policy: AdmitPolicy<D>,
+  ticket: MountTicket,
 ): Promise<{ def: D; props: unknown } | null> {
   const { vid, view, token, props } = shape;
   const refuse = (code: LiveError["code"], reason: string) => {
-    deps.sendError(conn, code, reason, { subId: vid });
+    if (!ticket.cancelled) deps.sendError(conn, code, reason, { subId: vid });
     return null;
   };
   if (policy.atCap(vid)) return refuse("limit", "too many views");
@@ -161,7 +173,8 @@ async function admitView<C, D>(
     return refuse("limit", "view props too large");
   }
   const def = policy.lookup(view);
-  if (!def || !(await verifyLiveViewToken(policy.tokenName(view), props, token))) {
+  const maxAge = deps.limits().viewTokenMaxAgeSeconds;
+  if (!def || !(await verifyLiveViewToken(policy.tokenName(view), props, token, maxAge))) {
     return refuse("gone", "view unavailable");
   }
   const decoded = decodeProps(props, shape.enc);
@@ -170,22 +183,144 @@ async function admitView<C, D>(
   return { def, props: decoded.value };
 }
 
+/** A mount in a connection's queue: `cancelled` once an unmount, a close or its deadline ends it. */
+interface MountTicket {
+  /** The view id the frame names (`null` when it names none). */
+  readonly vid: string | null;
+  /** Ended before it was placed: it places nothing and answers nothing more. */
+  cancelled: boolean;
+}
+
+/** A connection's mount queue: its tail and the mounts waiting in it or running. */
+interface QueueState {
+  tail: Promise<void>;
+  tickets: Set<MountTicket>;
+}
+
+/** Seconds a mount may hold its connection's queue when `renderTimeoutSeconds` is not set. */
+const DEFAULT_MOUNT_TIMEOUT_SECONDS = 30;
+
+/**
+ * Put an admitted view on the connection. `live` turns false once the mount was cancelled or the
+ * connection closed: check it after each of its own awaits.
+ */
+export type PlaceView<C, D> = (
+  conn: C,
+  shape: MountShape,
+  admitted: { def: D; props: unknown },
+  live: () => boolean,
+) => void | Promise<void>;
+
+/** Each connection's mounts, first come first placed (see {@link createMountQueue}). */
+export interface MountQueue<C> {
+  /**
+   * Handle a mount frame ({@link mountView}) once every earlier mount of `conn` settled (placed,
+   * refused, cancelled or timed out). A mount cancelled while it waits never runs.
+   */
+  mount<D>(
+    conn: C,
+    msg: Record<string, unknown>,
+    policy: AdmitPolicy<D>,
+    place: PlaceView<C, D>,
+  ): Promise<void>;
+  /** Cancel `conn`'s waiting and running mounts: those of view id `vid`, or every one. */
+  cancel(conn: C, vid?: string): void;
+}
+
+/** Mounts one connection may have waiting or running, per view it may hold (at least 4 in all). */
+const MOUNT_QUEUE_PER_VIEW = 2;
+const MIN_MOUNT_QUEUE = 4;
+
+/**
+ * The per-connection mount queue of a view hub. Every await of a mount (the token check,
+ * `authorize`, the viewer's identity, the resume digest and store) runs before it is placed, so
+ * without it a later mount on the same connection could overtake an earlier one and take its
+ * slot under the view cap. Mounts of one connection run one at a time, in arrival order; other
+ * connections' mounts run concurrently. Each holds the queue at most `renderTimeoutSeconds`: past
+ * it the mount is cancelled (it places nothing, even when its `authorize` settles later) and
+ * answered `failed`, and the next one runs. A connection holds at most twice
+ * `maxViewsPerConnection` mounts waiting or running (at least 4); a mount past that is refused with
+ * `limit` and never queued.
+ *
+ * @param deps The hub primitives.
+ * @returns The queue.
+ */
+export function createMountQueue<C extends object>(deps: ViewHubBaseDeps<C>): MountQueue<C> {
+  const queues = new WeakMap<C, QueueState>();
+
+  const bounded = async (conn: C, ticket: MountTicket, work: Promise<void>): Promise<void> => {
+    const seconds = deps.limits().renderTimeoutSeconds ?? DEFAULT_MOUNT_TIMEOUT_SECONDS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), seconds * 1000);
+    });
+    try {
+      if ((await Promise.race([work, expired])) !== "timeout" || ticket.cancelled) return;
+    } finally {
+      clearTimeout(timer);
+    }
+    ticket.cancelled = true;
+    if (ticket.vid !== null && deps.isConnected(conn)) {
+      deps.sendError(conn, "failed", "view mount timed out", { subId: ticket.vid });
+    }
+  };
+
+  return {
+    mount(conn, msg, policy, place) {
+      let state = queues.get(conn);
+      if (!state) queues.set(conn, state = { tail: Promise.resolve(), tickets: new Set() });
+      const queue = state;
+      const vid = str(msg.vid, 64);
+      const cap = Math.max(
+        MIN_MOUNT_QUEUE,
+        deps.limits().maxViewsPerConnection * MOUNT_QUEUE_PER_VIEW,
+      );
+      if (queue.tickets.size >= cap) {
+        if (vid !== null) deps.sendError(conn, "limit", "too many pending mounts", { subId: vid });
+        return Promise.resolve();
+      }
+      const ticket: MountTicket = { vid, cancelled: false };
+      queue.tickets.add(ticket);
+      const turn = queue.tail.then(() =>
+        ticket.cancelled
+          ? undefined
+          : bounded(conn, ticket, mountView(deps, conn, msg, ticket, policy, place))
+      );
+      const tail = turn.then(() => {}, () => {});
+      queue.tail = tail;
+      return turn.finally(() => {
+        queue.tickets.delete(ticket);
+        if (queue.tail === tail) queues.delete(conn);
+      });
+    },
+
+    cancel(conn, vid) {
+      for (const ticket of queues.get(conn)?.tickets ?? []) {
+        if (vid === undefined || ticket.vid === vid) ticket.cancelled = true;
+      }
+    },
+  };
+}
+
 /**
  * A mount frame end to end: its shape (a malformed one is `bad-message` when it names a view id),
- * {@link admitView}, a post-await connected and cap re-check, then `place`.
+ * {@link admitView}, a post-await connected and cap re-check, then `place`. The hub's
+ * {@link MountQueue} runs it, with the mount's `ticket`.
  *
  * @param deps The hub primitives.
  * @param conn The connection.
  * @param msg The frame.
+ * @param ticket The mount's place in its connection's queue.
  * @param policy The view half's lookups.
  * @param place Put the admitted view on the connection.
  */
-export async function mountView<C, D>(
+async function mountView<C, D>(
   deps: ViewHubBaseDeps<C>,
   conn: C,
   msg: Record<string, unknown>,
+  ticket: MountTicket,
   policy: AdmitPolicy<D>,
-  place: (shape: MountShape, admitted: { def: D; props: unknown }) => void | Promise<void>,
+  place: PlaceView<C, D>,
 ): Promise<void> {
   const shape = mountShape(msg);
   if (!shape) {
@@ -193,12 +328,55 @@ export async function mountView<C, D>(
     if (vid) deps.sendError(conn, "bad-message", "malformed view mount", { subId: vid });
     return;
   }
-  const admitted = await admitView(deps, conn, shape, policy);
-  if (!admitted || !deps.isConnected(conn)) return;
+  const live = () => !ticket.cancelled && deps.isConnected(conn);
+  const admitted = await admitView(deps, conn, shape, policy, ticket);
+  if (!admitted || !live()) return;
   if (policy.atCap(shape.vid)) {
     return deps.sendError(conn, "limit", "too many views", { subId: shape.vid });
   }
-  await place(shape, admitted);
+  await place(conn, shape, admitted, live);
+}
+
+/**
+ * Who a connection's viewer is, for binding a parked view to it: `user:<id>` for a `denextAuth`
+ * session (`auth()`, run in the connection's session as `authorize` is), `anonymous` when signed
+ * out; without `denextAuth`, a digest of the connection's `Cookie` header (`anonymous` with none),
+ * so signing out or switching account changes it whatever session library the app uses. A failure
+ * to read it yields a value no other connection has: nothing resumes across it.
+ *
+ * @param deps The hub primitives.
+ * @param conn The connection.
+ * @returns The identity fingerprint.
+ */
+export async function viewerIdentity<C>(deps: ViewHubBaseDeps<C>, conn: C): Promise<string> {
+  try {
+    return await deps.withConnContext(conn, async () => {
+      if (peekActiveAuthConfig()) {
+        const session = await auth();
+        return session ? `user:${session.user.id}` : "anonymous";
+      }
+      const cookie = deps.connContext(conn).cookie;
+      return cookie ? `cookie:${await sha256Hex(cookie)}` : "anonymous";
+    });
+  } catch {
+    return `unknown:${crypto.randomUUID()}`;
+  }
+}
+
+/**
+ * What a resume matches a parked or stored view on besides its viewer: the view id and a digest
+ * of the props text its token signs (`view + "\0" + SHA-256(props)`). Call it only after the
+ * mount's token verified (signature and age), so the props are ones the server signed. It leaves
+ * the token itself out: a page that re-rendered (a soft navigation back, an ISR re-render, a
+ * re-render after an expired token's `gone`) carries a freshly issued token over the same props,
+ * and still resumes its model.
+ *
+ * @param view The view id.
+ * @param props The props text the verified token signs.
+ * @returns The resume key.
+ */
+export async function resumeKey(view: string, props: string): Promise<string> {
+  return `${view}\0${await sha256Hex(props)}`;
 }
 
 /** What a parked instance carries that a resume checks. */
@@ -207,8 +385,10 @@ export interface Parkable {
   readonly iid: string;
   /** The view. */
   readonly def: { readonly id: string };
-  /** `view + "\0" + token`. */
+  /** {@link resumeKey}: the view and the props its verified token signs. */
   readonly signed: string;
+  /** The viewer it was mounted for ({@link viewerIdentity}): only the same viewer resumes it. */
+  readonly identity: string;
   /** Stopped for good. */
   stopped: boolean;
   /** The timer that stops it at the end of its resume window. */
@@ -216,13 +396,15 @@ export interface Parkable {
 }
 
 /**
- * The instance parked under `resume`, when it is this view with these signed props: taken out of
- * `parked`, its park timer cleared.
+ * The instance parked under `resume`, when it is this view with the same signed props (whatever
+ * token the page now carries over them), mounted for the same viewer: taken out of `parked`, its park timer cleared. Another viewer's resume (signed
+ * out, or another account, on the same page) gets `undefined` and the instance stays parked.
  *
  * @param parked The parked instances by id.
  * @param resume The id the client resumes.
  * @param view The view id.
- * @param signed `view + "\0" + token`.
+ * @param signed The mount's {@link resumeKey}.
+ * @param identity The resuming connection's {@link viewerIdentity}.
  * @returns The instance, or `undefined`.
  */
 export function takeParked<I extends Parkable>(
@@ -230,9 +412,11 @@ export function takeParked<I extends Parkable>(
   resume: string | undefined,
   view: string,
   signed: string,
+  identity: string,
 ): I | undefined {
   const inst = resume === undefined ? undefined : parked.get(resume);
   if (!inst || inst.def.id !== view || inst.signed !== signed || inst.stopped) return undefined;
+  if (inst.identity !== identity) return undefined;
   parked.delete(inst.iid);
   clearTimeout(inst.parkTimer);
   inst.parkTimer = undefined;

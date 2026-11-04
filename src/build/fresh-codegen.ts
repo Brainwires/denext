@@ -179,7 +179,17 @@ export default freshPage(route, ${optionsLiteral(route.id, v1, extra)});
 `;
 }
 
-/** A generated `layout.tsx` for a `_layout` (or the `_app` wrapper, with `app`). */
+/** The `main.ts` import of a generated file and the option passing it (none without one). */
+function mainImport(file: string, main: string | null): { line: string; option: string[] } {
+  return main
+    ? { line: `import * as main from "${importPath(file, main)}";\n`, option: ["main"] }
+    : { line: "", option: [] };
+}
+
+/**
+ * A generated `layout.tsx` for a `_layout` (or, with `app`, the root: the `_app` wrapper, and
+ * `main.ts`'s app wrapper and layouts when it has `main`).
+ */
 export function layoutSource(
   file: string,
   layout: FreshFile,
@@ -187,21 +197,38 @@ export function layoutSource(
   v1: boolean,
   app: boolean,
   cssImports: string[],
+  main: string | null = null,
 ): string {
   const css = cssImports.map((c) => `import "${importPath(file, c)}";\n`).join("");
+  const m = mainImport(file, app ? main : null);
   return `${FRESH_GEN_HEADER}// The Fresh ${app ? "app wrapper" : "layout"} routes/${layout.id}.
 ${css}import { freshLayout } from "denext/fresh/server";
 import * as layout from "${importPath(file, abs)}";
-
+${m.line}
 export default freshLayout(layout, ${
-    optionsLiteral(app ? "_app" : layout.dir, v1, app ? ["app: true"] : [])
+    optionsLiteral(app ? "_app" : layout.dir, v1, app ? ["app: true", ...m.option] : [])
   });
 `;
 }
 
-/** The root `layout.tsx` of an app with no `_app` (it only carries the stylesheets). */
-export function bareRootLayoutSource(file: string, cssImports: string[]): string {
+/**
+ * The root `layout.tsx` of an app with no `_app`: it carries the stylesheets, and renders
+ * `main.ts`'s `app.appWrapper()` and `app.layout()` layouts when there is a `main.ts`.
+ */
+export function bareRootLayoutSource(
+  file: string,
+  cssImports: string[],
+  main: string | null = null,
+): string {
   const css = cssImports.map((c) => `import "${importPath(file, c)}";\n`).join("");
+  if (main) {
+    return `${FRESH_GEN_HEADER}// The app has no routes/_app: main.ts's app wrapper and layouts, if any.
+${css}import { freshLayout } from "denext/fresh/server";
+import * as main from "${importPath(file, main)}";
+
+export default freshLayout({}, { id: "_app", app: true, main });
+`;
+  }
   return `${FRESH_GEN_HEADER}// The app has no routes/_app: denext renders the document around the pages.
 ${css}
 export default function RootLayout({ children }: { children?: unknown }) {
@@ -210,17 +237,61 @@ export default function RootLayout({ children }: { children?: unknown }) {
 `;
 }
 
-/** The generated `not-found.tsx`. */
-export function notFoundSource(file: string, mod: FreshFile, abs: string, v1: boolean): string {
-  return `${FRESH_GEN_HEADER}// The Fresh ${
-    mod.kind === "notFound" ? "not-found page" : "error page, for a 404"
-  } routes/${mod.id}.
+/**
+ * The generated `not-found.tsx`: the root `_404` (or `_error` for a 404), else — with no such
+ * file — `main.ts`'s `app.notFound()`.
+ */
+export function notFoundSource(
+  file: string,
+  mod: FreshFile | null,
+  abs: string | null,
+  v1: boolean,
+  main: string | null = null,
+): string {
+  const m = mainImport(file, main);
+  const what = mod === null
+    ? "main.ts's app.notFound()"
+    : `${mod.kind === "notFound" ? "not-found page" : "error page, for a 404"} routes/${mod.id}`;
+  const page = mod && abs ? `import * as page from "${importPath(file, abs)}";\n` : "";
+  return `${FRESH_GEN_HEADER}// The Fresh ${what}.
 import { freshNotFound } from "denext/fresh/server";
-import * as page from "${importPath(file, abs)}";
-
-export default freshNotFound(page, ${optionsLiteral(mod.id, v1)});
+${page}${m.line}
+export default freshNotFound(${page ? "page" : "undefined"}, ${
+    optionsLiteral(mod?.id ?? "_404", v1, m.option)
+  });
 `;
 }
+
+/** Where the page `main.ts` registers in code renders (the middleware rewrites to it). */
+export const APP_ROUTE_FOLDER = "fresh-app-route";
+
+/** The generated `app/fresh-app-route/page.tsx` (see `freshAppPage`). */
+export function appRoutePageSource(v1: boolean): string {
+  return `${FRESH_GEN_HEADER}// What main.ts registers in code renders here: an app.route() page, a handler's
+// ctx.render(), an app.onError() component. middleware.ts rewrites those requests here.
+import { freshAppPage } from "denext/fresh/server";
+
+export default freshAppPage(${v1 ? "{ v1: true }" : ""});
+`;
+}
+
+/**
+ * The app's own \`fresh/runtime\` (\`app/_fresh/runtime.ts\`): denext's, with \`Partial\` from the
+ * app's \`"use client"\` module (\`app/_fresh/partial.ts\`), so each \`<Partial>\` reaches the
+ * browser and Fresh's partial navigation can update it.
+ */
+export const FRESH_RUNTIME_SHIM =
+  `${FRESH_GEN_HEADER}// fresh/runtime for this app: denext's, with <Partial> from the app's own client module.
+export * from "denext/fresh/runtime";
+export { Partial } from "./partial.ts";
+`;
+
+/** The \`"use client"\` module re-exporting \`Partial\` (see {@link FRESH_RUNTIME_SHIM}). */
+export const FRESH_PARTIAL_SHIM =
+  `${FRESH_GEN_HEADER}// <Partial> as a client component: Fresh's partial navigation updates it in the browser.
+"use client";
+export { Partial } from "denext/fresh/partial";
+`;
 
 /** A generated `route.ts` for a handler-only route, exporting the methods it handles. */
 export function routeHandlerSource(
@@ -271,6 +342,8 @@ export interface MiddlewareSpec {
   layouts: { file: FreshFile; abs: string }[];
   /** The routes, in match order. */
   routes: MiddlewareRouteSpec[];
+  /** The URL of the page that renders what `main.ts` registers in code, when generated. */
+  appRoute?: string;
 }
 
 /** The source of the generated root `middleware.ts`. */
@@ -298,7 +371,9 @@ export function middlewareSource(file: string, spec: MiddlewareSpec): string {
 ${imports.join("\n")}
 
 export default freshMiddleware({
-${spec.v1 ? "  v1: true,\n" : ""}${spec.main ? "  main,\n" : ""}  middlewares: [
+${spec.v1 ? "  v1: true,\n" : ""}${spec.main ? "  main,\n" : ""}${
+    spec.appRoute ? `  appRoute: ${JSON.stringify(spec.appRoute)},\n` : ""
+  }  middlewares: [
 ${mws}  ],
   layouts: [
 ${layouts}  ],

@@ -7,8 +7,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { resetPlugins } from "../src/plugin/mod.ts";
-import { staticExport } from "../src/build/export.ts";
-import { build } from "../src/build/build.ts";
+import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -79,14 +78,12 @@ for (const compat of [false, true]) {
   for (const mode of ["export", "build"] as const) {
     Deno.test({
       name: `SPA ${mode} (${path} path): plugins are set up and their prepare steps run first`,
-      sanitizeResources: false,
-      sanitizeOps: false,
     }, async () => {
       resetPlugins();
       const dir = await spaProject(compat);
       try {
-        if (mode === "export") await staticExport(dir);
-        else await build(dir);
+        if (mode === "export") await exportInChild(dir);
+        else await buildInChild(dir);
         assertEquals(await Deno.readTextFile(join(dir, "setup-mode.txt")), mode);
         // The prepare step ran before the bundle: the module it wrote is in the client code.
         const client = await allJs(join(dir, mode === "export" ? "out" : ".denext"));

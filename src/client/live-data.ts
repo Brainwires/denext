@@ -14,7 +14,8 @@
  * @module
  */
 
-import { useCallback, useEffect, useOptimistic, useRef, useState } from "../runtime/hooks.ts";
+import { useCallback, useEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useOptimistic } from "../runtime/hooks/transition.ts";
 import type { LivePeer } from "../runtime/live-protocol.ts";
 import { joinPresence, subscribeLiveData } from "./live-client.ts";
 

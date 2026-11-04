@@ -104,9 +104,9 @@ export default function Mobile() {
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
         <code>capacitor.config.ts</code>{" "}
         that bundles the export (<code>webDir: "out"</code>) into the native shells, a{" "}
-        <code>package.json</code> pinning Capacitor 8 (<code>^8.5.2</code>), an <code>export</code>
+        <code>package.json</code> pinning Capacitor 8 exactly (<code>8.6.0</code>), an{" "}
+        <code>export</code> task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>
         {" "}
-        task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>{" "}
         to scaffold the desktop target too. Change <code>appId</code> and <code>appName</code> in
         {" "}
         <code>capacitor.config.ts</code>{" "}
@@ -148,8 +148,8 @@ export default {
       <Code lang="bash">
         {`denext install                # Capacitor's CLI + platforms are npm packages
 denext task export            # out/
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once`}
+denext run -A --node-modules-dir npm:@capacitor/cli@8.6.0 add ios       # once
+denext run -A --node-modules-dir npm:@capacitor/cli@8.6.0 add android   # once`}
       </Code>
       <p>
         <strong>4. Run it on a phone.</strong>{" "}
@@ -224,9 +224,13 @@ denext mobile add haptics share secure-store`}
         <code>.gitignore</code>. It installs the pinned Capacitor 8 packages with the project&apos;s
         package manager (as dev dependencies, without the project&apos;s lifecycle scripts), and
         with <code>--platform ios,android</code> exports and runs{" "}
-        <code>npx cap add</code>, which run the project&apos;s own build code. What it cannot know
-        (a hosted / remote mode switch in the build env, a backend URL a phone can reach, CORS for
-        {" "}
+        <code>npx cap add</code>. Those commands run the project&apos;s own code (its package
+        manager&apos;s configuration, its build, its Capacitor config), so migrate runs them only
+        with <code>--yes</code>{" "}
+        or after an interactive prompt that lists them; a non-interactive run without{" "}
+        <code>--yes</code>{" "}
+        prints them for you to run once you trust the project. What it cannot know (a hosted /
+        remote mode switch in the build env, a backend URL a phone can reach, CORS for{" "}
         <code>capacitor://localhost</code> and <code>https://localhost</code>) is listed for review;
         {" "}
         <code>--check</code> shows the whole plan.{" "}
@@ -274,7 +278,9 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         (and the fastlane lanes, which run it) refuses while that backup is on disk, or while the
         Capacitor config's <code>server</code> names a LAN / loopback <code>http</code> URL or sets
         {" "}
-        <code>cleartext</code>, unless a flavor's <code>serverUrl</code> sets the server on purpose.
+        <code>cleartext</code>, unless a flavor's <code>serverUrl</code>{" "}
+        sets the server on purpose (an <code>https</code> one: a release flavor&apos;s{" "}
+        <code>http</code> <code>serverUrl</code> is refused).
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
@@ -510,11 +516,38 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>npm_config_ignore_scripts</code> and <code>YARN_ENABLE_SCRIPTS</code> as{" "}
         <code>denext migrate</code>&apos;s does), declares any Android permissions they need, and
         runs{" "}
-        <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
-        export exists (no <code>index.html</code> in the config&apos;s{" "}
+        <code>npx --no cap sync</code>. The install runs in the Capacitor project folder. Before the
+        web export exists (no <code>index.html</code> in the config&apos;s{" "}
         <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}
-        <code>npx cap update</code> instead (the native half of sync) and says what is left:{" "}
+        <code>npx --no cap update</code> instead (the native half of sync) and says what is left:
+        {" "}
         <code>denext export</code>, then <code>npx cap sync</code>.
+      </p>
+      <p>
+        Every plugin is pinned to one exact version and saved exactly (<code>--save-exact</code> /
+        {" "}
+        <code>--exact</code>), never a range a package manager would resolve to whatever was
+        published last. Before installing, <code>denext mobile add</code>{" "}
+        reads each pinned version&apos;s publish time from the npm registry and refuses one your
+        minimum dependency age does not let in yet (the rule <code>create</code>,{" "}
+        <code>migrate</code> and <code>upgrade</code> apply: <code>minimumDependencyAge</code> in
+        {" "}
+        <code>deno.json</code>, <code>min-release-age</code> in <code>.npmrc</code>,{" "}
+        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s two days; an <code>npm:</code>{" "}
+        entry in its <code>exclude</code>{" "}
+        lifts it for that package). When the registry cannot be reached it installs the pins and
+        says their age was not checked.
+      </p>
+      <p>
+        Every <code>cap</code> command denext runs (<code>mobile add</code>, <code>sync</code>,{" "}
+        <code>dev</code>, <code>build</code>,{" "}
+        <code>migrate --enable-capacitor</code>) is the project&apos;s own{" "}
+        <code>@capacitor/cli</code>: denext checks that the package resolves from the project (its
+        {" "}
+        <code>node_modules</code> or one above it) and runs{" "}
+        <code>npx --no cap …</code>, so a missing CLI stops with &quot;install @capacitor/cli&quot;
+        instead of npx downloading the unrelated npm package named <code>cap</code> (which{" "}
+        <code>npm exec</code> does without asking when stdin is not a terminal or CI is detected).
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
@@ -588,7 +621,26 @@ denext mobile add haptics share network secure-store`}
           with the option also reads it when the OS store answers with no value for the key (a value
           the OS store holds wins). A later keychain <code>set</code> of the key clears it,{" "}
           <code>delete</code> clears both, and <code>requireBiometric</code>{" "}
-          never falls back. Without the option a refusal still rejects.
+          never falls back. Without the option a refusal still rejects.{" "}
+          <code>{'{ accessibility: "afterFirstUnlockThisDeviceOnly" }'}</code> on <code>set</code>
+          {" "}
+          picks the iOS Keychain class (<code>kSecAttrAccessible…</code>):{" "}
+          <code>&quot;whenUnlocked&quot;</code> (the default, unchanged),{" "}
+          <code>&quot;whenUnlockedThisDeviceOnly&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlock&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code> or{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code>. A <code>…ThisDeviceOnly</code>
+          {" "}
+          value is never in a backup and never moves to another device, which suits a refresh token;
+          an <code>afterFirstUnlock…</code>{" "}
+          value stays readable while the device is locked again, for background work. On Android the
+          plugin&apos;s Keystore key never leaves the device and needs no unlock, so every value
+          already behaves as{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code>. On the web and in a Deno Desktop
+          window the option is accepted and has no effect. An unknown class is a{" "}
+          <code>TypeError</code> everywhere, and so is a class other than{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code> beside{" "}
+          <code>requireBiometric</code>.
         </li>
         <li>
           <code>openSqlite(name)</code> (<code>sqlite</code>): a SQLite database with{" "}
@@ -655,6 +707,18 @@ denext mobile add haptics share network secure-store`}
           {" "}
           over the camera on the web where the browser has it. The install raises Android's{" "}
           <code>minSdkVersion</code> to 26, which the scanner needs.
+        </li>
+        <li>
+          <code>pickContact()</code>{" "}
+          (<code>contacts</code>): one contact from the system picker (its <code>id</code>,{" "}
+          <code>name</code>, <code>emails</code> and{" "}
+          <code>phoneNumbers</code>), with no contacts permission asked; <code>null</code>{" "}
+          when cancelled. On the web it is the browser&apos;s Contact Picker API where it has one
+          (Chrome on Android, from a click), with no <code>id</code>; elsewhere it rejects with code
+          {" "}
+          <code>unsupported</code>, and <code>contactPickerSupported()</code>{" "}
+          says which. react-native-permissions&apos; <code>openContactPicker</code>{" "}
+          and expo-contacts&apos; <code>presentContactPickerAsync</code> open it too.
         </li>
         <li>
           <code>setQuickActions([...])</code> / <code>onQuickAction</code> /{" "}
@@ -1365,10 +1429,15 @@ export function DeepLinks() {
         <code>launch: true</code>, to the subscribers registered by then (so mount it in the root
         layout); links opened while the app runs follow with <code>launch: false</code>.{" "}
         <strong>Only accepted links reach your code.</strong>{" "}
-        The default accepts the app's custom schemes (the OS only delivers the ones you registered)
-        and no <code>https</code> host, so list your domains in <code>accept.hosts</code>{" "}
-        or pass a predicate. Anyone can craft a deep link, so treat its path and query as untrusted
-        input. An accepted link's in-app path is navigated once: pushed onto the history with a{" "}
+        The default accepts the app's custom schemes and no <code>https</code>{" "}
+        host, so list your domains in <code>accept.hosts</code> or pass a predicate.{" "}
+        <code>accept</code>{" "}
+        filters what reaches your code; it is not authentication. Any web page or app can open a
+        custom-scheme link, and on Android another app can send an explicit intent straight to the
+        app's activity, which skips the intent filters (so even an <code>https</code>{" "}
+        App Link with the verified host can come from another app). Treat a link's path and query as
+        untrusted input, and never let one complete a sign-in or a payment by itself. An accepted
+        link's in-app path is navigated once: pushed onto the history with a{" "}
         <code>popstate</code>, which denext's router and history-based SPA routers follow. Pass{" "}
         <code>route: (path) =&gt; router.push(path)</code> to use your own router, or{" "}
         <code>route: false</code>{" "}
@@ -1408,6 +1477,20 @@ export default {
         <code>get_login_creds</code>, so saved passwords and passkeys are shared with the app
         (<code>webcredentials: false</code> / <code>loginCredentials: false</code> turn that off).
       </p>
+      <p>
+        <code>android</code> also takes a list, one <code>assetlinks.json</code>{" "}
+        statement per app (a debug and a release build, say). The same objects go in{" "}
+        <code>denextAuth({"{ passkeys: { androidApps } }"})</code>{" "}
+        for the app's passkeys (<a href="/docs/auth#passkeys-in-a-native-app">
+          Auth › Passkeys in a native app
+        </a>).
+      </p>
+      <Code lang="ts">
+        {`android: [
+  { packageName: "com.example.app", sha256CertFingerprints: ["14:6D:E9:…:44:E5"] },
+  { packageName: "com.example.app.debug", sha256CertFingerprints: ["FA:C6:17:…:0B:2A"] },
+],`}
+      </Code>
 
       <h2 id="auth-sessions">Auth sessions</h2>
       <p>
@@ -1424,7 +1507,12 @@ export default {
         <code>denext mobile doctor --store</code> / <code>--release</code> reports{" "}
         <code>auth-session-generations</code>{" "}
         when the files left behind are from different template generations (an error: an edited file
-        kept beside upgraded ones) or all from an older one (a warning).
+        kept beside upgraded ones) or all from an older one (a warning, whose fix is the command
+        that refreshes them: <code>denext mobile add auth-session</code>, then a new binary).{" "}
+        <code>denext upgrade</code> (<code>--dry-run</code>{" "}
+        included) lists every native template family in <code>ios/</code> / <code>android/</code>
+        {" "}
+        older than the denext it moves to, with that command; it never rewrites native files itself.
       </p>
       <Code lang="bash">
         {`denext mobile add auth-session --scheme myapp`}
@@ -1434,14 +1522,23 @@ export default {
 import { openAuthSession } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // PKCE S256: required
+  authorize.searchParams.set("code_challenge_method", "S256");
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
   if (params.get("state") !== state) throw new Error("state mismatch");
-  await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+  await fetch("/api/auth/exchange", {
+    method: "POST",
+    body: JSON.stringify({ code: params.get("code"), verifier }),
+  });
 }`}
       </Code>
       <ul>
@@ -1481,12 +1578,19 @@ export async function signIn() {
         Only one session is open at a time (<code>busy</code>); <code>timeoutMs</code> gives up with
         {" "}
         <code>timeout</code>, and a non-https <code>url</code> or a bad scheme is{" "}
-        <code>invalid</code>.{" "}
-        <strong>
-          PKCE and <code>state</code> stay your job:
-        </strong>{" "}
-        denext only opens the page and hands back the callback URL. Check <code>state</code>{" "}
-        and exchange the <code>code</code> on your server.
+        <code>invalid</code>. <strong>PKCE S256 is required:</strong> the URL must carry a{" "}
+        <code>code_challenge</code> and{" "}
+        <code>code_challenge_method=S256</code>, or the call rejects with <code>pkce_required</code>
+        {" "}
+        before anything opens (in the shell and the web popup alike). Without it, another app that
+        registers the same callback scheme could receive the redirect and redeem the code. A
+        provider that binds the callback to the client another way passes{" "}
+        <code>pkce: "not-applicable"</code> with a <code>reason</code>. Generating{" "}
+        <code>state</code> and the verifier, checking <code>state</code> and exchanging the{" "}
+        <code>code</code> on your server stay your job. The <code>expo-web-browser</code> /{" "}
+        <code>expo-auth-session</code> shims keep Expo's behaviour: a URL without PKCE (an{" "}
+        <code>AuthRequest</code> with{" "}
+        <code>usePKCE: false</code>) still opens, with a one-time console warning naming the risk.
       </p>
       <p>
         In a Deno Desktop window the same <code>openAuthSession</code>{" "}
@@ -1856,15 +1960,27 @@ const saved = await secureStore.get("refreshToken", { reason: "Sign in" }); // p
         <strong>
           What <code>requireBiometric</code> guarantees.
         </strong>{" "}
-        The secure-storage plugin has no biometric access control on its Keychain / Keystore items,
-        so the gate is denext's code: <code>secureStore.get</code>{" "}
-        runs the prompt before it returns a gated value. The item is stored "when passcode set, this
-        device only" on iOS (never backed up or migrated, deleted if the passcode is removed), but
-        native code in the app could still read it without a prompt. It protects against someone
-        picking up an unlocked phone, not against a compromised app. On the web a gated value cannot
-        be read at all. The <code>expo-secure-store</code> shim's <code>requireAuthentication</code>
+        With <code>denext mobile add biometrics</code> from this release (its{" "}
+        <code>DenextSettings</code>{" "}
+        plugin, in a new binary) the OS enforces the gate. On iOS the value is a Keychain item whose
+        access control requires the enrolled biometrics or the device passcode, stored "when
+        passcode set, this device only" (never backed up or migrated, deleted with the passcode);
+        the read asks for Face ID / Touch ID first (the passcode too with{" "}
+        <code>allowDeviceCredential</code>). On Android 9 and later the value is sealed under an
+        Android Keystore key that needs the user for every use, opened through a{" "}
+        <code>BiometricPrompt</code> (a strong biometric; the PIN / pattern too with{" "}
+        <code>allowDeviceCredential</code>{" "}
+        on Android 11 and later); Android 8 and earlier refuse it (<code>unavailable</code>).
+        Neither value is in the secure-storage plugin, so page script, an XSS included, cannot read
+        it through any bridge method without the prompt. Storing never prompts. A value is dropped
+        (reads{" "}
+        <code>null</code>) when the enrolled biometrics change. In a binary built before this, and
+        in a Deno Desktop window, the gate is denext's code in the page (the value sits in the plain
+        secure store, which page script can read; the first such <code>set</code>{" "}
+        warns), and such a value moves into the OS-enforced store the first time a current binary
+        opens it. On the web a gated value cannot be read at all. The <code>expo-secure-store</code>
         {" "}
-        maps to it.
+        shim's <code>requireAuthentication</code> maps to it.
       </Callout>
 
       <h2 id="clerk">Clerk in the shell</h2>
@@ -2158,7 +2274,17 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         <li>
           otherwise (the browser) the page: <code>fetch</code>{" "}
           with the body streamed into the Origin Private File System, with progress, pause and
-          resume, for as long as the page lasts.
+          resume, for as long as the page lasts. The bytes go to a part file in OPFS&apos;s{" "}
+          <code>cache/.denext-part/</code> folder (never beside the file, and hidden from{" "}
+          <code>listDir</code>), which takes the file&apos;s place only once the download is done: a
+          file already at the path keeps its contents through a pause, a cancel or a failure. A
+          download a reload interrupted starts over, reusing that part file. Where there is no OPFS
+          (no secure context), a download into a picked file or folder writes through the picked
+          file&apos;s own <code>createWritable()</code>{" "}
+          stream, which swaps the bytes in only once the download is done, so a cancel or a failure
+          still leaves the file as it was; it cannot pause (<code>pauseFileTransfer</code> resolves
+          {" "}
+          <code>false</code>). A download into an app folder needs OPFS.
         </li>
       </ol>
       <p>
@@ -2247,29 +2373,38 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>onFileTransfer(fn)</code> receives events whose <code>type</code> is{" "}
         <code>"started"</code>, <code>"progress"</code>, <code>"paused"</code>, <code>"done"</code>,
         {" "}
-        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code> and
-        {" "}
-        <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
-        for an upload (uploads cannot pause), a download that is not running (or, to resume, not
-        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
-        also retries a failed transfer.
+        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code>{" "}
+        resolves a <code>boolean</code>: <code>false</code>{" "}
+        for an upload (uploads cannot pause), a download that is not running, or an id with no
+        record. A pause answers once the request has stopped, so it is also <code>false</code>{" "}
+        for a download that finished, failed or was cancelled first.{" "}
+        <code>resumeFileTransfer(id)</code>{" "}
+        continues a paused download everywhere. In the iOS / Android shell with the plugin it also
+        retries a failed transfer: a download from its bytes so far when it is{" "}
+        <code>resumable</code>, else anew, and an upload from the start. On the web and on Deno
+        Desktop only a paused download resumes, and a failed one resolves{" "}
+        <code>false</code>: start it again with <code>downloadToFile</code>{" "}
+        (on Deno Desktop the same URL to the same file continues from the kept partial file). A
+        failed web download is not <code>resumable</code>: its bytes so far are dropped.
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
-        file on Android, the OPFS file on the web) and resumes with a range request guarded by the
-        response&apos;s <code>ETag</code> (or <code>Last-Modified</code>); a server that answers
+        file on Android and on Deno Desktop, the OPFS part file on the web) and resumes with a range
+        request guarded by the response&apos;s <code>ETag</code> (or{" "}
+        <code>Last-Modified</code>); a server that answers <code>200</code>{" "}
+        to it starts the download over. Uploads cannot pause. <code>cancelFileTransfer(id)</code>
         {" "}
-        <code>200</code> to it starts the download over. Uploads cannot pause.{" "}
-        <code>cancelFileTransfer(id)</code>{" "}
-        drops a download&apos;s partial file and rejects its promise with a{" "}
-        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
+        drops a download&apos;s partial file (on the web, the OPFS part file, even one a pause kept;
+        the file it was to replace is left as it was) and rejects its promise with a{" "}
+        <code>FileTransferError</code> of code <code>"CANCELLED"</code>; an aborted{" "}
         <code>signal</code>{" "}
-        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        does the same, rejecting with the signal&apos;s reason. A non-2xx answer rejects with code
+        {" "}
         <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
         {" "}
         <code>"NETWORK"</code>, <code>resumable</code>{" "}
-        when the bytes so far can be kept. On iOS, a transfer to a LAN host (RFC 1918, link-local,
-        {" "}
+        when the bytes so far can be kept (never on the web, where a failure drops them). On iOS, a
+        transfer to a LAN host (RFC 1918, link-local,{" "}
         <code>.local</code>) fails with &quot;The Internet connection appears to be offline&quot;
         until the user allows the app&apos;s Local Network access; that error&apos;s message then
         says where to allow it (the app needs an <code>NSLocalNetworkUsageDescription</code>{" "}
@@ -2287,11 +2422,27 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>fetch</code>, a redirect to another origin drops{" "}
         <code>Authorization</code>. It is a transfer like any other under its <code>id</code>:{" "}
         <code>fileTransfers()</code> lists it, <code>onFileTransfer</code> gets its events, and{" "}
+        <code>pauseFileTransfer</code> stops it in the runtime with the bytes so far kept in{" "}
+        <code>&lt;file&gt;.part</code> (and a <code>&lt;file&gt;.part.json</code>{" "}
+        sidecar naming the URL and its validator), <code>resumeFileTransfer</code>{" "}
+        asks for the rest with a <code>Range</code> request guarded by <code>If-Range</code>{" "}
+        (a strong <code>ETag</code> or <code>Last-Modified</code>; a server that answers{" "}
+        <code>200</code>, or offers only a weak <code>ETag</code>, starts it over), and{" "}
         <code>cancelFileTransfer</code>{" "}
-        stops it in the runtime and drops the partial file. It cannot pause (the runtime keeps no
-        partial file to resume): <code>pauseFileTransfer</code> rejects with code{" "}
-        <code>"unsupported"</code>. <code>uploadFile</code>{" "}
-        reads the file through the runtime and sends it from the page.
+        stops it in the runtime and drops the partial file. Like the plugin, the runtime keeps each
+        download&apos;s record across restarts (in a folder of the app&apos;s data directory the
+        page&apos;s <code>fs</code> calls cannot reach): after one, <code>fileTransfers()</code>
+        {" "}
+        lists the paused ones, the failed ones and those done in the last 7 days (until{" "}
+        <code>forgetFileTransfer(id)</code>), and <code>resumeFileTransfer(id)</code>{" "}
+        continues a paused or failed one from its partial file with the request headers it was
+        started with. A download that was running when the app quit is listed as <code>failed</code>
+        {" "}
+        (code <code>"NETWORK"</code>, <code>resumable</code>{" "}
+        when its partial file can continue), as iOS reports a transfer a force-quit stopped; so is
+        one whose page reloaded or closed. A cancelled download&apos;s record goes with its partial
+        file, and a live record&apos;s request headers are dropped once it is over for good.{" "}
+        <code>uploadFile</code> reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">
         <strong>Android&apos;s limits.</strong>{" "}
@@ -2472,7 +2623,8 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         <code>storage</code> with an earlier denext re-runs <code>denext mobile add storage</code>
         {" "}
         (with{" "}
-        <code>--encrypted</code>) and ships a new binary; unedited files are upgraded in place.
+        <code>--encrypted</code>) and ships a new binary; unedited files are upgraded in place. Key
+        rotation (<code>rekeyKeyValueStore</code>) needs generation 3 (denext 4.8.1).
       </Callout>
       <Code lang="ts">
         {`import { KeyValueStoreError, openKeyValueStore } from "denext/mobile";
@@ -2516,9 +2668,60 @@ try {
         <code>PRAGMA key</code> and <code>encryptionKey</code> reject with a{" "}
         <code>SqliteEncryptionError</code>{" "}
         (<code>ENCRYPTION_UNAVAILABLE</code>) and nothing runs. sqlite-wasm would otherwise treat
-        the pragma as a no-op and leave the data unencrypted. <code>PRAGMA rekey</code>,{" "}
-        <code>hexkey</code>{" "}
+        the pragma as a no-op and leave the data unencrypted. <code>hexkey</code>{" "}
         and a key pragma that is not the first statement are refused (<code>UNSUPPORTED</code>).
+      </p>
+
+      <h3 id="rotating-keys">Rotating keys</h3>
+      <p>
+        <code>rekeyKeyValueStore(name)</code>{" "}
+        rotates an encrypted store&apos;s key: a new random 256-bit key, the store&apos;s file
+        re-encrypted under it with SQLCipher&apos;s <code>PRAGMA rekey</code>, and the key in{" "}
+        <code>secureStore</code>{" "}
+        replaced. It needs the storage template generation 3 (denext 4.8.1): re-run{" "}
+        <code>denext mobile add storage --encrypted</code>{" "}
+        and ship a new binary; an older plugin is refused with{" "}
+        <code>ENCRYPTION_UNAVAILABLE</code>. Calls made on the store while it rotates wait for the
+        new key.
+      </p>
+      <Code lang="ts">
+        {`import { rekeyKeyValueStore } from "denext/mobile";
+
+await rekeyKeyValueStore("vault"); // ENCRYPTION_UNAVAILABLE wherever encrypted stores are refused`}
+      </Code>
+      <p>
+        <strong>If the app dies part-way.</strong> The rotation writes the new key to its own{" "}
+        <code>secureStore</code>{" "}
+        entry first and leaves the store&apos;s key as it was. SQLCipher rewrites the file inside
+        one transaction whose journal holds the old pages (the write-ahead log is folded in and
+        turned off for it), so a death during the rekey leaves the file under the old key. Only
+        after the rekey commits does the new key replace the old one. If the app dies between the
+        two, the next use of the store tries the current key, then the waiting one, keeps whichever
+        opens the file and drops the other. Nothing is lost; if neither key opens it, the call
+        rejects with <code>WRONG_KEY</code> and both entries are kept.
+      </p>
+      <p>
+        <code>db.rekey(newKey)</code> (or <code>PRAGMA rekey = &apos;…&apos;</code>{" "}
+        as the first statement) changes the passphrase of a database opened with{" "}
+        <code>encryptionKey</code> or <code>PRAGMA key</code>. Because{" "}
+        <code>@capacitor-community/sqlite</code> keeps one passphrase for the whole app, its{" "}
+        <code>changeEncryptionSecret</code>{" "}
+        re-encrypts every encrypted database of the app and then stores the new passphrase; other
+        open handles reconnect under it by themselves. It is refused with <code>KEY_REQUIRED</code>
+        {" "}
+        on a database that was not keyed on this page, <code>UNSUPPORTED</code>{" "}
+        inside a transaction, and <code>ENCRYPTION_UNAVAILABLE</code>{" "}
+        on the web, on Deno Desktop and with a plugin too old to change its passphrase. The
+        passphrase is yours to keep, so store the new one in <code>secureStore</code>{" "}
+        beside the old one before calling{" "}
+        <code>rekey</code>, and drop the old one only once it resolves. After a crash, open with the
+        old passphrase and, on{" "}
+        <code>WRONG_KEY</code>, with the new one, then keep the one that worked. The plugin rewrites
+        each file in its own SQLCipher transaction, one database after another, and stores the new
+        passphrase last, so a crash in the middle of an app with several encrypted databases can
+        leave them split between the two passphrases, which the plugin cannot open together. If you
+        rotate, keep one encrypted database per app, or keep secrets in an encrypted key-value
+        store, whose rotation recovers by itself.
       </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>
@@ -2690,7 +2893,12 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         (<code>@capacitor-community/text-to-speech</code>) is the OS speech engine behind{" "}
         <code>expo-speech</code>: the Android WebView has no{" "}
         <code>speechSynthesis</code>, so the Android shell needs it; elsewhere the shim uses the Web
-        Speech API.
+        Speech API. <code>denext/mobile</code>&apos;s own <code>speak(text, options)</code>{" "}
+        (resolving once said) and <code>stopSpeaking()</code>{" "}
+        take the same plugin, else the Web Speech API (Deno Desktop windows included), else, in a
+        Deno Desktop window without it (WebKitGTK), the runtime&apos;s OS speech (runtime
+        3.0.0-denext.6: AVSpeechSynthesizer, SAPI, speech-dispatcher, which the Linux packages
+        recommend).
       </p>
       <p>
         The same goes for <code>contacts</code> (<code>@capgo/capacitor-contacts</code>, behind{" "}
@@ -2727,6 +2935,15 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         split arrived in calendar template generation 2 (denext 4.4.0): a project that added{" "}
         <code>calendar</code> earlier re-runs <code>denext mobile add calendar</code>{" "}
         and ships a new binary, or that call still rejects on Android.
+      </p>
+      <p>
+        Printing cannot reach the app&apos;s private files: on iOS{" "}
+        <code>printAsync({"{ printerUrl, uri }"})</code>{" "}
+        (no dialog) prints only a file in the app&apos;s Documents, Caches or temporary folder, and
+        Android&apos;s <code>printToFile</code> WebView doesn&apos;t read <code>file:</code> /{" "}
+        <code>content:</code>{" "}
+        URLs (remote images still load). An app installed with an older template (before print
+        generation 2) re-runs <code>denext mobile add print</code> and ships a new binary.
       </p>
       <p>
         <code>app-config</code>{" "}
@@ -3275,11 +3492,15 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         (repeatable, or comma-separated; https only, plain http only to loopback) writes the
         Info.plist string <code>DenextOtaOrigins</code> and the <code>dev.denext.ota.ORIGINS</code>
         {" "}
-        meta-data, and the app then refuses a <code>baseUrl</code>{" "}
-        on any other origin except loopback (code{" "}
+        meta-data, and the app then refuses a <code>baseUrl</code> on any other origin (code{" "}
         <code>insecure</code>), signed or not. A binary with no public key accepts an unsigned UI
-        only from a pinned https origin or loopback: any script in the page can call the plugin, so
-        an unsigned update from whatever server it names would replace the UI for good.{" "}
+        only from a pinned https origin: any script in the page can call the plugin, so an unsigned
+        update from whatever server it names would replace the UI for good. A loopback{" "}
+        <code>baseUrl</code> (<code>localhost</code>, <code>127.0.0.1</code>,{" "}
+        <code>::1</code>, and Android's emulator alias{" "}
+        <code>10.0.2.2</code>) passes both checks only in a debug build (iOS: compiled with{" "}
+        <code>DEBUG</code>, Xcode's Debug configuration; Android: a debuggable build): in a release
+        build another app on the device could serve an unsigned UI there.{" "}
         <code>denext mobile doctor --release</code> fails when OTA is installed without a key.
       </p>
       <p>
@@ -3308,8 +3529,10 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         refuses a lower one, or a manifest with none once it has seen one (code{" "}
         <code>downgrade</code>), so an old signed release cannot be replayed. It survives{" "}
         <code>otaReset()</code>{" "}
-        and new binaries; only a reinstall clears it. Keep sequences growing: going from Unix times
-        to a small counter locks installed apps out. <code>--min-native N</code>{" "}
+        and new binaries; only a reinstall clears it. The bundled UI's own manifest sequence is a
+        floor too, so a release older than the UI the binary ships is refused even before the device
+        accepted one. Keep sequences growing: going from Unix times to a small counter locks
+        installed apps out. <code>--min-native N</code>{" "}
         marks a UI that needs native code from app build <code>N</code>{" "}
         on: an app whose build number (iOS{" "}
         <code>CFBundleVersion</code>, as an integer or its first dot-separated part; Android{" "}
@@ -3319,21 +3542,38 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         a different one refuses it (code <code>native_mismatch</code>); see{" "}
         <a href="#native-fingerprint">Native fingerprint</a>.
       </p>
+      <p>
+        <strong>Expiry.</strong> Signing also stamps an <code>expiresAt</code>{" "}
+        (Unix seconds): 30 days from now, or <code>--expires-in &lt;days&gt;</code> /{" "}
+        <code>--expires-at &lt;RFC 3339&gt;</code>. From then on every shell refuses the manifest
+        (code <code>expired</code>), and <code>checkForUiUpdate</code>{" "}
+        reports it even when it names the UI already running, so a feed that keeps serving an old
+        release (a stale CDN, an attacker replaying the newest one it saw) shows up as an error
+        instead of "current". Re-sign the live release before it expires (
+        <code>denext ota manifest out --sign ota.key</code>{" "}
+        again; the version stays, the sequence grows). A UI already installed keeps running past its
+        manifest's expiry. An app whose bundled UI's manifest carries an expiry refuses a release
+        without one (code{" "}
+        <code>expired</code>), while an app bundled by older tooling keeps taking them, so upgrading
+        denext never strands a fleet.
+      </p>
       <Code lang="bash">
-        {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now
-denext ota manifest out --sign ota.key --sequence 1758700000`}
+        {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now, expires in 30 days
+denext ota manifest out --sign ota.key --sequence 1758700000 --expires-in 7`}
       </Code>
       <p>
         The signature is ECDSA P-256 / SHA-256, as standard base64 of the raw 64-byte{" "}
         <code>r‖s</code>, over these UTF-8 bytes (<code>\n</code>{" "}
-        is one 0x0A byte, with no trailing newline). A manifest with a <code>sequence</code> and a
+        is one 0x0A byte, with no trailing newline). A manifest with an <code>expiresAt</code>{" "}
+        is signed as v4, else one with a <code>sequence</code> and a <code>nativeFingerprint</code>
         {" "}
-        <code>nativeFingerprint</code> is signed as v3, one with a <code>sequence</code>{" "}
+        as v3, one with a <code>sequence</code>{" "}
         alone as v2 (byte-for-byte what denext 2.9 signed), one without as v1 (what denext 2.8
-        signed); all three are accepted:
+        signed); all four are accepted:
       </p>
       <Code lang="text">
-        {`v3: denext-ota-v3\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint>
+        {`v4: denext-ota-v4\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint or empty>\\n<expiresAt>
+v3: denext-ota-v3\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint>
 v2: denext-ota-v2\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>
 v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
       </Code>
@@ -3363,15 +3603,29 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <li>
           with no key, refuses the manifest (code{" "}
           <code>insecure</code>) unless it comes from a pinned <code>https</code>{" "}
-          origin or a loopback host: <code>localhost</code>, <code>127.0.0.1</code>,{" "}
-          <code>::1</code>, or the Android emulator's <code>10.0.2.2</code>{" "}
-          in a debuggable Android build. An unpinned <code>https</code> server is refused too;
+          origin, or, in a debug build only, a loopback host: <code>localhost</code>,{" "}
+          <code>127.0.0.1</code>, <code>::1</code>, or the Android emulator's{" "}
+          <code>10.0.2.2</code>. An unpinned <code>https</code> server is refused too;
+        </li>
+        <li>
+          refuses a manifest past its{" "}
+          <code>expiresAt</code>, or one without an expiry when the bundled UI's carries one (code
+          {" "}
+          <code>expired</code>);
         </li>
         <li>
           refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
           <code>minNative</code> above its build (code <code>native_too_old</code>), and a{" "}
           <code>nativeFingerprint</code> other than the one the binary embeds (code{" "}
-          <code>native_mismatch</code>; only when both carry one).
+          <code>native_mismatch</code>; only when both carry one);
+        </li>
+        <li>
+          refuses a manifest whose <code>appId</code>{" "}
+          names another app than its bundle id / application id (code{" "}
+          <code>app_mismatch</code>), and with a public key embedded one that names no app or whose
+          {" "}
+          <code>appSignature</code> does not verify (codes <code>app_mismatch</code> /{" "}
+          <code>signature</code>).
         </li>
       </ul>
       <p>
@@ -3426,8 +3680,13 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         </li>
         <li>
           <code>insecure</code>: a <code>baseUrl</code>{" "}
-          outside the pinned origins, or no key and a host that is neither a pinned{" "}
-          <code>https</code> origin nor loopback;
+          outside the pinned origins, or no key and a host that is not a pinned <code>https</code>
+          {" "}
+          origin (loopback passes only in a debug build);
+        </li>
+        <li>
+          <code>expired</code>: the manifest's signed <code>expiresAt</code>{" "}
+          has passed (re-sign it), or it has none while the bundled UI's manifest does;
         </li>
         <li>
           <code>downgrade</code>: an older <code>sequence</code>, or none after a sequenced release;
@@ -3442,7 +3701,42 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <li>
           <code>platform_mismatch</code>: the manifest names another platform's export (
           <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
-          by <code>checkForUiUpdate</code> before the native side sees it.
+          by <code>checkForUiUpdate</code>{" "}
+          before the native side sees it, and by the native side too (from <code>add-ota</code>{" "}
+          template generation 12), so a call that skips the page's check is refused the same way. An
+          app that embeds a public key also refuses a manifest with no platform stamp (an unstamped
+          web export, which would otherwise install on any signed app sharing the key): sign the
+          export that <code>denext mobile build</code> or <code>denext export --platform ios</code>
+          {" "}
+          writes, or stamp one with{" "}
+          <code>denext ota manifest &lt;dir&gt; --platform ios --sign</code>. Unsigned apps (pinned
+          https origins) still take an unstamped export. The page cannot tell whether the binary
+          embeds a key, so only the native side refuses this one.
+        </li>
+        <li>
+          <code>app_mismatch</code>: the manifest&apos;s signed <code>appId</code>{" "}
+          names another app than this one (its iOS bundle id / Android application id). An app that
+          embeds a public key also refuses a manifest that names no app, so one signing key can
+          serve several apps without a feed for one installing its UI on another (from{" "}
+          <code>add-ota</code> template generation 12). <code>checkForUiUpdate</code>{" "}
+          refuses another app&apos;s manifest before the native side sees it (with{" "}
+          <code>appId</code> in its options, or the id the shell&apos;s status reports). A signed
+          {" "}
+          <code>spa.ota</code> export, <code>denext mobile build</code> and{" "}
+          <code>denext ota manifest &lt;dir&gt; --sign</code> stamp the Capacitor <code>appId</code>
+          {" "}
+          (a flavor&apos;s own under <code>mobile build --flavor</code>); otherwise pass{" "}
+          <code>--app-id &lt;id&gt;</code> or set{" "}
+          <code>DENEXT_OTA_APP_ID</code>. The id is signed in its own <code>appSignature</code>{" "}
+          (payload v5) beside the <code>signature</code>{" "}
+          older binaries verify, so one manifest serves both. Unsigned apps take a manifest without
+          one as before.
+        </li>
+        <li>
+          <code>guard_unavailable</code>: the iOS bridge could not install its check on{" "}
+          <code>/_capacitor_file_</code>{" "}
+          requests (see re-verification below), so this app serves no downloaded UI and refuses
+          every update.
         </li>
       </ul>
       <p>
@@ -3490,7 +3784,28 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         the embedded key, and its version recomputed from the file list), and the shell checks each
         file's SHA-256 and size the first time it serves it in a process (iOS: the bridge's router;
         Android: the bridge's route processor). Only the files a page actually loads are hashed, so
-        a large UI does not slow the launch. A file changed, added or removed on the device after
+        a large UI does not slow the launch. The same check covers a <code>/_capacitor_file_</code>
+        {" "}
+        request (<code>Capacitor.convertFileSrc</code>) for a file inside the downloaded versions,
+        however the path is spelled; files elsewhere are served as before, but a path with a control
+        character (a NUL would crash Capacitor's iOS handler) or to a file that is not there is
+        refused. So is a request for a UI file in another letter case (<code>APP.JS</code> for{" "}
+        <code>app.js</code>, which a case-insensitive volume opens as that file): it fails, and
+        never quarantines the version. On iOS that check is{" "}
+        <code>DenextOtaFileGuard</code>, which the bridge makes of Capacitor's own asset handler.
+        When it cannot (the web view's handler is the app's own class), the app serves no downloaded
+        UI: the launch runs the bundled UI, <code>onOtaRejected</code> fires with{" "}
+        <code>code: &quot;guard_unavailable&quot;</code>{" "}
+        (nothing is quarantined), and updates are refused with that code. An app whose own handler
+        does its own checks opts out with <code>plugins.DenextBridge.otaFileGuard: false</code>{" "}
+        in the Capacitor config; its downloaded UIs are then served with{" "}
+        <code>/_capacitor_file_</code>{" "}
+        reads of their files unchecked, so a file changed on the device can reach the page that way
+        (<code>denext mobile doctor</code>{" "}
+        warns while it is set). A file is hashed again whenever its size, modification or change
+        time, or inode differs from when it was last verified, so one rewritten while the app runs
+        is caught too. The shell serves only the bundled UI or a downloaded version's directory, and
+        refuses a request from any other base. A file changed, added or removed on the device after
         the download (another app on a rooted or jailbroken device, malware with storage access,
         corruption) is never served: the version is moved to{" "}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
@@ -3513,22 +3828,23 @@ import { onOtaRejected } from "denext/mobile";
 
 export function OtaWatch() {
   // Register early (the root layout): the event waits for its first listener.
-  useEffect(() => onOtaRejected(({ version, reason }) => report("ota-tampered", { version, reason })), []);
+  useEffect(() => onOtaRejected(({ version, reason, code }) => report(\`ota-\${code}\`, { version, reason })), []);
   return null;
 }`}
       </Code>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
-        Downgrade protection covers sequenced (v2 and v3) releases: a device that never accepted a
-        sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
-        is the only thing standing between the app and a hostile UI. Rotating the key takes an app
-        release, and a leaked key is valid until then. A file already verified in a process is not
-        hashed again until the next launch, so a change made while the app runs is caught then. On
-        iOS the first request for each file hashes it on the main thread (Capacitor's router is
-        synchronous), so a very large file delays its own first load once per process. On iOS, a web
-        content process that dies during a trial is reloaded by Capacitor itself; if that leaves the
-        page blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and
-        the next launch counts it as a failed trial attempt.
+        Downgrade protection covers sequenced (v2 to v4) releases: a device that never accepted a
+        sequenced manifest, on an app whose bundled UI carries none, still takes an older v1 one.
+        Without an embedded key, the transport (TLS) is the only thing standing between the app and
+        a hostile UI. Rotating the key takes an app release, and a leaked key is valid until then. A
+        file already verified in a process is not hashed again until the next launch, so a change
+        made while the app runs is caught then. On iOS the first request for each file hashes it on
+        the main thread (Capacitor's router is synchronous), so a very large file delays its own
+        first load once per process. On iOS, a web content process that dies during a trial is
+        reloaded by Capacitor itself; if that leaves the page blank, the watchdog rolls it back. On
+        Android, a renderer crash takes the app down, and the next launch counts it as a failed
+        trial attempt.
       </Callout>
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}
@@ -3953,7 +4269,9 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
           cleartext: <code>server.cleartext</code>, App Transport Security exceptions (<code>
             NSAllowsArbitraryLoads
           </code>, <code>NSAllowsLocalNetworking</code>, insecure exception domains), and{" "}
-          <code>usesCleartextTraffic</code>;
+          <code>usesCleartextTraffic</code>, and a network security config (the manifest&apos;s{" "}
+          <code>android:networkSecurityConfig</code>) whose <code>base-config</code> or a{" "}
+          <code>domain-config</code> sets <code>cleartextTrafficPermitted=&quot;true&quot;</code>;
         </li>
         <li>
           WebView debugging enabled for release (<code>
@@ -3969,7 +4287,10 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <li>a missing or invalid privacy manifest (the check above);</li>
         <li>missing app icons (iOS asset catalog, Android launcher) and launch screens;</li>
         <li>
-          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>;
+          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>{" "}
+          or a wildcard over hosts you do not own (<code>*.com</code>, <code>app.*</code>), an{" "}
+          <code>http:</code> entry (an error with <code>--release</code>), and{" "}
+          <code>*.example.com</code> (a warning: every subdomain);
         </li>
         <li>
           no Content-Security-Policy meta tag in the export&apos;s <code>index.html</code>;
@@ -3998,16 +4319,62 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         mixed content (<code>android.allowMixedContent</code>), <code>allowNavigation *</code>,{" "}
         <code>android:debuggable</code>, <code>android.useLegacyBridge</code>{" "}
         (its bridge answers plugin calls from every frame), a missing CSP and secrets in the export
-        are errors, and <code>loggingBehavior: &quot;production&quot;</code>{" "}
-        is a warning. Run both after <code>denext export</code> and <code>npx cap sync</code>{" "}
-        (the CI recipe does). Both profiles also report a{" "}
-        <code>DenextBridgeViewController.swift</code>{" "}
+        are errors, and <code>loggingBehavior: &quot;production&quot;</code> is a warning, as is
+        {" "}
+        <code>plugins.DenextBridge.frameGuard: false</code> for a hosted app&apos;s own{" "}
+        <code>server.url</code> (an error once an <code>allowNavigation</code>{" "}
+        origin is among the pages it opens to the plugins). Run both after{" "}
+        <code>denext export</code> and <code>npx cap sync</code> (the CI recipe does);{" "}
+        <code>denext mobile build --release</code> runs the release profile itself after its{" "}
+        <code>cap sync</code>{" "}
+        and refuses on its release-security errors, printing the rest as warnings
+        (<a href="/docs/mobile-build#release-checks">release checks</a>). Both profiles also report
+        a <code>DenextBridgeViewController.swift</code>{" "}
         written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
         of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
         frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame).
         With a <code>fastlane/</code> folder, <code>--release</code>{" "}
         also checks it (<a href="/docs/mobile-build#fastlane">fastlane</a>). Not checked: whether
         icons are still Capacitor&apos;s placeholders, and anything about the content itself.
+      </p>
+
+      <h3 id="bridge-origin-guard">The bridge&apos;s origin guard</h3>
+      <p>
+        The native bridge every denext native plugin installs accepts plugin calls only from the
+        app&apos;s main frame on the app&apos;s own origin: Capacitor&apos;s local one (
+        <code>capacitor://localhost</code> on iOS, <code>https://localhost</code> on Android), plus
+        {" "}
+        <code>server.url</code> in a debug build so <code>denext mobile dev</code>{" "}
+        live reload keeps working. A page the WebView navigates to through{" "}
+        <code>server.allowNavigation</code>, a hosted <code>server.url</code>{" "}
+        in a release build, and every iframe get no plugins: on iOS their calls are dropped, on
+        Android the bridge is not given to them at all (Capacitor itself hands it to every{" "}
+        <code>allowNavigation</code> origin). Configure it in the Capacitor config, which{" "}
+        <code>cap sync</code> ships inside the app (the page cannot change it):
+      </p>
+      <Code lang="ts">
+        {`// capacitor.config.ts
+plugins: {
+  DenextBridge: {
+    // pages there may call plugins too (exact origins: scheme, host, port)
+    allowedOrigins: ["https://app.example.com"],
+    // or turn the origin check off entirely (only the main-frame check stays)
+    // frameGuard: false,
+  },
+},`}
+      </Code>
+      <p>
+        A hosted app (the shell loads a remote{" "}
+        <code>server.url</code>) lists that origin, or opts out with <code>frameGuard: false</code>;
+        {" "}
+        <code>denext migrate --enable-capacitor</code>{" "}
+        writes the opt-out into a kept config that loads one. <code>denext mobile doctor</code>{" "}
+        warns about every <code>server.url</code> / <code>allowNavigation</code>{" "}
+        origin the guard refuses, and about <code>frameGuard: false</code>{" "}
+        (every such origin can call every plugin). Android also needs <code>androidx.webkit</code>
+        {" "}
+        in the app module, which <code>denext mobile add</code> adds to{" "}
+        <code>android/app/build.gradle</code> with the composed <code>MainActivity</code>.
       </p>
 
       <h2 id="crash-reporting">Crash reporting</h2>

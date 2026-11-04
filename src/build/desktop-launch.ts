@@ -28,10 +28,15 @@ import {
   desktopIncludeArgs,
   desktopNpmArgs,
   type DesktopOs,
+  strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
-import { desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
+import {
+  desktopNetSplit,
+  desktopRuntimeDenoFlags,
+  projectDesktopBackend,
+} from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -42,7 +47,7 @@ export interface DesktopLaunchBuildInput {
   readonly permissionFlags: readonly string[];
   /** `desktop.denoFlags`. */
   readonly denoFlags: readonly string[];
-  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; `--unstable-no-legacy-abort`). */
+  /** The pinned runtime's flags (`desktopRuntimeDenoFlags`; none from runtime 3.0.0-rc.5). */
   readonly runtimeFlags?: readonly string[];
   /** The extension `--include`s and the npm args (`desktopIncludeArgs` + `desktopNpmArgs`). */
   readonly extraArgs: readonly string[];
@@ -50,7 +55,7 @@ export interface DesktopLaunchBuildInput {
   readonly iconArgs: readonly string[];
   /** Embed the static export (`run`); `dev` proxies to the dev server and does not need it. */
   readonly includeOut: boolean;
-  /** Hosts to add to `--allow-net` (`dev --lan`: the dev server's LAN address). */
+  /** Hosts to add to `--allow-net` (`--allow-net-connect` under the split grant; `dev --lan`: the dev server's LAN address). */
   readonly netHosts?: readonly string[];
   /** The `--output` path (see {@linkcode desktopLaunchOutput}). */
   readonly output: string;
@@ -67,12 +72,15 @@ export interface DesktopLaunchBuildInput {
  * @returns The flags.
  */
 export function withNetHosts(flags: readonly string[], hosts: readonly string[]): string[] {
-  if (hosts.length === 0 || flags.includes("--allow-net")) return [...flags];
-  const at = flags.findIndex((f) => f.startsWith("--allow-net="));
-  const current = at === -1 ? [] : flags[at].slice("--allow-net=".length).split(",");
-  const flag = `--allow-net=${
-    [...new Set([...current, ...hosts])].filter(Boolean).sort().join(",")
-  }`;
+  // Under the split network grant the hosts are outbound (the window's server reaches the dev
+  // server): they join `--allow-net-connect`.
+  const kind = flags.some((f) => /^--allow-net-(connect|listen)(=|$)/.test(f))
+    ? "--allow-net-connect"
+    : "--allow-net";
+  if (hosts.length === 0 || flags.includes(kind)) return [...flags];
+  const at = flags.findIndex((f) => f.startsWith(`${kind}=`));
+  const current = at === -1 ? [] : flags[at].slice(kind.length + 1).split(",");
+  const flag = `${kind}=${[...new Set([...current, ...hosts])].filter(Boolean).sort().join(",")}`;
   if (at === -1) return [...flags, flag];
   return flags.map((f, i) => i === at ? flag : f);
 }
@@ -248,7 +256,7 @@ export interface DesktopLaunchPlanInput {
   readonly denoFlags: readonly string[];
   /**
    * The build's runtime env (`resolveDesktopRuntimeEnv`): on the pinned runtime the build gets its
-   * flags (`--unstable-no-legacy-abort`), as the packaging scripts do; none when empty (stock).
+   * flags (`desktopRuntimeDenoFlags`), as the packaging scripts do; none when empty (stock).
    */
   readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */
@@ -257,8 +265,12 @@ export interface DesktopLaunchPlanInput {
   readonly dev: boolean;
   /** Hosts to add to `--allow-net` (`dev --lan`). */
   readonly netHosts?: readonly string[];
+  /** Whether this build may bake the split network grant (default {@linkcode desktopNetSplit}). */
+  readonly netSplit?: () => boolean;
   /** The scratch directory ({@linkcode desktopLaunchScratchDir}). */
   readonly scratch: string;
+  /** Where a warning goes (default `console.warn`). */
+  readonly warn?: (line: string) => void;
 }
 
 /** A planned `desktop run` / `dev` build. */
@@ -272,7 +284,13 @@ export interface DesktopLaunchBuildPlan {
 /**
  * Plan the `deno desktop` build of `desktop run` / `dev`, reading the project the way the
  * packaging scripts do (a script URL in its `scripts/` folder): the permissions from
- * `desktop.capabilities`, the extension modules, the npm args, the icon and the app name.
+ * `desktop.capabilities`, the extension modules, the npm args, the backend for the host, the icon
+ * and the app name.
+ *
+ * `desktop.permissions: "strict"` that cannot be honoured (no `desktop.app.identifier`, or a runtime
+ * that does not expand the folder tokens) does not stop this local test build, unlike a packaging
+ * build: it warns, naming the reason and the fix, and bakes the default unscoped `--allow-read` /
+ * `--allow-env`, so a runtime under development (`DENEXT_DESKTOP_RUNTIME_DIR`) can still be run.
  *
  * @param input The project, config, host OS and scratch directory.
  * @returns The args and the bundle path.
@@ -286,13 +304,29 @@ export async function desktopLaunchBuildPlan(
     input.scratch,
     desktopLaunchName(await desktopAppName(scriptUrl)),
   );
+  const strictProblem = strictPermissionsProblem(input.config);
+  if (strictProblem !== null) {
+    (input.warn ?? ((line: string) => console.warn(line)))(
+      `denext: WARNING: ${strictProblem}. This local test build bakes the default (unscoped) ` +
+        "--allow-read and --allow-env instead; `denext desktop package` refuses this configuration.",
+    );
+  }
   const args = desktopLaunchBuildArgs({
-    permissionFlags: desktopBuildFlags(input.config, input.os),
+    permissionFlags: desktopBuildFlags(input.config, input.os, {
+      // Dev only: a strict mode that cannot be honoured warned above and bakes the default.
+      strictFallback: true,
+      // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
+      netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
+        (input.netSplit ?? desktopNetSplit)(),
+    }),
     denoFlags: input.denoFlags,
     runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
       ...await desktopIncludeArgs(scriptUrl, input.os),
       ...await desktopNpmArgs(scriptUrl),
+      // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
+      "--backend",
+      await projectDesktopBackend(input.projectDir, { target: input.os, config: input.config }),
     ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,

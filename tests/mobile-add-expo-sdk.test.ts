@@ -92,6 +92,7 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "out/index.html": "<!doctype html>\n",
     [PBXPROJ]: PBXPROJ_FIXTURE,
     "ios/App/App/Base.lproj/Main.storyboard": STOCK_STORYBOARD,
@@ -365,3 +366,18 @@ for (const family of ALL) {
     },
   });
 }
+
+Deno.test("print templates SECURITY (AU6-L6/L7): no app-private file reaches a printer or the PDF WebView", () => {
+  const swift = PRINT_IOS_FILES["DenextPrintPlugin.swift"];
+  // printToPrinter (no dialog) takes only a file in Documents, Caches or tmp, symlinks resolved.
+  assertStringIncludes(swift, "guard let file = DenextPrintPlugin.printableFile(path) else {");
+  assertStringIncludes(swift, "static func printableFile(_ path: String) -> URL? {");
+  assertStringIncludes(swift, "url.resolvingSymlinksInPath().standardizedFileURL.path");
+  assert(
+    !swift.includes("controller.printingItem = path.hasPrefix"),
+    "the raw path is never printed",
+  );
+  const java = PRINT_ANDROID_FILES["DenextPrintPlugin.java"];
+  assertStringIncludes(java, "webView.getSettings().setAllowFileAccess(false);");
+  assertStringIncludes(java, "webView.getSettings().setAllowContentAccess(false);");
+});

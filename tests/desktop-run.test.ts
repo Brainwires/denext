@@ -153,7 +153,6 @@ Deno.test("runDesktop: a malformed published origin refuses every desktop endpoi
 Deno.test({
   name:
     "runDesktop: a loopback dev URL proxies to `denext dev` (token stripped); a remote one is refused",
-  sanitizeResources: false, // the proxied fetch's keep-alive connection
   fn: async () => {
     const outDir = await exportDir();
     const seen: Array<{ path: string; token: string | null }> = [];

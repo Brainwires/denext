@@ -193,9 +193,11 @@ function detectLoop(
 ): Promise<ScannedBarcode | null> {
   return new Promise((resolve, reject) => {
     let done = false;
+    let next: ReturnType<typeof setTimeout> | undefined;
     const finish = (fn: () => void) => {
       if (done) return;
       done = true;
+      clearTimeout(next);
       fn();
     };
     cancel.addEventListener("click", () => finish(() => resolve(null)), { once: true });
@@ -204,7 +206,7 @@ function detectLoop(
       detector.detect(video).then((codes) => {
         const code = codes[0];
         if (code) finish(() => resolve({ value: code.rawValue, format: code.format }));
-        else setTimeout(tick, 120);
+        else next = setTimeout(tick, 120);
       }, (err) => finish(() => reject(err)));
     };
     tick();

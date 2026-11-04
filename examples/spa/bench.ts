@@ -12,35 +12,87 @@
 //
 // Run:  deno run -A bench.ts     (needs network the first time, to fetch npm React)
 
-import { dirname, fromFileUrl, join } from "@std/path";
+import { basename, dirname, fromFileUrl, join } from "@std/path";
+import { pruneUnreachable } from "../../src/build/sourcemap-attribution.ts";
 
 const here = dirname(fromFileUrl(import.meta.url));
 const denoBin = Deno.env.get("DENO_BIN") ?? Deno.execPath();
 
 async function gzipSize(bytes: Uint8Array): Promise<number> {
-  const stream = new Response(bytes).body!.pipeThrough(
+  const stream = new Response(bytes as BodyInit).body!.pipeThrough(
     new CompressionStream("gzip"),
   );
   return (await new Response(stream).arrayBuffer()).byteLength;
 }
 
-/** Total raw + gzip bytes of every `.js` file directly in `dir`. */
-async function sizeOfJs(dir: string): Promise<{ raw: number; gz: number }> {
-  let raw = 0, gz = 0;
+/** Raw + gzip bytes. */
+interface Size {
+  raw: number;
+  gz: number;
+}
+
+/** What a page downloads: its first load, and every file it can ever load. */
+interface Sizes {
+  /** The entry plus every chunk it imports statically (the first load). */
+  startup: Size;
+  /** Every file the entry can reach, `import()` chunks included. */
+  loadable: Size;
+}
+
+/** A sibling file an emitted file imports statically (`from"./chunk-X.js"`, `import"./x.js"`). */
+const STATIC_IMPORT = /(?:from|import)\s*"\.\/([\w$.-]+\.js)"/g;
+
+/** Every `.js` file directly in `dir`, by name. */
+async function readJs(dir: string): Promise<Map<string, string>> {
+  const files = new Map<string, string>();
   for await (const e of Deno.readDir(dir)) {
-    if (!e.isFile || !e.name.endsWith(".js")) continue;
-    const bytes = await Deno.readFile(join(dir, e.name));
-    raw += bytes.byteLength;
-    gz += await gzipSize(bytes);
+    if (e.isFile && e.name.endsWith(".js")) {
+      files.set(e.name, await Deno.readTextFile(join(dir, e.name)));
+    }
   }
-  return { raw, gz };
+  return files;
+}
+
+/** `entry` and every file it reaches through static imports: the first load. */
+function staticClosure(files: Map<string, string>, entry: string): string[] {
+  const seen = new Set([entry]);
+  // A Set iterates the names added while iterating, so this walks the whole static graph.
+  for (const name of seen) {
+    for (const m of (files.get(name) ?? "").matchAll(STATIC_IMPORT)) seen.add(m[1]);
+  }
+  return [...seen].filter((name) => files.has(name));
+}
+
+/** Raw + gzip bytes of `names`. */
+async function sizeOf(files: Map<string, string>, names: Iterable<string>): Promise<Size> {
+  const size = { raw: 0, gz: 0 };
+  for (const name of names) {
+    const bytes = new TextEncoder().encode(files.get(name)!);
+    size.raw += bytes.byteLength;
+    size.gz += await gzipSize(bytes);
+  }
+  return size;
+}
+
+/**
+ * Size the `.js` files directly in `dir` the way a page loads them. A chunk whose only `import()`
+ * site was tree-shaken after code splitting is still emitted by `deno bundle`, but no page can
+ * load it and `denext build` does not write it (`pruneUnreachable`), so it is not counted.
+ */
+async function sizeOfJs(dir: string, entry: string): Promise<Sizes> {
+  const files = await readJs(dir);
+  pruneUnreachable(files, [entry]);
+  return {
+    startup: await sizeOf(files, staticClosure(files, entry)),
+    loadable: await sizeOf(files, files.keys()),
+  };
 }
 
 /** Bundle `entry` with `config` into a temp dir and return total raw + gzip bytes. */
 async function bundle(
   entry: string,
   config: string,
-): Promise<{ raw: number; gz: number }> {
+): Promise<Sizes> {
   const out = await Deno.makeTempDir({ prefix: "spa_bench_" });
   try {
     const { code, stderr } = await new Deno.Command(denoBin, {
@@ -58,7 +110,7 @@ async function bundle(
       stderr: "piped",
     }).output();
     if (code !== 0) throw new Error(new TextDecoder().decode(stderr));
-    return await sizeOfJs(out);
+    return await sizeOfJs(out, basename(entry).replace(/\.tsx?$/, ".js"));
   } finally {
     await Deno.remove(out, { recursive: true });
   }
@@ -135,25 +187,27 @@ if (el) createRoot(el).render(<App />);
 
   const kb = (n: number) => (n / 1024).toFixed(1) + " KB";
   const x = (a: number, b: number) => (b / a).toFixed(1) + "×";
+  const row = (label: string, d: Size, r: Size) =>
+    console.log(
+      `  ${label.padEnd(26)}${kb(d.raw).padStart(10)}${kb(d.gz).padStart(10)}${
+        kb(r.raw).padStart(10)
+      }${kb(r.gz).padStart(10)}${x(d.raw, r.raw).padStart(8)}${x(d.gz, r.gz).padStart(8)}`,
+    );
   console.log(
     "\n  Same SPA, same bundler (deno bundle, minified). Client JS:\n",
   );
-  console.log(`  ${"".padEnd(28)}${"raw".padStart(10)}${"gzip".padStart(10)}`);
   console.log(
-    `  ${"denext (own React-equiv)".padEnd(28)}${kb(denext.raw).padStart(10)}${
-      kb(denext.gz).padStart(10)
+    `  ${"".padEnd(26)}${"denext".padStart(20)}${"React 19".padStart(20)}${
+      "smaller by".padStart(16)
     }`,
   );
   console.log(
-    `  ${"React 19 + ReactDOM 19".padEnd(28)}${kb(react.raw).padStart(10)}${
-      kb(react.gz).padStart(10)
-    }`,
+    `  ${"".padEnd(26)}${"raw".padStart(10)}${"gzip".padStart(10)}${"raw".padStart(10)}${
+      "gzip".padStart(10)
+    }${"raw".padStart(8)}${"gzip".padStart(8)}`,
   );
-  console.log(
-    `  ${"denext is smaller by".padEnd(28)}${x(denext.raw, react.raw).padStart(10)}${
-      x(denext.gz, react.gz).padStart(10)
-    }`,
-  );
+  row("first load", denext.startup, react.startup);
+  row("everything loadable", denext.loadable, react.loadable);
   console.log("");
 } finally {
   await Deno.remove(rdir, { recursive: true });

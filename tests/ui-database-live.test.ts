@@ -15,6 +15,10 @@ import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/databas
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
 import { setAppFetch } from "../src/ui/app-admin.ts";
 import { setDockerRunner } from "../src/ui/logs/source.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const KEY = "sb_secret_live_test_key";
 

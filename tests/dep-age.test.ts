@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
+  denextExemptions,
   effectiveRule,
   heldUntil,
   holdMessage,
@@ -318,7 +319,11 @@ Deno.test("upgrade: removes only the jsr:@denext/* exclude entry, and says why",
   assertEquals(code, 0, out);
   assertEquals(
     file,
-    EXISTING.replace('"jsr:@denext/*", ', ""),
+    // (upgrade also adds runtime 3.0.0-rc.5's `.deno/` exclude to an older project)
+    EXISTING.replace('"jsr:@denext/*", ', "").replace(
+      /\n}\n$/,
+      ',\n  "exclude": [".deno/"]\n}\n',
+    ),
     "the other entries, the age, the comment and the pin (4.5.0 is inside P2D) are kept",
   );
   assertStringIncludes(out, 'Removed "jsr:@denext/*" from minimumDependencyAge.exclude');
@@ -338,6 +343,24 @@ Deno.test("upgrade: an exclude that held only the denext entry goes with it; --c
   const { file } = await upgradeIn(only);
   assertFalse(file.includes("minimumDependencyAge"), file);
   JSON.parse(file.replace(/^\s*\/\/.*$/m, ""));
+});
+
+Deno.test("upgrade: another @denext exemption from the hold is flagged, never removed", async () => {
+  const other = EXISTING.replace('"jsr:@denext/*"', '"jsr:@denext/denext"');
+  const { code, out, file } = await upgradeIn(other);
+  assertEquals(code, 0, out);
+  assertStringIncludes(file, '"jsr:@denext/denext"');
+  assertStringIncludes(out, 'deno.json exempts "jsr:@denext/denext" from minimumDependencyAge');
+  assertStringIncludes(out, "denext never writes such an entry");
+  assertFalse(out.includes("Removed"), out);
+  assertEquals(
+    denextExemptions({ exclude: ["jsr:@denext/*", "jsr:@std/path", 1, "jsr:@denext/ui"] }),
+    [
+      "jsr:@denext/*",
+      "jsr:@denext/ui",
+    ],
+  );
+  assertEquals(denextExemptions("P2D"), []);
 });
 
 Deno.test("stripDenextExclude: every shape, other entries kept, valid JSON after", () => {
@@ -380,9 +403,31 @@ Deno.test("doctor: a deno.json that still exempts jsr:@denext/* gets a fix point
     await Deno.writeTextFile(join(dir, "deno.json"), EXISTING);
     const check = await depAgeExemptionCheck(dir);
     assertEquals([check?.ok, check?.critical], [false, false]);
-    assertStringIncludes(check!.detail, "`denext upgrade` removes the entry");
+    assertStringIncludes(check!.detail, '`denext upgrade` removes "jsr:@denext/*"');
     await Deno.writeTextFile(join(dir, "deno.json"), stripDenextExclude(EXISTING).text);
     assertEquals(await depAgeExemptionCheck(dir), null);
+    // any other @denext entry is flagged too: denext never writes it, so the fix is by hand
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      EXISTING.replace('"jsr:@denext/*"', '"jsr:@denext/denext", "@denext/ui"'),
+    );
+    const other = await depAgeExemptionCheck(dir);
+    assertEquals(other?.ok, false);
+    assertStringIncludes(other!.detail, 'exempts "jsr:@denext/denext", "@denext/ui"');
+    assertStringIncludes(other!.detail, "yourself (denext never writes it)");
+    assertFalse(other!.detail.includes("`denext upgrade` removes"), other!.detail);
+    // The failure says why the hold matters and how a test harness marks its exemption deliberate.
+    assertStringIncludes(other!.detail, "keeps a compromised release out");
+    assertStringIncludes(other!.detail, "DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1");
+    assertStringIncludes(other!.detail, "docs/toolchain#supply-chain-hold");
+    // Marked deliberate: a pass that still names what is exempt; any other value is not a mark.
+    const env = (value: string) => (name: string) =>
+      name === "DENEXT_ALLOW_DENEXT_AGE_EXEMPTION" ? value : undefined;
+    const allowed = await depAgeExemptionCheck(dir, env("1"));
+    assertEquals([allowed?.ok, allowed?.critical], [true, false]);
+    assertStringIncludes(allowed!.detail, 'exempts "jsr:@denext/denext", "@denext/ui"');
+    assertStringIncludes(allowed!.detail, "allowed by DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1");
+    assertEquals((await depAgeExemptionCheck(dir, env("true")))?.ok, false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

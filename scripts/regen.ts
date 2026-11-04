@@ -10,8 +10,14 @@
 // every output, runs the generators, compares, and puts the snapshot back, so a dirty working tree
 // is never lost. Not covered: the test-count badge (main and release PRs only; the release script
 // regenerates it) and the API reference (`deno task docs:api`, which CI does not diff).
+//
+// Phase 0 formats the docs corpus's inputs (the docs pages, the root guides, the example READMEs)
+// with `deno fmt` before anything reads them. The corpus fingerprints its inputs' exact bytes, so
+// a hand-edited page that the commit hook's `deno fmt` reformats afterwards would leave the corpus
+// one regen behind; formatted first, one regen is final (and `--check` lists an unformatted input).
 
 import { fromFileUrl, join, relative } from "@std/path";
+import { linkedLockFiles } from "./sync-example-locks.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -21,15 +27,64 @@ export interface RegenStep {
   readonly name: string;
   /** `deno run -A <script> ...args`, repo-relative. */
   readonly script?: readonly string[];
-  /** An in-process step (copies and other one-liners). */
-  readonly run?: () => Promise<void>;
+  /** An in-process step (copies and other one-liners), given the repository root. */
+  readonly run?: (root: string) => Promise<void>;
   /** The files it (re)writes, repo-relative. */
   readonly outputs: readonly string[];
+  /**
+   * The files it may rewrite that are known only at run time (the docs corpus's inputs), resolved
+   * before the run: snapshotted, compared and (with `--check`) restored like {@linkcode outputs}.
+   */
+  readonly runtimeOutputs?: (root: string) => Promise<readonly string[]>;
   /**
    * When it runs: the steps of one phase run concurrently, the phases in order. A step that reads
    * another's output, or writes the same file, sits in a later phase.
    */
-  readonly phase: 1 | 2 | 3 | 4;
+  readonly phase: 0 | 1 | 2 | 3 | 4;
+}
+
+/** The phases, in the order they run. */
+const PHASES = [0, 1, 2, 3, 4] as const;
+
+/** The extensions `deno fmt` formats among the corpus's inputs. */
+const FORMATTABLE = /\.(?:md|tsx?|json)$/;
+
+/**
+ * The phase-0 step: `deno fmt` (the repository's settings) over the files `inputs` names.
+ *
+ * @param inputs The files to format, repo-relative, resolved when the step runs.
+ * @returns The step.
+ */
+export function formatInputsStep(
+  inputs: (root: string) => Promise<readonly string[]>,
+): RegenStep {
+  return {
+    name: "deno fmt (the docs corpus's inputs)",
+    run: async (root) => {
+      const files = (await inputs(root)).filter((p) => FORMATTABLE.test(p));
+      if (files.length === 0) return;
+      const { code, stderr } = await new Deno.Command(Deno.execPath(), {
+        args: ["fmt", "--config", "deno.json", "--permit-no-files", ...files],
+        cwd: root,
+        stdin: "null",
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      if (code !== 0) {
+        await Deno.stderr.write(stderr);
+        throw new Error(`deno fmt failed (exit ${code})`);
+      }
+    },
+    outputs: [],
+    runtimeOutputs: inputs,
+    phase: 0,
+  };
+}
+
+/** The docs corpus's inputs (scripts/gen-docs-corpus.ts `corpusInputs`), repo-relative. */
+async function corpusInputPaths(): Promise<string[]> {
+  const { corpusInputs } = await import("./gen-docs-corpus.ts");
+  return (await corpusInputs()).map((i) => i.path);
 }
 
 const copy = (from: string, to: string) => async () => {
@@ -57,19 +112,28 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:command-table",
     script: ["scripts/gen-command-table.ts"],
-    outputs: ["src/cli/command-table.generated.ts", "src/cli/lazy-modules.generated.ts"],
+    outputs: [
+      "src/cli/command-table.generated.ts",
+      "src/cli/command-meta.packed.ts",
+      "src/cli/lazy-modules.generated.ts",
+      "src/cli/offline-modules.generated.ts",
+    ],
     phase: 1,
   },
   {
     name: "deno task gen:native-templates",
     script: ["scripts/gen-native-templates.ts"],
-    outputs: ["src/build/native-templates.packed.ts"],
+    outputs: ["src/build/native-templates.packed.ts", "packages/docs-corpus/native-templates.ts"],
     phase: 1,
   },
   {
     name: "deno task gen:config-schema",
     script: ["scripts/gen-config-schema.ts"],
-    outputs: ["src/server/config-keys.generated.ts", "denext.config.schema.json"],
+    outputs: [
+      "src/server/config-keys.generated.ts",
+      "denext.config.schema.json",
+      "src/ui/form/config-schema.packed.ts",
+    ],
     phase: 1,
   },
   {
@@ -81,7 +145,7 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:plugin-catalog",
     script: ["scripts/gen-plugin-catalog.ts"],
-    outputs: ["src/plugin/catalog.json"],
+    outputs: ["src/plugin/catalog.json", "src/plugin/catalog.packed.ts"],
     phase: 1,
   },
   {
@@ -109,9 +173,19 @@ export const STEPS: readonly RegenStep[] = [
     phase: 1,
   },
   {
+    // Reads the native-templates pack (the scaffold's package scripts live there), which
+    // gen:native-templates rewrites in phase 1: run in the same phase, the copy took the old pack
+    // and a second regen was needed.
     name: "the desktop scaffold's package scripts → examples/{native,rn-desktop}/scripts/",
     run: writePackageScripts,
     outputs: PACKAGE_SCRIPT_EXAMPLES.flatMap((e) => PACKAGE_SCRIPTS.map((s) => `${e}/${s}`)),
+    phase: 2,
+  },
+  {
+    // Reads the root deno.lock, which no step writes.
+    name: "deno task sync:example-locks",
+    script: ["scripts/sync-example-locks.ts"],
+    outputs: linkedLockFiles(),
     phase: 1,
   },
   {
@@ -151,6 +225,9 @@ export const STEPS: readonly RegenStep[] = [
     outputs: ["site/public/llms.txt", "site/public/llms-full.txt"],
     phase: 4,
   },
+  // Listed last so an output a generator also writes is reported under the generator; it runs
+  // first (phase 0).
+  formatInputsStep(corpusInputPaths),
 ];
 
 /** Every output, once each, in step order. */
@@ -172,8 +249,8 @@ function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
-async function runStep(step: RegenStep, quiet: boolean): Promise<void> {
-  if (step.run) return await step.run();
+async function runStep(step: RegenStep, root: string, quiet: boolean): Promise<void> {
+  if (step.run) return await step.run(root);
   const { code, stderr, stdout } = await new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", ...step.script!],
     cwd: ROOT,
@@ -188,12 +265,16 @@ async function runStep(step: RegenStep, quiet: boolean): Promise<void> {
 }
 
 /** Run the steps phase by phase, each phase's steps concurrently. */
-async function runPhases(steps: readonly RegenStep[], quiet: boolean): Promise<void> {
-  for (const phase of [1, 2, 3, 4]) {
+async function runPhases(
+  steps: readonly RegenStep[],
+  root: string,
+  quiet: boolean,
+): Promise<void> {
+  for (const phase of PHASES) {
     await Promise.all(
       steps.filter((s) => s.phase === phase).map(async (step) => {
         const t0 = performance.now();
-        await runStep(step, quiet);
+        await runStep(step, root, quiet);
         if (!quiet) {
           console.log(`regen: ${step.name} (${((performance.now() - t0) / 1000).toFixed(1)}s)`);
         }
@@ -204,13 +285,13 @@ async function runPhases(steps: readonly RegenStep[], quiet: boolean): Promise<v
 
 /** Each output whose bytes differ from `before`, with the first step that writes it. */
 async function changedOutputs(
-  steps: readonly RegenStep[],
+  outputsOf: ReadonlyMap<RegenStep, readonly string[]>,
   root: string,
   before: ReadonlyMap<string, Uint8Array | null>,
 ): Promise<Map<string, string>> {
   const staleBy = new Map<string, string>();
-  for (const step of steps) {
-    for (const p of step.outputs) {
+  for (const [step, outputs] of outputsOf) {
+    for (const p of outputs) {
       if (staleBy.has(p)) continue;
       if (!sameBytes(before.get(p)!, await readOrNull(root, p))) staleBy.set(p, step.name);
     }
@@ -234,11 +315,19 @@ export async function regen(
 ): Promise<{ stale: string[]; staleBy: Map<string, string> }> {
   const steps = opts.steps ?? STEPS;
   const root = opts.root ?? ROOT;
+  // Each step's outputs, the run-time ones resolved now (before any step rewrites them).
+  const outputsOf = new Map<RegenStep, readonly string[]>();
+  for (const step of steps) {
+    const more = step.runtimeOutputs ? await step.runtimeOutputs(root) : [];
+    outputsOf.set(step, [...new Set([...step.outputs, ...more])]);
+  }
   const before = new Map<string, Uint8Array | null>();
-  for (const p of allOutputs(steps)) before.set(p, await readOrNull(root, p));
+  for (const p of new Set([...outputsOf.values()].flat())) {
+    before.set(p, await readOrNull(root, p));
+  }
   try {
-    await runPhases(steps, opts.quiet ?? false);
-    const staleBy = await changedOutputs(steps, root, before);
+    await runPhases(steps, root, opts.quiet ?? false);
+    const staleBy = await changedOutputs(outputsOf, root, before);
     return { stale: [...staleBy.keys()], staleBy };
   } finally {
     if (opts.check) await restore(root, before);

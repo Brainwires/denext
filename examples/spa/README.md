@@ -43,8 +43,9 @@ export default {
 
 ## Package as a desktop app
 
-The `out/` from `denext task export` is a static app any host can serve — and it's
-byte-compatible with what [`deno desktop`](../native) wraps in a native window:
+The `out/` from `denext task export` is a static app any host can serve — and
+it's byte-compatible with what [`deno desktop`](../native) wraps in a native
+window:
 
 ```
 denext task export
@@ -57,13 +58,19 @@ denext desktop run          # wraps out/ in a native window (see examples/native
 Because denext ships its **own** small React-equivalent instead of React +
 ReactDOM, the client download is a fraction of the size. Benchmarked on **this
 example's app**, the same code bundled with the same bundler (`deno bundle`,
-minified), gzipped:
+minified), raw and gzipped, against React 19.3.1 + ReactDOM 19.3.1 (what `npm:react@19`
+resolves today). "First load" is the entry and every chunk it imports
+statically; "everything loadable" adds the chunks it can `import()` on demand
+(the class-component runtime, Fragment refs, the iOS scroll fix). A chunk no
+import can reach is not counted: `denext build` does not write it.
 
-| Client JS                    |     raw |    gzip |
-| ---------------------------- | ------: | ------: |
-| **denext** (own React-equiv) | 38.6 KB | 13.3 KB |
-| React 19 + ReactDOM 19       |  190 KB | 60.1 KB |
-| **denext is smaller by**     |    4.9× |    4.5× |
+|                         | denext raw | denext gzip | React 19 raw | React 19 gzip |
+| ----------------------- | ---------: | ----------: | -----------: | ------------: |
+| **first load**          |    52.7 KB |     19.5 KB |     218.9 KB |       68.7 KB |
+| **everything loadable** |    73.1 KB |     27.5 KB |     218.9 KB |       68.7 KB |
+
+denext is 4.2× (raw) / 3.5× (gzip) smaller on the first load, and 3.0× / 2.5×
+with everything loadable.
 
 Reproduce it yourself:
 

@@ -488,3 +488,46 @@ Deno.test("expo-linking (SDK 58): unwrapDevLaunchURL strips Expo's launcher comm
   assertEquals(Linking.unwrapDevLaunchURL("myapp://login?next=home"), "myapp://login?next=home");
   assertEquals(Linking.unwrapDevLaunchURL("not a url"), "not a url");
 });
+
+Deno.test("expo-secure-store: keychainAccessible reaches secureStore's Keychain class", async () => {
+  const access: unknown[] = [];
+  const storage = fakePlugin(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  storage.plugin.internalSetItem = (a: Any) => Promise.resolve(void access.push(a.access));
+  // KeychainAccess: whenUnlocked 0, whenUnlockedThisDeviceOnly 1, afterFirstUnlock 2,
+  // afterFirstUnlockThisDeviceOnly 3, whenPasscodeSetThisDeviceOnly 4. ALWAYS* take AfterFirstUnlock*.
+  const cases: [number, number][] = [
+    [SecureStore.WHEN_UNLOCKED, 0],
+    [SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY, 1],
+    [SecureStore.AFTER_FIRST_UNLOCK, 2],
+    [SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY, 3],
+    [SecureStore.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY, 4],
+    [SecureStore.ALWAYS, 2],
+    [SecureStore.ALWAYS_THIS_DEVICE_ONLY, 3],
+  ];
+  await inShell("ios", { SecureStorage: storage.plugin }, async () => {
+    await SecureStore.setItemAsync("k", "v"); // no option: the default
+    for (const [keychainAccessible] of cases) {
+      await SecureStore.setItemAsync("k", "v", { keychainAccessible });
+    }
+    await SecureStore.setItemAsync("k", "v", { keychainAccessible: 99 }); // unknown: the default
+  });
+  assertEquals(access, [0, ...cases.map(([, want]) => want), 0]);
+});
+
+Deno.test("expo-secure-store: requireAuthentication keeps its own class beside keychainAccessible", async () => {
+  const access: unknown[] = [];
+  const storage = fakePlugin(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  storage.plugin.internalSetItem = (a: Any) => Promise.resolve(void access.push(a.access));
+  const bio = fakePlugin(BIO_METHODS);
+  await inShell(
+    "ios",
+    { SecureStorage: storage.plugin, BiometricAuthNative: bio.plugin },
+    async () => {
+      await SecureStore.setItemAsync("pin", "1", {
+        requireAuthentication: true,
+        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+      });
+    },
+  );
+  assertEquals(access, [4]);
+});

@@ -10,6 +10,7 @@ import { addMobileCapabilities, type CommandRunner } from "../src/build/mobile-c
 import {
   bridgeViewControllerSource,
   mainActivitySource,
+  withWebkitDependency,
 } from "../src/build/mobile-native-install.ts";
 import { withGradleDependency } from "../src/build/mobile-native-views-install.ts";
 import {
@@ -71,6 +72,7 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "out/index.html": "<!doctype html>\n",
     [PBXPROJ]: PBXPROJ_FIXTURE,
     "ios/App/App/Base.lproj/Main.storyboard": STOCK_STORYBOARD,
@@ -152,7 +154,12 @@ Deno.test("mobile add native-views: the plugin on iOS + Android, registered; no 
     assertStringIncludes(pbx, "DenextNativeViewsPlugin.swift");
     assertStringIncludes(pbx, "DenextVideoViewFactory.swift");
     assert(!pbx.includes("DenextMapViewFactory.swift"), "the map is native-map's");
-    assertEquals(await read(dir, APP_GRADLE), APP_GRADLE_TEXT, "no osmdroid without native-map");
+    // androidx.webkit for MainActivity's bridge origin guard, and no osmdroid without native-map.
+    assertEquals(
+      await read(dir, APP_GRADLE),
+      withWebkitDependency(APP_GRADLE_TEXT),
+      "no osmdroid without native-map",
+    );
     const again = await addMobileCapabilities({ capabilities: ["native-views"], cwd: dir, run });
     assertEquals(again.written, []);
   });

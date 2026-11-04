@@ -412,7 +412,9 @@ single denext React.
   `@nasa-gcn/remix-seo` reads to generate a sitemap. What the old server read
   off the Express request and response is mapped (§6.1); a value with no
   equivalent is an `undefined` property under a `TODO(denext migrate)` note
-  that names the file and line it came from and why.
+  that names the file and line it came from and why. The `context` loaders get is
+  a React Router `RouterContextProvider` carrying those properties, so typed keys
+  from `createContext` work beside them (`context.get(key)`).
 - **Assets and Tailwind**: `import logo from "./logo.svg"` and a
   `styles.css?url` import are served under `/_denext/client/assets/`, and a
   Tailwind v3 stylesheet is compiled through the project's own `tailwindcss`.
@@ -442,6 +444,16 @@ property only a library sets), `req` or `res` passed on whole, and a spread of
 `res.locals`. A session the old server's store held does not carry over: users
 sign in again, and writes go through `getSession({ secret }).set(…)` in an
 action.
+
+A React Router 7 app keeps its sources (it runs on the `@denext/react-router`
+plugin), and `denext migrate` carries its custom server's `getLoadContext` the
+same way: `load-context.ts` at the app root, imported by a new
+`instrumentation.ts` (an existing one is left alone, with a note to add the
+import). A `getLoadContext` that returns a `RouterContextProvider` (React Router's
+middleware mode) is rebuilt per request with each `context.set(key, value)` whose
+value carries over; the others are `TODO(denext migrate)` notes. Route
+`middleware` and the plugin's own `getLoadContext` option:
+[React Router → Load context and middleware](/docs/react-router#load-context-and-middleware).
 
 ---
 
@@ -489,18 +501,21 @@ The CLI prints up to twelve notes and a count of the rest.
 - **`headers` and `handle` are carried, not interpreted as Remix does.**
   `handle` is threaded to `useMatches`; a `headers` export is preserved in the
   data module for you to apply through denext's `headers()` or middleware.
-- **Prisma is auto-migrated to the Rust-free Deno client.** The schema
-  generator becomes the ESM `prisma-client` with `queryCompiler` and
-  `driverAdapters`, every `@prisma/client` import is repointed, the adapter is
-  injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim,
-  npm pins, and a `prisma:setup` task. Run `denext task prisma:setup` once. The
+- **Prisma is auto-migrated to Prisma 7's Rust-free Deno client.** The schema
+  generator becomes the ESM `prisma-client`, the datasource URL moves to
+  `prisma.config.ts`, every `@prisma/client` import is repointed, the adapter is
+  injected at each `new PrismaClient()`, and `deno.json` gets the npm pins and a
+  `prisma:setup` task. Run `denext task prisma:setup` once. The
   seed and test tooling (`prisma/seed.ts`, `tests/`, mocks, `scripts/`, test
   setup files) are rewritten with the runtime source, the seed runs as
   `denext task prisma:seed`, and a `new PrismaClient(<non-object>)` is flagged
-  for a one-line manual adapter add. A SQLite datasource gets the `links` shim
-  over `node:sqlite`; Postgres and MySQL get `@prisma/adapter-pg` and
-  `@prisma/adapter-mariadb` (see [Databases](/docs/database)); SQL Server and
-  MongoDB are not wired.
+  for a one-line manual adapter add. A SQLite or Postgres datasource gets
+  `denext/prisma-adapter` over `Deno.SQL` (no npm driver); under
+  `--prisma-adapter npm` (or `DENEXT_DENO=stock`) SQLite takes the `links` shim
+  over `node:sqlite` and Postgres `@prisma/adapter-pg`. MySQL and SQL Server get
+  `@prisma/adapter-mariadb` and `@prisma/adapter-mssql` (see
+  [Databases](/docs/database)); MongoDB is not wired. An app that imports
+  `better-sqlite3` itself keeps the `links` shim for it either way.
 - **Everything that is not Remix-specific** (the default Content-Security-Policy
   and response headers, uncached `fetch()` by default, class components in npm
   libraries, native addons) is exactly as documented in

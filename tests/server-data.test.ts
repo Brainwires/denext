@@ -1,11 +1,12 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { permanentRedirect, redirect } from "../src/runtime/error-boundary.ts";
 import { cookies, headers } from "../src/server/request-context.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { useOptimistic, useState } from "../src/runtime/hooks.ts";
+import { useState } from "../src/runtime/hooks.ts";
+import { useOptimistic } from "../src/runtime/hooks/transition.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";

@@ -22,7 +22,8 @@
 /** The HTTP methods a route handler may export. */
 export type { HttpMethod } from "../server/types.ts";
 import type { HttpMethod } from "../server/types.ts";
-import { decodeWire, encodeWire, stableKey, WIRE_HEADER } from "./wire-codec.ts";
+import { decodeWire, WIRE_HEADER } from "./wire-codec.ts";
+import { encodeWire, stableKey } from "./wire-encode.ts";
 import { type BatchCall, type Batcher, createBatcher } from "./api-batch.ts";
 import {
   BATCH_ITEM_HEADERS,

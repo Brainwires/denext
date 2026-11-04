@@ -5,8 +5,9 @@
 // undefined (reading 'S')"), and while it renders a component it installs its hooks dispatcher in
 // `H`, so the hooks the component imported from `react` must go to it. Its elements must be
 // React's: `<>…</>` is React's fragment brand (react-reconciler threw React error #130, "element
-// type is invalid: symbol", on denext's own marker). A context it has no provider for reads
-// `_currentValue2`, the default. The real renderer is exercised by
+// type is invalid: symbol", on denext's own marker). A context reaches it as its React twin, whose
+// `_currentValue2` is the default until a provider sets it. The real renderer is exercised by
+// tests/react-reconciler-bridge.test.ts (contexts and class components) and
 // tests/e2e/react-native-skia.e2e.test.ts.
 
 import { assertEquals, assertStrictEquals } from "@std/assert";
@@ -37,8 +38,22 @@ function withDispatcher<T>(dispatcher: Record<string, unknown>, fn: () => T): T 
 }
 
 Deno.test("internals: the shared object a react-reconciler build reads", () => {
-  assertEquals(Object.keys(internals).sort(), ["A", "H", "S", "T"]);
+  // React 19's fields, and the development ones a development build reads (`actQueue` must be
+  // null outside `act`, or every render is queued there).
+  assertEquals(Object.keys(internals).sort(), [
+    "A",
+    "H",
+    "S",
+    "T",
+    "actQueue",
+    "didScheduleLegacyUpdate",
+    "didUsePromise",
+    "getCurrentStack",
+    "isBatchingLegacy",
+    "thrownErrors",
+  ]);
   assertEquals(internals.H, null);
+  assertEquals(internals.actQueue, null);
   assertStrictEquals(
     (React as Record<string, unknown>)
       .__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE,
@@ -66,6 +81,7 @@ Deno.test("internals: hooks go to the foreign renderer's dispatcher while it is 
     ) => (calls.push("useContext"), ctx._currentValue2),
     use: (v: unknown) => (calls.push("use"), v),
   };
+  // The foreign renderer gets the context's React twin (src/compat/react-internals.ts).
   const Ctx = createContext("default");
   /** The hooks a component of the foreign renderer calls. */
   function useForeignHooks() {
@@ -75,7 +91,12 @@ Deno.test("internals: hooks go to the foreign renderer's dispatcher while it is 
     assertEquals(useMemo(() => 3, []), 3);
     assertEquals(useRef(4).current, 4);
     assertEquals(useContext(Ctx), "default");
-    assertEquals(use(Ctx) as unknown, Ctx);
+    const twin = use(Ctx) as unknown as { $$typeof: symbol; Provider: unknown };
+    assertEquals(twin.$$typeof, Symbol.for("react.context"));
+    assertStrictEquals(twin.Provider, twin);
+    // Anything but a context reaches the foreign renderer as is.
+    const thenable = { then() {} };
+    assertStrictEquals(use(thenable as never) as unknown, thenable);
   }
   withDispatcher(dispatcher, useForeignHooks);
   assertEquals(calls, [
@@ -85,6 +106,7 @@ Deno.test("internals: hooks go to the foreign renderer's dispatcher while it is 
     "useMemo",
     "useRef",
     "useContext",
+    "use",
     "use",
   ]);
 });

@@ -299,8 +299,14 @@ Deno.test("form_post: no transaction cookie (a forged cross-site POST) is refuse
 Deno.test("form_post: a tampered transaction cookie is refused", async () => {
   const { config } = appConfig([formPostOidc()]);
   const start = await startSignIn(config, "fp");
+  // Change the signature's FIRST character: all six of its bits are signature bits. Rewriting the
+  // last two to "xx" left the signature intact whenever it ended in "xw" (base64 decoding drops
+  // the final character's two spare bits): about one run in a thousand.
   const [name, value] = start.pair.split("=");
-  const tampered = `${name}=${value.slice(0, -2)}xx`;
+  const at = value.lastIndexOf(".") + 1;
+  const tampered = `${name}=${value.slice(0, at)}${value[at] === "A" ? "B" : "A"}${
+    value.slice(at + 1)
+  }`;
   const { res } = await run(formPost("fp", { code: "c", state: start.state }, tampered), config);
   assertEquals(errorOf(res), "invalid_state");
 });

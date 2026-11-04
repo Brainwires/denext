@@ -31,8 +31,6 @@ function serverRaw(doc: FakeDocument): { div: FakeElement; b: FakeElement; i: Fa
   i.appendChild(doc.createTextNode("there"));
   div.appendChild(b);
   div.appendChild(i);
-  // The mismatch check parses `__html` into a shallow copy of the element.
-  Object.assign(div, { cloneNode: () => doc.createElement("div") });
   return { div, b, i };
 }
 
@@ -261,4 +259,35 @@ Deno.test("a re-render with a fresh { __html } of the same markup keeps the node
   root.render(h("div", { title: "2", ...raw("<u>3</u>") }));
   flushSync();
   assertEquals(div.innerHTML, "<u>3</u>");
+});
+
+Deno.test("hydration: the dev __html check parses into an inert <template>, never a live element", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const { div } = serverRaw(doc);
+  container.appendChild(div);
+  // A clone of the element is in the live document: markup parsed there loads images and runs
+  // their onerror. The check must not parse into one.
+  let cloned = 0;
+  Object.assign(div, {
+    cloneNode: () => {
+      cloned++;
+      return doc.createElement("div");
+    },
+  });
+  const created: string[] = [];
+  const create = doc.createElement.bind(doc);
+  Object.assign(doc, {
+    createElement: (tag: string) => {
+      created.push(tag);
+      return create(tag);
+    },
+  });
+  const warnings = withWarnings(() => {
+    hydrateRoot(asEl(container), h("div", { id: "raw", ...raw('<img src="x" onerror="1">') }));
+    flushSync();
+  });
+  assertEquals(cloned, 0, "no clone of the live element");
+  assert(created.includes("template"), created.join(","));
+  assertEquals(warnings.length, 1, "the mismatch is still reported");
 });

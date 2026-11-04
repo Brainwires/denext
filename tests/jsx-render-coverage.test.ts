@@ -13,14 +13,9 @@ import { Suspense } from "../src/runtime/suspense.ts";
 import { ErrorBoundary } from "../src/runtime/error-boundary.ts";
 import { createContext } from "../src/runtime/context.ts";
 import { useSignal } from "../src/runtime/signals.ts";
-import {
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useSyncExternalStore,
-} from "../src/runtime/hooks.ts";
+import { useContext, useLayoutEffect, useMemo, useRef } from "../src/runtime/hooks.ts";
+import { useReducer } from "../src/runtime/hooks/use-reducer.ts";
+import { useSyncExternalStore } from "../src/runtime/hooks/use-sync-external-store.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 
 import { renderToFlight } from "../src/jsx/render-to-flight.ts";

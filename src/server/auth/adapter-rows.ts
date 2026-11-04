@@ -15,6 +15,7 @@ import type {
   PasskeyChallengeRecord,
   PasskeyRecord,
   SsoProviderRecord,
+  SsoSessionIndexRecord,
   SsoSessionRecord,
   VerificationTokenRecord,
 } from "./adapter.ts";
@@ -386,6 +387,15 @@ export const SSO_SESSION_MAP: FieldMap<SsoSessionRecord> = {
   nameId: ["name_id", TEXT],
   sessionIndex: ["session_index", TEXT],
   userId: ["user_id", TEXT],
+  expiresAt: ["expires_at", INT],
+};
+
+/** `auth_sso_cookie_sessions`: SAML Single Logout's index of stateless cookie sessions. */
+export const SSO_SESSION_INDEX_MAP: FieldMap<SsoSessionIndexRecord> = {
+  providerId: ["provider_id", TEXT],
+  nameId: ["name_id", TEXT],
+  sessionIndex: ["session_index", TEXT],
+  sid: ["sid", TEXT],
   expiresAt: ["expires_at", INT],
 };
 

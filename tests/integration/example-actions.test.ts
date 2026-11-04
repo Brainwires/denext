@@ -5,11 +5,12 @@
 // "use client" island (useActionState/useOptimistic) shipped a client bundle.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
+import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/actions", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("actions");
 
 type Ctx = { origin: string; actionUrl: string };
 
@@ -69,13 +70,11 @@ async function crossOriginPostIsRefused(ctx: Ctx) {
 
 Deno.test({
   name: "examples/actions: server action progressive enhancement + client island",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;
   try {
-    await build(APP);
+    await buildInChild(APP);
     const started = await startProdOrigin(APP, controller.signal);
     server = started.server;
     const ctx: Ctx = { origin: started.origin, actionUrl: "" };

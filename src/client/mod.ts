@@ -34,26 +34,24 @@ export type { NavigateOptions } from "./navigation.ts";
 
 // Re-export hooks and context so client components import from one place.
 export {
-  startTransition,
   useCallback,
   useContext,
   useDebugValue,
-  useDeferredValue,
   useEffect,
-  useEffectEvent,
   useErrorBoundary,
-  useId,
   useImperativeHandle,
-  useInsertionEffect,
   useLayoutEffect,
   useMemo,
-  useOptimistic,
-  useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
-  useTransition,
 } from "../runtime/hooks.ts";
+export { startTransition, useOptimistic, useTransition } from "../runtime/hooks/transition.ts";
+export { useDeferredValue } from "../runtime/hooks/use-deferred-value.ts";
+export { useEffectEvent } from "../runtime/hooks/use-effect-event.ts";
+export { useId } from "../runtime/hooks/use-id.ts";
+export { useInsertionEffect } from "../runtime/hooks/use-insertion-effect.ts";
+export { useReducer } from "../runtime/hooks/use-reducer.ts";
+export { useSyncExternalStore } from "../runtime/hooks/use-sync-external-store.ts";
 export { Profiler } from "../runtime/profiler.ts";
 export type { ProfilerOnRender, ProfilerPhase, ProfilerProps } from "../runtime/profiler.ts";
 export type {

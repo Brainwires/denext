@@ -9,6 +9,7 @@ import { fromFileUrl, join } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
 import { plainText } from "../src/cli/command.ts";
 import { readCommandCache, writeCommandCache } from "../src/cli/command-cache.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const DENO_JSON = fromFileUrl(new URL("../deno.json", import.meta.url));
@@ -78,12 +79,10 @@ async function runCli(
   cwd?: string,
 ): Promise<{ code: number; out: string; err: string }> {
   const run = () =>
-    new Deno.Command(Deno.execPath(), {
+    boundedOutput(Deno.execPath(), {
       args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
       cwd,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
   // A child the OS killed (a signal, under a loaded full-suite run) says nothing about the CLI:
   // run it once more. A CLI that exits on its own, with any code, is never retried.
   let result = await run();
@@ -251,6 +250,28 @@ Deno.test("a cached verb whose name is not a verb name is no listing at all", as
     assertStringIncludes(help, "seed-2");
     assert(!help.includes("\x1b"), "the escape is gone by the time it is printed");
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("with no per-user cache directory no listing is written or trusted", async () => {
+  // denoCacheDir() refuses (no DENO_DIR, no absolute LOCALAPPDATA / XDG_CACHE_HOME / home): the
+  // listing key is then unavailable, so the verb writes nothing and help trusts nothing.
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_nocache_" });
+  const names = ["DENO_DIR", "LOCALAPPDATA", "XDG_CACHE_HOME", "HOME", "USERPROFILE"];
+  const saved = names.map((n) => [n, Deno.env.get(n)] as const);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    for (const n of names) Deno.env.delete(n);
+    await writeCommandCache(dir, [{ name: "seed", summary: "ok" }]);
+    assertEquals(await readCommandCache(dir), null);
+    const written = await Deno.stat(join(dir, ".denext", "commands.json")).then(
+      () => true,
+      () => false,
+    );
+    assertEquals(written, false);
+  } finally {
+    for (const [n, v] of saved) v === undefined ? Deno.env.delete(n) : Deno.env.set(n, v);
     await Deno.remove(dir, { recursive: true });
   }
 });

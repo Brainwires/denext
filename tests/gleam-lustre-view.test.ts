@@ -59,7 +59,9 @@ function next(conn: Conn, pred: (f: Any) => boolean): Promise<Any> {
 const isError = (code: string) => (f: Any) => f.type === "error" && f.code === code;
 const isLustre = (kind: number) => (f: Any) => f.type === "lustre" && f.msg?.kind === kind;
 
-function fakeHub(limits: Partial<ViewLimits> = {}) {
+type HubDeps = Parameters<typeof createLustreViewHub<Conn>>[0];
+
+function fakeHub(limits: Partial<ViewLimits> = {}, overrides: Partial<HubDeps> = {}) {
   const hub = createLustreViewHub<Conn>({
     limits: () => ({
       maxViewsPerConnection: 4,
@@ -68,6 +70,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}) {
       maxParkedViews: 10,
       maxSubscriptionInputBytes: 1024,
       channelAuthTtlSeconds: 300,
+      viewTokenMaxAgeSeconds: 86_400,
       ...limits,
     }),
     sendFrame: (conn, text) => push(conn, JSON.parse(text)),
@@ -82,6 +85,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}) {
     isConnected: (conn) => !conn.closed,
     backPressured: (conn) => conn.pressured === true,
     armRecover: (conn) => void (conn.armed = true),
+    ...overrides,
   });
   let n = 0;
   const conn = (cookie = ""): Conn => ({
@@ -112,10 +116,22 @@ function counterView(extra: Partial<Parameters<typeof defineLustreView<number, A
   return { id, View };
 }
 
+/**
+ * When the page "rendered" every frame's token: tokens carry their issue time in seconds, and a
+ * resume carries the token of the page it resumes, so every frame signs at the same instant.
+ */
+const SIGNED_AT = Date.now();
+
 /** The `lustre-mount` frame the island would send for `props`. */
-async function mountFrame(id: string, props: unknown, vid = "l1", resume?: string) {
+async function mountFrame(
+  id: string,
+  props: unknown,
+  vid = "l1",
+  resume?: string,
+  signedAt = SIGNED_AT,
+) {
   const json = JSON.stringify(props);
-  const token = await signLiveViewToken(lustreTokenName(id), json);
+  const token = await signLiveViewToken(lustreTokenName(id), json, signedAt);
   return { type: "lustre-mount", vid, view: id, props: json, token, ...(resume ? { resume } : {}) };
 }
 
@@ -444,6 +460,45 @@ Deno.test("Lustre hub: a dropped connection parks the runtime; a resume reattach
   assertEquals([hub.running(), hub.parked()], [0, 0]);
 });
 
+Deno.test("Lustre hub: a resume matches the props a fresh token signs, not the token", async () => {
+  const { hub, conn } = fakeHub({ viewResumeSeconds: 30, viewTokenMaxAgeSeconds: 600 });
+  const { id } = counterView();
+  // Parked under the token the page carried (two minutes old); the reconnects below carry a
+  // token issued when the page re-rendered (SIGNED_AT).
+  const a = conn("viewer");
+  await hub.mount(a, await mountFrame(id, { start: 1 }, "l1", undefined, SIGNED_AT - 120_000));
+  const { iid } = await next(a, isLustre(0));
+  hub.event(a, click());
+  await next(a, isLustre(1));
+  hub.drop(a);
+  assertEquals(hub.parked(), 1);
+
+  // Another viewer under a valid fresh token: init, and the runtime stays parked.
+  const b = conn("other");
+  await hub.mount(b, await mountFrame(id, { start: 1 }, "l1", iid));
+  const other = await next(b, isLustre(0));
+  assert(other.iid !== iid);
+  assertEquals([other.msg.vdom, hub.parked()], ["1", 1]);
+
+  // Other props under a valid fresh token: init, and the runtime stays parked.
+  const c = conn("viewer");
+  await hub.mount(c, await mountFrame(id, { start: 8 }, "l1", iid));
+  assertEquals([(await next(c, isLustre(0))).msg.vdom, hub.parked()], ["8", 1]);
+
+  // An expired token is `gone` before any resume.
+  const d = conn("viewer");
+  await hub.mount(d, await mountFrame(id, { start: 1 }, "l1", iid, SIGNED_AT - 3_600_000));
+  assertEquals((await next(d, isError("gone"))).subId, "l1");
+  assertEquals(hub.parked(), 1);
+
+  // The same viewer and props under the fresh token reattach the parked runtime.
+  const e = conn("viewer");
+  await hub.mount(e, await mountFrame(id, { start: 1 }, "l1", iid));
+  const resumed = await next(e, isLustre(0));
+  assertEquals([resumed.iid, resumed.msg.vdom, hub.parked()], [iid, "2", 0]);
+  hub.dispose();
+});
+
 Deno.test("Lustre hub: a parked runtime is shut down when its resume window ends", async () => {
   const { hub, conn } = fakeHub({ viewResumeSeconds: 0.01 });
   const { id } = counterView();
@@ -457,6 +512,116 @@ Deno.test("Lustre hub: a parked runtime is shut down when its resume window ends
   fakeRuntimes.onShutdown = null;
   assertEquals([hub.running(), hub.parked()], [0, 0]);
   assertEquals(fakeRuntimes.live.size, before - 1, "the Lustre runtime itself shut down");
+});
+
+Deno.test("Lustre hub: a malformed mount (wire encoding, props that are not JSON) is bad-message", async () => {
+  const { hub, conn } = fakeHub();
+  const { id } = counterView();
+  const c = conn();
+  await hub.mount(c, { ...(await mountFrame(id, { start: 1 })), enc: "no-such-encoding" });
+  assertEquals((await next(c, isError("bad-message"))).reason, "malformed view mount");
+  // A token over exactly these bytes, which are not JSON: the token holds, the decode refuses.
+  const props = "{not json";
+  const token = await signLiveViewToken(lustreTokenName(id), props, SIGNED_AT);
+  await hub.mount(c, { type: "lustre-mount", vid: "l2", view: id, props, token });
+  const refused = await next(c, isError("bad-message"));
+  assertEquals([refused.subId, refused.reason], ["l2", "malformed view props"]);
+  assertEquals(hub.running(), 0, "nothing started");
+});
+
+Deno.test("Lustre hub: one connection's mounts take the cap in arrival order; a close places nothing", async () => {
+  // Every await of a mount (authorize, the viewer's identity) holds until the test lets it go.
+  const held: Array<() => void> = [];
+  let hold = false;
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 1 }, {
+    withConnContext: async (_conn, fn) => {
+      if (hold) await new Promise<void>((resolve) => held.push(resolve));
+      return await fn();
+    },
+  });
+  const waitHeld = async (n: number) => {
+    while (held.length < n) await new Promise((r) => setTimeout(r, 0));
+  };
+  const release = async (n: number) => {
+    await waitHeld(n);
+    held.splice(0, n).forEach((go) => go());
+  };
+
+  // Two mounts on one connection with one slot: the first sent takes it, however their awaits
+  // (authorize, the props digest, the identity) would settle; the second waits in the
+  // connection's mount queue meanwhile, then is refused at the cap, in arrival order.
+  const { id } = counterView();
+  const c = conn();
+  hold = true;
+  const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
+  const second = hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
+  await waitHeld(1);
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(held.length, 1, "the second mount waits behind the first");
+  hold = false;
+  await release(1);
+  await Promise.all([first, second]);
+  assertEquals((await next(c, isLustre(0))).vid, "l1");
+  assertEquals((await next(c, isError("limit"))).subId, "l2", "the cap is checked in order");
+  assertEquals([...c.lustreViews.keys()], ["l1"]);
+  assertEquals(hub.running(), 1);
+  hub.dispose();
+
+  const { id: open } = counterView({ authorize: undefined });
+  hold = true;
+  // The socket closed while the identity was read: nothing is placed.
+  const e = conn();
+  const closing = hub.mount(e, await mountFrame(open, { start: 1 }, "l1"));
+  await waitHeld(1);
+  e.closed = true;
+  await release(1);
+  hold = false;
+  await closing;
+  assertEquals([hub.running(), e.lustreViews.size, e.frames.length], [0, 0, 0]);
+});
+
+Deno.test("Lustre hub: an unreadable viewer identity resumes nothing", async () => {
+  // Reading the viewer (the session, in the connection's context) throws: the view still mounts,
+  // bound to an identity no other connection has, so no resume can take it.
+  const { hub, conn } = fakeHub({ viewResumeSeconds: 30 }, {
+    withConnContext: () => Promise.reject(new Error("session store down")),
+  });
+  const { id } = counterView({ authorize: undefined });
+  const a = conn("session=1");
+  await hub.mount(a, await mountFrame(id, { start: 1 }));
+  const { iid } = await next(a, isLustre(0));
+  hub.event(a, click());
+  await next(a, isLustre(1));
+  hub.drop(a);
+  assertEquals(hub.parked(), 1);
+  const b = conn("session=1");
+  await hub.mount(b, await mountFrame(id, { start: 1 }, "l1", iid));
+  const fresh = await next(b, isLustre(0));
+  assert(fresh.iid !== iid, "init ran again");
+  assertEquals(fresh.msg.vdom, "1");
+  assertEquals(hub.parked(), 1, "the parked runtime stays parked");
+  hub.dispose();
+});
+
+Deno.test("Lustre hub: resync re-mounts, discard stops without parking, array event data", async () => {
+  const { hub, conn } = fakeHub();
+  const { id } = counterView();
+  const c = conn();
+  await hub.mount(c, await mountFrame(id, { start: 3 }));
+  await next(c, isLustre(0));
+  hub.event(c, {
+    type: "lustre-event",
+    vid: "l1",
+    msg: { kind: 1, path: "0", name: "click", event: { keys: [1, "a", [true]] } },
+  });
+  assertEquals((await next(c, isLustre(1))).msg.patch, { text: "4" });
+  hub.resync(c, "l1");
+  assertEquals((await next(c, isLustre(0))).msg.vdom, "4", "the whole view, sent again");
+  hub.resync(c, 7); // not a view id: ignored
+  hub.unmount(c, null);
+  assertEquals(hub.running(), 1);
+  hub.discard(c);
+  assertEquals([hub.running(), hub.parked(), c.lustreViews.size], [0, 0, 0]);
 });
 
 Deno.test("Lustre hub: many sessions opened and closed leave no runtime, timer or parked view", async () => {
@@ -547,4 +712,78 @@ console.log(JSON.stringify({ grew: after - before, running: hub.running(), parke
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** A view whose `authorize` waits on the gate its props' `start` names (none: allowed at once). */
+function gatedView(gates: Map<number, PromiseWithResolvers<boolean>>, authorized: number[]) {
+  return counterView({
+    authorize: (props) => {
+      authorized.push(props.start);
+      return gates.get(props.start)?.promise ?? true;
+    },
+  });
+}
+
+Deno.test("Lustre hub: mounts on one connection are queued, cancelled by an unmount or close, and bounded", async () => {
+  const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
+  const gates = new Map([[1, Promise.withResolvers<boolean>()]]);
+  const authorized: number[] = [];
+  const { id } = gatedView(gates, authorized);
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 1 });
+
+  // Arrival order: the slow first mount still takes the only slot; the second waits, then is
+  // refused at the cap.
+  const c = conn();
+  const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
+  const second = hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
+  while (!authorized.includes(1)) await tick(1);
+  await tick();
+  assertEquals(authorized, [1], "the second mount waits behind the first");
+  // Another connection is not held up by it.
+  const other = conn();
+  await hub.mount(other, await mountFrame(id, { start: 3 }, "l1"));
+  assertEquals(other.lustreViews.size, 1);
+  gates.get(1)!.resolve(true);
+  await Promise.all([first, second]);
+  assertEquals([...c.lustreViews.keys()], ["l1"]);
+  assertEquals((await next(c, isError("limit"))).subId, "l2");
+  hub.dispose();
+
+  // An unmount cancels a queued mount and a running one; a close cancels them all.
+  gates.set(1, Promise.withResolvers<boolean>());
+  authorized.length = 0;
+  const d = conn();
+  const running = hub.mount(d, await mountFrame(id, { start: 1 }, "l1"));
+  const waiting = hub.mount(d, await mountFrame(id, { start: 2 }, "l2"));
+  const closing = hub.mount(d, await mountFrame(id, { start: 4 }, "l3"));
+  while (!authorized.includes(1)) await tick(1);
+  await tick();
+  hub.unmount(d, "l1");
+  hub.unmount(d, "l2");
+  gates.set(4, Promise.withResolvers<boolean>());
+  gates.get(1)!.resolve(true);
+  await Promise.all([running, waiting]);
+  await tick();
+  assertEquals(authorized, [1, 4], "the unmounted queued mount never ran");
+  d.closed = true;
+  hub.drop(d);
+  gates.get(4)!.resolve(true);
+  await closing;
+  assertEquals([d.lustreViews.size, d.frames.length, hub.running(), hub.parked()], [0, 0, 0, 0]);
+  hub.dispose();
+
+  // A mount held past renderTimeoutSeconds is refused (`failed`) and the next one runs; its
+  // authorize settling late places nothing.
+  const bounded = fakeHub({ renderTimeoutSeconds: 0.05 });
+  gates.set(1, Promise.withResolvers<boolean>());
+  const e = bounded.conn();
+  const stuck = bounded.hub.mount(e, await mountFrame(id, { start: 1 }, "l1"));
+  const after = bounded.hub.mount(e, await mountFrame(id, { start: 2 }, "l2"));
+  await Promise.all([stuck, after]);
+  const timedOut = await next(e, isError("failed"));
+  assertEquals([timedOut.subId, timedOut.reason], ["l1", "view mount timed out"]);
+  gates.get(1)!.resolve(true);
+  await tick();
+  assertEquals([...e.lustreViews.keys()], ["l2"]);
+  bounded.hub.dispose();
 });

@@ -51,8 +51,6 @@ async function scaffold(): Promise<string> {
 for (const verb of ["build", "export"]) {
   Deno.test({
     name: `cli: \`denext ${verb}\` exits when an app module holds the event loop open`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     const dir = await scaffold();
     try {

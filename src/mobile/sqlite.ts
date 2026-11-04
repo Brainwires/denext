@@ -54,6 +54,21 @@ export interface SqliteDatabase {
   queryRows(sql: string, params?: SqliteParams): Promise<SqliteRows>;
   /** Whether a transaction is open (`BEGIN` without its `COMMIT` / `ROLLBACK`). */
   inTransaction(): Promise<boolean>;
+  /**
+   * Change the SQLCipher passphrase of a database opened with `encryptionKey` (or keyed with
+   * `PRAGMA key`), as `PRAGMA rekey = '…'` does. In the shell, `@capacitor-community/sqlite` keeps
+   * ONE passphrase for every encrypted database of the app, so this re-encrypts each of them under
+   * `newKey` and then stores it as the plugin's passphrase (in the Keychain / Keystore). Each file
+   * is rewritten inside SQLCipher's own transaction: a process killed during one keeps that file
+   * under the old passphrase, but one killed between two files leaves the app's databases split
+   * between the passphrases (keep one encrypted database per app if you rotate). Keep the new
+   * passphrase beside the old one before calling this and drop the old one once it resolves; after
+   * a crash, open with the old one first and, on `WRONG_KEY`, with the new one (see the mobile
+   * docs). Refused with `KEY_REQUIRED` when the database is not keyed, `UNSUPPORTED`
+   * inside a transaction, and `ENCRYPTION_UNAVAILABLE` on the web and Deno Desktop (no
+   * SQLCipher) or with a plugin that cannot change its passphrase.
+   */
+  rekey(newKey: string): Promise<void>;
   /** Close it. Later calls reject. */
   close(): Promise<void>;
 }
@@ -89,9 +104,10 @@ export type SqliteEncryptionErrorCode =
 /**
  * A refused encryption request: `ENCRYPTION_UNAVAILABLE` (this backing has no SQLCipher, or the
  * plugin has encryption off; nothing ran), `WRONG_KEY` (another passphrase than the one the
- * plugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first) or
- * `UNSUPPORTED` (a key pragma other than `PRAGMA key = '…'` as the first statement, such as
- * `PRAGMA rekey`).
+ * plugin keeps), `KEY_REQUIRED` (the database is encrypted: run `PRAGMA key` first; or a rekey
+ * of a database that was never keyed) or `UNSUPPORTED` (a key pragma other than
+ * `PRAGMA key = '…'` / `PRAGMA rekey = '…'` as the first statement, such as `PRAGMA hexkey`, or
+ * a rekey inside a transaction).
  */
 export class SqliteEncryptionError extends Error {
   /** Why. */
@@ -116,6 +132,11 @@ interface CapacitorSqliteCipher {
   setEncryptionSecret(options: { passphrase: string }): Promise<void>;
   checkEncryptionSecret(options: { passphrase: string }): Promise<{ result?: boolean }>;
   isDatabaseEncrypted(options: { database: string }): Promise<{ result?: boolean }>;
+  /**
+   * Re-encrypt every encrypted database of the app under `passphrase`, then store it (closes
+   * every connection). Absent from a plugin too old to have it.
+   */
+  changeEncryptionSecret?(options: { passphrase: string; oldpassphrase: string }): Promise<void>;
 }
 
 /** The slice of `@capacitor-community/sqlite`'s native plugin this module calls. */
@@ -397,7 +418,8 @@ function lostConnection(err: unknown): boolean {
  * Open `name` through the plugin. A page reload keeps the native side's connections, so the
  * first open of a page closes them all (the plugin's own consistency check with an empty
  * list), then opens fresh. With `passphrase` it opens encrypted; without, an encrypted file is
- * left locked until `PRAGMA key` ({@linkcode SqliteDriver.encrypt}).
+ * left locked until `PRAGMA key` ({@linkcode SqliteDriver.encrypt}). A keyed database rekeys
+ * through the plugin's `changeEncryptionSecret` ({@linkcode SqliteDriver.rekey}).
  */
 async function openNative(
   plugin: CapacitorSqlitePlugin,
@@ -414,6 +436,8 @@ async function openNative(
   let locked = false;
   /** Whether the page closed it (a dropped connection is then not reopened). */
   let closed = false;
+  /** The passphrase it was keyed with on this page (what a rekey proves it knows). */
+  let currentKey: string | undefined;
   const connect = async (mode: string) => {
     try {
       await plugin.createConnection({
@@ -457,6 +481,41 @@ async function openNative(
     }
     encrypted = true;
     locked = false;
+    currentKey = key;
+  };
+  const rekey = async (newKey: string) => {
+    if (!encrypted || currentKey === undefined) {
+      throw new SqliteEncryptionError(
+        "KEY_REQUIRED",
+        `openSqlite("${name}"): only a database keyed on this page (encryptionKey, or PRAGMA ` +
+          "key = '…') can be rekeyed; nothing changed.",
+      );
+    }
+    if (newKey === currentKey) return;
+    const change = cipherOf(plugin)?.changeEncryptionSecret;
+    if (typeof change !== "function") {
+      throw new SqliteEncryptionError(
+        "ENCRYPTION_UNAVAILABLE",
+        `openSqlite("${name}"): this @capacitor-community/sqlite cannot change its passphrase ` +
+          "(no changeEncryptionSecret); nothing changed.",
+      );
+    }
+    if ((await plugin.isTransactionActive(conn).catch(() => ({ result: false }))).result) {
+      throw new SqliteEncryptionError(
+        "UNSUPPORTED",
+        `openSqlite("${name}"): rekey inside a transaction; COMMIT or ROLLBACK first. Nothing ` +
+          "changed.",
+      );
+    }
+    try {
+      await change.call(cipherOf(plugin), { passphrase: newKey, oldpassphrase: currentKey });
+    } catch (err) {
+      throw nativeFailure(name, err);
+    }
+    currentKey = newKey;
+    // Changing the secret closed every connection the plugin had: open anew under it.
+    await plugin.closeConnection(conn).catch(() => {});
+    await connect("secret");
   };
   if (passphrase !== undefined) {
     await encrypt(passphrase);
@@ -509,6 +568,7 @@ async function openNative(
   return {
     backend: "native",
     encrypt,
+    rekey,
     async exec(sql) {
       for (const statement of splitSqlStatements(sql)) {
         if (returnsRows(statement)) await query(statement, []);
@@ -600,23 +660,31 @@ function quotedText(text: string): string | undefined {
   return m[1].slice(1, -1).replaceAll(q + q, q);
 }
 
+/** A key pragma `sql` starts with: which one, its passphrase, and the statements after it. */
+interface KeyPragma {
+  readonly pragma: "key" | "rekey";
+  readonly passphrase: string;
+  readonly rest: string[];
+}
+
 /**
- * The passphrase of the `PRAGMA key = '…'` that `sql` starts with, and the statements after it;
- * null when `sql` runs no key pragma. Any other key pragma (`rekey`, `hexkey`, one that is not
- * first) is refused.
+ * The `PRAGMA key = '…'` or `PRAGMA rekey = '…'` that `sql` starts with, and the statements after
+ * it; null when `sql` runs no key pragma. Any other key pragma (`hexkey`, `textrekey`, one that
+ * is not first, a second one) is refused.
  */
-function keyPragma(name: string, sql: string): { passphrase: string; rest: string[] } | null {
+function keyPragma(name: string, sql: string): KeyPragma | null {
   if (!/pragma/i.test(sql) || !/key/i.test(sql)) return null;
   const statements = splitSqlStatements(sql);
   const at = statements.findIndex((st) => keyPragmaOf(st) !== null);
   if (at === -1) return null;
   const pragma = keyPragmaOf(statements[at])!;
   const passphrase = quotedText(statements[at].slice(pragma.end));
-  if (at !== 0 || pragma.name.toLowerCase() !== "key" || passphrase === undefined) {
+  const which = pragma.name.toLowerCase();
+  if (at !== 0 || (which !== "key" && which !== "rekey") || passphrase === undefined) {
     throw new SqliteEncryptionError(
       "UNSUPPORTED",
-      `openSqlite("${name}"): only PRAGMA key = '<passphrase>', as the first statement, is ` +
-        `supported (not "${statements[at].trim()}"); nothing ran.`,
+      `openSqlite("${name}"): only PRAGMA key = '<passphrase>' or PRAGMA rekey = '<passphrase>', ` +
+        `as the first statement, is supported (not "${statements[at].trim()}"); nothing ran.`,
     );
   }
   if (statements.slice(1).some((st) => keyPragmaOf(st) !== null)) {
@@ -625,7 +693,7 @@ function keyPragma(name: string, sql: string): { passphrase: string; rest: strin
       `openSqlite("${name}"): one key pragma per call; nothing ran.`,
     );
   }
-  return { passphrase, rest: statements.slice(1) };
+  return { pragma: which as KeyPragma["pragma"], passphrase, rest: statements.slice(1) };
 }
 
 /** Why `driver` cannot encrypt. */
@@ -643,12 +711,21 @@ function noCipher(name: string, driver: SqliteDriver): SqliteEncryptionError {
 
 /** The public face over a driver; a `PRAGMA key` keys the database through the driver. */
 function database(name: string, driver: SqliteDriver): SqliteDatabase {
+  /** Change the passphrase, where the backing has SQLCipher. */
+  const rekey = async (newKey: string): Promise<void> => {
+    if (typeof newKey !== "string" || newKey === "") {
+      throw new TypeError(`openSqlite("${name}"): rekey needs a non-empty passphrase`);
+    }
+    if (!driver.rekey) throw noCipher(name, driver);
+    await driver.rekey(newKey);
+  };
   /** Run `sql`'s key pragma; the statements after it, or null when it has none. */
   const keyed = async (sql: string): Promise<string[] | null> => {
     const pragma = keyPragma(name, sql);
     if (!pragma) return null;
-    if (!driver.encrypt) throw noCipher(name, driver);
-    await driver.encrypt(pragma.passphrase);
+    if (pragma.pragma === "rekey") await rekey(pragma.passphrase);
+    else if (!driver.encrypt) throw noCipher(name, driver);
+    else await driver.encrypt(pragma.passphrase);
     return pragma.rest;
   };
   const query = async (sql: string, params: SqliteParams): Promise<SqliteRows> => {
@@ -683,6 +760,7 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
     },
     queryRows: (sql, params = []) => query(sql, params),
     inTransaction: () => driver.inTransaction(),
+    rekey,
     close: () => driver.close(),
   };
 }
@@ -707,7 +785,8 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
  *
  * Encryption (SQLCipher): `encryptionKey`, or `PRAGMA key = '…'` as the first statement run on
  * it (expo-sqlite's way), keys the database in the shell through `@capacitor-community/sqlite`
- * (see {@linkcode SqliteOptions.encryptionKey}). The web engine and Deno Desktop have no
+ * (see {@linkcode SqliteOptions.encryptionKey}); {@linkcode SqliteDatabase.rekey} (or
+ * `PRAGMA rekey = '…'`) changes the passphrase. The web engine and Deno Desktop have no
  * SQLCipher, so both refuse with a {@linkcode SqliteEncryptionError} and run nothing, rather
  * than leave the data unencrypted.
  *

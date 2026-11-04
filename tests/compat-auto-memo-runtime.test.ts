@@ -6,11 +6,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { staticExport } from "../src/build/export.ts";
 import type { Platform } from "../src/build/platform-extensions.ts";
 import { compatRuntimeFileForUrl, runtimeEntryPoints } from "../src/build/next-compat.ts";
 import { frameworkFileUrl, frameworkRootUrl } from "../src/build/bundle.ts";
 import { transformModule } from "../src/build/compiler.ts";
+import { exportInChild } from "./helpers/bounded-build.ts";
 
 /** The hook dispatcher's own error text: one per copy of denext's hooks in a bundle. */
 const DISPATCHER = "no dispatcher installed";
@@ -89,7 +89,7 @@ for (const platform of ["web", "ios", "macos"] as const satisfies readonly Platf
   Deno.test(`compat SPA export --platform ${platform} with reactCompiler: one copy of denext's hooks`, async () => {
     const dir = await project();
     try {
-      const js = await clientJs((await staticExport(dir, { platform })).outDir);
+      const js = await clientJs((await exportInChild(dir, { platform })).outDir);
       assertStringIncludes(js, "memo_card");
       assertEquals(count(js, DISPATCHER), 1, "exactly one copy of denext's hooks");
     } finally {

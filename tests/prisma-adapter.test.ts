@@ -100,6 +100,9 @@ Deno.test("pg-binary: numeric at every scale and sign", () => {
   assertEquals(bin.decodeNumeric(numeric(0, 0, 0xf000, 0)), "-Infinity");
   assertEquals(bin.decodeMoney(i64(-150n)), "-1.50");
   assertEquals(bin.decodeMoney(i64(123405n)), "1234.05");
+  assertEquals(bin.moneyDecoder(0)(i64(-1500n)), "-1500");
+  assertEquals(bin.moneyDecoder(3)(i64(1234005n)), "1234.005");
+  assertEquals(bin.moneyDecoder(3)(i64(-5n)), "-0.005");
 });
 
 Deno.test("pg-binary: dates, times and timestamps in UTC", () => {
@@ -284,6 +287,12 @@ Deno.test("postgres: errors as Prisma's kinds", () => {
   assertEquals(conv({ code: "23503", column: "pid" }).constraint, { fields: ["pid"] });
   assertEquals(conv({ code: "23503", constraint: "c_fk" }).constraint, { index: "c_fk" });
   assertEquals(conv({ code: "23503" }).constraint, undefined);
+  assertEquals(conv({ code: "23001", column: "pid" }).kind, "RestrictViolation");
+  assertEquals(conv({ code: "23001", column: "pid" }).constraint, { fields: ["pid"] });
+  assertEquals(conv({ code: "23001", constraint: "c_fk" }).constraint, { index: "c_fk" });
+  assertEquals(conv({ code: "23001" }).constraint, undefined);
+  assertEquals(conv({ code: "22P02" }).kind, "InvalidInputValue");
+  assertEquals(conv({ code: "22P02" }).message, "m");
   const db = (code: string, message: string) => fields(pg.convertPostgresError({ code, message }));
   assertEquals(db("3D000", 'database "nodb" does not exist').db, "nodb");
   assertEquals(
@@ -292,6 +301,7 @@ Deno.test("postgres: errors as Prisma's kinds", () => {
   );
   assertEquals(db("28P01", 'password authentication failed for user "postgres"').user, "postgres");
   assertEquals(db("40001", "x").kind, "TransactionWriteConflict");
+  assertEquals(db("40P01", "x").kind, "TransactionWriteConflict");
   assertEquals(db("42P01", 'relation "nope" does not exist').table, "nope");
   assertEquals(db("42703", 'column "nope" does not exist').column, "nope");
   assertEquals(db("42P04", 'database "app" already exists').db, "app");
@@ -405,6 +415,50 @@ Deno.test("sqlite: Prisma's arguments in the form SQLite binds", () => {
   assertEquals(map(7, "int"), 7);
 });
 
+Deno.test("postgres: a unique violation names its table and constraint, as adapter-pg does", () => {
+  const conv = (e: Record<string, unknown>) =>
+    fields(pg.convertPostgresError({ code: "23505", message: "m", severity: "ERROR", ...e }));
+  // What Deno.SQL reports: the server's `table` and `constraint` fields beside the detail.
+  const full = conv({
+    detail: "Key (email)=(x) already exists.",
+    schema: "public",
+    table: "User",
+    constraint: "User_email_key",
+  });
+  assertEquals([full.kind, full.constraint, full.table], [
+    "UniqueConstraintViolation",
+    { index: "User_email_key" },
+    "User",
+  ]);
+  // No `table` field: a default `<table>_<fields>_key` constraint name gives it.
+  const derived = conv({ detail: "Key (a, b)=(1, 2) already exists.", constraint: "Post_a_b_key" });
+  assertEquals([derived.constraint, derived.table], [{ index: "Post_a_b_key" }, "Post"]);
+  // A custom constraint name says nothing about the table.
+  const custom = conv({ detail: "Key (a)=(1) already exists.", constraint: "uniq_a" });
+  assertEquals([custom.constraint, "table" in custom], [{ index: "uniq_a" }, false]);
+  // Only the detail: the fields, and no table.
+  const detail = conv({ detail: "Key (a, b)=(1, 2) already exists." });
+  assertEquals([detail.constraint, "table" in detail], [{ fields: ["a", "b"] }, false]);
+});
+
+Deno.test("sqlite: a unique violation names its table, as adapter-better-sqlite3 does", () => {
+  const conv = (code: string, message: string) =>
+    fields(lite.convertSqliteError({ code, message }));
+  const one = conv("SQLITE_CONSTRAINT_UNIQUE", "UNIQUE constraint failed: User.email");
+  assertEquals([one.kind, one.constraint, one.table], [
+    "UniqueConstraintViolation",
+    { fields: ["email"] },
+    "User",
+  ]);
+  const pk = conv(
+    "SQLITE_CONSTRAINT_PRIMARYKEY",
+    "UNIQUE constraint failed: main.Post.a, main.Post.b",
+  );
+  assertEquals([pk.constraint, pk.table], [{ fields: ["a", "b"] }, "main.Post"]);
+  const odd = conv("SQLITE_CONSTRAINT_UNIQUE", "odd message");
+  assertEquals([odd.constraint, "table" in odd], [undefined, false]);
+});
+
 Deno.test("sqlite: errors as Prisma's kinds", () => {
   const conv = (code: string, message: string, errno?: number) =>
     fields(lite.convertSqliteError({ code, message, errno }));
@@ -497,6 +551,57 @@ Deno.test("adapter: Postgres results decoded from binary, user-type kinds looked
   assert(log.includes("raw select x"));
   assertEquals(db.getConnectionInfo(), { schemaName: "app", supportsRelationJoins: true });
   assertEquals([db.provider, db.adapterName], ["postgres", "denext/prisma-adapter"]);
+});
+
+Deno.test("adapter: money is read at lc_monetary's fractional digits, asked once", async () => {
+  const columns = [
+    col({ name: "price", typeOid: 790 }),
+    col({ name: "prices", typeOid: 791, typeKind: "array", baseTypeOid: 790, baseType: "money" }),
+  ];
+  const lookup = "select scale('1'::money::numeric)::int4";
+  const { client, log } = fakeClient({
+    "select x": rows([[i64(1500n), array(790, [2], [i64(7n), i64(-3n)])]], { columns }),
+    [lookup]: rows([[0]], { columns: [col({ name: "scale" })] }),
+  });
+  const db = new DenoSqlAdapter(client, postgresDriver(undefined), () => Promise.resolve());
+  const r = await db.queryRaw(query("select x"));
+  assertEquals(r.columnTypes, [T.Numeric, T.NumericArray]);
+  assertEquals(r.rows, [["1500", ["7", "-3"]]]);
+  await db.queryRaw(query("select x"));
+  assertEquals(log.filter((l) => l === `unsafe ${lookup}`).length, 1);
+  // A result without a money column asks nothing.
+  const plain = fakeClient({ "select y": rows([[i64(1n)]], { columns: [col({ typeOid: 20 })] }) });
+  const db2 = new DenoSqlAdapter(plain.client, postgresDriver(undefined), () => Promise.resolve());
+  await db2.queryRaw(query("select y"));
+  assert(!plain.log.includes(`unsafe ${lookup}`));
+});
+
+Deno.test("adapter: a failed money scale lookup is asked again; a bad scale reads two digits", async () => {
+  const columns = [col({ name: "price", typeOid: 790 })];
+  const lookup = "select scale('1'::money::numeric)::int4";
+  const answers: Record<string, SqlRows<unknown> | Error> = {
+    "select x": rows([[i64(1500n)]], { columns }),
+    [lookup]: new Error("lookup down"),
+  };
+  const { client, log } = fakeClient(answers);
+  const db = new DenoSqlAdapter(client, postgresDriver(undefined), () => Promise.resolve());
+  await assertRejects(() => db.queryRaw(query("select x")));
+  // Not cached: the next result asks again, and an out-of-range answer falls back to 2 digits.
+  answers[lookup] = rows([[99]], { columns: [col({ name: "scale" })] });
+  const r = await db.queryRaw(query("select x"));
+  assertEquals(r.rows, [["15.00"]]);
+  assertEquals(log.filter((l) => l === `unsafe ${lookup}`).length, 2);
+});
+
+Deno.test("postgres: a money column without a scale lookup reads two digits", async () => {
+  const codec = await pg.columnCodec(col({ typeOid: 790 }), noKinds);
+  assertEquals(codec.decode(i64(-150n)), "-1.50");
+  const scaled = await pg.columnCodec(
+    col({ typeOid: 16700, typeKind: "domain", baseTypeOid: 790 }),
+    noKinds,
+    () => Promise.resolve(3),
+  );
+  assertEquals([scaled.type, scaled.decode(i64(1005n))], [T.Numeric, "1.005"]);
 });
 
 Deno.test("adapter: an unknown user type's kind may be missing", async () => {

@@ -53,8 +53,27 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * BGTask, finds it data-protected; a permission or I/O error) is not a mismatch: that request is
  * refused (or, for the stored manifest at launch, this launch serves the confirmed or bundled UI)
  * and nothing is quarantined. The bump keeps an older denext from rewriting the check away.
+ * Generation 10: the downgrade floor is raised to the bundled UI's own manifest `sequence`, so an
+ * older signed UI cannot replace a newer bundled one on a device that has not yet accepted an
+ * over-the-air UI; the bump keeps an older denext from rewriting that check away.
+ * Generation 11: a manifest's signed `expiresAt` (the v4 payload) is enforced (code `expired`),
+ * and one without an expiry is refused once the bundled UI's manifest carries one; an unsigned UI
+ * from a loopback host is accepted (and loopback exempt from pinned origins) only in a debug
+ * build (iOS `DEBUG`, Android `FLAG_DEBUGGABLE`); `booted` without a version confirms nothing;
+ * a request for a directory of a downloaded UI no longer quarantines it; and the bridge's frame
+ * guard also refuses a main frame on another origin than the app's (bridge-frame-guard-native-
+ * template.ts). The bump keeps an older denext from rewriting those checks away.
+ * Generation 12: the shell checks a manifest's platform stamp itself (code `platform_mismatch`, as
+ * the page does), the asset handler's check fails closed for a base other than the bundled UI or a
+ * version directory, and `/_capacitor_file_` requests into the versions root get the same check
+ * (iOS: `DenextOtaFileGuard`; Android: the route processor). A `/_capacitor_file_` path with a
+ * control character or to a missing file is refused; iOS serves no downloaded UI when the guard
+ * cannot be installed (code `guard_unavailable`, unless `plugins.DenextBridge.otaFileGuard: false`);
+ * an app that embeds a public key requires the platform stamp; a verified file is hashed again
+ * when its stat changes; and a manifest's signed `appId` (`appSignature`, the v5 payload) must
+ * name this app (code `app_mismatch`), required when the app embeds a public key. The bump keeps an older denext from rewriting those checks away.
  */
-export const OTA_TEMPLATE_VERSION = 9;
+export const OTA_TEMPLATE_VERSION = 12;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:

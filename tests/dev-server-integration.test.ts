@@ -8,11 +8,13 @@
 // Target app: examples/hello (native App Router; the unbundled loop is default-on).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
 import { startDevOnDir } from "./e2e/harness.ts";
 import { fsUrlPath } from "../src/build/dev-unbundled/state.ts";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+// A private copy: this test builds into (and edits) the app, which other test files read.
+const HELLO = await copyExample("hello");
 
 /** Drain + discard a response body so no reader leaks (SSE especially). */
 async function drop(res: Response): Promise<void> {
@@ -314,8 +316,6 @@ const STEPS: Array<[string, (ctx: Ctx) => Promise<void> | void]> = [
 
 Deno.test({
   name: "dev server (unbundled default-on) serves the full dev + app surface",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // DENEXT_EDITOR=true → the open-in-editor endpoint spawns the harmless `true`
   // binary instead of launching the developer's real editor. DEV_TYPECHECK=0 keeps

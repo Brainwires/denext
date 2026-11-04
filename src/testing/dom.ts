@@ -5,8 +5,15 @@
 
 /** The read-only shape of a rendered element that query helpers return. */
 export interface TestElement {
-  /** Upper-cased tag name (e.g. `"BUTTON"`). */
+  /**
+   * The tag name: upper-cased for an HTML element (`"BUTTON"`), as written for an SVG or MathML
+   * one (`"svg"`, `"linearGradient"`), as in a browser.
+   */
   readonly tagName: string;
+  /** The local name (`"button"`, `"linearGradient"`). */
+  readonly localName: string;
+  /** The namespace: HTML's, SVG's (`<svg>` and its content) or MathML's (`<math>`). */
+  readonly namespaceURI: string | null;
   /** The element's `node.nodeType` (`1` for elements). */
   readonly nodeType: number;
   /** Concatenated visible text of this element and its descendants. */
@@ -25,6 +32,8 @@ export interface TestElement {
   getAttribute(name: string): string | null;
   /** Whether an attribute is present. */
   hasAttribute(name: string): boolean;
+  /** Read an attribute by namespace and local name (`xlink:href`), or `null` if absent. */
+  getAttributeNS(namespace: string | null, localName: string): string | null;
 }
 
 /** A synthetic event passed to handlers during {@linkcode fireEventOn}. */
@@ -87,8 +96,11 @@ export function clearChildren(parent: { childNodes: unknown[] }): void {
 
 /** How {@link parseHtmlInto} builds the nodes it parses: an element or a text node at a time. */
 interface HtmlNodeBuilder {
-  /** A new element named `tag` (lower-case), with no attributes or children. */
-  element(tag: string): TreeNode & { setAttribute(name: string, value: string): void };
+  /**
+   * A new element named `tag`, with no attributes or children: lower-case HTML, or — with `ns`, the
+   * SVG or MathML namespace — an SVG / MathML element, its name in SVG's case (`foreignObject`).
+   */
+  element(tag: string, ns?: string): TreeNode & { setAttribute(name: string, value: string): void };
   /** A new text node holding `value` (character references already decoded). */
   text(value: string): TreeNode;
 }
@@ -97,6 +109,30 @@ interface HtmlNodeBuilder {
 const VOID_ELEMENTS = new Set(
   "area base br col embed hr img input link meta param source track wbr".split(" "),
 );
+/**
+ * SVG element names with capitals: HTML's tokenizer lower-cases a tag name, and its tree builder
+ * restores these inside `<svg>` (the "adjust SVG tag name" table).
+ */
+const SVG_TAG_NAMES = new Map(
+  ("altGlyph altGlyphDef altGlyphItem animateColor animateMotion animateTransform clipPath " +
+    "feBlend feColorMatrix feComponentTransfer feComposite feConvolveMatrix feDiffuseLighting " +
+    "feDisplacementMap feDistantLight feDropShadow feFlood feFuncA feFuncB feFuncG feFuncR " +
+    "feGaussianBlur feImage feMerge feMergeNode feMorphology feOffset fePointLight " +
+    "feSpecularLighting feSpotLight feTile feTurbulence foreignObject glyphRef linearGradient " +
+    "radialGradient textPath").split(" ").map((name) => [name.toLowerCase(), name]),
+);
+/** The namespace an element named `name` opens inside an element of namespace `parent`. */
+function childNamespace(name: string, parent: string, parentName: string): string {
+  if (name === "svg") return SVG_NAMESPACE;
+  if (name === "math") return MATHML_NAMESPACE;
+  // A <foreignObject>'s content (and MathML's text-integration points') is HTML again.
+  if (parent === SVG_NAMESPACE && parentName === "foreignobject") return HTML_NAMESPACE;
+  return parent;
+}
+/** Whether a start tag opens no content: an HTML void element, or a self-closed SVG / MathML one. */
+function hasNoContent(name: string, ns: string, selfClosing: boolean): boolean {
+  return ns === HTML_NAMESPACE ? VOID_ELEMENTS.has(name) : selfClosing;
+}
 /** Elements whose content is text up to their end tag (never parsed as markup). */
 const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
 /**
@@ -245,6 +281,8 @@ class HtmlFragmentParser {
   #text = "";
   readonly #open: TreeNode[];
   readonly #names: string[] = [""];
+  /** The namespace of each open element (the parent's is HTML). */
+  readonly #namespaces: string[] = [HTML_NAMESPACE];
   /** How many elements of each name are open (a stray end tag is then found without a search). */
   readonly #openCount = new Map<string, number>();
 
@@ -293,17 +331,24 @@ class HtmlFragmentParser {
 
   /** A start tag: the element, its attributes, then its content (unless void or raw text). */
   #start(name: string, attrs: Tag["attrs"], selfClosing: boolean): void {
-    const el = this.build.element(name);
+    const top = this.#open.length - 1;
+    const ns = childNamespace(name, this.#namespaces[top], this.#names[top]);
+    const el = this.#element(name, ns);
     for (const [attr, value] of attrs) el.setAttribute(attr, value);
     insertChild(this.#current(), el, null);
-    if (RAW_TEXT_ELEMENTS.has(name)) this.#rawText(name, el);
-    else if (
-      !VOID_ELEMENTS.has(name) && !selfClosing && this.#open.length < MAX_PARSE_DEPTH
-    ) {
+    if (ns === HTML_NAMESPACE && RAW_TEXT_ELEMENTS.has(name)) this.#rawText(name, el);
+    else if (!hasNoContent(name, ns, selfClosing) && this.#open.length < MAX_PARSE_DEPTH) {
       this.#open.push(el);
       this.#names.push(name);
+      this.#namespaces.push(ns);
       this.#openCount.set(name, (this.#openCount.get(name) ?? 0) + 1);
     }
+  }
+
+  /** A new element named `name` (lower-cased by the tokenizer) in `ns`. */
+  #element(name: string, ns: string): ReturnType<HtmlNodeBuilder["element"]> {
+    if (ns === HTML_NAMESPACE) return this.build.element(name);
+    return this.build.element(ns === SVG_NAMESPACE ? SVG_TAG_NAMES.get(name) ?? name : name, ns);
   }
 
   /** An end tag closes its open element and every one inside it; a stray one is ignored. */
@@ -314,6 +359,7 @@ class HtmlFragmentParser {
       this.#openCount.set(closed, this.#openCount.get(closed)! - 1);
     }
     this.#open.length = at;
+    this.#namespaces.length = at;
   }
 
   /** A raw-text element's content, as one text node, through its end tag. */
@@ -349,13 +395,21 @@ class HtmlFragmentParser {
 export function replaceWithMarkup<
   E extends TreeNode & { setAttribute(n: string, v: string): void },
 >(
-  el: TreeNode & { ownerDocument: { createElement(tag: string): E } | null },
+  el: TreeNode & {
+    ownerDocument:
+      | { createElement(tag: string): E; createElementNS?(ns: string, tag: string): E }
+      | null;
+  },
   html: string,
-  make: { element(tag: string): E; text(value: string): TreeNode },
+  make: { element(tag: string, ns?: string): E; text(value: string): TreeNode },
 ): void {
   clearChildren(el);
+  const doc = el.ownerDocument;
   parseHtmlInto(el, html, {
-    element: (tag) => el.ownerDocument?.createElement(tag) ?? make.element(tag),
+    element: (tag, ns) =>
+      ns === undefined
+        ? doc?.createElement(tag) ?? make.element(tag)
+        : doc?.createElementNS?.(ns, tag) ?? make.element(tag, ns),
     text: make.text,
   });
 }
@@ -436,20 +490,47 @@ export class DomText extends DomNode {
   }
 }
 
+/** The HTML namespace, the one {@linkcode DomDocument.createElement} makes elements in. */
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+/** The SVG namespace: `<svg>` and everything inside it but a `<foreignObject>`'s content. */
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+/** The MathML namespace: `<math>` and everything inside it. */
+const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
+
 /** An element node with attributes, listeners, and a value. */
 export class DomEl extends DomNode implements TestElement {
   override nodeType = 1;
+  /**
+   * The tag name: upper-cased for an HTML element (`"BUTTON"`), as written for an SVG or MathML
+   * one (`"svg"`, `"foreignObject"`, `"linearGradient"`), as in a browser's HTML document.
+   */
   tagName: string;
+  /** The element's local name (`"div"`, `"linearGradient"`), without a prefix. */
+  localName: string;
+  /** The element's namespace (`HTML_NAMESPACE` for a plain HTML element, `null` for none). */
+  namespaceURI: string | null;
   attributes = new Map<string, string>();
+  /** The namespace of each attribute set with `setAttributeNS` (by qualified name). */
+  readonly attributeNamespaces = new Map<string, string>();
   listeners = new Map<string, Set<Listener>>();
   captureListeners = new Map<string, Set<Listener>>();
   value = "";
   checked = false;
   ownerDocument: DomDocument | null = null;
+  readonly #qualifiedName: string;
 
-  constructor(tagName: string) {
+  /**
+   * @param tagName The qualified name (an HTML one is matched case-insensitively, as by
+   *   `createElement`).
+   * @param namespaceURI The namespace, the HTML one by default.
+   */
+  constructor(tagName: string, namespaceURI: string | null = HTML_NAMESPACE) {
     super();
-    this.tagName = tagName.toUpperCase();
+    const html = namespaceURI === HTML_NAMESPACE;
+    this.namespaceURI = namespaceURI;
+    this.#qualifiedName = html ? tagName.toLowerCase() : tagName;
+    this.localName = this.#qualifiedName.slice(this.#qualifiedName.indexOf(":") + 1);
+    this.tagName = html ? tagName.toUpperCase() : tagName;
   }
 
   setAttribute(name: string, value: string): void {
@@ -465,7 +546,49 @@ export class DomEl extends DomNode implements TestElement {
   }
   removeAttribute(name: string): void {
     this.attributes.delete(name);
+    this.attributeNamespaces.delete(name);
     if (name === "checked") this.checked = false;
+  }
+
+  /**
+   * Set an attribute in a namespace (`xlink:href` in the XLink one): an attribute with the same
+   * namespace and local name is replaced, whatever its prefix. A prefix needs a namespace.
+   */
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  setAttributeNS(namespace: string | null, qualifiedName: string, value: string): void {
+    if (!namespace && qualifiedName.includes(":")) {
+      throw new DOMException(`"${qualifiedName}" has a prefix but no namespace`, "NamespaceError");
+    }
+    const local = qualifiedName.slice(qualifiedName.indexOf(":") + 1);
+    const existing = this.#namespacedName(namespace, local);
+    if (existing !== null && existing !== qualifiedName) this.removeAttribute(existing);
+    this.setAttribute(qualifiedName, value);
+    if (namespace) this.attributeNamespaces.set(qualifiedName, namespace);
+  }
+  /** The attribute with `namespace` and `localName`, or `null` if absent. */
+  getAttributeNS(namespace: string | null, localName: string): string | null {
+    const name = this.#namespacedName(namespace, localName);
+    return name === null ? null : this.attributes.get(name)!;
+  }
+  /** Whether the element has an attribute with `namespace` and `localName`. */
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  hasAttributeNS(namespace: string | null, localName: string): boolean {
+    return this.#namespacedName(namespace, localName) !== null;
+  }
+  /** Remove the attribute with `namespace` and `localName`, if present. */
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  removeAttributeNS(namespace: string | null, localName: string): void {
+    const name = this.#namespacedName(namespace, localName);
+    if (name !== null) this.removeAttribute(name);
+  }
+  /** The qualified name of the attribute with `namespace` and `localName`, or `null`. */
+  #namespacedName(namespace: string | null, localName: string): string | null {
+    for (const name of this.attributes.keys()) {
+      const ns = this.attributeNamespaces.get(name) ?? null;
+      if (ns !== (namespace || null)) continue;
+      if ((ns === null ? name : name.slice(name.indexOf(":") + 1)) === localName) return name;
+    }
+    return null;
   }
 
   /** Element children only (text nodes omitted). */
@@ -475,7 +598,7 @@ export class DomEl extends DomNode implements TestElement {
 
   get outerHTML(): string {
     const attrs = [...this.attributes.entries()].map(([k, v]) => ` ${k}="${v}"`).join("");
-    const tag = this.tagName.toLowerCase();
+    const tag = this.#qualifiedName;
     return `<${tag}${attrs}>${this.innerHTML}</${tag}>`;
   }
   get innerHTML(): string {
@@ -495,7 +618,7 @@ export class DomEl extends DomNode implements TestElement {
 
 /** How this DOM's elements and text nodes are made outside a document. */
 const DOM_NODES = {
-  element: (tag: string) => new DomEl(tag),
+  element: (tag: string, ns?: string) => new DomEl(tag, ns),
   text: (value: string) => new DomText(value),
 };
 
@@ -519,7 +642,14 @@ function escapeHtml(s: string): string {
 /** A minimal document the reconciler creates nodes through. */
 export class DomDocument {
   createElement(tag: string): DomEl {
-    const el = new DomEl(tag);
+    return this.createElementNS(HTML_NAMESPACE, tag.toLowerCase());
+  }
+  /**
+   * Create an element in `namespace` (`SVG_NAMESPACE` for `<svg>` and its content), its tag name
+   * kept as written (`"foreignObject"`); the reconciler makes SVG and MathML elements this way.
+   */
+  createElementNS(namespace: string | null, qualifiedName: string): DomEl {
+    const el = new DomEl(qualifiedName, namespace);
     el.ownerDocument = this;
     return el;
   }

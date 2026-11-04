@@ -84,6 +84,12 @@ export interface TableChangesFrame<Row = Record<string, unknown>> {
   changes?: TableChange<Row>[];
   /** Changes were lost (a burst too large, the database connection dropped): re-read. */
   resync?: true;
+  /**
+   * The server kept this subscription while its connection was down and is resuming it: what
+   * the subscriber missed follows (re-read as them), numbered on from the frames before the drop.
+   * A reconnect answered by neither this nor `resync` lost the subscription: re-read.
+   */
+  resumed?: true;
 }
 
 /** A value a filter compares against. */

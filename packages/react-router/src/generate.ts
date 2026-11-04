@@ -6,6 +6,7 @@
 // untouched. Writes are content-compared, so a dev re-scan that changes nothing writes nothing.
 
 import { remixCodegen as cg } from "@denext/denext/plugin-kit";
+import type { remixCodegen } from "@denext/denext/plugin-kit";
 import { dirname, join, relative } from "@std/path";
 import { prerenderExports } from "./prerender.ts";
 import type { RouteNode } from "./route-tree.ts";
@@ -71,15 +72,30 @@ export async function generateRoutes(
     dirs.set(dir, id);
     return dir;
   };
+  // Every module is analyzed first: a route's generated modules import the `middleware` of
+  // its ancestors, so which of them has one must be known before any is written.
+  const analyzed = new Map<string, Analyzed>();
+  if (opts.rootFile) {
+    const source = cg.stripRootDoc(await Deno.readTextFile(opts.rootFile));
+    analyzed.set(ROOT_ID, { parts: await cg.analyzeModule(source), layout: true });
+  }
+  for (const node of opts.nodes) {
+    const source = await Deno.readTextFile(join(opts.appDir, node.file));
+    analyzed.set(node.id, { parts: await cg.analyzeModule(source), layout: node.layout });
+  }
   if (opts.rootFile) {
     // The root renders on the server even in SPA mode (React Router prerenders it as the
     // app shell); its own clientLoader, if any, follows the usual hydration rules.
     claim(ROOT_ID);
-    out.set(ROOT_ID, await generateRoot(opts.rootFile, opts.outDir));
+    out.set(ROOT_ID, await generateRoot(opts.rootFile, opts.outDir, analyzed));
   }
   for (const node of opts.nodes) {
     claim(node.id);
-    out.set(node.id, await generateNode(node, join(opts.appDir, node.file), opts));
+    const chain = middlewareChain([...node.layoutIds, node.id], node.id, analyzed, !!opts.rootFile);
+    out.set(
+      node.id,
+      await generateNode(node, join(opts.appDir, node.file), opts, analyzed.get(node.id)!, chain),
+    );
   }
   // Prune output dirs whose route no longer exists (a renamed/deleted route) so `.denext`
   // doesn't accumulate stale modules across route churn.
@@ -102,6 +118,35 @@ async function pruneStaleDirs(outDir: string, keep: Set<string>): Promise<void> 
   }
 }
 
+/** A route module's analysis, and whether it generates as a layout. */
+interface Analyzed {
+  parts: remixCodegen.ModuleParts;
+  layout: boolean;
+}
+
+/**
+ * The route middleware a route's generated modules run, outermost first: the root's (when the
+ * app has a root), then each of `ids` (the layouts above the route, then the route) that
+ * exports a `middleware`. Another route's export is imported from its generated data module.
+ */
+function middlewareChain(
+  ids: string[],
+  self: string,
+  analyzed: Map<string, Analyzed>,
+  withRoot: boolean,
+): remixCodegen.MiddlewareRef[] | undefined {
+  const refs: remixCodegen.MiddlewareRef[] = [];
+  for (const id of withRoot ? [ROOT_ID, ...ids] : ids) {
+    const entry = analyzed.get(id);
+    const exportName = entry?.parts.middlewareExport;
+    if (!entry || !exportName) continue;
+    const role = entry.layout ? "layout" : "page";
+    const module = id === self ? null : `../${slug(id)}/${role}.data.tsx`;
+    refs.push({ id, module, exportName });
+  }
+  return refs.length > 0 ? refs : undefined;
+}
+
 /** `routes/users.$id` → `routes__users.$id` (one flat directory per route). */
 function slug(id: string): string {
   return id.replace(/[\\/]/g, "__").replace(/[^A-Za-z0-9_.$@+-]/g, "_");
@@ -111,10 +156,10 @@ async function generateNode(
   node: RouteNode,
   file: string,
   opts: GenerateOptions,
+  { parts }: Analyzed,
+  middleware: remixCodegen.MiddlewareRef[] | undefined,
 ): Promise<GeneratedRoute> {
   const outDir = opts.outDir;
-  const source = await Deno.readTextFile(file);
-  const parts = await cg.analyzeModule(source);
   const dir = join(outDir, slug(node.id));
   const srcDir = dirname(file);
   const role = node.layout ? "layout" : "page";
@@ -145,14 +190,17 @@ async function generateNode(
   if (!parts.hasDefault) {
     // A resource route: GET/POST handlers only.
     result.api = join(dir, "route.ts");
-    await writeIfChanged(result.api, cg.resourceRouteSource(node.id, dataFile, parts));
+    await writeIfChanged(
+      result.api,
+      cg.resourceRouteSource(node.id, dataFile, parts, middleware),
+    );
     return result;
   }
   result.wrapper = join(dir, `${role}.tsx`);
   const wrapper = role === "page"
-    ? cg.pageWrapperSource(node.id, parts, clientFile, dataFile) +
+    ? cg.pageWrapperSource(node.id, parts, clientFile, dataFile, middleware) +
       prerenderExports(node, opts.prerender ?? null)
-    : cg.layoutWrapperSource(node.id, parts, clientFile, dataFile);
+    : cg.layoutWrapperSource(node.id, parts, clientFile, dataFile, middleware);
   await writeIfChanged(result.wrapper, wrapper);
   if (parts.hasErrorBoundary || parts.hasCatchBoundary) {
     result.error = join(dir, "error.tsx");
@@ -160,15 +208,18 @@ async function generateNode(
   }
   if (role === "page" && parts.hasAction) {
     result.api = join(dir, "route.ts");
-    await writeIfChanged(result.api, cg.pageActionRouteSource(dataFile));
+    await writeIfChanged(result.api, cg.pageActionRouteSource(dataFile, middleware));
   }
   return result;
 }
 
 /** `app/root.tsx` → the root layout: a server shell when it is one, else the client/data split. */
-async function generateRoot(rootFile: string, outDir: string): Promise<GeneratedRoute> {
-  const source = cg.stripRootDoc(await Deno.readTextFile(rootFile));
-  const parts = await cg.analyzeModule(source);
+async function generateRoot(
+  rootFile: string,
+  outDir: string,
+  analyzed: Map<string, Analyzed>,
+): Promise<GeneratedRoute> {
+  const parts = analyzed.get(ROOT_ID)!.parts;
   const dir = join(outDir, ROOT_ID);
   const srcDir = dirname(rootFile);
   await Deno.mkdir(dir, { recursive: true });
@@ -194,7 +245,13 @@ async function generateRoot(rootFile: string, outDir: string): Promise<Generated
   );
   await writeIfChanged(
     result.wrapper!,
-    cg.layoutWrapperSource(ROOT_ID, parts, "layout.client.tsx", "layout.data.tsx"),
+    cg.layoutWrapperSource(
+      ROOT_ID,
+      parts,
+      "layout.client.tsx",
+      "layout.data.tsx",
+      middlewareChain([], ROOT_ID, analyzed, true),
+    ),
   );
   if (parts.hasErrorBoundary || parts.hasCatchBoundary) {
     result.error = join(dir, "error.tsx");

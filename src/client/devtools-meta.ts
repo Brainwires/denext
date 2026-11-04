@@ -28,7 +28,8 @@ export interface HookDevMeta {
    * by a static relative import (`import { useAuth } from "./auth.ts"`). `hook` is then the
    * name that module exports it under (`"default"` for a default import), so
    * `"<from>#<hook>"` is the importee's own registry key. Absent for a primitive, a
-   * same-module hook, and a hook from a bare/`npm:`/`jsr:`/URL import. A namespace import's
+   * same-module hook, and a hook from a `jsr:` / URL import; a hook from a package (a bare
+   * specifier, in the unbundled dev loop's npm bundle) records `npm:<specifier>`. A namespace import's
    * member call (`hooks.useAuth()`) records the namespace's module.
    */
   from?: string;
@@ -233,7 +234,7 @@ function firstCandidate(base: string, find: (url: string) => Found | undefined):
 function lookupHook(moduleUrl: string, name: string, hops: number): Found | undefined {
   const meta = metaById.get(`${moduleUrl}#${name}`);
   if (meta && !meta.aliasOf) return { meta, moduleUrl };
-  if (hops >= MAX_REEXPORT_HOPS) return undefined;
+  if (hops >= MAX_REEXPORT_HOPS && !moduleUrl.startsWith("npm:")) return undefined;
   return meta?.aliasOf ? viaAlias(meta.aliasOf, hops) : viaStars(moduleUrl, name, hops);
 }
 
@@ -244,11 +245,16 @@ function viaAlias(aliasOf: string, hops: number): Found | undefined {
   return firstCandidate(aliasOf.slice(0, hash), (u) => lookupHook(u, target, hops + 1));
 }
 
-/** `name` in the modules a barrel's `export *` lines name, one hop further (never `default`). */
+/**
+ * `name` in the modules a barrel's `export *` lines name, one hop further (never `default`). A
+ * package specifier's record (`npm:<specifier>#*`, which the dev npm bundle registers) names the
+ * module the specifier resolves to, and costs no hop: the package's own barrels get the three.
+ */
 function viaStars(moduleUrl: string, name: string, hops: number): Found | undefined {
-  if (name === "default") return undefined;
+  const pkg = moduleUrl.startsWith("npm:");
+  if (name === "default" && !pkg) return undefined;
   for (const star of metaById.get(`${moduleUrl}#*`)?.reExportsAll ?? []) {
-    const hit = firstCandidate(star, (u) => lookupHook(u, name, hops + 1));
+    const hit = firstCandidate(star, (u) => lookupHook(u, name, pkg ? hops : hops + 1));
     if (hit) return hit;
   }
   return undefined;
@@ -258,7 +264,8 @@ function viaStars(moduleUrl: string, name: string, hops: number): Found | undefi
  * The level a custom-hook call expands into: the hook's registered metadata, looked up in
  * the module that declares it (`from`, else the calling module), breadcrumbed under the
  * hook's declared name. Undefined when no module registered it — an uninstrumented or
- * not-yet-evaluated importee, or a package hook — which leaves the call opaque.
+ * not-yet-evaluated importee, or a package module the dev npm bundle could not instrument
+ * (CommonJS, minified) — which leaves the call opaque.
  */
 function expandCustomHook(entry: HookDevMeta, level: HookLevel): HookLevel | undefined {
   const find = (url: string) => lookupHook(url, entry.hook, 0);

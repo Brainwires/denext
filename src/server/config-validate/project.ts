@@ -5,7 +5,9 @@ import type { DenextConfig } from "../config.ts";
 import { VERB_NAME } from "../../cli/command.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../../cli/deno-verbs.ts";
 import { validateRemovedExperimental } from "./keys.ts";
-import { type Fail, isPlainObject } from "./shared.ts";
+import { resourceLimitProblems } from "./limits.ts";
+import { startTlsProblems } from "./tls.ts";
+import { type Fail, isPlainObject, validatePermissionLists } from "./shared.ts";
 
 /** `tailwind.input`/`output` are required non-empty path strings. */
 function validateTailwind(tailwind: unknown, fail: Fail): void {
@@ -132,7 +134,7 @@ export function validateNestedRequired(config: DenextConfig, fail: Fail): void {
 }
 
 /** The permission kinds `compile.permissions` takes. */
-const COMPILE_PERMISSION_KINDS = ["write", "run", "ffi", "sys"];
+const COMPILE_PERMISSION_KINDS = ["write", "run", "ffi", "sys", "netConnect", "netListen"];
 
 /** Whether `p` is a project-relative path: not absolute, no `..` segment. */
 function insideProject(p: string): boolean {
@@ -163,11 +165,22 @@ function validateCompilePermissions(permissions: unknown, fail: Fail): void {
   if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) {
     return fail("compile.permissions", 'must be "all" or an object of permission kinds');
   }
-  for (const [k, v] of Object.entries(permissions as Record<string, unknown>)) {
-    if (!COMPILE_PERMISSION_KINDS.includes(k) || !isPermissionList(v)) {
+  validatePermissionLists(
+    "compile.permissions",
+    permissions as Record<string, unknown>,
+    COMPILE_PERMISSION_KINDS,
+    isPermissionList,
+    fail,
+  );
+  // An empty direction would bake its UNSCOPED flag (an empty list is no scope to Deno), the
+  // opposite of what "none" reads as: refuse it rather than grant every host.
+  for (const k of ["netConnect", "netListen"]) {
+    const v = (permissions as Record<string, unknown>)[k];
+    if (Array.isArray(v) && v.length === 0) {
       fail(
         `compile.permissions.${k}`,
-        `must be an array of strings (kinds: ${COMPILE_PERMISSION_KINDS.join(", ")})`,
+        'is empty, which would leave that direction unscoped: list the hosts, use ["*"] for ' +
+          "any, or leave it out",
       );
     }
   }
@@ -216,6 +229,28 @@ export function validateCompile(compile: unknown, fail: Fail): void {
   validateCompileInclude(include, fail);
   validateCompilePermissions(permissions, fail);
   validateCompileSign(sign, fail);
+}
+
+/**
+ * `start`: an object whose `idleTrim` (when set) is a boolean, whose `limits` (when set) the
+ * runtime accepts (src/build/resource-limits.ts) and whose `tls` (when set) lists certificates by
+ * host name (src/server/tls-certificates.ts).
+ */
+export function validateStart(start: unknown, fail: Fail): void {
+  if (start === undefined) return;
+  if (typeof start !== "object" || start === null || Array.isArray(start)) {
+    return fail("start", "must be an object");
+  }
+  const { idleTrim, limits, tls } = start as {
+    idleTrim?: unknown;
+    limits?: unknown;
+    tls?: unknown;
+  };
+  if (idleTrim !== undefined && typeof idleTrim !== "boolean") {
+    fail("start.idleTrim", "must be a boolean");
+  }
+  for (const [key, message] of resourceLimitProblems(limits)) fail(key, message);
+  for (const [key, message] of startTlsProblems(tls)) fail(key, message);
 }
 
 /**

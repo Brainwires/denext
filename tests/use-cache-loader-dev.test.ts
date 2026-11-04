@@ -159,3 +159,29 @@ Deno.test("dev copies: an import cycle through an edited module copies consisten
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("dev copies: a copy dropped while it is still being written is removed once written", async () => {
+  const dir = await project({});
+  try {
+    const dev = new DevCopies(dir);
+    const [a, b, c] = ["a.js", "b.js", "c.js"].map((f) => join(dir, f));
+    let open!: () => void;
+    const gate = new Promise<void>((r) => open = r);
+    const slow = dev.write(dir, "file:///m.ts", a, async () => {
+      await gate;
+      await Deno.writeTextFile(a, "a");
+    });
+    await dev.write(dir, "file:///m.ts", b, () => Deno.writeTextFile(b, "b"));
+    await dev.write(dir, "file:///m.ts", c, () => Deno.writeTextFile(c, "c")); // drops `a`
+    open();
+    await slow;
+    for (let i = 0; i < 50 && await Deno.stat(a).then(() => true, () => false); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert(!(await Deno.stat(a).then(() => true, () => false)), "the dropped copy is gone");
+    assert((await Deno.stat(b)).isFile && (await Deno.stat(c)).isFile, "the two newest stay");
+    assertEquals(dev.size, 2);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -9,6 +9,7 @@ import { denoDocJson } from "../scripts/deno-doc.ts";
 import {
   type DocType,
   interfaceSchema,
+  itemPattern,
   type Schema,
   symbolTable,
   tsTypeToSchema,
@@ -149,6 +150,39 @@ Deno.test("widgetHint accepts only the widget names the UI renders", () => {
   assertEquals(widgetHint([{ kind: "unsupported", value: "@widget" }]), undefined);
   assertEquals(widgetHint([{ kind: "unsupported", value: "@default 1" }]), undefined);
   assertEquals(widgetHint(undefined), undefined);
+});
+
+Deno.test("itemPattern: a JSON-string @itemPattern becomes each array item's pattern", async () => {
+  assertEquals(
+    itemPattern([{ kind: "unsupported", value: '@itemPattern "^[^\\\\s]+$"' }]),
+    "^[^\\s]+$",
+  );
+  assertEquals(itemPattern([{ kind: "unsupported", value: "@itemPattern ^a$" }]), undefined);
+  assertEquals(itemPattern([{ kind: "unsupported", value: "@itemPattern 1" }]), undefined);
+  assertEquals(itemPattern(undefined), undefined);
+  const table = await docOf(`/** Probe. */
+export interface Probe {
+  /**
+   * Hosts.
+   *
+   * @itemPattern "^[a-z]+$"
+   */
+  hosts?: string[];
+  /**
+   * Not an array: no items to constrain.
+   *
+   * @itemPattern "^[a-z]+$"
+   */
+  one?: string;
+}
+`);
+  const schema = props(interfaceSchema("Probe", { table, stack: [] }));
+  assertEquals(schema.hosts, {
+    description: "Hosts.",
+    type: "array",
+    items: { type: "string", pattern: "^[a-z]+$" },
+  });
+  assertEquals(schema.one, { description: "Not an array: no items to constrain.", type: "string" });
 });
 
 Deno.test("mapper: maxDepth caps how deep nested interfaces expand", async () => {

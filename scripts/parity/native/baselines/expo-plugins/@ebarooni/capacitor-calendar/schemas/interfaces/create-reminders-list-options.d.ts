@@ -1,34 +1,29 @@
-import type { SystemColorName } from '../types/system-color-name.d.ts';
 /**
  * @since 8.1.0
  */
 export interface CreateRemindersListOptions {
     /**
-     * Named color (`blue`, …) or hex `#RRGGBB` / `#RRGGBBAA`.
-     * When omitted, the platform chooses the list color.
+     * The color of the list.
      *
      * @example 'indigo'
-     * @example #007AFF
+     * @default 'blue'
      * @platform iOS
      * @since 8.1.0
      */
-    color?: SystemColorName | `#${string}`;
+    color?: 'blue' | 'brown' | 'gray' | 'green' | 'indigo' | 'orange' | 'pink' | 'purple' | 'red' | 'teal' | 'yellow';
     /**
-     * Whether to save the list immediately.
-     * Pass `false` to batch changes and commit them with `CapacitorCalendar.commit()`.
+     * Whether to save the list to the event store immediately.
+     * Pass `false` to batch multiple changes and commit them together using `CapacitorCalendar.commit()`, which is more efficient than committing each save individually.
      *
      * @example false
      * @default true
      * @platform iOS
-     * @see {@link CalendarOperations#commit}
      * @since 8.1.0
      */
     commit?: boolean;
     /**
-     * The calendar source (account) where the list should be created.
-     *
-     * If provided, it should match a source from `fetchAllCalendarSources()`.
-     * If omitted or unmatched, iCloud is used when available, otherwise the local source.
+     * The EKSource identifier (account) where the list should be created.
+     * If left undefined, iCloud will be used if available, otherwise falls back to local.
      *
      * @example 'A1234567-ABCD-EFGH-IJKL-MNOPQRSTUVWX'
      * @platform iOS

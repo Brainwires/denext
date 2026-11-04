@@ -12,26 +12,38 @@ import {
   legacyAbortActive,
   toolchainRuntimeFlags,
 } from "../src/cli/self-exec.ts";
+import { needsNoLegacyAbortFlag } from "../src/build/deno-version.ts";
 
 const src = (path: string) => toFileUrl(join(Deno.cwd(), path)).href;
 
 Deno.test("toolchainRuntimeFlags: the toolchain child opts in to Deno.serve's new request abort", () => {
   assertEquals(toolchainRuntimeFlags("2.9.7-denext.16"), ["--unstable-no-legacy-abort"]);
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.4"), ["--unstable-no-legacy-abort"]);
+  // From 3.0.0-rc.5 the new abort is the runtime's default (the flag is a no-op): none.
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.5"), []);
+  assertEquals(toolchainRuntimeFlags("3.0.0-rc.10"), []);
+  assertEquals(toolchainRuntimeFlags("3.0.0"), []);
   // A DENEXT_DENO=<path> binary may predate the flag; no toolchain, no flag.
   assertEquals(toolchainRuntimeFlags("path"), []);
   assertEquals(toolchainRuntimeFlags(undefined), []);
   // Which toolchain a CLI child runs: the marker, else this process's own toolchain build.
   const env = (vars: Record<string, string>) => (name: string) => vars[name];
   const marker = "DENEXT_TOOLCHAIN_ACTIVE";
-  assertEquals(childToolchainMarker(env({ [marker]: "path" }), "2.9.6"), "path");
-  assertEquals(childToolchainMarker(env({}), "2.9.7-denext.17"), "2.9.7-denext.17");
-  assertEquals(childToolchainMarker(env({ DENO_BIN: "/x/deno" }), "2.9.7-denext.17"), undefined);
-  assertEquals(childToolchainMarker(env({}), "2.9.6"), undefined);
+  assertEquals(childToolchainMarker(env({ [marker]: "path" }), { deno: "2.9.6" }), "path");
+  assertEquals(childToolchainMarker(env({}), { deno: "2.9.7-denext.17" }), "2.9.7-denext.17");
+  assertEquals(
+    childToolchainMarker(env({ DENO_BIN: "/x/deno" }), { deno: "2.9.7-denext.17" }),
+    undefined,
+  );
+  assertEquals(childToolchainMarker(env({}), { deno: "2.9.6" }), undefined);
+  // From 3.0.0-rc.3 the identity marker says it; upstream Deno of the same version is not it.
+  const rc3 = { deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" };
+  assertEquals(childToolchainMarker(env({}), rc3), "3.0.0-rc.3");
+  assertEquals(childToolchainMarker(env({}), { deno: "3.0.0-rc.3" }), undefined);
 });
 
 Deno.test({
   name: "the server loop under the toolchain's flags: no legacy-abort warning, same request signal",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "dnx-legacy-abort-" });
   try {
@@ -42,9 +54,13 @@ Deno.test({
 export async function GET(req: Request) {
   const signal = requestSignal()!;
   const name = new URL(req.url).pathname;
-  signal.addEventListener("abort", () => console.log("aborted " + name));
+  // Each step is also an event the script waits on (globalThis.steps), instead of guessing times.
+  const step = (what) => globalThis.steps?.dispatchEvent(new Event(what + " " + name));
+  signal.addEventListener("abort", () => (console.log("aborted " + name), step("aborted")));
+  step("started");
   await new Promise((r) => setTimeout(r, ${ms}));
   console.log("returning " + name + " aborted=" + signal.aborted);
+  step("returned");
   return new Response("ok");
 }
 `;
@@ -66,13 +82,20 @@ const server = serveWithPortFallback({
   port: 0, hostname: "127.0.0.1", strict: true, signal: done.signal, onListen() {},
 }, handler);
 const base = "http://127.0.0.1:" + server.addr.port;
+globalThis.steps = new EventTarget();
+const step = (type) => new Promise((r) => globalThis.steps.addEventListener(type, r, { once: true }));
+const fastAborted = step("aborted /fast");
 console.log(await (await fetch(base + "/fast")).text());
-await new Promise((r) => setTimeout(r, 100));
+await fastAborted;
 const client = new AbortController();
+const slowStarted = step("started /slow");
+const slowReturned = step("returned /slow");
 const slow = fetch(base + "/slow", { signal: client.signal }).catch(() => {});
-setTimeout(() => client.abort(), 300);
+// The client goes away mid-request: once the handler runs, with its whole wait still ahead.
+await slowStarted;
+client.abort();
 await slow;
-await new Promise((r) => setTimeout(r, 1600));
+await slowReturned;
 done.abort();
 await server.finished;
 `,
@@ -127,8 +150,14 @@ console.log(JSON.stringify(await legacyAbortActive()));
       assert(!/legacy behavior/.test(stderr), stderr);
       return new TextDecoder().decode(out.stdout).trim();
     };
-    assertEquals(await run([]), "true");
-    assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
+    if (needsNoLegacyAbortFlag(Deno.version.deno)) {
+      assertEquals(await run([]), "true");
+      assertEquals(await run(["--unstable-no-legacy-abort"]), "false");
+    } else {
+      // From runtime 3.0.0-rc.5 the legacy abort is off by default; the flag opts back in.
+      assertEquals(await run([]), "false");
+      assertEquals(await run(["--unstable-legacy-abort"]), "true");
+    }
   } finally {
     await Deno.remove(join(script, ".."), { recursive: true });
   }

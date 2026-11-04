@@ -154,7 +154,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
-- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development) and
+- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development, in
+  client renders and server renders alike) and
   `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR
@@ -211,12 +212,14 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   protection** on the login endpoint (`rateLimit`: on by default, a generic
   `429` after 5 failures per client + identifier per 15 min — the client is the
   socket peer, or the proxy's `x-forwarded-for` when `trustForwardedHeaders` is
-  set; pluggable `RateLimitStore`, or `false`), and **opt-in revocable sessions**
-  (`sessionStore`: `inMemorySessionStore` / the durable `sqliteSessionStore`
-  on `node:sqlite`, or your own — the cookie then carries only an id, and
-  `revokeSession` / `revokeAllSessions` end sessions immediately). Without a
-  store, sessions stay stateless signed cookies (zero-config, multi-replica
-  safe). A weak session secret throws in production; `__Host-` cookies pin
+  set; pluggable `RateLimitStore`, or `false`), and **revocable sessions**:
+  with a `sessionStore` (`inMemorySessionStore` / the durable
+  `sqliteSessionStore` on `node:sqlite`, or your own) the cookie carries only
+  an id, and `revokeSession` / `revokeAllSessions` end sessions immediately.
+  Without a store, sessions stay stateless signed cookies (zero-config,
+  multi-replica safe), and `revokeSession(id)` still ends one (the id from
+  `currentSessionId()`) by putting it on the auth adapter's revocation list
+  until it would have expired. A weak session secret throws in production; `__Host-` cookies pin
   `Secure` regardless of proxy headers. **OIDC discovery**: a provider that names
   an `issuer` resolves its endpoints from `.well-known/openid-configuration`
   (issuer-host-pinned, issuer match required, cached per `Cache-Control`) and
@@ -515,8 +518,9 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
   (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
-  module or across a static relative import — **`useDebugValue`** labels, conditional
-  and package hooks aligned around, and kind labels only where no name is certain),
+  module, across a static import or from an npm package's ES modules — **`useDebugValue`**
+  labels, conditional and uninstrumented hooks aligned around, and kind labels only where no
+  name is certain),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
   store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…); **"why did
@@ -676,12 +680,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   in-place upgrade keyed on the app identifier, Authenticode-signed) and
   `.zip`. — `src/build/desktop-installers.ts`.
 - **denext's pinned Deno Desktop runtime** — `run`, `dev`, `package` and the
-  scripts build on a prebuilt runtime (Deno 2.9.7 plus the laufey patches)
+  scripts build on a prebuilt runtime (Deno 2.9.8 plus the laufey patches)
   pinned by URL, size and SHA-256, downloaded once, verified before extraction,
   extracted safely and cached for offline use, with optional `gh attestation`
   provenance pinned to the release workflow and tag; `deno task
   desktop:pin-runtime <tag>` writes a new pin; `DENEXT_DESKTOP_RUNTIME=stock`
-  opts out. It carries a **stable app origin** (`desktop.app.origin`, so
+  opts out on a stock Deno CLI (`DENEXT_DENO=stock`). It carries a **stable app origin** (`desktop.app.origin`, so
   storage and server allow-lists survive relaunch) that the window **stays on** (a top-level
   navigation elsewhere opens in the user's browser unless
   `desktop.app.allowedNavigationOrigins` lists it), **deep links and opened
@@ -763,7 +767,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   generated from `app/`, and the shell gets Expo web's root style. Unistyles 3
   works with no setup, Metro's `require.context` (literal arguments) is
   generated at build, and `react-reconciler` renderers (React Native Skia,
-  react-three-fiber, react-konva) load on denext's `react`. —
+  react-three-fiber, react-konva) load on denext's `react`, with contexts (bridged into a
+  react-three-fiber `<Canvas>` / react-konva `<Stage>`) and class components inside their
+  trees. —
   `src/build/react-native.ts`, `src/build/react-native-unistyles.ts`,
   `src/build/require-context.ts`.
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`
@@ -1282,13 +1288,13 @@ is in [the CVE-defense guide](https://denext.dev/docs/security).
   CVE-2025-67779.
 - **Inert JSON decode** — the only decode of client input is `JSON.parse` with
   no reviver; a payload shaped like a `react.server.reference` is inert data,
-  never resolved/invoked. — `src/runtime/server-action.ts:432-441`. CVE-2025-55182 /
+  never resolved/invoked. — `src/runtime/server-action.ts:389-395`. CVE-2025-55182 /
   CVE-2025-66478 (RSC RCE, CVSS 10.0).
 - **Prototype-pollution resistance** — a `__proto__` key does not pollute
   `Object.prototype` (native `JSON.parse` + denext never deep-merges the
   payload). — verified `tests/nextjs-cve-parity.test.ts:543-549`.
 - **Deep-nesting DoS bounded** — a ~200k-deep payload throws in `JSON.parse`, is
-  caught, returns fast. — `src/runtime/server-action.ts:434-437`.
+  caught, returns fast. — `src/runtime/server-action.ts:392`.
 
 ### 1.3 SSRF-safe image optimizer & `safeFetch` **[default]**
 
@@ -1524,13 +1530,13 @@ default").
   `src/build/hydration.ts:26, 72-107`, wired
   `src/build/build-pipeline/routes.ts:50`, `src/build/build-pipeline/transforms.ts:78`.
 - **Tiny self-contained React-equivalent** **[default]** — denext's own JSX
-  runtime, hooks, context, and reconciler; no npm React. **~20 KB first load**
-  vs ~60 KB React+ReactDOM / ~137 KB Next.js 16; **~19 KB** shared runtime
-  baseline. — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
+  runtime, hooks, context, and reconciler; no npm React. **~25 KB first load**
+  (gzip; 66 KB raw) vs ~139 KB gzip on Next.js 16.4.2 for the same routes; **~24 KB** gz shared runtime
+  baseline (in the `examples/spa` bench the first load is 19.5 KB gz / 52.7 KB raw on denext vs 68.7 KB gz / 218.9 KB raw on React 19.3.1 + ReactDOM). — `src/runtime/*`, `src/jsx/*`, `src/client/fiber/*` (numbers:
   `README.md` "Tiny by default").
 - **Single shared runtime chunk cached across navigations** **[default]** — one
   code-split pass hoists the runtime into a common chunk downloaded once; a
-  later navigation transfers only the route delta (**~0.6–0.9 KB**). Route
+  later navigation transfers only the route delta (**~0.7–1.4 KB** gz). Route
   entries dropped from ~19 KB to ~1 KB each. —
   `src/build/bundle.ts:1734-1746` (`bundleRoutes`), `src/build/build.ts`; regression
   `tests/integration/build-smoke.test.ts:71-90`.
@@ -1553,8 +1559,8 @@ default").
   path with a 5 ms frame budget, yield via `MessageChannel`, and are preempted
   by urgent updates (abandon + restart); tree built off-DOM, committed
   atomically. Default sync lane still runs to completion. —
-  `src/client/fiber/scheduler.ts:188-191, 212-218, 263-265, 340-355, 397`;
-  `src/client/fiber/work-loop.ts:151-164, 198`; `src/runtime/hooks.ts:380, 393`. (Canonical description:
+  `src/client/fiber/scheduler.ts:218, 263-266, 350-376, 397, 432`;
+  `src/client/fiber/work-loop.ts:151-164, 198`; `src/runtime/hooks/transition.ts:38, 102, 119`. (Canonical description:
   [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).)
 - **Auto-memo compiler / `useMemoCache`** **[opt-in]** — a
   React-Compiler-style pass lifts JSX elements into `memoValue(...)` for stable
@@ -1649,7 +1655,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`useErrorBoundary`** — imperative `captureError`/`reset` on the nearest
   boundary (async errors, timers). React makes you install
   `react-error-boundary`; denext ships it in-core, SSR-inert. —
-  `src/runtime/hooks.ts:476, 493, 528`.
+  `src/runtime/hooks.ts:320, 326, 381`.
 - **`isServer` / `serverOnly` / `clientOnly`** — replaces the `server-only` +
   `client-only` npm packages Next docs tell you to install; first-class in-core
   with a runtime `isServer()`, and `serverOnly()`/`clientOnly()` **throw when
@@ -1666,8 +1672,8 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
   replacement. — `src/runtime/public-env.ts:16, 34, 103`.
 - **`useMemoCache`** — the React-Compiler cache primitive exposed as a _public_
   hook (React's is an unstable internal), with `compiler-runtime` as a public
-  entrypoint. — `src/runtime/hooks.ts:310, 106`;
-  `src/runtime/compiler-runtime.ts:13, 34`.
+  entrypoint. — `src/runtime/hooks/use-memo-cache.ts:22`, `src/runtime/hooks.ts:111`;
+  `src/runtime/compiler-runtime.ts:14, 35`.
 - **`useEffectEvent` shipped stable** — still experimental in React proper. —
   `mod.ts` hook block, `src/runtime/hooks.ts`.
 - **Browser-platform hooks React/Next don't ship** — `useWakeLock` (Screen Wake

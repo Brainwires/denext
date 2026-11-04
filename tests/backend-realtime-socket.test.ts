@@ -393,8 +393,6 @@ function busClient() {
 
 Deno.test({
   name: "realtime bus on Postgres: heartbeat, listen, broadcast inline or stored, presence rows",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const fake = busClient();
     const got: unknown[] = [];
@@ -502,8 +500,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime bus: a failed start is retried; a stop during start unlistens",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const fake = busClient();
     let fail = true;
@@ -759,8 +755,6 @@ const responseOf = (m: PhxMessage) => (m.payload as { response: Record<string, u
 
 Deno.test({
   name: "realtime hub: heartbeat, join, leave, invalid and unmatched topics, channel cap",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig({ maxChannelsPerConnection: 2 });
     try {
@@ -815,8 +809,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: broadcast self, ack, binary, private write, size; delivered per topic",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig({ maxPayloadBytes: 100 });
     try {
@@ -896,8 +888,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: private channels follow the policies — join, read, write",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig();
     const ALL = PUBLIC_PERMISSIONS;
@@ -966,8 +956,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: presence track, re-track, untrack, state on join, gone with the socket",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig({ maxPayloadBytes: 50 });
     try {
@@ -1064,8 +1052,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: postgres_changes bindings, their payloads, and refusals",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig();
     try {
@@ -1166,8 +1152,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: access tokens — expired, refreshed, another user, expiry",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig();
     const sessions: Record<string, SocketIdentity> = {
@@ -1249,8 +1233,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: limits — rate, frame size, slow consumers, connections per address",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig({
       maxEventsPerSecond: 3,
@@ -1302,8 +1284,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: a binding's select keeps only those columns; REST calls are rate limited",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig({ maxEventsPerSecond: 2 });
     try {
@@ -1365,8 +1345,6 @@ const CROSS = { origin: "https://elsewhere.test" };
 
 Deno.test({
   name: "realtime HTTP: routing, upgrade refusals, REST broadcast",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     installRealtimeHub(undefined);
     assertEquals(handleRealtimeRequest(new Request(`${ORIGIN}/realtime/v1/websocket`)), null);
@@ -1595,8 +1573,6 @@ Deno.test("channelPermissions: the policies, probed as the user, always rolled b
 
 Deno.test({
   name: "realtime identity: tokens, subjects, the session",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const fallback = userIdentity(A);
     assertEquals(await tokenIdentity(undefined, fallback), fallback);
@@ -1769,8 +1745,6 @@ Deno.test("phoenix codec: server frames decoded; a broadcast's meta in both seri
 Deno.test({
   name:
     "realtime bus on Postgres: a private broadcast is stored (inline id or by id); replay reads",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const fake = busClient();
     const bus = postgresBus({
@@ -1838,8 +1812,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime hub: replay to a private channel, replication_ready, stored ids as meta",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig();
     try {
@@ -1929,8 +1901,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime upgrade with Supabase keys: a same-origin socket may omit the apikey",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const g = await generateSupabaseKeys();
     installSupabaseKeys(
@@ -1999,8 +1969,6 @@ Deno.test("phoenix codec: a client's binary broadcast push round-trips through t
 
 Deno.test({
   name: "realtime hub: the admin snapshot — channels, subscribers, bindings; presence keys apart",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const r = rig();
     try {

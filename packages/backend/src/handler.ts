@@ -47,8 +47,10 @@ import {
 import {
   bucketAndKey,
   objectHeaders,
+  type ObjectReader,
   objectResponse,
   preflight,
+  servedBytes,
   transformedHeaders,
   transformError,
   transformSource,
@@ -232,11 +234,12 @@ async function serveObject(
   const headers = objectHeaders(info, cache, dispositionFor(type));
   const early = preflight(info, headers, request);
   if (early instanceof Response) return early;
-  const object = request.method === "HEAD"
-    ? null
-    : await rt.driver.get(bucket.name, key, early.range);
-  if (request.method !== "HEAD" && !object) throw new StorageError("not_found", "no such object");
-  return objectResponse(info, headers, early.range, object?.body ?? null);
+  const read: ObjectReader = async (range) => {
+    const object = await rt.driver.get(bucket.name, key, range);
+    if (!object) throw new StorageError("not_found", "no such object");
+    return servedBytes(info, object, range);
+  };
+  return await objectResponse(info, headers, early.ranges, request.method === "HEAD" ? null : read);
 }
 
 async function transformed(

@@ -40,12 +40,15 @@ export type {
   DeployImages,
   DeployJob,
   DeployManifest,
+  DeployNetPermissions,
   DeployPermissions,
   DeployRoute,
   DeployRouteKind,
   DeploySchedule,
   DeployServer,
+  DeployServerTls,
   DeployService,
+  DeployTlsCertificate,
 } from "./manifest.ts";
 export { docker } from "./presets/docker.ts";
 export type { DockerPresetOptions } from "./presets/docker.ts";

@@ -36,7 +36,11 @@ on:
       - "src/build/installed-package.ts"
       - "src/build/native-module-scan.ts"
       - "src/build/next-compat.ts"
+      - "src/build/packed-text.ts" # the Brotli decoder the packed manifests import
       - "src/build/esbuild/**" # the vendored esbuild API every bundle above runs through
+      - "src/build/exited-output.ts" # child output read until exit (esbuild, the parity `deno doc`)
+      - "scripts/deno-doc.ts" # the parity `deno doc` children, bounded and retried on a stall
+      - "src/build/child-probe.ts" # their stall probe (debug-log tail, CPU samples)
       - "src/build/reanimated*.ts"
       - "src/ts/program-api.ts" # the TypeScript program API the parity scripts read through
       - "src/build/require-context.ts" # Metro's require.context in React Native mode
@@ -54,6 +58,7 @@ on:
       - "src/jsx/types.ts"
       - "src/runtime/context.ts"
       - "src/runtime/hooks.ts"
+      - "src/runtime/hooks/**"
       - "src/runtime/react-core.ts"
       - "scripts/parity/**"
       - "deno.json"

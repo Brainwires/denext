@@ -23,10 +23,11 @@ import { fromFileUrl, join } from "@std/path";
 import {
   assertNoConsoleErrors,
   collectConsoleErrors,
-  killTree,
   launchBrowser,
   runDeno,
+  spawnOnBoundPort,
   startCliServer,
+  statusOf,
 } from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/tanstack-start", import.meta.url));
@@ -63,8 +64,6 @@ async function hydrated(page: Page): Promise<void> {
 
 Deno.test({
   name: "e2e: examples/tanstack-start runs a TanStack Start app on denext",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const install = await runDeno(["install"], EXAMPLE, 180_000);
   if (!install.ok) {
@@ -106,7 +105,7 @@ Deno.test({
   const server = await startCliServer(EXAMPLE, 60_000);
   try {
     await t.step("`denext start` serves the server bundle the build made", async () => {
-      assertEquals((await fetch(server.origin + "/")).status, 200);
+      assertEquals(await statusOf(fetch(server.origin + "/")), 200);
       assertEquals(
         (await Deno.stat(serverBundle)).mtime?.getTime(),
         builtAt,
@@ -126,7 +125,7 @@ Deno.test({
         "the post renders inside the layout's <Outlet />",
       );
       assertStringIncludes(html, '<script type="module" src="/_tss/client.js"');
-      assertEquals((await fetch(server.origin + "/_tss/client.js")).status, 200);
+      assertEquals(await statusOf(fetch(server.origin + "/_tss/client.js")), 200);
     });
 
     await t.step("the client bundle carries no server-only code", async () => {
@@ -340,8 +339,6 @@ function serveStatic(
 
 Deno.test({
   name: "e2e: examples/tanstack-start exports a static site with Start's prerender",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const install = await runDeno(["install"], EXAMPLE, 180_000);
   if (!install.ok) {
@@ -500,21 +497,14 @@ Deno.test({
 
 /** `denext dev` for the example on a free port, once it answers. */
 async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", String(port)],
-    cwd: EXAMPLE,
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  const origin = `http://127.0.0.1:${port}`;
-  const close = async () => {
-    await killTree(child.pid);
-    await child.status.catch(() => {});
-  };
-  for (let i = 0; i < 240; i++) {
+  // `--port 0`, then the port the server says it bound: nothing picked for it can be taken.
+  const server = await spawnOnBoundPort(
+    ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", "0"],
+    EXAMPLE,
+  );
+  const origin = `http://127.0.0.1:${server.port}`;
+  const close = server.close;
+  for (let i = 0; i < 240 && !server.exited(); i++) {
     try {
       const res = await fetch(origin + "/_tss/client.js");
       await res.body?.cancel();
@@ -528,8 +518,6 @@ async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
 
 Deno.test({
   name: "e2e: examples/tanstack-start in denext dev renders every page as Start's SPA shell",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const install = await runDeno(["install"], EXAMPLE, 180_000);
   if (!install.ok) {

@@ -130,6 +130,18 @@ Deno.test("BlurView: a backdrop blur with the tint; overlayColor and enabled={fa
   assertStringIncludes(vib.style.cssText, "blur(4px)");
 });
 
+Deno.test("BlurView: Android's blurRadius sets the radius in pixels, clamped to 25", () => {
+  const radius = (props: Record<string, unknown>) =>
+    find(mount(() => h(BlurView, props)).container, "div").style.cssText;
+  assertStringIncludes(radius({ blurAmount: 50, blurRadius: 3 }), "blur(3px)");
+  assertStringIncludes(radius({ blurRadius: 40 }), "blur(25px)");
+  // the tint still follows blurAmount
+  assertStringIncludes(
+    radius({ blurType: "dark", blurAmount: 50, blurRadius: 3 }),
+    "rgba(25,25,25",
+  );
+});
+
 // ---- the date pickers --------------------------------------------------------------------
 
 Deno.test("date input values round-trip, keeping the parts a mode does not edit", () => {

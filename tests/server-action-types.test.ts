@@ -2,7 +2,7 @@
 // call is type-checked against the handler's signature across the client/server boundary
 // (Next types actions only within a module — denext types them wherever they're imported).
 import { assertEquals } from "@std/assert";
-import { serverAction } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
 
 Deno.test("serverAction: the ref runs the handler and carries a stable id (server side)", async () => {
@@ -12,7 +12,7 @@ Deno.test("serverAction: the ref runs the handler and carries a stable id (serve
 });
 
 Deno.test("serverAction: calls are type-checked (wrong args / return are compile errors)", async () => {
-  const mod = new URL("../src/runtime/server-action.ts", import.meta.url).href;
+  const mod = new URL("../src/runtime/action-stub.ts", import.meta.url).href;
   const dir = await Deno.makeTempDir({ prefix: "denext-action-types-" });
   try {
     // A passing `deno check` here proves BOTH that a correct call type-checks AND that a

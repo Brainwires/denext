@@ -488,12 +488,33 @@ async function keepMode(target: string, temp: string): Promise<void> {
   await Deno.chmod(temp, mode & 0o7777);
 }
 
+/** A path through a dangling symlink: writing it would create the link's target, wherever it points. */
+function danglingError(path: string): Error {
+  return new Error(`denext: ${path} is outside the project (a dangling symlink is on its path)`);
+}
+
+/** Whether `path` is a symlink whose target does not exist. */
+async function isDanglingSymlink(path: string): Promise<boolean> {
+  return (await Deno.lstat(path).catch(() => null))?.isSymlink === true;
+}
+
+/** {@linkcode isDanglingSymlink}, synchronously. */
+function isDanglingSymlinkSync(path: string): boolean {
+  try {
+    return Deno.lstatSync(path).isSymlink;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The realpath of `path`, or of its nearest existing ancestor when it does not exist yet. Also
  * the MCP tools' containment re-check (a lexically-inside path through a symlink is outside).
+ * A dangling symlink on the path is refused: writing through it would create its target.
  *
  * @param path An absolute path.
  * @returns The realpath of it or its nearest existing ancestor.
+ * @throws When a dangling symlink is on the path.
  */
 export async function realPathOfNearest(path: string): Promise<string> {
   let current = path;
@@ -501,6 +522,7 @@ export async function realPathOfNearest(path: string): Promise<string> {
     try {
       return await Deno.realPath(current);
     } catch {
+      if (await isDanglingSymlink(current)) throw danglingError(path);
       const parent = resolve(current, "..");
       if (parent === current) return current;
       current = parent;
@@ -514,6 +536,7 @@ export async function realPathOfNearest(path: string): Promise<string> {
  *
  * @param path An absolute path.
  * @returns The realpath of it or its nearest existing ancestor.
+ * @throws When a dangling symlink is on the path.
  */
 export function realPathOfNearestSync(path: string): string {
   let current = path;
@@ -521,6 +544,7 @@ export function realPathOfNearestSync(path: string): string {
     try {
       return Deno.realPathSync(current);
     } catch {
+      if (isDanglingSymlinkSync(current)) throw danglingError(path);
       const parent = resolve(current, "..");
       if (parent === current) return current;
       current = parent;

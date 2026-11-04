@@ -40,16 +40,20 @@ export function responseCompletionOf(request: Request): Promise<void> | undefine
  * wildcard bind (`0.0.0.0` / `::`) as the loopback address and an IPv6 one bracketed.
  *
  * @param addr The address `Deno.serve` bound.
- * @returns `http://<host>:<port>`, or `undefined` for a non-TCP address (a Unix socket).
+ * @param scheme `https` for a server that serves TLS (`start.tls`).
+ * @returns `<scheme>://<host>:<port>`, or `undefined` for a non-TCP address (a Unix socket).
  */
-export function loopbackOrigin(addr: Deno.Addr): string | undefined {
+export function loopbackOrigin(
+  addr: Deno.Addr,
+  scheme: "http" | "https" = "http",
+): string | undefined {
   if (!("hostname" in addr) || !("port" in addr)) return undefined;
   const host = addr.hostname === "0.0.0.0"
     ? "127.0.0.1"
     : addr.hostname === "::"
     ? "::1"
     : addr.hostname;
-  return `http://${host.includes(":") ? `[${host}]` : host}:${addr.port}`;
+  return `${scheme}://${host.includes(":") ? `[${host}]` : host}:${addr.port}`;
 }
 
 /**

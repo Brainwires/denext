@@ -4,9 +4,9 @@
  * `HttpError`, and 1.x's content-security-policy helpers.
  *
  * `<Head>` renders its children in place: denext hoists `<title>`, `<meta>` and `<link>` into the
- * document head. `<Partial>` renders its children (denext has no partial navigation: a link
- * loads the next page). `asset()` returns the path unchanged (denext fingerprints its own
- * bundles; files in `public/` are served as they are).
+ * document head. `<Partial>` is a region Fresh's client navigation (`f-client-nav`, `f-partial`)
+ * updates in place (see `denext/fresh/partial`). `asset()` returns the path unchanged (denext
+ * fingerprints its own bundles; files in `public/` are served as they are).
  *
  * @module
  */
@@ -15,6 +15,7 @@ import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 
 export { HttpError } from "./http-error.ts";
+export { Partial, type PartialMode, type PartialProps } from "./partial.ts";
 
 /** True in the browser, false while rendering on the server. */
 export const IS_BROWSER: boolean = typeof document !== "undefined";
@@ -53,27 +54,6 @@ export interface HeadProps {
  * @returns The elements.
  */
 export function Head(props: HeadProps): VNode {
-  return h(Fragment, null, props.children);
-}
-
-/** Props of {@link Partial}. */
-export interface PartialProps {
-  /** The partial's name. */
-  name: string;
-  /** How Fresh merges a partial update (unused on denext). */
-  mode?: "replace" | "prepend" | "append";
-  /** The partial's content. */
-  children?: VNodeChildren;
-}
-
-/**
- * Fresh's `<Partial>`: renders its children. denext has no partial navigation, so a
- * `f-client-nav` link loads the next page in full.
- *
- * @param props The partial's name and content.
- * @returns The content.
- */
-export function Partial(props: PartialProps): VNode {
   return h(Fragment, null, props.children);
 }
 

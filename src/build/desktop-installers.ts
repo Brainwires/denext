@@ -20,8 +20,10 @@
 
 import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import type { DesktopOs } from "./desktop-capabilities.ts";
 import { gzipBytes } from "./precompress.ts";
+import { type DesktopOs, sidecarRunWriteWarnings } from "./desktop-capabilities.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { resolveDesktopBackend } from "../desktop/engine-backend.ts";
 
 /** Every installer format, by the OS it is built for. */
 export const DESKTOP_INSTALLER_FORMATS = {
@@ -127,18 +129,7 @@ export function planDesktopInstallers(
   return { formats, explicit };
 }
 
-/**
- * `denext.config.ts` beside the scripts dir of `entryUrl` (a missing config is `undefined`). Shared
- * by the package-script helpers.
- */
-export async function loadConfigBeside(entryUrl: string): Promise<unknown> {
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    return (mod as { default?: unknown }).default;
-  } catch {
-    return undefined; // no denext.config.ts (or it exports no config): the defaults apply
-  }
-}
+export { loadConfigBeside };
 
 /**
  * {@linkcode planDesktopInstallers} for the project whose `scripts/` holds `entryUrl` (its
@@ -184,7 +175,10 @@ export interface DesktopPackageMeta {
   readonly singleInstance: boolean;
   /** deno.json `license` (the `.rpm` License tag), when it is a string. */
   readonly license?: string;
-  /** The `deno desktop` backend (`"webview"` unless deno.json `desktop.backend` says otherwise). */
+  /**
+   * The `deno desktop` backend of the target OS: `desktop.backend` in `denext.config.ts` (one
+   * engine, or per OS), else deno.json's, else `"webview"`.
+   */
   readonly backend: string;
   /**
    * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on libsecret,
@@ -291,13 +285,16 @@ function schemes(list: unknown): string[] {
  * @param config The loaded `denext.config.ts` default export.
  * @param fallbackName The name to use when neither file names the app.
  * @param pkg The parsed package.json, if the project has one.
+ * @param os The target OS, for a per-OS `desktop.backend` (default: the host's).
  * @returns The metadata.
+ * @throws {Error} When `denext.config.ts` `desktop.backend` is not a backend setting.
  */
 export function packageMetaFrom(
   deno: unknown,
   config: unknown,
   fallbackName: string,
   pkg?: unknown,
+  os: DesktopOs = Deno.build.os as DesktopOs,
 ): DesktopPackageMeta {
   const denoApp = field(field(deno, "desktop"), "app");
   const cfgDesktop = field(config, "desktop");
@@ -316,7 +313,8 @@ export function packageMetaFrom(
     deepLinks: schemes(denoApp.deepLinks ?? cfgApp.deepLinks),
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
     license: str((deno as Obj | undefined)?.license),
-    backend: str(field(deno, "desktop").backend) ?? "webview",
+    backend: resolveDesktopBackend(cfgDesktop.backend, os) ??
+      str(field(deno, "desktop").backend) ?? "webview",
     secureStore: capabilityOn(field(cfgDesktop, "capabilities"), "secureStore", "secure-store"),
   };
 }
@@ -331,11 +329,13 @@ function capabilityOn(caps: Obj, ...names: string[]): boolean {
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param fallbackName The name to use when deno.json names no app.
+ * @param os The target OS, for a per-OS `desktop.backend` (default: the host's).
  * @returns The metadata.
  */
 export async function desktopPackageMeta(
   entryUrl: string,
   fallbackName: string,
+  os?: DesktopOs,
 ): Promise<DesktopPackageMeta> {
   const root = new URL("../", entryUrl);
   const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
@@ -345,6 +345,7 @@ export async function desktopPackageMeta(
     await loadConfigBeside(entryUrl),
     fallbackName,
     await readPackageJson(dir),
+    os,
   );
 }
 
@@ -398,20 +399,26 @@ export function packageMetaWarnings(
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param meta The resolved metadata.
+ * @param os The target OS (default: this host's): what the sidecar warnings are baked for.
  * @returns The warning lines.
  */
 export async function desktopPackageMetaWarnings(
   entryUrl: string,
   meta: DesktopPackageMeta,
+  os: DesktopOs = hostDesktopOs(),
 ): Promise<string[]> {
   const root = new URL("../", entryUrl);
   const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
-  return packageMetaWarnings(
-    await readDenoJson(dir),
-    await loadConfigBeside(entryUrl),
-    meta,
-    await readPackageJson(dir),
-  );
+  const config = await loadConfigBeside(entryUrl);
+  return [
+    ...packageMetaWarnings(await readDenoJson(dir), config, meta, await readPackageJson(dir)),
+    ...sidecarRunWriteWarnings(config, os),
+  ];
+}
+
+/** The OS this process runs on, as a packaging target. */
+function hostDesktopOs(): DesktopOs {
+  return Deno.build.os === "darwin" ? "darwin" : Deno.build.os === "windows" ? "windows" : "linux";
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -832,6 +839,14 @@ const LINUX_RUNTIME_DEPS: Record<string, ReadonlyArray<readonly [string, string]
     ["libexpat.so.1", "libexpat1"],
     ["libxcb.so.1", "libxcb1"],
     ["libdrm.so.2", "libdrm2"],
+    // Linked directly by CEF with no declared package; they installed only because other packages
+    // happened to pull them in. `libnssutil3` and `libsmime3` ship in Debian's `libnss3` too.
+    ["libcups.so.2", "libcups2"],
+    ["libnspr4.so", "libnspr4"],
+    ["libnssutil3.so", "libnss3"],
+    ["libsmime3.so", "libnss3"],
+    ["libatk-bridge-2.0.so.0", "libatk-bridge2.0-0"],
+    ["libXi.so.6", "libxi6"],
   ],
 };
 
@@ -847,6 +862,19 @@ function linuxDeps(backend: string): ReadonlyArray<readonly [string, string]> {
 function linuxCapabilityDeps(meta: DesktopPackageMeta): ReadonlyArray<readonly [string, string]> {
   return meta.secureStore === true ? [["libsecret-1-0", "libsecret"]] : [];
 }
+
+/**
+ * What the packages recommend (a weak dependency: installed by default where the package manager
+ * does, never required), as (Debian package, RPM requirement): gtk-layer-shell, which the runtime
+ * loads for an `overlay: true` window on a wlr-layer-shell compositor (wlroots, KDE Plasma,
+ * COSMIC), and speech-dispatcher, the OS text to speech `Deno.desktop.speech` speaks through
+ * (runtime 3.0.0-denext.6). Without them an overlay is an ordinary window and speech is
+ * unsupported.
+ */
+const LINUX_RECOMMENDS: ReadonlyArray<readonly [string, string]> = [
+  ["libgtk-layer-shell0", "libgtk-layer-shell.so.0()(64bit)"],
+  ["speech-dispatcher", "speech-dispatcher"],
+];
 
 /** Strip control characters (a `.desktop` / control value is one line). */
 function oneLine(s: string): string {
@@ -1241,9 +1269,14 @@ export function debControl(
     `Maintainer: ${oneLine(meta.publisher)}`,
     `Installed-Size: ${installedKiB}`,
     `Depends: ${
-      [...linuxDeps(meta.backend).map(([, p]) => p), ...linuxCapabilityDeps(meta).map(([d]) => d)]
-        .join(", ")
+      [
+        ...new Set([
+          ...linuxDeps(meta.backend).map(([, p]) => p),
+          ...linuxCapabilityDeps(meta).map(([d]) => d),
+        ]),
+      ].join(", ")
     }`,
+    `Recommends: ${LINUX_RECOMMENDS.map(([d]) => d).join(", ")}`,
     "Section: utils",
     "Priority: optional",
     `Description: ${oneLine(meta.description)}`,
@@ -1439,8 +1472,8 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
  * The `rpmbuild` spec for a staged Linux root: the files are copied as staged (no strip, no
  * debuginfo, no automatic dependency scan), `Requires` names the backend's shared libraries by
  * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (the
- * library the runtime loads) when the secure store is on; `%post` / `%postun` refresh the desktop
- * and icon databases.
+ * library the runtime loads) when the secure store is on, `Recommends` gtk-layer-shell (by soname)
+ * and speech-dispatcher; `%post` / `%postun` refresh the desktop and icon databases.
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).
@@ -1456,6 +1489,7 @@ export function rpmSpec(
   const requires = [
     ...linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`),
     ...linuxCapabilityDeps(meta).map(([, rpm]) => `Requires: ${rpm}`),
+    ...LINUX_RECOMMENDS.map(([, rpm]) => `Recommends: ${rpm}`),
   ];
   // rpmbuild expands `%macro` / `%(shell)` / `%{lua:…}` everywhere in the spec, so every value
   // that comes from the project carries its `%` as the literal `%%`.

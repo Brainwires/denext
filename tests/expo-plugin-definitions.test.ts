@@ -17,6 +17,7 @@ import {
   readVendoredIndex,
 } from "../scripts/parity/native/expo-plugins.ts";
 import { fileUrlCheckEnv } from "./helpers/file-url-check-env.ts";
+import { quietDeno } from "./helpers/quiet-deno.ts";
 
 const ROOT = new URL("../", import.meta.url);
 const CONFIG = fromFileUrl(new URL("deno.json", ROOT));
@@ -40,13 +41,10 @@ async function typeCheck(files: Record<string, string>): Promise<{ ok: boolean; 
       await Deno.writeTextFile(path, text);
       paths.push(path);
     }
-    const res = await new Deno.Command(Deno.execPath(), {
-      args: ["check", "--quiet", "--config", CONFIG, ...paths],
+    const res = await quietDeno(["check", "--quiet", "--config", CONFIG, ...paths], {
       env: { NO_COLOR: "1", ...fileUrlCheckEnv() },
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    const out = new TextDecoder().decode(res.stdout) + new TextDecoder().decode(res.stderr);
+    });
+    const out = res.stdout + res.stderr;
     return { ok: res.success, out };
   } finally {
     await Deno.remove(dir, { recursive: true });

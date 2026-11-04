@@ -122,14 +122,25 @@ Deno.test("an AbortError from any source is swallowed, not fatal", async () => {
 Deno.test("fetch helper type accepts a URL input", async () => {
   // Compile-time coverage for the `RequestInfo | URL` widening: this file would
   // fail `deno check` if the helper still rejected `URL`.
+  let body: string | undefined;
+  let settled!: () => void;
+  const done = new Promise<void>((r) => settled = r);
   function Comp() {
     useAsyncEffect(async ({ fetch, signal }) => {
-      if (signal.aborted) return;
-      const url = new URL("data:,hello");
-      await fetch(url).catch(() => {});
+      try {
+        if (signal.aborted) return;
+        const url = new URL("data:,hello");
+        // Read the body: one left unread is a leak the test sanitizer reports.
+        body = await (await fetch(url)).text();
+      } finally {
+        settled();
+      }
     }, []);
     return h("p", null, "ok");
   }
   const screen = await render(h(Comp, null));
+  // The fetch settles inside the test, before the unmount (which would abort it).
+  await done;
+  assertEquals(body, "hello");
   await screen.unmount();
 });

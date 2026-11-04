@@ -29,7 +29,7 @@ import type {
 import { decodeCbor } from "../../server/auth/cbor.ts";
 import { type CacheStore, getCacheStore } from "../../server/cache.ts";
 import { base64UrlDecode } from "../../server/auth/oauth.ts";
-import type { SessionStore } from "../../server/auth/session-store.ts";
+import { markWithoutAuthLevel, type SessionStore } from "../../server/auth/session-store.ts";
 import type { AuthSession } from "../../server/auth/types.ts";
 
 import type { Awaitable } from "./types.ts";
@@ -526,10 +526,12 @@ function serially<T>(
 }
 
 /**
- * A user's session row as a denext session payload (no `authTime`: it never slides). With the
- * session `maxAge`, its sign-in time to the millisecond (`authTimeMs`): the row's expiry less
- * `maxAge`, the expiry having been written with the sign-in's milliseconds ({@link rowExpires}),
- * so "sign out everywhere" tells a sign-in in the same second, but after it, from one before.
+ * A user's session row as a denext session payload. The row keeps no sign-in time, so the
+ * session cookie carries it (`denextAuth` restores `authTime` from there on every read, which
+ * lets the row slide under `session.updateAge` up to `session.maxLifetime`). Without one (a
+ * cookie from before that), with the session `maxAge`, its sign-in time to the millisecond
+ * (`authTimeMs`): the row's expiry less `maxAge`, the expiry having been written with the
+ * sign-in's milliseconds ({@link rowExpires}) — such a session never slides, so that holds.
  */
 function sessionPayload(
   row: AuthJsAdapterSession,
@@ -570,7 +572,9 @@ function sessionStore(
 ): SessionStore | undefined {
   const { createSession, getSessionAndUser, deleteSession, updateSession } = adapter;
   if (!createSession || !getSessionAndUser || !deleteSession) return undefined;
-  return {
+  // A row holds the user and the expiry only: no `authTime`, `amr` or `mfaPending`, so
+  // `denextAuth` refuses MFA over it rather than read a pending session back as complete.
+  return markWithoutAuthLevel({
     async create(id, session) {
       await createSession.call(adapter, {
         sessionToken: id,
@@ -608,7 +612,7 @@ function sessionStore(
           `of user ${JSON.stringify(userId)} were not ended — they expire on their own.`,
       );
     },
-  };
+  });
 }
 
 /** Options for {@linkcode fromAuthJsAdapter}. */

@@ -53,6 +53,27 @@ export interface MobileDoctorFinding {
   readonly level: "error" | "warning";
   readonly message: string;
   readonly fix: string;
+  /**
+   * A release-security hole `denext mobile build --release` refuses to ship (see
+   * {@linkcode releaseGateFindings}): a dev / http `server.url`, a wildcard or http
+   * `allowNavigation`, `frameGuard: false` over a foreign origin, cleartext (the Capacitor
+   * config, the manifest's `usesCleartextTraffic`, a network security config, a leftover
+   * `NSAllowsLocalNetworking`), a debuggable WebView or APK (`android:debuggable`), the legacy
+   * bridge. Every other finding (`NSAllowsArbitraryLoads`, insecure ATS exception domains,
+   * mixed content, a missing CSP, …) only warns there.
+   */
+  readonly releaseGate?: boolean;
+}
+
+/**
+ * The findings `denext mobile build --release` refuses on: errors tagged
+ * {@linkcode MobileDoctorFinding.releaseGate}.
+ *
+ * @param report A `--release` doctor report.
+ * @returns The gating errors, in report order.
+ */
+export function releaseGateFindings(report: MobileDoctorReport): MobileDoctorFinding[] {
+  return report.findings.filter((f) => f.level === "error" && f.releaseGate === true);
 }
 
 /** What the doctor found. */
@@ -214,6 +235,11 @@ const serverUrl: Check = {
     perConfig(p, (c) => typeof at(c, "server", "url") === "string", (label) => ({
       check: "server-url",
       level: "error",
+      // A LAN / loopback / plain-http server (a dev session's) is a release hole; a hosted
+      // https one is a store-review matter.
+      releaseGate: !/^https:\/\//i.test(
+        String(at(p.configs.find((s) => s.label === label)!.config, "server", "url")).trim(),
+      ),
       message: `${label} sets server.url (${
         String(at(p.configs.find((s) => s.label === label)!.config, "server", "url"))
       }): the app loads a remote site instead of its bundled export, the classic 4.2 rejection`,
@@ -253,6 +279,7 @@ const webviewDebugging: Check = {
       perConfig(p, (c) => at(c, platform, "webContentsDebuggingEnabled") === true, (label) => ({
         check: "webview-debugging",
         level: "error",
+        releaseGate: true,
         message: `${label}: ${platform}.webContentsDebuggingEnabled is true, so a release build ` +
           "lets anyone attach a web inspector to the app",
         fix: `remove ${platform}.webContentsDebuggingEnabled (debug builds are inspectable ` +
@@ -280,11 +307,110 @@ const legacyBridge: Check = {
     perConfig(p, (c) => at(c, "android", "useLegacyBridge") === true, (label) => ({
       check: "legacy-bridge",
       level: "error",
+      releaseGate: true,
       message: `${label}: android.useLegacyBridge exposes the native bridge through ` +
         "addJavascriptInterface, which every frame can call: an iframe could reach every " +
         "installed plugin (the default bridge accepts plugin calls from the main frame only)",
       fix: "remove android.useLegacyBridge",
     })),
+};
+
+/**
+ * The origins a Capacitor config navigates to besides the app's own: `server.url` and each
+ * `server.allowNavigation` entry, as `https://host` (an entry without a scheme is https, as
+ * Capacitor reads it).
+ */
+function hostedOrigins(config: Record<string, unknown>): string[] {
+  const entries: string[] = [];
+  const url = at(config, "server", "url");
+  if (typeof url === "string") entries.push(url);
+  const navigation = at(config, "server", "allowNavigation");
+  if (Array.isArray(navigation)) {
+    for (const entry of navigation) if (typeof entry === "string") entries.push(entry);
+  }
+  return [...new Set(entries.map(originOf))];
+}
+
+/** `entry`'s origin (`https://` when it names no scheme), or `entry` when it does not parse. */
+function originOf(entry: string): string {
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `https://${entry}`;
+  try {
+    return new URL(withScheme).origin;
+  } catch {
+    return withScheme;
+  }
+}
+
+/**
+ * `server.url` / `server.allowNavigation` origins with the bridge's origin guard on: their pages
+ * cannot call native plugins (refused, AU6-L8) unless `plugins.DenextBridge.allowedOrigins` lists
+ * them; and `plugins.DenextBridge.frameGuard: false`, which lets every one of them (an error under
+ * `--release` when an `allowNavigation` origin other than `server.url`'s is among them).
+ */
+const bridgeOriginGuard: Check = {
+  id: "bridge-origin-guard",
+  profiles: ["store", "release"],
+  run: (p, profile) =>
+    p.configs.flatMap(({ label, config }): MobileDoctorFinding[] => {
+      const hosted = hostedOrigins(config);
+      if (hosted.length === 0) return [];
+      if (at(config, "plugins", "DenextBridge", "frameGuard") === false) {
+        // A release must not ship it over third-party sites: a page on any `allowNavigation`
+        // origin would drive every plugin. A hosted app's own server.url alone (what `denext
+        // migrate` opts out for) stays a warning.
+        const url = at(config, "server", "url");
+        const own = typeof url === "string" ? originOf(url) : undefined;
+        const others = hosted.some((origin) => origin !== own);
+        return [{
+          check: "bridge-origin-guard",
+          level: profile === "release" && others ? "error" as const : "warning" as const,
+          releaseGate: others,
+          message: `${label}: plugins.DenextBridge.frameGuard is false, so a page on ` +
+            `${hosted.join(", ")} can call every installed native plugin`,
+          fix: "list only the origins whose pages must call plugins in " +
+            "plugins.DenextBridge.allowedOrigins and remove frameGuard: false",
+        }];
+      }
+      const listed = at(config, "plugins", "DenextBridge", "allowedOrigins");
+      const allowed = new Set(
+        (Array.isArray(listed) ? listed : []).flatMap((o) =>
+          typeof o === "string" ? [originOf(o)] : []
+        ),
+      );
+      const refused = hosted.filter((origin) => !allowed.has(origin));
+      if (refused.length === 0) return [];
+      return [{
+        check: "bridge-origin-guard",
+        level: "warning" as const,
+        message: `${label}: the bridge's origin guard is on, so a page on ${refused.join(", ")} ` +
+          "cannot call native plugins (its calls are refused)",
+        fix: "if pages there call plugins (a hosted server.url app), list them in " +
+          "plugins.DenextBridge.allowedOrigins, or opt out with plugins.DenextBridge.frameGuard: " +
+          "false; else nothing to do",
+      }];
+    }),
+};
+
+/**
+ * `plugins.DenextBridge.otaFileGuard: false`: the iOS shell serves downloaded over-the-air UIs
+ * even where `DenextOtaFileGuard` cannot be installed, so Capacitor answers `/_capacitor_file_`
+ * requests for their files without the signed manifest's check.
+ */
+const otaFileGuard: Check = {
+  id: "ota-file-guard",
+  profiles: ["store", "release"],
+  run: (p) =>
+    p.configs.flatMap(({ label, config }) => {
+      if (at(config, "plugins", "DenextBridge", "otaFileGuard") !== false) return [];
+      return [{
+        check: "ota-file-guard",
+        level: "warning" as const,
+        message: `${label}: plugins.DenextBridge.otaFileGuard is false, so a page can read a ` +
+          "downloaded UI's files through /_capacitor_file_ without the signed manifest's check " +
+          "wherever the guard cannot be installed",
+        fix: "remove otaFileGuard: false (without the guard the app then serves its bundled UI)",
+      }];
+    }),
 };
 
 /** The bridge view controller denext generates, and the guard every current one carries. */
@@ -398,26 +524,70 @@ const exportRoutes: Check = {
   },
 };
 
-/** Whether an allowNavigation entry allows every host. */
-function wildcardHost(entry: unknown): boolean {
-  return typeof entry === "string" && /^(?:[a-z]+:\/\/)?\*(?:\/.*)?$/i.test(entry.trim());
+/**
+ * What is wrong with one `server.allowNavigation` entry, or null. Capacitor matches the entry's
+ * host with `*` as a wildcard and a missing scheme as https (https://capacitorjs.com/docs/config):
+ * `*` alone lets any site in; a wildcard over a bare top-level label (`*.com`) or anywhere but
+ * the first label (`app.*`) lets in hosts nobody vetted; `*.example.com` lets in every subdomain
+ * (worth a look); an `http:` entry loads a page over plain http, with the native bridge.
+ */
+function navigationProblem(
+  entry: unknown,
+  profile: MobileDoctorProfile,
+): { level: "error" | "warning"; why: string } | null {
+  if (typeof entry !== "string") return null;
+  const text = entry.trim();
+  const http = /^http:\/\//i.test(text);
+  const host = text.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/[/:?#].*$/, "");
+  const wildcard = host.includes("*") ? wildcardProblem(text, host) : null;
+  if (wildcard && (wildcard.level === "error" || !http)) return wildcard;
+  if (!http) return null;
+  return {
+    level: profile === "release" ? "error" : "warning",
+    why: `allows ${JSON.stringify(text)} over plain http, so a network attacker can serve ` +
+      "that page inside the app's WebView",
+  };
+}
+
+/** What a wildcard `allowNavigation` host lets in (see {@linkcode navigationProblem}). */
+function wildcardProblem(text: string, host: string): { level: "error" | "warning"; why: string } {
+  if (host === "*") {
+    return { level: "error", why: 'allows "*", so any site can load inside the app\'s WebView' };
+  }
+  const labels = host.split(".");
+  const leading = labels[0] === "*" && !labels.slice(1).some((l) => l.includes("*"));
+  if (!leading || labels.length < 3) {
+    return {
+      level: "error",
+      why: `allows ${JSON.stringify(text)}, a wildcard that matches hosts on domains you do ` +
+        "not own, so other sites can load inside the app's WebView",
+    };
+  }
+  return {
+    level: "warning",
+    why: `allows ${JSON.stringify(text)}: every subdomain, including ones a third party ` +
+      "hosts, can load inside the app's WebView",
+  };
 }
 
 const allowNavigation: Check = {
   id: "allow-navigation",
   profiles: ["store", "release"],
-  run: (p) =>
-    perConfig(p, (c) => {
-      const list = at(c, "server", "allowNavigation");
-      return Array.isArray(list) && list.some(wildcardHost);
-    }, (label) => ({
-      check: "allow-navigation",
-      level: "error",
-      message: `${label}: server.allowNavigation allows "*", so any site can load inside the ` +
-        "app's WebView (with the native bridge)",
-      fix: "list the exact hosts the WebView must navigate to; open everything else with " +
-        "openExternal()",
-    })),
+  run: (p, profile) =>
+    p.configs.flatMap(({ label, config }) => {
+      const list = at(config, "server", "allowNavigation");
+      return (Array.isArray(list) ? list : []).flatMap((entry) => {
+        const problem = navigationProblem(entry, profile);
+        return problem === null ? [] : [{
+          check: "allow-navigation",
+          level: problem.level,
+          releaseGate: problem.level === "error",
+          message: `${label}: server.allowNavigation ${problem.why} (with the native bridge)`,
+          fix: "list the exact https hosts the WebView must navigate to; open everything else " +
+            "with openExternal()",
+        }];
+      });
+    }),
 };
 
 /** The ATS exceptions of Info.plist that allow plain http. */
@@ -446,11 +616,12 @@ function atsExceptions(plist: PlistDict): string[] {
 const cleartext: Check = {
   id: "cleartext",
   profiles: ["store", "release"],
-  run: (p, profile) => {
+  run: async (p, profile) => {
     const level = profile === "release" ? "error" : "warning";
     const out = perConfig(p, (c) => at(c, "server", "cleartext") === true, (label) => ({
       check: "cleartext",
       level,
+      releaseGate: true,
       message: `${label}: server.cleartext allows plain-http traffic from the WebView (Android)`,
       fix: "remove server.cleartext (it is for live reload) and use https",
     }));
@@ -458,6 +629,7 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
+        releaseGate: key === "NSAllowsLocalNetworking",
         message: `${nativeRel(p.root, INFO_PLIST)}: App Transport Security exception ${key}` +
           (key === "NSAllowsLocalNetworking" ? " (left by a `denext mobile dev` session?)" : ""),
         fix: "remove the exception (App Review asks for a justification of each) and use https",
@@ -467,13 +639,57 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
+        releaseGate: true,
         message: `${nativeRel(p.root, ANDROID_MANIFEST)}: android:usesCleartextTraffic="true"`,
         fix: "remove it, or scope plain http to named hosts with a network security config",
       });
     }
+    out.push(...await networkSecurityCleartext(p, level));
     return out;
   },
 };
+
+/**
+ * The network security config the manifest names (`android:networkSecurityConfig="@xml/<name>"`),
+ * relative to the project, or null. https://developer.android.com/privacy-and-security/security-config
+ */
+function networkSecurityConfigPath(manifest: string | null): string | null {
+  const name = manifest === null
+    ? undefined
+    : /\bandroid:networkSecurityConfig\s*=\s*"@xml\/([A-Za-z0-9_]+)"/.exec(manifest)?.[1];
+  return name === undefined ? null : `android/app/src/main/res/xml/${name}.xml`;
+}
+
+/**
+ * The Android network security config's plain-http opt-ins: `cleartextTrafficPermitted="true"`
+ * on `<base-config>` (every host) or a `<domain-config>` (its hosts), which the manifest's
+ * usesCleartextTraffic check does not see.
+ */
+async function networkSecurityCleartext(
+  p: MobileProject,
+  level: "error" | "warning",
+): Promise<MobileDoctorFinding[]> {
+  const rel = networkSecurityConfigPath(p.androidManifest);
+  const xml = rel === null ? null : await readText(nativeJoin(p.root, rel));
+  if (rel === null || xml === null) return [];
+  const text = xml.replace(/<!--[\s\S]*?-->/g, "");
+  const permits = (tag: string) =>
+    new RegExp(`<${tag}\\b[^>]*\\bcleartextTrafficPermitted\\s*=\\s*"true"`).test(text);
+  const where = [
+    ...(permits("base-config") ? ["<base-config> (every host)"] : []),
+    ...(permits("domain-config") ? ["a <domain-config>"] : []),
+  ];
+  return where.length === 0 ? [] : [{
+    check: "cleartext",
+    level,
+    releaseGate: true,
+    message: `${nativeRel(p.root, rel)}: cleartextTrafficPermitted="true" on ${
+      where.join(" and ")
+    } allows plain-http traffic`,
+    fix: "remove cleartextTrafficPermitted (Android refuses plain http by default since API 28) " +
+      "and use https",
+  }];
+}
 
 const androidDebuggable: Check = {
   id: "android-debuggable",
@@ -483,6 +699,7 @@ const androidDebuggable: Check = {
       ? [{
         check: "android-debuggable",
         level: "error",
+        releaseGate: true,
         message: `${
           nativeRel(p.root, ANDROID_MANIFEST)
         }: android:debuggable="true" (Play refuses debuggable uploads)`,
@@ -1394,6 +1611,8 @@ const CHECKS: readonly Check[] = [
   cleartext,
   mixedContent,
   legacyBridge,
+  bridgeOriginGuard,
+  otaFileGuard,
   allowNavigation,
   bridgeFrameGuard,
   exportRoutes,

@@ -6,7 +6,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { build } from "../src/build/build.ts";
+import { buildInChild } from "./helpers/bounded-build.ts";
+import { boundPort, listenedPort } from "./helpers/port.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -81,7 +82,7 @@ async function cliFromElsewhere(args: string[], dir: string): Promise<void> {
 Deno.test("build(dir) from another folder: an island reached only through an alias hydrates", async () => {
   const dir = await aliasApp();
   try {
-    await build(dir);
+    await buildInChild(dir);
     const got = await builtOutput(dir);
     assertEquals(got.staticRoutes, [], "the route is not static");
     assertStringIncludes(got.js, "COUNT_MARK", "the island is bundled");
@@ -115,12 +116,52 @@ Deno.test("denext export <dir> (CLI) from another folder: an aliased island hydr
   }
 });
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
+/**
+ * `denext dev <dir>` from `cwd` on `--port 0`, once it answers `/` on the port it says it bound
+ * (its output kept for a failure).
+ */
+async function startDev(dir: string, cwd: string, unbundled: boolean) {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", abs("cli.ts"), "dev", dir, "--port", "0"],
+    cwd,
+    env: { DENEXT_DEV_UNBUNDLED: unbundled ? "1" : "0" },
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  // Keep the server's output: a cold CI cache can take a while, and a real failure should say why.
+  let errText = "";
+  let port: number | undefined; // read before the tail is cut
+  const read = async (stream: ReadableStream<Uint8Array>) => {
+    const dec = new TextDecoder();
+    for await (const c of stream) {
+      errText += dec.decode(c, { stream: true });
+      port ??= listenedPort(errText);
+      errText = errText.slice(-4000);
+    }
+  };
+  const errDone = Promise.all([read(child.stdout), read(child.stderr)]);
+  let exited = false;
+  child.status.then(() => exited = true);
+  await boundPort(() => port, () => exited);
+  const text = async (path: string) =>
+    await (await fetch(`http://localhost:${port}${path}`)).text();
+  const stop = async () => {
+    try {
+      child.kill("SIGTERM");
+    } catch { /* exited */ }
+    await child.status;
+    await errDone;
+  };
+  let html = "";
+  for (let i = 0; i < 720 && port !== undefined && !html && !exited; i++) { // ~3 min (cold cache)
+    html = await text("/").catch(() => "");
+    if (!html) await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!html) {
+    await stop();
+    throw new Error(`the dev server never answered; its output ended with:\n${errText}`);
+  }
+  return { html, text, stop };
 }
 
 // `denext dev <dir>` as a user runs it from another folder (the CLI's own process; an in-process
@@ -130,29 +171,10 @@ for (const unbundled of [true, false]) {
   Deno.test(`denext dev <dir> (CLI, ${loop}) from another folder: an aliased island is in the Flight entry`, async () => {
     const dir = await aliasApp();
     const elsewhere = await Deno.makeTempDir({ prefix: "denext_alias_cwd_" });
-    const port = freePort();
-    const child = new Deno.Command(Deno.execPath(), {
-      args: ["run", "-A", abs("cli.ts"), "dev", dir, "--port", String(port)],
-      cwd: elsewhere,
-      env: { DENEXT_DEV_UNBUNDLED: unbundled ? "1" : "0" },
-      stdout: "null",
-      stderr: "piped",
-    }).spawn();
-    // Keep the server's stderr: a cold CI cache can take a while, and a real failure should say why.
-    let errText = "";
-    const errDone = (async () => {
-      const dec = new TextDecoder();
-      for await (const c of child.stderr) errText = (errText + dec.decode(c)).slice(-4000);
-    })();
-    const text = async (path: string) =>
-      await (await fetch(`http://localhost:${port}${path}`)).text();
+    let server: Awaited<ReturnType<typeof startDev>> | undefined;
     try {
-      let html = "";
-      for (let i = 0; i < 720 && !html; i++) { // up to ~3 min for the server to come up (cold cache)
-        html = await text("/").catch(() => "");
-        if (!html) await new Promise((r) => setTimeout(r, 250));
-      }
-      assert(html, `the dev server never answered; its stderr ended with:\n${errText}`);
+      server = await startDev(dir, elsewhere, unbundled);
+      const { html, text } = server;
       assertStringIncludes(html, "COUNT_MARK");
       assertStringIncludes(html, "/_denext/flight.js", "the page boots the Flight islands");
       const entry = await text("/_denext/flight.js");
@@ -164,9 +186,7 @@ for (const unbundled of [true, false]) {
         "the Flight entry carries the aliased island",
       );
     } finally {
-      child.kill("SIGTERM");
-      await child.status;
-      await errDone;
+      await server?.stop();
       await Deno.remove(elsewhere, { recursive: true });
       await Deno.remove(dir, { recursive: true });
     }

@@ -1,8 +1,13 @@
 // An in-memory S3 for the backend storage tests: the REST calls the `s3()` driver makes
 // (path-style), including presigned URLs, ranges, ListObjectsV2 paging with `encoding-type=url`
 // multipart uploads and CopyObject. It checks that every request is SigV4-signed (header or query form)
-// and that a presigned request carries the headers it signed; it does not recompute signatures
-// (the signer is verified against AWS's own vectors in backend-sigv4.test.ts).
+// and that a presigned request carries the headers it signed. With `verify` set it also
+// recomputes a presigned URL's signature from the request as it arrives — the way S3 does — so
+// a body whose length differs from a signed `content-length` is refused; otherwise it does not
+// recompute signatures (the signer is verified against AWS's own vectors in
+// backend-sigv4.test.ts).
+
+import { type AwsCredentials, presignUrl } from "../packages/backend/src/sigv4.ts";
 
 interface StoredS3 {
   body: Uint8Array;
@@ -21,12 +26,14 @@ export class FakeS3 {
   readonly calls: { method: string; url: string }[] = [];
   /** When set, the next request with this method answers 500 with an S3 error body. */
   failNext: string | null = null;
+  /** When set, presigned requests are checked against a signature recomputed as S3 would. */
+  verify: { region: string; credentials: AwsCredentials } | null = null;
   #seq = 0;
 
   constructor(readonly bucket = "test-bucket") {}
 
   fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const request = new Request(input, init);
+    let request = new Request(input, init);
     const url = new URL(request.url);
     this.calls.push({ method: request.method, url: request.url });
     if (this.failNext === request.method) {
@@ -36,19 +43,12 @@ export class FakeS3 {
         "<Error><Code>InternalError</Code><Message>boom &amp; bust</Message></Error>",
       );
     }
-    const auth = request.headers.get("authorization") ?? url.searchParams.get("X-Amz-Signature");
-    if (!auth) return xml(403, "<Error><Code>AccessDenied</Code></Error>");
-    const signed = url.searchParams.get("X-Amz-SignedHeaders");
-    if (signed) {
-      for (const name of signed.split(";")) {
-        // `host` and `content-length` are set by fetch on the wire, not on the Request object.
-        if (name !== "host" && name !== "content-length" && !request.headers.has(name)) {
-          return xml(
-            403,
-            `<Error><Code>SignatureDoesNotMatch</Code><Message>${name}</Message></Error>`,
-          );
-        }
-      }
+    const refused = this.#unsigned(request, url);
+    if (refused) return refused;
+    if (this.verify && url.searchParams.has("X-Amz-Signature")) {
+      const checked = await this.#verified(request, url);
+      if (checked instanceof Response) return checked;
+      request = checked;
     }
     const prefix = `/${this.bucket}`;
     if (!url.pathname.startsWith(prefix)) {
@@ -58,6 +58,65 @@ export class FakeS3 {
     if (!key) return this.#list(url);
     return await this.#object(request, url, key);
   };
+
+  /** A refusal for an unsigned request, or one missing a header its presigned URL signed. */
+  #unsigned(request: Request, url: URL): Response | null {
+    const auth = request.headers.get("authorization") ?? url.searchParams.get("X-Amz-Signature");
+    if (!auth) return xml(403, "<Error><Code>AccessDenied</Code></Error>");
+    // `host` and `content-length` are set by fetch on the wire, not on the Request object.
+    const missing = (url.searchParams.get("X-Amz-SignedHeaders") ?? "").split(";").find((name) =>
+      name && name !== "host" && name !== "content-length" && !request.headers.has(name)
+    );
+    return missing === undefined
+      ? null
+      : xml(403, `<Error><Code>SignatureDoesNotMatch</Code><Message>${missing}</Message></Error>`);
+  }
+
+  /** The request again (its body buffered) when its presigned signature holds, else a 403. */
+  async #verified(request: Request, url: URL): Promise<Request | Response> {
+    const body = new Uint8Array(await request.arrayBuffer());
+    if (!await this.#presignMatches(request, url, body)) {
+      return xml(403, "<Error><Code>SignatureDoesNotMatch</Code></Error>");
+    }
+    const hasBody = request.method !== "GET" && request.method !== "HEAD";
+    return new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: hasBody ? body as BodyInit : null,
+    });
+  }
+
+  /** Recompute a presigned URL's signature from what arrived (a signed length is the body's). */
+  async #presignMatches(request: Request, url: URL, body: Uint8Array): Promise<boolean> {
+    const q = url.searchParams;
+    const headers: Record<string, string> = {};
+    for (const name of (q.get("X-Amz-SignedHeaders") ?? "").split(";")) {
+      if (name === "host") continue;
+      headers[name] = name === "content-length"
+        ? String(body.byteLength)
+        : request.headers.get(name) ?? "";
+    }
+    const query: Record<string, string> = {};
+    for (const [k, v] of q) if (!k.startsWith("X-Amz-")) query[k] = v;
+    const d = q.get("X-Amz-Date") ?? "";
+    const date = new Date(
+      `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${d.slice(9, 11)}:${d.slice(11, 13)}:${
+        d.slice(13, 15)
+      }Z`,
+    );
+    const again = await presignUrl(
+      {
+        method: request.method,
+        origin: url.origin,
+        path: decodeURIComponent(url.pathname),
+        query,
+        headers,
+      },
+      { region: this.verify!.region, service: "s3", credentials: this.verify!.credentials, date },
+      Number(q.get("X-Amz-Expires")),
+    );
+    return new URL(again).searchParams.get("X-Amz-Signature") === q.get("X-Amz-Signature");
+  }
 
   async #object(request: Request, url: URL, key: string): Promise<Response> {
     const q = url.searchParams;

@@ -10,6 +10,7 @@
 // the entry that pulled it in, and the fix.
 
 import { relative, SEPARATOR } from "@std/path";
+import { canonicalPath } from "./canonical-path.ts";
 
 // ---- Literal / comment stripping -----------------------------------------------------------
 
@@ -564,8 +565,8 @@ export interface ServerOnlyLeak {
 }
 
 /**
- * Whether a shipped source is one of the app's own modules — under `projectDir` (already
- * realpath'd) and not a vendored `node_modules` package. Framework source, npm/jsr caches,
+ * Whether a shipped source is one of the app's own modules — under `projectDir` (both
+ * canonical, see ./canonical-path.ts) and not a vendored `node_modules` package. Framework source, npm/jsr caches,
  * and the bundler's temp entry/stub files all fall outside.
  */
 function isAppModule(path: string, projectDir: string): boolean {
@@ -578,7 +579,7 @@ function isAppModule(path: string, projectDir: string): boolean {
  * bundle's source-map `sources` — what survived tree-shaking, so a pure helper the entry
  * never used is not a leak) whose source carries a {@link ServerOnlySignal}.
  *
- * @param shipped Realpath'd absolute paths of the modules the bundle emitted.
+ * @param shipped Absolute paths of the modules the bundle emitted (in any spelling).
  * @param projectDir The app's project directory (the boundary of "app module").
  * @param readFile Read a module's source (defaults to `Deno.readTextFile`).
  * @returns The leaks, in `shipped` order.
@@ -588,13 +589,12 @@ export async function findServerOnlyLeaks(
   projectDir: string,
   readFile: (path: string) => Promise<string> = Deno.readTextFile,
 ): Promise<ServerOnlyLeak[]> {
-  let root = projectDir;
-  try {
-    root = await Deno.realPath(projectDir);
-  } catch { /* keep the logical path */ }
+  // Both sides canonical: a project or a shipped path named through a symlink (macOS `/var` →
+  // `/private/var`) is still the app's own, so its leak is still caught.
+  const root = canonicalPath(projectDir);
   const leaks: ServerOnlyLeak[] = [];
   for (const path of shipped) {
-    if (!isAppModule(path, root)) continue;
+    if (!isAppModule(canonicalPath(path), root)) continue;
     let src: string;
     try {
       src = await readFile(path);

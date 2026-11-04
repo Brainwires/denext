@@ -55,7 +55,7 @@ export { collapseHeadTags } from "../jsx/render-to-string.ts";
 export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
-export { parseRange, serveStatic } from "./static.ts";
+export { parseRange, parseRanges, serveStatic } from "./static.ts";
 export { createOtaHandler, type OtaHandlerOptions, type OtaTarget } from "./ota-handler.ts";
 export {
   inOtaRollout,
@@ -82,6 +82,7 @@ export {
   sendPush,
 } from "./push-send.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
+export type { CertifiedKeyPem, ServeTls } from "./tls-certificates.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
 // Typed route handlers: phantom-typed Request/Response so the typed-API-client generator
 // can recover request/response body shapes (see src/build/api-types.ts).
@@ -146,12 +147,14 @@ export {
 } from "../runtime/channel.ts";
 export type {
   Channel,
+  ChannelAdmission,
   ChannelConfig,
   ChannelContext,
   ChannelEvent,
   ChannelIdleReason,
   ChannelPublisher,
   ChannelPublisherContext,
+  ChannelPublishOptions,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,
@@ -206,6 +209,8 @@ export { scanRoutes } from "../router/manifest.ts";
 export type {
   DenextPlugin,
   EmittedAsset,
+  EmittedHashedAsset,
+  EmittedNamedAsset,
   PluginBuildContext,
   PluginBuildStep,
   PluginContext,
@@ -302,6 +307,7 @@ export {
   type DenextCommand,
   type DenextConfig,
   type DesktopAppIcons,
+  type DesktopBackendConfig,
   type DesktopCapabilitiesConfig,
   type DesktopConfig,
   type DesktopEntitlementValue,
@@ -311,6 +317,7 @@ export {
   type DesktopLinuxConfig,
   type DesktopMacosConfig,
   type DesktopPasskeysConfig,
+  type DesktopPermissionsConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
   type DesktopSidecarLoginShellEnvConfig,
@@ -319,9 +326,14 @@ export {
   type DesktopSidecarRunConfig,
   type DesktopSidecarShutdownConfig,
   type DesktopSize,
+  type DesktopTrayConfig,
+  type DesktopTrayMenuEntry,
+  type DesktopTrayMenuItem,
+  type DesktopTrayPanelConfig,
   type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
   type DesktopWindowConfig,
+  type DesktopWindowLevel,
   type DesktopWindowsConfig,
   type ExperimentalConfig,
   type HeaderRule,
@@ -352,6 +364,10 @@ export {
   type SpaProxyConfig,
   type SpaShellConfig,
   type SpaTanstackRouterConfig,
+  type StartConfig,
+  type StartLimits,
+  type StartTls,
+  type StartTlsCertificate,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";
@@ -614,7 +630,8 @@ export type {
 } from "./deno-kv.ts";
 
 // Server Actions — runtime registration + secure same-origin dispatch.
-export { isServerAction, serverAction } from "../runtime/server-action.ts";
+export { isServerAction } from "../runtime/server-action.ts";
+export { serverAction } from "../runtime/action-stub.ts";
 export type { ServerActionRef } from "../runtime/server-action.ts";
 export type { ActionHandlerOptions } from "./action-handler.ts";
 // Typed Server Actions: define an action with a validated, typed input + typed result.

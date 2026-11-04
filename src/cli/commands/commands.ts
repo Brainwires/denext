@@ -35,6 +35,7 @@ import {
 import { writeCommandCache } from "../command-cache.ts";
 import { COMMAND_LOAD_BUDGET_MS, loadPluginCommands } from "../plugin-commands.ts";
 import { projectDir } from "../shared.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** One verb, as `denext commands --json` describes it. */
 export interface CommandInfo {
@@ -184,19 +185,7 @@ function budgetOf(ctx: CommandContext): number {
  */
 export function makeCommandsCommand(reg: CommandRegistry): CommandSpec {
   return {
-    name: "commands",
-    summary: "List this project's own CLI verbs (config commands: + plugin addCommand)",
-    usage: "  denext commands [--json] [--timeout <ms>] [--cwd <dir>]\n\n" +
-      "  Imports denext.config.ts and runs every plugin setup() to discover the verbs the\n" +
-      "  project contributes, then exits. A plugin that hangs or throws degrades to a notice\n" +
-      "  (--json: `timedOut` / `error`); the exit code stays 0 either way.",
-    flags: [{
-      name: "timeout",
-      type: "number",
-      valueName: "<ms>",
-      default: COMMAND_LOAD_BUDGET_MS,
-      help: "Budget for plugin discovery",
-    }],
+    ...commandMeta("commands"),
     run: async (ctx: CommandContext): Promise<void> => {
       const dir = projectDir(ctx);
       const timeoutMs = budgetOf(ctx);

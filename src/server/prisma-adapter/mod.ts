@@ -16,8 +16,8 @@
  * `connection_limit` (the pool size), `connect_timeout` / `pool_timeout` (seconds) and
  * `pgbouncer=true` (no prepared statements).
  *
- * Use it with Prisma 6's `prisma-client` generator (`runtime = "deno"`) and the
- * `driverAdapters` + `queryCompiler` preview features; `denext migrate` wires all of it.
+ * Use it with Prisma 7's `prisma-client` generator (`runtime = "deno"`); `denext migrate` wires
+ * all of it.
  *
  * Needs denext's Deno runtime 3.0.0-rc.1 or later: the adapter reads each result column's
  * type from `Deno.SQL`'s `result.columns`, which earlier runtimes do not report

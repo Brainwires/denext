@@ -9,14 +9,18 @@
 //   deno task release 2.0.0-rc.5 --dry      # preview every step; write/commit nothing
 //   deno task release 2.0.0-rc.5 --full-gate  # run the whole local suite at step 5
 //   deno task release 2.0.0-rc.5 --confirm --resume-from corpus  # finish a stopped release
+//   deno task release 2.0.0-rc.5 --confirm --resume-from tag --regate  # … re-running both gates
 //
 // Order of operations:
 //   0. CI: the newest ci.yml run on HEAD that ran the heavy jobs (integration, next-compat,
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
-//      green, and so are the newest desktop-ci.yml, e2e.yml and desktop-window.yml runs on HEAD
-//      (every job), else ABORT
+//      green, and so are the newest desktop-ci.yml, e2e.yml, desktop-window.yml and
+//      native-plugins.yml runs on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
+//   1c. raise the compiled-in revoked-runtimes floor to the published list's sequence
+//      (`deno task revocations floor`; a warning on failure, never an abort), so this release
+//      never takes a list older than the one current when it was cut
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
 //       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
@@ -27,7 +31,7 @@
 //       denext X.Y.Z pins exactly @denext/docs-corpus X.Y.Z, never another version
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
-//   4. deno cache mod.ts   — refresh deno.lock
+//   4. deno cache mod.ts   — refresh deno.lock; sync:example-locks — the examples' links
 //   5. the gate (ABORTS the release if it fails): step 0 already proved CI's `check` job (fmt +
 //      lint + the full suite) green on HEAD, so only the release's own changes are re-checked —
 //      fmt, lint and RELEASE_DELTA_TESTS. publish.yml runs the same delta gate on the tagged
@@ -37,12 +41,18 @@
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
 //      v<version> and push branch + tag
+//   7. re-sign the signed revoked-runtimes list when fewer than 10 days remain before it expires
+//      (`deno task revocations resign --if-due`, the keychain key; a warning on failure, never an
+//      abort: the list is advisory)
 //
 // A release that stopped in step 6 (JSR slow to list the corpus — the wait polls for the exact
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
 // stopped: run the same command again. It sees the release commit on HEAD and the tags already
 // made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
 // wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+// Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
+// the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
+// one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
@@ -51,12 +61,13 @@
 // run `deno task docs:build`, then rsync the built `site/out/` to your docs host.
 
 import { exists, walk } from "@std/fs";
-import { join, relative } from "@std/path";
+import { join, relative, resolve } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
 import {
   desktopCiVerdict,
   desktopWindowVerdict,
   e2eVerdict,
+  nativePluginsVerdict,
   releaseCiHint,
   releaseCiVerdict,
 } from "./release-ci.ts";
@@ -67,15 +78,21 @@ import {
   corpusReleaseState,
 } from "./lib/docs-corpus-package.ts";
 import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
+import { copyStrippedTree } from "./publish-strip.ts";
 import {
   detectResume,
+  gateMarkerName,
+  type GatePass,
+  gateRefusal,
   pinRefusal,
   publishFrom,
   type PublishStep,
+  readGatePass,
   realPublishDeps,
   ReleaseAbort,
   releaseSubject,
   resumeFromArg,
+  writeGatePass,
 } from "./lib/release-publish.ts";
 
 export { pinRefusal };
@@ -414,26 +431,28 @@ function unreleasedEntries(text: string, marker: string): number {
 }
 
 async function main(): Promise<void> {
-  const { version, dry, confirmed, fullGate, resumeFrom } = parseReleaseArgs();
+  const { version, dry, confirmed, fullGate, resumeFrom, regate } = parseReleaseArgs();
   const branch = await capture("git", "rev-parse", "--abbrev-ref", "HEAD");
   const tag = `v${version}`;
   if (dry) return await dryRun(version, tag, branch);
   const target = { version, tag, branch };
   const resume = resumeFrom ?? await detectResume(target, realPublishDeps(REPO_ROOT));
-  if (resume) return await resumeRelease(target, resume, confirmed);
+  if (resume) return await resumeRelease(target, resume, { confirmed, regate, fullGate });
   await checkPreconditions(tag, branch);
-  await checkCi(branch, false);
+  const base = await capture("git", "rev-parse", "HEAD");
+  await checkCi(branch, false, base);
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
   // Step 0 refuses a HEAD whose ci.yml `check` job (fmt + lint + the whole suite) is not green.
   await runGate(version, fullGate);
-  if (await confirmRelease(tag, branch, confirmed)) await publish(version, tag, branch);
+  await recordGatePass({ version, base, tree: await worktreeTree() });
+  if (await confirmRelease(target, confirmed)) await publish(version, tag, branch);
 }
 
 /** `--dry`: preview steps 1–2 regardless of tree state; skip the gate; write nothing. */
 async function dryRun(version: string, tag: string, branch: string): Promise<void> {
   console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
-  await checkCi(branch, true);
+  await checkCi(branch, true, await capture("git", "rev-parse", "HEAD"));
   await prepareRelease(version, true);
   console.log("3. docs:api          (skipped — dry run)");
   console.log("3b. badge:tests      (skipped — dry run)");
@@ -463,6 +482,7 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
       }`,
     );
   }
+  console.log("7. revocations      (skipped — dry run; a real run re-signs the list when due)");
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
 
@@ -472,6 +492,7 @@ function parseReleaseArgs(): {
   confirmed: boolean;
   fullGate: boolean;
   resumeFrom: PublishStep | undefined;
+  regate: boolean;
 } {
   const flags = new Set(Deno.args.filter((a) => a.startsWith("--")));
   const version = Deno.args.find((a, i) =>
@@ -480,7 +501,7 @@ function parseReleaseArgs(): {
   if (!version) {
     die(
       "usage: deno task release <version> [--confirm] [--dry] [--full-gate] " +
-        "[--resume-from <step>]",
+        "[--resume-from <step> [--regate]]",
     );
   }
   if (!VERSION_RE.test(version!)) die(`"${version}" is not a valid semver (e.g. 2.0.0-rc.5)`);
@@ -496,21 +517,24 @@ function parseReleaseArgs(): {
     confirmed: flags.has("--confirm"),
     fullGate: flags.has("--full-gate"),
     resumeFrom,
+    regate: flags.has("--regate"),
   };
 }
 
 /**
  * Finish a release that stopped in step 6: from `step`, with a clean tree and the release commit
- * on HEAD (`commit` makes it from the prepared tree instead).
+ * on HEAD (`commit` makes it from the prepared tree instead). Every resume requires a recorded
+ * gate pass for exactly the tree it publishes ({@linkcode requireGatePass}).
  */
 async function resumeRelease(
   target: { version: string; tag: string; branch: string },
   step: PublishStep,
-  confirmed: boolean,
+  opts: { confirmed: boolean; regate: boolean; fullGate: boolean },
 ): Promise<void> {
   console.log(`\n=== Resuming the release of denext ${target.version} at step "${step}" ===\n`);
   if (step === "commit") {
-    if (!await confirmRelease(target.tag, target.branch, confirmed)) return;
+    await requireGatePass(target, step, opts);
+    if (!await confirmRelease(target, opts.confirmed)) return;
     return await publish(target.version, target.tag, target.branch);
   }
   if (await capture("git", "status", "--porcelain")) {
@@ -520,7 +544,101 @@ async function resumeRelease(
   if (subject !== releaseSubject(target.version)) {
     die(`HEAD is "${subject}", not the release commit "${releaseSubject(target.version)}".`);
   }
+  const tagged = await capture("git", "rev-parse", "--verify", "--quiet", `${target.tag}^{commit}`);
+  if (tagged && tagged !== await capture("git", "rev-parse", "HEAD")) {
+    die(
+      `${target.tag} exists here but is not HEAD (${tagged.slice(0, 12)}): delete the stale ` +
+        "tag or check out the release commit it names, then resume.",
+    );
+  }
+  await requireGatePass(target, step, opts);
   await publishSteps(target, step);
+}
+
+/** Where the gate-pass marker lives: the git directory (never in the tree, never committed). */
+async function gateMarkerPath(version: string): Promise<string> {
+  const path = await capture("git", "rev-parse", "--git-path", gateMarkerName(version));
+  if (!path) die("could not locate the git directory for the gate-pass marker.");
+  return resolve(REPO_ROOT, path);
+}
+
+/** Record that step 0 and step 5 passed for `pass.base` and `pass.tree`. */
+async function recordGatePass(pass: GatePass): Promise<void> {
+  await writeGatePass(await gateMarkerPath(pass.version), pass);
+  console.log(
+    `\n5. Gate passed: recorded tree ${pass.tree.slice(0, 12)} on ${pass.base.slice(0, 12)}.`,
+  );
+}
+
+/**
+ * The tree `git add -A` would commit right now, hashed through a copy of the index (the real
+ * index is untouched; the copy keeps its stat data, so unchanged files are not re-hashed).
+ */
+async function worktreeTree(): Promise<string> {
+  const index = await Deno.makeTempFile({ prefix: "denext-release-index-" });
+  try {
+    await Deno.copyFile(
+      resolve(REPO_ROOT, await capture("git", "rev-parse", "--git-path", "index")),
+      index,
+    );
+    const env = { GIT_INDEX_FILE: index };
+    const add = await new Deno.Command("git", { args: ["add", "-A"], cwd: REPO_ROOT, env })
+      .output();
+    if (add.code !== 0) die("git add -A (into a scratch index) failed.");
+    const out = await new Deno.Command("git", {
+      args: ["write-tree"],
+      cwd: REPO_ROOT,
+      env,
+      stdout: "piped",
+    }).output();
+    if (out.code !== 0) die("git write-tree failed.");
+    return new TextDecoder().decode(out.stdout).trim();
+  } finally {
+    await Deno.remove(index).catch(() => {});
+  }
+}
+
+/**
+ * The base commit and tree a release at `step` publishes: before the release commit, HEAD and
+ * the prepared working tree; after it, the release commit's parent and its tree.
+ */
+async function currentGateState(version: string, step: PublishStep): Promise<GatePass> {
+  if (step === "commit") {
+    return { version, base: await capture("git", "rev-parse", "HEAD"), tree: await worktreeTree() };
+  }
+  return {
+    version,
+    base: await capture("git", "rev-parse", "HEAD^"),
+    tree: await capture("git", "rev-parse", "HEAD^{tree}"),
+  };
+}
+
+/**
+ * Refuse to resume at `step` unless a gate pass is recorded for exactly the base and tree it
+ * would publish. `--regate` re-runs step 0 (CI on the base) and step 5 (the local gate, plus doc
+ * lint) on the tree as it is, and records the pass when both are green.
+ */
+async function requireGatePass(
+  target: { version: string; tag: string; branch: string },
+  step: PublishStep,
+  opts: { regate: boolean; fullGate: boolean },
+): Promise<void> {
+  const current = await currentGateState(target.version, step);
+  if (opts.regate) {
+    await checkCi(target.branch, false, current.base);
+    await runReleaseGate(opts.fullGate);
+    if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
+    if (await run("deno", "run", "-A", "scripts/publish-strip.ts") !== 0) {
+      die("the package is over its size guard — release aborted BEFORE tagging.");
+    }
+    const after = await currentGateState(target.version, step);
+    if (after.tree !== current.tree) die("the gate changed the tree — release aborted.");
+    return await recordGatePass(current);
+  }
+  const recorded = await readGatePass(await gateMarkerPath(target.version));
+  const refusal = gateRefusal(recorded, current, target, step);
+  if (refusal) die(refusal);
+  console.log(`0. Gate pass recorded for tree ${current.tree.slice(0, 12)} — resuming.`);
 }
 
 /** Run the publish steps from `step`, turning a stop into the abort message. */
@@ -533,6 +651,55 @@ async function publishSteps(
   } catch (err) {
     if (err instanceof ReleaseAbort) die(err.message);
     throw err;
+  }
+  await resignRevocations();
+}
+
+/** Step 7's command: re-sign the revoked-runtimes list when fewer than 10 days remain. */
+const RESIGN_REVOCATIONS = [
+  "deno",
+  "run",
+  "-A",
+  "scripts/runtime-revocations.ts",
+  "resign",
+  "--if-due",
+];
+
+/**
+ * Step 7: keep the signed revoked-runtimes list (src/build/runtime-revocations.ts) fresh — it
+ * expires 21 days after signing, and releases are what re-sign it (there is no scheduled job): a
+ * list with fewer than 10 days left is re-signed with the keychain key and published again. It is
+ * advisory, so a failure (no key on this machine, offline) is a warning, never a failed release.
+ */
+async function resignRevocations(): Promise<void> {
+  console.log("\n7. Revoked-runtimes list: re-sign when fewer than 10 days remain…");
+  const [cmd, ...args] = RESIGN_REVOCATIONS;
+  if (await run(cmd, ...args) !== 0) {
+    console.warn(
+      "release: warning — the revoked-runtimes list was not re-signed. It is advisory and " +
+        "lapses only at its expiry; run `deno task revocations resign` on the machine that " +
+        "holds the key (CONTRIBUTING.md → A bad runtime release).",
+    );
+  }
+}
+
+/** Step 1c's command: raise the compiled-in revoked-runtimes floor to the published list's. */
+export const REVOCATION_FLOOR = ["deno", "run", "-A", "scripts/runtime-revocations.ts", "floor"];
+
+/**
+ * Step 1c: compile the published revoked-runtimes list's sequence into the release
+ * (`RUNTIME_REVOCATION_MIN_SEQUENCE`), so a fresh install never takes an older list a stale
+ * mirror serves. Advisory like the list: a failure (offline) is a warning, never a failed release.
+ */
+async function raiseRevocationFloor(dry: boolean): Promise<void> {
+  if (dry) return console.log("1c. revocation floor (skipped — dry run)");
+  console.log("1c. Revoked-runtimes floor: the published list's sequence…");
+  const [cmd, ...args] = REVOCATION_FLOOR;
+  if (await run(cmd, ...args) !== 0) {
+    console.warn(
+      "release: warning — the compiled-in revoked-runtimes floor was not raised; this release " +
+        "keeps the previous one.",
+    );
   }
 }
 
@@ -559,14 +726,19 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
 
 /**
  * Step 0: the ci.yml jobs a push skips (integration, next-compat, coverage, backend-integration)
- * and every desktop-ci.yml, e2e.yml and desktop-window.yml job passed on HEAD
+ * and every desktop-ci.yml, e2e.yml, desktop-window.yml and native-plugins.yml job passed on HEAD
  * (scripts/release-ci.ts). A real run aborts
  * otherwise; `--dry` reports and goes on.
  */
-async function checkCi(branch: string, dry: boolean): Promise<void> {
-  const sha = await capture("git", "rev-parse", "HEAD");
+async function checkCi(branch: string, dry: boolean, sha: string): Promise<void> {
   const verdicts = await Promise.all(
-    [releaseCiVerdict, desktopCiVerdict, e2eVerdict, desktopWindowVerdict].map((check) =>
+    [
+      releaseCiVerdict,
+      desktopCiVerdict,
+      e2eVerdict,
+      desktopWindowVerdict,
+      nativePluginsVerdict,
+    ].map((check) =>
       check(sha).catch((err: Error) => ({
         ok: false,
         reason: `could not ask GitHub (needs the GitHub CLI, logged in): ${err.message}`,
@@ -618,6 +790,8 @@ export async function prepareRelease(version: string, dry: boolean): Promise<voi
   for (const { file, hits } of bump.changed) console.log(`     ${file} (${hits})`);
   // 1b. Refresh the version-pinned examples/effect migrate golden (else the gate fails).
   console.log(goldenLine(await refreshEffectGolden(dry), dry));
+  // 1c. The compiled-in revoked-runtimes floor: the published list's sequence.
+  await raiseRevocationFloor(dry);
   const { entries, relinked } = await rollChangelog(version, dry);
   console.log(
     `2. CHANGELOG: rolled [Unreleased] → [${version}] (${plural(entries, "entry", "entries")})`,
@@ -682,14 +856,59 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   if (await run("deno", "task", "badge:fallow") !== 0) {
     die("badge:fallow failed — release aborted (changes left in tree).");
   }
-  console.log("\n4. Refreshing deno.lock (deno cache mod.ts)…");
-  await run("deno", "cache", "mod.ts");
+  await refreshLocks();
   await runReleaseGate(fullGate);
   // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
-  if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
+  await checkPublishSize();
+  if (!await publishDryRunStripped()) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
+  }
+}
+
+/**
+ * `deno publish --dry-run` over the set publish.yml sends: the working tree copied into a
+ * temporary directory with the publish set stripped (scripts/publish-strip.ts), so the tree
+ * the release commits is never rewritten. True when the dry-run passes.
+ */
+async function publishDryRunStripped(): Promise<boolean> {
+  const dir = await Deno.makeTempDir({ prefix: "denext-publish-dry-" });
+  try {
+    const copied = await copyStrippedTree(dir);
+    if (copied === null) die("could not list the working tree for the stripped publish dry-run.");
+    const { code } = await new Deno.Command("deno", {
+      args: ["publish", "--dry-run", "--allow-dirty"],
+      cwd: dir,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "null",
+    }).output();
+    return code === 0;
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
+/** Stop before tagging when the package, as published, is over its size guard. */
+async function checkPublishSize(): Promise<void> {
+  if (await run("deno", "run", "-A", "scripts/publish-strip.ts") !== 0) {
+    die("the package is over its size guard — release aborted BEFORE tagging.");
+  }
+}
+
+/**
+ * Step 4: refresh deno.lock, then the examples' locks, which link every workspace member at its
+ * version — derived from the refreshed root lock, so building an example after the release
+ * rewrites nothing.
+ */
+async function refreshLocks(): Promise<void> {
+  console.log("\n4. Refreshing deno.lock (deno cache mod.ts) and the example locks' links…");
+  if (await run("deno", "cache", "mod.ts") !== 0) {
+    die("deno cache mod.ts failed — release aborted (changes left in tree).");
+  }
+  if (await run("deno", "task", "sync:example-locks") !== 0) {
+    die("sync:example-locks failed — release aborted (changes left in tree).");
   }
 }
 
@@ -714,7 +933,11 @@ export function gateCommand(fullGate: boolean): string[] {
 }
 
 /** Show the diff and ask (unless `--confirm`); false aborts with the tree left as prepared. */
-async function confirmRelease(tag: string, branch: string, confirmed: boolean): Promise<boolean> {
+async function confirmRelease(
+  target: { version: string; tag: string; branch: string },
+  confirmed: boolean,
+): Promise<boolean> {
+  const { version, tag, branch } = target;
   console.log("\n=== Prepared. Review the changes: ===");
   await run("git", "--no-pager", "diff", "--stat");
   if (confirmed) {
@@ -726,8 +949,10 @@ async function confirmRelease(tag: string, branch: string, confirmed: boolean): 
   );
   if (answer !== null && ["yes", "y"].includes(answer.trim().toLowerCase())) return true;
   console.log(
-    "\nAborted — nothing committed or pushed. Prepared changes remain in your working " +
-      "tree (run `git checkout .` and `git clean -n` to discard, or commit by hand).",
+    "\nAborted — nothing committed or pushed. Prepared changes remain in your working tree. " +
+      "Run `git checkout .` and `git clean -n` to discard them, or release them as gated with\n" +
+      `  deno task release ${version} --resume-from commit\n` +
+      "(the gate pass is recorded for exactly this tree; a changed tree is refused).",
   );
   return false;
 }
@@ -765,6 +990,15 @@ async function publish(version: string, tag: string, branch: string): Promise<vo
     [["git", "add", "-A"], "git add failed"],
     [["git", "commit", "-m", releaseSubject(version)], "git commit failed"],
   ]);
+  // The commit must be exactly the gated tree (a hook, or a write between the gate and the commit,
+  // would publish something the gate never saw).
+  const refusal = gateRefusal(
+    await readGatePass(await gateMarkerPath(version)),
+    await currentGateState(version, "corpus"),
+    { version, tag, branch },
+    "corpus",
+  );
+  if (refusal) die(refusal);
   await publishSteps({ version, tag, branch }, "corpus");
 }
 

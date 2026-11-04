@@ -40,8 +40,8 @@ from the repository; an app uses `denext` or
 `deno run -A jsr:@denext/denext/cli`):
 
 ```sh
-npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2 @capacitor/android@8.5.2
-npm install --save-exact -D @capacitor/cli@8.5.2
+npm install --save-exact @capacitor/core@8.6.0 @capacitor/ios@8.6.0 @capacitor/android@8.6.0
+npm install --save-exact -D @capacitor/cli@8.6.0
 npx cap init "denext mobile" com.brainwires.denext.mobile --web-dir out
 denext task export
 npx cap add ios

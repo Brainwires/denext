@@ -8,13 +8,10 @@ import {
   installLiveHub,
   uninstallLiveHub,
 } from "../src/server/live.ts";
-import {
-  liveReadable,
-  registerServerReference,
-  serverAction,
-} from "../src/runtime/server-action.ts";
+import { liveReadable, registerServerReference } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { revalidateTag } from "../src/server/cache.ts";
-import { prepareWire } from "../src/runtime/wire-codec.ts";
+import { prepareWire } from "../src/runtime/wire-encode.ts";
 import { defineSubscription } from "../src/runtime/define-subscription.ts";
 import { getSubscriptionDef, tagServerExports } from "../src/runtime/server-action.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
@@ -1343,6 +1340,7 @@ function channelSub(port: number, subId: string, channelId: string, key: string)
   });
   const frame = new Promise<Any>((res) => (onFrame = res));
   const timer = setTimeout(() => onErr(new Error(`timeout waiting on ${subId}`)), 3000);
+  ws.addEventListener("close", () => clearTimeout(timer)); // closed by the test: nothing to wait on
   ws.onopen = () => channelSubscribe(ws, subId, channelId, key);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data as string);
@@ -1564,9 +1562,15 @@ Deno.test("channel transports: the in-memory default loops back; BroadcastChanne
   if (typeof BroadcastChannel !== "undefined") {
     const a = broadcastChannelTransport("denext-test-channels");
     const b = broadcastChannelTransport("denext-test-channels");
-    const seen = new Promise<string>((resolve) => b.subscribe((ev) => resolve(ev.key)));
-    await a.publish({ kind: "publish", channelId: "c", key: "cross", seq: 1, instance: "other" });
-    assertEquals(await seen, "cross");
+    try {
+      const seen = new Promise<string>((resolve) => b.subscribe((ev) => resolve(ev.key)));
+      await a.publish({ kind: "publish", channelId: "c", key: "cross", seq: 1, instance: "other" });
+      assertEquals(await seen, "cross");
+    } finally {
+      // Closed: an open BroadcastChannel holds the event loop (the sanitizers report it).
+      a.close();
+      b.close();
+    }
   }
   resetChannels(); // registry + transport back to defaults for later tests
 });

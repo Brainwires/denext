@@ -48,7 +48,15 @@ import {
   type StartMocks,
   type StartToolchain,
 } from "./toolchain.ts";
-import { MOCK_ID, MOCK_NS, mockEdgeId, mockModuleSource, selfDenialSource } from "./mock.ts";
+import {
+  type ImportTrail,
+  importTrail,
+  MOCK_ID,
+  MOCK_NS,
+  mockEdgeId,
+  mockModuleSource,
+  selfDenialSource,
+} from "./mock.ts";
 import { browserServerModule } from "./use-server.ts";
 
 /** The query naming a server-function provider module (Start's `TSS_SERVERFN_SPLIT_PARAM`). */
@@ -90,7 +98,14 @@ interface EsbuildPluginBuild {
   onResolve(
     opts: { filter: RegExp; namespace?: string },
     cb: (
-      args: { path: string; importer: string; resolveDir: string; namespace: string },
+      args: {
+        path: string;
+        importer: string;
+        resolveDir: string;
+        namespace: string;
+        kind?: string;
+        pluginData?: unknown;
+      },
     ) => unknown,
   ): void;
   onLoad(
@@ -99,7 +114,7 @@ interface EsbuildPluginBuild {
   ): void;
   resolve(
     path: string,
-    opts: { importer?: string; resolveDir?: string; kind?: string },
+    opts: { importer?: string; resolveDir?: string; kind?: string; pluginData?: unknown },
   ): Promise<
     { path: string; namespace: string; external: boolean; errors: unknown[]; suffix?: string }
   >;
@@ -362,7 +377,16 @@ export function startBuild(opts: StartBuildOptions): StartBuild {
 interface Mocking {
   mocks(): Promise<StartMocks>;
   code(path: string): Promise<string>;
+  /** The imports seen so far, when a runtime mock's message lists a trace (dev, the browser). */
+  trail?: ImportTrail;
 }
+
+/** The `pluginData` of a resolve the import trail makes (every hook of the plugin skips it). */
+const TRAIL_PROBE = { denextTssTrailProbe: true };
+
+/** Whether a resolve is the import trail's own. */
+const isTrailProbe = (pluginData: unknown) =>
+  (pluginData as typeof TRAIL_PROBE | undefined)?.denextTssTrailProbe === true;
 
 /**
  * With a `"mock"` behavior, a file the environment's `files` rules deny is loaded as Start's
@@ -380,6 +404,7 @@ async function selfDenial(
     env,
     file: path,
     source,
+    trace: await mocking.trail?.trace(path),
   });
   return { contents, loader: "js", resolveDir: dirname(path) };
 }
@@ -412,8 +437,11 @@ function guardBundle(
   // recorded, and a denied one an empty module (CommonJS, so a named import still binds) until
   // the end decides whether the import survived.
   let record = newResolveRecord();
+  if (mocking) mocking.trail = trailOf(build, { env, protection, cwd });
   build.onResolve({ filter: resolveFilter(protection, env) }, async (args) => {
     if (args.namespace !== "file") return undefined;
+    // The trail's probe of a denied import: not an import of the build's (nothing to record).
+    if (isTrailProbe(args.pluginData)) return { path: args.path, external: true };
     const denied = record.denied.length;
     const action = recordImport(protection, env, record, args.path, args.importer);
     if (action !== "mock") return undefined;
@@ -424,6 +452,7 @@ function guardBundle(
         importer: args.importer,
         importerCode: await mocking.code(args.importer),
         specifier: args.path,
+        trace: await mocking.trail?.trace(args.importer),
       });
       record.denied[denied].module = `${MOCK_NS}:${id}`;
       return { path: id, namespace: MOCK_NS };
@@ -468,6 +497,46 @@ function guardBundle(
     if (message) throw new Error(message);
     onGraph(result.metafile, cwd);
   });
+}
+
+/**
+ * A dev browser build's import trail (a runtime mock's message lists its trace), or `undefined`
+ * where Start's runtime mock is the silent one (a build, the server, `mockAccess: "off"`). It
+ * notes each app module's imports as esbuild resolves them, and resolves them again, marked as
+ * its probe, only when a violation asks for a trace.
+ */
+function trailOf(
+  build: EsbuildPluginBuild,
+  { env, protection, cwd }: { env: StartEnv; protection: ImportProtection; cwd: string },
+): ImportTrail | undefined {
+  if (protection.command === "build" || env !== "client" || protection.mockAccess === "off") {
+    return undefined;
+  }
+  const trail = importTrail(
+    async ({ importer, specifier, resolveDir, kind }) => {
+      const r = await build.resolve(specifier, {
+        importer,
+        resolveDir,
+        kind,
+        pluginData: TRAIL_PROBE,
+      });
+      return r.errors.length > 0 || r.external || r.namespace !== "file" ? null : r.path;
+    },
+    cwd,
+    protection.maxTraceDepth,
+  );
+  build.onResolve({ filter: /.*/, namespace: "file" }, (args) => {
+    if (!isTrailProbe(args.pluginData) && args.importer) {
+      trail.note({
+        importer: args.importer,
+        specifier: args.path,
+        resolveDir: args.resolveDir,
+        kind: args.kind ?? "import-statement",
+      });
+    }
+    return undefined;
+  });
+  return trail;
 }
 
 /**

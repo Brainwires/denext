@@ -5,7 +5,7 @@ import { renderToFlight } from "../src/jsx/render-to-flight.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
-import { serverAction } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { createChannel } from "../src/runtime/channel.ts";
 import type { Component } from "../src/jsx/types.ts";
 

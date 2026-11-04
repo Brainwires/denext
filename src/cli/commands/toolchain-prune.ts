@@ -8,7 +8,11 @@ import type { CommandContext } from "../command.ts";
 import { commandCwd } from "../shared.ts";
 import { pinnedDenextCli, pinnedVersion } from "../self-exec.ts";
 import { VERSION } from "../../version.ts";
-import { loadDenoToolchainPin, staleToolchainLink } from "../../build/deno-toolchain.ts";
+import {
+  type DenoToolchainPin,
+  loadDenoToolchainPin,
+  staleToolchainLink,
+} from "../../build/deno-toolchain.ts";
 import { DESKTOP_RUNTIME_PIN } from "../../build/desktop-runtime.ts";
 import { GLEAM_TOOLCHAIN } from "../../build/gleam-toolchain.ts";
 import { FASTLANE_TOOLCHAIN } from "../../build/fastlane-toolchain.ts";
@@ -32,6 +36,11 @@ interface DenextPins {
   readonly desktopRuntime: string | null;
   readonly gleam: string | null;
   readonly fastlane: string | null;
+  /**
+   * The pins' `rollback` versions: what runs when the revoked-runtimes list revokes the pinned
+   * release (src/build/runtime-revocations.ts), so it is in use too.
+   */
+  readonly rollback?: { readonly deno?: string | null; readonly desktopRuntime?: string | null };
 }
 
 /** The process seams the command reads (injectable for tests). */
@@ -49,17 +58,21 @@ export interface ToolchainPruneDeps {
 
 /** This denext's own pins. */
 function ownPins(): DenextPins {
-  let deno: string | null = null;
+  let pin: DenoToolchainPin | null = null;
   try {
-    deno = loadDenoToolchainPin().version;
+    pin = loadDenoToolchainPin();
   } catch {
-    deno = null;
+    pin = null;
   }
   return {
-    deno,
+    deno: pin?.version ?? null,
     desktopRuntime: DESKTOP_RUNTIME_PIN.version ?? null,
     gleam: GLEAM_TOOLCHAIN.version,
     fastlane: FASTLANE_TOOLCHAIN.fastlane,
+    rollback: {
+      deno: pin?.rollback?.version ?? null,
+      desktopRuntime: DESKTOP_RUNTIME_PIN.rollback?.version ?? null,
+    },
   };
 }
 
@@ -88,11 +101,14 @@ async function publishedPins(version: string): Promise<DenextPins | null> {
   ]);
   if (deno === null) return null;
   const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const rollbackOf = (pin: Record<string, unknown> | null) =>
+    str((pin?.rollback as { version?: unknown } | undefined)?.version);
   return {
     deno: str(deno.version),
     desktopRuntime: str(desktop?.version),
     gleam: str(gleam?.version),
     fastlane: str(fastlane?.fastlane),
+    rollback: { deno: rollbackOf(deno), desktopRuntime: rollbackOf(desktop) },
   };
 }
 
@@ -141,12 +157,14 @@ async function versionsInUse(
       all.push(pins);
     }
   }
-  const pick = (k: keyof DenextPins) =>
+  const pick = (k: "deno" | "desktopRuntime" | "gleam" | "fastlane") =>
     all.map((p) => p[k]).filter((v): v is string => typeof v === "string");
+  const rollbacks = (k: "deno" | "desktopRuntime") =>
+    all.map((p) => p.rollback?.[k]).filter((v): v is string => typeof v === "string");
   return {
     inUse: {
-      deno: pick("deno"),
-      desktopRuntime: pick("desktopRuntime"),
+      deno: [...pick("deno"), ...rollbacks("deno")],
+      desktopRuntime: [...pick("desktopRuntime"), ...rollbacks("desktopRuntime")],
       gleam: pick("gleam"),
       fastlane: pick("fastlane"),
     },

@@ -52,6 +52,11 @@ export interface NativeMfaPending {
    * by enrolling one (`/native/mfa-enroll`, then `/native/mfa-confirm`), not by a code check.
    */
   enroll?: true;
+  /**
+   * The first factor's authentication methods (`["hwk"]` for a passkey without user
+   * verification); absent for an id_token sign-in, which is `["ext"]`.
+   */
+  amr?: string[];
 }
 
 function nowSeconds(): number {
@@ -124,6 +129,8 @@ export async function consumeNativeMfaToken(
  * @param isNewUser Whether the sign-in created the user.
  * @param enroll The sign-in is finished by enrolling a first factor (see
  *   {@linkcode NativeMfaPending.enroll}).
+ * @param amr The first factor's methods, when it was not an id_token
+ *   ({@linkcode NativeMfaPending.amr}).
  * @returns The pending state to issue a token for.
  */
 export function newNativeMfaPending(
@@ -131,6 +138,7 @@ export function newNativeMfaPending(
   provider: string,
   isNewUser: boolean,
   enroll = false,
+  amr?: string[],
 ): NativeMfaPending {
   const now = nowSeconds();
   return {
@@ -141,6 +149,7 @@ export function newNativeMfaPending(
     attemptsLeft: NATIVE_MFA_ATTEMPTS,
     expiresAt: now + NATIVE_MFA_TTL,
     ...(enroll ? { enroll: true as const } : {}),
+    ...(amr ? { amr } : {}),
   };
 }
 

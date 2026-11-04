@@ -12,7 +12,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { ApiRoute, PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { __useCache, inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
@@ -28,7 +28,8 @@ import { fetchRemoteImage, optimizeImage } from "../src/server/image-optimizer.t
 import { makePinnedFetch, type Resolver, type Transport } from "../src/server/safe-fetch.ts";
 import { serveMetadataFile } from "../src/server/metadata-files.ts";
 import { decodeWire, WireCodecError } from "../src/runtime/wire-codec.ts";
-import { actionEndpoint, serverAction } from "../src/runtime/server-action.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
+import { serverAction } from "../src/runtime/action-stub.ts";
 import { handleAction } from "../src/server/action-handler.ts";
 import { devOriginAllowed } from "../src/build/dev-server.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";

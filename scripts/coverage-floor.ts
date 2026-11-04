@@ -10,6 +10,9 @@
 // failures) and always exits 0.
 
 import { join, relative, resolve } from "@std/path";
+import { canonicalPath } from "./coverage-to-istanbul.ts";
+
+export { canonicalPath };
 
 /** The source trees held to the per-file floor (relative to the project root). */
 export const FLOORED: readonly { dir: string; match: RegExp }[] = [
@@ -47,34 +50,96 @@ export interface FileCoverage {
 /** Whether an lcov hit count (`-` = never evaluated) counts as covered. */
 const hit = (count: string | undefined): boolean => count !== "-" && Number(count) > 0;
 
-/** How each counted lcov record line updates a file's totals. */
-const COUNTERS: Record<string, (cov: FileCoverage, rest: string) => void> = {
-  "DA:": (cov, rest) => tally(cov.lines, hit(rest.split(",")[1])),
-  "BRDA:": (cov, rest) => tally(cov.branches, hit(rest.split(",")[3])),
-  "FNDA:": (cov, rest) => tally(cov.functions, hit(rest.split(",")[0])),
+/** A counted lcov record line: which total it feeds, the point it names, and whether it ran. */
+type Point = [kind: keyof FileCoverage, key: string, covered: boolean];
+
+/** How each counted lcov record line names its point (DA / BRDA / FNDA). */
+const COUNTERS: Record<string, (rest: string) => Point> = {
+  "DA:": (rest) => {
+    const [line, count] = rest.split(",");
+    return ["lines", line, hit(count)];
+  },
+  "BRDA:": (rest) => {
+    const [line, block, branch, count] = rest.split(",");
+    return ["branches", `${line},${block},${branch}`, hit(count)];
+  },
+  "FNDA:": (rest) => {
+    const at = rest.indexOf(",");
+    return ["functions", rest.slice(at + 1), hit(rest.slice(0, at))];
+  },
 };
 
-function tally(pair: [number, number], covered: boolean): void {
-  pair[1]++;
-  if (covered) pair[0]++;
-}
+/** A file's points (`<key>#<occurrence>` → covered), across every record naming it. */
+type Points = Record<keyof FileCoverage, Map<string, boolean>>;
 
-/** Parse lcov text into absolute path → totals (counted from the DA / BRDA / FNDA lines). */
-export function parseLcov(text: string): Map<string, FileCoverage> {
-  const out = new Map<string, FileCoverage>();
-  let cur: FileCoverage | undefined;
+/**
+ * Parse lcov text into absolute path → totals (counted from the DA / BRDA / FNDA lines).
+ *
+ * Records whose paths `canonical` maps to one file are merged: a point counts once, covered when
+ * any record covered it (a run under a symlinked directory writes both spellings of a path).
+ *
+ * @param text The lcov report.
+ * @param canonical Maps each `SF:` path to its key (default: as written; the CLIs pass
+ *   {@linkcode canonicalPath}).
+ */
+export function parseLcov(
+  text: string,
+  canonical: (path: string) => string = (p) => p,
+): Map<string, FileCoverage> {
+  const files = new Map<string, Points>();
+  let cur: Points | undefined;
+  // Within one record each line is its own point (`<key>#<n>`), as it always counted; across
+  // records the n-th occurrence of a key is the same point.
+  let seen = new Map<string, number>();
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith("SF:")) {
-      cur = { lines: [0, 0], branches: [0, 0], functions: [0, 0] };
-      out.set(line.slice(3), cur);
-      continue;
+      cur = pointsOf(files, canonical(line.slice(3)));
+      seen = new Map();
+    } else if (line === "end_of_record") {
+      cur = undefined;
+    } else if (cur) {
+      recordPoint(cur, seen, line);
     }
-    if (line === "end_of_record") cur = undefined;
-    const tag = line.slice(0, line.indexOf(":") + 1);
-    if (cur && Object.hasOwn(COUNTERS, tag)) COUNTERS[tag](cur, line.slice(tag.length));
+  }
+  const out = new Map<string, FileCoverage>();
+  for (const [path, points] of files) {
+    out.set(path, {
+      lines: totals(points.lines),
+      branches: totals(points.branches),
+      functions: totals(points.functions),
+    });
   }
   return out;
+}
+
+/** The points recorded for `path` so far, created empty on its first record. */
+function pointsOf(files: Map<string, Points>, path: string): Points {
+  let points = files.get(path);
+  if (!points) {
+    points = { lines: new Map(), branches: new Map(), functions: new Map() };
+    files.set(path, points);
+  }
+  return points;
+}
+
+/** Count one record line (a DA / BRDA / FNDA; any other is ignored) into `points`. */
+function recordPoint(points: Points, seen: Map<string, number>, line: string): void {
+  const tag = line.slice(0, line.indexOf(":") + 1);
+  if (!Object.hasOwn(COUNTERS, tag)) return;
+  const [kind, key, covered] = COUNTERS[tag](line.slice(tag.length));
+  const id = `${kind}:${key}`;
+  const n = (seen.get(id) ?? 0) + 1;
+  seen.set(id, n);
+  const point = `${key}#${n}`;
+  points[kind].set(point, covered || (points[kind].get(point) ?? false));
+}
+
+/** `[covered, total]` over a file's points of one kind. */
+function totals(points: Map<string, boolean>): [number, number] {
+  let covered = 0;
+  for (const c of points.values()) if (c) covered++;
+  return [covered, points.size];
 }
 
 /** A percentage (100 when there is nothing to cover). */
@@ -170,10 +235,13 @@ export async function main(args: string[], root: string = resolve(".")): Promise
   }
   const at = args.indexOf("--floor");
   const floor = at === -1 ? 85 : Number(args[at + 1]);
+  // Both sides resolved: a root reached through a symlink (macOS `/var` → `/private/var`) and
+  // the report's paths, which may spell it either way, must meet.
+  const real = canonicalPath(root);
   const results = checkFloor(
-    await flooredFiles(root, args.includes("--full")),
-    parseLcov(await Deno.readTextFile(input)),
-    root,
+    await flooredFiles(real, args.includes("--full")),
+    parseLcov(await Deno.readTextFile(input), canonicalPath),
+    real,
     floor,
   );
   const failing = results.filter((r) => r.failures.length > 0);

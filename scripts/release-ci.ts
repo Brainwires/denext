@@ -1,16 +1,25 @@
 // The release's CI gate: a version is tagged only from a commit that ci.yml's heavy jobs, every
-// desktop-ci.yml job, every e2e.yml job and every desktop-window.yml job passed on.
+// desktop-ci.yml job, every e2e.yml job, every desktop-window.yml job and both native-plugins.yml
+// builds (an Android and an iOS app with every denext plugin) passed on.
 // A push to `development` runs only the fast jobs (integration, next-compat, coverage,
-// backend-integration and windows-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
+// backend-integration, windows-tests and macos-tests stay on pull requests, `main` and a manual dispatch), so `deno task release`
 // asks GitHub for the ci.yml runs on HEAD and refuses unless the newest one that ran those jobs
 // has every required job green. desktop-ci.yml and desktop-window.yml run on a push only when their
 // `paths` filter matches, and e2e.yml only on a dispatch, so for each of those the release asks
 // for its newest run on HEAD, push or dispatch, and refuses unless that run finished with every
 // job green (e2e.yml dispatched with `-f job=<one>` skips the rest, so it is refused: the release
-// needs a full run).
-// On `development` all four are dispatches: `gh workflow run ci.yml --ref development`,
-// `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`
-// and `gh workflow run desktop-window.yml --ref development`.
+// needs a full run). native-plugins.yml runs on a push only when a native template or installer
+// changes, but a release also ships the mobile runtime, the export and the Capacitor config writers
+// it builds: so its newest run on HEAD must be green too, its iOS build included (a dispatch with
+// `-f ios=false` skips it and can't vouch).
+// On `development` all five are dispatches: `gh workflow run ci.yml --ref development`,
+// `gh workflow run desktop-ci.yml --ref development`, `gh workflow run e2e.yml --ref development`,
+// `gh workflow run desktop-window.yml --ref development` and
+// `gh workflow run native-plugins.yml --ref development`.
+// Only a finished `push` or `workflow_dispatch` run whose head commit IS the release commit counts:
+// a `pull_request` run tests the PR's merge ref (the base branch plus HEAD), not HEAD, and a queued
+// or in-progress run has no verdict yet. Every job of the counted run must have passed (or been
+// skipped); the required lists only make a job that went missing refuse rather than pass unseen.
 
 /** The ci.yml jobs a release needs green on the commit it is cut from. */
 export const RELEASE_CI_JOBS: readonly string[] = [
@@ -22,6 +31,9 @@ export const RELEASE_CI_JOBS: readonly string[] = [
   "ios-export-router",
   "windows-resolve",
   "windows-tests",
+  "macos-tests",
+  "cargo-audit",
+  "bundle-budget",
 ];
 
 /**
@@ -37,6 +49,7 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
   "secureStore round-trip (macos-latest)",
   "install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)",
   "install.sh (ubuntu-latest — this commit's build + the real latest one)",
+  "install.sh (macos-latest — this commit's build + the real latest one)",
   "installers (windows-latest — .msi per-user + per-machine, upgrade, uninstall)",
   "installers (ubuntu-latest — .deb via apt, .rpm via dnf)",
   "installers (macos-latest — .dmg mounted, .pkg installed; unsigned)",
@@ -63,6 +76,13 @@ export const DESKTOP_WINDOW_JOBS: readonly string[] = [
   "results by OS",
 ];
 
+/**
+ * The native-plugins.yml jobs a release needs green on the commit it is cut from: examples/mobile
+ * exported, synced and built with every denext native plugin, as a debug `.apk` and an unsigned
+ * iOS Release build.
+ */
+export const NATIVE_PLUGINS_JOBS: readonly string[] = ["android", "ios"];
+
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
 const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integration"];
 
@@ -70,6 +90,8 @@ const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integrati
 export interface CiRun {
   readonly databaseId: number;
   readonly event: string;
+  /** The commit the run checked out (a `pull_request` run's is the PR head, not what it tests). */
+  readonly headSha: string;
   readonly status: string;
   readonly conclusion: string;
   readonly createdAt: string;
@@ -128,8 +150,8 @@ function ranHeavyJobs(jobs: readonly CiJob[]): boolean {
 }
 
 /**
- * Check ci.yml on `sha`: the newest run on it that ran the heavy jobs must have finished with every
- * {@linkcode RELEASE_CI_JOBS} job green.
+ * Check ci.yml on `sha`: the newest finished push or dispatch run of exactly `sha` that ran the
+ * heavy jobs must have every {@linkcode RELEASE_CI_JOBS} job green and no other job failed.
  *
  * @param sha The commit to release (HEAD).
  * @param gh How `gh` is reached (default: the GitHub CLI).
@@ -138,21 +160,49 @@ export async function releaseCiVerdict(sha: string, gh: GhJson = ghJson): Promis
   for (const run of await workflowRuns("ci.yml", sha, gh)) {
     const jobs = await runJobs(run, gh);
     if (!ranHeavyJobs(jobs)) continue; // a plain push run: look further back
-    if (run.status !== "completed") {
-      return { ok: false, reason: `ci.yml ${run.event} run on ${sha} is ${run.status}`, run };
-    }
-    const unmet = unmetCiJobs(jobs);
-    return unmet.length === 0
-      ? { ok: true, reason: `ci.yml ${run.event} run is green on ${sha}`, run }
-      : { ok: false, reason: `ci.yml ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+    return jobsVerdict("ci.yml", run, jobs, RELEASE_CI_JOBS, sha);
   }
   return {
     ok: false,
-    reason: `no ci.yml run on ${sha} ran the heavy jobs (${HEAVY_JOBS.join(", ")})`,
+    reason: `no ci.yml run of ${sha} has finished (push or dispatch) with the heavy jobs ` +
+      `(${HEAVY_JOBS.join(", ")})`,
   };
 }
 
-/** `workflow`'s runs on `sha`, newest first. */
+/** The events whose runs test the commit itself (a `pull_request` run tests a merge ref). */
+const COUNTED_EVENTS: readonly string[] = ["push", "workflow_dispatch"];
+
+/**
+ * Whether `run` can vouch for `sha`: a finished push or dispatch run whose head commit is `sha`.
+ *
+ * @param run A run `gh run list --commit <sha>` returned.
+ * @param sha The commit to release.
+ */
+export function countedRun(run: CiRun, sha: string): boolean {
+  return COUNTED_EVENTS.includes(run.event) && run.headSha === sha && run.status === "completed";
+}
+
+/**
+ * The verdict on one counted run: every `required` job green, and no other job failed (a job
+ * the list does not name, such as a new one, must not fail unseen).
+ */
+function jobsVerdict(
+  workflow: string,
+  run: CiRun,
+  jobs: readonly CiJob[],
+  required: readonly string[],
+  sha: string,
+): CiVerdict {
+  const others = jobs.filter((j) =>
+    !required.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
+  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
+  const unmet = [...unmetCiJobs(jobs, required), ...others];
+  return unmet.length === 0
+    ? { ok: true, reason: `${workflow} ${run.event} run is green on ${sha}`, run }
+    : { ok: false, reason: `${workflow} ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+}
+
+/** `workflow`'s counted runs on `sha` ({@linkcode countedRun}), newest first. */
 async function workflowRuns(workflow: string, sha: string, gh: GhJson): Promise<CiRun[]> {
   const runs = await gh([
     "run",
@@ -164,9 +214,10 @@ async function workflowRuns(workflow: string, sha: string, gh: GhJson): Promise<
     "--limit",
     "20",
     "--json",
-    "databaseId,event,status,conclusion,createdAt,url",
+    "databaseId,event,headSha,status,conclusion,createdAt,url",
   ]) as CiRun[];
-  return runs.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return runs.filter((run) => countedRun(run, sha))
+    .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /** The jobs of `run`. */
@@ -177,8 +228,8 @@ async function runJobs(run: CiRun, gh: GhJson): Promise<CiJob[]> {
 }
 
 /**
- * The verdict on `workflow`'s newest run on `sha` (a push or a dispatch): it must have finished
- * with every `required` job green and no other job failed.
+ * The verdict on `workflow`'s newest finished push or dispatch run of `sha`: it must have every
+ * `required` job green and no other job failed.
  */
 async function newestRunVerdict(
   workflow: string,
@@ -187,18 +238,10 @@ async function newestRunVerdict(
   gh: GhJson,
 ): Promise<CiVerdict> {
   const [run] = await workflowRuns(workflow, sha, gh);
-  if (!run) return { ok: false, reason: `no ${workflow} run on ${sha}` };
-  if (run.status !== "completed") {
-    return { ok: false, reason: `${workflow} ${run.event} run on ${sha} is ${run.status}`, run };
+  if (!run) {
+    return { ok: false, reason: `no ${workflow} run of ${sha} has finished (push or dispatch)` };
   }
-  const jobs = await runJobs(run, gh);
-  const others = jobs.filter((j) =>
-    !required.includes(j.name) && j.conclusion !== "success" && j.conclusion !== "skipped"
-  ).map((j) => `${j.name}: ${j.conclusion || j.status}`);
-  const unmet = [...unmetCiJobs(jobs, required), ...others];
-  return unmet.length === 0
-    ? { ok: true, reason: `${workflow} ${run.event} run is green on ${sha}`, run }
-    : { ok: false, reason: `${workflow} ${run.event} run on ${sha}: ${unmet.join(", ")}`, run };
+  return jobsVerdict(workflow, run, await runJobs(run, gh), required, sha);
 }
 
 /**
@@ -233,15 +276,33 @@ export function desktopWindowVerdict(sha: string, gh: GhJson = ghJson): Promise<
   return newestRunVerdict("desktop-window.yml", DESKTOP_WINDOW_JOBS, sha, gh);
 }
 
+/**
+ * Check native-plugins.yml on `sha`: its newest run there (a push or a dispatch) must have finished
+ * with both {@linkcode NATIVE_PLUGINS_JOBS} builds green.
+ *
+ * @param sha The commit to release (HEAD).
+ * @param gh How `gh` is reached (default: the GitHub CLI).
+ */
+export function nativePluginsVerdict(sha: string, gh: GhJson = ghJson): Promise<CiVerdict> {
+  return newestRunVerdict("native-plugins.yml", NATIVE_PLUGINS_JOBS, sha, gh);
+}
+
 /** The workflows the release gates on, in the order its hint dispatches them. */
-const GATED_WORKFLOWS = ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"];
+export const GATED_WORKFLOWS: readonly string[] = [
+  "ci.yml",
+  "desktop-ci.yml",
+  "e2e.yml",
+  "desktop-window.yml",
+  "native-plugins.yml",
+];
 
 /** What to run to get every gated workflow onto `sha` on `branch`. */
 export function releaseCiHint(branch: string): string {
   const watch = (workflow: string) =>
     `    gh run watch "$(gh run list --workflow=${workflow} --event=workflow_dispatch --limit 1 ` +
     `--json databaseId -q '.[0].databaseId')" --exit-status`;
-  return `push ${branch}, then run ${GATED_WORKFLOWS.join(", ")} on it and wait for all four:\n` +
+  return `push ${branch}, then run ${GATED_WORKFLOWS.join(", ")} on it and wait for all ` +
+    `${GATED_WORKFLOWS.length}:\n` +
     GATED_WORKFLOWS.map((w) => `    gh workflow run ${w} --ref ${branch}\n`).join("") +
     GATED_WORKFLOWS.map(watch).join("\n");
 }

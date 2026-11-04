@@ -21,12 +21,13 @@ import {
   streamPprFlightDocument,
 } from "./document.ts";
 import { type CspSetting, resolveStreamingCsp } from "./csp.ts";
+import { streamLateStyleSheets } from "./late-style-sheets.ts";
 import { resumePageHolesFlightStream, resumePageHolesStream } from "./render-page.ts";
 import { absoluteUrl, stableBaseUrl, warnNoStableOrigin } from "./absolute-url.ts";
 import { augmentMetadataConventions } from "./augment-metadata.ts";
-import { publicEnv, restrictPublicEnv } from "../runtime/public-env.ts";
+import { documentPublicEnv } from "../runtime/public-env.ts";
 import { originOptions, reportRequestError } from "./app-config.ts";
-import { finalize, type RequestState } from "./pipeline-state.ts";
+import { finalizeNew, type RequestState } from "./pipeline-state.ts";
 import { htmlHeaders } from "./response-headers.ts";
 
 /** What `x-denext-cache` reports about the ISR cache for this response. */
@@ -96,7 +97,7 @@ export function documentOptions(pr: PageRequest) {
     devScript: config.devScript,
     devScriptSrc: config.devScriptSrc,
     lang: pr.locale || undefined,
-    publicEnv: restrictPublicEnv(publicEnv(), config.publicEnvKeys),
+    publicEnv: documentPublicEnv(config.publicEnvKeys),
     htmlAttrs: pr.state.ctx.documentAttrs?.html,
     bodyAttrs: pr.state.ctx.documentAttrs?.body,
   };
@@ -146,7 +147,7 @@ export function htmlResponse(
   csp: string | undefined,
   extra?: Record<string, string>,
 ): Response {
-  return finalize(state, new Response(body, { status, headers: htmlHeaders(csp, extra) }));
+  return finalizeNew(state, body, status, htmlHeaders(csp, extra));
 }
 
 /** `metadata.title` when it is a plain string (the soft-nav payloads carry only that). */
@@ -419,7 +420,9 @@ export async function servePprShell(
   const styles = pr.state.app.config.styleHrefsFor?.(pr.page.route);
   const shellPrefix = renderHeadContent(resumed.metadata, resumed.viewport, styles) + shell.body;
   const csp = await resolveStreamingCsp(shellPrefix, shell.routeCsp, pr.state.app.config.csp);
-  return htmlResponse(pr.state, resumed.stream, 200, csp, {
+  // Render-time style sheets (React Native mode): a hole's new rules stream ahead of it.
+  const body = streamLateStyleSheets(resumed.stream, shellPrefix);
+  return htmlResponse(pr.state, body, 200, csp, {
     "x-denext-cache": cacheState,
     "cache-control": "private, no-store",
   });

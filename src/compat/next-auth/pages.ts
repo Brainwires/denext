@@ -1,7 +1,9 @@
 /**
  * The built-in pages Auth.js serves when an app configures none: sign-in (a form per provider,
- * each carrying the CSRF token), sign-out confirmation, "check your email", and errors. Plain,
- * script-free HTML — they render under denext's strict CSP — with every value escaped.
+ * each carrying the CSRF token), sign-out confirmation, "check your email", and errors. Plain
+ * HTML with every value escaped. The one script is the passkey button's (a WebAuthn provider
+ * signs in from script, never from a form): a fixed body the sign-in page's own
+ * Content-Security-Policy allows by its hash, so nothing else inline can run there.
  *
  * @module
  */
@@ -15,14 +17,23 @@ function esc(value: string): string {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-/** A whole page. */
-function page(title: string, body: string, status = 200): Response {
+/** A whole page, with any extra response headers. */
+function page(
+  title: string,
+  body: string,
+  status = 200,
+  extra: Record<string, string> = {},
+): Response {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>${esc(title)}</title></head><body><main>${body}</main></body></html>`;
   return new Response(html, {
     status,
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      ...extra,
+    },
   });
 }
 
@@ -43,6 +54,7 @@ const MESSAGES: Record<string, string> = {
   Configuration: "There is a problem with the server configuration.",
   SessionRequired: "Please sign in to access this page.",
   MissingCSRF: "The form expired. Please try again.",
+  WebAuthnVerificationError: "Sign in with a passkey failed. Please try again.",
 };
 
 /** The message for an error code. */
@@ -80,6 +92,107 @@ function providerForm(
 }
 
 /**
+ * The passkey button's script: a fixed body (its hash is {@link PASSKEY_SCRIPT_HASH}). It shows
+ * every `[data-denext-passkey]` button when the browser has WebAuthn, and on a click runs
+ * denext's passkey sign-in ceremony against the button's `data-base` (the `/passkey/authenticate`
+ * endpoints `next-auth/webauthn` uses), landing on the server's same-origin coercion of
+ * `data-callback`. A cancel says nothing; a refusal shows in the error line beside the button.
+ */
+export const PASSKEY_SCRIPT = `(function () {
+  var pk = window.PublicKeyCredential;
+  if (typeof pk !== "function" || !navigator.credentials) return;
+  function fromB64u(v) {
+    var b = v.replace(/-/g, "+").replace(/_/g, "/");
+    while (b.length % 4) b += "=";
+    return Uint8Array.from(atob(b), function (c) { return c.charCodeAt(0); }).buffer;
+  }
+  function toB64u(buf) {
+    var bytes = new Uint8Array(buf), s = "";
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+  }
+  function options(json) {
+    if (pk.parseRequestOptionsFromJSON) return pk.parseRequestOptionsFromJSON(json);
+    json.challenge = fromB64u(json.challenge);
+    if (json.allowCredentials) {
+      json.allowCredentials = json.allowCredentials.map(function (d) {
+        return Object.assign({}, d, { id: fromB64u(d.id) });
+      });
+    }
+    return json;
+  }
+  function credential(c) {
+    if (typeof c.toJSON === "function") return c.toJSON();
+    var r = c.response, out = {
+      clientDataJSON: toB64u(r.clientDataJSON),
+      authenticatorData: toB64u(r.authenticatorData),
+      signature: toB64u(r.signature)
+    };
+    if (r.userHandle) out.userHandle = toB64u(r.userHandle);
+    return {
+      id: c.id, rawId: toB64u(c.rawId), type: c.type, response: out,
+      clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {}
+    };
+  }
+  function post(url, body) {
+    return fetch(url, {
+      method: "POST", credentials: "same-origin",
+      headers: { "content-type": "application/json", accept: "application/json", "x-denext-auth": "1" },
+      body: JSON.stringify(body)
+    });
+  }
+  async function run(button) {
+    var base = button.getAttribute("data-base"), error = button.nextElementSibling;
+    error.hidden = true;
+    try {
+      var res = await post(base + "/passkey/authenticate/options", {});
+      if (!res.ok) throw new Error("options");
+      var json = await res.json(), ceremonyId = json.ceremonyId;
+      delete json.ceremonyId;
+      var asserted;
+      try {
+        asserted = await navigator.credentials.get({ publicKey: options(json) });
+      } catch (e) {
+        if (e && (e.name === "NotAllowedError" || e.name === "AbortError")) return;
+        throw e;
+      }
+      if (!asserted) return;
+      res = await post(base + "/passkey/authenticate", {
+        credential: credential(asserted), ceremonyId: ceremonyId,
+        callbackUrl: button.getAttribute("data-callback")
+      });
+      if (!res.ok) throw new Error("verify");
+      var body = await res.json();
+      location.assign(body.url || "/");
+    } catch (e) {
+      error.hidden = false;
+    }
+  }
+  document.querySelectorAll("[data-denext-passkey]").forEach(function (button) {
+    button.hidden = false;
+    button.addEventListener("click", function () { run(button); });
+  });
+})();`;
+
+/**
+ * `'sha256-…'` of {@link PASSKEY_SCRIPT}, the source the sign-in page's CSP allows (a test
+ * checks it against the body).
+ */
+export const PASSKEY_SCRIPT_HASH = "'sha256-T9XnsmUmC31gcc54L+zScEHO4VTs76pTZ0MpY+bYKaU='";
+
+/** A WebAuthn provider's button (hidden until the script finds WebAuthn) and its error line. */
+function passkeyButton(
+  basePath: string,
+  provider: ProviderDescriptor,
+  callbackUrl: string,
+): string {
+  return `<div><button type="button" data-denext-passkey hidden data-base="${esc(basePath)}" ` +
+    `data-callback="${esc(callbackUrl)}">Sign in with ${esc(provider.name)}</button>` +
+    `<p data-denext-passkey-error hidden aria-live="polite">` +
+    `${esc(MESSAGES.WebAuthnVerificationError)}</p></div>`;
+}
+
+/**
  * The sign-in page.
  *
  * @param basePath The endpoint prefix.
@@ -95,11 +208,18 @@ export function signInPage(
   query: URLSearchParams,
 ): Response {
   const fields = { csrfToken, callbackUrl: query.get("callbackUrl") ?? "/" };
-  // A WebAuthn provider signs in from script (`next-auth/webauthn`), never from a plain form.
-  const forms = providers.filter((p) => p.type !== "webauthn").map((p) =>
-    providerForm(basePath, p, fields)
+  // A WebAuthn provider signs in from script (the passkey button), never from a plain form.
+  const forms = providers.map((p) =>
+    p.type === "webauthn"
+      ? passkeyButton(basePath, p, fields.callbackUrl)
+      : providerForm(basePath, p, fields)
   ).join("");
-  return page("Sign in", `<h1>Sign in</h1>${message(query.get("error"))}${forms}`);
+  const body = `<h1>Sign in</h1>${message(query.get("error"))}${forms}`;
+  if (!providers.some((p) => p.type === "webauthn")) return page("Sign in", body);
+  return page("Sign in", `${body}<script>${PASSKEY_SCRIPT}</script>`, 200, {
+    "content-security-policy": `script-src ${PASSKEY_SCRIPT_HASH}; object-src 'none'; ` +
+      "base-uri 'none'",
+  });
 }
 
 /**

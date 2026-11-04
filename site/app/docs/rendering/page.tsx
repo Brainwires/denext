@@ -391,11 +391,13 @@ export default { asyncContext: true };`}
         <code>asyncContext</code> is opt-in: the transform instruments every <code>await</code>{" "}
         in client code (a small per-<code>await</code>{" "}
         cost), so it is off by default and the time-window behavior is unchanged. Async generators
-        are instrumented too, except one that uses <code>yield*</code> delegation; top-level{" "}
-        <code>await</code> is left alone — both rare shapes in client code. The synchronous{" "}
-        <code>AsyncContext</code> API works with or without the flag; only cross-<code>await</code>
+        are instrumented too, <code>yield*</code>{" "}
+        delegation included (the delegate's every step runs in the generator's context, and the
+        caller's context is back while the generator is suspended), and a module with a top-level
         {" "}
-        propagation needs it.
+        <code>await</code> gets a module scope, so its statements after the <code>await</code>{" "}
+        run in the context its evaluation started in. The synchronous <code>AsyncContext</code>{" "}
+        API works with or without the flag; only cross-<code>await</code> propagation needs it.
       </Callout>
     </DocsShell>
   );

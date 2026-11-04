@@ -186,6 +186,11 @@ export function jobNames(): string[] {
   return [...registry.keys()].sort();
 }
 
+/** Remove one job (a test app's `close()`); a no-op for a name that is not registered. */
+export function unregisterJob(name: string): void {
+  registry.delete(name);
+}
+
 /** Clear the registry (test isolation; a dev-server re-discovery). */
 export function clearJobs(): void {
   registry.clear();

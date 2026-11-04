@@ -8,12 +8,14 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { reactRouter } from "../packages/react-router/mod.ts";
+import { reactRouter, type ReactRouterOptions } from "../packages/react-router/mod.ts";
+import { clearLoadContext } from "../src/compat/remix/load-context.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { PageCache } from "../src/server/cache.ts";
+import type { AppConfig } from "../src/server/app-config.ts";
 
 const DSL = new URL("../packages/react-router/routes.ts", import.meta.url).href;
 
@@ -241,7 +243,12 @@ async function withRrApp(
     app: (req: Request) => Promise<Response>,
     root: string,
   ) => Promise<void>,
-  options: { pageCache?: PageCache } = {},
+  options: {
+    pageCache?: PageCache;
+    plugin?: ReactRouterOptions;
+    flight?: boolean;
+    headerRules?: AppConfig["headerRules"];
+  } = {},
 ): Promise<void> {
   resetPlugins();
   const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
@@ -252,7 +259,7 @@ async function withRrApp(
     await applyPlugins({
       projectRoot: root,
       appDir: join(root, "app"),
-      config: { plugins: [reactRouter()] },
+      config: { plugins: [reactRouter(options.plugin)] },
       mode: "build",
       load: defaultLoader,
     });
@@ -261,9 +268,14 @@ async function withRrApp(
       getManifest: () => manifest,
       load: defaultLoader,
       pageCache: options.pageCache,
+      headerRules: options.headerRules,
+      ...(options.flight
+        ? { flight: true, appDir: join(root, "app"), flightRoutes: new Set(["/teams/[id]"]) }
+        : {}),
     });
     await run(app, root);
   } finally {
+    clearLoadContext();
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
@@ -502,4 +514,309 @@ export default [route("about", "routes/about.tsx")];
     assertStringIncludes(second, '<p id="who">anonymous</p>');
     assert(!first.includes("alice"), "the prerendered page never carries a visitor's cookie");
   }, { pageCache: new PageCache() });
+});
+
+// React Router 7 middleware + typed context (roadmap P3): `getLoadContext` from the plugin
+// options, `createContext` keys, and `middleware` / `unstable_middleware` exports on the root, a
+// pathless layout and a page — run outermost first, once per request, before the loaders; a
+// thrown redirect stops the request; on a resource route `next()` wraps the real handler.
+Deno.test("react-router plugin: route middleware + typed context reach every loader", async () => {
+  await withRrApp({
+    "context.ts": `import { createContext } from "denext/remix";
+export const trail = createContext<string[]>([]);
+export const user = createContext<string>("anonymous");
+`,
+    "root.tsx": `import { Outlet } from "react-router";
+import { trail } from "./context.ts";
+export const middleware = [
+  async ({ context }, next) => {
+    context.set(trail, [...context.get(trail), "root"]);
+    const response = await next();
+    response.headers.set("x-root-middleware", "ran");
+    return response;
+  },
+];
+export function loader({ context }) {
+  return { depth: context.get(trail).length };
+}
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App({ loaderData }: { loaderData: { depth: number } }) {
+  return <main><p id="depth">{loaderData.depth}</p><Outlet /></main>;
+}
+`,
+    "routes.ts": `import { layout, route } from ${JSON.stringify(DSL)};
+export default [
+  layout("routes/shell.tsx", [route("teams/:id", "routes/team.tsx")]),
+  route("api/trail", "routes/api.ts"),
+];
+`,
+    "routes/shell.tsx": `import { Outlet } from "react-router";
+import { trail } from "../context.ts";
+export const unstable_middleware = [({ context }) => {
+  context.set(trail, [...context.get(trail), "shell"]);
+}];
+export default function Shell() {
+  return <section><Outlet /></section>;
+}
+`,
+    "routes/team.tsx": `import { redirect } from "react-router";
+import { trail, user } from "../context.ts";
+export const middleware = [({ request, params, context }, next) => {
+  if (params.id === "blocked") throw redirect("/teams/1");
+  const who = request.headers.get("x-user");
+  if (who) context.set(user, who);
+  context.set(trail, [...context.get(trail), "team"]);
+  return next();
+}];
+export function loader({ context }) {
+  return { trail: context.get(trail).join(">"), user: context.get(user), tenant: context.tenant };
+}
+export default function Team({ loaderData }: { loaderData: { trail: string; user: string; tenant: string } }) {
+  return <p id="team">{loaderData.trail}|{loaderData.user}|{loaderData.tenant}</p>;
+}
+`,
+    "routes/api.ts": `import { trail } from "../context.ts";
+export function loader({ context }) {
+  return { trail: context.get(trail), tenant: context.tenant };
+}
+`,
+  }, async (app) => {
+    const res = await app(
+      new Request("http://localhost/teams/7", { headers: { "x-user": "alice" } }),
+    );
+    const html = await res.text();
+    assertEquals(res.status, 200);
+    // Outermost first, each route's middleware once (the metadata pass and the render share
+    // the run), then the loaders read what they set — and the config's getLoadContext value.
+    assertStringIncludes(html, '<p id="team">root&gt;shell&gt;team|alice|acme</p>');
+    assertEquals(res.headers.get("x-root-middleware"), "ran", "a header set on next()'s response");
+
+    const anonymous = await (await app(new Request("http://localhost/teams/8"))).text();
+    assertStringIncludes(anonymous, "|anonymous|acme</p>", "a key's default value");
+
+    const blocked = await app(new Request("http://localhost/teams/blocked"));
+    assertEquals(blocked.status, 302, "a middleware's thrown redirect answers the request");
+    assertEquals(blocked.headers.get("location"), "/teams/1");
+
+    // A resource route: the root's middleware wraps the loader's own response.
+    const api = await app(new Request("http://localhost/api/trail"));
+    assertEquals(await api.json(), { trail: ["root"], tenant: "acme" });
+    assertEquals(api.headers.get("x-root-middleware"), "ran");
+  }, { plugin: { getLoadContext: () => ({ tenant: "acme" }) } });
+});
+
+// React Router's server middleware wraps the whole request: the innermost `next()` serves the
+// page — loaders, render and document (or a client navigation's payload) — and resolves to the
+// response the browser gets, outermost route first, sharing the request's context.
+const WRAPPING_APP: Record<string, string> = {
+  "context.ts": `import { createContext } from "denext/remix";
+export const log = createContext<string[] | null>(null);
+`,
+  "root.tsx": `import { Outlet, useRouteError } from "react-router";
+import { log } from "./context.ts";
+export const middleware = [
+  async ({ request, context }, next) => {
+    const order: string[] = ["root"];
+    context.set(log, order);
+    if (new URL(request.url).searchParams.has("short")) {
+      return new Response("short-circuited", { status: 418 });
+    }
+    const response = await next();
+    order.push("root-after");
+    response.headers.set("x-seen", response.status + " " + response.headers.get("content-type"));
+    response.headers.set("x-order", order.join(">"));
+    if (response.status === 500) return new Response("replaced", { status: 503 });
+    return response;
+  },
+];
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App() {
+  return <Outlet />;
+}
+export function ErrorBoundary() {
+  return <p id="root-error">{String(useRouteError())}</p>;
+}
+`,
+  "routes.ts": `import { layout, route } from ${JSON.stringify(DSL)};
+export default [
+  layout("routes/shell.tsx", [
+    route("teams/:id", "routes/team.tsx"),
+    route("boom", "routes/boom.tsx"),
+  ]),
+  route("api/boom", "routes/api-boom.ts"),
+];
+`,
+  "routes/shell.tsx": `import { Outlet } from "react-router";
+import { log } from "../context.ts";
+export const middleware = [async ({ context }, next) => {
+  context.get(log)?.push("shell");
+  const response = await next();
+  context.get(log)?.push("shell-after");
+  return response;
+}];
+export default function Shell() {
+  return <section><Outlet /></section>;
+}
+`,
+  "routes/team.tsx": `import { log } from "../context.ts";
+export const middleware = [async ({ context }, next) => {
+  context.get(log)?.push("team");
+  const response = await next();
+  context.get(log)?.push("team-after");
+  return response;
+}];
+export function loader({ context, params }) {
+  context.get(log)?.push("loader");
+  return { id: params.id };
+}
+export default function Team({ loaderData }: { loaderData: { id: string } }) {
+  return <p id="team">team {loaderData.id}</p>;
+}
+`,
+  "routes/api-boom.ts": `export function loader() {
+  throw new Error("resource failed");
+}
+`,
+  "routes/boom.tsx": `export function loader() {
+  throw new Error("render failed");
+}
+export default function Boom() {
+  return <p>never</p>;
+}
+`,
+};
+
+/** Run `run` against {@link WRAPPING_APP} (Flight on, as a built app serves it). */
+function withWrappingApp(run: (app: (req: Request) => Promise<Response>) => Promise<void>) {
+  return withRrApp(WRAPPING_APP, (app) => run(app), { flight: true });
+}
+
+const WRAPPED_ORDER = "root>shell>team>loader>team-after>shell-after>root-after";
+
+Deno.test("react-router plugin: a middleware's header after next() lands on the rendered document", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/teams/7"));
+    assertStringIncludes(await res.text(), '<p id="team">team');
+    assertEquals(res.status, 200);
+    // next() resolved to the rendered HTML response itself, not a stand-in.
+    assertStringIncludes(res.headers.get("x-seen") ?? "", "200 text/html");
+  });
+});
+
+Deno.test("react-router plugin: middleware runs outermost first around nested routes' loaders", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/teams/7"));
+    await res.body?.cancel();
+    // In on the way down, out on the way up, the loaders in between; one shared context.
+    assertEquals(res.headers.get("x-order"), WRAPPED_ORDER);
+  });
+});
+
+Deno.test("react-router plugin: middleware wraps a client navigation's data request", async () => {
+  await withWrappingApp(async (app) => {
+    const nav = await app(
+      new Request("http://localhost/teams/8", { headers: { "x-denext-nav": "1" } }),
+    );
+    await nav.body?.cancel();
+    assertEquals(nav.status, 200);
+    assertEquals(nav.headers.get("x-denext-flight"), "1");
+    assertStringIncludes(nav.headers.get("x-seen") ?? "", "200 application/json");
+    assertEquals(nav.headers.get("x-order"), WRAPPED_ORDER);
+  });
+});
+
+Deno.test("react-router plugin: a render error reaches next() as its response, which middleware replaces", async () => {
+  await withWrappingApp(async (app) => {
+    const boom = await app(new Request("http://localhost/boom"));
+    assertEquals(boom.status, 503);
+    assertEquals(await boom.text(), "replaced");
+  });
+});
+
+Deno.test("react-router plugin: a middleware's own Response without next() short-circuits the render", async () => {
+  await withWrappingApp(async (app) => {
+    const short = await app(new Request("http://localhost/teams/9?short"));
+    assertEquals(short.status, 418);
+    assertEquals(await short.text(), "short-circuited");
+  });
+});
+
+Deno.test("react-router plugin: a resource route's thrown error reaches next() as a 500 a middleware can replace", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/api/boom"));
+    // The root middleware sees a 500 Response from next() (not a rethrow) and answers 503.
+    assertEquals(res.status, 503);
+    assertEquals(await res.text(), "replaced");
+  });
+});
+
+// A response a middleware builds after `next()` (a fresh one, a copy, or a thrown redirect) still
+// carries the app's configured headers and the cookies the render queued: only the rendered
+// response itself, which already has them, skips the final pass.
+const AFTER_RENDER_APP: Record<string, string> = {
+  "root.tsx": `import { Outlet, redirect } from "react-router";
+export const middleware = [
+  async ({ request }, next) => {
+    const mode = new URL(request.url).searchParams.get("mode");
+    const response = await next();
+    if (mode === "fresh") {
+      return new Response(response.body, { status: response.status, headers: { "x-own": "1" } });
+    }
+    if (mode === "copy") return new Response(response.body, response);
+    if (mode === "own") return new Response(response.body, { headers: { "x-app": "mine" } });
+    if (mode === "redirect") throw redirect("/elsewhere");
+    return response;
+  },
+];
+export function loader() {
+  return {};
+}
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App() {
+  return <Outlet />;
+}
+`,
+  "routes.ts": `import { route } from ${JSON.stringify(DSL)};
+export default [route("page", "routes/page.tsx")];
+`,
+  "routes/page.tsx": `import { cookies } from "denext/server";
+export function loader() {
+  cookies().set("sid", "signed-in");
+  return { ok: true };
+}
+export default function Page() {
+  return <p id="page">page</p>;
+}
+`,
+};
+
+Deno.test("react-router plugin: a response built after next() keeps the app's headers and queued cookies", async () => {
+  await withRrApp(AFTER_RENDER_APP, async (app) => {
+    const sid = (res: Response) =>
+      res.headers.getSetCookie().filter((c) => c.startsWith("sid=signed-in"));
+    for (const mode of ["", "fresh", "copy"]) {
+      const res = await app(new Request(`http://localhost/page?mode=${mode}`));
+      assertStringIncludes(await res.text(), '<p id="page">page</p>', mode);
+      assertEquals(res.headers.get("x-app"), "rule", mode);
+      // Exactly once: a copy of the rendered headers is not given a second Set-Cookie.
+      assertEquals(sid(res).length, 1, mode);
+    }
+    const redirected = await app(new Request("http://localhost/page?mode=redirect"));
+    await redirected.body?.cancel();
+    assertEquals(redirected.status, 302);
+    assertEquals(redirected.headers.get("location"), "/elsewhere");
+    assertEquals(redirected.headers.get("x-app"), "rule");
+    assertEquals(sid(redirected).length, 1, "the sign-in cookie rides the redirect");
+    // A header the middleware set on purpose is its own: only what the response lacks is added.
+    const own = await app(new Request("http://localhost/page?mode=own"));
+    await own.body?.cancel();
+    assertEquals(own.headers.get("x-app"), "mine");
+    assertEquals(sid(own).length, 1);
+  }, { headerRules: [{ source: "/:path*", headers: [{ key: "x-app", value: "rule" }] }] });
 });

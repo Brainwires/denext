@@ -21,7 +21,8 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
-import { useEffect, useId, useRef, useState } from "./hooks.ts";
+import { useEffect, useRef, useState } from "./hooks.ts";
+import { useId } from "./hooks/use-id.ts";
 import { prefixFromId } from "../jsx/tree-id.ts";
 import { registerLiveBoundary } from "./live-registry.ts";
 import { CLIENT_REF } from "./client-reference.ts";

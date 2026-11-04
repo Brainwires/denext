@@ -1,0 +1,14 @@
+{
+  "name": "bun-patched-app",
+  "dependencies": {
+    "next": "15.3.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "left-pad": "1.3.0",
+    "kleur": "4.1.5"
+  },
+  "patchedDependencies": {
+    "left-pad@1.3.0": "patches/left-pad@1.3.0.patch",
+    "kleur@4.1.5": "patches/kleur@4.1.5.patch"
+  }
+}

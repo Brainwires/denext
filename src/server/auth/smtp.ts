@@ -302,16 +302,20 @@ class SmtpSession {
 
   /** Swap the transport for its TLS upgrade. */
   async upgrade(settings: Settings): Promise<void> {
-    this.#conn = await this.#timed(
-      "the TLS handshake",
+    // The TLS connection takes over the TCP one: from here on it is what must be closed.
+    const upgrading = handshaken(
       Deno.startTls(this.#conn as Deno.TcpConn, {
         hostname: settings.host,
         ...(settings.caCerts ? { caCerts: settings.caCerts } : {}),
-      }).then(async (tls) => {
-        await tls.handshake();
-        return tls;
       }),
     );
+    try {
+      this.#conn = await this.#timed("the TLS handshake", upgrading);
+    } catch (error) {
+      // A handshake that finishes after the timeout is closed, not leaked.
+      upgrading.then((tls) => tls.close(), () => {});
+      throw error;
+    }
   }
 
   close(): void {
@@ -339,17 +343,36 @@ async function ehlo(session: SmtpSession, settings: Settings): Promise<string[]>
   return extensionsOf(await session.command("EHLO", `EHLO ${settings.clientName}`, [250]));
 }
 
+/**
+ * `opening`'s TLS connection once its handshake has completed. A refused handshake (a certificate
+ * that doesn't chain to a trusted CA, a name mismatch) closes the connection rather than leaving
+ * it open: nothing else holds it.
+ */
+async function handshaken(opening: Promise<Deno.TlsConn>): Promise<Deno.TlsConn> {
+  const tls = await opening;
+  try {
+    await tls.handshake();
+    return tls;
+  } catch (error) {
+    try {
+      tls.close();
+    } catch {
+      // Already closed.
+    }
+    throw error;
+  }
+}
+
 /** Open the connection: implicit TLS, or plain TCP (upgraded later). */
 async function connect(settings: Settings): Promise<Deno.Conn> {
   const target = { hostname: settings.host, port: settings.port };
   const opening = settings.secure
-    ? Deno.connectTls({
-      ...target,
-      ...(settings.caCerts ? { caCerts: settings.caCerts } : {}),
-    }).then(async (tls) => {
-      await tls.handshake();
-      return tls;
-    })
+    ? handshaken(
+      Deno.connectTls({
+        ...target,
+        ...(settings.caCerts ? { caCerts: settings.caCerts } : {}),
+      }),
+    )
     : Deno.connect(target);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {

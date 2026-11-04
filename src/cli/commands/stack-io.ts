@@ -5,6 +5,7 @@
 import { join } from "@std/path";
 import type { CommandContext } from "../command.ts";
 import { parseEnv } from "../../server/env.ts";
+import { runToExit } from "../../build/exited-output.ts";
 
 /** Options for {@linkcode StackIo.pipe}: what feeds `docker`'s stdin and where stdout goes. */
 export interface PipeOptions {
@@ -46,6 +47,8 @@ export interface StackIo {
   fetch?(url: string, init?: RequestInit): Promise<Response>;
   /** Wait `ms` between `health --watch` rounds. */
   sleep?(ms: number): Promise<void>;
+  /** Bytes free on the filesystem holding `dir`, or `undefined` when it can't be told. */
+  freeBytes?(dir: string): Promise<number | undefined>;
 }
 
 /**
@@ -306,3 +309,60 @@ export const terminalIo: Pick<
   fetch: (url, init) => fetch(url, init),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
+
+/**
+ * The bytes `df -Pk` reports available: the fourth field of its last line (1024-byte blocks).
+ *
+ * @param text `df -Pk <dir>`'s output.
+ * @returns The bytes, or `undefined` when the output has no such field.
+ */
+export function parseDfAvailable(text: string): number | undefined {
+  const last = text.trim().split("\n").at(-1)?.trim().split(/\s+/) ?? [];
+  const blocks = last.length >= 4 ? Number(last.at(-3)) : NaN;
+  return Number.isSafeInteger(blocks) && blocks >= 0 && last[0] !== "Filesystem"
+    ? blocks * 1024
+    : undefined;
+}
+
+/**
+ * The bytes PowerShell printed for a drive's free space: a whole number on its own. Empty output
+ * (`Get-PSDrive`'s `Free` is blank for an account that may not query the volume) or anything
+ * else is no answer, never zero bytes free.
+ *
+ * @param text PowerShell's output.
+ * @returns The bytes, or `undefined`.
+ */
+export function parseWindowsFree(text: string): number | undefined {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return undefined;
+  const free = Number(t);
+  return Number.isSafeInteger(free) ? free : undefined;
+}
+
+/**
+ * Bytes free on the host filesystem holding `dir`: `df -Pk` on macOS / Linux; on Windows the
+ * drive's space available to this account (.NET's `DriveInfo.AvailableFreeSpace`, which needs no
+ * administrator and counts a disk quota).
+ *
+ * @param dir A directory on the filesystem to measure.
+ * @returns The bytes, or `undefined` when the tool is missing or says nothing usable.
+ */
+export async function hostFreeBytes(dir: string): Promise<number | undefined> {
+  const windows = Deno.build.os === "windows";
+  const drive = windows ? /^([A-Za-z]):/.exec(dir)?.[1] : undefined;
+  if (windows && !drive) return undefined;
+  const [cmd, args] = windows
+    ? [
+      "powershell",
+      ["-NoProfile", "-Command", `([System.IO.DriveInfo]::new('${drive}')).AvailableFreeSpace`],
+    ]
+    : ["df", ["-Pk", dir]];
+  try {
+    const out = await runToExit(cmd, { args, stderr: "null" });
+    if (!out.success) return undefined;
+    const text = new TextDecoder().decode(out.stdout);
+    return windows ? parseWindowsFree(text) : parseDfAvailable(text);
+  } catch {
+    return undefined;
+  }
+}

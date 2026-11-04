@@ -21,7 +21,8 @@
  *   on iOS; a `ContentObserver` on Android, which may batch changes by a few seconds).
  * - Off the Capacitor shell (or without the plugin) every call rejects with
  *   `ERR_UNAVAILABLE`, except the permission calls, which answer `undetermined` as Expo's web
- *   build does, {@linkcode isAvailableAsync} (`false`) and the change listener (never fires).
+ *   build does, {@linkcode isAvailableAsync} (`false`), the change listener (never fires) and
+ *   {@linkcode presentContactPickerAsync} where the browser has the Contact Picker API.
  *   A shell that ran `denext mobile add contacts` before `DenextContacts` existed works as
  *   before: no containers, no change events, and Android updates drop those four fields.
  *
@@ -40,6 +41,7 @@
  */
 
 import { nativePlatform } from "../mobile/bridge.ts";
+import { contactPickerSupported, pickContact } from "../mobile/contact-picker.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "../mobile/plugin.ts";
 import {
   createEmitter,
@@ -1773,11 +1775,24 @@ export async function presentFormAsync(
 }
 
 /**
- * Let the user pick a contact with the system picker.
+ * Let the user pick a contact with the system picker. Off the shell, where the browser has the
+ * Contact Picker API (Chrome on Android), its picker (`pickContact` from `denext/mobile`): the
+ * contact then has no `id` (`""`), and only its name, emails and phone numbers. Expo's web
+ * build has no picker; elsewhere it rejects with `ERR_UNAVAILABLE`, as Expo's does.
  *
  * @returns The contact, or null when the picker was cancelled.
  */
 export async function presentContactPickerAsync(): Promise<ExistingContact | null> {
+  if (!plugin() && contactPickerSupported()) {
+    const picked = await pickContact();
+    return picked
+      ? toLegacy({
+        displayName: picked.name,
+        emailAddresses: picked.emails.map((value) => ({ value })),
+        phoneNumbers: picked.phoneNumbers.map((value) => ({ value })),
+      })
+      : null;
+  }
   const { contacts } = await need("presentContactPickerAsync").pickContact({});
   return contacts[0] ? toLegacy(contacts[0]) : null;
 }

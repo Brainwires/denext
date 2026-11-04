@@ -31,7 +31,8 @@ import {
   isUnauthorized,
   toClientError,
 } from "../runtime/error-boundary.ts";
-import { decodeWire, prepareWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { prepareWire } from "../runtime/wire-encode.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import {
@@ -41,6 +42,7 @@ import {
   type ViewSummary,
 } from "./live-views.ts";
 import { getLiveViewStore } from "./live-view-store.ts";
+import { DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS } from "../runtime/live-view.ts";
 import { createLustreViewHub, type LustreHub, type LustreViewInstance } from "./lustre-views.ts";
 import {
   broadcastInvalidation,
@@ -212,6 +214,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxViewBytesPerConnection: 1024 * 1024,
   viewResumeSeconds: 30,
   maxParkedViews: 1000,
+  viewTokenMaxAgeSeconds: DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
@@ -259,8 +262,17 @@ export function withDeadline<T>(
     () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
     ms,
   );
+  let work: Promise<T>;
+  try {
+    work = fn(ctrl.signal);
+  } catch (err) {
+    // A resolver that throws before returning a promise: a rejection like any other failure,
+    // and its deadline timer is not left armed for the whole render timeout.
+    clearTimeout(timer);
+    return Promise.reject(err);
+  }
   return Promise.race([
-    fn(ctrl.signal),
+    work,
     new Promise<never>((_, reject) =>
       ctrl.signal.addEventListener(
         "abort",
@@ -333,6 +345,15 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
     }
   }
   return out;
+}
+
+/**
+ * Resolves once the live-view store writes in flight have landed: a socket that closes parks
+ * its views and seals each one's snapshot into the view store in the background, which can
+ * still be running when the hub is torn down. The server awaits it before its teardowns.
+ */
+export function liveViewStoreSettled(): Promise<void> {
+  return viewHub.settled();
 }
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
@@ -522,9 +543,16 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }, { ip, limitIp }))) {
-    return new Response("forbidden", { status: 403 });
+  // A handshake waiting on the hook holds its slot (total and per address), so a slow hook can't
+  // let one address pile up pending handshakes past the caps.
+  const release = reserveConnection(limitIp);
+  let authorized: boolean;
+  try {
+    authorized = await connectionAuthorized({ origin, url: "", cookie, peerId }, { ip, limitIp });
+  } finally {
+    release();
   }
+  if (!authorized) return new Response("forbidden", { status: 403 });
   // Re-check the caps after the (async) authorization: concurrent handshakes all passed the
   // first check while none had attached yet.
   const stillFull = connectionsFull(limitIp);
@@ -544,7 +572,7 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
  * when there is room. A connection with no address to limit on counts only against the total.
  */
 function connectionsFull(limitIp: string | undefined): Response | null {
-  if (connections.size >= limits.maxConnections) {
+  if (connections.size + pendingHandshakes >= limits.maxConnections) {
     return new Response("too many connections", { status: 503 });
   }
   if (limitIp === undefined) return null;
@@ -552,6 +580,29 @@ function connectionsFull(limitIp: string | undefined): Response | null {
   if ((connectionsPerIp.get(bucket) ?? 0) < limits.maxConnectionsPerIp) return null;
   warnPerIpRefusalOnce(bucket);
   return new Response("too many connections from this address", { status: 429 });
+}
+
+/** Handshakes holding a slot while the connection `authorize` hook runs. */
+let pendingHandshakes = 0;
+
+/**
+ * Count a handshake against the caps (the total and its address's) while it waits on the
+ * connection `authorize` hook; the returned function releases the slot (once).
+ */
+function reserveConnection(limitIp: string | undefined): () => void {
+  pendingHandshakes++;
+  const bucket = limitIp === undefined ? undefined : ipBucket(limitIp);
+  if (bucket !== undefined) connectionsPerIp.set(bucket, (connectionsPerIp.get(bucket) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    pendingHandshakes--;
+    if (bucket === undefined) return;
+    const left = (connectionsPerIp.get(bucket) ?? 1) - 1;
+    if (left > 0) connectionsPerIp.set(bucket, left);
+    else connectionsPerIp.delete(bucket);
+  };
 }
 
 /** Whether the proxy-peer / per-address refusal warnings have been logged (once per process). */

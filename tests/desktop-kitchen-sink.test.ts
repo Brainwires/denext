@@ -72,9 +72,16 @@ Deno.test("kitchen sink geometry: real failures stay failures", () => {
 
 import {
   parseWindowTestArgs,
+  privateLanAddress,
   resultsDocument,
   runtimeOf,
+  saveDialogKeys,
 } from "../examples/desktop-kitchen-sink/e2e/window-test.ts";
+import {
+  ATTACHMENT_NAME,
+  ATTACHMENT_TEXT,
+  attachmentResponse,
+} from "../examples/desktop-kitchen-sink/app/downloads.ts";
 import { parseFlags } from "../examples/desktop-kitchen-sink/e2e/cli-args.ts";
 import pin from "../src/build/desktop-runtime-pin.json" with { type: "json" };
 
@@ -153,6 +160,54 @@ Deno.test("kitchen sink: flag parsing for the command-line tools", () => {
   });
   // A JSON argument is positional, not a flag.
   assertEquals(parseFlags(["size", '{"width":800}']).positional, ["size", '{"width":800}']);
+});
+
+Deno.test("kitchen sink window test: downloadToFile's host is a private address, never loopback", () => {
+  const nic = (address: string, family: "IPv4" | "IPv6" = "IPv4") => ({ family, address });
+  assertEquals(
+    privateLanAddress([nic("127.0.0.1"), nic("fe80::1", "IPv6"), nic("10.1.0.4")]),
+    "10.1.0.4",
+  );
+  assertEquals(privateLanAddress([nic("172.20.3.9"), nic("192.168.1.2")]), "172.20.3.9");
+  assertEquals(privateLanAddress([nic("192.168.64.3")]), "192.168.64.3");
+  // Loopback, link-local, public and the edges of 172.16/12 are not offered.
+  assertEquals(
+    privateLanAddress([
+      nic("127.0.0.1"),
+      nic("169.254.10.1"),
+      nic("8.8.8.8"),
+      nic("172.15.0.1"),
+      nic("172.32.0.1"),
+      nic("fd00::1", "IPv6"),
+    ]),
+    null,
+  );
+});
+
+Deno.test("kitchen sink window test: a save dialog is answered with Return, dismissed with Escape", () => {
+  assertEquals(saveDialogKeys("linux"), {
+    driver: "xdotool",
+    accept: ["xdotool", "key", "--clearmodifiers", "Return"],
+    dismiss: ["xdotool", "key", "--clearmodifiers", "Escape"],
+  });
+  const mac = saveDialogKeys("darwin")!;
+  assertEquals(mac.driver, "osascript");
+  assertStringIncludes(mac.accept.join(" "), "key code 36"); // Return
+  assertStringIncludes(mac.dismiss.join(" "), "key code 53"); // Escape
+  const win = saveDialogKeys("windows")!;
+  assertEquals(win.driver, "sendkeys");
+  assertStringIncludes(win.accept.at(-1)!, "SendKeys('~')");
+  assertStringIncludes(win.dismiss.at(-1)!, "SendKeys('{ESC}')");
+  assertEquals(saveDialogKeys("freebsd"), null);
+});
+
+Deno.test("kitchen sink: the app origin's attachment is a download with the name the check expects", async () => {
+  const res = attachmentResponse();
+  assertEquals(
+    res.headers.get("content-disposition"),
+    `attachment; filename="${ATTACHMENT_NAME}"`,
+  );
+  assertEquals(await res.text(), ATTACHMENT_TEXT);
 });
 
 // --- the drive mode's queue protocol ---------------------------------------------------------

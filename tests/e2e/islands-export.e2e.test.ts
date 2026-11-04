@@ -56,8 +56,6 @@ async function scriptsLoaded(page: { evaluate: (js: string) => Promise<unknown> 
 
 Deno.test({
   name: "e2e: an islands-only export boots without the runtime and replays the first click",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_islands_export_e2e_" });
   for (const [name, src] of Object.entries(FILES)) {

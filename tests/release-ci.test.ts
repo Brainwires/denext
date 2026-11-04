@@ -11,17 +11,35 @@ import {
   desktopWindowVerdict,
   E2E_JOBS,
   e2eVerdict,
+  GATED_WORKFLOWS,
+  NATIVE_PLUGINS_JOBS,
+  nativePluginsVerdict,
   RELEASE_CI_JOBS,
   releaseCiHint,
   releaseCiVerdict,
   unmetCiJobs,
 } from "../scripts/release-ci.ts";
+import { revocationResignDue } from "../src/build/runtime-revocations.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
-/** A run of ci.yml. */
-function run(id: number, event: string, createdAt: string, status = "completed"): CiRun {
-  return { databaseId: id, event, status, conclusion: "", createdAt, url: `https://x/runs/${id}` };
+/** A run of ci.yml (of `headSha`, HEAD by default). */
+function run(
+  id: number,
+  event: string,
+  createdAt: string,
+  status = "completed",
+  headSha = SHA,
+): CiRun {
+  return {
+    databaseId: id,
+    event,
+    headSha,
+    status,
+    conclusion: "",
+    createdAt,
+    url: `https://x/runs/${id}`,
+  };
 }
 
 /** Every release job with `conclusion`, then `over` on top. */
@@ -62,6 +80,9 @@ Deno.test("release CI gate: the jobs a release needs, and what is unmet", () => 
     "ios-export-router",
     "windows-resolve",
     "windows-tests",
+    "macos-tests",
+    "cargo-audit",
+    "bundle-budget",
   ]);
   assertEquals(unmetCiJobs(jobs("success")), []);
   assertEquals(
@@ -90,13 +111,13 @@ Deno.test("release CI gate: only push runs (heavy jobs skipped) refuse, with how
   const { gh } = fakeGh([run(2, "push", "2026-10-06T11:00:00Z")], { 2: PUSH_JOBS });
   const verdict = await releaseCiVerdict(SHA, gh);
   assert(!verdict.ok);
-  assertStringIncludes(verdict.reason, "no ci.yml run");
+  assertStringIncludes(verdict.reason, "no ci.yml run of");
   assertStringIncludes(releaseCiHint("development"), "gh workflow run ci.yml --ref development");
   // No run at all: the same refusal.
   assert(!(await releaseCiVerdict(SHA, fakeGh([], {}).gh)).ok);
 });
 
-Deno.test("release CI gate: the NEWEST heavy run decides — a failure, or one still running, refuses", async () => {
+Deno.test("release CI gate: the NEWEST finished heavy run decides; a running one has no say", async () => {
   const older = run(1, "workflow_dispatch", "2026-10-06T10:00:00Z");
   const failed = fakeGh([older, run(3, "workflow_dispatch", "2026-10-06T12:00:00Z")], {
     1: jobs("success"),
@@ -107,13 +128,56 @@ Deno.test("release CI gate: the NEWEST heavy run decides — a failure, or one s
   assertStringIncludes(verdict.reason, "next-compat: failure");
   assertEquals(verdict.run?.databaseId, 3);
 
+  // A queued or in-progress run is not counted: the newest FINISHED run of this commit decides,
+  // and with none finished the release refuses.
   const running = fakeGh([older, run(4, "workflow_dispatch", "2026-10-06T12:00:00Z", "queued")], {
     1: jobs("success"),
     4: jobs("", { check: "success" }),
   });
-  const pending = await releaseCiVerdict(SHA, running.gh);
-  assert(!pending.ok);
-  assertStringIncludes(pending.reason, "queued");
+  const counted = await releaseCiVerdict(SHA, running.gh);
+  assert(counted.ok, counted.reason);
+  assertEquals(counted.run?.databaseId, 1);
+  const onlyRunning = fakeGh([run(5, "workflow_dispatch", "2026-10-06T12:00:00Z", "in_progress")], {
+    5: jobs("success"),
+  });
+  assert(
+    !(await releaseCiVerdict(SHA, onlyRunning.gh)).ok,
+    "an unfinished run vouches for nothing",
+  );
+});
+
+Deno.test("release CI gate: a pull_request run, or a run of another commit, never vouches", async () => {
+  // A pull_request run tests refs/pull/N/merge (the base plus HEAD), not HEAD itself.
+  const pr = fakeGh([run(1, "pull_request", "2026-10-06T10:00:00Z")], { 1: jobs("success") });
+  const prVerdict = await releaseCiVerdict(SHA, pr.gh);
+  assert(!prVerdict.ok);
+  assertStringIncludes(prVerdict.reason, "no ci.yml run of");
+  // `--commit` can list a run whose head is another commit: only HEAD's own runs count.
+  const other = fakeGh(
+    [run(2, "workflow_dispatch", "2026-10-06T10:00:00Z", "completed", "f".repeat(40))],
+    { 2: jobs("success") },
+  );
+  assert(!(await releaseCiVerdict(SHA, other.gh)).ok);
+  // The same rule for the other gated workflows.
+  const desktopPr = fakeGh([run(3, "pull_request", "2026-10-06T10:00:00Z")], {
+    3: desktopJobs("success"),
+  });
+  assert(!(await desktopCiVerdict(SHA, desktopPr.gh)).ok);
+});
+
+Deno.test("release CI gate: a failed job the list does not name still refuses", async () => {
+  // Every required job green, one unlisted job red: the run is not green.
+  const { gh } = fakeGh([run(1, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+    1: [...jobs("success"), { name: "new-job", status: "completed", conclusion: "failure" }],
+  });
+  const verdict = await releaseCiVerdict(SHA, gh);
+  assert(!verdict.ok);
+  assertStringIncludes(verdict.reason, "new-job: failure");
+  // bundle-budget is required: red or missing refuses.
+  const budget = fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+    2: jobs("success", { "bundle-budget": "failure" }),
+  });
+  assertStringIncludes((await releaseCiVerdict(SHA, budget.gh)).reason, "bundle-budget: failure");
 });
 
 /** Every desktop-ci job with `conclusion`, then `over` on top (extra names are added). */
@@ -171,9 +235,9 @@ Deno.test("desktop CI gate: the newest desktop-ci run on HEAD, push or dispatch,
     }).gh,
   );
   assertStringIncludes(missing.reason, "scaffold + package-script drift: missing");
-  // Still running, or no run at all: refused, with the dispatch in the hint.
+  // Only a run still going, or no run at all: refused, with the dispatch in the hint.
   const queued = fakeGh([run(5, "workflow_dispatch", "2026-10-06T10:00:00Z", "queued")], {});
-  assertStringIncludes((await desktopCiVerdict(SHA, queued.gh)).reason, "queued");
+  assert(!(await desktopCiVerdict(SHA, queued.gh)).ok);
   const none = await desktopCiVerdict(SHA, fakeGh([], {}).gh);
   assert(!none.ok);
   assertStringIncludes(none.reason, "no desktop-ci.yml run");
@@ -190,10 +254,11 @@ Deno.test("desktop CI gate: every required job is named in desktop-ci.yml", asyn
   // No job may fail without failing the run: a release needs every one of them green.
   assert(!/^\s*continue-on-error:/m.test(workflow), "a desktop-ci.yml job has continue-on-error");
   for (const job of DESKTOP_CI_JOBS) {
-    // A matrix leg `<name> (<os>)` comes from `name: <name> (${{ matrix.os }})` and that os.
-    const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)\)$/.exec(job);
-    if (leg) {
-      assertStringIncludes(workflow, `name: ${leg[1]} (\${{ matrix.os }})`, job);
+    // A matrix leg `<name> (<os>[ — <note>])` comes from `name: <name> (${{ matrix.os }}[ — <note>])`
+    // and that os.
+    const leg = /^(.*) \(((?:windows|macos|ubuntu)-latest)( — [^)]*)?\)$/.exec(job);
+    if (leg && !workflow.includes(`name: ${job}\n`)) {
+      assertStringIncludes(workflow, `name: ${leg[1]} (\${{ matrix.os }}${leg[3] ?? ""})`, job);
       assertStringIncludes(workflow, leg[2], job);
     } else {
       assertStringIncludes(workflow, `name: ${job}\n`, job);
@@ -284,15 +349,76 @@ Deno.test("desktop window gate: desktop-window.yml's newest run on HEAD, every O
     SHA,
     fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z", "in_progress")], {}).gh,
   );
-  assertStringIncludes(running.reason, "in_progress");
+  assertStringIncludes(running.reason, "has finished");
 });
 
 Deno.test("release CI gate: the hint dispatches every gated workflow, e2e with every job", () => {
+  assertEquals(GATED_WORKFLOWS, [
+    "ci.yml",
+    "desktop-ci.yml",
+    "e2e.yml",
+    "desktop-window.yml",
+    "native-plugins.yml",
+  ]);
   const hint = releaseCiHint("development");
-  for (const w of ["ci.yml", "desktop-ci.yml", "e2e.yml", "desktop-window.yml"]) {
+  for (const w of GATED_WORKFLOWS) {
     assertStringIncludes(hint, `gh workflow run ${w} --ref development`);
   }
+  assertStringIncludes(hint, "wait for all 5");
   assert(!hint.includes("-f job="), "e2e.yml runs every job (job=all, the default)");
+  assert(!hint.includes("-f ios="), "native-plugins.yml builds iOS too (ios=true, the default)");
+});
+
+Deno.test("native plugins gate: native-plugins.yml's newest run on HEAD, both apps green", async () => {
+  assertEquals(NATIVE_PLUGINS_JOBS, ["android", "ios"]);
+  const green = fakeGh([run(1, "push", "2026-10-06T10:00:00Z")], {
+    1: namedJobs(NATIVE_PLUGINS_JOBS, "success"),
+  });
+  const ok = await nativePluginsVerdict(SHA, green.gh);
+  assert(ok.ok, ok.reason);
+  assertEquals(green.calls[0].slice(0, 6), [
+    "run",
+    "list",
+    "--workflow",
+    "native-plugins.yml",
+    "--commit",
+    SHA,
+  ]);
+  // A dispatch with `-f ios=false` skips the iOS build: it can't vouch for a release.
+  const noIos = await nativePluginsVerdict(
+    SHA,
+    fakeGh([run(2, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+      2: namedJobs(NATIVE_PLUGINS_JOBS, "success", { ios: "skipped" }),
+    }).gh,
+  );
+  assert(!noIos.ok);
+  assertStringIncludes(noIos.reason, "ios: skipped");
+  // A newer red run outranks an older green one; none at all refuses.
+  const red = await nativePluginsVerdict(
+    SHA,
+    fakeGh(
+      [run(3, "push", "2026-10-06T10:00:00Z"), run(4, "workflow_dispatch", "2026-10-06T11:00:00Z")],
+      {
+        3: namedJobs(NATIVE_PLUGINS_JOBS, "success"),
+        4: namedJobs(NATIVE_PLUGINS_JOBS, "success", { android: "failure" }),
+      },
+    ).gh,
+  );
+  assertStringIncludes(red.reason, "android: failure");
+  const none = await nativePluginsVerdict(SHA, fakeGh([], {}).gh);
+  assert(!none.ok);
+  assertStringIncludes(none.reason, "no native-plugins.yml run");
+  // Both jobs exist in the workflow under those ids, and the dispatch builds iOS by default.
+  const workflow = await Deno.readTextFile(
+    new URL("../.github/workflows/native-plugins.yml", import.meta.url),
+  );
+  for (const job of NATIVE_PLUGINS_JOBS) assertStringIncludes(workflow, `\n  ${job}:\n`, job);
+  assertStringIncludes(workflow, "default: true");
+});
+
+Deno.test("release CI gate: every required job is a job of ci.yml", async () => {
+  const ci = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  for (const job of RELEASE_CI_JOBS) assertStringIncludes(ci, `\n  ${job}:\n`, job);
 });
 
 Deno.test("e2e + desktop window gates: every required job is named in its workflow", async () => {
@@ -308,10 +434,54 @@ Deno.test("e2e + desktop window gates: every required job is named in its workfl
   }
 });
 
-Deno.test("release CI gate: the release script checks all four workflows", async () => {
+Deno.test("release CI gate: the release script checks all five workflows", async () => {
   const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
   const check = src.slice(src.indexOf("async function checkCi("));
-  for (const v of ["releaseCiVerdict", "desktopCiVerdict", "e2eVerdict", "desktopWindowVerdict"]) {
+  for (
+    const v of [
+      "releaseCiVerdict",
+      "desktopCiVerdict",
+      "e2eVerdict",
+      "desktopWindowVerdict",
+      "nativePluginsVerdict",
+    ]
+  ) {
     assertStringIncludes(check.slice(0, check.indexOf("\n}\n")), v);
   }
+});
+
+Deno.test("CI workflows: every job of the gated workflows has a timeout-minutes", async () => {
+  // A job with no limit runs to GitHub's 6 h default, holding a runner through a stall.
+  for (const workflow of GATED_WORKFLOWS) {
+    const text = await Deno.readTextFile(
+      new URL(`../.github/workflows/${workflow}`, import.meta.url),
+    );
+    const jobs = text.slice(text.search(/^jobs:$/m));
+    const blocks = jobs.split(/^(?= {2}[\w-]+:$)/m).slice(1);
+    assert(blocks.length > 0, workflow);
+    for (const block of blocks) {
+      const name = block.slice(0, block.indexOf(":")).trim();
+      assert(/^ {4}timeout-minutes: \d+$/m.test(block), `${workflow}: job ${name} has no timeout`);
+    }
+  }
+});
+
+Deno.test("CI workflows: the badge check runs on the dispatched run a release counts", async () => {
+  const ci = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  const step = ci.slice(ci.indexOf("- name: Test-count badge is current"));
+  const cond = step.slice(step.indexOf("if:"), step.indexOf("run:"));
+  assertStringIncludes(cond, "workflow_dispatch");
+});
+
+Deno.test("release step 7: the revoked-runtimes list is re-signed when fewer than 10 days remain", () => {
+  const now = Date.parse("2026-10-30T00:00:00Z");
+  const day = 86_400_000;
+  const expiring = (days: number) => ({ expiresAt: new Date(now + days * day).toISOString() });
+  // A fresh 21-day list is left alone until its last 10 days.
+  assertEquals(revocationResignDue(expiring(21), now), false);
+  assertEquals(revocationResignDue(expiring(10), now), false);
+  assert(revocationResignDue(expiring(10 - 1 / 24), now));
+  assert(revocationResignDue(expiring(1), now));
+  // Lapsed (the releases paused): re-signed on the next one.
+  assert(revocationResignDue(expiring(-5), now));
 });

@@ -26,6 +26,7 @@ import * as Device from "../src/expo/device.ts";
 import * as Crypto from "../src/expo/crypto.ts";
 import * as Linking from "../src/expo/linking.ts";
 import * as WebBrowser from "../src/expo/web-browser.ts";
+import { resetPkceWarningForTesting } from "../src/expo/internal/pkce-warning.ts";
 import * as AuthSession from "../src/expo/auth-session.ts";
 import * as Notifications from "../src/expo/notifications.ts";
 import * as QuickActions from "../src/expo/quick-actions.ts";
@@ -1500,4 +1501,38 @@ Deno.test("expo-audio: AudioModule holds the classes and the session calls; prel
     ),
     true,
   );
+});
+
+Deno.test("expo-web-browser SECURITY (AU6-L9): a URL without PKCE keeps working, with a one-time warning", async () => {
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+  resetPkceWarningForTesting();
+  try {
+    const auth = recorder(["start"], { start: { url: "myapp://cb?code=1" } });
+    await inShell({ DenextAuthSession: auth.plugin }, async () => {
+      for (let i = 0; i < 2; i++) {
+        assertEquals(
+          await WebBrowser.openAuthSessionAsync(
+            "https://auth.test/authorize?client_id=c",
+            "myapp://cb",
+          ),
+          { type: "success", url: "myapp://cb?code=1" },
+        );
+      }
+      // A PKCE URL is denext's normal path (no waiver).
+      const pkce = "https://auth.test/authorize?client_id=c&code_challenge=" +
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
+      assertEquals(await WebBrowser.openAuthSessionAsync(pkce, "myapp://cb"), {
+        type: "success",
+        url: "myapp://cb?code=1",
+      });
+    });
+    const pkceWarnings = warnings.filter((w) => w.includes("WITHOUT PKCE"));
+    assertEquals(pkceWarnings.length, 1, warnings.join("\n"));
+    assert(pkceWarnings[0].includes("redeem the authorization code"));
+    assertEquals(auth.calls.length, 3);
+  } finally {
+    console.warn = realWarn;
+  }
 });

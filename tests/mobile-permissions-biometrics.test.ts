@@ -23,6 +23,11 @@ import {
   Target,
   withGlobals,
 } from "./helpers/mobile-fakes.ts";
+import {
+  SETTINGS_ANDROID_FILES,
+  SETTINGS_IOS_FILES,
+  SETTINGS_TEMPLATE_VERSION,
+} from "../src/build/settings-native-templates.ts";
 
 const PERMISSION_METHODS = ["checkPermissions", "requestPermissions"];
 const BIO_METHODS = ["checkBiometry", "internalAuthenticate"];
@@ -392,5 +397,162 @@ Deno.test("secureStore: requireBiometric stores a gated value and asks before re
     await assertRejects(() => secureStore.set("x", "\u0000denext-biometric:spoof"), TypeError);
     const err = await assertRejects(() => secureStore.get("token"), Error);
     assertEquals((err as Any).code, "unsupported", "no biometric plugin: the gate stays shut");
+  });
+});
+
+/** The secure-storage plugin over a map, as page script reaches it through the bridge. */
+function fakeSecureStorage(stored = new Map<string, string>()) {
+  const storage = fakePlugin(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  storage.plugin.internalSetItem = (arg: Any) => {
+    storage.calls.push(["internalSetItem", arg]);
+    stored.set(arg.prefixedKey, arg.data);
+    return Promise.resolve();
+  };
+  storage.plugin.internalGetItem = (arg: Any) =>
+    Promise.resolve({ data: stored.get(arg.prefixedKey) ?? null });
+  storage.plugin.internalRemoveItem = (arg: Any) => {
+    storage.calls.push(["internalRemoveItem", arg]);
+    stored.delete(arg.prefixedKey);
+    return Promise.resolve();
+  };
+  return { ...storage, stored };
+}
+
+/** denext's DenextSettings biometric secret store: the value only comes back after a prompt. */
+function fakeBiometricStore(refuseWith?: string) {
+  const secrets = new Map<string, string>();
+  const prompts: Any[] = [];
+  const store = fakePlugin([
+    "open",
+    "biometricSecretSet",
+    "biometricSecretGet",
+    "biometricSecretDelete",
+  ]);
+  store.plugin.biometricSecretSet = (arg: Any) => {
+    secrets.set(arg.key, arg.value);
+    return Promise.resolve();
+  };
+  store.plugin.biometricSecretGet = (arg: Any) => {
+    if (!secrets.has(arg.key)) return Promise.resolve({ value: null });
+    prompts.push(arg);
+    if (refuseWith) return Promise.reject(pluginError("refused", refuseWith));
+    return Promise.resolve({ value: secrets.get(arg.key) });
+  };
+  store.plugin.biometricSecretDelete = (arg: Any) => {
+    secrets.delete(arg.key);
+    return Promise.resolve();
+  };
+  return { ...store, secrets, prompts };
+}
+
+Deno.test("secureStore SECURITY (AU6-L5): requireBiometric is kept in the OS-enforced store, never in the page-readable one", async () => {
+  const storage = fakeSecureStorage();
+  const native = fakeBiometricStore();
+  await inShell(
+    "ios",
+    { SecureStorage: storage.plugin, DenextSettings: native.plugin },
+    async () => {
+      assertEquals(
+        await secureStore.set("token", "secret", { requireBiometric: true }),
+        { stored: "keychain" },
+      );
+      // Page script reading the plain store through the bridge gets nothing.
+      const read = await (storage.plugin.internalGetItem as (a: Any) => Promise<Any>)({
+        prefixedKey: "capacitor-storage_token",
+        sync: false,
+      });
+      assertEquals(read.data, null, "the gated value is not in the page-readable store");
+      assertEquals([...storage.stored.values()].some((v) => v.includes("secret")), false);
+      assertEquals(native.secrets.get("token"), "secret");
+      assertEquals(native.prompts, [], "storing never prompts");
+
+      assertEquals(await secureStore.get("token", { reason: "Unlock your account" }), "secret");
+      assertEquals(native.prompts, [{
+        key: "token",
+        reason: "Unlock your account",
+        allowDeviceCredential: false,
+      }]);
+      assertEquals(await secureStore.get("missing"), null, "nothing stored: no prompt, null");
+      assertEquals(native.prompts.length, 1);
+
+      // A plain value of the same key replaces the gated one; delete clears both stores.
+      await secureStore.set("token", "open");
+      assertEquals(native.secrets.has("token"), false);
+      assertEquals(await secureStore.get("token"), "open");
+      await secureStore.set("token", "secret", { requireBiometric: true });
+      assertEquals(storage.stored.has("capacitor-storage_token"), false);
+      await secureStore.delete("token");
+      assertEquals(native.secrets.has("token"), false);
+    },
+  );
+
+  const refusing = fakeBiometricStore("lockout");
+  refusing.secrets.set("token", "secret");
+  await inShell(
+    "android",
+    { SecureStorage: storage.plugin, DenextSettings: refusing.plugin },
+    async () => {
+      const err = await assertRejects(() => secureStore.get("token"), Error);
+      assertEquals((err as Any).code, "lockout");
+      assertEquals((err as Any).name, "BiometricError");
+    },
+  );
+});
+
+Deno.test("secureStore SECURITY (AU6-L5): a value an older denext gated in the page moves into the OS-enforced store once opened", async () => {
+  const storage = fakeSecureStorage(
+    new Map([["capacitor-storage_old", "\u0000denext-biometric:legacy"]]),
+  );
+  const native = fakeBiometricStore();
+  const bio = fakePlugin(BIO_METHODS);
+  await inShell(
+    "ios",
+    {
+      SecureStorage: storage.plugin,
+      DenextSettings: native.plugin,
+      BiometricAuthNative: bio.plugin,
+    },
+    async () => {
+      assertEquals(await secureStore.get("old"), "legacy");
+      assertEquals(bio.calls.length, 1, "the legacy value is still gated in the page once");
+      assertEquals(native.secrets.get("old"), "legacy");
+      assertEquals(storage.stored.has("capacitor-storage_old"), false);
+      assertEquals(await secureStore.get("old"), "legacy");
+      assertEquals(native.prompts.length, 1, "the next read goes through the native prompt");
+    },
+  );
+});
+
+Deno.test("DenextSettings SECURITY (AU6-L5): the biometric secret store is enforced by the OS", () => {
+  const swift = SETTINGS_IOS_FILES["DenextSettingsPlugin.swift"];
+  for (const method of ["biometricSecretSet", "biometricSecretGet", "biometricSecretDelete"]) {
+    assert(swift.includes(`CAPPluginMethod(name: "${method}"`), method);
+  }
+  // A Keychain access control the OS checks, read with an evaluated LAContext.
+  assert(swift.includes("[.biometryCurrentSet, .or, .devicePasscode]"));
+  assert(swift.includes("kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly"));
+  assert(swift.includes("query[kSecUseAuthenticationContext as String] = context"));
+  assert(swift.includes('static let biometricSecretService = "dev.denext.biometric-secret"'));
+  const java = SETTINGS_ANDROID_FILES["DenextSettingsPlugin.java"];
+  // An Android Keystore key that needs the user for every use, opened through a CryptoObject.
+  assert(java.includes(".setUserAuthenticationRequired(true)"));
+  assert(java.includes(".setInvalidatedByBiometricEnrollment(true)"));
+  assert(
+    java.includes("spec.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG"),
+  );
+  assert(java.includes("new BiometricPrompt.CryptoObject(rsa)"));
+  assert(java.includes("Cipher unwrap = result.getCryptoObject().getCipher();"));
+  assert(SETTINGS_TEMPLATE_VERSION >= 4, "the generation is bumped so an older denext keeps it");
+});
+
+Deno.test("secureStore SECURITY (AU6-L5): a shell with the biometric store but no secure-storage plugin reads it back", async () => {
+  const native = fakeBiometricStore();
+  await inShell("android", { DenextSettings: native.plugin }, async () => {
+    assertEquals(
+      await secureStore.set("token", "secret", { requireBiometric: true }),
+      { stored: "keychain" },
+    );
+    assertEquals(await secureStore.get("token"), "secret");
+    assertEquals(native.prompts.length, 1);
   });
 });

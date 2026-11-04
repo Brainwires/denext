@@ -309,10 +309,40 @@ itself (it reads neither the config keys nor the env vars for them).
   `false` answers `404`), `mutations` (default `true`: POST/PUT/PATCH/DELETE items run
   one at a time in call order; `false` refuses them), `forwardHeaders` (default none: request
   headers such as `["x-tenant"]` a batched call may carry, each item its own value; never a
-  credential, framing or proxy header), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  credential, framing, method-override or proxy header — nothing a CDN, hosting platform or
+  auth proxy sets, such as `fly-client-ip`, `x-vercel-*`, `x-amzn-*` or `x-envoy-*`), `maxItems` (default 20, at most 100), `maxBodyBytes`
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).
+- **`start`** — `StartConfig` (`denext/server`). Settings of the production
+  server process rather than its request handler. `start.idleTrim` — `boolean`
+  (default `true`; env `DENEXT_IDLE_TRIM=0` turns it off too). Once the event
+  loop has gone a second without work, the server runs a full GC and then
+  `malloc_trim(0)`, handing the memory a load burst left behind back to the OS
+  (at most once per idle period, never twice within 10 s). On for
+  `denext start`, the `build --compile` binary and the generated Docker image /
+  systemd unit on denext's Deno from runtime 3.0.0-rc.5; never for `dev`, tests
+  or jobs; glibc Linux only. See
+  [Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
+  `start.limits` — `{ memory?, cpuSeconds?, deadlineSeconds? }`: process
+  resource limits on denext's Deno from runtime 3.0.0-rc.2. `memory` caps the
+  main thread's JavaScript heap (a number of megabytes, or `"512m"` / `"2g"`; at
+  least 32 MB; exit 137), `cpuSeconds` the process CPU time (exit 152) and
+  `deadlineSeconds` its wall-clock lifetime (exit 124), each a whole number of
+  seconds from 1 up. Applied by `denext start` (to the process that serves,
+  never a CLI re-run before it), baked into the `build --compile` binary (whose
+  `job` and `db` run under them too: the runtime can't lift them) and written
+  into the generated Docker image / systemd unit; never for `dev`, tests or
+  `denext job`; not applied on stock Deno (a warning says so). See
+  [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
+  `start.tls` — `{ certificates: { hostnames, certFileEnv, keyFileEnv }[] }`:
+  serve HTTPS without a proxy. Each certificate lists the host names it serves
+  (exact, a one-label `*.` wildcard, or `"*"` for any other name and a client
+  without SNI) and names the environment variables holding its PEM certificate
+  and key files' paths, read when the server starts. One certificate works on
+  any Deno; several are picked per connection by SNI on denext's Deno from
+  runtime 3.0.0-denext.3 with `"unstable": ["net"]` in `deno.json`. See
+  [Deployment targets › HTTPS without a proxy](/docs/deployment-targets#https-without-a-proxy).
 
 ```ts
 export default {
@@ -375,9 +405,10 @@ export default {
   hydration when the server rendered a class, statically when the build scan
   finds `Component` in the app's own sources. `true` always imports the runtime
   statically (no round trip); `false` keeps it out entirely (zero bytes, and a
-  class throws a guided error). On the next-compat/SPA esbuild path the flag is
-  also a `define`, so `false` dead-code-eliminates the reconciler's class guards
-  from that bundle too.
+  class throws a guided error). On the next-compat/SPA esbuild path, and on the
+  native App Router path under denext's Deno toolchain (`deno bundle --define`),
+  the flag is also a `define`, so `false` dead-code-eliminates the reconciler's
+  class guards from that bundle too.
 - **`mdx`** — `MdxConfig`. MDX/CommonMark compilation options for `.mdx`/`.md`
   sources in a compat (npm-React) app. The baseline loader compiles plain MDX;
   set this to thread your own `remarkPlugins`, `rehypePlugins`, `recmaPlugins`,
@@ -440,6 +471,9 @@ See [Writing a plugin](/docs/plugins).
   `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
   `preload`, `inspectable`, the first window (`window`, `titleBar`, `backdrop`,
   `minSize`, `maxSize`), `installers`, `linux`, `extraPermissions` and `denoFlags`.
+  `desktop.backend` is the window engine, `"webview"` (default) or `"cef"`, for every
+  target or per OS (`{ macos?, windows?, linux?, default? }`); see
+  [Desktop apps › The window engine, per OS](/docs/desktop#desktop-backend).
 - **`mobile`** — `MobileConfig`. Capacitor shell settings for
   `denext mobile build` and `denext mobile assets`, such as build `flavors`
   (per-flavor app id, name, server URL, icon and splash) and the source `icon`
@@ -449,7 +483,8 @@ See [Writing a plugin](/docs/plugins).
 - **`appLinks`** — `AppLinksConfig`. The domain-association files for
   universal links (iOS) and App Links (Android): `denext start` and
   `denext dev` serve `/.well-known/apple-app-site-association` and
-  `/.well-known/assetlinks.json` from it, and `denext export` writes both. See
+  `/.well-known/assetlinks.json` from it, and `denext export` writes both.
+  `android` is one app or a list of apps (a debug and a release build, say). See
   [Mobile › Serving the association files](/docs/mobile#app-links).
 - **`cors`** (for an app's own origin such as `capacitor://localhost`) is under
   [Security](#security).
@@ -654,7 +689,10 @@ every `--platform` target included.
   `services/`, `functions/`, `migrations/`, `supabase/migrations/` and the root
   config, middleware and instrumentation modules; never `.env` files or SQLite
   databases), and `permissions` adds `--allow-*` beyond the least-privilege
-  baseline (`"all"` bakes `--allow-all`). `sign` (`true`, or `{ entitlements?,
+  baseline (`write`, `run`, `ffi`, `sys`; `"all"` bakes `--allow-all`). Its `netConnect` /
+  `netListen` (host lists in `--allow-net` syntax, `":3000"` for a port) bake the network grant
+  split by direction (`--allow-net-connect` / `--allow-net-listen`) on denext's Deno 3.0.0-rc.2 and
+  later, an unset direction unscoped; elsewhere the binary keeps `--allow-net` with a warning. `sign` (`true`, or `{ entitlements?,
   notarize?, timestampUrl? }`) code-signs the binary with the `DENEXT_*` credentials in the
   environment, and only warns when they are missing. See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)
@@ -670,6 +708,11 @@ every `--platform` target included.
   strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
   (Next limits it to `pages/`), and a worker script a client component renders later, on a page
   that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
+  SPA mode (`mode: "spa"`) works too wherever denext serves the shell (`denext dev`, `denext
+  start`): each shell response carries the boot tag and a fresh nonce on its scripts, and a
+  `spa.csp` policy lists it, so the worker scripts the app renders in the browser take the same
+  nonce. A static `denext export` of a SPA has no response to mint a nonce for, so its worker
+  scripts run on the main thread.
   Only denext's own worker scripts run: each carries a per-response nonce the page's CSP lists, so
   an injected `text/partytown` script is left inert (see
   [Security](/docs/security#script-strategyworker-partytown-and-html-injection)). Partytown's
