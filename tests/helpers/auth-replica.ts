@@ -15,8 +15,8 @@ import { createApp } from "../../src/server/app.ts";
 import { scanRoutes } from "../../src/router/manifest.ts";
 import type { DenextConfig } from "../../src/server/config.ts";
 import type { ModuleLoader } from "../../src/server/types.ts";
-import { denextAuth } from "../../src/server/auth/mod.ts";
-import { credentials } from "../../src/server/auth/providers.ts";
+import { denextAuth } from "../../packages/auth/src/mod.ts";
+import { credentials } from "../../packages/auth/src/providers.ts";
 import { backend, backendAuthAdapter } from "../../packages/backend/mod.ts";
 
 const url = Deno.env.get("REPLICA_DB_URL");

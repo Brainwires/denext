@@ -5,10 +5,10 @@
 // (userinfo + attribute mapping) and an OIDC one (a verified id_token with its nonce).
 
 import { assert, assertEquals, assertExists, assertStringIncludes } from "@std/assert";
-import { customProviderStoreOf } from "../src/server/auth/adapter-oauth-server.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { customProviderStoreOf } from "../packages/auth/src/adapter-oauth-server.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 
 // deno-lint-ignore no-explicit-any

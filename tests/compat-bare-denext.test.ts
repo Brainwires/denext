@@ -7,6 +7,7 @@
 // denext's sources (a second hook dispatcher). Each fixture here maps denext to `jsr:` with no
 // lockfile, so any `denext` specifier that falls through fails the export.
 
+import { authModuleUrl, authPackageExports } from "../src/build/auth-package.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { Platform } from "../src/build/platform-extensions.ts";
@@ -22,6 +23,9 @@ const exportsMap = JSON.parse(
   await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
 ).exports as Record<string, string>;
 /** Every public specifier: `denext`, `denext/client`, `denext/expo/haptics`, … */
+/** @denext/auth's exports, as the compat build reads them from the workspace member. */
+const AUTH_BASE = new URL("../", import.meta.url).href;
+const AUTH_EXPORTS = await authPackageExports(AUTH_BASE);
 const PUBLIC = Object.keys(exportsMap).map((k) => k === "." ? "denext" : `denext/${k.slice(2)}`);
 const CLIENT = PUBLIC.filter((s) => !DENEXT_SERVER_SUBPATHS.has(s));
 
@@ -40,7 +44,13 @@ Deno.test("every public denext subpath is a prebuilt runtime file or a server-on
     assert(file === null || !DENEXT_SERVER_SUBPATHS.has(spec), `${spec} is in both`);
     if (file) assert(entries.has(file), `${spec} → ${file}, which the prebuild does not emit`);
   }
-  for (const spec of DENEXT_SERVER_SUBPATHS) assert(PUBLIC.includes(spec), `${spec} not exported`);
+  // `denext/auth` and `denext/next-auth[/…]` are @denext/auth's (beside the framework): the
+  // compat bundles resolve them there, not through denext's own exports.
+  for (const spec of DENEXT_SERVER_SUBPATHS) {
+    if (spec === "denext/auth" || spec.startsWith("denext/next-auth")) {
+      assert(authModuleUrl(spec, AUTH_EXPORTS, AUTH_BASE), `${spec} is not an @denext/auth export`);
+    } else assert(PUBLIC.includes(spec), `${spec} not exported`);
+  }
   assertEquals(DENEXT_RUNTIME_FILES["denext"], "denext.js");
   // The Lustre helpers are client components (hooks, the Live socket): prebuilt into the one
   // runtime graph, never an external a compat page's browser can't load.

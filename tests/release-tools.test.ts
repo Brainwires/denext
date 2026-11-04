@@ -336,7 +336,8 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // src/cli/commands/meta/ → 19.55 MiB; 0.25 MiB above that is still past 19.75, so the guard
   // stays. Nothing else in the set was data, so scripts/publish-strip.ts now blanks internal
   // comments at publish (19.61 → 16.48 MiB); the guard is on that size, at 18.5 MiB. Raise it
-  // only with the reason.
+  // only with the reason. 5.0 moved the auth layer into @denext/auth (packages/auth, published
+  // on its own), about 2 MiB of source out of this package.
   const measured = await measurePublishSet();
   if (!measured) return; // not a git checkout: nothing to measure
   assertEquals(publishSizeProblem(measured.after), null);

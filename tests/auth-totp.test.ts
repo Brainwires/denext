@@ -9,13 +9,13 @@ import {
   totpAuthUri,
   type TotpVerifyResult,
   verifyTotp,
-} from "../src/server/auth/totp.ts";
+} from "../packages/auth/src/totp.ts";
 import {
   backupCodeMatcher,
   generateBackupCodes,
   isBackupCodeShaped,
-} from "../src/server/auth/backup-codes.ts";
-import { type Hasher, scryptHasher } from "../src/server/auth/hasher.ts";
+} from "../packages/auth/src/backup-codes.ts";
+import { type Hasher, scryptHasher } from "../packages/auth/src/hasher.ts";
 
 /** RFC 6238 Appendix B: the ASCII seed "12345678901234567890", base32. */
 const RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";

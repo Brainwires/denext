@@ -7,10 +7,10 @@
 // nonce) each refuse on their own.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { decodeCbor } from "../src/server/auth/cbor.ts";
+import { decodeCbor } from "../packages/auth/src/cbor.ts";
 import { type Cbor, cbor as encodeCbor } from "./helpers/soft-authenticator.ts";
-import { base64UrlDecode, base64UrlEncode } from "../src/server/auth/oauth.ts";
-import { verifyRegistration, WebAuthnError } from "../src/server/auth/webauthn.ts";
+import { base64UrlDecode, base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import { verifyRegistration, WebAuthnError } from "../packages/auth/src/webauthn.ts";
 import fixture from "./fixtures/webauthn-attestation/simplewebauthn.json" with { type: "json" };
 
 interface Vector {

@@ -1,5 +1,5 @@
 // Test wallets for Web3 sign-in: an Ethereum one (secp256k1 signing over the curve arithmetic in
-// src/server/auth/gotrue/secp256k1.ts, an EIP-1193 `request` like a browser wallet's) and a
+// packages/auth/src/gotrue/secp256k1.ts, an EIP-1193 `request` like a browser wallet's) and a
 // Solana one (Ed25519 through Web Crypto, `publicKey.toBase58()` + `signMessage()`). The
 // recovery the server runs is checked separately against viem-generated fixtures, so a bug in
 // the shared curve code can't make these tests agree with themselves.
@@ -12,14 +12,14 @@ import {
   mod,
   multiply,
   N,
-} from "../src/server/auth/gotrue/secp256k1.ts";
+} from "../packages/auth/src/gotrue/secp256k1.ts";
 import {
   addressOfPublicKey,
   base58Encode,
   bytesToHex,
   personalMessageHash,
   toChecksumAddress,
-} from "../src/server/auth/gotrue/web3.ts";
+} from "../packages/auth/src/gotrue/web3.ts";
 
 /** An Ethereum test wallet. */
 export interface EthereumTestWallet {

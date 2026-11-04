@@ -3,8 +3,8 @@
 // tests/helpers/postgres-suites.ts). The user's row alone is dropped — as a deletion that left
 // its sessions behind would — by hiding it from `getUser`.
 
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { DELETED_USER_CASES } from "./helpers/deleted-user-tokens.ts";
 
 for (const [name, run] of Object.entries(DELETED_USER_CASES)) {

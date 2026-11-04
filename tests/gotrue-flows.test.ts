@@ -5,10 +5,10 @@
 // a native id_token sign-in.
 
 import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig, OAuthProvider } from "../packages/auth/src/types.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 
 interface Call {

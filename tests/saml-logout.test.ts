@@ -19,7 +19,7 @@ import {
   type VerifyLogoutOptions,
   verifyLogoutRequest,
   verifyLogoutResponse,
-} from "../src/server/auth/saml/mod.ts";
+} from "../packages/auth/src/saml/mod.ts";
 import { ecKey, encode, IDP_ENTITY, marker, rsaKey, sign, SP, T0 } from "./_saml-helpers.ts";
 import {
   IDP_SLO_URL,

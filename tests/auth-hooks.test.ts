@@ -8,15 +8,15 @@ import {
   runDeferred,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { requestEmailVerification } from "../src/server/auth/email.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { credentials, emailOtp, magicLink } from "../src/server/auth/providers.ts";
-import { assertEmailProviderConfig } from "../src/server/auth/providers-email.ts";
+import { requestEmailVerification } from "../packages/auth/src/email.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { credentials, emailOtp, magicLink } from "../packages/auth/src/providers.ts";
+import { assertEmailProviderConfig } from "../packages/auth/src/providers-email.ts";
 import type {
   GoTrueSendEmailPayload,
   GoTrueSmsMessage,
-} from "../src/server/auth/gotrue/options.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/gotrue/options.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { type NativeHarness, nativeHarness, ORIGIN, post } from "./helpers/auth-native-harness.ts";
 
 function setup(extra: Partial<AuthConfig> = {}) {

@@ -1,16 +1,16 @@
 // The AuthAdapter contract for the `/auth/v1` OAuth-server, stored-provider and Web3 nonce
-// groups (src/server/auth/adapter-oauth-server.ts) — run by tests/helpers/auth-adapter-contract.ts
+// groups (packages/auth/src/adapter-oauth-server.ts) — run by tests/helpers/auth-adapter-contract.ts
 // against every adapter denext ships (in-memory, SQLite, Postgres).
 
 import { assert, assertEquals } from "@std/assert";
-import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
+import type { AuthAdapter } from "../../packages/auth/src/adapter.ts";
 import { at } from "./contract-clock.ts";
 import {
   customProviderStoreOf,
   type OAuthAuthorizationRecord,
   type OAuthClientRecord,
   oauthServerStoreOf,
-} from "../../src/server/auth/adapter-oauth-server.ts";
+} from "../../packages/auth/src/adapter-oauth-server.ts";
 
 type Case = (adapter: AuthAdapter) => Promise<void>;
 

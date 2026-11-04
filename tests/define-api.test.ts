@@ -2,6 +2,12 @@
 // is a plain ApiHandler) and through handleApi for the error mapping. A hand-rolled Standard
 // Schema stands in for Zod/Valibot so the test has zero dependencies.
 
+import {
+  AuthPluginMissingError,
+  peekAuthRuntime,
+  registerAuthRuntime,
+  resetAuthRuntimeForTesting,
+} from "../src/server/auth-registry.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { apiDefinitionOf, createApi, defineApi } from "../src/server/define-api.ts";
 import { rateLimit, requireSession } from "../src/server/api-middleware.ts";
@@ -12,7 +18,7 @@ import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import type { ApiModule } from "../src/server/types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
-import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { inMemoryRateLimitStore } from "../packages/auth/src/rate-limit.ts";
 import { parseCidr, setRemoteAddr } from "../src/server/remote-addr.ts";
 
 /** A loopback reverse proxy, listed as the trusted source of the app's limit header. */
@@ -198,10 +204,26 @@ Deno.test("requireSession: without a signed-in viewer it fails 401 before valida
       return "unreachable";
     },
   );
-  const err = await rejects(GET(post({ title: 1 }), ctx()));
-  assert(isApiError(err));
-  assertEquals([err.status, err.code, err.message], [401, "unauthorized", "sign in first"]);
-  assertEquals(validated, false);
+  // A signed-out viewer, as `denextAuth()` (@denext/auth) reports one through the registry.
+  const before = peekAuthRuntime();
+  registerAuthRuntime({
+    auth: () => Promise.resolve(null),
+    requireAuth: () => Promise.resolve(null),
+    updateAuthSession: () => Promise.resolve(null),
+  });
+  try {
+    const err = await rejects(GET(post({ title: 1 }), ctx()));
+    assert(isApiError(err));
+    assertEquals([err.status, err.code, err.message], [401, "unauthorized", "sign in first"]);
+    assertEquals(validated, false);
+    // With no auth plugin at all, the guard says how to add one (and still never validates).
+    resetAuthRuntimeForTesting();
+    assert((await rejects(GET(post({ title: 1 }), ctx()))) instanceof AuthPluginMissingError);
+    assertEquals(validated, false);
+  } finally {
+    if (before) registerAuthRuntime(before);
+    else resetAuthRuntimeForTesting();
+  }
 });
 
 Deno.test("rateLimit: the (max+1)th request in a window is a 429 with retry-after; forged XFF is ignored", async () => {

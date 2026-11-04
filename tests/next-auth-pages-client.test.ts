@@ -13,7 +13,7 @@ import {
   refetchers,
   refreshProviders,
   sameOrigin,
-} from "../src/compat/next-auth/client-state.ts";
+} from "../packages/auth/next-auth/client-state.ts";
 import {
   errorPage,
   PASSKEY_SCRIPT,
@@ -21,12 +21,12 @@ import {
   signInPage,
   signOutPage,
   verifyRequestPage,
-} from "../src/compat/next-auth/pages.ts";
-import Credentials from "../src/compat/next-auth/providers/credentials.ts";
-import GitHub from "../src/compat/next-auth/providers/github.ts";
-import Passkey from "../src/compat/next-auth/providers/passkey.ts";
-import Resend from "../src/compat/next-auth/providers/resend.ts";
-import type { ProviderDescriptor } from "../src/compat/next-auth/providers/shared.ts";
+} from "../packages/auth/next-auth/pages.ts";
+import Credentials from "../packages/auth/next-auth/providers/credentials.ts";
+import GitHub from "../packages/auth/next-auth/providers/github.ts";
+import Passkey from "../packages/auth/next-auth/providers/passkey.ts";
+import Resend from "../packages/auth/next-auth/providers/resend.ts";
+import type { ProviderDescriptor } from "../packages/auth/next-auth/providers/shared.ts";
 
 const query = (init: Record<string, string> = {}) => new URLSearchParams(init);
 

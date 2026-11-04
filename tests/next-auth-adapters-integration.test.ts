@@ -15,11 +15,14 @@
 //     deno test -A tests/next-auth-adapters-integration.test.ts
 
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
-import NextAuth, { getServerSession, type NextAuthConfig } from "../src/compat/next-auth/index.ts";
-import type { AuthJsAdapter } from "../src/compat/next-auth/adapter.ts";
-import { instanceFor } from "../src/compat/next-auth/instance.ts";
-import Credentials from "../src/compat/next-auth/providers/credentials.ts";
-import Resend from "../src/compat/next-auth/providers/resend.ts";
+import NextAuth, {
+  getServerSession,
+  type NextAuthConfig,
+} from "../packages/auth/next-auth/index.ts";
+import type { AuthJsAdapter } from "../packages/auth/next-auth/adapter.ts";
+import { instanceFor } from "../packages/auth/next-auth/instance.ts";
+import Credentials from "../packages/auth/next-auth/providers/credentials.ts";
+import Resend from "../packages/auth/next-auth/providers/resend.ts";
 import Database from "../src/compat/better-sqlite3.ts";
 import { type CallInit, inRequest, Jar, request } from "./helpers/next-auth-harness.ts";
 

@@ -12,17 +12,17 @@ import {
   type ResolvedMds,
   resolveMds,
   verifyMdsBlob,
-} from "../src/server/auth/fido-mds.ts";
-import { CertificateChainError, verifyCertificateChain } from "../src/server/auth/x509-chain.ts";
+} from "../packages/auth/src/fido-mds.ts";
+import { CertificateChainError, verifyCertificateChain } from "../packages/auth/src/x509-chain.ts";
 import {
   type RegistrationResult,
   verifyRegistration,
   WebAuthnError,
-} from "../src/server/auth/webauthn.ts";
-import { resolvePasskeys } from "../src/server/auth/passkeys.ts";
-import { creationOptions, verifyNewPasskey } from "../src/server/auth/passkey-ceremony.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/webauthn.ts";
+import { resolvePasskeys } from "../packages/auth/src/passkeys.ts";
+import { creationOptions, verifyNewPasskey } from "../packages/auth/src/passkey-ceremony.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import {
   b64,
   type BlobPayload,

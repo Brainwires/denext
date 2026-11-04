@@ -1,5 +1,5 @@
 // denext auth's users, read from its Postgres tables (`auth_users` and the `auth_*` tables keyed
-// by `user_id`; see src/server/auth/postgres-schema.ts): who they are, how many live sessions
+// by `user_id`; see packages/auth/src/postgres-schema.ts): who they are, how many live sessions
 // each has, whether a second factor is confirmed, whether a ban is in force. Revoking deletes
 // the user's rows in the session store, marks their native-app sessions revoked and moves the
 // user's "sessions valid after" mark to now (which ends a stateless cookie session too); deleting
@@ -14,8 +14,8 @@
 // preview shows its hash as a mask.
 
 import type { SqlClient } from "../../server/postgres.ts";
-import { hashPassword } from "../../server/auth/password.ts";
-import { emailKey } from "../../server/auth/email-key.ts";
+import { hashPassword } from "../../server/password.ts";
+import { emailKey } from "../../server/email-key.ts";
 import {
   DB_BAN_DURATIONS,
   DB_MAX_PASSWORD,

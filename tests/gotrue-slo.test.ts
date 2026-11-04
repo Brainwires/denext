@@ -6,8 +6,8 @@
 // destination, a LogoutResponse for another request).
 
 import { assert, assertEquals, assertExists, assertStringIncludes } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, SLO, testIdp } from "./_saml-idp.ts";
 import { encryptNameId, inflateParam, spKey, verifySpRedirect } from "./_saml-enc-helpers.ts";

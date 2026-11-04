@@ -1,4 +1,5 @@
-import { denextAuth, type DenextConfig } from "denext/server";
+import type { DenextConfig } from "denext/server";
+import { denextAuth } from "@denext/auth";
 import { openapi } from "@denext/openapi";
 import { authConfig } from "./lib/auth.ts";
 

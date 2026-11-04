@@ -5,14 +5,14 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import type { SqlClient } from "../../src/server/postgres.ts";
-import { postgresAuthAdapter } from "../../src/server/auth/postgres-adapter.ts";
-import { postgresSessionStore } from "../../src/server/auth/postgres-session-store.ts";
-import { postgresRateLimitStore } from "../../src/server/auth/postgres-rate-limit.ts";
+import { postgresAuthAdapter } from "../../packages/auth/src/postgres-adapter.ts";
+import { postgresSessionStore } from "../../packages/auth/src/postgres-session-store.ts";
+import { postgresRateLimitStore } from "../../packages/auth/src/postgres-rate-limit.ts";
 import { postgresCacheStore } from "../../src/server/postgres-cache.ts";
 import { postgresLiveViewStore } from "../../src/server/live-view-stores.ts";
 import { liveViewStoreContract } from "./live-view-store-contract.ts";
 import { migratePostgres, postgresMigrationStatus } from "../../src/server/postgres-migrate.ts";
-import type { PasskeyRecord } from "../../src/server/auth/adapter.ts";
+import type { PasskeyRecord } from "../../packages/auth/src/adapter.ts";
 import type { CachedPage } from "../../src/server/cache.ts";
 import { adapterContract } from "./auth-adapter-contract.ts";
 import {

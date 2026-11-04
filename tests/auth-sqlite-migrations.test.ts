@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
 import {
   dropColumn,
   dropTable,
@@ -13,7 +13,7 @@ import {
   renameTable,
   runSchemaMigrations,
   type SqliteSchemaMigration,
-} from "../src/server/auth/sqlite-migrations.ts";
+} from "../packages/auth/src/sqlite-migrations.ts";
 import type { SqliteDb, SqlValue } from "../src/server/sqlite-cache.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 

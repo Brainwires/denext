@@ -20,41 +20,41 @@ import {
   expectedFiles,
   extract,
   MANIFEST,
-  patchDenoJson,
+  patchAuthDenoJson,
   Unexpressible,
 } from "../scripts/gen-auth-providers.ts";
 import { docLintModules } from "../scripts/doc-lint.ts";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import { mapProfile } from "../src/compat/next-auth/providers/generated.ts";
-import { NEXT_AUTH_PROVIDER_MODULES } from "../src/compat/next-auth/providers/list.ts";
-import { signInRecord } from "../src/compat/next-auth/state.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import { mapProfile } from "../packages/auth/next-auth/providers/generated.ts";
+import { NEXT_AUTH_PROVIDER_MODULES } from "../src/build/next-auth-providers.ts";
+import { signInRecord } from "../packages/auth/next-auth/state.ts";
 import { inRequest, Jar, request } from "./helpers/next-auth-harness.ts";
-import Descope from "../src/compat/next-auth/providers/descope.ts";
-import Dribbble from "../src/compat/next-auth/providers/dribbble.ts";
-import Eventbrite from "../src/compat/next-auth/providers/eventbrite.ts";
-import EVEOnline from "../src/compat/next-auth/providers/eveonline.ts";
-import FusionAuth from "../src/compat/next-auth/providers/fusionauth.ts";
-import Kakao from "../src/compat/next-auth/providers/kakao.ts";
-import Mattermost from "../src/compat/next-auth/providers/mattermost.ts";
-import Reddit from "../src/compat/next-auth/providers/reddit.ts";
-import Salesforce from "../src/compat/next-auth/providers/salesforce.ts";
-import Webex from "../src/compat/next-auth/providers/webex.ts";
-import WorkOS from "../src/compat/next-auth/providers/workos.ts";
-import Zitadel from "../src/compat/next-auth/providers/zitadel.ts";
-import AzureAD from "../src/compat/next-auth/providers/azure-ad.ts";
-import Bungie from "../src/compat/next-auth/providers/bungie.ts";
-import Dropbox from "../src/compat/next-auth/providers/dropbox.ts";
-import Foursquare from "../src/compat/next-auth/providers/foursquare.ts";
-import HubSpot from "../src/compat/next-auth/providers/hubspot.ts";
-import LINE from "../src/compat/next-auth/providers/line.ts";
-import NetSuite from "../src/compat/next-auth/providers/netsuite.ts";
-import Nextcloud from "../src/compat/next-auth/providers/nextcloud.ts";
-import TikTok from "../src/compat/next-auth/providers/tiktok.ts";
-import Todoist from "../src/compat/next-auth/providers/todoist.ts";
-import Trakt from "../src/compat/next-auth/providers/trakt.ts";
-import VK from "../src/compat/next-auth/providers/vk.ts";
-import type { Provider } from "../src/compat/next-auth/types.ts";
-import type { AuthUser, OAuthProvider, ProfileInput } from "../src/server/auth/types.ts";
+import Descope from "../packages/auth/next-auth/providers/descope.ts";
+import Dribbble from "../packages/auth/next-auth/providers/dribbble.ts";
+import Eventbrite from "../packages/auth/next-auth/providers/eventbrite.ts";
+import EVEOnline from "../packages/auth/next-auth/providers/eveonline.ts";
+import FusionAuth from "../packages/auth/next-auth/providers/fusionauth.ts";
+import Kakao from "../packages/auth/next-auth/providers/kakao.ts";
+import Mattermost from "../packages/auth/next-auth/providers/mattermost.ts";
+import Reddit from "../packages/auth/next-auth/providers/reddit.ts";
+import Salesforce from "../packages/auth/next-auth/providers/salesforce.ts";
+import Webex from "../packages/auth/next-auth/providers/webex.ts";
+import WorkOS from "../packages/auth/next-auth/providers/workos.ts";
+import Zitadel from "../packages/auth/next-auth/providers/zitadel.ts";
+import AzureAD from "../packages/auth/next-auth/providers/azure-ad.ts";
+import Bungie from "../packages/auth/next-auth/providers/bungie.ts";
+import Dropbox from "../packages/auth/next-auth/providers/dropbox.ts";
+import Foursquare from "../packages/auth/next-auth/providers/foursquare.ts";
+import HubSpot from "../packages/auth/next-auth/providers/hubspot.ts";
+import LINE from "../packages/auth/next-auth/providers/line.ts";
+import NetSuite from "../packages/auth/next-auth/providers/netsuite.ts";
+import Nextcloud from "../packages/auth/next-auth/providers/nextcloud.ts";
+import TikTok from "../packages/auth/next-auth/providers/tiktok.ts";
+import Todoist from "../packages/auth/next-auth/providers/todoist.ts";
+import Trakt from "../packages/auth/next-auth/providers/trakt.ts";
+import VK from "../packages/auth/next-auth/providers/vk.ts";
+import type { Provider } from "../packages/auth/next-auth/types.ts";
+import type { AuthUser, OAuthProvider, ProfileInput } from "../packages/auth/src/types.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const SECRET = "next-auth-generated-providers-secret-32+";
@@ -91,18 +91,19 @@ Deno.test("generated providers: the manifest covers exactly the pinned @auth/cor
 });
 
 Deno.test("generated providers: every module, export and doc-lint entry is in place", async () => {
-  const denoJson = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
+  // The modules are @denext/auth's exports; `deno task doc-lint` (scripts/doc-lint.ts) covers them.
+  const authJson = JSON.parse(await Deno.readTextFile(join(ROOT, "packages/auth/deno.json"))) as {
     exports: Record<string, string>;
   };
-  const docLint = docLintModules(denoJson.exports);
+  const docLint = docLintModules(authJson.exports);
   for (const id of providerModules(manifest)) {
     const path = `${PROVIDERS_DIR}/${id}.ts`;
     await Deno.stat(join(ROOT, path));
-    assertEquals(denoJson.exports[`./next-auth/providers/${id}`], `./${path}`);
+    assertEquals(authJson.exports[`./next-auth/providers/${id}`], `./next-auth/providers/${id}.ts`);
     assert(docLint.includes(path), `doc-lint misses ${path}`);
   }
   for (const id of Object.keys(manifest.unsupported)) {
-    assertEquals(denoJson.exports[`./next-auth/providers/${id}`], undefined);
+    assertEquals(authJson.exports[`./next-auth/providers/${id}`], undefined);
   }
 });
 
@@ -152,7 +153,7 @@ Deno.test("gen:auth-providers: an upstream value it would write unescaped fails 
     assertThrows(() => renderAll(bad), Error, "gen:auth-providers", what);
   }
   assertThrows(
-    () => patchDenoJson('"./next-auth/providers/a": "x",', ['a": "evil']),
+    () => patchAuthDenoJson('"./next-auth/providers/a": "x",', ['a": "evil']),
     Error,
     "unsafe provider module name",
   );
@@ -753,11 +754,11 @@ Deno.test("doc-lint: the provider modules come from the exports, after the provi
   const { DOC_LINT_MODULES, PROVIDERS_AFTER } = await import("../scripts/doc-lint.ts");
   const modules = docLintModules({
     ".": "./mod.ts",
-    "./next-auth/providers": `./${PROVIDERS_AFTER}`,
-    "./next-auth/providers/github": "./src/compat/next-auth/providers/github.ts",
+    "./next-auth/providers": "./next-auth/providers/index.ts",
+    "./next-auth/providers/github": "./next-auth/providers/github.ts",
   });
   const at = modules.indexOf(PROVIDERS_AFTER);
-  assertEquals(modules[at + 1], "src/compat/next-auth/providers/github.ts");
+  assertEquals(modules[at + 1], "packages/auth/next-auth/providers/github.ts");
   assertEquals(modules.length, DOC_LINT_MODULES.length + 1);
   assert(!DOC_LINT_MODULES.some((m) => /providers\/(?!index)[\w-]+\.ts$/.test(m)), "listed twice");
 });

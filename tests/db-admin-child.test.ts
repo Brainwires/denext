@@ -20,7 +20,7 @@ import {
 } from "../src/cli/db-admin/connection.ts";
 import type { DbFailure, DbReplies, DbReply, DbRequest } from "../src/ui/database/protocol.ts";
 import { DB_SQL_MAX_ROWS } from "../src/ui/database/protocol.ts";
-import { verifyPassword } from "../src/server/auth/password.ts";
+import { verifyPassword } from "../src/server/password.ts";
 
 /** One recorded statement. */
 interface Sent {

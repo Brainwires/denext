@@ -11,7 +11,7 @@
  * @module
  */
 
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, relative } from "@std/path";
 import {
   AUTHJS_CORE_VERSION,
   HAND_WRITTEN,
@@ -23,6 +23,7 @@ import {
 } from "./auth-providers/classify.ts";
 import {
   assertModuleName,
+  AUTH_PACKAGE_DIR,
   type ProviderManifest,
   providerModules,
   PROVIDERS_DIR,
@@ -35,10 +36,10 @@ import {
   generatedUserinfoRequest,
   mapProfile,
   type ProfileExpr,
-} from "../src/compat/next-auth/providers/generated.ts";
-import { OAUTH_CHECKS } from "../src/server/auth/oauth.ts";
+} from "../packages/auth/next-auth/providers/generated.ts";
+import { OAUTH_CHECKS } from "../packages/auth/src/oauth.ts";
 import { boundedDeno } from "./deno-doc.ts";
-import type { OAuthCheck } from "../src/server/auth/types.ts";
+import type { OAuthCheck } from "../packages/auth/src/types.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 /** The manifest's path, repo-relative. */
@@ -766,26 +767,27 @@ async function listProviders(): Promise<string[]> {
 // ---- deno.json -----------------------------------------------------------------------------
 
 /**
- * `deno.json`'s text with its `next-auth/providers/*` exports set to `modules` (the block's
- * position and every other line kept). `deno task doc-lint` (scripts/doc-lint.ts) lints the
- * modules those exports name.
+ * `@denext/auth`'s `deno.json` text with its `next-auth/providers/*` exports set to `modules`
+ * (the block's position and every other line kept). `deno task doc-lint` (scripts/doc-lint.ts)
+ * lints the modules those exports name.
  *
- * @param text The current `deno.json`.
+ * @param text The current `packages/auth/deno.json`.
  * @param modules The provider module names.
  * @returns The new text.
  */
-export function patchDenoJson(text: string, modules: readonly string[]): string {
+export function patchAuthDenoJson(text: string, modules: readonly string[]): string {
   modules.forEach(assertModuleName);
   const lines = text.split("\n");
   const isProvider = (line: string) => /^\s*"\.\/next-auth\/providers\/[^"]+":/.test(line);
   const first = lines.findIndex(isProvider);
-  if (first < 0) throw new Error("deno.json has no next-auth/providers exports");
+  if (first < 0) throw new Error("packages/auth/deno.json has no next-auth/providers exports");
   let last = first;
   while (isProvider(lines[last + 1])) last++;
   const indent = /^\s*/.exec(lines[first])![0];
-  const block = modules.map((m) =>
-    `${indent}"./next-auth/providers/${m}": "./${PROVIDERS_DIR}/${m}.ts",`
-  );
+  const dir = relative(AUTH_PACKAGE_DIR, PROVIDERS_DIR).replaceAll("\\", "/");
+  const block = modules.map((m) => `${indent}"./next-auth/providers/${m}": "./${dir}/${m}.ts",`);
+  // The last export carries no comma when the provider block ends the map.
+  if (!lines[last].trimEnd().endsWith(",")) block[block.length - 1] = block.at(-1)!.slice(0, -1);
   lines.splice(first, last - first + 1, ...block);
   return lines.join("\n");
 }
@@ -816,8 +818,9 @@ export async function formatSources(files: Map<string, string>): Promise<Map<str
 export async function expectedFiles(manifest: ProviderManifest): Promise<Map<string, string>> {
   const files = await formatSources(renderAll(manifest));
   files.set(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
-  const denoJson = await Deno.readTextFile(join(ROOT, "deno.json"));
-  files.set("deno.json", patchDenoJson(denoJson, providerModules(manifest)));
+  const modules = providerModules(manifest);
+  const authJson = `${AUTH_PACKAGE_DIR}/deno.json`;
+  files.set(authJson, patchAuthDenoJson(await Deno.readTextFile(join(ROOT, authJson)), modules));
   return files;
 }
 

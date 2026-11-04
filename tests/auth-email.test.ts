@@ -9,30 +9,30 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { constantTimeEqualHex, sha256Hex } from "../src/server/auth/hash.ts";
-import { issueApiToken } from "../src/server/auth/api-token.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { constantTimeEqualHex, sha256Hex } from "../src/server/hash.ts";
+import { issueApiToken } from "../packages/auth/src/api-token.ts";
 import {
   issueVerificationToken,
   normalizeEmailIdentifier,
   redeemVerificationToken,
-} from "../src/server/auth/verification.ts";
+} from "../packages/auth/src/verification.ts";
 import {
   requestEmailVerification,
   requestPasswordReset,
   resetPassword,
   verifyEmail,
-} from "../src/server/auth/email.ts";
-import { accountRoutes } from "../src/server/auth/routes-account.ts";
-import { mfaLimiter, verificationLimiter } from "../src/server/auth/rate-limit.ts";
-import type { AuthAdapter, VerificationTokenRecord } from "../src/server/auth/adapter.ts";
-import type { Hasher } from "../src/server/auth/hasher.ts";
+} from "../packages/auth/src/email.ts";
+import { accountRoutes } from "../packages/auth/src/routes-account.ts";
+import { mfaLimiter, verificationLimiter } from "../packages/auth/src/rate-limit.ts";
+import type { AuthAdapter, VerificationTokenRecord } from "../packages/auth/src/adapter.ts";
+import type { Hasher } from "../packages/auth/src/hasher.ts";
 import type {
   AuthConfig,
   AuthSession,
   VerificationRequestParams,
-} from "../src/server/auth/types.ts";
+} from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

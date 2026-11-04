@@ -12,39 +12,39 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { issueApiToken } from "../src/server/auth/api-token.ts";
-import { handleCredentials } from "../src/server/auth/routes-credentials.ts";
-import type { AuthRouteContext } from "../src/server/auth/routes-shared.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { sha256Hex } from "../src/server/auth/hash.ts";
-import { generateBackupCodes } from "../src/server/auth/backup-codes.ts";
-import { enrollTotp, mfaStatus, verifySecondFactor } from "../src/server/auth/mfa.ts";
-import { generateTotpSecret } from "../src/server/auth/totp.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { issueApiToken } from "../packages/auth/src/api-token.ts";
+import { handleCredentials } from "../packages/auth/src/routes-credentials.ts";
+import type { AuthRouteContext } from "../packages/auth/src/routes-shared.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { sha256Hex } from "../src/server/hash.ts";
+import { generateBackupCodes } from "../packages/auth/src/backup-codes.ts";
+import { enrollTotp, mfaStatus, verifySecondFactor } from "../packages/auth/src/mfa.ts";
+import { generateTotpSecret } from "../packages/auth/src/totp.ts";
 import {
   credentials,
   emailOtp,
   type EmailProviderOptions,
   magicLink,
-} from "../src/server/auth/providers.ts";
-import { assertEmailProviderConfig } from "../src/server/auth/providers-email.ts";
+} from "../packages/auth/src/providers.ts";
+import { assertEmailProviderConfig } from "../packages/auth/src/providers-email.ts";
 import {
   emailCallbacks,
   handleEmailRedeem,
   handleEmailRequest,
-} from "../src/server/auth/routes-email.ts";
-import { handleProviders } from "../src/server/auth/routes-session.ts";
-import { readAuthSession } from "../src/server/auth/session.ts";
-import { redeemVerificationCode } from "../src/server/auth/verification.ts";
-import type { AuthAdapter, VerificationTokenRecord } from "../src/server/auth/adapter.ts";
+} from "../packages/auth/src/routes-email.ts";
+import { handleProviders } from "../packages/auth/src/routes-session.ts";
+import { readAuthSession } from "../packages/auth/src/session.ts";
+import { redeemVerificationCode } from "../packages/auth/src/verification.ts";
+import type { AuthAdapter, VerificationTokenRecord } from "../packages/auth/src/adapter.ts";
 import {
   type AuthConfig,
   type AuthSession,
   type EmailProvider,
   isEmailProvider,
   type VerificationRequestParams,
-} from "../src/server/auth/types.ts";
+} from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

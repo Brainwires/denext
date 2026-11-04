@@ -5,8 +5,8 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { credentials, github } from "../src/server/auth/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { credentials, github } from "../packages/auth/src/providers.ts";
 import {
   clientIpBucket,
   createRateLimiter,
@@ -18,14 +18,14 @@ import {
   sessionReadLimiter,
   signinStartKey,
   signinStartLimiter,
-} from "../src/server/auth/rate-limit.ts";
+} from "../packages/auth/src/rate-limit.ts";
 import {
   type LimitAddrPolicy,
   parseCidr,
   resetLimitHeaderWarningForTesting,
   setRemoteAddr,
 } from "../src/server/remote-addr.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 

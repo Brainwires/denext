@@ -107,6 +107,8 @@ interface Needs {
   carried: Set<string>;
   /** The `requestSession()` helper (`req.session`). */
   session: boolean;
+  /** The `requestAuth()` helper (`req.user`, `req.isAuthenticated()`). */
+  user: boolean;
 }
 
 /** Everything known about the server module that values are translated against. */
@@ -384,6 +386,7 @@ class Translator {
     server: new Set(),
     carried: new Set(),
     session: false,
+    user: false,
   };
   /** The Express fields read whose trust of a proxy's headers changes (`ip`, `secure`, …). */
   readonly proxyTrust = new Set<string>();
@@ -490,8 +493,9 @@ class Translator {
       return this.header(arg.value);
     }
     if (chain.path[0] === "isAuthenticated" && !n.arguments?.length) {
-      this.needs.server.add("auth");
-      return { text: "((await auth()) !== null)" };
+      this.needs.user = true;
+      this.needs.server.add("auth").add("AuthPluginMissingError");
+      return { text: "((await requestAuth()) !== null)" };
     }
     return null;
   }
@@ -582,7 +586,9 @@ class Translator {
           "Object.fromEntries(cookies().getAll().map((c) => [c.name, c.value]))",
         );
       case "user":
-        return server("auth", "(await auth())?.user");
+        this.needs.user = true;
+        this.needs.server.add("AuthPluginMissingError");
+        return server("auth", "(await requestAuth())?.user");
       case "session":
         this.needs.session = true;
         this.needs.server.add("getSession");
@@ -747,6 +753,31 @@ async function requestSession(): Promise<Record<string, unknown>> {
 `;
 }
 
+/**
+ * The `requestAuth()` helper `req.user` / `req.isAuthenticated()` read: denext's auth session,
+ * signed out (`null`) while no `denextAuth()` plugin is configured, as the old server's were
+ * without its auth middleware.
+ */
+const AUTH_HELPER = `
+/**
+ * \`req.user\` / \`req.isAuthenticated()\`: denext's auth session — signed out until the
+ * \`denextAuth()\` plugin (\`@denext/auth\`) is in denext.config.ts's \`plugins\`.
+ */
+async function requestAuth() {
+  try {
+    return await auth();
+  } catch (error) {
+    if (error instanceof AuthPluginMissingError) return null;
+    throw error;
+  }
+}
+`;
+
+/** The generated module's helpers: `requestSession()` and `requestAuth()`, as it needs them. */
+function helpers(needs: Needs, server: ServerModule, translator: Translator): string {
+  return (needs.session ? sessionHelper(server, translator) : "") + (needs.user ? AUTH_HELPER : "");
+}
+
 /** The import lines of the generated module. */
 function importLines(
   server: ServerModule,
@@ -850,7 +881,7 @@ function objectModule(
   const props = rendered?.map((r) => r.code).join("") ??
     `  // TODO(denext migrate): ${rel} — could not read the object getLoadContext returns; ` +
       "port it by hand\n";
-  const helper = needs.session ? sessionHelper(server, translator) : "";
+  const helper = helpers(needs, server, translator);
   const isAsync = /\bawait\b/.test(props);
   const code = `${GEN_HEADER}${moduleIntro(rel)}
 ${importLines(server, needs, props.includes("remixServerBuild()")).join("\n")}
@@ -917,7 +948,7 @@ function providerModule(
   const body = providerStatements(provider, server, translator);
   const needs = translator.needs;
   const url = needs.url ? "  const requestUrl = new URL(request.url);\n" : "";
-  const helper = needs.session ? sessionHelper(server, translator) : "";
+  const helper = helpers(needs, server, translator);
   const head = providerHead(needs, /\bawait\b/.test(body.code));
   const code = `${GEN_HEADER}${moduleIntro(rel)}
 ${importLines(server, needs, body.code.includes("remixServerBuild()"), body.fallback).join("\n")}

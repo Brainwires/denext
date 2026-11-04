@@ -5,7 +5,7 @@
 // The limiters' keys, budgets and eviction are tests/auth-rate-limit.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createRateLimiter, inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { createRateLimiter, inMemoryRateLimitStore } from "../packages/auth/src/rate-limit.ts";
 import { rateLimit } from "../src/server/api-middleware.ts";
 import type { ApiMiddlewareInput } from "../src/server/define-api.ts";
 import { ApiError } from "../src/server/api-error.ts";

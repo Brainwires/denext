@@ -14,7 +14,7 @@ import { createApp } from "../../src/server/app.ts";
 import { scanRoutes } from "../../src/router/manifest.ts";
 import type { DenextConfig } from "../../src/server/config.ts";
 import type { ModuleLoader } from "../../src/server/types.ts";
-import { denextAuth } from "../../src/server/auth/mod.ts";
+import { denextAuth } from "../../packages/auth/src/mod.ts";
 import { backend } from "../../packages/backend/mod.ts";
 import { authConfig } from "./realtime-harness.ts";
 

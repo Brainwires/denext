@@ -12,28 +12,25 @@ import { decodeBase32 } from "@std/encoding/base32";
 import type { PluginContext, PluginRequestHandler } from "../src/plugin/mod.ts";
 import { isApiError } from "../src/server/api-error.ts";
 import type { ApiMiddleware, ApiMiddlewareInput } from "../src/server/define-api.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
 import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
+import { auth, hashPassword, requireAuth, requireSession } from "../src/server/mod.ts";
 import {
-  auth,
   type AuthAdapter,
   type AuthConfig,
   type BearerContext,
   credentials,
   denextAuth,
   generateTotpSecret,
-  hashPassword,
   inMemoryAuthAdapter,
   inMemorySessionStore,
   issueApiToken,
   listApiTokens,
   mfaStatus,
   pendingMfaSession,
-  requireAuth,
   requireBearer,
-  requireSession,
   verifyTotp,
-} from "../src/server/mod.ts";
+} from "../packages/auth/mod.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import {
   createRequestContext,

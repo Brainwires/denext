@@ -21,9 +21,17 @@
   },
   "workspace": {
     "links": {
+      "jsr:@denext/auth@4.12.0": {
+        "dependencies": [
+          "jsr:@denext/denext@4.12.0",
+          "jsr:@std/encoding@1",
+          "jsr:@std/path@1"
+        ]
+      },
       "jsr:@denext/avif@0.2.0": {},
       "jsr:@denext/backend@0.8.1": {
         "dependencies": [
+          "jsr:@denext/auth@^4.12.0",
           "jsr:@denext/denext@^4.12.0",
           "jsr:@std/path@1"
         ]

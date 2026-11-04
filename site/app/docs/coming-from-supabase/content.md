@@ -57,7 +57,7 @@ denext plugin add @denext/backend
 
 ```ts
 // denext.config.ts
-import { denextAuth, github } from "denext/server";
+import { denextAuth, github } from "@denext/auth";
 import { backend, backendAuthAdapter, fs, realtime } from "@denext/backend";
 
 export default {
@@ -415,7 +415,7 @@ What moves:
 ```ts
 // lib/hasher.ts
 import bcrypt from "npm:bcryptjs";
-import { type Hasher, scryptHasher } from "denext/server";
+import { type Hasher, scryptHasher } from "@denext/auth";
 
 const scrypt = scryptHasher();
 export const hasher: Hasher = {
@@ -463,7 +463,8 @@ A one-off script, run against both databases (`npm:postgres` makes it work on an
 ```ts
 // scripts/import-supabase-users.ts — deno run -A scripts/import-supabase-users.ts
 import postgres from "npm:postgres";
-import { fromPostgresJs, postgresAuthAdapter } from "denext/server";
+import { fromPostgresJs } from "denext/server";
+import { postgresAuthAdapter } from "@denext/auth";
 
 const from = postgres(Deno.env.get("SUPABASE_DB_URL")!);
 const adapter = postgresAuthAdapter({

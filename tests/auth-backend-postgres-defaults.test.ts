@@ -10,9 +10,9 @@ import {
   credentialsLimiter,
   inMemoryRateLimitStore,
   type RateLimitStore,
-} from "../src/server/auth/rate-limit.ts";
-import { replayCacheOf } from "../src/server/auth/gotrue/sso-providers.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
+} from "../packages/auth/src/rate-limit.ts";
+import { replayCacheOf } from "../packages/auth/src/gotrue/sso-providers.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 
 /** A fake Postgres that answers the two statements under test and records the rest. */

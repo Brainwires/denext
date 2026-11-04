@@ -9,13 +9,8 @@
 // "database"`: the `sessions` DDL is byte-identical, so the adapter adopts the existing
 // table with no migration step and nobody is logged out.
 
-import {
-  type AdapterUser,
-  type AuthAdapter,
-  hashPassword,
-  sqliteAuthAdapter,
-  verifyPassword,
-} from "denext/server";
+import { hashPassword, verifyPassword } from "denext/server";
+import { type AdapterUser, type AuthAdapter, sqliteAuthAdapter } from "@denext/auth";
 import { countUsers, DB_PATH } from "./db.ts";
 
 /** The demo account, seeded on first run (and, as the first user, the admin). */

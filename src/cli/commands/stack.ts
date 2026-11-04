@@ -16,7 +16,7 @@
 
 import { join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { generateSupabaseKeys } from "../../server/auth/gotrue/keys.ts";
+import { generateSupabaseKeys } from "../../server/supabase-keys.ts";
 import { exitedOutput } from "../../build/exited-output.ts";
 import { DOCKER_FLAGS, runDocker } from "./generate-docker.ts";
 import { backupAction, restoreAction } from "./stack-backup.ts";

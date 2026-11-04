@@ -13,9 +13,9 @@ import {
   setClientAddr,
   setRemoteAddr,
 } from "../../src/server/remote-addr.ts";
-import { credentials } from "../../src/server/auth/providers.ts";
-import { issueAuthSession } from "../../src/server/auth/session.ts";
-import type { AuthConfig } from "../../src/server/auth/types.ts";
+import { credentials } from "../../packages/auth/src/providers.ts";
+import { issueAuthSession } from "../../packages/auth/src/session.ts";
+import type { AuthConfig } from "../../packages/auth/src/types.ts";
 import {
   encodeSubscriptionKey,
   newNonce,

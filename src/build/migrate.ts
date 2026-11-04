@@ -130,6 +130,7 @@ import {
   isDenextReleaseVersion,
 } from "./deno-version.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
+import { NEXT_AUTH_SUBPATHS } from "./auth-package.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
  * deno.json exports); the subpath equals the specifier. React-family entries come
@@ -317,8 +318,9 @@ async function buildAppRouterImports(
     "denext": R.base,
     "denext/jsx-runtime": jsr("jsx-runtime"),
     "denext/server": jsr("server"),
-    "denext/auth": jsr("auth"),
     "denext/client": jsr("client"),
+    // The auth layer (`denextAuth()`, the providers): its own package from denext 5.0.
+    ...R.authEntries(),
   };
   if (opts.remix) {
     // The Remix compat runtime the generated route wrappers/components import.
@@ -352,7 +354,7 @@ async function buildAppRouterImports(
     const target = R.prefix(prefix);
     if (/^(?:file|https?):/.test(target)) imports[prefix] = target;
   }
-  await addNextAuthAliases(imports, R, deps);
+  addNextAuthAliases(imports, R, deps);
   addServerClientStubs(imports, deps, jsr);
   // `/mdx` provides the type-only `mdx/types` module; MDX apps often import it at value syntax.
   if ("@types/mdx" in deps) imports["mdx/types"] = jsr("empty");
@@ -365,19 +367,18 @@ async function buildAppRouterImports(
 
 /**
  * `next-auth` (Auth.js v5 or NextAuth.js v4) and every `next-auth/*` subpath (v4's
- * `next-auth/next`, `next-auth/middleware` and `next-auth/adapters` included) → denext's shim,
- * mapped onto `denextAuth`, when the app depends on `next-auth` — exact entries, plus the prefix when it is a
- * URL (see the `next/*` ones above).
+ * `next-auth/next`, `next-auth/middleware` and `next-auth/adapters` included) → `@denext/auth`'s
+ * shim, mapped onto `denextAuth`, when the app depends on `next-auth` — exact entries, plus the
+ * prefix when it is a URL (see the `next/*` ones above).
  */
-async function addNextAuthAliases(
+function addNextAuthAliases(
   imports: Record<string, string>,
   R: DenextResolver,
   deps: Record<string, string>,
-): Promise<void> {
+): void {
   if (!("next-auth" in deps)) return;
-  imports["next-auth"] = R.sub("next-auth");
-  for (const spec of await frameworkSubpaths(["next-auth/"])) imports[spec] = R.sub(spec);
-  const target = R.prefix("next-auth/");
+  for (const spec of NEXT_AUTH_SUBPATHS) imports[spec] = R.auth(spec);
+  const target = R.auth("next-auth/");
   if (/^(?:file|https?):/.test(target)) imports["next-auth/"] = target;
 }
 
@@ -711,6 +712,16 @@ interface DenextResolver {
   /** The `@denext/effect` bridge import-map entry (single `.` export — no subpaths). */
   effectEntry: () => Record<string, string>;
   /**
+   * `@denext/auth[/<sub>]` (`next-auth/jwt`); a trailing-slash `sub` is a prefix (a URL in
+   * local-path mode only).
+   */
+  auth: (sub: string) => string;
+  /**
+   * The `@denext/auth` import-map entry, and in local-path mode the package's own bare imports
+   * (`@denext/denext/*`, `@std/*`), which a `file://` package cannot resolve itself.
+   */
+  authEntries: () => Record<string, string>;
+  /**
    * The `@denext/tanstack-start` entry, and in local-path mode the plugin's own bare imports
    * (`@denext/denext/*`, `@std/path`), which a `file://` package cannot resolve itself.
    */
@@ -734,6 +745,8 @@ interface DenextResolver {
 /** The resolver for the published JSR package (the package carries its own deps). */
 function jsrResolver(V: string): DenextResolver {
   const jsr = (sub: string) => `jsr:@denext/denext${V}/${sub}`;
+  // `@denext/auth` is versioned with denext (auth X.Y.Z pins denext X.Y.Z): the same range.
+  const auth = (sub: string) => `jsr:@denext/auth${V}${sub === "" ? "" : `/${sub}`}`;
   return {
     base: `jsr:@denext/denext${V}`,
     sub: jsr,
@@ -751,6 +764,8 @@ function jsrResolver(V: string): DenextResolver {
       "@denext/react-router/dom": REACT_ROUTER_SPEC + "/dom",
     }),
     effectEntry: () => ({ "@denext/effect": EFFECT_SPEC }),
+    auth,
+    authEntries: () => ({ "@denext/auth": auth("") }),
     tanstackStartEntries: () => ({ "@denext/tanstack-start": TANSTACK_START_SPEC }),
     frameworkDeps: () => ({}),
   };
@@ -803,6 +818,11 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     local,
     fileFor,
   );
+  const authDir = join(abs, "packages", "auth");
+  const authExp = await packageExports(authDir);
+  const authEntries = await localPluginEntries("@denext/auth", authDir, local, fileFor, [
+    "next-auth",
+  ]);
   return {
     base: local(""),
     sub: local,
@@ -838,6 +858,11 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
     effectEntry: () => ({
       "@denext/effect": fileFor(efDir, efExp["."] ?? "./mod.ts"),
     }),
+    auth: (sub) => {
+      if (sub.endsWith("/")) return toFileUrl(join(authDir, sub)).href.replace(/\/?$/, "/");
+      return fileFor(authDir, authExp[sub === "" ? "." : "./" + sub] ?? "./mod.ts");
+    },
+    authEntries: () => authEntries,
     tanstackStartEntries: () => tssEntries,
     frameworkDeps: () => frameworkDeps,
   };
@@ -854,6 +879,7 @@ async function localPluginEntries(
   dir: string,
   local: (sub: string) => string,
   fileFor: (root: string, rel: string) => string,
+  sourceDirs: readonly string[] = [],
 ): Promise<Record<string, string>> {
   const cfg = (await readJson(join(dir, "deno.json"))) ?? {};
   const exp = (cfg.exports ?? {}) as Record<string, string>;
@@ -868,8 +894,11 @@ async function localPluginEntries(
     }
   };
   scan(await mfs.readTextFile(join(dir, "mod.ts")).catch(() => ""));
-  await walkCode(join(dir, "src"), scan);
-  for (const spec of denextSpecs) out[spec] = local(spec.slice("@denext/denext/".length));
+  for (const sub of ["src", ...sourceDirs]) await walkCode(join(dir, sub), scan);
+  // Sorted: the walk's order is the filesystem's, and the config must not depend on it.
+  for (const spec of [...denextSpecs].sort()) {
+    out[spec] = local(spec.slice("@denext/denext/".length));
+  }
   return out;
 }
 

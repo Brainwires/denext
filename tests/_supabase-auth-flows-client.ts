@@ -6,8 +6,8 @@
 // after, and the admin API's `listUsers` paging walked to its end.
 
 import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import {
   memoryStorage,
   ORIGIN,

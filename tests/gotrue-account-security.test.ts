@@ -12,11 +12,11 @@
 //   user-writable `user_metadata`.
 
 import { assert, assertEquals } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { sessionFromJwtBearer } from "../src/server/auth/gotrue/access.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
+import { sessionFromJwtBearer } from "../packages/auth/src/gotrue/access.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, testIdp } from "./_saml-idp.ts";
 

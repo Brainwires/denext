@@ -7,22 +7,22 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import type { ApiTokenRecord, AuthAdapter } from "../src/server/auth/adapter.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
+import type { ApiTokenRecord, AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
 import { fakeSqlClient } from "./helpers/fake-sql-client.ts";
-import { issueApiToken, verifyApiToken } from "../src/server/auth/api-token.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { issueApiToken, verifyApiToken } from "../packages/auth/src/api-token.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   refreshNativeSession,
   resolveNative,
   startNativeSession,
-} from "../src/server/auth/native.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { readAuthSession } from "../src/server/auth/session.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/native.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { readAuthSession } from "../packages/auth/src/session.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 

@@ -1,6 +1,8 @@
 // The release's publish half (step 6 of scripts/release.ts), resumable: publish
-// `@denext/docs-corpus` <version> and wait for JSR to list it, then tag `v<version>`, push, and
-// hand over the `development → main` PR. A release that stopped part-way — JSR slow to list the
+// `@denext/docs-corpus` <version> and wait for JSR to list it, then tag `v<version>` and push,
+// wait for JSR to list `@denext/denext` <version>, then tag and push `auth-v<version>` (which pins
+// that denext exactly) and wait for JSR to list `@denext/auth` <version>, and hand over the
+// `development → main` PR. A release that stopped part-way — JSR slow to list the
 // corpus, a network error, a closed terminal — is picked up where it stopped: run
 // `deno task release <version>` again (it sees the release commit and the tags already made) or
 // name the step with `--resume-from <step>`.
@@ -10,10 +12,11 @@ import {
   corpusConflictMessage,
   corpusReleaseState,
 } from "./docs-corpus-package.ts";
+import { fromFileUrl, join } from "@std/path";
 import { type Fetch, jsrHasVersion, type MemberPin, memberPin, missingPins } from "./jsr-pins.ts";
 
 /** The publish steps, in order. `commit` is the release commit the earlier steps prepared. */
-export const PUBLISH_STEPS = ["commit", "corpus", "tag", "push", "pr"] as const;
+export const PUBLISH_STEPS = ["commit", "corpus", "tag", "push", "auth", "pr"] as const;
 
 /** One publish step. */
 export type PublishStep = (typeof PUBLISH_STEPS)[number];
@@ -121,8 +124,9 @@ async function tagState(
 
 /**
  * The step a stopped release resumes from, or `null` when HEAD is not this release's commit and
- * no `v<version>` tag exists (a fresh release). `pr` once `v<version>` is on origin, `push` once
- * it is made here, else `corpus` (which skips what JSR and origin already have).
+ * no `v<version>` tag exists (a fresh release). `auth` once `v<version>` is on origin (it skips
+ * what JSR and origin already have, so a finished release only re-checks JSR and hands over the
+ * PR), `push` once it is made here, else `corpus` (which skips what JSR and origin already have).
  *
  * @param target The release.
  * @param deps Git.
@@ -133,7 +137,7 @@ export async function detectResume(
   deps: PublishDeps,
 ): Promise<PublishStep | null> {
   const tag = await tagState(target.tag, deps);
-  if (tag.remote) return "pr";
+  if (tag.remote) return "auth";
   if (tag.local) return "push";
   const subject = (await deps.git("log", "-1", "--format=%s")).out;
   return subject === releaseSubject(target.version) ? "corpus" : null;
@@ -231,8 +235,19 @@ async function corpusStep(target: ReleaseTarget, deps: PublishDeps): Promise<voi
   await corpusState(target.version, deps);
 }
 
-/** The tag step: refuse while a pinned member is not on JSR, else tag `v<version>`. */
+/**
+ * The tag step: refuse while a pinned member is not on JSR, or while `@denext/auth` is not in
+ * lockstep (it would publish only after `v<version>` is out, too late to fix), else tag
+ * `v<version>`.
+ */
 async function tagStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  const lockstep = await authLockstepRefusal(target.version, deps.root);
+  if (lockstep) {
+    throw new ReleaseAbort(
+      `refusing to tag ${target.tag}: ${lockstep}.\n${target.tag} is not tagged, so ` +
+        "denext is not published: fix packages/auth/deno.json and release again.",
+    );
+  }
   const refusal = pinRefusal(await missingPins(deps.fetch, deps.root), target.tag);
   if (refusal) {
     throw new ReleaseAbort(
@@ -250,6 +265,84 @@ async function pushStep(target: ReleaseTarget, deps: PublishDeps): Promise<void>
   const resume = resumeCommand(target, "push");
   await gitOrAbort(deps, ["push", "origin", target.branch], "git push (branch) failed", resume);
   await gitOrAbort(deps, ["push", "origin", target.tag], "git push (tag) failed", resume);
+}
+
+/** The framework's JSR package, which `@denext/auth` pins exactly. */
+const DENEXT_PACKAGE = RELEASE_PACKAGE;
+
+/** `@denext/auth`'s `packages/<dir>`: versioned with denext, and pinning it exactly. */
+export const AUTH_DIR = "auth";
+
+/**
+ * Why `packages/auth/deno.json` cannot be published beside denext `version`, or `null`. The
+ * package is released in lockstep: its version is denext's and it imports
+ * `jsr:@denext/denext@<version>` exactly (scripts/bump-version.ts moves both), so `create` and
+ * `migrate` can pin `@denext/auth` X.Y.Z beside denext X.Y.Z.
+ *
+ * @param version The denext release.
+ * @param root The repository root (default: this checkout).
+ */
+export async function authLockstepRefusal(version: string, root?: string): Promise<string | null> {
+  const dir = join(root ?? fromFileUrl(new URL("../../", import.meta.url)), "packages", AUTH_DIR);
+  const json = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))) as {
+    version?: string;
+    imports?: Record<string, string>;
+  };
+  const pin = json.imports?.[DENEXT_PACKAGE];
+  if (json.version !== version) {
+    return `packages/auth/deno.json is at ${json.version}, not ${version}: @denext/auth is ` +
+      "released in lockstep with denext (scripts/bump-version.ts moves it)";
+  }
+  if (pin !== `jsr:${DENEXT_PACKAGE}@${version}`) {
+    return `packages/auth/deno.json maps ${DENEXT_PACKAGE} to ${pin ?? "nothing"}, not ` +
+      `jsr:${DENEXT_PACKAGE}@${version}: @denext/auth pins the denext it ships with exactly`;
+  }
+  return null;
+}
+
+/**
+ * The auth step: once JSR lists `@denext/denext` <version> (the `v<version>` publish), tag
+ * `auth-v<version>` on the release commit (unless it exists), push it (unless origin has it) and
+ * wait for JSR to list `@denext/auth` <version>. Denext goes first because auth pins it exactly:
+ * an auth publish before denext's would fail to resolve its own dependency. Skipped when JSR
+ * already lists that auth version.
+ */
+async function authStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  const resume = resumeCommand(target, "auth");
+  const lockstep = await authLockstepRefusal(target.version, deps.root);
+  if (lockstep) {
+    throw new ReleaseAbort(`${lockstep}. Fix it in a new release; this one cannot ship auth.`);
+  }
+  const auth = await memberPin(AUTH_DIR, deps.root);
+  const listed = await jsrHasVersion(auth.name, auth.version, deps.fetch).catch(() => false);
+  if (listed) {
+    deps.log(`   ${auth.name}@${auth.version} is on JSR`);
+    return;
+  }
+  deps.log(`   waiting for ${DENEXT_PACKAGE}@${target.version} before ${auth.tag} (auth pins it)`);
+  if (!await waitForJsrVersion(DENEXT_PACKAGE, target.version, deps)) {
+    throw new ReleaseAbort(
+      `${target.tag} is pushed but jsr.io does not list ${DENEXT_PACKAGE}@${target.version} yet ` +
+        `(check publish.yml's run for ${target.tag}). ${auth.name} pins it exactly, so ` +
+        `${auth.tag} waits. Once JSR lists it, resume:\n  ${resume}`,
+    );
+  }
+  const tag = await tagState(auth.tag, deps);
+  if (!tag.local) {
+    const args = ["tag", "-a", auth.tag, "-m", `${auth.name} ${auth.version}`, `${target.tag}^{}`];
+    await gitOrAbort(deps, args, `git tag ${auth.tag} failed`, resume);
+  }
+  if (!tag.remote) {
+    await gitOrAbort(deps, ["push", "origin", auth.tag], `git push (${auth.tag}) failed`, resume);
+  }
+  if (!await waitForJsrVersion(auth.name, auth.version, deps)) {
+    throw new ReleaseAbort(
+      `${auth.tag} is pushed but jsr.io does not list ${auth.name}@${auth.version} yet ` +
+        `(check publish.yml's run for ${auth.tag}; a failed run is re-run from the Actions ` +
+        `page). Once JSR lists it, resume:\n  ${resume}`,
+    );
+  }
+  deps.log(`   ${auth.name}@${auth.version} is on JSR`);
 }
 
 /** The message for a publish run that failed: what to do for a transient cause and a real one. */
@@ -316,8 +409,9 @@ async function verifyPublished(target: ReleaseTarget, deps: PublishDeps): Promis
 async function prStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
   await verifyPublished(target, deps);
   deps.log(
-    `\n✓ Released ${target.version}: ${RELEASE_PACKAGE}@${target.version} is on JSR and the ` +
-      `${target.tag} publish run succeeded.\n` +
+    `\n✓ Released ${target.version}: JSR lists ${RELEASE_PACKAGE} and @denext/auth ` +
+      `${target.version} (${target.tag} and auth-v${target.version}), and the ${target.tag} ` +
+      "publish run succeeded.\n" +
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${target.branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
@@ -346,6 +440,7 @@ export async function publishFrom(
     if (step === "corpus") await corpusStep(target, deps);
     else if (step === "tag") await tagStep(target, deps);
     else if (step === "push") await pushStep(target, deps);
+    else if (step === "auth") await authStep(target, deps);
     else await prStep(target, deps);
   }
 }

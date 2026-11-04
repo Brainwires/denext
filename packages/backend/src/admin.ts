@@ -12,12 +12,8 @@
 // the service role. No key installed (`backend({ supabase })` off), no key, another key: refused
 // before anything is read. GET only, `no-store`.
 
-import {
-  apiKeyRole,
-  bearerTokenOf,
-  installedSupabaseKeys,
-  supervisionStatus,
-} from "@denext/denext/server";
+import { apiKeyRole, installedSupabaseKeys, supervisionStatus } from "@denext/denext/server";
+import { bearerTokenOf } from "@denext/auth";
 import { functionsAdmin } from "./functions-admin.ts";
 import { installedRealtimeHub } from "./realtime-socket.ts";
 

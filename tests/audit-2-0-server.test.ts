@@ -20,10 +20,10 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
-import { credentials, google, oidc } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { createRateLimiter, IP_BUCKET_FACTOR } from "../src/server/auth/rate-limit.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { credentials, google, oidc } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { createRateLimiter, IP_BUCKET_FACTOR } from "../packages/auth/src/rate-limit.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { hmacSign, hmacVerify } from "../src/server/session.ts";
 import {
   beginSignalCollection,

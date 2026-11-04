@@ -22,7 +22,7 @@
 import { join } from "@std/path";
 import { findComposeFile } from "../../build/docker-template.ts";
 import type { CommandContext } from "../command.ts";
-import { generateSupabaseKeys, SUPABASE_KEY_ENV } from "../../server/auth/gotrue/keys.ts";
+import { generateSupabaseKeys, SUPABASE_KEY_ENV } from "../../server/supabase-keys.ts";
 import { parseEnv } from "../../server/env.ts";
 import { generatePassword, prepareWrite, setEnvValues, writeFileAtomic } from "./stack-env.ts";
 import { composeArgs, ioMember, psRows, requireRunning, type StackIo } from "./stack-io.ts";

@@ -255,3 +255,17 @@ Deno.test("ejectPlugin: removes an import written with a jsr: specifier", () => 
   assertEquals([result.removedImport, result.removedPlugin], [true, true]);
   assert(!result.source.includes("openapi"), result.source);
 });
+
+Deno.test("resolvePluginNames: a first-party plugin's factory comes from the catalog (@denext/auth)", () => {
+  const names = resolvePluginNames("@denext/auth");
+  assertEquals(names.factory, "denextAuth");
+  assertEquals(names.importSpec, "@denext/auth");
+  // denextAuth() needs a secret and a provider: the starter call names both.
+  assertEquals(
+    names.call,
+    'denextAuth({ secret: Deno.env.get("AUTH_SECRET")!, providers: [] })',
+  );
+  assertStringIncludes(createConfigSource(names), 'import { denextAuth } from "@denext/auth";');
+  assertEquals(resolvePluginNames("@denext/auth", { noCall: true }).call, "denextAuth");
+  assertEquals(resolvePluginNames("@denext/auth", { export: "other" }).call, "other()");
+});

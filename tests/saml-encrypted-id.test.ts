@@ -14,9 +14,9 @@ import {
   verifyLogoutRequest,
   verifySamlResponse,
   type VerifySamlResponseOptions,
-} from "../src/server/auth/saml/mod.ts";
-import { decryptNameId } from "../src/server/auth/saml/encrypted-id.ts";
-import { parseXml } from "../src/server/auth/saml/xml.ts";
+} from "../packages/auth/src/saml/mod.ts";
+import { decryptNameId } from "../packages/auth/src/saml/encrypted-id.ts";
+import { parseXml } from "../packages/auth/src/saml/xml.ts";
 import {
   encode,
   IDP_ENTITY,

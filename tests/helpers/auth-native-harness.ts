@@ -8,16 +8,16 @@ import {
   runWithContext,
 } from "../../src/server/request-context.ts";
 import { setRemoteAddr } from "../../src/server/remote-addr.ts";
-import type { GoTrueSmsMessage } from "../../src/server/auth/gotrue/options.ts";
-import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../../src/server/auth/memory-adapter.ts";
-import { handleAuthRequest } from "../../src/server/auth/routes.ts";
-import { readAuthSession } from "../../src/server/auth/session.ts";
+import type { GoTrueSmsMessage } from "../../packages/auth/src/gotrue/options.ts";
+import type { AuthAdapter } from "../../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../../packages/auth/src/memory-adapter.ts";
+import { handleAuthRequest } from "../../packages/auth/src/routes.ts";
+import { readAuthSession } from "../../packages/auth/src/session.ts";
 import type {
   AuthConfig,
   AuthSession,
   VerificationRequestParams,
-} from "../../src/server/auth/types.ts";
+} from "../../packages/auth/src/types.ts";
 
 export const ORIGIN = "https://app.test";
 export const SECRET = "test-secret-value-at-least-32-chars-long";

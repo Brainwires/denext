@@ -13,7 +13,7 @@
 import { fromFileUrl } from "@std/path";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { builtinSql } from "../src/server/postgres.ts";
-import { generateSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
+import { generateSupabaseKeys } from "../src/server/supabase-keys.ts";
 import { backendAuthAdapter } from "../packages/backend/mod.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import { encode, marker, responseXml, rsaKey, sign, type TestKey } from "./_saml-helpers.ts";

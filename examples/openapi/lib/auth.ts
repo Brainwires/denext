@@ -9,14 +9,14 @@
 // same tokens survive a restart. `authConfig` is what `denext.config.ts` hands `denextAuth()`,
 // which also mounts `/auth/tokens` so a signed-in user can mint and revoke their own tokens.
 
+import { createApi } from "denext/server";
 import {
   type AuthConfig,
-  createApi,
   credentials,
   inMemoryAuthAdapter,
   issueApiToken,
   requireBearer,
-} from "denext/server";
+} from "@denext/auth";
 
 // The one demo account. A real app checks a database + a password hash (`verifyPassword`).
 const DEMO = { username: "demo", password: "denext", email: "demo@example.com" };

@@ -1,4 +1,5 @@
-import { type ApiTokenRecord, auth, listApiTokens, type PageProps } from "denext/server";
+import { auth, type PageProps } from "denext/server";
+import { type ApiTokenRecord, listApiTokens } from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 import { onceKey, takeOnce } from "../../../lib/once.ts";
 import { createToken, revokeToken } from "./actions.ts";

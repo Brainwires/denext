@@ -16,7 +16,7 @@ import {
   enrollTotp,
   spendMfaAttempt,
   verifySecondFactor,
-} from "denext/server";
+} from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 import { onceKey, stashOnce } from "../../../lib/once.ts";
 import { signedIn } from "../../../lib/session.ts";

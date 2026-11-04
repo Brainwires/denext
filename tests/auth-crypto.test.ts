@@ -8,9 +8,9 @@ import {
   buildAuthorizationUrl,
   generatePkce,
   randomToken,
-} from "../src/server/auth/oauth.ts";
-import { type Jwk, verifyIdToken } from "../src/server/auth/jwt.ts";
-import { exchangeCodeForTokens } from "../src/server/auth/flow.ts";
+} from "../packages/auth/src/oauth.ts";
+import { type Jwk, verifyIdToken } from "../packages/auth/src/jwt.ts";
+import { exchangeCodeForTokens } from "../packages/auth/src/flow.ts";
 
 // ---- PKCE + tokens ---------------------------------------------------------
 

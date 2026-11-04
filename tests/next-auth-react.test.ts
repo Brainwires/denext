@@ -11,7 +11,7 @@ import {
   signIn,
   signOut,
   useSession,
-} from "../src/compat/next-auth/react.ts";
+} from "../packages/auth/next-auth/react.ts";
 
 /** A recorded request. */
 interface Call {

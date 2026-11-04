@@ -167,7 +167,7 @@ Deno.test("a scaffolded app's map, passed to the CLI with --config, anchors noth
       "denext/server": `${fw}src/server/mod.ts`,
       "denext/client": `${fw}src/client/mod.ts`,
       "denext/testing": `${fw}src/testing/mod.ts`,
-      "denext/auth": `${fw}src/server/auth/public.ts`,
+      "@denext/auth": `${fw}packages/auth/mod.ts`,
       "denext/deploy": `${fw}src/deploy/mod.ts`,
     });
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(cfg, null, 2));

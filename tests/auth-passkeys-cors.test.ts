@@ -5,12 +5,12 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { resolvePasskeys } from "../src/server/auth/passkeys.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { resolvePasskeys } from "../packages/auth/src/passkeys.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { Authenticator } from "./helpers/soft-authenticator.ts";
 
 const AUTH = "https://auth.app.test"; // the server

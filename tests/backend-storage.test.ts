@@ -19,10 +19,10 @@ import { downloadPayload, uploadPayload } from "../packages/backend/src/storage.
 import { clientIp, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { remoteAddrOf, setRemoteAddr } from "../src/server/remote-addr.ts";
 import { signRequestFrom } from "../packages/backend/src/handler.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";

@@ -9,19 +9,19 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { confirmTotp, enrollTotp } from "../src/server/auth/mfa.ts";
-import { apkKeyHashOrigin, resolvePasskeys } from "../src/server/auth/passkeys.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { confirmTotp, enrollTotp } from "../packages/auth/src/mfa.ts";
+import { apkKeyHashOrigin, resolvePasskeys } from "../packages/auth/src/passkeys.ts";
 import {
   resolveNative,
   snapshotFor,
   startNativeSession,
   verifyNativeAccessToken,
-} from "../src/server/auth/native.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { AuthConfig, AuthPasskeyConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/native.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig, AuthPasskeyConfig } from "../packages/auth/src/types.ts";
 import { decodeBase32 } from "@std/encoding/base32";
 import { Authenticator, b64u } from "./helpers/soft-authenticator.ts";
 

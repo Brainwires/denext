@@ -8,15 +8,15 @@ import {
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { emitAuthEvent } from "../src/server/auth/events.ts";
-import { scryptHasher } from "../src/server/auth/hasher.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { emitAuthEvent } from "../packages/auth/src/events.ts";
+import { scryptHasher } from "../packages/auth/src/hasher.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

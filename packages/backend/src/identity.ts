@@ -15,19 +15,16 @@
 // `anon`: a client with an expired token learns it has to refresh.
 
 import {
-  activeAuthConfig,
   apiKeyRole,
   auth,
   type AuthSession,
-  bearerTokenOf,
-  type GoTrueHooks,
   installedSupabaseKeys,
   looksLikeJwt,
   opaqueKeyRole,
   SupabaseKeyError,
   type SupabaseKeys,
-  verifyAccessToken,
 } from "@denext/denext/server";
+import { activeAuthConfig, bearerTokenOf, type GoTrueHooks, verifyAccessToken } from "@denext/auth";
 import { authenticatedScope, type RlsOptions, type RlsScope, sessionClaims } from "./rls.ts";
 
 /** The three roles a request can act as — Supabase's names. */
@@ -267,8 +264,24 @@ async function hookedClaims(session: AuthSession, claims: Claims): Promise<Claim
   return { ...shaped };
 }
 
+/**
+ * Whether a `denextAuth()` plugin has been created. Without one there is no denext session
+ * (`auth()` from `denext/server` then throws, naming `@denext/auth`).
+ *
+ * @returns `true` when the auth plugin is configured.
+ */
+export function hasDenextAuth(): boolean {
+  try {
+    activeAuthConfig();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A cookie or native denext session, or `null`. */
 async function denextSession(rls: RlsOptions | undefined): Promise<RequestIdentity | null> {
+  if (!hasDenextAuth()) return null;
   const session = await auth();
   if (!session) return null;
   const custom = rls?.claims ? await rls.claims(session) : {};

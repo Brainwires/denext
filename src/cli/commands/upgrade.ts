@@ -33,6 +33,12 @@ import {
 } from "../../build/scaffold.ts";
 import { deleteJsonValue, setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
+import {
+  authSpecifierFor,
+  crossesAuthSplit,
+  planAuthSourceRewrites,
+  rewriteAuthConfig,
+} from "../../build/upgrade-auth.ts";
 import { commandMeta } from "../command-meta.ts";
 import type { StaleNativeTemplate } from "../../build/native-template-status.ts";
 
@@ -102,7 +108,11 @@ function describeSteps(steps: readonly UpgradeStep[]): string {
   const width = Math.max(...steps.map((s) => s.name.length));
   return steps.map((s) =>
     `  ${s.name.padEnd(width)}  ${
-      s.from === s.to ? `${s.from} (up to date)` : `${s.from} → ${s.to}`
+      s.from === ""
+        ? `added at ${s.to}`
+        : s.from === s.to
+        ? `${s.from} (up to date)`
+        : `${s.from} → ${s.to}`
     }`
   ).join("\n");
 }
@@ -135,6 +145,18 @@ interface UpgradeOutcome {
   readonly nativeTemplates: readonly StaleNativeTemplate[];
   /** The 5.0 config clean-ups made (or that would be), per config that needed one. */
   readonly retired: readonly RetiredConfigChange[];
+  /** The 4.x → 5.0 auth rewrite (`null`: the upgrade doesn't cross into 5.0). */
+  readonly auth: AuthMigration | null;
+}
+
+/** What the 4.x → 5.0 auth rewrite changed (or would). */
+interface AuthMigration {
+  /** The `@denext/auth` specifier pinned. */
+  readonly spec: string;
+  /** The source modules whose imports were split, relative to the project. */
+  readonly files: readonly string[];
+  /** Statements left for a hand edit. */
+  readonly warnings: readonly string[];
 }
 
 /** What {@linkcode retiredConfigUpdate} changed in one config. */
@@ -378,6 +400,7 @@ function outcomeJson(
     ["jailExceptions", o.jail && { action: o.jail.action, lines: o.jail.lines }],
     ["retiredConfig", o.retired],
     ["nativeTemplates", o.nativeTemplates],
+    ["authPackage", o.auth],
     ["unresolvedMembers", files.unresolved],
     ["outsideMembers", files.outside],
   ];
@@ -409,6 +432,7 @@ function printOutcome(
   reportExemptions(o.dir, o.exemptions);
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
+  reportAuthMigration(o);
   reportProjectRepairs(o);
   reportNativeTemplates(o.nativeTemplates);
   if (o.lock === true) console.log("deno.lock refreshed.");
@@ -465,18 +489,9 @@ export async function runUpgrade(
   options: { rule?: DepAgeRule; now?: Date } = {},
 ): Promise<number> {
   const dir = projectDir(ctx);
-  const path = await configPath(dir);
-  if (!path) {
-    console.error(`denext upgrade: no deno.json in ${dir}`);
-    return 1;
-  }
+  const path = await upgradeConfigPath(dir);
+  if (!path) return 1;
   // A workspace's members pin denext too: plan over every config at once so they all agree.
-  if (!await insideProject(dir, path)) {
-    console.error(
-      `denext upgrade: ${path} is a symlink that leads out of the project; not changed`,
-    );
-    return 1;
-  }
   const { files: read, unresolved, outside } = await workspaceConfigs(dir, path);
   // The `jsr:@denext/*` exemption from Deno's dependency-age hold goes first: the plan then
   // picks only versions the hold lets in.
@@ -489,8 +504,9 @@ export async function runUpgrade(
   });
   const now = options.now ?? new Date();
   const rule = options.rule ?? await readProjectRule(dir, now, files[0].text);
-  const plan = await planUpgrade(
-    files.map((f) => f.text).join("\n"),
+  const { plan, split, auth } = await planWithAuthSplit(
+    dir,
+    files,
     { ...upgradeFlags(ctx), rule, now },
     lookups,
   );
@@ -498,6 +514,7 @@ export async function runUpgrade(
   const changed = plan.ok && (plan.changed || stripped.length > 0);
   const written = changed && !check && ctx.flags["dry-run"] !== true;
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
+  if (written) await writeAuthSources(dir, split);
   const repairs = await projectRepairs(
     dir,
     files.map((f) => f.path),
@@ -516,12 +533,116 @@ export async function runUpgrade(
     stripped,
     exemptions,
     now,
+    auth,
     ...repairs,
     nativeTemplates,
   };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
+}
+
+/**
+ * Plan the upgrade; when it moves denext from 4.x into 5.0, apply the auth split to `files` (in
+ * place: their texts gain the `@denext/auth` pin and lose `denext/auth`) and plan again, so the
+ * new pin is chosen like any other: the newest `@denext/auth` that admits the denext the plan
+ * picks and the dependency-age rule lets in (it starts at a placeholder floor).
+ */
+async function planWithAuthSplit(
+  dir: string,
+  files: { path: string; text: string; removed: boolean }[],
+  flags: Parameters<typeof planUpgrade>[1],
+  lookups: UpgradeLookups,
+): Promise<{ plan: UpgradePlan; split: AuthSplit | null; auth: AuthMigration | null }> {
+  const first = await planUpgrade(files.map((f) => f.text).join("\n"), flags, lookups);
+  const split = first.ok ? await authSplit(dir, files, first.steps) : null;
+  if (!split) return { plan: first, split: null, auth: null };
+  files.splice(0, files.length, ...split.files);
+  const plan = await planUpgrade(split.files.map((f) => f.text).join("\n"), flags, lookups);
+  if (!plan.ok) return { plan, split, auth: null };
+  const steps = plan.steps.map((s) => addedStep(s, split.floor));
+  const to = steps.find((s) => s.name === "@denext/auth")?.to;
+  const auth = to ? { ...split.migration, spec: authSpecifierFor(files[0].text, to) } : null;
+  return { plan: { ...plan, steps }, split, auth };
+}
+
+/** The 4.x → 5.0 auth rewrite planned over a project (see {@link authSplit}). */
+interface AuthSplit {
+  /** The placeholder version the new `@denext/auth` pin starts at (the plan moves it up). */
+  readonly floor: string;
+  /** Each config's text with the auth entries rewritten. */
+  readonly files: { path: string; text: string; removed: boolean }[];
+  /** The source modules to write. */
+  readonly sources: readonly { path: string; text: string }[];
+  /** What to report. */
+  readonly migration: AuthMigration;
+}
+
+/**
+ * When the plan moves denext from 4.x into 5.0 or later: the configs with `@denext/auth` pinned
+ * at the target (the root's entry added when a source needs it) and the `next-auth` aliases on
+ * its shim, plus the source modules whose auth imports split. `null` otherwise.
+ */
+async function authSplit(
+  dir: string,
+  files: readonly { path: string; text: string; removed: boolean }[],
+  steps: readonly UpgradeStep[],
+): Promise<AuthSplit | null> {
+  const denext = steps.find((s) => s.name === "@denext/denext");
+  if (!denext || !crossesAuthSplit(denext.from, denext.to)) return null;
+  const sources = await planAuthSourceRewrites(dir);
+  // A prerelease floor lets the plan consider prereleases (`5.0.0-rc.1`) for a prerelease target.
+  const floor = /-/.test(denext.to) ? "0.0.0-0" : "0.0.0";
+  const spec = authSpecifierFor(files[0].text, floor);
+  const rewritten = [];
+  for (const [i, f] of files.entries()) {
+    const out = await rewriteAuthConfig(f.text, spec, i === 0 && sources.needsAuth);
+    rewritten.push({ ...f, text: out.text });
+  }
+  return {
+    floor,
+    files: rewritten,
+    sources: sources.files,
+    migration: { spec, files: sources.files.map((f) => f.path), warnings: sources.warnings },
+  };
+}
+
+/** A step from the placeholder floor is a package the upgrade adds (`from` is empty). */
+function addedStep(step: UpgradeStep, floor: string): UpgradeStep {
+  return step.name === "@denext/auth" && step.from === floor ? { ...step, from: "" } : step;
+}
+
+/** The auth rewrite's lines: the package, the modules split, and what needs a hand edit. */
+function reportAuthMigration(o: UpgradeOutcome): void {
+  if (!o.auth) return;
+  const verb = o.written ? "Moved" : "Would move";
+  console.log(
+    `\n${verb} the auth imports to ${o.auth.spec} (denext 5.0 ships the auth layer as its own ` +
+      `package: https://denext.dev/docs/upgrading-to-5)` +
+      (o.auth.files.length ? `:\n${o.auth.files.map((f) => `  ${f}`).join("\n")}` : "."),
+  );
+  for (const w of o.auth.warnings) console.error(`denext upgrade: ${w}`);
+}
+
+/** The project config `upgrade` edits, or `null` (and why, printed): none, or linked outside. */
+async function upgradeConfigPath(dir: string): Promise<string | null> {
+  const path = await configPath(dir);
+  if (!path) {
+    console.error(`denext upgrade: no deno.json in ${dir}`);
+    return null;
+  }
+  if (!await insideProject(dir, path)) {
+    console.error(
+      `denext upgrade: ${path} is a symlink that leads out of the project; not changed`,
+    );
+    return null;
+  }
+  return path;
+}
+
+/** Write the source modules the auth split rewrote (none without a split). */
+async function writeAuthSources(dir: string, split: AuthSplit | null): Promise<void> {
+  for (const f of split?.sources ?? []) await Deno.writeTextFile(join(dir, f.path), f.text);
 }
 
 /**

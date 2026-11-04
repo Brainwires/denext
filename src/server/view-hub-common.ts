@@ -7,8 +7,8 @@
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 import { verifyLiveViewToken } from "../runtime/live-view.ts";
 import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
-import { sha256Hex } from "./auth/hash.ts";
-import { auth, peekActiveAuthConfig } from "./auth/mod.ts";
+import { sha256Hex } from "./hash.ts";
+import { auth, peekAuthRuntime } from "./auth-registry.ts";
 
 /** The caps a view hub reads (a subset of `live.limits`). */
 export interface ViewLimits {
@@ -351,7 +351,7 @@ async function mountView<C, D>(
 export async function viewerIdentity<C>(deps: ViewHubBaseDeps<C>, conn: C): Promise<string> {
   try {
     return await deps.withConnContext(conn, async () => {
-      if (peekActiveAuthConfig()) {
+      if (peekAuthRuntime()) {
         const session = await auth();
         return session ? `user:${session.user.id}` : "anonymous";
       }

@@ -20,13 +20,8 @@
 // otherwise. Each client has a request budget (`rateLimit`, `rest-limit.ts`): past it, a 429
 // before any statement.
 
-import {
-  csrf,
-  nativeBearerToken,
-  type PluginContext,
-  type SqlClient,
-  type SqlRow,
-} from "@denext/denext/server";
+import { csrf, type PluginContext, type SqlClient, type SqlRow } from "@denext/denext/server";
+import { nativeBearerToken } from "@denext/auth";
 import { db, rlsReady } from "./postgres.ts";
 import { isIdentityError, type RequestIdentity, resolveIdentity } from "./identity.ts";
 import { start } from "./rls.ts";

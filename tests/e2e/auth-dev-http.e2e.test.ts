@@ -20,9 +20,21 @@ async function writeFixture(dir: string): Promise<void> {
         "denext/jsx-runtime": `${ROOT}src/jsx/jsx-runtime.ts`,
         "denext/server": `${ROOT}src/server/mod.ts`,
         "denext/client": `${ROOT}src/client/mod.ts`,
+        // @denext/auth, and the bare imports its file:// sources make.
+        "@denext/auth": `${ROOT}packages/auth/mod.ts`,
+        "@denext/denext": `${ROOT}mod.ts`,
+        "@denext/denext/auth-kit": `${ROOT}src/server/auth-kit.ts`,
+        "@denext/denext/auth-kit/client": `${ROOT}src/client/auth-kit.ts`,
+        "@denext/denext/cli/command": `${ROOT}src/cli/command.ts`,
+        "@denext/denext/client": `${ROOT}src/client/mod.ts`,
+        "@denext/denext/jsx-runtime": `${ROOT}src/jsx/jsx-runtime.ts`,
+        "@denext/denext/next/server": `${ROOT}src/compat/next/server.ts`,
+        "@denext/denext/plugin-kit": `${ROOT}src/plugin/kit.ts`,
+        "@std/encoding": "jsr:@std/encoding@^1.0.0",
+        "@std/path": "jsr:@std/path@^1.0.0",
       },
     }),
-    "denext.config.ts": `import { credentials, denextAuth } from "denext/server";
+    "denext.config.ts": `import { credentials, denextAuth } from "@denext/auth";
 export default {
   plugins: [
     denextAuth({

@@ -12,8 +12,8 @@ import {
   smtpMailer,
   type SmtpMailerOptions,
   SmtpMessageError,
-} from "../src/server/auth/smtp.ts";
-import { dotStuff, encodeHeaderText, quotedPrintable } from "../src/server/auth/smtp-message.ts";
+} from "../packages/auth/src/smtp.ts";
+import { dotStuff, encodeHeaderText, quotedPrintable } from "../packages/auth/src/smtp-message.ts";
 import { type FakeSmtpServer, SMTP_TEST_CA, startFakeSmtp } from "./helpers/fake-smtp.ts";
 
 /**

@@ -23,9 +23,34 @@ Three facts shape everything below:
   accounts, credentials, API tokens and MFA factors live. Passing one never by itself
   makes sessions stateful — those are two different decisions.
 
-The server half is the `denext/auth` entry point (`import { auth, denextAuth, github } from
-"denext/auth"`); `denext/server` re-exports every one of those names, so either import works.
-The client half comes from `denext` or `denext/client`.
+The plugin is its own package, **`@denext/auth`**: `denextAuth()`, the providers, the adapters
+and stores, SAML, `/auth/v1`, passkeys, MFA, the mailers and the `next-auth` compat. Its version
+is denext's, and it pins that `@denext/denext` version exactly, so `denext create` writes it beside
+denext at the same range and `denext upgrade` moves the two together:
+
+```json
+{
+  "imports": {
+    "denext": "jsr:@denext/denext@^5.0.0",
+    "@denext/auth": "jsr:@denext/auth@^5.0.0"
+  }
+}
+```
+
+(`deno add jsr:@denext/auth`, or `denext plugin add @denext/auth`, which also wires it into
+`denext.config.ts`.) Reading the session stays in `denext/server`: `auth()`, `requireAuth()`,
+`requireSession()`, `getSession()`, the `AuthSession` / `AuthUser` / `SessionStore` types, the
+rate-limit stores, `hashPassword()` / `verifyPassword()` and the Supabase key helpers. They read
+through the plugin once `denextAuth()` is in `plugins`; without it `auth()`, `requireAuth()` and
+`requireSession()` throw an `AuthPluginMissingError` that names `@denext/auth` and how to add it.
+
+```ts
+import { auth } from "denext/server"; // the session, anywhere on the server
+import { denextAuth, github } from "@denext/auth"; // the plugin, in denext.config.ts
+```
+
+Before 5.0 all of it shipped inside `@denext/denext` (`denext/auth`, `denext/server`); see
+[Upgrading to 5.0](/docs/upgrading-to-5). The client half comes from `denext` or `denext/client`.
 
 On top of sign-in, the plugin runs the account flows an app would otherwise hand-roll:
 [password sign-in with no `authorize`](#password-sign-in-without-an-authorize),
@@ -39,7 +64,8 @@ and [TOTP two-factor authentication](#two-factor-authentication-totp). All four 
 
 ```ts
 // denext.config.ts
-import { credentials, denextAuth, google, verifyPassword } from "denext/server";
+import { verifyPassword } from "denext/server";
+import { credentials, denextAuth, google } from "@denext/auth";
 
 export default {
   plugins: [
@@ -212,7 +238,7 @@ the URL template.
 ### The generic OIDC provider
 
 ```ts
-import { oidc } from "denext/server";
+import { oidc } from "@denext/auth";
 
 // Discovery: issuer only — endpoints come from the well-known document.
 oidc({ issuer: "https://idp.example.com", clientId, clientSecret });
@@ -272,7 +298,7 @@ takes:
   verified against the issuer's JWKS.
 
 ```ts
-import type { OAuthProvider } from "denext/server";
+import type { OAuthProvider } from "@denext/auth";
 
 const example: OAuthProvider = {
   id: "example",
@@ -392,7 +418,7 @@ marks the email verified when `xms_edov` is `true`.
 Workspace, ADFS, Keycloak, …) on denextAuth's own endpoints — no `/auth/v1` needed:
 
 ```ts
-import { denextAuth, saml, sqliteAuthAdapter } from "denext/server";
+import { denextAuth, saml, sqliteAuthAdapter } from "@denext/auth";
 
 denextAuth({
   secret: Deno.env.get("AUTH_SECRET")!,
@@ -596,7 +622,7 @@ explicit `updateAuthSession()` — and **never** inside a bare `auth()`, where a
 call) is carried back onto the parent response rather than lost with the child.
 
 ```ts
-import { updateAuthSession } from "denext/server";
+import { updateAuthSession } from "@denext/auth";
 
 // In a Server Action or a route handler — the refreshed cookie rides this response.
 const session = await updateAuthSession(); // AuthSession | null
@@ -614,7 +640,7 @@ import {
   revokeAllSessions,
   revokeSession,
   sqliteSessionStore,
-} from "denext/server";
+} from "@denext/auth";
 
 denextAuth({
   // …
@@ -714,7 +740,7 @@ one, a sign-in resolves (or creates) a stored user, and **`session.user.id` beco
 adapter's id** — that is the opt-in change an adapter makes.
 
 ```ts
-import { denextAuth, sqliteAuthAdapter } from "denext/server";
+import { denextAuth, sqliteAuthAdapter } from "@denext/auth";
 
 denextAuth({
   // …
@@ -770,7 +796,7 @@ write. Two racing requests must see exactly one success:
 
 A non-atomic implementation turns each of them into a replay window. The full contract,
 with every record type, is
-[`src/server/auth/adapter.ts`](https://github.com/Brainwires/denext/blob/main/src/server/auth/adapter.ts);
+[`packages/auth/src/adapter.ts`](https://github.com/Brainwires/denext/blob/main/packages/auth/src/adapter.ts);
 the in-memory implementation is the executable reference, and a shared contract suite
 runs against every shipped adapter.
 
@@ -824,7 +850,7 @@ that same file with no migration and **no logout**. It still takes
 ### Postgres
 
 ```ts
-import { denextAuth, postgresAuthAdapter } from "denext/server";
+import { denextAuth, postgresAuthAdapter } from "@denext/auth";
 
 denextAuth({
   // …
@@ -902,7 +928,7 @@ With an adapter that stores password hashes, `credentials()` needs no `authorize
 adapter is the password store:
 
 ```ts
-import { credentials, denextAuth, sqliteAuthAdapter } from "denext/server";
+import { credentials, denextAuth, sqliteAuthAdapter } from "@denext/auth";
 
 denextAuth({
   // …
@@ -971,7 +997,7 @@ surfaces, and `verificationRequested` fires only for a delivery that succeeded.
 no npm package, `Deno.connect` / `Deno.connectTls` / `Deno.startTls` underneath:
 
 ```ts
-import { denextAuth, smtpMailer } from "denext/server";
+import { denextAuth, smtpMailer } from "@denext/auth";
 
 denextAuth({
   // …
@@ -1095,7 +1121,7 @@ The functions take the same config object you passed to `denextAuth()`, like
 ## Passwordless: magic links and one-time codes
 
 ```ts
-import { denextAuth, emailOtp, magicLink, sqliteAuthAdapter } from "denext/server";
+import { denextAuth, emailOtp, magicLink, sqliteAuthAdapter } from "@denext/auth";
 
 denextAuth({
   // …
@@ -1198,7 +1224,7 @@ HTML-escaped. A link without a valid address or token goes to the error page ins
 ## Phone sign-in
 
 ```ts
-import { denextAuth, phoneOtp, sqliteAuthAdapter } from "denext/server";
+import { denextAuth, phoneOtp, sqliteAuthAdapter } from "@denext/auth";
 
 denextAuth({
   // …
@@ -1376,7 +1402,8 @@ Action:
 
 ```ts
 "use server";
-import { auth, confirmTotp, enrollTotp } from "denext/server";
+import { auth } from "denext/server";
+import { confirmTotp, enrollTotp } from "@denext/auth";
 import { authConfig } from "../lib/auth-config.ts";
 
 export async function startEnrollment() {
@@ -1406,7 +1433,8 @@ safe under the strict CSP:
 ```ts
 // app/settings/two-factor/actions.ts
 "use server";
-import { auth, enrollTotp, totpQrSvg } from "denext/server";
+import { auth } from "denext/server";
+import { enrollTotp, totpQrSvg } from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 
 export async function startEnrollment() {
@@ -1446,7 +1474,8 @@ reads the pending session with `pendingMfaSession()` and posts the code:
 ```tsx
 // app/mfa/page.tsx — `pages: { mfa: "/mfa" }`
 import { redirect } from "denext";
-import { type PageProps, pendingMfaSession } from "denext/server";
+import { type PageProps } from "denext/server";
+import { pendingMfaSession } from "@denext/auth";
 
 export default async function Mfa({ searchParams }: PageProps) {
   if (!(await pendingMfaSession())) redirect("/login");
@@ -1583,7 +1612,8 @@ No factor needs a retired secret: secrets after the first can be removed.
 
 ```ts
 // jobs/reseal.ts — `denext job reseal`
-import { activeAuthConfig, defineJob, resealTotpFactors } from "denext/server";
+import { defineJob } from "denext/server";
+import { activeAuthConfig, resealTotpFactors } from "@denext/auth";
 export default defineJob({
   description: "re-seal TOTP factors under the current auth secret",
   handler: async () => console.log(await resealTotpFactors(activeAuthConfig())),
@@ -2293,7 +2323,8 @@ on every call and can't be escalated into a browser session.
 
 ```ts
 // lib/auth.ts
-import { createApi, requireBearer } from "denext/server";
+import { createApi } from "denext/server";
+import { requireBearer } from "@denext/auth";
 import { authConfig } from "./auth-config.ts";
 
 export const authed = createApi().use(requireBearer(authConfig, { scope: "pets:write" }));
@@ -2434,9 +2465,11 @@ view instead of unmounting behind an error boundary.
 
 A Next.js app written for Auth.js v5 runs on denext with its source unchanged. `denext migrate`
 aliases `next-auth`, `next-auth/react`, `next-auth/webauthn`, `next-auth/jwt` and
-`next-auth/providers/*` to denext's
-compat modules, which map Auth.js onto `denextAuth` (a NextAuth.js v4 app too: see
-[NextAuth.js v4 apps](#nextauthjs-v4-apps)):
+`next-auth/providers/*` to `@denext/auth`'s compat modules (`jsr:@denext/auth@^5.0.0/next-auth/…`
+in `deno.json`), which map Auth.js onto `denextAuth` (a NextAuth.js v4 app too: see
+[NextAuth.js v4 apps](#nextauthjs-v4-apps)). A 4.x app's aliases pointed at
+`@denext/denext/next-auth/…`; `denext upgrade` moves them, and the app's `next-auth` imports stay
+as they are:
 
 ```ts
 // auth.ts — as written for Next.js
@@ -2471,9 +2504,10 @@ with the `NextRequest` in the route handlers and middleware and `undefined` in `
 `signIn()` and `signOut()`, as in Auth.js. Concurrent requests each read their own config.
 
 On a next-compat build the aliases need no import map: `next-auth/react` and `next-auth/webauthn`
-(in the app or in a library under `node_modules`) bundle from denext's runtime, and `next-auth`,
-`next-auth/jwt` and the providers resolve to the shim, so an installed `next-auth` package is
-never loaded.
+(in the app or in a library under `node_modules`) bundle from `@denext/auth` into denext's runtime
+(the same version as denext, beside it), and `next-auth`, `next-auth/jwt` and the providers
+resolve to the shim, so an installed `next-auth` package is never loaded. An app that does not use
+`next-auth` never loads `@denext/auth` at build time.
 
 | Auth.js                                                                                                                | On denext                                                                                                                                                                                                     |
 | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2737,7 +2771,7 @@ The `Hasher` seam is where that lives: `{ hash, verify }`, defaulting to `scrypt
 which passes its own options to both halves so the two costs can never drift apart.
 
 ```ts
-import { scryptHasher } from "denext/server";
+import { scryptHasher } from "@denext/auth";
 
 denextAuth({ hasher: scryptHasher({ cost: 2 ** 16 }) /* … */ });
 ```
@@ -2851,7 +2885,7 @@ session and a token session are the same user, in the same adapter:
 
 ```ts
 // denext.config.ts
-import { credentials, denextAuth, github } from "denext/server";
+import { credentials, denextAuth, github } from "@denext/auth";
 import { backend, backendAuthAdapter } from "@denext/backend";
 
 export default {
@@ -3073,7 +3107,8 @@ process alive and stops when the plugin is torn down. Or run it on your own sche
 
 ```ts
 // jobs/sso-metadata.ts
-import { defineJob, refreshSsoMetadata } from "denext/server";
+import { defineJob } from "denext/server";
+import { refreshSsoMetadata } from "@denext/auth";
 
 export default defineJob({
   description: "refresh stored SAML metadata URLs",

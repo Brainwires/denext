@@ -12,14 +12,14 @@
 // tests/_x509-test-ca.ts.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { decodeCbor } from "../src/server/auth/cbor.ts";
-import { base64UrlDecode, base64UrlEncode } from "../src/server/auth/oauth.ts";
+import { decodeCbor } from "../packages/auth/src/cbor.ts";
+import { base64UrlDecode, base64UrlEncode } from "../packages/auth/src/oauth.ts";
 import {
   type AttestationInput,
   SAFETYNET_SKEW_MS,
   verifyAndroidSafetyNet,
-} from "../src/server/auth/webauthn-attestation.ts";
-import { verifyRegistration, WebAuthnError } from "../src/server/auth/webauthn.ts";
+} from "../packages/auth/src/webauthn-attestation.ts";
+import { verifyRegistration, WebAuthnError } from "../packages/auth/src/webauthn.ts";
 import { leafOf, TEST_NOW, type TestKeyPair, testPki } from "./_x509-test-ca.ts";
 import fixture from "./fixtures/webauthn-attestation/simplewebauthn-safetynet.json" with {
   type: "json",

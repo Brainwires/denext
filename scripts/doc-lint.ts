@@ -2,7 +2,8 @@
 // (@denext/denext's entrypoints and the workspace packages'), then the docs' citation and anchor
 // checks. The list lives here rather than in deno.json's task, which @denext/denext publishes
 // (against JSR's 20 MiB package cap). The `next-auth/providers/*` modules are not listed: they
-// come from deno.json's exports, which scripts/gen-auth-providers.ts writes.
+// come from @denext/auth's packages/auth/deno.json exports, which scripts/gen-auth-providers.ts
+// writes.
 //
 //   deno task doc-lint
 //
@@ -22,7 +23,8 @@ export const DOC_LINT_MODULES: readonly string[] = [
   "src/ui/kit.ts",
   "src/jsx/jsx-runtime.ts",
   "src/server/mod.ts",
-  "src/server/auth/public.ts",
+  "src/server/auth-kit.ts",
+  "src/client/auth-kit.ts",
   "src/client/mod.ts",
   "src/devtools.ts",
   "src/live.ts",
@@ -185,14 +187,6 @@ export const DOC_LINT_MODULES: readonly string[] = [
   "src/compat/next-intl/context.ts",
   "src/compat/next-intl/icu.ts",
   "src/compat/next-intl/rich.ts",
-  "src/compat/next-auth/index.ts",
-  "src/compat/next-auth/react.ts",
-  "src/compat/next-auth/webauthn.ts",
-  "src/compat/next-auth/jwt.ts",
-  "src/compat/next-auth/next.ts",
-  "src/compat/next-auth/middleware.ts",
-  "src/compat/next-auth/adapters.ts",
-  "src/compat/next-auth/providers/index.ts",
   "packages/swc/mod.ts",
   "packages/lightningcss/mod.ts",
   "packages/photon/mod.ts",
@@ -224,24 +218,41 @@ export const DOC_LINT_MODULES: readonly string[] = [
   "packages/backend/mod.ts",
   "packages/backend/server.ts",
   "packages/backend/client.ts",
+  "packages/auth/mod.ts",
+  "packages/auth/next-auth/index.ts",
+  "packages/auth/next-auth/react.ts",
+  "packages/auth/next-auth/webauthn.ts",
+  "packages/auth/next-auth/jwt.ts",
+  "packages/auth/next-auth/next.ts",
+  "packages/auth/next-auth/middleware.ts",
+  "packages/auth/next-auth/adapters.ts",
+  "packages/auth/next-auth/providers/index.ts",
   "packages/docs-corpus/mod.ts",
   "packages/docs-corpus/native-templates.ts",
 ];
 
 /** The module the generated `next-auth/providers/*` modules are listed after. */
-export const PROVIDERS_AFTER = "src/compat/next-auth/providers/index.ts";
+export const PROVIDERS_AFTER = "packages/auth/next-auth/providers/index.ts";
+
+/** Where @denext/auth lives, repo-relative: its `deno.json` export targets are relative to it. */
+export const AUTH_PACKAGE = "packages/auth";
 
 /**
  * Every module `deno doc --lint` checks: {@linkcode DOC_LINT_MODULES} with the target of each
- * `./next-auth/providers/<id>` export of `exports` (deno.json's) after {@linkcode PROVIDERS_AFTER}.
+ * `./next-auth/providers/<id>` export of `exports` (@denext/auth's) after
+ * {@linkcode PROVIDERS_AFTER}.
  *
- * @param exports deno.json's `exports`.
+ * @param exports @denext/auth's `deno.json` `exports`.
+ * @param base The directory those export targets are relative to, repo-relative.
  * @returns The modules, repo-relative.
  */
-export function docLintModules(exports: Readonly<Record<string, string>>): string[] {
+export function docLintModules(
+  exports: Readonly<Record<string, string>>,
+  base: string = AUTH_PACKAGE,
+): string[] {
   const providers = Object.entries(exports)
     .filter(([key]) => /^\.\/next-auth\/providers\/[^/]+$/.test(key))
-    .map(([, target]) => target.replace(/^\.\//, ""));
+    .map(([, target]) => `${base}/${target.replace(/^\.\//, "")}`);
   const at = DOC_LINT_MODULES.indexOf(PROVIDERS_AFTER);
   if (at < 0) throw new Error(`doc-lint: ${PROVIDERS_AFTER} is not listed`);
   return [...DOC_LINT_MODULES.slice(0, at + 1), ...providers, ...DOC_LINT_MODULES.slice(at + 1)];
@@ -254,7 +265,9 @@ async function deno(args: string[]): Promise<boolean> {
 }
 
 if (import.meta.main) {
-  const config = JSON.parse(await Deno.readTextFile(new URL("deno.json", ROOT)));
+  const config = JSON.parse(
+    await Deno.readTextFile(new URL(`${AUTH_PACKAGE}/deno.json`, ROOT)),
+  );
   const ok = await deno(["doc", "--lint", ...docLintModules(config.exports)]) &&
     await deno([
       "run",

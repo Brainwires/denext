@@ -4,12 +4,12 @@
 // goes to `logger.error` instead.
 
 import { assert, assertEquals } from "@std/assert";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { credentials } from "../src/server/auth/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
-import type { AuthConfig, AuthEvents, AuthUser } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthEvents, AuthUser } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

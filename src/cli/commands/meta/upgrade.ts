@@ -33,6 +33,10 @@ export const upgradeMeta: CommandMeta = {
     "Native templates in ios/ / android/ older than this denext writes (`denext mobile add`'s\n" +
     "files) are listed, --dry-run included, with the command that refreshes each (such as\n" +
     "`denext mobile add auth-session`); upgrade never rewrites native files itself.\n" +
+    "Into 5.0 (from 4.x) it also moves the auth layer to its own package: `@denext/auth` is\n" +
+    "pinned beside denext, imports of the auth names from denext/server or denext/auth are split\n" +
+    "onto it (auth(), requireAuth, requireSession and the session types stay in denext/server),\n" +
+    "and the next-auth aliases point at @denext/auth's shim.\n" +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [

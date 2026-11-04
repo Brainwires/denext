@@ -8,16 +8,16 @@
 import { assert, assertEquals, assertFalse, assertRejects, assertThrows } from "@std/assert";
 import { decodeBase32 } from "@std/encoding/base32";
 import type { CommandContext } from "../src/cli/command.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { type AuthCommandIo, createAuthCommand } from "../src/server/auth/command.ts";
-import { factorAad } from "../src/server/auth/factors.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { confirmTotp, enrollTotp, verifySecondFactor } from "../src/server/auth/mfa.ts";
-import { resealTotpFactors } from "../src/server/auth/reseal.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { generateTotpSecret } from "../src/server/auth/totp.ts";
-import { openTotpSecret, sealTotpSecret } from "../src/server/auth/totp-seal.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { type AuthCommandIo, createAuthCommand } from "../packages/auth/src/command.ts";
+import { factorAad } from "../packages/auth/src/factors.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { confirmTotp, enrollTotp, verifySecondFactor } from "../packages/auth/src/mfa.ts";
+import { resealTotpFactors } from "../packages/auth/src/reseal.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { generateTotpSecret } from "../packages/auth/src/totp.ts";
+import { openTotpSecret, sealTotpSecret } from "../packages/auth/src/totp-seal.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const KEY_A = "first-auth-secret-at-least-32-characters";

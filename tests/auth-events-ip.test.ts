@@ -4,13 +4,13 @@
 // raised outside any request carries none.
 
 import { assertEquals } from "@std/assert";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { emitAuthEvent } from "../src/server/auth/events.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { emitAuthEvent } from "../packages/auth/src/events.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

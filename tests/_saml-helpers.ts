@@ -3,8 +3,8 @@
 // signer. The signer reuses denext's own exclusive c14n, so it only produces fixtures for
 // mutation cases; the golden fixtures in tests/fixtures/saml/ come from xmlsec1.
 
-import { excC14n } from "../src/server/auth/saml/c14n.ts";
-import { parseXml, type XmlElement } from "../src/server/auth/saml/xml.ts";
+import { excC14n } from "../packages/auth/src/saml/c14n.ts";
+import { parseXml, type XmlElement } from "../packages/auth/src/saml/xml.ts";
 
 export const SP = {
   entityId: "https://sp.example.com/auth/v1/sso/saml/metadata",

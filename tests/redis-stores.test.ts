@@ -15,8 +15,8 @@ import {
   RespReader,
 } from "../src/server/redis.ts";
 import { redisCacheStore } from "../src/server/redis-cache.ts";
-import { redisSessionStore } from "../src/server/auth/redis-session-store.ts";
-import { redisRateLimitStore } from "../src/server/auth/redis-rate-limit.ts";
+import { redisSessionStore } from "../packages/auth/src/redis-session-store.ts";
+import { redisRateLimitStore } from "../packages/auth/src/redis-rate-limit.ts";
 import {
   cacheStoreContract,
   rateLimitStoreContract,

@@ -2,7 +2,7 @@
 // findings that were confirmed by the audit and fixed at the framework level.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { github, google, oidc } from "../src/server/auth/providers.ts";
+import { github, google, oidc } from "../packages/auth/src/providers.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";

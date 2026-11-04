@@ -4,15 +4,17 @@
 // copy of this package. `backendAuthAdapter()` puts denext auth's tables on that same client.
 
 import {
-  type AuthAdapter,
   type AuthSession,
-  postgresAuthAdapter,
-  type PostgresAuthAdapterOptions,
   postgresClient,
   sessionClient,
   type SqlClient,
   withDirectConnection,
 } from "@denext/denext/server";
+import {
+  type AuthAdapter,
+  postgresAuthAdapter,
+  type PostgresAuthAdapterOptions,
+} from "@denext/auth";
 import { identityScope, isRequestIdentity, resolveIdentity } from "./identity.ts";
 import {
   ANON_SCOPE,
@@ -311,7 +313,7 @@ export type BackendAuthAdapterOptions = Omit<PostgresAuthAdapterOptions, "sql" |
  *
  * ```ts
  * // denext.config.ts
- * import { denextAuth, github } from "denext/server";
+ * import { denextAuth, github } from "@denext/auth";
  * import { backend, backendAuthAdapter } from "@denext/backend";
  * export default {
  *   plugins: [

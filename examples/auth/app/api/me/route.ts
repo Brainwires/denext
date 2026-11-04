@@ -9,7 +9,8 @@
 // same 401. It also documents itself: an endpoint built with it is marked secured in the
 // `@denext/openapi` document with nothing written here.
 
-import { createApi, requireBearer } from "denext/server";
+import { createApi } from "denext/server";
+import { requireBearer } from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 
 /** Endpoints that require a valid API token. Add `{ scope: "me:read" }` to require a scope. */

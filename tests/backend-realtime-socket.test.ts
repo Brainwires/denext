@@ -18,7 +18,7 @@ import { createRequestContext, runWithContext } from "../src/server/request-cont
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
 import { resetChannels } from "../src/runtime/channel.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { broadcast as serverBroadcast } from "../packages/backend/server.ts";
@@ -77,7 +77,7 @@ import {
   installSupabaseKeys,
   resolveSupabaseKeys,
   signSupabaseJwt,
-} from "../src/server/auth/gotrue/keys.ts";
+} from "../src/server/supabase-keys.ts";
 import type { TableChangesFrame } from "../packages/backend/src/realtime-shared.ts";
 import { fakeRealtimeClient } from "./helpers/fake-realtime-client.ts";
 import { authConfig, cookieFor, settle, until } from "./helpers/realtime-harness.ts";

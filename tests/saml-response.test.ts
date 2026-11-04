@@ -10,13 +10,13 @@ import {
   type SamlReplayCache,
   verifySamlResponse,
   type VerifySamlResponseOptions,
-} from "../src/server/auth/saml/mod.ts";
+} from "../packages/auth/src/saml/mod.ts";
 import {
   directSignature,
   indexIds,
   verifyEnvelopedSignature,
-} from "../src/server/auth/saml/dsig.ts";
-import { parseXml, type XmlElement } from "../src/server/auth/saml/xml.ts";
+} from "../packages/auth/src/saml/dsig.ts";
+import { parseXml, type XmlElement } from "../packages/auth/src/saml/xml.ts";
 import {
   ALG,
   ecKey,

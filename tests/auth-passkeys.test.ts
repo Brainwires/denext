@@ -12,19 +12,19 @@ import {
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { confirmTotp, enrollTotp } from "../src/server/auth/mfa.ts";
-import { deletePasskey, listPasskeys, userHandleOf } from "../src/server/auth/passkeys.ts";
-import { WebAuthnError } from "../src/server/auth/webauthn.ts";
-import { resetPassword } from "../src/server/auth/email.ts";
-import { issueVerificationToken } from "../src/server/auth/verification.ts";
-import { readAuthSession } from "../src/server/auth/session.ts";
-import type { AuthAdapter, PasskeyRecord } from "../src/server/auth/adapter.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { confirmTotp, enrollTotp } from "../packages/auth/src/mfa.ts";
+import { deletePasskey, listPasskeys, userHandleOf } from "../packages/auth/src/passkeys.ts";
+import { WebAuthnError } from "../packages/auth/src/webauthn.ts";
+import { resetPassword } from "../packages/auth/src/email.ts";
+import { issueVerificationToken } from "../packages/auth/src/verification.ts";
+import { readAuthSession } from "../packages/auth/src/session.ts";
+import type { AuthAdapter, PasskeyRecord } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { decodeBase32 } from "@std/encoding/base32";
 
 import { Authenticator, b64u, fromB64u } from "./helpers/soft-authenticator.ts";

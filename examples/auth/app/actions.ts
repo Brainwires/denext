@@ -7,7 +7,7 @@
 // of its own, so `session.user.id` and the stored record are always the same identity.
 
 import { redirect } from "denext";
-import { requestEmailVerification, revokeAllSessions } from "denext/server";
+import { requestEmailVerification, revokeAllSessions } from "@denext/auth";
 import { authConfig } from "../lib/auth-config.ts";
 import { signedIn } from "../lib/session.ts";
 import { checkPassword, createAccount, findUser, setPassword } from "../lib/users.ts";

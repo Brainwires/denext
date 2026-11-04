@@ -95,10 +95,10 @@ export async function appPlan(rootDir: string, name: string): Promise<AppPlanFil
   const files = scaffoldFiles({ dir: join(rootDir, dir), monorepoScope: scope, vscode: false })
     .map((f) => ({
       path: join(rootDir, dir, f.path),
-      contents: f.content.replaceAll(
-        `jsr:@denext/denext@^${VERSION}`,
-        `jsr:@denext/denext@${pinned}`,
-      ),
+      // @denext/auth is versioned with denext: it takes the same pin.
+      contents: f.content
+        .replaceAll(`jsr:@denext/denext@^${VERSION}`, `jsr:@denext/denext@${pinned}`)
+        .replaceAll(`jsr:@denext/auth@^${VERSION}`, `jsr:@denext/auth@${pinned}`),
     }));
   // Deno refuses a member named twice, so a glob that covers the new app means it is listed.
   const listed = workspaceSelects(members, dir, "deno");

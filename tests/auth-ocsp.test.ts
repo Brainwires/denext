@@ -1,5 +1,5 @@
 // OCSP (RFC 6960) revocation checks for the FIDO Metadata Service paths
-// (src/server/auth/ocsp.ts, src/server/auth/revocation.ts): the DER request, the response's
+// (packages/auth/src/ocsp.ts, packages/auth/src/revocation.ts): the DER request, the response's
 // signature (the issuer's or a delegated responder's), its CertID and freshness, the cache, the
 // fall-back to the CRL, and the soft / hard failure policy (`passkeys.attestation.revocation`).
 //
@@ -16,16 +16,20 @@ import {
   OcspCache,
   ocspUrlsOf,
   parseOcspResponse,
-} from "../src/server/auth/ocsp.ts";
-import { RevocationChecker } from "../src/server/auth/revocation.ts";
-import { RevocationError, type RevocationMode } from "../src/server/auth/crl.ts";
-import { checkMdsAttestation, type ResolvedMds, resolveMds } from "../src/server/auth/fido-mds.ts";
+} from "../packages/auth/src/ocsp.ts";
+import { RevocationChecker } from "../packages/auth/src/revocation.ts";
+import { RevocationError, type RevocationMode } from "../packages/auth/src/crl.ts";
+import {
+  checkMdsAttestation,
+  type ResolvedMds,
+  resolveMds,
+} from "../packages/auth/src/fido-mds.ts";
 import {
   type ParsedCertificate,
   parseX509Certificate,
   verifyCertificateChain,
   verifyWithSpki,
-} from "../src/server/auth/x509-chain.ts";
+} from "../packages/auth/src/x509-chain.ts";
 import {
   b64,
   leafOf,

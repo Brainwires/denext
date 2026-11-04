@@ -3,28 +3,28 @@
 // tag), and the `/auth/tokens` management endpoints (cookie session only, MFA-pending
 // refused, own-tokens-only revocation).
 
-import { credentials } from "../src/server/auth/providers.ts";
-import { activeAuthConfig, denextAuth } from "../src/server/auth/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { activeAuthConfig, denextAuth } from "../packages/auth/src/mod.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   createRequestContext,
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {
   issueApiToken,
   listApiTokens,
   revokeApiToken,
   verifyApiToken,
-} from "../src/server/auth/api-token.ts";
-import { type BearerContext, requireBearer } from "../src/server/auth/bearer.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
+} from "../packages/auth/src/api-token.ts";
+import { type BearerContext, requireBearer } from "../packages/auth/src/bearer.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
 import { isApiError } from "../src/server/api-error.ts";
 import type { ApiMiddleware, ApiMiddlewareInput } from "../src/server/define-api.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { AuthConfig, AuthUser } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig, AuthUser } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

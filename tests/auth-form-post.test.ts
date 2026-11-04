@@ -11,11 +11,11 @@ import {
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { apple, oidc } from "../src/server/auth/providers.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { apple, oidc } from "../packages/auth/src/providers.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig, OAuthProvider } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

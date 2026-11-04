@@ -10,7 +10,7 @@
 // a JavaScript client would call; these actions are the no-JS path.
 
 import { redirect } from "denext";
-import { issueApiToken, listApiTokens, revokeApiToken } from "denext/server";
+import { issueApiToken, listApiTokens, revokeApiToken } from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 import { onceKey, stashOnce } from "../../../lib/once.ts";
 import { signedIn } from "../../../lib/session.ts";

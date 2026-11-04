@@ -34,6 +34,8 @@ export interface RuntimeCacheInputs {
   readonly depAge: unknown;
   /** The project's denext patch (null when it has none). */
   readonly patch: DenextPatchSet | null;
+  /** Whether the `next-auth` client modules (from `@denext/auth`) are prebuilt in. */
+  readonly nextAuth?: boolean;
 }
 
 /**
@@ -50,6 +52,7 @@ export function runtimeCacheKey(inputs: RuntimeCacheInputs): string {
     Object.entries(inputs.imports).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     inputs.depAge ?? null,
     inputs.patch ? [...inputs.patch].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) : null,
+    inputs.nextAuth ?? false,
   ]);
 }
 

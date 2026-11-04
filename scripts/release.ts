@@ -40,7 +40,10 @@
 //      docs-corpus-v<version>, push branch + that tag and wait for JSR to list it; REFUSE to tag
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
-//      v<version> and push branch + tag
+//      v<version> and push branch + tag; then wait for JSR to list @denext/denext <version>, tag
+//      auth-v<version> on the release commit, push it and wait for JSR to list @denext/auth
+//      <version> (auth is versioned in lockstep and pins @denext/denext <version> EXACTLY, so it
+//      publishes after denext, never before; `create` / `migrate` pin both at one version)
 //   7. re-sign the signed revoked-runtimes list when fewer than 10 days remain before it expires
 //      (`deno task revocations resign --if-due`, the keychain key; a warning on failure, never an
 //      abort: the list is advisory)
@@ -49,7 +52,8 @@
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
 // stopped: run the same command again. It sees the release commit on HEAD and the tags already
 // made, and runs only the remaining steps (scripts/lib/release-publish.ts): `corpus` (publish and
-// wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
+// wait for @denext/docs-corpus), `tag`, `push`, `auth` (wait for denext on JSR, then publish and
+// wait for @denext/auth), `pr`. `--resume-from <step>` names the step.
 // Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
 // the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
 // one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
@@ -482,8 +486,20 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
       }`,
     );
   }
+  const authOnJsr = await jsrHasVersion("@denext/auth", version).catch(() => null);
+  console.log(
+    `6. @denext/auth@${version}: ${
+      authOnJsr === null
+        ? "could not ask JSR"
+        : authOnJsr
+        ? "already on JSR"
+        : `a real run publishes auth-v${version} once JSR lists @denext/denext@${version}`
+    }`,
+  );
   console.log("7. revocations      (skipped — dry run; a real run re-signs the list when due)");
-  console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
+  console.log(
+    `\nDry run complete — nothing written, nothing committed. Would tag ${tag}, then auth-v${version}.`,
+  );
 }
 
 function parseReleaseArgs(): {

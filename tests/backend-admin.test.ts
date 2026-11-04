@@ -10,7 +10,7 @@ import {
   generateSupabaseKeys,
   installSupabaseKeys,
   resolveSupabaseKeys,
-} from "../src/server/auth/gotrue/keys.ts";
+} from "../src/server/supabase-keys.ts";
 import { ADMIN_PREFIX, handleAdminRequest } from "../packages/backend/src/admin.ts";
 import { installRealtimeHub, type RealtimeHub } from "../packages/backend/src/realtime-socket.ts";
 import {

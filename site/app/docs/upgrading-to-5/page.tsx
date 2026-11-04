@@ -5,7 +5,7 @@ import { MarkdownDoc } from "../../../components/markdown.tsx";
 export const metadata = {
   title: "Upgrading to denext 5.0",
   description:
-    "denext 5.0 runs only on its own Deno runtime: what breaks, what to do instead, the CI changes and the errors you will see.",
+    "denext 5.0 runs only on its own Deno runtime and moves the auth layer into @denext/auth: what breaks, what denext upgrade rewrites, the CI changes and the errors you will see.",
 };
 
 export default async function UpgradingTo5() {

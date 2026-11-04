@@ -7,10 +7,10 @@ import {
   parseIdpMetadata,
   SamlError,
   spMetadataXml,
-} from "../src/server/auth/saml/mod.ts";
-import { certificateKey } from "../src/server/auth/saml/x509.ts";
-import { parseXml, type XmlElement } from "../src/server/auth/saml/xml.ts";
-import * as server from "../src/server/mod.ts";
+} from "../packages/auth/src/saml/mod.ts";
+import { certificateKey } from "../packages/auth/src/saml/x509.ts";
+import { parseXml, type XmlElement } from "../packages/auth/src/saml/xml.ts";
+import * as authPackage from "../packages/auth/mod.ts";
 import { certificateFor, der, derOid, ecKey, rsaKey, SP } from "./_saml-helpers.ts";
 
 const rsa = await rsaKey();
@@ -214,7 +214,8 @@ Deno.test("saml x509: refuses what it cannot pin", () => {
   for (const cert of bad) assertEquals(code(() => certificateKey(cert)), "bad_certificate", cert);
 });
 
-Deno.test("saml: the primitives are public API of denext/server", () => {
+Deno.test("saml: the primitives are public API of @denext/auth", () => {
+  const server = authPackage;
   assertEquals(typeof server.verifySamlResponse, "function");
   assertEquals(typeof server.buildAuthnRequest, "function");
   assertEquals(typeof server.parseIdpMetadata, "function");

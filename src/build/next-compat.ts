@@ -66,7 +66,13 @@ import {
   transformInlineServerActions,
 } from "./inline-server-action.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
-import { NEXT_AUTH_PROVIDER_MODULES } from "../compat/next-auth/providers/list.ts";
+import { NEXT_AUTH_PROVIDER_MODULES } from "./next-auth-providers.ts";
+import {
+  authModuleUrl,
+  authPackageExports,
+  authPackageRootUrl,
+  usesNextAuth,
+} from "./auth-package.ts";
 import * as esbuild from "./esbuild/mod.ts";
 import {
   basename,
@@ -244,14 +250,31 @@ export function normalizeNextSpecifier(spec: string): string {
  * and throw "Path must be absolute", breaking every `denext export`/`build` of a
  * compat-mode app installed from JSR.
  */
-export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
+export function runtimeEntryPoints(
+  baseUrl: string,
+  options: { nextAuth?: boolean } = {},
+): Record<string, string> {
   const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
   const u = (rel: string) => new URL(rel, base).href;
   return {
     ...coreRuntimeEntries(u),
     ...platformRuntimeEntries(u),
     ...compatRuntimeEntries(u),
+    ...(options.nextAuth === false ? {} : nextAuthRuntimeEntries(base)),
     ...reactNativeRuntimeEntries(u),
+  };
+}
+
+/**
+ * `next-auth/react` (the Auth.js client) and `next-auth/webauthn`, from `@denext/auth` beside
+ * the framework (see auth-package.ts): prebuilt into the same graph so its SessionProvider
+ * shares the one hooks instance. Only for an app that uses `next-auth`.
+ */
+function nextAuthRuntimeEntries(base: string): Record<string, string> {
+  const auth = authPackageRootUrl(base);
+  return {
+    "next-auth-react": new URL("next-auth/react.ts", auth).href,
+    "next-auth-webauthn": new URL("next-auth/webauthn.ts", auth).href,
   };
 }
 
@@ -346,9 +369,6 @@ function compatRuntimeEntries(u: EntryUrl): Record<string, string> {
     "next-intl": u("src/compat/next-intl/index.ts"),
     "next-intl-navigation": u("src/compat/next-intl/navigation.ts"),
     "next-intl-routing": u("src/compat/next-intl/routing.ts"),
-    // `next-auth/react` (the Auth.js client) — its SessionProvider shares the one hooks instance.
-    "next-auth-react": u("src/compat/next-auth/react.ts"),
-    "next-auth-webauthn": u("src/compat/next-auth/webauthn.ts"),
     // `next/head` for libraries (the app's own stays the Pages Router plugin's).
     "next-head": u("src/compat/next/head.ts"),
     // The empty module behind the runtime-free subpaths (`denext/client-only`,
@@ -440,6 +460,11 @@ export interface PrebuildOptions {
    * patched framework sources are what get prebuilt (see {@link patchPlugin}).
    */
   projectDir?: string;
+  /**
+   * Prebuild `next-auth/react` and `next-auth/webauthn` from `@denext/auth` (default: whether
+   * the app in `projectDir` uses `next-auth`, see auth-package.ts).
+   */
+  nextAuth?: boolean;
 }
 
 /**
@@ -480,12 +505,15 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   const depAge = minDepAgeConfig(undefined);
   const patch = options.projectDir ? await loadDenextPatchSet(options.projectDir) : null;
   const classComponents = !!options.classComponents;
+  // `next-auth`'s client modules come from `@denext/auth`: prebuilt only for an app that uses it.
+  const nextAuth = options.nextAuth ??
+    (options.projectDir ? await usesNextAuth(options.projectDir) : false);
   // The runtime depends on none of the app's files, its target or its generation: a process
   // builds each distinct one once (see runtime-prebuild-cache.ts).
-  const key = runtimeCacheKey({ rootUrl, classComponents, imports, depAge, patch });
+  const key = runtimeCacheKey({ rootUrl, classComponents, imports, depAge, patch, nextAuth });
   const runtime = await cachedRuntime(
     key,
-    () => buildRuntime({ rootUrl, outDir, imports, depAge, patch, classComponents }),
+    () => buildRuntime({ rootUrl, outDir, imports, depAge, patch, classComponents, nextAuth }),
   );
   await writeRuntime(outDir, runtime);
   return outDir;
@@ -499,6 +527,7 @@ async function buildRuntime(options: {
   depAge: Record<string, unknown>;
   patch: Awaited<ReturnType<typeof loadDenextPatchSet>>;
   classComponents: boolean;
+  nextAuth: boolean;
 }): Promise<PrebuiltRuntime> {
   const { rootUrl, outDir } = options;
   // The deno loader needs a LOCAL config file for jsr:/npm resolution. Materialize denext's
@@ -513,7 +542,7 @@ async function buildRuntime(options: {
   const cwd = Deno.cwd();
   try {
     const result = await esbuild.build({
-      entryPoints: runtimeEntryPoints(rootUrl),
+      entryPoints: runtimeEntryPoints(rootUrl, { nextAuth: options.nextAuth }),
       outdir: outDir,
       // Kept in memory: the cache writes them, here and wherever a later prebuild wants them.
       write: false,
@@ -533,6 +562,7 @@ async function buildRuntime(options: {
       plugins: [
         expoBridgeExternalPlugin(),
         ...(options.patch ? [patchPlugin(options.patch, rootUrl)] : []),
+        ...(options.nextAuth ? [frameworkSelfImportPlugin(rootUrl)] : []),
         ...denoLoaderPlugins({ configPath: tmpConfig }),
       ],
     });
@@ -546,6 +576,37 @@ async function buildRuntime(options: {
   } finally {
     await Deno.remove(tmpConfig).catch(() => {});
   }
+}
+
+/** `@denext/denext[/<sub>]`, bare (a checkout) or as JSR rewrites it (`jsr:@denext/denext@<v>/…`). */
+const DENEXT_SELF_IMPORT = /^(?:jsr:\/?)?@denext\/denext(?:@[^/]+)?(\/.*)?$/;
+
+/**
+ * Point `@denext/auth`'s imports of `@denext/denext` (its `next-auth` client modules import the
+ * hooks, `createContext` and the API dispatcher) at the framework sources this runtime is built
+ * from, so they share the one instance instead of loading a second copy of denext.
+ */
+function frameworkSelfImportPlugin(rootUrl: string): esbuild.Plugin {
+  let exportsMap: Record<string, string> | null = null;
+  return {
+    name: "denext-framework-self-import",
+    setup(build) {
+      build.onResolve({ filter: /^(?:jsr:\/?)?@denext\/denext(?:@|\/|$)/ }, async (args) => {
+        const m = DENEXT_SELF_IMPORT.exec(args.path);
+        if (!m) return null;
+        exportsMap ??= (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+        const rel = exportsMap["." + (m[1] ?? "")];
+        if (!rel) return null;
+        // The deno loader resolves against `<namespace>:<importer>`, so the namespace goes along.
+        return await build.resolve(new URL(rel, rootUrl).href, {
+          kind: args.kind,
+          importer: args.importer,
+          namespace: args.namespace,
+          resolveDir: args.resolveDir,
+        });
+      });
+    },
+  };
 }
 
 /**
@@ -806,23 +867,24 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
   // JSR URL). Export keys are "./" + spec. The deno loader resolves the external URL at bundle
   // time whether the framework is a local checkout or served from JSR.
   const specToUrl = new Map<string, string>();
-  const specs = [
-    ...Object.keys(REACT_ALIASES),
-    ...Object.keys(NEXT_ALIASES),
-    ...NEXT_AUTH_SERVER_SPECIFIERS,
-  ];
+  const specs = [...Object.keys(REACT_ALIASES), ...Object.keys(NEXT_ALIASES)];
   for (const spec of specs) {
     const key = "./" + spec;
     const rel = exportsMap?.[key];
     if (rel) specToUrl.set(spec, frameworkFileUrl(rel));
   }
+  // `next-auth` and its subpaths are `@denext/auth`'s, read only when an import names one.
+  const auth = authExternals();
   const filter =
     /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^next-auth$|^next-auth\//;
   return {
     name: "denext-external",
     setup(build) {
-      build.onResolve({ filter }, (args) => {
-        const url = specToUrl.get(normalizeNextSpecifier(args.path));
+      build.onResolve({ filter }, async (args) => {
+        const spec = normalizeNextSpecifier(args.path);
+        const authed = await auth(`denext/${spec}`);
+        if (authed !== undefined) return authed;
+        const url = specToUrl.get(spec);
         return url ? { path: url, external: true } : null;
       });
       // denext's own subpaths (`denext`, `denext/server`, `denext/remix`,
@@ -831,7 +893,9 @@ async function denextExternalPlugin(): Promise<esbuild.Plugin> {
       // dispatcher) and so their `jsr:@std/*` deps aren't dragged through the portable
       // esbuild loader. Resolved via the framework `exports` map; unknown subpaths fall
       // through to normal resolution.
-      build.onResolve({ filter: /^denext$|^denext\// }, (args) => {
+      build.onResolve({ filter: /^denext$|^denext\// }, async (args) => {
+        const authed = await auth(args.path);
+        if (authed !== undefined) return authed;
         const sub = args.path === "denext" ? "." : "./" + args.path.slice("denext/".length);
         const rel = exportsMap?.[sub];
         return rel ? { path: frameworkFileUrl(rel), external: true } : null;
@@ -961,6 +1025,10 @@ function prefixedAliases(aliases: Readonly<Record<string, string>>): Record<stri
 export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/server",
   "denext/auth",
+  // The internals `@denext/auth` builds on (its next-auth client reaches `auth-kit/client` through
+  // the prebuild's own resolution, never through an app import).
+  "denext/auth-kit",
+  "denext/auth-kit/client",
   "denext/server-only",
   "denext/remix/server",
   "denext/fresh/server",
@@ -1010,10 +1078,29 @@ function serverOnlyExternalResolver(): (
   args: esbuild.OnResolveArgs,
 ) => Promise<esbuild.OnResolveResult | null> {
   let exportsMap: Record<string, string> | null = null;
+  const auth = authExternals();
   return async (args) => {
+    // `denext/auth` and the `next-auth` shim are `@denext/auth`'s (beside the framework).
+    const authed = await auth(args.path);
+    if (authed !== undefined) return authed;
     exportsMap ??= (await readFrameworkJson("deno.json")).exports as Record<string, string>;
     const rel = exportsMap["./" + args.path.slice("denext/".length)];
     return rel ? { path: frameworkFileUrl(rel), external: true } : null;
+  };
+}
+
+/**
+ * `denext/auth` and `denext/next-auth[/…]` → that module of `@denext/auth` (beside the
+ * framework, see auth-package.ts), external; `null` for one it doesn't export, `undefined` for
+ * any other specifier. The package's exports are read on the first auth specifier only.
+ */
+function authExternals(): (spec: string) => Promise<esbuild.OnResolveResult | null | undefined> {
+  let exports: Promise<Record<string, string>> | null = null;
+  return async (spec) => {
+    if (spec !== "denext/auth" && !/^denext\/next-auth(?:\/|$)/.test(spec)) return undefined;
+    exports ??= authPackageExports();
+    const url = authModuleUrl(spec, await exports);
+    return url ? { path: url, external: true } : null;
   };
 }
 
