@@ -316,6 +316,7 @@ export {
   type DesktopInstallersConfig,
   type DesktopLinuxConfig,
   type DesktopMacosConfig,
+  type DesktopMediaCaptureConfig,
   type DesktopPasskeysConfig,
   type DesktopPermissionsConfig,
   type DesktopShellConfig,

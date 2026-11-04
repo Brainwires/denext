@@ -686,6 +686,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   you build yourself over that folder reads files without the per-file check: one changed after
   launch is served as it is. `runDesktop` is not affected. A hand-built server should use
   `openDesktopUi` and read through its overlay's `read`.
+- **No WebRTC on Linux's webview backend:** no distribution builds WebKitGTK with WebRTC, so
+  `RTCPeerConnection` is undefined there; `getUserMedia` works, so recording is fine. An app that
+  uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in `denext.config.ts` (macOS and
+  Windows keep the system WebView);
+  `denext desktop doctor --linux`, `denext doctor` and a Linux `desktop package` warn
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

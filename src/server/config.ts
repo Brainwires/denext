@@ -1004,10 +1004,35 @@ export interface DesktopCapabilitiesConfig {
    * file without it refuses every ceremony. `false` (or leaving it out) disables it.
    */
   passkeys?: false | DesktopPasskeysConfig;
+  /**
+   * The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never
+   * another origin the window navigates to, nor a sub-frame of another origin, except on Linux,
+   * where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with
+   * `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+   * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
+   * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
+   * 3.0.0-denext.9 or later, which enforces the grant: `denext desktop package` refuses an older
+   * one. macOS still asks the user once. The options take `usageDescription` only.
+   */
+  microphone?: boolean | DesktopMediaCaptureConfig;
+  /**
+   * The page's `getUserMedia({ video })` gets the camera, as {@link microphone} the microphone
+   * (`NSCameraUsageDescription`, `com.apple.security.device.camera`).
+   */
+  camera?: boolean | DesktopMediaCaptureConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** `desktop.capabilities.microphone` / `camera` options. */
+export interface DesktopMediaCaptureConfig {
+  /**
+   * What macOS shows when it asks the user for the device (`NSMicrophoneUsageDescription` /
+   * `NSCameraUsageDescription`). Default: "<app name> uses your microphone." / "… camera.".
+   */
+  usageDescription?: string;
 }
 
 /** `desktop.capabilities.passkeys` options. */

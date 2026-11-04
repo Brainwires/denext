@@ -27,6 +27,7 @@ import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
 import { DESKTOP_STRICT_RUNTIME_ENV } from "./desktop-runtime-env.ts";
 import {
   desktopPermissionsMode,
@@ -112,6 +113,10 @@ const APP_FOLDERS = ["$APPDATA", "$CACHE"];
 /** The by-hand step for a passkeys capability added without `--rp-id` (its `rpIds` is empty). */
 const PASSKEY_RP_IDS_MANUAL =
   "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } (`denext desktop add passkeys --rp-id <domain>`, repeatable, writes them) — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app).";
+
+/** The by-hand note every media-capture capability prints: which windows get the device. */
+const MEDIA_CAPTURE_RUNTIME_MANUAL = (kind: string) =>
+  `${kind}: only the packaged app (\`denext desktop package\`) has it: its laufey-launch.json grants getUserMedia to the app origin alone (mediaCapture), which needs Deno Desktop runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} or later — packaging refuses an older runtime, which cannot restrict capture to the app's origin (\`denext doctor\` says so). An unpackaged window (\`denext desktop run\` / \`dev\`) gets no grant (from that runtime it refuses every request); build the capture UI in the browser (\`denext dev\`), where the browser asks.`;
 
 /** One DNS label of a hostname: letters, digits and inner hyphens, 1–63 characters. */
 const DNS_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;
@@ -381,6 +386,32 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "the page installs the app's signed updates: the UI overlay (desktop.update.ui) and the full app (desktop.update.manifestUrl, pinned runtime)",
     manual: [
       "updates: set desktop.update.ui = { feedUrl, publicKey } (a signed `denext ota manifest` export) and/or desktop.update.manifestUrl + publicKey (`denext desktop publish-update`); a target without its config is reported as not configured.",
+    ],
+  },
+  microphone: {
+    key: "microphone",
+    value: true,
+    api: ["navigator.mediaDevices.getUserMedia({ audio }) (the page's own)"],
+    // The webview captures; the Deno process needs no permission. What it adds is the device:
+    // the packaged launch file grants it to the app origin alone.
+    trust: "none",
+    notes:
+      "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.9+)",
+    manual: [
+      MEDIA_CAPTURE_RUNTIME_MANUAL("microphone"),
+      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows asks through Settings › Privacy › Microphone (desktop apps).',
+    ],
+  },
+  camera: {
+    key: "camera",
+    value: true,
+    api: ["navigator.mediaDevices.getUserMedia({ video }) (the page's own)"],
+    trust: "none",
+    notes:
+      "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.9+)",
+    manual: [
+      MEDIA_CAPTURE_RUNTIME_MANUAL("camera"),
+      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows asks through Settings › Privacy › Camera (desktop apps).',
     ],
   },
   passkeys: {

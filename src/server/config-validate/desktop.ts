@@ -471,7 +471,11 @@ export function validateDesktop(
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   validateDesktopPermissions(desktop as Record<string, unknown>, fail);
-  const caps = (desktop as { capabilities?: unknown }).capabilities;
+  validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);
+}
+
+/** `desktop.capabilities`: an object of capability names to `true` or options. */
+function validateDesktopCapabilities(caps: unknown, fail: Fail): void {
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
     fail("desktop.capabilities", "must be an object of capability names to `true` or options");
@@ -483,6 +487,7 @@ export function validateDesktop(
     if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
   }
   validatePasskeys(c.passkeys, fail);
+  for (const key of ["microphone", "camera"]) validateMediaCapture(key, c[key], fail);
   for (const key of ["fs", "shell", "passkeys"]) {
     const v = c[key];
     const ok = v === undefined || typeof v === "boolean" ||
@@ -490,6 +495,52 @@ export function validateDesktop(
     if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
   }
   validateOpenPathAllow(c.shell, fail);
+}
+
+/**
+ * Whether `text` holds a character an XML 1.0 document (the macOS `Info.plist` a usage description
+ * goes into) cannot: a C0 control but tab, newline and carriage return, U+FFFE / U+FFFF, or a lone
+ * surrogate.
+ */
+function hasXmlIllegal(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) return true;
+    if (c === 0xfffe || c === 0xffff) return true;
+  }
+  return !text.isWellFormed();
+}
+
+/** `desktop.capabilities.microphone` / `camera`: a boolean, or `{ usageDescription?: string }`. */
+function validateMediaCapture(key: string, value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (!isPlainObject(value)) {
+    fail(`desktop.capabilities.${key}`, "must be a boolean or { usageDescription?: string }");
+  }
+  // Any other key would still turn the device on (`{ enabled: false }`), or be silently ignored
+  // (`{ origins }`: the grant is the app origin alone).
+  for (const other of Object.keys(value as Record<string, unknown>)) {
+    if (other !== "usageDescription") {
+      fail(
+        `desktop.capabilities.${key}.${other}`,
+        "is not an option (only usageDescription; the grant is always the app's own origin, and " +
+          "`false` turns the device off)",
+      );
+    }
+  }
+  const text = (value as Record<string, unknown>).usageDescription;
+  if (text !== undefined && (typeof text !== "string" || text.trim() === "")) {
+    fail(
+      `desktop.capabilities.${key}.usageDescription`,
+      "must be a non-empty string (what macOS shows when it asks the user)",
+    );
+  }
+  if (typeof text === "string" && hasXmlIllegal(text)) {
+    fail(
+      `desktop.capabilities.${key}.usageDescription`,
+      "must not contain control characters other than tab and newline (Info.plist is XML)",
+    );
+  }
 }
 
 /** `desktop.capabilities.shell.openPathAllowExtensions`: bare extensions (no dot, no path). */

@@ -23,8 +23,9 @@
 // The type → schema mapping itself lives in scripts/lib/ts-to-schema.ts (shared with the
 // plugin catalog's options schemas). What is specific to the config schema:
 //   `additionalProperties: false` is set exactly where the runtime WARNS on unknown keys
-//   (the root and `experimental`); nested objects are left open, as the loader passes
-//   them through untouched. `@default` / `@minimum` / `@maximum` tags are added to a
+//   (the root and `experimental`) or REJECTS them (`desktop.capabilities.microphone` /
+//   `camera`'s options); other nested objects are left open, as the loader passes them
+//   through untouched. `@default` / `@minimum` / `@maximum` tags are added to a
 //   config field only where config-validate.ts enforces that exact bound, and
 //   `@widget textarea` marks a multi-line string (`spa.head`, `spa.loading`).
 
@@ -76,6 +77,21 @@ export const CONFIG_SCHEMA_BROTLI_BASE64: string =
 `;
 }
 
+/**
+ * `desktop.capabilities.microphone` / `camera`'s options object, closed: config-validate rejects
+ * any key but `usageDescription` (another would turn the device on, or be silently ignored).
+ */
+function closeMediaCaptureOptions(properties: Record<string, Schema>): void {
+  const desktop = properties.desktop?.properties as Record<string, Schema> | undefined;
+  const caps = desktop?.capabilities?.properties as Record<string, Schema> | undefined;
+  for (const kind of ["microphone", "camera"]) {
+    const branches = (caps?.[kind]?.anyOf ?? []) as Schema[];
+    const options = branches.find((b) => b.type === "object");
+    if (!options) throw new Error(`desktop.capabilities.${kind}: no options object in the schema`);
+    options.additionalProperties = false;
+  }
+}
+
 /** The JSON Schema document for `DenextConfig` (unformatted JSON text). */
 export function renderSchema(table: SymbolTable): string {
   const ctx: SchemaContext = { table, stack: [] };
@@ -84,6 +100,7 @@ export function renderSchema(table: SymbolTable): string {
   // Closed exactly where the runtime validator warns on unknown keys (config-validate.ts).
   const experimental = properties.experimental;
   if (experimental?.properties) experimental.additionalProperties = false;
+  closeMediaCaptureOptions(properties);
   const schema: Schema = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     title: "denext.config",
