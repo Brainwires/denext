@@ -120,6 +120,19 @@ export {
 } from "../desktop/extension.ts";
 /** A keyed window of the last session (`DesktopRuntime.windows.lastSession`). */
 export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-store.ts";
+// Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
+export {
+  createOwnedResources,
+  type OwnedResourceAddOptions,
+  type OwnedResourceAttachment,
+  type OwnedResourceReplayEntry,
+  OwnedResources,
+  type OwnedResourcesClosedWindow,
+  type OwnedResourcesHost,
+  type OwnedResourcesOptions,
+  type OwnedResourcesReplayOptions,
+  type OwnedResourcesWindow,
+} from "../desktop/owned-resources.ts";
 
 // Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
 // `runDesktop({ sidecars })`).

@@ -38,6 +38,18 @@ and this project adheres to
   launch (it also bakes `--allow-write` for the app support folder into the packaged app).
 - **`desktop.app.maxWindows`** (an integer from 1 to 64, default 8): the most windows open at once
   besides the main window and the tray panel; the `windows` capability reports it as `max`.
+- **`createOwnedResources()` in `denext/desktop`: per-window backend resources for extensions.** An
+  extension that keeps a PTY, a watcher or a subprocess alive for one window registers it with
+  an owner (`ctx.windowId`) and connects the registry from `setup(host)`. `emit(id, event, data)`
+  reaches the owner window only, as `{ id, data }`. When the owner closes, `onOwnerClosed:
+  "dispose"` (the default) disposes its resources, and `"detach"` keeps them alive with no owner:
+  `ownedBy(key)` finds them for a window reopened with the same key and `attach(id, windowId)`
+  hands one over with what it emitted meanwhile, as `{ event, data }` entries (`replay: { maxBytes,
+  events? }`, a per-resource ring buffer of event data that drops the oldest chunks and keeps the
+  tail of an oversized string or byte chunk; `events` limits which events are kept).
+  The app's quit disposes everything whatever the policy, each dispose bounded by
+  `disposeTimeoutMs`. It needs the host's window lifecycle hooks (`onWindowClosed`, `onAppQuit`,
+  `windows()`).
 
 ## [4.12.0] - 2026-11-04
 
