@@ -12,6 +12,7 @@ import {
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
 import { desktopBackendProblem } from "../../desktop/engine-backend.ts";
+import { maxWindowsProblem } from "../../desktop/window-config.ts";
 import { permissionListError } from "../../desktop/permission-entries.ts";
 import {
   desktopPermissionsMode,
@@ -184,10 +185,14 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  for (const key of ["singleInstance", "keepAlive", "dock"]) {
+  for (const key of ["singleInstance", "keepAlive", "dock", "restoreWindows"]) {
     if (a[key] !== undefined && typeof a[key] !== "boolean") {
       fail(`desktop.app.${key}`, "must be a boolean");
     }
+  }
+  if (a.maxWindows !== undefined) {
+    const problem = maxWindowsProblem(a.maxWindows);
+    if (problem) fail("desktop.app.maxWindows", problem);
   }
   if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
     fail("desktop.app.name", "must be a non-empty string");

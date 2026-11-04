@@ -78,6 +78,10 @@ export interface DesktopAppSettings {
   readonly dock?: boolean;
   /** The macOS activation policy at launch (`desktop.app.activationPolicy`). */
   readonly activationPolicy?: "regular" | "accessory";
+  /** Reopen the keyed windows of the last session at launch (`desktop.app.restoreWindows`). */
+  readonly restoreWindows?: boolean;
+  /** The most windows open at once besides the main window and the panel (`desktop.app.maxWindows`). */
+  readonly maxWindows?: number;
 }
 
 /**
@@ -106,6 +110,8 @@ export const DEFAULT_VIBRANCY = "under-window";
 
 const TITLE_BARS = ["default", "hidden", "hiddenInset"] as const;
 const POLICIES = ["regular", "accessory"] as const;
+/** The most `desktop.app.maxWindows` may be. */
+export const MAX_WINDOWS_LIMIT = 64;
 const BACKDROPS = ["none", "mica", "acrylic", "vibrancy"] as const;
 
 /** A launch-time config error. */
@@ -238,15 +244,47 @@ function levelSetting(top: unknown): { alwaysOnTop?: DesktopWindowLevel | false 
 export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings {
   const app = (desktop as { app?: unknown } | null | undefined)?.app;
   if (typeof app !== "object" || app === null) return {};
-  const a = app as { keepAlive?: unknown; dock?: unknown; activationPolicy?: unknown };
-  const out: { keepAlive?: boolean; dock?: boolean } = {};
-  for (const key of ["keepAlive", "dock"] as const) {
+  const a = app as {
+    keepAlive?: unknown;
+    dock?: unknown;
+    activationPolicy?: unknown;
+    restoreWindows?: unknown;
+    maxWindows?: unknown;
+  };
+  const out: {
+    keepAlive?: boolean;
+    dock?: boolean;
+    restoreWindows?: boolean;
+    maxWindows?: number;
+  } = {};
+  for (const key of ["keepAlive", "dock", "restoreWindows"] as const) {
     if (a[key] === undefined) continue;
     if (typeof a[key] !== "boolean") throw bad(`app.${key}`, "must be a boolean");
     out[key] = a[key] as boolean;
   }
+  if (a.maxWindows !== undefined) {
+    const problem = maxWindowsProblem(a.maxWindows);
+    if (problem) throw bad("app.maxWindows", problem);
+    out.maxWindows = a.maxWindows as number;
+  }
   const policy = oneOf(a.activationPolicy, POLICIES, "app.activationPolicy");
   return policy !== undefined ? { ...out, activationPolicy: policy } : out;
+}
+
+/**
+ * Why `value` is not a `desktop.app.maxWindows`, or `null`: an integer from 1 to
+ * {@linkcode MAX_WINDOWS_LIMIT}.
+ *
+ * @param value The configured value.
+ * @returns The problem, or `null`.
+ */
+export function maxWindowsProblem(value: unknown): string | null {
+  if (
+    typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_WINDOWS_LIMIT
+  ) {
+    return `must be an integer from 1 to ${MAX_WINDOWS_LIMIT}`;
+  }
+  return null;
 }
 
 /**

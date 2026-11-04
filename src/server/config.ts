@@ -1144,6 +1144,20 @@ export interface DesktopConfig {
      * starts. Windows and Linux have no policy.
      */
     activationPolicy?: "regular" | "accessory";
+    /**
+     * Reopen at launch the keyed windows (`windows.open({ key })` in `desktop.ts`,
+     * `openWindow({ key })` in a page) that were open when the app last quit, each at its saved
+     * frame (`DesktopWindows.lastSession` lists them either way). The frames live in one
+     * `windows.json` in the app support folder, so the packaged app is given `--allow-write` for
+     * that folder. Bounds and the display are restored, clamped onto a display connected now;
+     * macOS Spaces are not. Default `false`.
+     */
+    restoreWindows?: boolean;
+    /**
+     * The most windows open at once besides the main window and the tray panel (`openWindow`,
+     * `windows.open`; one more is a `validation` error). An integer from 1 to 64; default 8.
+     */
+    maxWindows?: number;
   };
   /**
    * A tray icon (macOS menu bar extra, Windows notification area, Linux StatusNotifierItem /

@@ -40,6 +40,8 @@ import {
   type WindowConstructor,
   type WindowRegistry,
 } from "./window-registry.ts";
+import type { WindowLifecycle } from "./window-lifecycle.ts";
+import type { SessionWindow } from "./window-store.ts";
 import {
   applyDesktopWindowSettings,
   type DesktopAppSettings,
@@ -52,6 +54,8 @@ export interface DesktopWindowRef {
   readonly id: string;
   /** What it is. */
   readonly kind: "main" | "panel" | "window";
+  /** The app-chosen key it was opened with (`windows.open({ key })`), if any. */
+  readonly key?: string;
   /** The runtime's `Deno.BrowserWindow`. */
   readonly window: unknown;
   /** Show it. */
@@ -121,6 +125,20 @@ export interface DesktopOpenWindowOptions {
   readonly show?: boolean;
   /** The capabilities its pages may call (default: all; `window` always). */
   readonly capabilities?: readonly string[];
+  /**
+   * An app-chosen key, unique among the open windows (a duplicate is a `validation` error): 1 to
+   * 64 letters, digits, `.`, `_`, `:` or `-`. The window is found again with
+   * {@linkcode DesktopWindows.byKey}; its frame (bounds and display) is saved to the app support
+   * folder as it moves and when it closes, and restored the next time the key opens; and it is in
+   * the next launch's {@linkcode DesktopWindows.lastSession} when the app quits with it open.
+   */
+  readonly key?: string;
+  /**
+   * With a `key`: whether the saved frame fills in the bounds this call leaves out (`x`, `y`,
+   * `width`, `height`; default `true`). The result is clamped onto a display connected now; macOS
+   * Spaces are not restored.
+   */
+  readonly restoreBounds?: boolean;
 }
 
 /** The app's windows, as `desktop.ts` drives them (`DesktopRuntime.windows`). */
@@ -129,8 +147,16 @@ export interface DesktopWindows {
   open(options: DesktopOpenWindowOptions): DesktopWindowRef;
   /** A window by id, or `undefined` once it closed. */
   get(id: string): DesktopWindowRef | undefined;
+  /** The open window opened with `key`, or `undefined`. */
+  byKey(key: string): DesktopWindowRef | undefined;
   /** The open windows. */
   list(): DesktopWindowRef[];
+  /**
+   * The keyed windows open when the app last quit (each with its key, app path and saved bounds),
+   * from the window store in the app support folder; `desktop.app.restoreWindows: true` reopens
+   * them at launch. Empty on the first launch, or when the store could not be read.
+   */
+  lastSession(): readonly SessionWindow[];
 }
 
 /** What {@linkcode setUpDesktopWindows} needs. */
@@ -155,6 +181,8 @@ export interface DesktopWindowsOptions {
   readonly picked?: PickedPaths;
   /** The app's own folders (drag-out). */
   readonly dirs?: DesktopAppDirs;
+  /** The app support folder (the window store's home; none: frames kept for this launch only). */
+  readonly appSupportDir?: string;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** The running OS (default `Deno.build.os`). */
@@ -210,6 +238,13 @@ export interface DesktopWindowsSetup {
   getActivationPolicy(): ActivationPolicy | null;
   /** Set the URL resolver new windows load with (known once the server listens). */
   setAppUrl(appUrl: (path: string) => string): void;
+  /** The window lifecycle (the extensions' hooks and quit guards; `undefined` outside the runtime). */
+  readonly lifecycle?: WindowLifecycle;
+  /**
+   * Reopen the keyed windows of the last session (`desktop.app.restoreWindows`), once the app URL
+   * is known; how many were reopened (a window that cannot be reopened is a warning).
+   */
+  restoreSession(): number;
 }
 
 /** The setup's state. */
@@ -237,12 +272,17 @@ function keepAliveOf(st: SetupState): boolean {
   return st.options.appSettings?.keepAlive ?? st.hasTray;
 }
 
-/** Tell the runtime whether the app quits with its last window (`Deno.desktop`). */
+/**
+ * Tell the runtime whether the app quits with its last window (`Deno.desktop`): not when it is
+ * kept alive, and not while the lifecycle has quit hooks to run first — the registry then ends the
+ * process itself once they ran, where the runtime would end the loop before they could.
+ */
 function applyKeepAlive(st: SetupState): void {
   const api = st.options.api;
   if (!api || !("quitOnLastWindowClosed" in api)) return;
   try {
-    api.quitOnLastWindowClosed = !keepAliveOf(st);
+    api.quitOnLastWindowClosed = !keepAliveOf(st) &&
+      !(st.registry?.lifecycle.hasQuitWork() ?? false);
   } catch { /* a runtime with a read-only flag */ }
 }
 
@@ -297,6 +337,7 @@ function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
   return {
     id: entry.id,
     kind: entry.kind,
+    ...(entry.key !== undefined ? { key: entry.key } : {}),
     window: w,
     show: () => w.show?.(),
     hide: () => w.hide?.(),
@@ -305,7 +346,7 @@ function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
     navigate: (path) => {
       const at = st.registry?.get(entry.id);
       if (!at) return;
-      w.navigate?.(st.appUrl(path));
+      st.registry?.navigate(entry.id, path);
     },
     get visible() {
       try {
@@ -356,8 +397,33 @@ function windowsApi(st: SetupState): DesktopWindows {
       const entry = st.registry?.get(id);
       return entry ? ref(st, entry) : undefined;
     },
+    byKey: (key) => {
+      const entry = st.registry?.byKey(key);
+      return entry ? ref(st, entry) : undefined;
+    },
     list: () => st.registry?.list().map((e) => ref(st, e)) ?? [],
+    lastSession: () => st.registry?.lastSession() ?? [],
   };
+}
+
+/** Reopen the last session's keyed windows (`desktop.app.restoreWindows`); how many reopened. */
+function restoreSession(st: SetupState): number {
+  if (st.options.appSettings?.restoreWindows !== true || !st.registry) return 0;
+  let n = 0;
+  for (const { key, url } of st.registry.lastSession()) {
+    if (st.registry.byKey(key)) continue; // opened already (desktop.ts did)
+    try {
+      st.registry.open({ url, key });
+      n++;
+    } catch (err) {
+      st.warn(
+        `the window "${key}" of the last session could not be reopened: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+  }
+  return n;
 }
 
 /** The macOS Dock icon was clicked with no window showing: show the main window again. */
@@ -377,6 +443,11 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     ...(typeof o.BrowserWindow === "function"
       ? { BrowserWindow: o.BrowserWindow as WindowConstructor }
       : {}),
+    ...(o.api ? { api: o.api } : {}),
+    ...(o.appSettings?.maxWindows !== undefined ? { maxWindows: o.appSettings.maxWindows } : {}),
+    ...(o.appSupportDir !== undefined ? { appSupportDir: o.appSupportDir } : {}),
+    warn: st.warn,
+    onQuitWorkChanged: () => applyKeepAlive(st),
     appUrl: (path) => st.appUrl(path),
     emit: o.emit,
     keepAlive: () => keepAliveOf(st),
@@ -441,8 +512,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     ...(st.registry ? { registry: st.registry } : {}),
     ...(st.app ? { app: st.app } : {}),
     keepAlive: () => keepAliveOf(st),
-    interceptMainClose: (event) =>
-      st.registry?.get("main")?.controller.interceptClose(event) ?? false,
+    interceptMainClose: (event) => st.registry?.interceptClose("main", event) ?? false,
     mainClosed: () => {
       if (st.registry) st.registry.closed("main");
       else (options.exit ?? Deno.exit)(0);
@@ -454,6 +524,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     },
     install: () => {
       st.app?.install();
+      st.registry?.lifecycle.install();
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
     },
     startTray: async (ctx) => {
@@ -484,6 +555,8 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     setAppUrl: (appUrl) => {
       st.appUrl = appUrl;
     },
+    ...(st.registry ? { lifecycle: st.registry.lifecycle } : {}),
+    restoreSession: () => restoreSession(st),
   };
 }
 
@@ -537,7 +610,9 @@ export function noDesktopWindows(): {
         throw new Error("desktop: this launch has no windows (a sidecar's child)");
       },
       get: () => undefined,
+      byKey: () => undefined,
       list: () => [],
+      lastSession: () => [],
     },
     setDockVisible: () => false,
     setActivationPolicy: () => false,

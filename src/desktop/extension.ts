@@ -128,10 +128,36 @@ export interface DesktopPickedPathOptions {
 }
 
 /**
+ * One of the app's windows, as the lifecycle hooks report it ({@linkcode DesktopCapability.onWindowOpened},
+ * {@linkcode DesktopExtensionHost.windows}).
+ */
+export interface DesktopWindowInfo {
+  /** Its id: `"main"`, `"panel"` (the tray panel) or the id `openWindow` / `windows.open` returned. */
+  readonly id: string;
+  /** What it is. */
+  readonly kind: "main" | "panel" | "window";
+  /** The app-chosen key it was opened with (`windows.open({ key })`), if any. */
+  readonly key?: string;
+}
+
+/**
+ * A window that closed for good ({@linkcode DesktopCapability.onWindowClosed}): never a reload or a
+ * navigation. `appQuitting` is `true` when the close is part of the app's quit — Cmd+Q, `quitApp()`,
+ * the OS's session end, or the last app window closing without `desktop.app.keepAlive` — so a
+ * resource shared by every window can be let go with the last one.
+ */
+export type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean };
+
+/**
  * What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the
  * process-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)
  * starts on its own — a tray-started job, a file watcher — that streams to the page with no page
  * call in flight. Keep it at module scope and use it for the life of the app.
+ *
+ * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
+ * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
+ * can refuse a quit, and `windows()` lists the open windows now. Each subscription returns its
+ * unsubscribe.
  */
 export interface DesktopExtensionHost {
   /**
@@ -147,6 +173,36 @@ export interface DesktopExtensionHost {
   readonly appSupportDir: string;
   /** The running OS. */
   readonly os: "darwin" | "windows" | "linux";
+  /**
+   * Call `fn` for every window that opens from now on — and first for each window open now, so a
+   * subscriber that starts late still sees every window. An error it throws (or rejects with) is
+   * logged, never surfaced. Returns the unsubscribe.
+   */
+  onWindowOpened(fn: (info: DesktopWindowInfo) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` once a window closed for good (never on a reload or a navigation), with
+   * {@linkcode DesktopWindowClosedInfo.appQuitting} saying whether the close is part of the app's
+   * quit. A promise it returns is waited for, bounded, when the app is quitting; an error is logged,
+   * never surfaced, and never keeps a window open. Returns the unsubscribe.
+   */
+  onWindowClosed(fn: (info: DesktopWindowClosedInfo) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` once the app is about to quit, after every window's `onWindowClosed`, and wait for
+   * it: at most 3 seconds for every `onAppQuit` hook together, after which the process exits
+   * regardless. An error is logged, never surfaced. Returns the unsubscribe.
+   */
+  onAppQuit(fn: () => void | Promise<void>): () => void;
+  /**
+   * Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session
+   * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when
+   * it returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a
+   * page's guards get); one that throws or runs past it is logged and does not cancel, so a quit
+   * is never held for good. A refused OS session end asks the OS to stop it, which it may not
+   * honour (macOS ignores an accessory app's refusal). Returns the unsubscribe.
+   */
+  onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
+  /** The open windows now (the main window, the tray panel and the opened ones). */
+  windows(): readonly DesktopWindowInfo[];
 }
 
 /**
@@ -215,6 +271,26 @@ export interface DesktopCapability {
    * every window's page loads, not just the main window's.
    */
   readonly perWindow?: boolean;
+  /**
+   * Called for every window that opens (the main window, the tray panel, the windows pages or
+   * `desktop.ts` open) — and, when the capability is registered while windows are open, first for
+   * each of them. The same for every capability that defines it, {@linkcode DesktopCapability.perWindow}
+   * or not. An error is logged, never surfaced.
+   */
+  readonly onWindowOpened?: (info: DesktopWindowInfo) => void | Promise<void>;
+  /**
+   * Called once a window closed for good — never on a reload or a navigation (that is
+   * {@linkcode DesktopCapability.onPageLoad}) — with whether the close is part of the app's quit
+   * ({@linkcode DesktopWindowClosedInfo.appQuitting}). A promise it returns is waited for, bounded,
+   * when the app is quitting; an error is logged, never surfaced, and never keeps a window open.
+   */
+  readonly onWindowClosed?: (info: DesktopWindowClosedInfo) => void | Promise<void>;
+  /**
+   * Called once the app is about to quit, after the windows' {@linkcode DesktopCapability.onWindowClosed},
+   * and waited for: at most 3 seconds for every capability's `onAppQuit` together, after which the
+   * process exits regardless. An error is logged, never surfaced.
+   */
+  readonly onAppQuit?: () => void | Promise<void>;
   /**
    * Called once, when the app's bridge starts (before any page can call), with the
    * {@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its

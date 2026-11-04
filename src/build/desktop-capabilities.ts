@@ -521,8 +521,15 @@ interface DesktopFlagConfig {
       readonly hosts?: unknown;
       readonly ui?: unknown;
     };
-    /** Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`. */
-    readonly app?: { readonly deepLinks?: unknown; readonly identifier?: unknown };
+    /**
+     * Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`.
+     * `restoreWindows`: the window frames are written to the app-support folder.
+     */
+    readonly app?: {
+      readonly deepLinks?: unknown;
+      readonly identifier?: unknown;
+      readonly restoreWindows?: unknown;
+    };
     /** Sidecars: their own `permissions`, and what running them takes. */
     readonly sidecars?: unknown;
     /** `"strict"` scopes the baked read and environment grants. */
@@ -584,8 +591,9 @@ const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
 
 /**
  * Whether the broad `--allow-write` is baked: a capability writes, `extraPermissions` asks (a
- * per-user path can't be baked), or the UI overlay (`desktop.update.ui`) keeps its boot marker and
- * staged versions in the app-support folder.
+ * per-user path can't be baked), the UI overlay (`desktop.update.ui`) keeps its boot marker and
+ * staged versions in the app-support folder, or the window frames are kept there
+ * (`desktop.app.restoreWindows`).
  */
 function bakesWrite(
   capFlags: readonly string[],
@@ -593,7 +601,13 @@ function bakesWrite(
   cfg: DesktopFlagConfig,
 ): boolean {
   return capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
-    (extra.write?.length ?? 0) > 0 || cfg.desktop?.update?.ui !== undefined;
+    (extra.write?.length ?? 0) > 0 || cfg.desktop?.update?.ui !== undefined ||
+    restoresWindows(cfg);
+}
+
+/** Whether `desktop.app.restoreWindows` is on (the window store is written at run time). */
+function restoresWindows(cfg: DesktopFlagConfig): boolean {
+  return cfg.desktop?.app?.restoreWindows === true;
 }
 
 /**
@@ -616,7 +630,7 @@ function writeFlags(
     return scoped ? [`--allow-write=${scoped.join(",")}`] : ["--allow-write"];
   }
   const write = extra.write ?? [];
-  const scoped = cfg.desktop?.update?.ui === undefined &&
+  const scoped = cfg.desktop?.update?.ui === undefined && !restoresWindows(cfg) &&
     !capFlags.some((f) => kindOfFlag(f) === "--allow-write") &&
     write.every((v) => v.startsWith(`${DESKTOP_CACHE_TOKEN}/`));
   return scoped ? [`--allow-write=${[...write].sort().join(",")}`] : ["--allow-write"];
@@ -641,6 +655,8 @@ function writeValues(
     ...(extra.write ?? []),
     // The UI overlay is staged and kept in `<data>/ui-updates` (src/desktop/updater.ts).
     ...(cfg.desktop?.update?.ui !== undefined ? [UI_UPDATES_FOLDER] : []),
+    // The window frames are kept in `<data>/windows.json` (src/desktop/window-store.ts).
+    ...(restoresWindows(cfg) ? [WINDOW_STORE_PATH] : []),
   ];
 }
 
@@ -711,6 +727,9 @@ export const DESKTOP_DATA_TOKEN = "$DENO_DESKTOP_DATA";
 
 /** Where the UI overlay keeps its versions (`<data>/ui-updates`, src/desktop/updater.ts). */
 const UI_UPDATES_FOLDER = "$APPDATA/ui-updates";
+/** Where the window frames are kept (`desktop.app.restoreWindows`): the whole folder, as the store
+ * writes a temp file beside `windows.json` and renames it. */
+const WINDOW_STORE_PATH = "$APPDATA";
 
 /** The config path tokens a runtime that expands the folder tokens takes, and what they become. */
 const FOLDER_TOKENS: ReadonlyArray<readonly [string, string]> = [

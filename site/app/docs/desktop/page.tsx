@@ -2657,7 +2657,8 @@ onCloseRequested(({ reason }) => {
         the app, never another site. The new window&apos;s page has the app&apos;s desktop
         capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
         <code>denext/desktop/window</code>{" "}
-        calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+        calls act on itself. At most 8 are open at once besides the main window and the tray panel
+        (<code>desktop.app.maxWindows</code>, 1 to 64).
       </p>
       <p>
         A <code>capabilities</code>{" "}
@@ -2689,6 +2690,93 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
       </p>
+      <h4 id="desktop-window-keys">Keys, frames and the last session</h4>
+      <p>
+        A window opened with a <code>key</code>{" "}
+        (app-chosen, unique among the open windows; 1 to 64 letters, digits, <code>.</code>,{" "}
+        <code>_</code>, <code>:</code> or <code>-</code>) is found again with{" "}
+        <code>windows.byKey(key)</code>, and its frame is remembered: the bounds are saved to one
+        {" "}
+        <code>windows.json</code>{" "}
+        in the app support folder as the window moves and when it closes, and the next time the key
+        opens they fill in the bounds the call leaves out (<code>x</code>, <code>y</code>,{" "}
+        <code>width</code>, <code>height</code>; <code>restoreBounds: false</code>{" "}
+        keeps the call&apos;s). A saved frame is clamped onto a display connected now, so a window
+        last seen on a monitor that is gone opens on one that is here. Bounds and the display are
+        what is restored; macOS Spaces are not (the runtime does not report which Space a window is
+        on). A corrupt or missing store is the defaults, never an error.{" "}
+        <code>windows.lastSession()</code>{" "}
+        lists the keyed windows that were open when the app last quit (each with its key, path and
+        bounds; a window the user closed is not among them), and{" "}
+        <code>desktop.app.restoreWindows: true</code>{" "}
+        reopens them at launch, which also gives the packaged app <code>--allow-write</code>{" "}
+        for its app support folder (without it, or the <code>fs</code> / <code>sqlite</code> /{" "}
+        <code>updates</code> capability or{" "}
+        <code>desktop.extraPermissions.write</code>, the save is skipped with one warning).
+      </p>
+      <Code lang="ts">
+        {`// desktop.ts — a "New Window" that remembers where each window was
+const app = await runDesktop({ ... });
+onAppMenuItem((id) => {
+  if (id !== "new") return;
+  const key = \`win-\${Date.now()}\`;
+  app.windows.open({ url: "/", key, width: 1000, height: 700 }); // the saved frame fills in x, y
+});
+console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the last quit`}
+      </Code>
+      <h4 id="desktop-window-lifecycle">Window lifecycle hooks and the quit</h4>
+      <p>
+        An extension (<code>defineDesktopExtension</code>) can follow the windows: static{" "}
+        <code>onWindowOpened(info)</code>, <code>onWindowClosed(info)</code> and{" "}
+        <code>onAppQuit()</code>{" "}
+        hooks on the capability, or the same as subscriptions on the host its{" "}
+        <code>setup(host)</code> receives (<code>host.onWindowOpened(fn)</code>,{" "}
+        <code>host.onWindowClosed(fn)</code>,{" "}
+        <code>host.onAppQuit(fn)</code>, each returning its unsubscribe), plus{" "}
+        <code>host.windows()</code>, the open windows now. <code>info</code> is{" "}
+        <code>{"{ id, kind, key? }"}</code>. <code>onWindowOpened</code>{" "}
+        is also called for the windows open when the hook is added, so the main window is never
+        missed. <code>onWindowClosed</code>{" "}
+        fires once a window closed for good, never on a reload or a navigation (that is{" "}
+        <code>onPageLoad</code>), with <code>appQuitting</code>{" "}
+        true when the close is part of the app&apos;s quit: Cmd+Q,{" "}
+        <code>quitApp()</code>, the OS&apos;s session end, or the last app window closing without
+        {" "}
+        <code>desktop.app.keepAlive</code>. <code>onAppQuit</code>{" "}
+        runs after the windows&apos; closes, and the process waits for it, at most 3 seconds for
+        every hook together. An error in a hook is logged and never keeps a window open or the app
+        running.
+      </p>
+      <p>
+        A guard on the runtime side, <code>host.onBeforeQuit(fn)</code> (or{" "}
+        <code>app.onBeforeQuit(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with), is asked before any page&apos;s <code>onBeforeQuit</code> /{" "}
+        <code>onCloseRequested</code>: returning (or resolving) <code>false</code>{" "}
+        cancels the quit. The guards get 5 seconds together, the deadline a page&apos;s guards get;
+        one that throws or runs past it does not cancel, so a quit is never held for good. The OS
+        session-end rules are the pages&apos;: a refusal asks the OS to stop the logout, which macOS
+        ignores for an accessory app, and macOS takes no input for the app while a session end is
+        pending.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/sessions.ts — one resource per window, let go with the window
+import { defineDesktopExtension } from "denext/desktop";
+
+const sessions = new Map<string, Session>();
+export default defineDesktopExtension({
+  name: "sessions",
+  methods: { /* … */ },
+  onWindowOpened: ({ id }) => void sessions.set(id, startSession()),
+  onWindowClosed: async ({ id, appQuitting }) => {
+    await sessions.get(id)?.end({ flush: !appQuitting });
+    sessions.delete(id);
+  },
+  onAppQuit: () => pool.close(), // awaited, 3 s at most
+  setup: (host) => {
+    host.onBeforeQuit(async () => !(await hasUnsavedWork())); // false keeps the app running
+  },
+});`}
+      </Code>
       <p id="desktop-background-throttling">
         A window&apos;s page keeps running while the window is hidden, minimized or covered, with
         its timers slowed to about once a second (Electron&apos;s default). For a hidden window that

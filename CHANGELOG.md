@@ -8,6 +8,37 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Window lifecycle hooks for desktop extensions.** A capability (`defineDesktopExtension`) can
+  define `onWindowOpened(info)`, `onWindowClosed(info)` and `onAppQuit()`, and the host its
+  `setup(host)` receives has the same as subscriptions (`host.onWindowOpened(fn)` …, each returning
+  its unsubscribe) plus `host.windows()`. `info` is `{ id, kind, key? }` (`DesktopWindowInfo` from
+  `denext/desktop`); `onWindowOpened` is also called for the windows open when the hook is added,
+  so the main window is never missed; `onWindowClosed` fires once a window closed for good, never
+  on a reload or a navigation, with `appQuitting` true when the close is part of the app's quit
+  (Cmd+Q, `quitApp()`, the OS's session end, or the last app window closing without
+  `desktop.app.keepAlive`); `onAppQuit` runs after the closes and the process waits for it, 3
+  seconds at most for every hook together. A hook's error is logged and never keeps a window open.
+  Without any such hook a close and a quit behave exactly as before.
+- **A runtime-side quit guard.** `host.onBeforeQuit(fn)` in an extension's `setup`, and
+  `onBeforeQuit(fn)` on what `runDesktop()` resolves with, are asked before any page's
+  `onBeforeQuit` / `onCloseRequested`; `false` cancels the quit (a refused OS session end asks the
+  OS to stop it, as a page's refusal does). The guards get 5 seconds together, the deadline a
+  page's guards get; a throw or a guard past it does not cancel.
+- **Window keys and remembered frames.** `windows.open({ url, key })` in `desktop.ts` (and
+  `openWindow({ key })` in a page) names a window with an app-chosen key, unique among the open
+  windows (1 to 64 letters, digits, `.`, `_`, `:` or `-`; a duplicate is a `validation` error),
+  found again with `windows.byKey(key)` and reported as `DesktopWindowRef.key`. Its bounds are
+  saved to one `windows.json` in the app support folder as it moves and when it closes, and
+  restored the next time the key opens for the bounds the call leaves out (`restoreBounds: false`
+  keeps the call's), clamped onto a display connected now; macOS Spaces are not restored. A corrupt
+  or missing store is the defaults. `windows.lastSession()` lists the keyed windows open at the
+  last quit (key, path, bounds), and the new `desktop.app.restoreWindows: true` reopens them at
+  launch (it also bakes `--allow-write` for the app support folder into the packaged app).
+- **`desktop.app.maxWindows`** (an integer from 1 to 64, default 8): the most windows open at once
+  besides the main window and the tray panel; the `windows` capability reports it as `max`.
+
 ## [4.12.0] - 2026-11-04
 
 ### Added

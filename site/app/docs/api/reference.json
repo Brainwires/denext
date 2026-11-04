@@ -16940,7 +16940,7 @@
             {
               "kind": "property",
               "name": "app",
-              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean; activationPolicy?: \"regular\" | \"accessory\" }",
+              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean; activationPolicy?: \"regular\" | \"accessory\"; restoreWindows?: boolean; maxWindows?: number }",
               "doc": "App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders\nand the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as\n`\"com.example.myapp\"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would\notherwise share one folder and one keychain service across every denext desktop app, letting\none app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier`\n(which `deno desktop` uses for the bundle id); the scaffold writes both."
             },
             {
@@ -45152,6 +45152,18 @@
               "name": "activationPolicy",
               "signature": "readonly activationPolicy?: \"regular\" | \"accessory\"",
               "doc": "The macOS activation policy at launch (`desktop.app.activationPolicy`)."
+            },
+            {
+              "kind": "property",
+              "name": "restoreWindows",
+              "signature": "readonly restoreWindows?: boolean",
+              "doc": "Reopen the keyed windows of the last session at launch (`desktop.app.restoreWindows`)."
+            },
+            {
+              "kind": "property",
+              "name": "maxWindows",
+              "signature": "readonly maxWindows?: number",
+              "doc": "The most windows open at once besides the main window and the panel (`desktop.app.maxWindows`)."
             }
           ]
         },
@@ -45444,6 +45456,24 @@
               "name": "perWindow",
               "signature": "readonly perWindow?: boolean",
               "doc": "The capability keeps per-page state for each window (keyed by\n{@linkcode DesktopCapCtx.windowId}), so {@linkcode DesktopCapability.onPageLoad} is called for\nevery window's page loads, not just the main window's."
+            },
+            {
+              "kind": "property",
+              "name": "onWindowOpened",
+              "signature": "readonly onWindowOpened?: (info: DesktopWindowInfo) => void | Promise<void>",
+              "doc": "Called for every window that opens (the main window, the tray panel, the windows pages or\n`desktop.ts` open) — and, when the capability is registered while windows are open, first for\neach of them. The same for every capability that defines it, {@linkcode DesktopCapability.perWindow}\nor not. An error is logged, never surfaced."
+            },
+            {
+              "kind": "property",
+              "name": "onWindowClosed",
+              "signature": "readonly onWindowClosed?: (info: DesktopWindowClosedInfo) => void | Promise<void>",
+              "doc": "Called once a window closed for good — never on a reload or a navigation (that is\n{@linkcode DesktopCapability.onPageLoad}) — with whether the close is part of the app's quit\n({@linkcode DesktopWindowClosedInfo.appQuitting}). A promise it returns is waited for, bounded,\nwhen the app is quitting; an error is logged, never surfaced, and never keeps a window open."
+            },
+            {
+              "kind": "property",
+              "name": "onAppQuit",
+              "signature": "readonly onAppQuit?: () => void | Promise<void>",
+              "doc": "Called once the app is about to quit, after the windows' {@linkcode DesktopCapability.onWindowClosed},\nand waited for: at most 3 seconds for every capability's `onAppQuit` together, after which the\nprocess exits regardless. An error is logged, never surfaced."
             },
             {
               "kind": "property",
@@ -45805,7 +45835,7 @@
           "kind": "interface",
           "signature": "interface DesktopExtensionHost",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, and `windows()` lists the open windows now. Each subscription returns its\nunsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -45834,6 +45864,36 @@
               "name": "pickedPath",
               "signature": "pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string",
               "doc": "The same lookup as {@linkcode DesktopCapCtx.pickedPath}."
+            },
+            {
+              "kind": "method",
+              "name": "onWindowOpened",
+              "signature": "onWindowOpened(fn: (info: DesktopWindowInfo) => void | Promise<void>): () => void",
+              "doc": "Call `fn` for every window that opens from now on — and first for each window open now, so a\nsubscriber that starts late still sees every window. An error it throws (or rejects with) is\nlogged, never surfaced. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onWindowClosed",
+              "signature": "onWindowClosed(fn: (info: DesktopWindowClosedInfo) => void | Promise<void>): () => void",
+              "doc": "Call `fn` once a window closed for good (never on a reload or a navigation), with\n{@linkcode DesktopWindowClosedInfo.appQuitting} saying whether the close is part of the app's\nquit. A promise it returns is waited for, bounded, when the app is quitting; an error is logged,\nnever surfaced, and never keeps a window open. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onAppQuit",
+              "signature": "onAppQuit(fn: () => void | Promise<void>): () => void",
+              "doc": "Call `fn` once the app is about to quit, after every window's `onWindowClosed`, and wait for\nit: at most 3 seconds for every `onAppQuit` hook together, after which the process exits\nregardless. An error is logged, never surfaced. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onBeforeQuit",
+              "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when\nit returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a\npage's guards get); one that throws or runs past it is logged and does not cancel, so a quit\nis never held for good. A refused OS session end asks the OS to stop it, which it may not\nhonour (macOS ignores an accessory app's refusal). Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "windows",
+              "signature": "windows(): readonly DesktopWindowInfo[]",
+              "doc": "The open windows now (the main window, the tray panel and the opened ones)."
             }
           ]
         },
@@ -46255,6 +46315,18 @@
               "name": "capabilities",
               "signature": "readonly capabilities?: readonly string[]",
               "doc": "The capabilities its pages may call (default: all; `window` always)."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "An app-chosen key, unique among the open windows (a duplicate is a `validation` error): 1 to\n64 letters, digits, `.`, `_`, `:` or `-`. The window is found again with\n{@linkcode DesktopWindows.byKey}; its frame (bounds and display) is saved to the app support\nfolder as it moves and when it closes, and restored the next time the key opens; and it is in\nthe next launch's {@linkcode DesktopWindows.lastSession} when the app quits with it open."
+            },
+            {
+              "kind": "property",
+              "name": "restoreBounds",
+              "signature": "readonly restoreBounds?: boolean",
+              "doc": "With a `key`: whether the saved frame fills in the bounds this call leaves out (`x`, `y`,\n`width`, `height`; default `true`). The result is clamped onto a display connected now; macOS\nSpaces are not restored."
             }
           ]
         },
@@ -46801,6 +46873,12 @@
               "name": "sidecar",
               "signature": "sidecar(name: string): SidecarHandle",
               "doc": "The handle of one sidecar (`desktop.sidecars` / `runDesktop({ sidecars })`): its `status`,\n`onStatus`, `restart` and `stop`. Throws for a name the app does not declare."
+            },
+            {
+              "kind": "method",
+              "name": "onBeforeQuit",
+              "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called."
             }
           ]
         },
@@ -46893,6 +46971,38 @@
               "name": "remoteAddr",
               "signature": "readonly remoteAddr?: { readonly transport?: string }",
               "doc": "The peer address; `transport` is `\"memory\"` for the runtime's in-process transport."
+            }
+          ]
+        },
+        {
+          "name": "DesktopSessionWindow",
+          "slug": "DesktopSessionWindow",
+          "kind": "interface",
+          "signature": "interface DesktopSessionWindow",
+          "doc": "A keyed window that was open at the last exit (WindowStore.lastSession).",
+          "docFull": "A keyed window that was open at the last exit ({@linkcode WindowStore.lastSession}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key: string",
+              "doc": "Its key."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "The app path it showed (as opened, or last navigated to through the windows API)."
+            },
+            {
+              "kind": "property",
+              "name": "bounds",
+              "signature": "readonly bounds?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }",
+              "doc": "Its last saved bounds, if any."
             }
           ]
         },
@@ -47657,6 +47767,50 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWindowClosedInfo",
+          "slug": "DesktopWindowClosedInfo",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }",
+          "doc": "A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.",
+          "docFull": "A window that closed for good ({@linkcode DesktopCapability.onWindowClosed}): never a reload or a\nnavigation. `appQuitting` is `true` when the close is part of the app's quit — Cmd+Q, `quitApp()`,\nthe OS's session end, or the last app window closing without `desktop.app.keepAlive` — so a\nresource shared by every window can be let go with the last one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowInfo",
+          "slug": "DesktopWindowInfo",
+          "kind": "interface",
+          "signature": "interface DesktopWindowInfo",
+          "doc": "One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).",
+          "docFull": "One of the app's windows, as the lifecycle hooks report it ({@linkcode DesktopCapability.onWindowOpened},\n{@linkcode DesktopExtensionHost.windows}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "Its id: `\"main\"`, `\"panel\"` (the tray panel) or the id `openWindow` / `windows.open` returned."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: \"main\" | \"panel\" | \"window\"",
+              "doc": "What it is."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "The app-chosen key it was opened with (`windows.open({ key })`), if any."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowRef",
           "slug": "DesktopWindowRef",
           "kind": "interface",
@@ -47679,6 +47833,12 @@
               "name": "kind",
               "signature": "readonly kind: \"main\" | \"panel\" | \"window\"",
               "doc": "What it is."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "The app-chosen key it was opened with (`windows.open({ key })`), if any."
             },
             {
               "kind": "property",
@@ -47762,9 +47922,21 @@
             },
             {
               "kind": "method",
+              "name": "byKey",
+              "signature": "byKey(key: string): DesktopWindowRef | undefined",
+              "doc": "The open window opened with `key`, or `undefined`."
+            },
+            {
+              "kind": "method",
               "name": "list",
               "signature": "list(): DesktopWindowRef[]",
               "doc": "The open windows."
+            },
+            {
+              "kind": "method",
+              "name": "lastSession",
+              "signature": "lastSession(): readonly SessionWindow[]",
+              "doc": "The keyed windows open when the app last quit (each with its key, app path and saved bounds),\nfrom the window store in the app support folder; `desktop.app.restoreWindows: true` reopens\nthem at launch. Empty on the first launch, or when the store could not be read."
             }
           ]
         },
@@ -51444,6 +51616,12 @@
               "name": "visible",
               "signature": "readonly visible: boolean",
               "doc": "Whether it is showing."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "The key it was opened with (`openWindow({ key })`), if any."
             }
           ]
         },
@@ -52017,6 +52195,18 @@
               "name": "capabilities",
               "signature": "readonly capabilities?: readonly string[]",
               "doc": "The desktop capabilities its pages may call (default: all the app has; `window` always). Least\nprivilege for a trusted page that needs little, not a security boundary: every window shares\nthe app's origin, storage and launch token, so script in this window can still reach every\ncapability the app has (for example by calling the bridge as the main window). Never open\nuntrusted content in an app window because of a subset."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "An app-chosen key, unique among the open windows (a duplicate rejects `validation`): 1 to 64\nletters, digits, `.`, `_`, `:` or `-`. The window's frame is saved as it moves and when it\ncloses, and restored the next time the key opens (the bounds this call leaves out), clamped\nonto a display connected now; `desktop.app.restoreWindows` reopens the keyed windows open at\nthe last quit."
+            },
+            {
+              "kind": "property",
+              "name": "restoreBounds",
+              "signature": "readonly restoreBounds?: boolean",
+              "doc": "With a `key`: whether the saved frame fills in the bounds left out (default `true`)."
             }
           ]
         },

@@ -58,6 +58,7 @@ import {
   validateStandard,
 } from "./extension.ts";
 import type { PickedPaths } from "./picked-paths.ts";
+import type { WindowLifecycleHost } from "./window-lifecycle.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -112,7 +113,22 @@ export interface DesktopBridgeOptions {
    * {@link DesktopCapCtx.pickedPath} resolves a handle against. Without it every handle is refused.
    */
   readonly pickedPaths?: PickedPaths;
+  /**
+   * The window lifecycle the hosts subscribe to ({@link DesktopExtensionHost.onWindowOpened},
+   * `onWindowClosed`, `onAppQuit`, `onBeforeQuit`, `windows`). Without it (no window: a sidecar's
+   * child, a test) a subscription is kept by nobody and `windows()` is empty.
+   */
+  readonly lifecycle?: WindowLifecycleHost;
 }
+
+/** A lifecycle with no windows: subscriptions go nowhere (their unsubscribe is a no-op). */
+const NO_LIFECYCLE: WindowLifecycleHost = {
+  onWindowOpened: () => () => {},
+  onWindowClosed: () => () => {},
+  onAppQuit: () => () => {},
+  onBeforeQuit: () => () => {},
+  windows: () => [],
+};
 
 /** The runtime bridge: a request handler for its two paths, and an event emitter. */
 export interface DesktopBridge {
@@ -429,11 +445,17 @@ export function createDesktopBridge(
   });
 
   // Each capability's process-level host, handed once to its `setup` before any page can call.
+  const lifecycle = options.lifecycle ?? NO_LIFECYCLE;
   setUpCapabilities(registry.values(), (cap) => ({
     emit: capEmit(cap),
     pickedPath,
     appSupportDir: options.appSupportDir ?? "",
     os,
+    onWindowOpened: (fn) => lifecycle.onWindowOpened(fn),
+    onWindowClosed: (fn) => lifecycle.onWindowClosed(fn),
+    onAppQuit: (fn) => lifecycle.onAppQuit(fn),
+    onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn),
+    windows: () => lifecycle.windows(),
   }), dev);
 
   /** The calling window's id, or the 403 for a window token that names no open window. */

@@ -115,7 +115,11 @@ export {
   type DesktopMainThreadFn,
   type DesktopPermissions,
   type DesktopPickedPathOptions,
+  type DesktopWindowClosedInfo,
+  type DesktopWindowInfo,
 } from "../desktop/extension.ts";
+/** A keyed window of the last session (`DesktopRuntime.windows.lastSession`). */
+export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-store.ts";
 
 // Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
 // `runDesktop({ sidecars })`).
@@ -674,6 +678,14 @@ export interface DesktopRuntime {
    * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
    */
   sidecar(name: string): SidecarHandle;
+  /**
+   * Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session
+   * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled
+   * when it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`
+   * hosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not
+   * cancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called.
+   */
+  onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
   /**
    * Set when this launch is a child a module sidecar started (`denextSidecar.spawnSelf` /
    * `childCommand`): the sidecar's name. `runDesktop` then ran that sidecar's module headless
@@ -1562,17 +1574,22 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     exit,
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
+    ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
   });
   windowsRef.setup = windows;
   const registry = windows.registry;
+  const capabilities = [
+    ...(options.capabilities ?? []),
+    ...appEvents.capabilities,
+    ...windows.capabilities,
+    ...(appWindow !== undefined ? [createSpeechCapability(desktopAppApi)] : []),
+    ...(sidecarHost ? [sidecarHost.capability] : []),
+  ];
+  // The capabilities' static window-lifecycle hooks (`onWindowOpened` is replayed for the main
+  // window, open already); their `setup` hosts subscribe through the bridge below.
+  windows.lifecycle?.addCapabilities(capabilities);
   const bridge = createDesktopBridge(
-    [
-      ...(options.capabilities ?? []),
-      ...appEvents.capabilities,
-      ...windows.capabilities,
-      ...(appWindow !== undefined ? [createSpeechCapability(desktopAppApi)] : []),
-      ...(sidecarHost ? [sidecarHost.capability] : []),
-    ],
+    capabilities,
     {
       appSupportDir: options.appSupportDir,
       getWindow: (id) => registry?.get(id)?.window ?? appWindow,
@@ -1583,6 +1600,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
           windowCount: () => registry.count(),
         }
         : {}),
+      ...(windows.lifecycle ? { lifecycle: windows.lifecycle } : {}),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
@@ -1636,6 +1654,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       ),
   });
   startSidecars(sidecarHost);
+  // The keyed windows of the last session (`desktop.app.restoreWindows`), now that the app URL
+  // is known and the tray panel, if any, is registered.
+  windows.restoreSession();
   return {
     window: appWindow,
     windows: windows.windows,
@@ -1649,6 +1670,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
+    onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn) ?? (() => {}),
   };
 }
 
@@ -1682,6 +1704,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
     sidecar: (name) => {
       throw new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`);
     },
+    onBeforeQuit: () => () => {},
     sidecarChild: launch.name,
   };
 }

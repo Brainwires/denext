@@ -661,7 +661,17 @@ icon from the first frame), `openWindow({ url, overlay, focusable: false, … })
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
-`setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
+`desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
+windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
+support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
+connected display; macOS Spaces are not restored), `windows.lastSession()` lists the keyed windows open at the
+last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
+at most 64) caps the open windows. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+(`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
+as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
+`onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
+guards; the OS session-end rules are the pages'). With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
