@@ -32,7 +32,8 @@ import { packSidecarModules } from "../desktop/sidecar-modules.ts";
 export interface SidecarBundleReport {
   /** The sidecar's name. */
   readonly name: string;
-  /** The bundle folder, relative to the project (`.deno-desktop/sidecars/<name>`). */
+  /** The bundle folder, relative to the project (`.deno-desktop/sidecars/<name>`, below the entry's
+   * folder for a nested entry). */
   readonly dir: string;
   /** The packages copied whole (native addons and `external`), by name. */
   readonly copied: readonly string[];
@@ -575,10 +576,21 @@ export interface BundleSidecarOptions {
   readonly os?: DesktopOs;
   /** Whether `ffi` is granted (`permissions.ffi` or `desktop.extraPermissions.ffi`). */
   readonly ffiGranted?: boolean;
+  /**
+   * The folder of the entry that calls `runDesktop`, relative to the project and `/`-separated
+   * (default `.`): the app loads the bundle from `.deno-desktop/sidecars/<name>/` beside it.
+   */
+  readonly entryDir?: string;
+}
+
+/** The bundles' folder, relative to the project: {@linkcode SIDECAR_BUNDLE_DIR} beside the entry. */
+function bundleRoot(entryDir = "."): string {
+  return entryDir === "." ? SIDECAR_BUNDLE_DIR : `${entryDir}/${SIDECAR_BUNDLE_DIR}`;
 }
 
 /**
- * Bundle one Node backend sidecar into `.deno-desktop/sidecars/<name>/` (replacing what was there).
+ * Bundle one Node backend sidecar into `.deno-desktop/sidecars/<name>/` beside the entry that calls
+ * `runDesktop` (the project root by default), replacing what was there.
  *
  * @param options The project, the sidecar and the target OS.
  * @returns What was written.
@@ -592,7 +604,7 @@ export async function bundleDesktopSidecar(
   const entry = resolve(projectDir, run.module);
   const nodeModules = run.nodeModules ? resolve(projectDir, run.nodeModules) : undefined;
   const platform = NODE_PLATFORM[options.os ?? (Deno.build.os as DesktopOs)] ?? "linux";
-  const relDir = `${SIDECAR_BUNDLE_DIR}/${def.name}`;
+  const relDir = `${bundleRoot(options.entryDir)}/${def.name}`;
   const out = join(projectDir, ...relDir.split("/"));
   const state: BundleState = {
     external: new Set(run.external ?? []),
@@ -644,8 +656,12 @@ export async function bundleDesktopSidecar(
 }
 
 /** Write `.deno-desktop/sidecars/.gitignore` (the bundles are build output) and drop stale bundles. */
-async function tidyBundleDir(projectDir: string, keep: readonly string[]): Promise<void> {
-  const dir = join(projectDir, ...SIDECAR_BUNDLE_DIR.split("/"));
+async function tidyBundleDir(
+  projectDir: string,
+  keep: readonly string[],
+  entryDir?: string,
+): Promise<void> {
+  const dir = join(projectDir, ...bundleRoot(entryDir).split("/"));
   await Deno.mkdir(dir, { recursive: true });
   const ignore = join(dir, ".gitignore");
   if ((await Deno.readTextFile(ignore).catch(() => "")) !== "*\n") {
@@ -672,12 +688,15 @@ function ffiGranted(def: SidecarDefinition, config: unknown): boolean {
  * @param projectDir The project root.
  * @param config The project config.
  * @param os The OS packaged for (default: the host's).
+ * @param entryDir The folder of the entry that calls `runDesktop`, relative to the project (default
+ *   `.`; `denext desktop run --entry app/desktop.ts` → `app`): the bundles go beside it.
  * @returns The reports.
  */
 export async function bundleDesktopSidecars(
   projectDir: string,
   config: unknown,
   os?: DesktopOs,
+  entryDir?: string,
 ): Promise<SidecarBundleReport[]> {
   const sidecars = ((config as { desktop?: { sidecars?: unknown } } | undefined)?.desktop
     ?.sidecars ?? []) as SidecarDefinition[];
@@ -691,6 +710,7 @@ export async function bundleDesktopSidecars(
       definition: def,
       ...(os ? { os } : {}),
       ffiGranted: ffiGranted(def, config),
+      ...(entryDir === undefined ? {} : { entryDir }),
     });
     const mb = (report.bytes / 1024 / 1024).toFixed(1);
     console.log(
@@ -700,8 +720,8 @@ export async function bundleDesktopSidecars(
     for (const w of report.warnings) console.warn(`  ⚠ sidecar ${def.name}: ${w}`);
     reports.push(report);
   }
-  if (bundled.length > 0 || await exists(join(projectDir, ...SIDECAR_BUNDLE_DIR.split("/")))) {
-    await tidyBundleDir(projectDir, bundled.map((d) => d.name));
+  if (bundled.length > 0 || await exists(join(projectDir, ...bundleRoot(entryDir).split("/")))) {
+    await tidyBundleDir(projectDir, bundled.map((d) => d.name), entryDir);
   }
   return reports;
 }

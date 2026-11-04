@@ -689,6 +689,7 @@
     "DesktopInstallersConfig:interface",
     "DesktopLinuxConfig:interface",
     "DesktopMacosConfig:interface",
+    "DesktopMediaCaptureConfig:interface",
     "DesktopMenuConfig:interface",
     "DesktopPasskeysConfig:interface",
     "DesktopPermissionsConfig:interface",

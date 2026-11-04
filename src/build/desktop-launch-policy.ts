@@ -15,7 +15,9 @@ import {
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
   supportsInitialOverlay,
+  supportsMediaCapture,
   supportsOverlayTray,
+  supportsSidecarIntegrity,
 } from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
@@ -161,6 +163,29 @@ function compilerBakesAppIdentifier(compiler: DenoIdentity): boolean {
 
 /**
  * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * checks a program sidecar's recorded hash at spawn: denext's pinned runtime (not
+ * `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version)
+ * from `FIRST_SIDECAR_INTEGRITY_RUNTIME` (`3.0.0-denext.10`). An older runtime would read the recorded
+ * value as a path, so there a program sidecar keeps its copy in the cache folder under a write
+ * grant, and the package run warns. Only when denext's Deno compiles the app: the recorded value is
+ * a `$DENO_DESKTOP_CACHE` path, expanded from the identifier that compiler bakes.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's).
+ * @returns Whether to bake a program sidecar's hash into its run grant.
+ */
+export function desktopSidecarIntegrityRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsSidecarIntegrity) &&
+    compilerBakesAppIdentifier(compiler);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
  * expands `$DENO_DESKTOP_DATA` in a baked permission to the app's data folder: denext's pinned
  * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
  * unknown version) from `FIRST_DESKTOP_DATA_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
@@ -220,6 +245,43 @@ export function desktopDataTokenRuntimeProblem(
       "$DENO_DESKTOP_CACHE. Package on denext's Deno toolchain (`denext desktop package`)";
   }
   return null;
+}
+
+/**
+ * Whether a package script in this process builds on a runtime that grants the microphone and
+ * camera from the launch file (`"mediaCapture"` in `laufey-launch.json`): denext's pinned runtime
+ * (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown
+ * version) from `FIRST_MEDIA_CAPTURE_RUNTIME` (`3.0.0-denext.10`).
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the grant.
+ */
+export function mediaCaptureRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsMediaCapture);
+}
+
+/**
+ * The Deno Desktop runtime a package build in this process uses, as a message names it: the
+ * pinned `runtime 3.0.0-denext.N`, "the stock runtime" (`DENEXT_DESKTOP_RUNTIME=stock`) or "a
+ * local runtime build" (`DENEXT_DESKTOP_RUNTIME_DIR`).
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns The label.
+ */
+export function desktopRuntimeLabel(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): string {
+  if ((env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase() === "stock") {
+    return "the stock runtime";
+  }
+  if (env("DENEXT_DESKTOP_RUNTIME_DIR")) return "a local runtime build";
+  return `runtime ${version}`;
 }
 
 /**

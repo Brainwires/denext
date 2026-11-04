@@ -14,15 +14,30 @@
 // npm args — into a temp directory, and launch the bundle's executable (macOS: the `.app`'s
 // `Contents/MacOS/<CFBundleExecutable>`, so stdout/stderr come back; Linux / Windows: the bundle's
 // `<app>` / `<app>.exe`). The webview's launch settings come from `LAUFEY_*` env (an env var wins
-// over a `laufey-launch.json`, and the bundle has none), so the window gets DevTools as documented
-// and never takes the single-instance lock of an installed copy.
+// over the bundle's `laufey-launch.json`), so the window gets DevTools as documented and never takes
+// the single-instance lock of an installed copy. A key with no env var (deno.json's
+// `desktop.app.mediaCapture`) is kept out of the build ({@linkcode desktopRunConfig}).
 //
 // `desktop dev` builds a generated entry instead of `desktop.ts`: it marks the build as a dev build
 // ({@linkcode DESKTOP_DEV_BUILD_KEY}) and then imports the real entry. A built binary is not the
 // `deno` CLI, and the runtime honours `DENEXT_DESKTOP_DEV_URL` only under the CLI or in a build that
 // carries that mark, which only this verb compiles in — a packaged app still ignores the env.
 
-import { basename, dirname, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  SEPARATOR,
+  toFileUrl,
+} from "@std/path";
+import {
+  dirname as posixDirname,
+  join as posixJoin,
+  normalize as posixNormalize,
+} from "@std/path/posix";
 import {
   desktopBuildFlags,
   desktopIncludeArgs,
@@ -31,6 +46,7 @@ import {
   strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
+import { readJson } from "./json-edit.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
 import {
   desktopNetSplit,
@@ -55,8 +71,13 @@ export interface DesktopLaunchBuildInput {
   readonly iconArgs: readonly string[];
   /** Embed the static export (`run`); `dev` proxies to the dev server and does not need it. */
   readonly includeOut: boolean;
+  /** The static export embedded with `includeOut`, relative to the project (default `out`; see
+   * {@linkcode desktopEntryOutDir}). */
+  readonly outDir?: string;
   /** Hosts to add to `--allow-net` (`--allow-net-connect` under the split grant; `dev --lan`: the dev server's LAN address). */
   readonly netHosts?: readonly string[];
+  /** `--config <file>` for the build ({@linkcode desktopRunConfig}; default none). */
+  readonly configArgs?: readonly string[];
   /** The `--output` path (see {@linkcode desktopLaunchOutput}). */
   readonly output: string;
   /** The entry module, relative to the project. */
@@ -102,9 +123,10 @@ export function desktopLaunchBuildArgs(input: DesktopLaunchBuildInput): string[]
     ...withNetHosts(input.permissionFlags, input.netHosts ?? []),
     ...input.denoFlags,
     ...input.runtimeFlags ?? [],
-    ...(input.includeOut ? ["--include", "out"] : []),
+    ...(input.includeOut ? ["--include", input.outDir ?? "out"] : []),
     ...input.extraArgs,
     ...input.iconArgs,
+    ...input.configArgs ?? [],
     "--output",
     input.output,
     input.entry,
@@ -172,6 +194,28 @@ export async function desktopLaunchExecutable(
   const exe = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
   if (!exe) throw new Error(`no CFBundleExecutable in ${bundle}/Contents/Info.plist`);
   return join(bundle, "Contents", "MacOS", exe);
+}
+
+/**
+ * A `--entry` as the project-relative path every desktop step reads it as, or an error when it is
+ * not one of the project's files: the build writes beside the entry (a Node backend's bundles, and
+ * drops stale ones there; the UI export) and embeds what it loads, so an entry outside the project
+ * would write and delete outside it.
+ *
+ * @param projectDir The project.
+ * @param entry The `--entry` value (relative to the project, or absolute).
+ * @returns The entry, relative to the project.
+ * @throws {Error} When the entry is the project itself or outside it.
+ */
+export function desktopProjectEntry(projectDir: string, entry: string): string {
+  const abs = resolve(projectDir, entry);
+  if (!isInsideDir(abs, projectDir) || resolve(abs) === resolve(projectDir)) {
+    throw new Error(
+      `--entry ${entry} is outside the project (${projectDir}): pass a file inside it`,
+    );
+  }
+  // `/`-separated, as the flag is usually written (every step reads either separator).
+  return relative(resolve(projectDir), abs).replaceAll(SEPARATOR, "/");
 }
 
 /** Whether `path` is `dir` or inside it. */
@@ -244,6 +288,150 @@ export async function writeDesktopDevEntry(
   return relative(projectDir, file);
 }
 
+/** A literal `outDir: "<path>"` in an entry's source (the first one). */
+const ENTRY_OUT_DIR = /\boutDir\s*:\s*(["'`])([^"'`$\n]+)\1/;
+
+/**
+ * Where `denext desktop run` / `build` export the UI for an entry, relative to the project and
+ * `/`-separated: the folder the app serves it from (`runDesktop`'s `resolveOutDir`: `out`, or the
+ * entry's literal `outDir: "<path>"`, resolved against the entry's `import.meta.url`). `out` for a
+ * root `desktop.ts` that passes no `outDir`, as always; `app/out` for `--entry app/desktop.ts`;
+ * `ui` for a root entry with `outDir: "ui"`.
+ *
+ * @param projectDir The project.
+ * @param entry The entry that calls `runDesktop`, relative to the project.
+ * @returns The export folder, relative to the project.
+ */
+export async function desktopEntryOutDir(projectDir: string, entry: string): Promise<string> {
+  const entryDir = posixDirname(posixNormalize(entry.replaceAll("\\", "/")));
+  const outDir = await entryOutDirLiteral(projectDir, entry) ?? "out";
+  if (isAbsolute(outDir)) return relative(projectDir, outDir).replaceAll("\\", "/");
+  return posixNormalize(posixJoin(entryDir, outDir.replaceAll("\\", "/"))).replace(/(.)\/+$/, "$1");
+}
+
+/** The entry's literal `outDir: "<path>"` (the first one), else `undefined`. */
+async function entryOutDirLiteral(projectDir: string, entry: string): Promise<string | undefined> {
+  const source = await Deno.readTextFile(join(projectDir, entry)).catch(() => "");
+  return ENTRY_OUT_DIR.exec(source)?.[2];
+}
+
+/**
+ * Why the packaged app would serve no UI, or `null`: the root `desktop.ts`, which every packaging
+ * script compiles, passes `runDesktop` an `outDir` other than `out`, while the scripts export to
+ * and embed `out/` (`deno task export`, `--include out`).
+ *
+ * @param projectDir The project.
+ * @returns The message (one line), or `null`.
+ */
+export async function desktopPackageOutDirProblem(projectDir: string): Promise<string | null> {
+  const outDir = await desktopEntryOutDir(projectDir, "desktop.ts");
+  if (outDir === "out") return null;
+  return `desktop.ts passes runDesktop outDir "${await entryOutDirLiteral(
+    projectDir,
+    "desktop.ts",
+  )}" (${outDir}/), but the packaging scripts export to and embed out/, so the packaged window ` +
+    "would have no UI";
+}
+
+/** What to do about {@linkcode desktopPackageOutDirProblem}. */
+export const DESKTOP_PACKAGE_OUT_DIR_FIX =
+  'remove outDir from desktop.ts (runDesktop serves out/ by default), or set it to "out"';
+
+/** The `.gitignore` `denext desktop run` / `build` write into an export folder other than `out`. */
+export const DESKTOP_EXPORT_GITIGNORE =
+  "# The UI export of `denext desktop run` / `build` (replaced on each run).\n*\n";
+
+/**
+ * Why `denext desktop run` / `build` must not export to `outDir` (relative to the project), or
+ * `null`: the export replaces the folder wholesale, so a folder other than the root `out` is used
+ * only when it does not exist yet, is empty, or is already a denext export (it holds the
+ * {@linkcode DESKTOP_EXPORT_GITIGNORE} or a `_denext/` folder).
+ *
+ * @param projectDir The project.
+ * @param outDir The export folder, relative to the project.
+ * @returns The message, or `null`.
+ */
+export async function desktopExportTargetProblem(
+  projectDir: string,
+  outDir: string,
+): Promise<string | null> {
+  if (outDir === "out") return null;
+  const dir = join(projectDir, outDir);
+  const info = await Deno.lstat(dir).catch(() => null);
+  if (info === null) return null;
+  if (!info.isDirectory) return `${outDir} exists and is not a folder`;
+  const ignore = await Deno.readTextFile(join(dir, ".gitignore")).catch(() => null);
+  if (ignore === DESKTOP_EXPORT_GITIGNORE) return null;
+  if (await Deno.stat(join(dir, "_denext")).then((i) => i.isDirectory, () => false)) return null;
+  for await (const _ of Deno.readDir(dir)) {
+    return `${outDir}/ exists and is not a denext export; the export replaces it wholesale. ` +
+      "Move it, or point the entry's outDir at another folder";
+  }
+  return null;
+}
+
+/**
+ * Mark an export folder other than the root `out` as build output: write its
+ * {@linkcode DESKTOP_EXPORT_GITIGNORE} (the export has just replaced the folder, so it holds
+ * nothing of the user's).
+ *
+ * @param projectDir The project.
+ * @param outDir The export folder, relative to the project.
+ */
+export async function markDesktopExport(projectDir: string, outDir: string): Promise<void> {
+  if (outDir === "out") return;
+  await Deno.writeTextFile(join(projectDir, outDir, ".gitignore"), DESKTOP_EXPORT_GITIGNORE);
+}
+
+/** A `--config` for `deno desktop` without deno.json's own media grant ({@linkcode desktopRunConfig}). */
+export interface DesktopRunConfig {
+  /** `["--config", <file>]`, or `[]` when deno.json sets no grant (the build reads it as it is). */
+  readonly args: string[];
+  /** What was left out (one line, for a warning), or `null`. */
+  readonly dropped: string | null;
+  /** Remove the generated file (after the build). */
+  cleanup(): Promise<void>;
+}
+
+/**
+ * The config an unpackaged window (`denext desktop run` / `dev`) is built with: deno.json as it is,
+ * unless it sets `desktop.app.mediaCapture`. `deno desktop` writes that grant (any exact origins, a
+ * loopback dev server's too) into the bundle's `laufey-launch.json`, which the window reads and no
+ * `LAUFEY_*` env var overrides; denext's own grant is the packaged app's alone. So the build gets a
+ * copy without the key, beside deno.json (its relative paths, lockfile and workspace resolve the
+ * same), and never writes the grant: nothing inside the signed bundle is edited afterwards.
+ *
+ * @param projectDir The project.
+ * @returns The `--config` args, the warning and the cleanup.
+ */
+export async function desktopRunConfig(projectDir: string): Promise<DesktopRunConfig> {
+  const none: DesktopRunConfig = { args: [], dropped: null, cleanup: () => Promise.resolve() };
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const text = await Deno.readTextFile(join(projectDir, name)).catch(() => null);
+    if (text === null) continue;
+    let doc: unknown;
+    try {
+      doc = readJson(text);
+    } catch {
+      return none; // `deno desktop` reports a config that does not parse.
+    }
+    const app = (doc as { desktop?: { app?: Record<string, unknown> } } | null)?.desktop?.app;
+    if (typeof app !== "object" || app === null || !("mediaCapture" in app)) return none;
+    const granted = JSON.stringify(app.mediaCapture);
+    delete app.mediaCapture;
+    const file = join(projectDir, `.denext-desktop-run-${crypto.randomUUID()}.deno.json`);
+    await Deno.writeTextFile(file, JSON.stringify(doc, null, 2) + "\n");
+    return {
+      args: ["--config", file],
+      dropped: `deno.json's desktop.app.mediaCapture (${granted}) is left out of this window's ` +
+        "build: an unpackaged window gets no microphone / camera grant, and the packaged app's is " +
+        "denext's own (desktop.capabilities.microphone / camera, the app origin alone)",
+      cleanup: () => Deno.remove(file).catch(() => {}),
+    };
+  }
+  return none;
+}
+
 /** What {@linkcode desktopLaunchBuildPlan} plans. */
 export interface DesktopLaunchPlanInput {
   /** The project. */
@@ -261,6 +449,12 @@ export interface DesktopLaunchPlanInput {
   readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */
   readonly entry: string;
+  /**
+   * The entry that calls `runDesktop`, relative to the project (default {@linkcode entry}): `desktop
+   * dev` builds a generated entry that imports it. A program sidecar's `exec` is relative to its
+   * folder, as the app resolves it.
+   */
+  readonly appEntry?: string;
   /** `desktop dev` (no export embedded) vs `desktop run`. */
   readonly dev: boolean;
   /** Hosts to add to `--allow-net` (`dev --lan`). */
@@ -271,6 +465,13 @@ export interface DesktopLaunchPlanInput {
   readonly scratch: string;
   /** Where a warning goes (default `console.warn`). */
   readonly warn?: (line: string) => void;
+  /**
+   * Whether the runtime checks a program sidecar's recorded hash (default
+   * `desktopSidecarIntegrityRuntime()`; see `DesktopBuildFlagOptions.sidecarIntegrity`).
+   */
+  readonly sidecarIntegrity?: boolean;
+  /** `--config <file>` for the build ({@linkcode desktopRunConfig}; default none). */
+  readonly configArgs?: readonly string[];
 }
 
 /** A planned `desktop run` / `dev` build. */
@@ -315,6 +516,12 @@ export async function desktopLaunchBuildPlan(
     permissionFlags: desktopBuildFlags(input.config, input.os, {
       // Dev only: a strict mode that cannot be honoured warned above and bakes the default.
       strictFallback: true,
+      projectDir: input.projectDir,
+      // A recorded program sidecar's embedded path is relative to the compiled entry (`desktop dev`
+      // compiles `.denext/desktop-dev-entry.ts`).
+      entry: input.entry,
+      appEntry: input.appEntry ?? input.entry,
+      ...(input.sidecarIntegrity === undefined ? {} : { sidecarIntegrity: input.sidecarIntegrity }),
       // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
       netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
         (input.netSplit ?? desktopNetSplit)(),
@@ -322,7 +529,7 @@ export async function desktopLaunchBuildPlan(
     denoFlags: input.denoFlags,
     runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
-      ...await desktopIncludeArgs(scriptUrl, input.os),
+      ...await desktopIncludeArgs(scriptUrl, input.os, input.appEntry ?? input.entry),
       ...await desktopNpmArgs(scriptUrl),
       // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
       "--backend",
@@ -330,7 +537,12 @@ export async function desktopLaunchBuildPlan(
     ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,
+    // The export the app serves: `out` for a root entry, beside a nested one.
+    ...(input.dev
+      ? {}
+      : { outDir: await desktopEntryOutDir(input.projectDir, input.appEntry ?? input.entry) }),
     netHosts: input.netHosts,
+    ...(input.configArgs ? { configArgs: input.configArgs } : {}),
     output,
     entry: input.entry,
   });

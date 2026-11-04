@@ -19,7 +19,8 @@
 //     launcher badges (runtime 2.9.7-denext.11); and the Chromium sandbox a CEF window would run in
 //     (unprivileged user namespaces, else the `chrome-sandbox` helper of a `.deb` / `.rpm`
 //     install, else off), with `desktop.linux.requireSandbox` for an app that would rather not
-//     start unsandboxed.
+//     start unsandboxed; and, for a project with the microphone or camera on the webview backend,
+//     that the Linux build has no WebRTC (no distribution's WebKitGTK is built with it).
 //
 // The probe needs no window: it asks the session bus through `busctl --user` (systemd) or
 // `gdbus` (GLib), argv only, never a shell, each call bounded by a timeout. The runtime's own
@@ -49,6 +50,7 @@ import {
 import { runToExitText } from "./exited-output.ts";
 import { type DoctorPty, ptyDoctorCheck, ptyFactLine } from "./desktop-pty-doctor.ts";
 import type { PtyOs } from "../desktop/pty-config.ts";
+import { LINUX_WEBRTC_FIX } from "./desktop-media-capture.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -235,6 +237,11 @@ export interface DesktopDoctorOptions {
    * answers one with `capabilities.pty` enabled (`null`: not a desktop project).
    */
   readonly desktopConfig?: () => Promise<unknown | null>;
+  /**
+   * Why the project's Linux build has no WebRTC (`linuxWebRtcProblem`: the microphone or camera on
+   * the webview backend), or `null`; the `webrtc` check runs with the Linux checks when given.
+   */
+  readonly linuxWebRtc?: () => Promise<string | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -1314,7 +1321,14 @@ export async function runDesktopDoctor(
   const cefSigning = os === "windows" && runtime.status.backend === "cef";
   const policy = await launchPolicyFindings(options);
   const pty = await ptyCheck(options, os, pinVersion);
-  const checks = checkNames(policy.checks, pty !== null, linux ? runtime : null, cefSigning);
+  const webrtc = await webRtcFindings(options, linuxChecks);
+  const checks = checkNames(
+    policy.checks,
+    pty !== null,
+    linux ? runtime : null,
+    webrtc.checks,
+    cefSigning,
+  );
   return {
     os,
     runtime,
@@ -1326,6 +1340,7 @@ export async function runDesktopDoctor(
       ...policy.findings,
       ...(pty?.findings ?? []),
       ...(linux ? linuxFindings(linux, runtime) : []),
+      ...webrtc.findings,
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
@@ -1355,6 +1370,7 @@ function checkNames(
   policy: readonly string[],
   pty: boolean,
   linuxRuntime: DoctorRuntime | null,
+  webrtc: readonly string[],
   cefSigning: boolean,
 ): string[] {
   return [
@@ -1362,6 +1378,7 @@ function checkNames(
     ...policy,
     ...(pty ? ["pty"] : []),
     ...(linuxRuntime ? linuxCheckNames(linuxRuntime) : []),
+    ...webrtc,
     ...(cefSigning ? ["cef-signing"] : []),
   ];
 }
@@ -1376,6 +1393,24 @@ async function ptyCheck(
   if (desktop === null) return null;
   const target: PtyOs = os === "windows" || os === "linux" ? os : "darwin";
   return ptyDoctorCheck(desktop, target, typeof pinVersion === "string" ? pinVersion : "");
+}
+
+/**
+ * The `webrtc` check, with the Linux checks (none without `options.linuxWebRtc`): a warning when
+ * the project's Linux build would have no `RTCPeerConnection`.
+ */
+async function webRtcFindings(
+  options: DesktopDoctorOptions,
+  linuxChecks: boolean,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  if (!linuxChecks || !options.linuxWebRtc) return { checks: [], findings: [] };
+  const problem = await options.linuxWebRtc();
+  return {
+    checks: ["webrtc"],
+    findings: problem === null
+      ? []
+      : [{ check: "webrtc", level: "warning", message: problem, fix: LINUX_WEBRTC_FIX }],
+  };
 }
 
 /** The Linux session checks that run for `runtime`, in order. */

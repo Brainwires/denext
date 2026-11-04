@@ -21,7 +21,11 @@
 import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { gzipBytes } from "./precompress.ts";
-import { type DesktopOs, sidecarRunWriteWarnings } from "./desktop-capabilities.ts";
+import {
+  type DesktopOs,
+  sidecarIntegrityWarnings,
+  sidecarRunWriteWarnings,
+} from "./desktop-capabilities.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { resolveDesktopBackend } from "../desktop/engine-backend.ts";
 
@@ -412,7 +416,8 @@ export async function desktopPackageMetaWarnings(
   const config = await loadConfigBeside(entryUrl);
   return [
     ...packageMetaWarnings(await readDenoJson(dir), config, meta, await readPackageJson(dir)),
-    ...sidecarRunWriteWarnings(config, os),
+    ...sidecarRunWriteWarnings(config, os, { projectDir: dir }),
+    ...sidecarIntegrityWarnings(config, os, { projectDir: dir }),
   ];
 }
 

@@ -86,6 +86,180 @@ and this project adheres to
   and `cmd.exe`), which the package scripts bake as the app's `--allow-run` (never an unscoped
   run) and the doctor lists; `cwd` must be an existing directory, and the page's `env` loses any
   `LD_*` / `DYLD_*` variable.
+- **Deno Desktop apps can use the microphone and camera.** `denext desktop add microphone` (and
+  `camera`) lets the page's own `getUserMedia` reach the device, for the app's own origin only:
+  never another origin the window navigates to, and never a sub-frame of another origin (except on
+  Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to
+  with `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+  (`"mediaCapture"`), which the webview backend enforces natively; on macOS the bundle's
+  `Info.plist` gets `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` (from
+  `desktop.capabilities.microphone = { usageDescription }`, else "<app> uses your microphone.") and
+  a signed build the Hardened Runtime entitlements `com.apple.security.device.audio-input` /
+  `com.apple.security.device.camera`. It needs Deno Desktop runtime 3.0.0-denext.10 or later: `denext
+  desktop package` refuses an older runtime, which cannot restrict capture to the app's origin, and
+  `denext doctor` says so. An unpackaged window (`denext desktop run` / `dev`) gets no grant and
+  says so at launch. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **The doctors and Linux packaging say when a capturing app has no WebRTC on Linux.** No
+  distribution builds WebKitGTK with WebRTC, so on the webview backend `RTCPeerConnection` is
+  undefined in the Linux app (`getUserMedia` itself works). With the microphone or camera on and the
+  Linux engine not `"cef"`, `denext desktop doctor --linux` and `denext doctor` warn, and `denext
+  desktop package` warns once for a Linux target (it still packages: an app that only records is
+  fine). An app that uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in
+  `denext.config.ts`, so macOS and Windows keep the system WebView. Docs:
+  https://denext.dev/docs/desktop#desktop-media-capture
+- **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
+  3.0.0-denext.10, once denext pins it, in an app with `desktop.app.identifier`). A project-file
+  `run: { exec }` is hashed at packaging and baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
+  with no write grant. The runtime writes the file from the binary, denies its folder to the app's
+  writes, and checks the hash in every spawn, so the app's own code can no longer write the program
+  and then run it, nor move a folder above it (the runtime refuses a rename of a folder that holds a
+  denied path, as it does a recursive remove). A file that differs is refused with `NotCapable` and
+  removed; the next start writes it again. An older runtime keeps the copy, its write grant and the
+  package-run warning. The embedded path is relative to the entry `deno desktop` compiles, so the
+  program starts under `denext desktop dev` too (its build compiles `.denext/desktop-dev-entry.ts`);
+  a program that cannot be recorded (a `#` or `,` in its path, a path outside the project) keeps the
+  unscoped grants of a runtime without the check, never a run grant on its copy, which Deno denies
+  the app's writes to.
+- **Node's compile cache for CommonJS modules** (denext's Deno 3.0.0-denext.10).
+  `module.enableCompileCache()`, `module.getCompileCacheDir()`, `module.flushCompileCache()`,
+  `module.constants.compileCacheStatus`, `NODE_COMPILE_CACHE`, `NODE_COMPILE_CACHE_PORTABLE` and
+  `NODE_DISABLE_COMPILE_CACHE` work as in Node: a CommonJS module's V8 code cache is stored and
+  reused on the next run, and a tool that calls `module.enableCompileCache()` unchecked no longer
+  throws. ES modules keep the runtime's own code cache. Each entry is signed (HMAC-SHA256) under a
+  per-user key in `DENO_DIR` that never reaches JavaScript, so an entry another program planted, or
+  one made for other source, is not loaded but rewritten; the default directory is
+  `<DENO_DIR>/node_compile_cache`, not the shared temporary directory, and a directory other users
+  can write is refused. A compiled program (`deno compile`, `denext build --compile`, a Deno Desktop
+  app) never reads or writes the cache.
+- **`node --test` round-out** (denext's Deno 3.0.0-denext.10): `--test-rerun-failures <file>` reruns
+  only what failed (`t.attempt`, `run({ rerunFailuresFilePath })`); test tags reach reporters on
+  every test event, and `--experimental-test-tag-filter=<tag>` / `run({ testTagFilters })` run only
+  the tests with every tag given.
+- **`--seed` makes `node:crypto`'s random functions repeat run to run** (denext's Deno
+  3.0.0-denext.10): `randomInt`, `randomFill` and `randomFillSync` draw from the seeded generator, as
+  `Math.random`, `crypto.getRandomValues` and `randomUUID` already did. Key generation, signing and
+  prime generation keep the OS's generator.
+- **`deno compile` warns when its own flags come after the script** (denext's Deno 3.0.0-denext.10):
+  `deno compile main.ts --output app --allow-net` embeds those flags as the program's arguments
+  instead of applying them. A leading `--` silences the warning; `DENO_COMPILE_ARG_SEPARATOR=strict`
+  or deno.json `"compile": { "argSeparator": "strict" }` requires the `--` and leaves it out of the
+  embedded arguments.
+- **`deno desktop` writes the microphone / camera grant from deno.json** (Deno Desktop runtime
+  3.0.0-denext.10): `desktop.app.mediaCapture` (`{ "microphone": [origins], "camera": [origins] }`,
+  exact origins only) goes into the launch file. A denext app does not need it: `denext desktop
+  package` writes the grant from `desktop.capabilities.microphone` / `camera`.
+
+### Changed
+
+- **`node --test` runs Node's test runner instead of `deno test`** (takes effect with denext's Deno
+  3.0.0-denext.10). Each test file runs in its own process, files are found with Node's patterns, and
+  Node's reporters (`spec`, `tap`, `dot`, `junit`, `lcov` or a custom one), `run()` and
+  `--experimental-test-coverage` work as in Node. What changes for a project that relied on the old
+  behaviour:
+  - Only files matching Node's default pattern run (`test.*`, `test-*.*`, `*.test.*`, `*-test.*`,
+    `*_test.*` and everything under `test/`, in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`;
+    `node_modules` is skipped). `*.test.jsx` and `*.test.tsx` files no longer run, and helper files
+    under `test/` now run as test files.
+  - `deno.json`'s `test.include` and `test.exclude` are ignored, and test files are not
+    type-checked.
+  - `Deno.test` tests do not run under `node --test`: a file that calls `Deno.test()` fails with an
+    error that says to run it with `deno test`. `denext test` and `deno test` are unchanged.
+  - The output is Node's, so a script that parses `ok | N passed` needs updating. A failing test
+    still exits with 1, and a custom reporter that throws ends the run with 7, as in Node.
+  - `node --test --watch` still runs `deno test --watch`.
+- **`--import`, `--experimental-loader` and `--require=<module>` in `NODE_OPTIONS` take effect**
+  (denext's Deno 3.0.0-denext.10), in Node's order: loaders, then imports, then the command line's
+  preloads, under `deno run` as well as `node`. A `NODE_OPTIONS` left over from Node tooling (say
+  `--import tsx`) now loads that module in every process that reads it, and stops with `Module not
+  found` when it can't be resolved.
+
+### Fixed
+
+- **A program sidecar works with a desktop entry below the project root.** With `denext desktop
+  run` / `dev --entry app/desktop.ts`, the app resolves a sidecar's `exec` (`./bin/server`) from
+  the entry's folder (`app/bin/server`), but the build embedded, hashed and recorded the file at
+  the project root (`bin/server`), so the sidecar's program was missing from the app or its
+  recorded grant named another file. The `--include`, the recorded hash and the embedded path now
+  name the file the app resolves. An entry at the project root (every packaged app) is unchanged.
+- **Extensions, module sidecars, Node backends and the UI work with a desktop entry below the
+  project root.** The app resolves a relative `desktop.capabilities.extensions` module, a module sidecar's
+  `run.module` and a Node backend's bundle (`.deno-desktop/sidecars/<name>/`) from the folder of the
+  entry, but `denext desktop run` / `dev --entry app/desktop.ts` embedded them from the project
+  root, so the app could not load them. The build now embeds the extension and the module the app
+  loads (`app/ext.ts`) and writes the bundle to `app/.deno-desktop/sidecars/<name>/`. The UI
+  export follows the same rule: `runDesktop` serves `out` (or its `outDir`) from the entry's folder,
+  so `denext desktop run` / `build --entry app/desktop.ts` now export to `app/out/` (or to the
+  entry's literal `outDir`, resolved from `app/`) and `run` embeds that folder, where a nested entry's
+  window had no UI before. A root `desktop.ts` that passes `outDir: "ui"` now gets its export in
+  `ui/` too. An export folder other than `out/` gets a `.gitignore` of `*`, and one that holds files
+  but is not a denext export is refused rather than replaced. The packaging scripts still export to
+  and embed `out/`, so `denext desktop package` and `denext doctor` warn when `desktop.ts` passes
+  another `outDir`. An entry at the project root with no `outDir` (the scaffold's) is unchanged.
+- **A `desktop.app.mediaCapture` in deno.json is no longer replaced silently.** denext writes the
+  packaged app's `laufey-launch.json` after `deno desktop`, with its own grant (the app origin
+  alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant
+  never reached the app. `denext desktop package` now warns and `denext doctor` reports it when
+  deno.json's grant differs. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **A `denext desktop run` / `dev` window no longer takes deno.json's microphone / camera grant.**
+  `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a loopback dev
+  server's too) into the window's `laufey-launch.json`, which no environment variable overrides, so
+  an unpackaged window granted capture to those origins although denext said it got none. The window
+  is now built from a copy of deno.json without the key (`--config`, written beside deno.json and
+  removed after the build), so the grant is never written, with a warning naming it.
+- **`denext desktop package` says when a program sidecar runs unchecked.** On a runtime that checks
+  a program sidecar's recorded hash, a program that cannot be recorded (no `desktop.app.identifier`,
+  a `,`, `#`, `%` or `?` in its path, a file outside the project or one that cannot be read), or an
+  unscoped `--allow-run` from `desktop.extraPermissions`, a capability or a sidecar's permissions,
+  gave every program sidecar an unscoped `--allow-run` and a write grant on its cache folder with no
+  word; the package run now warns, naming the cause. A `%` or `?` in the path is no longer recorded:
+  the app resolves such a path to another file, so the sidecar could not start.
+- **`desktop.capabilities.microphone` / `camera` with an unknown option is off, not on, in a
+  packaging script.** The scripts read the config without validating it, so `{ enabled: false }`
+  turned the device on; now only `true` or `{ usageDescription }` does (`denext` still reports the
+  key as a config error).
+- **`denext desktop run` / `build` / `dev --entry` refuse an entry outside the project.** The build
+  writes a Node backend's bundles (and removes stale ones) and the UI export beside the entry, so an
+  entry such as `../other/desktop.ts` wrote and deleted outside the project.
+- **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.10), so
+  `net.connect()`'s default `dns.ADDRCONFIG` takes effect: on a machine with no IPv6, AAAA records
+  no longer come back and slow down family autoselection. `dns.ADDRCONFIG`, `dns.ALL` and
+  `dns.V4MAPPED` are the operating system's values, as in Node.js, and on glibc an `EAI_ADDRFAMILY`
+  failure is reported as `EAI_ADDRFAMILY`, not `ENOTFOUND`.
+- **`node --test` failure stacks and TypeScript coverage look like Node's** (denext's Deno
+  3.0.0-denext.10): the runner's own frames show as `node:internal/...`, CommonJS frames show the
+  file path, and a `.ts` file's coverage maps back to its own lines, functions and branches. `run()`
+  no longer emits a file's first events before the caller can listen, and `node` started from
+  `child_process` with arguments it can't parse exits with 9 and `node: <message>` instead of
+  throwing from `spawn()`.
+- **Deno Desktop runtime fixes** (Deno Desktop runtime 3.0.0-denext.10): a CEF app on an Intel Mac no
+  longer crashes in Chromium's teardown when it quits (about once in 5,600 quits; the shutdown now
+  ends with `_exit` once the helpers have ended, as on Windows); a window is created hidden, sized,
+  then shown, so a Wayland compositor maps it at the size asked for instead of 800x600 under load;
+  CEF keeps a window created hidden hidden until it is shown, on every OS; a custom-scheme page's
+  localStorage commit waits up to 10 s instead of 1 s, which lost a launch's localStorage a few
+  times in 10,000 on a loaded machine; a macOS CEF launch right after a quit no longer fails with
+  exit 134 ("Library not loaded") from Chrome's code-signing clone; WebView2's print to PDF, script
+  execution and DevTools wait for the web view to be ready; and WebKitGTK's print to PDF on a window
+  that never loaded anything is refused instead of crashing.
+
+### Security
+
+- **V8 15.6.75.38** (from 15.6.75.33; 3.0.0-denext.10) in denext's Deno and the Deno Desktop runtime,
+  with five security merges, among them **CVE-2026-121057** (High, type confusion in module star
+  exports) and **CVE-2026-121137** (High, type confusion when a debugger breaks inside optimized
+  WebAssembly; reachable only with an inspector session attached).
+- **denext's Deno 3.0.0-denext.10: `deno compile`, `deno desktop` and `deno install` no longer build
+  `NODE_OPTIONS`' `--import`, `--experimental-loader` or `--require` modules into the program they
+  write.** Those preloads would run at every launch of the built program, so a `NODE_OPTIONS` left
+  in a build machine's environment shipped with it; they are ignored with one warning naming them.
+  `--preload` and `--require` on the command line still apply.
+- **A rename needs write access to every path it moves** (denext's Deno and the Deno Desktop runtime
+  3.0.0-denext.10): `--deny-write=a/b` now stops `Deno.rename("a", "c")`.
+- **The runtime's release builds are hardened** (from 3.0.0-denext.10): no build caches in a tag
+  build, pinned runner images, the CEF staleness gate enforced, a V8 or CEF pin more than 14 days
+  behind its branch's newest patch fails the build, and each archive's `BUILD_INFO.json` records the
+  exact build toolchain.
 
 ## [4.12.0] - 2026-11-04
 

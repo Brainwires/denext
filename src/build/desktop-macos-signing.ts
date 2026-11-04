@@ -20,6 +20,8 @@ import {
 } from "./plist-value.ts";
 import { loadConfigBeside, readDenoJson } from "./desktop-installers.ts";
 import { runToExit } from "./exited-output.ts";
+import { assertMediaCaptureRuntime, mediaCaptureEntitlements } from "./desktop-media-capture.ts";
+import { desktopRuntimeLabel, mediaCaptureRuntime } from "./desktop-launch-policy.ts";
 
 /** One entitlement's value as `desktop.macos.entitlements` writes it. */
 type EntitlementValue = string | number | boolean | string[];
@@ -68,6 +70,11 @@ export interface DesktopMacosSigningOptions {
   readonly decodeProfile?: (path: string) => Promise<string>;
   /** "Now", for the expiry check (tests pass one). */
   readonly now?: Date;
+  /**
+   * Whether the runtime enforces the launch file's microphone / camera grant (default
+   * `mediaCaptureRuntime()`). Without it a config with either on is refused.
+   */
+  readonly mediaCapture?: boolean;
 }
 
 /** Entitlements macOS honours only when a provisioning profile grants them. */
@@ -366,14 +373,24 @@ async function profileEntitlements(
 
 /**
  * Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and
- * write the entitlements to sign with. With neither a profile nor config entitlements, the
- * `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.
+ * write the entitlements to sign with: `desktop.macos.entitlements` over the microphone / camera
+ * capabilities' (`com.apple.security.device.audio-input` / `.camera`). With neither a profile nor
+ * any of those, the `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged. The device
+ * entitlements need a runtime that enforces the launch file's grant: with either capability on and
+ * any other runtime, packaging is refused here, before the build.
+ *
+ * With the device keys and no other entitlements, the plist this writes replaces (in the scripts'
+ * `macosSigningEntitlements`) what `deno desktop`'s ad-hoc pass signed the main executable with,
+ * instead of being merged over it. Nothing is lost: that pass signs it with laufey's
+ * `cef/macos/entitlements-browser.plist` (exactly {@linkcode V8_ENTITLEMENTS}) on CEF and with
+ * none (ad-hoc) on the webview backend, and the scripts add `V8_ENTITLEMENTS` to the plist.
  *
  * @param entryUrl `import.meta.url` of `scripts/package-macos.ts` (the project is its parent).
  * @param options The signing identity, `DENEXT_ENTITLEMENTS`, `DENEXT_PROVISIONING_PROFILE`.
  * @returns The entitlements plist and the profile for the signing step.
  * @throws {Error} When the profile cannot sign this app (each problem named), or a profile is set
- *   without a signing identity, or a restricted entitlement is asked for without a profile.
+ *   without a signing identity, or a restricted entitlement is asked for without a profile, or
+ *   the microphone or camera is on and the runtime does not enforce the grant.
  */
 export async function desktopMacosSigning(
   entryUrl: string,
@@ -386,8 +403,18 @@ export async function desktopMacosSigning(
     ? macos.provisioningProfile
     : undefined;
   const setting = options.provisioningProfile || configured;
-  const overlay = macos.entitlements as Record<string, EntitlementValue> | undefined;
-  if (!setting && Object.keys(overlay ?? {}).length === 0) {
+  assertMediaCaptureRuntime(
+    config,
+    options.mediaCapture ?? mediaCaptureRuntime(),
+    desktopRuntimeLabel(),
+  );
+  // The microphone / camera capabilities' Hardened Runtime entitlements, under the config's own
+  // (an explicit `false` there wins).
+  const overlay: Record<string, EntitlementValue> = {
+    ...mediaCaptureEntitlements(config),
+    ...macos.entitlements as Record<string, EntitlementValue> | undefined,
+  };
+  if (!setting && Object.keys(overlay).length === 0) {
     return { entitlements: options.entitlements };
   }
   let entitlements = mergeEntitlements(await readBaseEntitlements(options.entitlements), overlay);

@@ -45,6 +45,24 @@ export default function Desktop() {
           (what the window serves).
         </li>
         <li>
+          <code>--entry app/desktop.ts</code> (<code>run</code>, <code>dev</code>,{" "}
+          <code>build</code>) uses another entry. <code>runDesktop</code> serves{" "}
+          <code>out</code>, or its <code>outDir</code>, from the entry&apos;s folder, so{" "}
+          <code>run</code> and <code>build</code>{" "}
+          export there (<code>app/out/</code>, or the entry&apos;s literal <code>outDir: "…"</code>
+          {" "}
+          resolved from its folder; a root <code>desktop.ts</code> with <code>outDir: "ui"</code>
+          {" "}
+          exports to <code>ui/</code>) and <code>run</code> embeds that folder. A folder other than
+          {" "}
+          <code>out/</code> gets a <code>.gitignore</code> of{" "}
+          <code>*</code>, and one that holds files but is not a denext export is refused, never
+          replaced. The packaging scripts always compile the root <code>desktop.ts</code>{" "}
+          and export to and embed <code>out/</code>: <code>denext desktop package</code> and{" "}
+          <code>denext doctor</code> warn when <code>desktop.ts</code> passes another{" "}
+          <code>outDir</code>.
+        </li>
+        <li>
           <code>denext desktop package</code> — build the app and its{" "}
           <a href="#desktop-installers">installers</a> for the host OS;{" "}
           <code>--target-os linux</code> or <code>windows</code>{" "}
@@ -836,8 +854,9 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
         own teardown when it quits, about once in 5,600 launches. The app has already finished by
         then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
-        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
-        next runtime.
+        silicon, the WebView backend and the other OSes are not affected. Runtime 3.0.0-denext.10
+        fixes it: its CEF shutdown ends with <code>_exit</code>{" "}
+        once the helpers have ended, as on Windows, instead of running exit&apos;s destructors.
       </p>
       <p>
         The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
@@ -2158,6 +2177,37 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>none</td>
           </tr>
+          <tr>
+            <td>
+              <code>microphone</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ audio: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
+            </td>
+            <td>
+              none (the webview captures; macOS: <code>NSMicrophoneUsageDescription</code> and the
+              {" "}
+              <code>audio-input</code> entitlement)
+            </td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>camera</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ video: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
+            </td>
+            <td>
+              none (macOS: <code>NSCameraUsageDescription</code> and the <code>camera</code>{" "}
+              entitlement)
+            </td>
+            <td>none</td>
+          </tr>
         </tbody>
       </table>
       <Callout kind="note">
@@ -3410,6 +3460,91 @@ const state = await setLaunchAtLogin(true);
 if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
       </Code>
 
+      <h3 id="desktop-media-capture">The microphone and camera</h3>
+      <p>
+        A page captures with the web&apos;s own <code>navigator.mediaDevices.getUserMedia</code>
+        {" "}
+        (a voice UI, a video call). On denext&apos;s runtime the window refuses every request by
+        default. <code>denext desktop add microphone</code> (and{" "}
+        <code>camera</code>) grants the device to the app&apos;s own origin alone (<code>
+          desktop.app.origin
+        </code>, else{" "}
+        <code>app://localhost</code>): never another origin the window navigates to, and never a
+        sub-frame of another origin, even one the page delegates the device to with{" "}
+        <code>allow="microphone"</code>{" "}
+        (on Linux, where WebKitGTK does not say which frame asks, such a delegation is honoured).
+        Packaging writes three things:
+      </p>
+      <ul>
+        <li>
+          the grant in the packaged app&apos;s <code>laufey-launch.json</code>{" "}
+          (<code>"mediaCapture"</code>), which the webview backend enforces natively: WKWebView,
+          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.10 or later.
+          An older runtime does not enforce it (each engine asks, or refuses, by its own rules, for
+          whatever origin asks), so <code>denext desktop package</code>{" "}
+          refuses to package the microphone or camera on one, and <code>denext doctor</code>{" "}
+          says so;
+        </li>
+        <li>
+          that grant replaces any <code>desktop.app.mediaCapture</code> in deno.json:{" "}
+          <code>deno desktop</code>{" "}
+          writes deno.json&apos;s into the launch file, and denext rewrites the file after it, so
+          the packaged app grants exactly the kinds <code>desktop.capabilities</code>{" "}
+          turns on, to the app origin, and no other origin. <code>denext desktop package</code>{" "}
+          warns and <code>denext doctor</code> reports it when deno.json sets a different grant;
+        </li>
+        <li>
+          on macOS, <code>NSMicrophoneUsageDescription</code> /{" "}
+          <code>NSCameraUsageDescription</code> in{" "}
+          <code>Info.plist</code>: the text macOS shows when it asks the user, from{" "}
+          <code>{"{ usageDescription }"}</code>{" "}
+          (default: &quot;&lt;app&gt; uses your microphone.&quot;). Without it macOS would end the
+          app the first time the page captures;
+        </li>
+        <li>
+          on a signed macOS build, the Hardened Runtime entitlements{" "}
+          <code>com.apple.security.device.audio-input</code> /{" "}
+          <code>com.apple.security.device.camera</code> (a <code>false</code> in{" "}
+          <code>desktop.macos.entitlements</code> wins).
+        </li>
+      </ul>
+      <p>
+        The OS still asks the user: macOS once per app (System Settings › Privacy &amp; Security),
+        Windows through its privacy switches for desktop apps. A refusal there reaches the page as
+        {" "}
+        <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
+        {" "}
+        <code>dev</code>) has no launch file, usage description or entitlement, so it has no grant
+        (from runtime 3.0.0-denext.10 it refuses the device): build and test the capture UI in the
+        browser with <code>denext dev</code>, where the browser asks.
+      </p>
+      <p>
+        WebRTC on Linux needs the CEF backend. No distribution builds WebKitGTK with WebRTC, so on
+        the webview backend <code>RTCPeerConnection</code> is undefined in the Linux app;{" "}
+        <code>getUserMedia</code>{" "}
+        itself works, so an app that only records is fine. An app that uses WebRTC gives Linux the
+        CEF backend in <code>denext.config.ts</code>:{" "}
+        <code>desktop: {"{"} backend: {"{"} linux: "cef" {"}"} {"}"}</code>{" "}
+        (Chromium, about 150 MB larger, on Linux only; macOS and Windows keep the system WebView,
+        which has WebRTC). <code>denext desktop doctor --linux</code> and <code>denext doctor</code>
+        {" "}
+        warn when the microphone or camera is on with the webview backend, and{" "}
+        <code>denext desktop package</code> warns once for a Linux target.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: {
+    microphone: { usageDescription: "Acme listens while you hold the talk key." },
+  },
+  // WebRTC on Linux too: Chromium there, the system WebView on macOS and Windows.
+  backend: { linux: "cef" },
+},
+
+// the page
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
+      </Code>
+
       <h3 id="desktop-devtools">DevTools</h3>
       <p>
         The web inspector (F12, the context menu, Safari&apos;s Develop menu, remote debugging) is
@@ -3433,7 +3568,13 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
         <code>denext/desktop/client</code>. The page half (<code>desktopExtension</code>,{" "}
         <code>onDesktopEvent</code>) is in <code>denext/desktop/client</code>;{" "}
-        <code>defineDesktopExtension</code> is exported from <code>denext/desktop</code>:
+        <code>defineDesktopExtension</code> is exported from{" "}
+        <code>denext/desktop</code>. A relative path (<code>
+          "./desktop/extensions/scanner.ts"
+        </code>) is resolved from the folder of the entry that calls{" "}
+        <code>resolveDesktopCapabilities</code> (the project root for{" "}
+        <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -3755,12 +3896,15 @@ export default defineDesktopExtension({
           <code>run: {"{ module }"}</code> runs a module{" "}
           <strong>inside the app&apos;s own Deno runtime</strong>, in a dedicated worker with Node
           compatibility. No second binary ships (a Deno CLI would add about 100 MB), and the worker
-          cannot outlive the app. A Node backend names its{" "}
-          <code>nodeModules</code>: the package scripts and <code>denext desktop run</code>{" "}
-          bundle it into <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
-          (every npm import inlined) and embed the folder in the app. The packages it loads with
+          cannot outlive the app. The module is relative to the folder of the entry that calls{" "}
+          <code>runDesktop</code> (the project root for <code>desktop.ts</code>; <code>app/</code>
           {" "}
-          <code>require</code>{" "}
+          for <code>denext desktop run --entry app/desktop.ts</code>). A Node backend names its{" "}
+          <code>nodeModules</code> (both relative to the project): the package scripts and{" "}
+          <code>denext desktop run</code> bundle it into{" "}
+          <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
+          beside that entry (every npm import inlined) and embed the folder in the app. The packages
+          it loads with <code>require</code>{" "}
           at run time (those that carry a native addon, with only the target OS&apos;s prebuilds,
           and those listed in{" "}
           <code>external</code>) travel as one archive beside it and are unpacked into the
@@ -3770,8 +3914,11 @@ export default defineDesktopExtension({
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
-          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder (
+          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), relative to the
+          folder of the entry that calls <code>runDesktop</code> (the project root for{" "}
+          <code>desktop.ts</code>, which packaging compiles;{" "}
+          <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
+          <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
@@ -3780,8 +3927,31 @@ export default defineDesktopExtension({
           {" "}
           <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
           every <code>--allow-run</code>{" "}
-          path, so a run grant on the copy would leave the app unable to write it. It gets the
-          sidecar&apos;s variables, and one JSON line on stdin (
+          path, so a run grant on the copy would leave the app unable to write it. From runtime
+          3.0.0-denext.10 (once denext pins it; the same app) the program&apos;s SHA-256, taken at
+          packaging, is baked into the run grant, and the runtime keeps the file itself: it writes
+          it from the binary to{" "}
+          <code>sidecars/&lt;name&gt;/&lt;sha256&gt;/&lt;file&gt;</code>, denies that folder to the
+          app&apos;s writes (no write grant is baked for it) and checks the hash at every spawn, in
+          the spawn itself, so <code>new Deno.Command(path)</code>{" "}
+          in the app gets the same answer. A file that differs is refused with{" "}
+          <code>NotCapable</code>{" "}
+          and removed, and the next start (the supervisor&apos;s restart) writes it again. A limit
+          stays on macOS and Linux: another program of the same user that changes the file in the
+          microseconds between the check and the exec can run for a moment before the runtime sees
+          it and kills the child (<code>outputSync()</code>{" "}
+          has no such kill). On Linux that check compares the file&apos;s timestamps, which ext4
+          keeps to a coarse clock (a 1 ms tick on a 1000 Hz kernel, measured on Linux 6.8; kernels
+          with multigrain timestamps, 6.13 and later, refine a timestamp that has been read), so a
+          rewrite of the same length with the mode put back, inside the tick after the file last
+          changed, goes unseen; such a program must already be able to write the file, which the
+          app&apos;s own code can&apos;t. On Windows the file is locked for the spawn. Code holding
+          unscoped <code>--allow-read</code> and <code>--allow-write</code>{" "}
+          could put a symlink where a folder above the program&apos;s will be before the runtime
+          first writes it and race the spawn the same way, but such an app can change what the
+          user&apos;s own programs run anyway. The hash covers that one file, not what the program
+          loads or runs in turn. The program gets the sidecar&apos;s variables, and one JSON line on
+          stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>
@@ -4021,7 +4191,8 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         <code>permissions</code> is baked into the package like{" "}
         <code>desktop.extraPermissions</code>, and a program of the project bakes an unscoped{" "}
         <code>--allow-run</code>{" "}
-        (it runs from the cache folder, whose path is only known on the user&apos;s machine).
+        (it runs from the cache folder, whose path is only known on the user&apos;s machine), unless
+        the runtime can scope it as above.
       </p>
 
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>

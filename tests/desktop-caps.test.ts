@@ -1777,8 +1777,10 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
 
 /** Catalog caps with NO bridge-cap object, so there are no runtime method permissions to compare
  * against: `auth-session` (a runtime loopback ENDPOINT, not a bridge cap — its opener `--allow-run` is exercised by
- * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests). */
-const WEBVIEW_ONLY = new Set(["auth-session"]);
+ * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests), and
+ * `microphone` / `camera` (the webview's own getUserMedia, granted by the launch file; no Deno
+ * permission, covered by desktop-media-capture.test.ts). */
+const WEBVIEW_ONLY = new Set(["auth-session", "microphone", "camera"]);
 
 /** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
 const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };

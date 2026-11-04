@@ -33,4 +33,6 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "launchAtLogin",
   "updates",
   "pty",
+  "microphone",
+  "camera",
 ] as const;

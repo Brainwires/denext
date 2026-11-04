@@ -71,6 +71,7 @@ import {
   denextVersionLine,
   FIRST_MARKER_RUNTIME,
   isDenextReleaseVersion,
+  mediaCapturePinProblem,
   pinnedDenoReleaseVersion,
 } from "../src/build/deno-version.ts";
 
@@ -310,6 +311,11 @@ export function pinFromRelease(tag: string, manifest: unknown, sumsText: string)
     if (file.startsWith(CLI_PREFIX) || file.startsWith(DENORT_PREFIX)) continue;
     if (/\.(tar\.gz|zip)$/.test(file) && !pinned.has(file)) fail(`${file} is in SHA256SUMS only`);
   }
+  const laufeyApiVersion = typeof m.laufey?.apiVersion === "number" ? m.laufey.apiVersion : null;
+  // The microphone / camera gate is a version: a release past it must carry the laufey API that
+  // enforces the grant, or denext would unlock capture for every origin on it.
+  const media = mediaCapturePinProblem(version, laufeyApiVersion);
+  if (media) fail(media);
   return {
     schema: 1,
     version,
@@ -318,7 +324,7 @@ export function pinFromRelease(tag: string, manifest: unknown, sumsText: string)
     deno,
     denoSha: String(m.deno?.sha ?? ""),
     laufeySha: String(m.laufey?.sha ?? ""),
-    laufeyApiVersion: typeof m.laufey?.apiVersion === "number" ? m.laufey.apiVersion : null,
+    laufeyApiVersion,
     targets,
   };
 }

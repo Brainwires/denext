@@ -458,6 +458,31 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 - **Layer:** laufey.
 - **Upstream:** planned.
 
+### Microphone and camera
+
+- **What:** every `getUserMedia` request goes to the backend, which decides it once and refuses
+  it by default (from `3.0.0-denext.10`, laufey API 53). The launch file's `mediaCapture` key
+  (`{ "microphone": [origins], "camera": [origins] }`, exact `scheme://host[:port]` origins) grants
+  those origins the kinds it lists. A request from a sub-frame of another origin than the
+  top-level document's, from an opaque origin, or for screen capture (`getDisplayMedia`) is always
+  refused, and an allowed one still meets the OS's consent (macOS's privacy prompt, Windows'
+  privacy switch). On Linux WebKitGTK does not say which frame asks, so a sub-frame the page
+  delegates the device to (`allow="microphone"`) gets it. denext's packager writes the grant for
+  the app origin alone when `desktop.capabilities.microphone` / `camera` is on, with the macOS
+  usage strings and entitlements, and refuses to package either on an older runtime; `deno
+  desktop` writes it from deno.json's `desktop.app.mediaCapture`. In a denext app that deno.json
+  key has no effect: denext writes `laufey-launch.json` after `deno desktop` and replaces whatever
+  `mediaCapture` it held with its own grant, the app origin alone for the kinds
+  `desktop.capabilities` turns on (none when neither is on), so no other origin can be granted.
+  `denext desktop package` warns, and `denext doctor` reports it, when deno.json sets a different
+  grant.
+- **Why:** before it, each engine asked (or refused) by its own rules, for whatever origin asked,
+  so a page the window navigated to could reach the device as easily as the app's own. A grant
+  names the app's own documents and nothing else, and nothing is remembered between requests.
+- **Layer:** laufey (the decision and the launch key), Deno runtime (`desktop.app.mediaCapture`),
+  denext (writes the grant, the usage strings and the entitlements).
+- **Upstream:** planned.
+
 ### The secure store on Linux
 
 - **What:** `Deno.desktop.secureStore`: `get` / `set` / `delete` of a small secret per (service,
@@ -852,7 +877,7 @@ line, and denext's runtime is the forward line. The Deno release a runtime is bu
 the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and that is still the stock
 `deno desktop` it packages with. denext compares runtime versions by semver with one exception: on
 the `3.0.0` core a `denext.N` release ranks above every `rc.N` one, where plain semver would put it
-below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7` < `3.0.0-denext.8`.
+below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7` < `3.0.0-denext.8` < `3.0.0-denext.10`.
 From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marker rather than the version: `Deno.build.denext` and a
 `denext <version> (Brainwires)` line in `deno --version` (see the
 [toolchain notes](/docs/toolchain#identity)).
@@ -894,6 +919,7 @@ From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marke
 | `3.0.0-denext.6`  | Overlay windows, tray events and the activation policy ([above](#overlay-windows-tray-events-and-the-activation-policy)): click-through, hit regions, every workspace (over full-screen apps too), the taskbar entry, always-on-top levels, `show: false`, `overlay` (wlr-layer-shell) and `skipTaskbar` window options, transparent windows on WebView2; tray `click` events with their detail, `contextmenu`, `auxclick`, `mouseenter` / `mouseleave`, `popUpMenu()`, `Tray.capabilities()`, laufey's own StatusNotifierItem on Linux; `Deno.dock.setActivationPolicy` and the launch file's `activationPolicy`; `Deno.desktop.speech`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `3.0.0-denext.7`  | Security: CEF 156.0.14 (Chromium 156.0.8078.48), up from CEF 150, with Chrome's fixes from 151 through 156.0.8078.48 (advisory [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)); Chrome's fixes from 156.0.8078.73 on come with the next runtime. Linux Wayland: `.deno-desktop/app.json`'s `initialWindow.overlay` makes the window the app starts with a layer-shell surface, a tray panel is one where the compositor has layer-shell (and opens at the click when the tray has no icon position), a non-resizable window keeps its size rather than 800 × 600, KWin leaves a frameless window frameless, and app.json's `name` titles an untitled window. Linux: `libdenort.so` is linked `-Bsymbolic`, so `node:zlib`'s Brotli no longer binds to the system `libbrotlidec` a web view loaded (a packaged webview app that used it hung). `deno doc --json` and `--html` carry no ANSI color escapes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `3.0.0-denext.8`  | Security: V8 15.6.75.33 (Chrome Extended Stable 156), up from 15.2.124.45, with the V8 fixes from Chrome 153 through 156; CEF 156.0.15 (Chromium 156.0.8078.80), with Chrome's fixes from 156.0.8078.73 on. Full-app update and install checks: a Windows update's files that are not PE images are under the `.exe`'s signed tree manifest, bound to the app and version; the staged tree is checked and swapped without a race, and a rollback restores only the tree it checked; a revocation check that can't complete refuses a Windows update; a macOS update needs a notarized Developer ID Application signature. The CLI embeds the expected `denort` SHA-256s and refuses a target the list doesn't name. OS quits (Cmd+Q, the Dock's Quit, a logout, a Windows session end) reach the close handlers with `reason: "quit"`; `BrowserWindow`'s `backgroundThrottling` (a hidden macOS page is throttled, not frozen); `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` in baked permissions and scoped read and environment grants; `Deno.disarmResourceLimits(import.meta)`; the type check's npm copy under `DENO_DIR`; `--deny-write` holds against renames and links of a parent, and Windows compares paths as NTFS does. Known issue: a CEF app on an Intel Mac can crash in Chromium's own teardown when it quits, about once in 5,600 quits ([details](/docs/desktop#desktop-cef-macos-x64-quit)).                                                                                     |
+| `3.0.0-denext.10` | There is no `3.0.0-denext.9` release (its tag was pushed on a commit still versioned `3.0.0-denext.8`, and a tag is never reused), so this release carries that work. Security: V8 15.6.75.38, with five security merges, among them CVE-2026-121057 (type confusion in module star exports) and CVE-2026-121137 (type confusion when a debugger breaks inside optimized WebAssembly); release builds use no caches, run on pinned runner images and fail a V8 or CEF pin more than 14 days behind its branch. Microphone and camera requests decided by the backend and granted per origin by the launch file's `mediaCapture` (laufey API 53); a program sidecar's run grant records its SHA-256, and the runtime writes, guards and checks the program at every spawn; a rename needs write access to every path it moves. The macOS CEF quit crash is gone (the shutdown drain ends with `_exit` after the helpers, as on Windows); windows are sized before they are first shown (Wayland), CEF honours hidden-on-create, a custom-scheme page's localStorage commit waits longer. Node's `node --test` runner, the CommonJS compile cache (signed under `DENO_DIR`), `NODE_OPTIONS` preloads, seeded `node:crypto` and the `deno compile` argument-separator warning. Still CEF 156.0.15.                                                                                                                                                                                                      |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages

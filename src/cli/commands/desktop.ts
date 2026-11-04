@@ -32,9 +32,16 @@ import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build
 import { DESKTOP_DEV_LAN_ENV, DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import type { DesktopOs } from "../../build/desktop-capabilities.ts";
 import {
+  DESKTOP_PACKAGE_OUT_DIR_FIX,
+  desktopEntryOutDir,
+  desktopExportTargetProblem,
   desktopLaunchBuildPlan,
   desktopLaunchExecutable,
   desktopLaunchScratchDir,
+  desktopPackageOutDirProblem,
+  desktopProjectEntry,
+  desktopRunConfig,
+  markDesktopExport,
   writeDesktopDevEntry,
 } from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
@@ -46,6 +53,7 @@ import { desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
+import { desktopMediaCapture } from "../../build/desktop-media-capture.ts";
 import {
   assertStockRuntimeUsable,
   DESKTOP_RUNTIME_ATTEST_ENV,
@@ -55,7 +63,7 @@ import {
   projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
-import { needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
+import { FIRST_MEDIA_CAPTURE_RUNTIME, needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
@@ -81,16 +89,28 @@ function desktopDir(ctx: CommandContext): string {
 }
 
 /**
- * Export the SPA to out/, holding the build-dir and out/ locks for the export only — `desktop
+ * Export the SPA to out/ (for a nested `--entry`, the folder that entry serves:
+ * `desktopEntryOutDir`), holding the build-dir and output locks for the export only — `desktop
  * run` then keeps its window open for as long as the user likes, and must not block builds.
  */
-async function exportSpa(dir: string): Promise<void> {
+async function exportSpa(dir: string, entry = "desktop.ts"): Promise<void> {
+  const outDir = await desktopEntryOutDir(dir, entry);
   // The window runs on this machine: resolve this OS's platform files (`.macos`, `.desktop`).
   const platform = desktopPlatform(Deno.build.os);
   console.log(`\n  denext desktop — exporting SPA [${platform}]  ▸  ${dir}\n`);
   const result = await withProjectLocks(
-    { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
-    () => runBuildStep(() => staticExport(dir, { platform }), "desktop export"),
+    { projectDir: dir, buildDir: "exclusive", outputDirs: [outDir] },
+    async () => {
+      // A folder other than the root `out` is replaced only when it is (or becomes) an export.
+      const problem = await desktopExportTargetProblem(dir, outDir);
+      if (problem) fail(`denext desktop: ${problem}.`);
+      const result = await runBuildStep(
+        () => staticExport(dir, { platform, ...(outDir === "out" ? {} : { outDir }) }),
+        "desktop export",
+      );
+      await markDesktopExport(dir, outDir);
+      return result;
+    },
   );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
@@ -100,7 +120,7 @@ const DESKTOP_ACTIONS: Record<
   string,
   (ctx: CommandContext, dir: string, entry: string) => Promise<void>
 > = {
-  build: (_ctx, dir) => exportSpa(dir),
+  build: (_ctx, dir, entry) => exportSpa(dir, entry),
   run: (_ctx, dir, entry) => runDesktop(dir, entry),
   dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
   package: (ctx, dir) => packageDesktop(ctx, dir),
@@ -126,7 +146,7 @@ export const desktopCommand: CommandSpec = {
     if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     // At a monorepo root, the workspace's app: never a desktop shell or config in the root.
     const dir = await desktopTargetDir(ctx, action);
-    const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
+    const entry = desktopEntryFlag(dir, ctx.flags.entry as string | undefined);
     if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
       fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
     }
@@ -139,6 +159,15 @@ export const desktopCommand: CommandSpec = {
     Deno.exit(1);
   },
 };
+
+/** `--entry` (default `desktop.ts`) as a project-relative path; one outside the project fails. */
+function desktopEntryFlag(dir: string, flag: string | undefined): string {
+  try {
+    return desktopProjectEntry(dir, flag ?? "desktop.ts");
+  } catch (err) {
+    fail(`denext desktop: ${err instanceof Error ? err.message : String(err)}.`);
+  }
+}
 
 /**
  * The project a `denext desktop <action>` runs on: {@linkcode desktopDir}, or at a Deno workspace
@@ -187,7 +216,7 @@ interface DesktopWindowLaunch {
  * configured origin + identifier, embedded through deno.json `compile.include`), resolve denext's
  * pinned Deno Desktop runtime for the build (downloaded and verified on first use; nothing under
  * `DENEXT_DESKTOP_RUNTIME=stock`), and the webview backend's launch settings as `LAUFEY_*` env for
- * the launched executable (the scratch bundle has no `laufey-launch.json`; DevTools on in `dev`,
+ * the launched executable (they win over the scratch bundle's `laufey-launch.json`; DevTools on in `dev`,
  * and in `run` unless `desktop.inspectable: false`). Single instance is left out on purpose: a dev
  * window must never hand itself to an installed copy of the same app and exit.
  */
@@ -211,6 +240,15 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
     // packaging.
     ship: false,
   });
+  const media = Object.keys(desktopMediaCapture(config));
+  if (media.length > 0) {
+    console.warn(
+      `  denext desktop: desktop.capabilities.${media.join(" / ")} applies to the packaged app ` +
+        "only (its laufey-launch.json grant): this window gets no grant, no usage description and " +
+        `no device entitlement (from runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} it refuses getUserMedia ` +
+        "with NotAllowedError). Try capture in the browser (`denext dev`) or a packaged build.",
+    );
+  }
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...(dev ? await devPreloadEnv(paths) : {}),
@@ -279,18 +317,24 @@ async function buildDesktopWindow(
   dir: string,
   entry: string,
   launch: DesktopWindowLaunch,
-  opts: { dev: boolean; netHosts?: string[] },
+  opts: { dev: boolean; netHosts?: string[]; appEntry?: string },
 ): Promise<BuiltDesktopWindow> {
   const os = hostDesktopOs();
   const scratch = await desktopLaunchScratchDir(dir);
+  // deno.json's own microphone / camera grant never reaches an unpackaged window: the build reads a
+  // copy without it, so nothing in the signed bundle is edited afterwards.
+  const runConfig = await desktopRunConfig(dir);
+  if (runConfig.dropped) console.warn(`  denext desktop: ${runConfig.dropped}.`);
   try {
     const plan = await desktopLaunchBuildPlan({
+      configArgs: runConfig.args,
       projectDir: dir,
       config: launch.config,
       os,
       denoFlags: launch.denoFlags,
       runtimeEnv: launch.buildEnv,
       entry,
+      ...(opts.appEntry === undefined ? {} : { appEntry: opts.appEntry }),
       dev: opts.dev,
       netHosts: opts.netHosts,
       scratch,
@@ -317,6 +361,8 @@ async function buildDesktopWindow(
   } catch (err) {
     await removeScratch(scratch);
     throw err;
+  } finally {
+    await runConfig.cleanup();
   }
 }
 
@@ -427,6 +473,8 @@ async function spawnDevWindow(o: {
   const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, o.entry);
   const built = await buildDesktopWindow(dir, devEntry, launch, {
     dev: true,
+    // The generated entry imports the real one, whose folder a program sidecar's `exec` is from.
+    appEntry: o.entry,
     // The window's runtime reaches a LAN dev server over the network.
     netHosts: lan ? [new URL(devUrl).hostname] : [],
   });
@@ -507,7 +555,7 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
   } catch (err) {
     fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
   }
-  await exportSpa(dir);
+  await exportSpa(dir, entry);
   let built: BuiltDesktopWindow;
   try {
     built = await buildDesktopWindow(dir, entry, launch, { dev: false });
@@ -559,6 +607,11 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // so clear the guards here before spawning.
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
+  // The scripts export to and embed `out/`: a root entry serving another folder gets no UI.
+  const outProblem = await desktopPackageOutDirProblem(dir);
+  if (outProblem) {
+    console.error(`  ⚠ ${outProblem} — ${DESKTOP_PACKAGE_OUT_DIR_FIX}.`);
+  }
   const format = ctx.flags.format as string | undefined;
   const age = await checkPackageScript(dir, config, targetOs, scriptText, format);
   const formatArgs = format && age.formats ? ["--format", format] : [];
