@@ -1916,6 +1916,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopInstallersConfig` — DesktopConfig.installers: the installer formats per OS, and what they say about the app.
 - `interface DesktopLinuxConfig` — DesktopConfig.linux: Linux launch settings of the packaged app.
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
+- `interface DesktopMenuConfig` — The application menu's standard window items (DesktopConfig.menu).
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
@@ -2970,8 +2971,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMacosSigning` — What desktop.macos resolves to for one packaging run.
 - `interface DesktopMacosSigningOptions` — Options for desktopMacosSigning.
 - `type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject` — A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.
+- `interface DesktopMenuSettings` — desktop.menu, resolved.
 - `interface DesktopMsiProbe` — Seams for desktopMsiProblem.
 - `desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>` — Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).
+- `interface DesktopNewWindowContext` — What runDesktop({ newWindow }) receives: the windows open now.
+- `type DesktopNewWindowHandler = (ctx: DesktopNewWindowContext) => DesktopOpenWindowOptions | undefined` — How desktop.ts supplies the window New Window opens (runDesktop({ newWindow })): the open options (url and key at least; a key already open is a validation error), or undefined to open nothing. Without it New Window opens desktop.menu.window.newWindow with the suggested key.
 - `desktopNpmArgs(entryUrl: string): Promise<string[]>` — desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.
 - `interface DesktopOpenWindowOptions` — The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).
 - `desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>` — Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).
@@ -3022,6 +3026,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVersionProblem(format: "msi" | "deb" | "rpm", version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
 - `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
 - `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
+- `interface DesktopWindowMenuSettings` — The standard window items (desktop.menu.window), resolved.
 - `interface DesktopWindowRef` — One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).
 - `interface DesktopWindows` — The app's windows, as desktop.ts drives them (DesktopRuntime.windows).
 - `type DesktopWindowsArch = "x86_64" | "arm64"` — A Windows bundle's architecture, as the package script names it.

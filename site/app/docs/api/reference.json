@@ -16951,6 +16951,12 @@
             },
             {
               "kind": "property",
+              "name": "menu",
+              "signature": "menu?: DesktopMenuConfig",
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
+            },
+            {
+              "kind": "property",
               "name": "capabilities",
               "signature": "capabilities?: DesktopCapabilitiesConfig",
               "doc": "The capability allowlist (default deny)."
@@ -17258,6 +17264,26 @@
               "name": "userActivityTypes",
               "signature": "userActivityTypes?: string[]",
               "doc": "The user activity types the app continues (Handoff from another device, a Spotlight result):\nreverse-DNS names, written to the bundle's `NSUserActivityTypes` by the package script. A type\n`setUserActivity` (in `denext/desktop/app`) sets must be listed here for\n`onUserActivityContinued` to receive it."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuConfig",
+          "slug": "DesktopMenuConfig",
+          "kind": "interface",
+          "signature": "interface DesktopMenuConfig",
+          "doc": "The application menu's standard window items (DesktopConfig.menu).",
+          "docFull": "The application menu's standard window items ({@link DesktopConfig.menu}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean; list?: boolean }",
+              "doc": "The \"Window\" submenu's items."
             }
           ]
         },
@@ -18006,6 +18032,12 @@
               "name": "visibleOnAllWorkspaces",
               "signature": "visibleOnAllWorkspaces?: boolean",
               "doc": "Show the window on every Space / virtual desktop, over full-screen apps too. Needs a runtime\nwith `BrowserWindow.setVisibleOnAllWorkspaces` (`windowCapabilities().visibleOnAllWorkspaces`);\non macOS a `focusable: false` window already joins every Space."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "key?: string",
+              "doc": "An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`), as\n`windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the\napp support folder as it moves and when it closes, and restored at the next launch (the saved\nposition, and the size unless `width` / `height` set one), clamped onto a display connected\nnow; it is `DesktopWindowRef.key`, found with `windows.byKey`, and in `windows.lastSession()`.\nA window opened with the same key is refused."
             },
             {
               "kind": "property",
@@ -46152,6 +46184,26 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMenuSettings",
+          "slug": "DesktopMenuSettings",
+          "kind": "interface",
+          "signature": "interface DesktopMenuSettings",
+          "doc": "desktop.menu, resolved.",
+          "docFull": "`desktop.menu`, resolved.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window?: DesktopWindowMenuSettings",
+              "doc": "The standard window items."
+            }
+          ]
+        },
+        {
           "name": "DesktopMsiProbe",
           "slug": "DesktopMsiProbe",
           "kind": "interface",
@@ -46195,6 +46247,50 @@
             }
           ],
           "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopNewWindowContext",
+          "slug": "DesktopNewWindowContext",
+          "kind": "interface",
+          "signature": "interface DesktopNewWindowContext",
+          "doc": "What runDesktop({ newWindow }) receives: the windows open now.",
+          "docFull": "What `runDesktop({ newWindow })` receives: the windows open now.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "readonly windows: readonly { readonly id: string; readonly key?: string }[]",
+              "doc": "The open windows' ids and keys."
+            },
+            {
+              "kind": "property",
+              "name": "suggestedKey",
+              "signature": "readonly suggestedKey: string",
+              "doc": "The key New Window would use (`window-N`, the lowest not open)."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url?: string",
+              "doc": "The app path `desktop.menu.window.newWindow` names, if set."
+            }
+          ]
+        },
+        {
+          "name": "DesktopNewWindowHandler",
+          "slug": "DesktopNewWindowHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopNewWindowHandler = (ctx: DesktopNewWindowContext) => DesktopOpenWindowOptions | undefined",
+          "doc": "How desktop.ts supplies the window New Window opens (runDesktop({ newWindow })): the open options (url and key at least; a key already open is a validation error), or undefined to open nothing. Without it New Window opens desktop.menu.window.newWindow with the suggested key.",
+          "docFull": "How `desktop.ts` supplies the window New Window opens (`runDesktop({ newWindow })`): the open\noptions (`url` and `key` at least; a key already open is a `validation` error), or `undefined`\nto open nothing. Without it New Window opens `desktop.menu.window.newWindow` with the suggested\nkey.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -47830,6 +47926,38 @@
           ]
         },
         {
+          "name": "DesktopWindowMenuSettings",
+          "slug": "DesktopWindowMenuSettings",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuSettings",
+          "doc": "The standard window items (desktop.menu.window), resolved.",
+          "docFull": "The standard window items (`desktop.menu.window`), resolved.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "newWindow",
+              "signature": "readonly newWindow?: string | false",
+              "doc": "The app path New Window (Cmd/Ctrl+N) opens; `false` or unset: no item."
+            },
+            {
+              "kind": "property",
+              "name": "reopenClosed",
+              "signature": "readonly reopenClosed?: boolean",
+              "doc": "Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows."
+            },
+            {
+              "kind": "property",
+              "name": "list",
+              "signature": "readonly list?: boolean",
+              "doc": "List the open windows, each focusing its window when chosen."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowRef",
           "slug": "DesktopWindowRef",
           "kind": "interface",
@@ -48084,6 +48212,12 @@
               "name": "overlay",
               "signature": "readonly overlay?: boolean",
               "doc": "A Wayland layer-shell overlay surface (`desktop.window.overlay`, creation-time)."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "The main window's key (`desktop.window.key`): its frame is saved and restored."
             }
           ]
         },
@@ -49309,6 +49443,18 @@
               "name": "configTray",
               "signature": "configTray?: DesktopTraySettings",
               "doc": "`desktop.tray` from the config (from {@link resolveDesktopCapabilities}); {@link tray} is laid over it."
+            },
+            {
+              "kind": "property",
+              "name": "configMenu",
+              "signature": "configMenu?: DesktopMenuSettings",
+              "doc": "`desktop.menu` as `resolveDesktopCapabilities` resolved it: the standard window items the\nbackend adds to the application menu (New Window, Reopen Closed Window, the open windows)."
+            },
+            {
+              "kind": "property",
+              "name": "newWindow",
+              "signature": "newWindow?: DesktopNewWindowHandler",
+              "doc": "What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),\nor `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a\nfresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`."
             },
             {
               "kind": "property",
@@ -50955,7 +51101,7 @@
               "doc": "force: true exits even when a beforequit / close listener refuses."
             }
           ],
-          "returns": "quitting: false when the app refused to quit: the runtime withdraws the install request and the helper stands down, leaving the app as it was.",
+          "returns": "quitting: false when the app refused to quit: the runtime withdraws the install request and the helper stands down, leaving the app as it was. quitting: true also while the window lifecycle holds the quit for its onBeforeQuit guards and onAppQuit hooks: the install is issued again once they ran (unless a guard refuses it).",
           "examples": [],
           "denextOnly": true
         },
