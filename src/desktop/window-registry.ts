@@ -108,6 +108,10 @@ export interface RegisteredWindow {
   readonly bound: boolean;
   /** The app-chosen key it was opened with, if any. */
   readonly key?: string;
+  /** The app path it shows (as opened, or last navigated to through the windows API). */
+  readonly url: string;
+  /** Its title, as opened or configured, if any (the Window menu's label). */
+  readonly title?: string;
 }
 
 /** Options for {@linkcode createWindowRegistry}. */
@@ -146,8 +150,11 @@ export interface WindowRegistryOptions {
   ) => WindowController;
   /** Whether the app stays up with no window (`desktop.app.keepAlive`, a tray). */
   readonly keepAlive: () => boolean;
-  /** A window closed for good (the `app` capability drops its page's trays). */
-  readonly onClosed?: (id: string) => void;
+  /**
+   * A window closed for good (the `app` capability drops its page's trays), with what it was and
+   * whether the close is part of the app's quit.
+   */
+  readonly onClosed?: (id: string, entry: RegisteredWindow, appQuitting: boolean) => void;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** A new per-window token (default a random UUID). */
@@ -217,6 +224,8 @@ export interface AdoptOptions {
   readonly key?: string;
   /** The size the configuration set explicitly (kept over a saved one). */
   readonly configured?: { readonly width?: number; readonly height?: number };
+  /** Its title (`desktop.window.title`), for the Window menu's list. */
+  readonly title?: string;
 }
 
 /** A `validation` error. */
@@ -469,6 +478,8 @@ function register(
   capabilities: ReadonlySet<string> | null,
   overlay = false,
   key?: string,
+  url = "/",
+  title?: string,
 ): RegisteredWindow {
   if (st.windows.has(id)) throw new Error(`desktop: a window "${id}" is registered already`);
   const token = (st.options.newToken ?? (() => crypto.randomUUID()))();
@@ -484,6 +495,8 @@ function register(
     capabilities,
     bound,
     ...(key !== undefined ? { key } : {}),
+    url,
+    ...(title !== undefined ? { title } : {}),
   };
   st.windows.set(id, entry);
   st.tokens.set(token, id);
@@ -545,7 +558,7 @@ function closed(st: RegistryState, id: string): void {
     sessionChanged(st);
   }
   st.store.flush();
-  st.options.onClosed?.(id);
+  st.options.onClosed?.(id, entry, quitting || endsApp);
   st.options.emit("windows", "closed", { id });
   const lifecycle = lifecycleOf(st);
   lifecycle.windowClosed({ ...infoOf(entry), appQuitting: quitting || endsApp });
@@ -674,6 +687,7 @@ function navigateWindow(st: RegistryState, entry: RegisteredWindow, url: unknown
     throw unsupported("navigate", "this Deno Desktop runtime has no BrowserWindow.navigate");
   }
   entry.window.navigate(st.options.appUrl(url));
+  (entry as { url: string }).url = url;
   const frame = st.frames.get(entry.id);
   if (!frame) return;
   frame.url = url;
@@ -710,6 +724,8 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     settings.capabilities,
     settings.overlay === true,
     settings.key,
+    settings.url,
+    settings.title,
   );
   window.addEventListener("close", (event) => {
     if (interceptClose(st, id, event)) return;
@@ -891,7 +907,17 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
           throw new Error(`desktop: a window with key "${options.key}" is open already`);
         }
       }
-      const entry = register(st, window, kind, id, null, options.overlay === true, options.key);
+      const entry = register(
+        st,
+        window,
+        kind,
+        id,
+        null,
+        options.overlay === true,
+        options.key,
+        "/",
+        options.title,
+      );
       restoreAdopted(st, entry, options);
       followFrame(st, entry, "/");
       // The tray panel's close (a quit's) is followed like an opened window's; the main window's

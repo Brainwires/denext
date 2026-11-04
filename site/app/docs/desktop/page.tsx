@@ -2795,6 +2795,37 @@ export default defineDesktopExtension({
         the CEF backend throttle a hidden page without freezing it either way. The main window is
         the one the runtime starts with, which is always throttled.
       </p>
+      <h4 id="desktop-window-menu">The standard window items</h4>
+      <p>
+        <code>desktop.menu.window</code>{" "}
+        adds a "Window" submenu to the application menu, each item its own opt-in:{" "}
+        <code>newWindow: "/"</code> (New Window, Cmd/Ctrl+N, opens that path with a fresh{" "}
+        <code>window-N</code> key, the lowest not open, so a reopened window gets its frame back;
+        {" "}
+        <code>runDesktop({"{ newWindow: (ctx) => ({ url, key }) }"})</code> in{" "}
+        <code>desktop.ts</code> supplies the window instead, with{" "}
+        <code>ctx.suggestedKey</code>, the open windows and the configured path, or{" "}
+        <code>undefined</code> to open nothing), <code>reopenClosed: true</code>{" "}
+        (Reopen Closed Window, Cmd/Ctrl+Shift+T as in Chromium and Safari: the keyed windows the
+        user closed, most recent first, opened again as pages with their keys and frames — a
+        resource an extension disposed with the window does not come back — a quit&apos;s closes are
+        not remembered) and <code>list: true</code>{" "}
+        (the open windows by title, key or id, each showing and focusing its window). On macOS the
+        submenu starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s
+        Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
+        keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
+        else the submenu is appended; the backend answers these items itself, so{" "}
+        <code>onAppMenuItem</code> never sees them.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default { desktop: { menu: { window: { newWindow: "/", reopenClosed: true, list: true } } } };
+
+// desktop.ts — give New Window its own key and page
+const app = await runDesktop({
+  newWindow: ({ suggestedKey }) => ({ url: "/workspace", key: suggestedKey, title: "Workspace" }),
+});`}
+      </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}

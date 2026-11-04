@@ -38,6 +38,16 @@ and this project adheres to
   launch (it also bakes `--allow-write` for the app support folder into the packaged app).
 - **`desktop.app.maxWindows`** (an integer from 1 to 64, default 8): the most windows open at once
   besides the main window and the tray panel; the `windows` capability reports it as `max`.
+- **`desktop.menu.window`: the standard window items of the application menu**, as a "Window"
+  submenu, each item its own opt-in: `newWindow: "/"` (New Window, Cmd/Ctrl+N, opens that path
+  with a fresh `window-N` key — the lowest not open, so a reopened window gets its frame back;
+  `runDesktop({ newWindow: (ctx) => ({ url, key }) })` supplies the window instead),
+  `reopenClosed: true` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the user closed,
+  most recent first, opened again as pages with their keys and frames; a quit's closes are not
+  remembered) and `list: true` (the open windows, each showing and focusing its window). On macOS
+  the submenu carries the standard Minimize / Zoom / Bring All to Front items. A page's
+  `setAppMenu` keeps its menu: the items join its own "Window" submenu when it has one, else the
+  submenu is appended, and the backend answers them itself.
 - **`desktop.window.key`** (or `runDesktop({ window: { key } })`): a key for the main window, with
   the same rules, so its frame is saved and restored at the next launch (the saved position, and
   the saved size unless `desktop.window.width` / `height` set one, clamped onto a connected

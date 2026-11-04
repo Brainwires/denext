@@ -41,6 +41,8 @@ import {
   type WindowRegistry,
 } from "./window-registry.ts";
 import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
+import { createWindowMenu, type DesktopNewWindowHandler, type WindowMenu } from "./window-menu.ts";
+import type { DesktopMenuSettings } from "./menu-config.ts";
 import type { SessionWindow } from "./window-store.ts";
 import {
   applyDesktopWindowSettings,
@@ -183,6 +185,10 @@ export interface DesktopWindowsOptions {
   readonly dirs?: DesktopAppDirs;
   /** The app support folder (the window store's home; none: frames kept for this launch only). */
   readonly appSupportDir?: string;
+  /** `desktop.menu` as resolved (the standard window items). */
+  readonly menuSettings?: DesktopMenuSettings;
+  /** `desktop.ts`'s New Window (`runDesktop({ newWindow })`). */
+  readonly newWindow?: DesktopNewWindowHandler;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** The running OS (default `Deno.build.os`). */
@@ -240,6 +246,8 @@ export interface DesktopWindowsSetup {
   setAppUrl(appUrl: (path: string) => string): void;
   /** The window lifecycle (the extensions' hooks and quit guards; `undefined` outside the runtime). */
   readonly lifecycle?: WindowLifecycle;
+  /** The standard window items of the application menu (`desktop.menu.window`), if configured. */
+  readonly menu?: WindowMenu;
   /**
    * Reopen the keyed windows of the last session (`desktop.app.restoreWindows`), once the app URL
    * is known; how many were reopened (a window that cannot be reopened is a warning).
@@ -255,6 +263,7 @@ interface SetupState {
   readonly warn: (message: string) => void;
   registry?: WindowRegistry;
   app?: AppController;
+  menu?: WindowMenu;
   appUrl: (path: string) => string;
   hasTray: boolean;
   /** `desktop.ts`'s `onClosed` handlers, by window id. */
@@ -436,10 +445,10 @@ function onDockReopen(st: SetupState, event: Event): void {
   main?.focus?.();
 }
 
-/** Make the registry, the `window` / `windows` / `app` capabilities over the adopted window. */
-function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapability[] {
+/** The registry over the adopted window (its windows' controllers, the store, the lifecycle). */
+function createRegistry(st: SetupState): WindowRegistry {
   const o = st.options;
-  st.registry = createWindowRegistry({
+  return createWindowRegistry({
     ...(typeof o.BrowserWindow === "function"
       ? { BrowserWindow: o.BrowserWindow as WindowConstructor }
       : {}),
@@ -451,8 +460,9 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     appUrl: (path) => st.appUrl(path),
     emit: o.emit,
     keepAlive: () => keepAliveOf(st),
-    onClosed: (id) => {
+    onClosed: (id, entry, appQuitting) => {
       st.app?.windowClosed(id);
+      st.menu?.windowClosed(entry, appQuitting);
       runClosedHandlers(st, id);
     },
     ...(o.exit ? { exit: o.exit } : {}),
@@ -468,18 +478,50 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
         ...(o.dirs ? { dirs: o.dirs } : {}),
       }),
   });
-  const ws = o.windowSettings;
-  st.registry.adopt(win, "main", "main", {
+}
+
+/** Adopt the main window: its overlay flag, its key and title, and the size the config set. */
+function adoptMain(st: SetupState, registry: WindowRegistry, win: RegistryWindow): void {
+  const ws = st.options.windowSettings;
+  registry.adopt(win, "main", "main", {
     overlay: ws?.overlay === true && overlayRuntime(st),
     ...(ws?.key !== undefined ? { key: ws.key } : {}),
+    ...(ws?.title !== undefined ? { title: ws.title } : {}),
     configured: {
       ...(ws?.width !== undefined ? { width: ws.width } : {}),
       ...(ws?.height !== undefined ? { height: ws.height } : {}),
     },
   });
+}
+
+/** The window menu (`desktop.menu.window`, `runDesktop({ newWindow })`), when either is set. */
+function createMenu(
+  st: SetupState,
+  registry: WindowRegistry,
+  app: AppController,
+): WindowMenu | undefined {
+  const o = st.options;
+  const windowMenu = o.menuSettings?.window;
+  if (!windowMenu && !o.newWindow) return undefined;
+  return createWindowMenu({
+    settings: windowMenu ?? {},
+    registry,
+    setBackendMenu: (menu) => app.setBackendMenu(menu),
+    ...(o.newWindow ? { newWindow: o.newWindow } : {}),
+    os: st.os,
+    warn: st.warn,
+  });
+}
+
+/** Make the registry, the `window` / `windows` / `app` capabilities over the adopted window. */
+function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapability[] {
+  const o = st.options;
+  const registry = createRegistry(st);
+  st.registry = registry;
+  adoptMain(st, registry, win);
   // The full-app updater's install quits through the lifecycle (its guards and hooks run first).
-  registerAppLifecycle(st.registry.lifecycle);
-  st.app = createAppController({
+  registerAppLifecycle(registry.lifecycle);
+  const app = createAppController({
     window: win,
     api: o.api,
     emit: o.emit,
@@ -487,7 +529,9 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     os: st.os,
     windows: () => st.registry?.list().map((w) => w.id) ?? ["main"],
   });
-  return [st.registry.router, st.registry.capability, st.app.capability];
+  st.app = app;
+  st.menu = createMenu(st, registry, app);
+  return [registry.router, registry.capability, app.capability];
 }
 
 /**
@@ -533,6 +577,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     install: () => {
       st.app?.install();
       st.registry?.lifecycle.install();
+      st.menu?.install();
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
     },
     startTray: async (ctx) => {
@@ -564,6 +609,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.appUrl = appUrl;
     },
     ...(st.registry ? { lifecycle: st.registry.lifecycle } : {}),
+    ...(st.menu ? { menu: st.menu } : {}),
     restoreSession: () => restoreSession(st),
   };
 }

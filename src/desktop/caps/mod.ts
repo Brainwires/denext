@@ -38,6 +38,7 @@ import {
   resolveDesktopWindowSettings,
 } from "../window-config.ts";
 import { type DesktopTraySettings, resolveDesktopTraySettings } from "../tray-config.ts";
+import { resolveDesktopMenuSettings } from "../menu-config.ts";
 import { dialogsCapability } from "./dialogs.ts";
 import { passkeysCapability } from "./passkeys.ts";
 import { clipboardCapability } from "./clipboard.ts";
@@ -273,6 +274,7 @@ function desktopLaunchBase(
     explicitId,
   );
   const tray = resolveDesktopTraySettings(desktop);
+  const menu = resolveDesktopMenuSettings(desktop);
   return {
     appSupportDir: dirs.data,
     authSessionEnabled,
@@ -281,6 +283,7 @@ function desktopLaunchBase(
     window: resolveDesktopWindowSettings(desktop),
     app: resolveDesktopAppSettings(desktop),
     ...(tray ? { configTray: tray } : {}),
+    ...(menu ? { configMenu: menu } : {}),
     appDirs: dirs,
     autoConfirmAppUpdate:
       (desktop as { update?: { autoConfirm?: unknown } } | undefined)?.update?.autoConfirm !==

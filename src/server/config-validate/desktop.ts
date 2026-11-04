@@ -21,6 +21,7 @@ import {
 } from "../../desktop/permissions-mode.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
+import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
@@ -279,6 +280,8 @@ function validateDesktopTray(tray: unknown, fail: Fail): void {
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
   validateDesktopTray(d.tray, fail);
+  const menu = desktopMenuProblem(d.menu);
+  if (menu) fail(`desktop.${menu[0]}`, menu[1]);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);

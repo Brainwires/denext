@@ -672,7 +672,9 @@ support folder and restored the next time the key opens (the bounds the call lea
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
-at most 64) caps the open windows. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reopenClosed: true, list: true }` adds
+New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s window), Reopen Closed Window
+(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
 as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
 `onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all

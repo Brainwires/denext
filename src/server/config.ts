@@ -1169,6 +1169,17 @@ export interface DesktopConfig {
    * first window is shown instead.
    */
   tray?: DesktopTrayConfig;
+  /**
+   * The standard window items the backend adds to the application menu, as a "Window" submenu
+   * (merged into a page's `setAppMenu` menu: into its own "Window" submenu when it has one, else
+   * appended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,
+   * opens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the
+   * window instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the
+   * user closed, most recent first, opened again as pages with their keys and frames) and `list`
+   * (the open windows, each focusing its window). On macOS the submenu also carries the standard
+   * Minimize / Zoom / Bring All to Front items.
+   */
+  menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
@@ -1625,6 +1636,19 @@ export interface DesktopTrayMenuEntry {
   checked?: boolean;
   /** A separator line instead of an item. */
   separator?: boolean;
+}
+
+/** The application menu's standard window items ({@link DesktopConfig.menu}). */
+export interface DesktopMenuConfig {
+  /** The "Window" submenu's items. */
+  window?: {
+    /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
+    newWindow?: string | false;
+    /** Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed. */
+    reopenClosed?: boolean;
+    /** The open windows, each focusing its window when chosen. */
+    list?: boolean;
+  };
 }
 
 /** The backend-owned tray icon ({@link DesktopConfig.tray}). */

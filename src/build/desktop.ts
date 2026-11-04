@@ -61,6 +61,8 @@ import {
   noDesktopWindows,
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
+import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type { DesktopNewWindowHandler } from "../desktop/window-menu.ts";
 import type {
   DesktopTrayHandle,
   DesktopTrayIcon,
@@ -120,6 +122,9 @@ export {
 } from "../desktop/extension.ts";
 /** A keyed window of the last session (`DesktopRuntime.windows.lastSession`). */
 export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-store.ts";
+/** `desktop.menu` resolved, and `runDesktop({ newWindow })`'s handler and its context. */
+export type { DesktopMenuSettings, DesktopWindowMenuSettings } from "../desktop/menu-config.ts";
+export type { DesktopNewWindowContext, DesktopNewWindowHandler } from "../desktop/window-menu.ts";
 // Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
 export {
   createOwnedResources,
@@ -609,6 +614,17 @@ export interface RunDesktopOptions {
   app?: DesktopAppSettings;
   /** `desktop.tray` from the config (from {@link resolveDesktopCapabilities}); {@link tray} is laid over it. */
   configTray?: DesktopTraySettings;
+  /**
+   * `desktop.menu` as `resolveDesktopCapabilities` resolved it: the standard window items the
+   * backend adds to the application menu (New Window, Reopen Closed Window, the open windows).
+   */
+  configMenu?: DesktopMenuSettings;
+  /**
+   * What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),
+   * or `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a
+   * fresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`.
+   */
+  newWindow?: DesktopNewWindowHandler;
   /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
@@ -1593,6 +1609,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
+    ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
+    ...(options.newWindow ? { newWindow: options.newWindow } : {}),
   });
   windowsRef.setup = windows;
   if (windowsRef.closedEarly) windows.mainClosed();
