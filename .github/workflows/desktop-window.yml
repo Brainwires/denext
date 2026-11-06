@@ -90,14 +90,11 @@ jobs:
           - { os: macos-latest, label: macos-arm64 }
           - { os: macos-15-intel, label: macos-x64 }
           - { os: windows-latest, label: windows-x64 }
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   windows-latest → RUNNER_WINDOWS_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
-    # The macOS entries stay on GitHub's images: the download checks drive the save dialog
-    # with osascript, which needs the Automation (TCC) grant the self-hosted pool's image lacks.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    # Every entry runs on GitHub's images. The self-hosted macOS pool can't run this
+    # test: its download checks drive the save dialog with osascript, which needs the
+    # Automation (TCC) grant GitHub's image has and the pool's image doesn't.
+    # The windows-latest entry needs an interactive desktop; our Windows runners run in session 0.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
