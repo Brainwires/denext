@@ -20,6 +20,14 @@ and this project adheres to
   no longer fails intermittently with hdiutil's "Directory not empty" or "No space left on device".
   The image holds the same `.app` as before. Regenerate an existing project's scripts to pick it
   up.
+- **Deno Desktop apps that load a native Node addon such as node-pty work again in packaged builds:**
+  runtime 3.0.0-denext.13 uses the package's own addon instead of the built-in node-pty shim when
+  the package ships one (#134).
+
+### Changed
+
+- **Pinned denext's Deno toolchain and the Deno Desktop runtime to `3.0.0-denext.13`** (rollback:
+  `3.0.0-denext.12`).
 
 ## [4.13.0] - 2026-11-06
 
