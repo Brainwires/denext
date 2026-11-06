@@ -191,8 +191,19 @@ const tools = {
   mypy: await hasTool("python3", ["-m", "mypy", "--version"]),
   go: await hasTool("go", ["version"]),
   swift: await hasTool("swiftc", ["--version"]),
-  kotlin: !!Deno.env.get("DENEXT_KOTLINC"),
 };
+
+/**
+ * Why the Kotlin goldens can't compile here (`undefined`: they can). `DENEXT_KOTLINC` opts in
+ * (kotlinc is slow to start, so it is never probed on PATH), and the program it names must run:
+ * an environment that sets the variable without installing kotlinc skips with that reason.
+ */
+const KOTLINC = Deno.env.get("DENEXT_KOTLINC") || undefined;
+const noKotlin = !KOTLINC
+  ? "set DENEXT_KOTLINC"
+  : !(await hasTool(KOTLINC, ["-version"]))
+  ? `DENEXT_KOTLINC=${KOTLINC} does not run`
+  : undefined;
 
 /** A temp dir holding both goldens of `lang`. */
 async function goldens(lang: ClientLanguage): Promise<{ dir: string; files: string[] }> {
@@ -258,11 +269,14 @@ Deno.test({ name: "clients: the Swift goldens type-check", ignore: !tools.swift 
   }
 });
 
-Deno.test({ name: "clients: the Kotlin goldens compile", ignore: !tools.kotlin }, async () => {
+Deno.test({
+  name: `clients: the Kotlin goldens compile${noKotlin ? ` (skipped: ${noKotlin})` : ""}`,
+  ignore: noKotlin !== undefined,
+}, async () => {
   const { dir, files } = await goldens("kotlin");
   try {
     for (const file of files) {
-      const r = await run(Deno.env.get("DENEXT_KOTLINC")!, ["-d", join(dir, "out"), file]);
+      const r = await run(KOTLINC!, ["-d", join(dir, "out"), file]);
       assert(r?.ok, r?.text);
     }
   } finally {
