@@ -161,7 +161,12 @@ the React family and the Next compat surface at denext:
 above is an excerpt of what it generates, shown so you can audit or hand-tune it
 (the real one also maps `denext` itself, the rest of the `react-dom/*` family, and
 every `next/*` and `next-intl/*` subpath denext ships); a fresh compat project gets
-the same map from `denext create --compatibility`.
+the same map from `denext create --compatibility`. Each of your other npm
+dependencies is pinned as `npm:name@version` at the version your package manager
+installed (its `node_modules`, else `package-lock.json` / `pnpm-lock.yaml`), not
+the floor of its range. When `node_modules` already holds every pin, migrate
+writes `"nodeModulesDir": "manual"`, so Deno uses that tree instead of installing
+a second one; otherwise `"auto"`, as above.
 
 ```sh
 denext migrate

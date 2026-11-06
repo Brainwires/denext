@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext migrate` pins npm dependencies at their installed versions and keeps an existing
+  `node_modules`.** It pinned the floor of each package.json range (`"^6.42.0"` installed as
+  6.48.0 became `npm:openai@6.42.0`), and under `nodeModulesDir: "auto"` Deno then installed a
+  second tree of those older versions into `node_modules/.deno`. A pin now takes the installed
+  package's version (its `node_modules`, else `package-lock.json` / `pnpm-lock.yaml`, else the
+  range floor as before), and the App Router and React Router paths write
+  `nodeModulesDir: "manual"` when `node_modules` holds every pin at its pinned version.
 - **`denext migrate` carries a next.config wrapped by next-intl's `createNextIntlPlugin` and wires
   the request config.** The plugin loads a native file watcher, so evaluating the config failed
   (`NotCapable: Requires ffi`) and every key (`basePath`, `redirects`, `rewrites`, `headers`, …)
