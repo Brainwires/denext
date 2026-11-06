@@ -1,16 +1,16 @@
 {
   "schema": 1,
-  "version": "3.0.0-denext.12",
-  "tag": "denext-runtime-v3.0.0-denext.12",
+  "version": "3.0.0-denext.13",
+  "tag": "denext-runtime-v3.0.0-denext.13",
   "repository": "https://github.com/Brainwires/deno",
   "deno": "2.9.8",
   "minGlibc": "2.27",
   "targets": {
     "darwin-aarch64": {
-      "file": "deno-cli-3.0.0-denext.12-aarch64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-apple-darwin.zip",
-      "sha256": "c4c4abc6702f429a733d349a987a973a7df7ab497c6a11670ba9b8265f19f9eb",
-      "size": 78759603,
+      "file": "deno-cli-3.0.0-denext.13-aarch64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-aarch64-apple-darwin.zip",
+      "sha256": "1567700a1394e66adcf1f1bff07fe232c88d287a80a559bbb4ecc1c8036b8629",
+      "size": 78765739,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -28,10 +28,10 @@
       }
     },
     "darwin-x86_64": {
-      "file": "deno-cli-3.0.0-denext.12-x86_64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-apple-darwin.zip",
-      "sha256": "d933d776ab7f39004608eda5b560b8fdf343254bbf6c6846c86d1e7004bc5fe1",
-      "size": 85289932,
+      "file": "deno-cli-3.0.0-denext.13-x86_64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-x86_64-apple-darwin.zip",
+      "sha256": "009595d6114dc0a52755f34f9203f7e6a0dc3bcb3fb91f2c71f1c779c5c319c9",
+      "size": 85288275,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -49,10 +49,10 @@
       }
     },
     "linux-aarch64": {
-      "file": "deno-cli-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
-      "sha256": "c81572b88d29bf84ee3118e5d9942aa8ff062d0a2e58ae5fa270072e2a960b31",
-      "size": 109280868,
+      "file": "deno-cli-3.0.0-denext.13-aarch64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-aarch64-unknown-linux-gnu.zip",
+      "sha256": "c6074d5d42884c7b64fcf8f1f8c2f18491410cebbba0027469f307d3e423ee0b",
+      "size": 109286821,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -70,10 +70,10 @@
       }
     },
     "linux-x86_64": {
-      "file": "deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
-      "sha256": "bc274a95c56ad7d2974c67817ca5e2dd43690eab86c6389d8c786fc189d247c8",
-      "size": 112113436,
+      "file": "deno-cli-3.0.0-denext.13-x86_64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-x86_64-unknown-linux-gnu.zip",
+      "sha256": "38e12cd9c586ecc23dbea072090bb593b2bd577d305deefc129b08ecb132d251",
+      "size": 112112598,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -91,10 +91,10 @@
       }
     },
     "windows-aarch64": {
-      "file": "deno-cli-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
-      "sha256": "c41e50b4bedf6baa06f2cb8951ccd48093b6636f6c3d93012814b10e736c3d30",
-      "size": 69879897,
+      "file": "deno-cli-3.0.0-denext.13-aarch64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-aarch64-pc-windows-msvc.zip",
+      "sha256": "e437b5ba62d68eb131973a145d7d6c612fc6f7e5f1225496717ffb2bad089bc1",
+      "size": 69881626,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -112,10 +112,10 @@
       }
     },
     "windows-x86_64": {
-      "file": "deno-cli-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
-      "sha256": "07bf9ce340001da03dd30530d4ebee54ca2387774b3986cbd6d53811f72390d6",
-      "size": 74982611,
+      "file": "deno-cli-3.0.0-denext.13-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-cli-3.0.0-denext.13-x86_64-pc-windows-msvc.zip",
+      "sha256": "041ae2ae180d9b6081df2a84555be344a14420089be89bdc74cc586ed7f3a5e2",
+      "size": 74981456,
       "format": "zip",
       "esbuild": {
         "version": "0.25.5",
@@ -135,59 +135,59 @@
   },
   "denort": {
     "darwin-aarch64": {
-      "file": "deno-denort-3.0.0-denext.12-aarch64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-apple-darwin.zip",
-      "sha256": "753cd60dc19b56ad0c907c8e515a28a70eea93035cb3dea1605755065996b0bc",
-      "size": 36518391,
+      "file": "deno-denort-3.0.0-denext.13-aarch64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-aarch64-apple-darwin.zip",
+      "sha256": "efe38cd9be58ef6cb1c266e0783a4c95850c5fc9796c28c5d4cf829ccc580f97",
+      "size": 36514037,
       "format": "zip"
     },
     "darwin-x86_64": {
-      "file": "deno-denort-3.0.0-denext.12-x86_64-apple-darwin.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-apple-darwin.zip",
-      "sha256": "d2ff28088f2f1d948f636bad0171151a29de2ed6b5091900e3865a657bb388c9",
-      "size": 40197275,
+      "file": "deno-denort-3.0.0-denext.13-x86_64-apple-darwin.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-x86_64-apple-darwin.zip",
+      "sha256": "d4e39710e52fdb35399e61d89c6efe1ba7b4e597b3cf748f1fdcdecce925a7e3",
+      "size": 40198624,
       "format": "zip"
     },
     "linux-aarch64": {
-      "file": "deno-denort-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
-      "sha256": "69d97588135967e98cca7cc752544fbcd98b5cf23a5e5a4ec62a190354860ff8",
-      "size": 61588259,
+      "file": "deno-denort-3.0.0-denext.13-aarch64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-aarch64-unknown-linux-gnu.zip",
+      "sha256": "eab5419e17dcb72c67fdfc9ff15ff9b4015596befbefa9f2d3bc959dbb6ae6cc",
+      "size": 61584561,
       "format": "zip"
     },
     "linux-x86_64": {
-      "file": "deno-denort-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
-      "sha256": "185b0ca81bc86812cf42ce6304112e5aaebc0cfb3c92e32e08e76f51fb8a284c",
-      "size": 61769724,
+      "file": "deno-denort-3.0.0-denext.13-x86_64-unknown-linux-gnu.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-x86_64-unknown-linux-gnu.zip",
+      "sha256": "0fa3eaecce4ad5ef75325cd7fee7844e021deea5dbc98708f25e23da29c00ef3",
+      "size": 61770893,
       "format": "zip"
     },
     "windows-aarch64": {
-      "file": "deno-denort-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
-      "sha256": "2b4010b808ae08e0322a57d0851811566486cb797e73af4b2d5de30f3c4b3665",
-      "size": 31729285,
+      "file": "deno-denort-3.0.0-denext.13-aarch64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-aarch64-pc-windows-msvc.zip",
+      "sha256": "c615c5d60319159dd90cf5ac2b3b2ffb4e9df9e1d309b12ead31547c577f2acc",
+      "size": 31731298,
       "format": "zip"
     },
     "windows-x86_64": {
-      "file": "deno-denort-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
-      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
-      "sha256": "bbf5cd1765a54705cb64e71dc047d09b071ed1e46e36ef3cc0d93e4ba46c35c3",
-      "size": 33538365,
+      "file": "deno-denort-3.0.0-denext.13-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.13/deno-denort-3.0.0-denext.13-x86_64-pc-windows-msvc.zip",
+      "sha256": "1c0101fc6b5d11820769d04e6d9b40a5373f4eca7b967cf37d7d5eb2ae1f6b81",
+      "size": 33538525,
       "format": "zip"
     }
   },
   "rollback": {
-    "version": "3.0.0-denext.8",
-    "tag": "denext-runtime-v3.0.0-denext.8",
+    "version": "3.0.0-denext.12",
+    "tag": "denext-runtime-v3.0.0-denext.12",
     "deno": "2.9.8",
     "minGlibc": "2.27",
     "targets": {
       "darwin-aarch64": {
-        "file": "deno-cli-3.0.0-denext.8-aarch64-apple-darwin.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-aarch64-apple-darwin.zip",
-        "sha256": "55a86c5556a998fd787f9c07d9b4606a5cd2ef1484225ecbea885751d8104528",
-        "size": 78530504,
+        "file": "deno-cli-3.0.0-denext.12-aarch64-apple-darwin.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-apple-darwin.zip",
+        "sha256": "c4c4abc6702f429a733d349a987a973a7df7ab497c6a11670ba9b8265f19f9eb",
+        "size": 78759603,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -205,10 +205,10 @@
         }
       },
       "darwin-x86_64": {
-        "file": "deno-cli-3.0.0-denext.8-x86_64-apple-darwin.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-x86_64-apple-darwin.zip",
-        "sha256": "8f4ee3c202f4cc54cd25d36bc8365dd03982a7e5f52b675c5363621f5d813006",
-        "size": 85056346,
+        "file": "deno-cli-3.0.0-denext.12-x86_64-apple-darwin.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-apple-darwin.zip",
+        "sha256": "d933d776ab7f39004608eda5b560b8fdf343254bbf6c6846c86d1e7004bc5fe1",
+        "size": 85289932,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -226,10 +226,10 @@
         }
       },
       "linux-aarch64": {
-        "file": "deno-cli-3.0.0-denext.8-aarch64-unknown-linux-gnu.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-aarch64-unknown-linux-gnu.zip",
-        "sha256": "921e8eaf0842a894af9267a989d5450ff828ebd79e25f49f0a3869495607eaa5",
-        "size": 108978663,
+        "file": "deno-cli-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
+        "sha256": "c81572b88d29bf84ee3118e5d9942aa8ff062d0a2e58ae5fa270072e2a960b31",
+        "size": 109280868,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -247,10 +247,10 @@
         }
       },
       "linux-x86_64": {
-        "file": "deno-cli-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip",
-        "sha256": "24e1ba8af8bbe724c15ec70f2c608f06c5e82a618dfd95cf1159241e75c63d0e",
-        "size": 111832043,
+        "file": "deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
+        "sha256": "bc274a95c56ad7d2974c67817ca5e2dd43690eab86c6389d8c786fc189d247c8",
+        "size": 112113436,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -268,10 +268,10 @@
         }
       },
       "windows-aarch64": {
-        "file": "deno-cli-3.0.0-denext.8-aarch64-pc-windows-msvc.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-aarch64-pc-windows-msvc.zip",
-        "sha256": "38ac4c69cce06ac30e82546002d7ca830c6e00581f0b1488bfa5854fc1096f8c",
-        "size": 69693662,
+        "file": "deno-cli-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
+        "sha256": "c41e50b4bedf6baa06f2cb8951ccd48093b6636f6c3d93012814b10e736c3d30",
+        "size": 69879897,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -289,10 +289,10 @@
         }
       },
       "windows-x86_64": {
-        "file": "deno-cli-3.0.0-denext.8-x86_64-pc-windows-msvc.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-cli-3.0.0-denext.8-x86_64-pc-windows-msvc.zip",
-        "sha256": "6aceb3e320899327a4d1efa7a56c62880c6dc174752e88cbf699fa2a9c4b0346",
-        "size": 74803643,
+        "file": "deno-cli-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-cli-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
+        "sha256": "07bf9ce340001da03dd30530d4ebee54ca2387774b3986cbd6d53811f72390d6",
+        "size": 74982611,
         "format": "zip",
         "esbuild": {
           "version": "0.25.5",
@@ -312,45 +312,45 @@
     },
     "denort": {
       "darwin-aarch64": {
-        "file": "deno-denort-3.0.0-denext.8-aarch64-apple-darwin.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-aarch64-apple-darwin.zip",
-        "sha256": "0b0e9be038c27088bf874e68ce69e38b1fa4c055fc1edf7817fa20620e20802d",
-        "size": 36294885,
+        "file": "deno-denort-3.0.0-denext.12-aarch64-apple-darwin.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-apple-darwin.zip",
+        "sha256": "753cd60dc19b56ad0c907c8e515a28a70eea93035cb3dea1605755065996b0bc",
+        "size": 36518391,
         "format": "zip"
       },
       "darwin-x86_64": {
-        "file": "deno-denort-3.0.0-denext.8-x86_64-apple-darwin.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-x86_64-apple-darwin.zip",
-        "sha256": "97d829431de67dd8eb4ede14b2aaf14ab3599b591f6fb4583f747de1a7945175",
-        "size": 39988925,
+        "file": "deno-denort-3.0.0-denext.12-x86_64-apple-darwin.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-apple-darwin.zip",
+        "sha256": "d2ff28088f2f1d948f636bad0171151a29de2ed6b5091900e3865a657bb388c9",
+        "size": 40197275,
         "format": "zip"
       },
       "linux-aarch64": {
-        "file": "deno-denort-3.0.0-denext.8-aarch64-unknown-linux-gnu.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-aarch64-unknown-linux-gnu.zip",
-        "sha256": "bcf94fe6e8db3fe7a88f074ca78153eaad2caba3d420a8f044283d715069a67b",
-        "size": 61290149,
+        "file": "deno-denort-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-unknown-linux-gnu.zip",
+        "sha256": "69d97588135967e98cca7cc752544fbcd98b5cf23a5e5a4ec62a190354860ff8",
+        "size": 61588259,
         "format": "zip"
       },
       "linux-x86_64": {
-        "file": "deno-denort-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip",
-        "sha256": "1ae2ba2c2430de57fdb82eab590cde504532b710be4bb78b24298ae1f213f852",
-        "size": 61500082,
+        "file": "deno-denort-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip",
+        "sha256": "185b0ca81bc86812cf42ce6304112e5aaebc0cfb3c92e32e08e76f51fb8a284c",
+        "size": 61769724,
         "format": "zip"
       },
       "windows-aarch64": {
-        "file": "deno-denort-3.0.0-denext.8-aarch64-pc-windows-msvc.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-aarch64-pc-windows-msvc.zip",
-        "sha256": "d3e9b0a6922297924440bdafb310e1860ea5942e590e846c9f7d5a6ac06aec5c",
-        "size": 31548738,
+        "file": "deno-denort-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-aarch64-pc-windows-msvc.zip",
+        "sha256": "2b4010b808ae08e0322a57d0851811566486cb797e73af4b2d5de30f3c4b3665",
+        "size": 31729285,
         "format": "zip"
       },
       "windows-x86_64": {
-        "file": "deno-denort-3.0.0-denext.8-x86_64-pc-windows-msvc.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.8/deno-denort-3.0.0-denext.8-x86_64-pc-windows-msvc.zip",
-        "sha256": "f060c596b83f3539aa31131ab4e9e5b41e682c9e30add9e69082fb41e08dc290",
-        "size": 33356355,
+        "file": "deno-denort-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.12/deno-denort-3.0.0-denext.12-x86_64-pc-windows-msvc.zip",
+        "sha256": "bbf5cd1765a54705cb64e71dc047d09b071ed1e46e36ef3cc0d93e4ba46c35c3",
+        "size": 33538365,
         "format": "zip"
       }
     }
