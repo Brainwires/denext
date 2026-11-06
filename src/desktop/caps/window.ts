@@ -581,9 +581,58 @@ function reissueQuit(s: WindowState): boolean {
     return true;
   }
   q.approved.add(s);
+  const quit = s.api.quit;
+  const api = s.api;
+  return reissueAppQuit(api, () => quit.call(api) === true);
+}
+
+/**
+ * Listen for the app's quits on `api` from now on, so {@linkcode isAppQuitting} can tell a quit's
+ * `close` from a plain one from the first quit (the window registry calls it once it has the API).
+ *
+ * @param api The runtime's app API (`Deno.desktop`); nothing without one.
+ */
+export function watchAppQuit(api: DesktopAppApi | undefined): void {
+  quitStateOf(api);
+}
+
+/**
+ * Whether a `close` dispatched right now is part of the app's quit (`Deno.desktop.quit()`, Cmd+Q,
+ * the OS's session end): `true` while a quit's `beforequit` is dispatching its closes, in the same
+ * task; `false` for a plain close, or with no runtime API.
+ *
+ * @param api The runtime's app API.
+ * @returns Whether the app is quitting.
+ */
+export function isAppQuitting(api: DesktopAppApi | undefined): boolean {
+  return quitStateOf(api).quitting;
+}
+
+/**
+ * Whether a `beforequit` dispatching right now was issued again by {@linkcode reissueAppQuit} (a
+ * page let a held quit go, or the runtime-side hooks finished), rather than by a new quit.
+ *
+ * @param api The runtime's app API.
+ * @returns Whether the quit is being issued again.
+ */
+export function isReissuingQuit(api: DesktopAppApi | undefined): boolean {
+  return quitStateOf(api).reissuing;
+}
+
+/**
+ * Issue the app's quit again on behalf of the runtime side (the window lifecycle's hooks ran, or
+ * a page let it go): the pages' consents to the quit in progress are kept, so a window that
+ * already agreed is not asked again.
+ *
+ * @param api The runtime's app API.
+ * @param issue Issues the quit (`Deno.desktop.quit()`, or an install-and-relaunch); its answer.
+ * @returns `issue`'s answer: `true` when the app is quitting.
+ */
+export function reissueAppQuit(api: DesktopAppApi | undefined, issue: () => boolean): boolean {
+  const q = quitStateOf(api);
   q.reissuing = true;
   try {
-    return s.api.quit() === true;
+    return issue() === true;
   } finally {
     q.reissuing = false;
   }

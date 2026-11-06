@@ -40,6 +40,8 @@ import {
   shellPathEnv,
 } from "../src/desktop/caps/shell.ts";
 import { keepAwakeCapability } from "../src/desktop/caps/keep-awake.ts";
+import { ptyCapability } from "../src/desktop/caps/pty.ts";
+import { resolvePtyConfig } from "../src/desktop/pty-config.ts";
 import {
   runSecureCli as realSecureRun,
   type SecureRunner,
@@ -1775,8 +1777,10 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
 
 /** Catalog caps with NO bridge-cap object, so there are no runtime method permissions to compare
  * against: `auth-session` (a runtime loopback ENDPOINT, not a bridge cap — its opener `--allow-run` is exercised by
- * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests). */
-const WEBVIEW_ONLY = new Set(["auth-session"]);
+ * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests), and
+ * `microphone` / `camera` (the webview's own getUserMedia, granted by the launch file; no Deno
+ * permission, covered by desktop-media-capture.test.ts). */
+const WEBVIEW_ONLY = new Set(["auth-session", "microphone", "camera"]);
 
 /** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
 const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
@@ -1784,6 +1788,8 @@ const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
 /** Build each catalog cap's runtime twin for `os` (injected no-op backends; nothing spawns). */
 const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   device: () => deviceCapability,
+  // The catalog shows the default shells; a configured list replaces them (tests/desktop-pty.test.ts).
+  pty: (os) => ptyCapability({ config: resolvePtyConfig(true, os), os }),
   passkeys: (os) => passkeysCapability({ os }),
   clipboard: () => clipboardCapability({ api: {} }),
   notifications: () => notificationsCapability({ api: {}, autoTopUp: false }),

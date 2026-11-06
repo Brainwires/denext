@@ -5,7 +5,7 @@
 // `desktop add sidecar` config edit and the config validation.
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
-import { join, normalize, toFileUrl } from "@std/path";
+import { fromFileUrl, join, normalize, relative, toFileUrl } from "@std/path";
 import {
   bundleDesktopSidecar,
   bundleDesktopSidecars,
@@ -16,15 +16,18 @@ import {
   desktopBuildFlags,
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
+  sidecarIntegrityWarnings,
   sidecarPermissionSet,
+  sidecarProgramFile,
+  sidecarRecordedProgram,
   sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
 import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import type { SidecarDefinition } from "../src/desktop/sidecar.ts";
-import { workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { type SidecarDefinition, sidecarModuleUrl } from "../src/desktop/sidecar.ts";
+import { resolveSidecarProgram, workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
 import { prepareSidecarModules } from "../src/desktop/sidecar-modules.ts";
 
 /** The bundle's archived packages, unpacked into a cache folder in the test's project. */
@@ -646,6 +649,392 @@ Deno.test("bundleDesktopSidecars: the host's OS by default, a sidecar with nothi
       logs.join("\n"),
       /sidecar plain: bundled into \.deno-desktop\/sidecars\/plain \([\d.]+ MB\)/,
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: the run grant carries the file's hash, with no write grant and no warning", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    // The SHA-256 of "packaged".
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("packaged"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const value =
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=bin/server`;
+    assertEquals(sidecarRecordedProgram("server", "./bin/server", root), value);
+    // Nothing a permission list or the value's own markers could misread; no file, no value.
+    assertEquals(sidecarRecordedProgram("a,b", "./bin/server", root), undefined);
+    assertEquals(sidecarRecordedProgram("a#b", "./bin/server", root), undefined);
+    assertEquals(sidecarRecordedProgram("server", "./bin/a#b", root), undefined);
+    assertEquals(sidecarRecordedProgram("server", "./bin/missing", root), undefined);
+
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    const on = { cacheScope: true, sidecarIntegrity: true, projectDir: root };
+    const flags = desktopBuildFlags(config, "linux", on);
+    assertEquals(flags.filter((f) => f.startsWith("--allow-run")), [`--allow-run=${value}`]);
+    assertEquals(flags.filter((f) => f.startsWith("--allow-write")), []);
+    assertEquals(sidecarRunWriteWarnings(config, "linux", on), []);
+    // The plain copy's token scope is off by default (a run path is denied to writes), but the
+    // recorded grant needs no write: it is baked with `cacheScope` left out.
+    const byDefault = { sidecarIntegrity: true, projectDir: root };
+    assertEquals(
+      desktopBuildFlags(config, "linux", byDefault).filter((f) => f.startsWith("--allow-run")),
+      [`--allow-run=${value}`],
+    );
+    assertEquals(sidecarRunWriteWarnings(config, "linux", byDefault), []);
+
+    // An unscoped run has no value to record in: the copy and its write grant stay, so it still starts.
+    const wide = desktopBuildFlags(
+      {
+        desktop: { ...config.desktop, extraPermissions: { run: ["*"] } },
+      },
+      "linux",
+      on,
+    );
+    assertEquals(wide.includes("--allow-run"), true);
+    assertEquals(
+      wide.includes("--allow-write=$DENO_DESKTOP_CACHE/sidecars/server"),
+      true,
+      wide.join(" "),
+    );
+
+    // A runtime before the check: the copy in the cache folder, its write grant and the warning.
+    const off = { cacheScope: true, sidecarIntegrity: false, projectDir: root };
+    assertEquals(
+      desktopBuildFlags(config, "linux", off).filter((f) => f.includes("sidecars/server")),
+      [
+        "--allow-write=$DENO_DESKTOP_CACHE/sidecars/server",
+        "--allow-run=$DENO_DESKTOP_CACHE/sidecars/server/server",
+      ],
+    );
+    assertEquals(sidecarRunWriteWarnings(config, "linux", off).length, 1);
+    // ... and so is a program that cannot be hashed, or no project directory to read it in.
+    assertEquals(
+      sidecarRunWriteWarnings(
+        {
+          desktop: {
+            app: { identifier: "com.example.app" },
+            sidecars: [{ name: "server", run: { exec: "./bin/missing" } }],
+          },
+        },
+        "linux",
+        on,
+      ).length,
+      1,
+    );
+    assertEquals(
+      sidecarRunWriteWarnings(config, "linux", { cacheScope: true, sidecarIntegrity: true }).length,
+      1,
+    );
+    // Without the cache token nothing is recorded, whatever the runtime.
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        cacheScope: false,
+        sidecarIntegrity: true,
+        projectDir: root,
+      })
+        .includes("--allow-run"),
+      true,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: its embedded path is relative to the entry deno desktop compiles", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-entry-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("packaged"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const grant = (source: string) =>
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=${source}`;
+    // The runtime reads `#embedded=` relative to the compiled entry's folder (`desktop.ts` at the
+    // project root for a packaging script): `desktop dev` compiles `.denext/desktop-dev-entry.ts`.
+    assertEquals(sidecarRecordedProgram("server", "./bin/server", root), grant("bin/server"));
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/server", root, "desktop.ts"),
+      grant("bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram(
+        "server",
+        "./bin/server",
+        root,
+        ".denext/desktop-dev-entry.ts",
+        "desktop.ts",
+      ),
+      grant("../bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram(
+        "server",
+        "bin\\server",
+        root,
+        ".denext\\desktop-dev-entry.ts",
+        "desktop.ts",
+      ),
+      grant("../bin/server"),
+    );
+    // A compiled entry in `app/` that imports the root `desktop.ts` (which calls `runDesktop`).
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/./server", root, "app/desktop.ts", "desktop.ts"),
+      grant("../bin/server"),
+    );
+    // A path that leaves the project is not one the build embeds: nothing is recorded.
+    assertEquals(sidecarRecordedProgram("server", "../bin/server", join(root, "bin")), undefined);
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        sidecarIntegrity: true,
+        projectDir: root,
+        entry: ".denext/desktop-dev-entry.ts",
+        appEntry: "desktop.ts",
+      }).filter((f) => f.startsWith("--allow-run")),
+      [`--allow-run=${grant("../bin/server")}`],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a nested entry: the --include, the recorded hash and the app's own resolution name one file", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-nested-entry-" });
+  try {
+    // `denext desktop run --entry app/desktop.ts`: the app resolves `./bin/server` against
+    // `app/desktop.ts`'s `import.meta.url`, so the program is `app/bin/server`, never `bin/server`.
+    await Deno.mkdir(join(root, "app", "bin"), { recursive: true });
+    await Deno.writeTextFile(join(root, "app", "bin", "server"), "nested");
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "a different file at the root");
+    const entryUrl = toFileUrl(join(root, "app", "desktop.ts")).href;
+    const resolved = await resolveSidecarProgram(
+      "./bin/server",
+      "server",
+      entryUrl,
+      undefined,
+      false,
+    );
+    assertEquals(resolved, join(root, "app", "bin", "server"));
+    assertEquals(join(root, sidecarProgramFile("./bin/server", "app/desktop.ts")), resolved);
+    assertEquals(sidecarProgramFile("../bin/server", "app/desktop.ts"), "bin/server");
+    assertEquals(sidecarProgramFile("bin\\server", "app\\desktop.ts"), "app/bin/server");
+    assertEquals(sidecarProgramFile("./bin/server"), "bin/server");
+
+    // The plain copy: the file embedded is the one the app reads.
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    assertEquals(await desktopSidecarIncludeArgs(root, config, "linux", "app/desktop.ts"), [
+      "--include",
+      "app/bin/server",
+    ]);
+    assertEquals(await desktopSidecarIncludeArgs(root, config, "linux"), [
+      "--include",
+      "./bin/server",
+    ]);
+
+    // The recorded program: hashed from that file, embedded at it relative to the compiled entry.
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("nested"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const grant = (source: string) =>
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=${source}`;
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/server", root, "app/desktop.ts"),
+      grant("bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram(
+        "server",
+        "./bin/server",
+        root,
+        ".denext/desktop-dev-entry.ts",
+        "app/desktop.ts",
+      ),
+      grant("../app/bin/server"),
+    );
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        sidecarIntegrity: true,
+        projectDir: root,
+        entry: ".denext/desktop-dev-entry.ts",
+        appEntry: "app/desktop.ts",
+      }).filter((f) => f.startsWith("--allow-run")),
+      [`--allow-run=${grant("../app/bin/server")}`],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a nested entry: a module sidecar's module and a Node backend's bundle are embedded where the app loads them", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-nested-modules-" });
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await writeTree(root, {
+      ...BACKEND,
+      "app/server/deno.ts": "export {};\n",
+      "server/deno.ts": "a different file at the root",
+    });
+    const deno: SidecarDefinition = { name: "deno", run: { module: "./server/deno.ts" } };
+    const config = { desktop: { sidecars: [SIDECAR, deno] } };
+    const args = await desktopSidecarIncludeArgs(root, config, "linux", "app/desktop.ts");
+    assertEquals(args, [
+      "--include",
+      "app/.deno-desktop/sidecars/api",
+      "--include",
+      "app/server/deno.ts",
+    ]);
+    // Each is the file the app loads: `sidecarModuleUrl` against `app/desktop.ts`'s URL.
+    const entryUrl = toFileUrl(join(root, "app", "desktop.ts")).href;
+    for (const def of [SIDECAR, deno]) {
+      const file = fromFileUrl(sidecarModuleUrl(def, entryUrl));
+      assert(await Deno.stat(file).then((s) => s.isFile, () => false), file);
+      const included = args.filter((_, i) => i % 2 === 1);
+      assert(
+        included.some((p) => !relative(join(root, p), file).startsWith("..")),
+        `${def.name}: ${file} is embedded (${included.join(" ")})`,
+      );
+    }
+    assertEquals(
+      await Deno.readTextFile(join(root, "app", ".deno-desktop", "sidecars", ".gitignore")),
+      "*\n",
+    );
+  } finally {
+    console.log = log;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: one that cannot be recorded keeps the unscoped grants, never a run path on its copy", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-fallback-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "a#b"), "packaged");
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        // `#` cannot be in a recorded value, but a plain copy could be named after it.
+        sidecars: [{ name: "server", run: { exec: "./bin/a#b" } }],
+      },
+    };
+    // Deno denies writes to every --allow-run path: a run grant on the copy would leave the app
+    // unable to write it, and the sidecar would never start. So the runtime's default without the
+    // check: an unscoped run, and a write the copy can be made under.
+    const flags = desktopBuildFlags(config, "linux", { sidecarIntegrity: true, projectDir: root });
+    assert(flags.includes("--allow-run"), flags.join(" "));
+    assertEquals(flags.filter((f) => f.includes("sidecars/server")), [], flags.join(" "));
+    assert(flags.some((f) => f.startsWith("--allow-write")), flags.join(" "));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: a `%` or `?` in its path is not recorded (the app would ask for another file)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-url-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "a%20b"), "packaged");
+    await Deno.writeTextFile(join(root, "bin", "a?b"), "packaged").catch(() => {});
+    // `new URL("./bin/a%20b", base)` decodes to `bin/a b`: the kept path the app asks for would not
+    // be the recorded one, and with no write grant its copy could not be made either.
+    assertEquals(sidecarRecordedProgram("server", "./bin/a%20b", root), undefined);
+    // `?` starts a query in that URL.
+    assertEquals(sidecarRecordedProgram("server", "./bin/a?b", root), undefined);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("sidecarIntegrityWarnings: a program the runtime could check but that runs unchecked is said, never baked silently", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-warn-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    await Deno.writeTextFile(join(root, "bin", "a#b"), "packaged");
+    const app = { identifier: "com.example.app" };
+    const on = { sidecarIntegrity: true, projectDir: root };
+    const recorded = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "./bin/server" } }] },
+    };
+    // Recorded: nothing to say. A runtime without the check: the run-write warning's business.
+    assertEquals(sidecarIntegrityWarnings(recorded, "linux", on), []);
+    assertEquals(
+      sidecarIntegrityWarnings(recorded, "linux", { ...on, sidecarIntegrity: false }),
+      [],
+    );
+    // A bare name or an absolute path is not the app's to record.
+    assertEquals(
+      sidecarIntegrityWarnings(
+        {
+          desktop: { app, sidecars: [{ name: "git", run: { exec: "git" } }] },
+        },
+        "linux",
+        on,
+      ),
+      [],
+    );
+
+    // Not recordable: the build falls back to an unscoped --allow-run, and says so.
+    const hash = {
+      desktop: {
+        app,
+        sidecars: [
+          { name: "server", run: { exec: "./bin/server" } },
+          { name: "odd", run: { exec: "./bin/a#b" } },
+        ],
+      },
+    };
+    const flags = desktopBuildFlags(hash, "linux", on);
+    assert(flags.includes("--allow-run"), flags.join(" "));
+    const lines = sidecarIntegrityWarnings(hash, "linux", on);
+    assertEquals(lines.length, 2, lines.join("\n"));
+    assertMatch(lines[0], /sidecar "odd".*not recorded \(its path holds/);
+    assertMatch(lines[0], /unscoped --allow-run/);
+    assertMatch(lines[1], /every program sidecar unrecorded: "server", "odd"/);
+
+    // Outside the project, or missing.
+    const outside = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "../bin/server" } }] },
+    };
+    assertMatch(sidecarIntegrityWarnings(outside, "linux", on)[0], /outside the project/);
+    const missing = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "./bin/missing" } }] },
+    };
+    assertMatch(sidecarIntegrityWarnings(missing, "linux", on)[0], /bin\/missing cannot be read/);
+
+    // No identifier: nothing can be recorded.
+    const anonymous = { desktop: { sidecars: recorded.desktop.sidecars } };
+    assertMatch(
+      sidecarIntegrityWarnings(anonymous, "linux", on)[0],
+      /needs desktop\.app\.identifier/,
+    );
+
+    // An unscoped run grant from elsewhere leaves the program unrecorded too.
+    const wide = { desktop: { ...recorded.desktop, extraPermissions: { run: ["*"] } } };
+    assertEquals(
+      desktopBuildFlags(wide, "linux", on).filter((f) => f.includes("#sha256=")),
+      [],
+    );
+    assertMatch(sidecarIntegrityWarnings(wide, "linux", on)[0], /an unscoped --allow-run/);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

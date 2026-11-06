@@ -1073,3 +1073,50 @@ Deno.test("desktop doctor: the CEF cookie store (os / basic / unknown), with a f
   assert(!webview.findings.some((f) => f.check === "cookie-encryption"));
   assert(!webview.checks.includes("cookie-encryption"));
 });
+
+Deno.test("desktop doctor: the microphone on the webview backend warns that Linux has no WebRTC", async () => {
+  const problem = "desktop.capabilities.microphone is on and the Linux engine is the webview " +
+    "backend (WebKitGTK): no WebRTC";
+  const base = {
+    runtimeStatus: () => Promise.resolve(status()),
+    env: env({ XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE" }),
+    run: fakeRun(FULL),
+    pin: pin(45),
+  };
+  const linux = await runDesktopDoctor({
+    ...base,
+    os: "linux",
+    linuxWebRtc: () => Promise.resolve(problem),
+  });
+  assert(linux.checks.includes("webrtc"), linux.checks.join());
+  assertEquals(linux.findings.map((f) => [f.check, f.level, f.message]), [
+    ["webrtc", "warning", problem],
+  ]);
+  assertStringIncludes(
+    linux.findings[0].fix,
+    'desktop: { backend: { linux: "cef" } } in denext.config.ts',
+  );
+  assertStringIncludes(formatDesktopDoctor(linux), problem);
+
+  // Nothing to say (CEF, or no capture): the check ran and passed.
+  const cef = await runDesktopDoctor({
+    ...base,
+    os: "linux",
+    linuxWebRtc: () => Promise.resolve(null),
+  });
+  assert(cef.checks.includes("webrtc"));
+  assertEquals(cef.findings, []);
+
+  // Without the Linux checks (a macOS host, no --linux) it does not run.
+  let asked = false;
+  const mac = await runDesktopDoctor({
+    ...base,
+    os: "darwin",
+    linuxWebRtc: () => {
+      asked = true;
+      return Promise.resolve(problem);
+    },
+  });
+  assert(!asked);
+  assert(!mac.checks.includes("webrtc"));
+});

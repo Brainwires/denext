@@ -36,14 +36,29 @@ import {
 } from "../../build/desktop-app-config.ts";
 import {
   desktopPasskeyRpIds,
+  desktopRuntimeLabel,
   isDesktopProject,
   launchPolicyProblems,
+  mediaCaptureRuntime,
   readProjectDenoJson as readDenoJson,
   staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
+import {
+  DENO_JSON_MEDIA_CAPTURE_FIX,
+  denoJsonMediaCaptureProblem,
+  LINUX_WEBRTC_FIX,
+  linuxWebRtcProblem,
+  mediaCaptureLaunchGrant,
+  mediaCaptureRuntimeProblem,
+} from "../../build/desktop-media-capture.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
+import {
+  DESKTOP_PACKAGE_OUT_DIR_FIX,
+  desktopPackageOutDirProblem,
+} from "../../build/desktop-launch.ts";
+import { DEFAULT_DESKTOP_APP_ORIGIN } from "../../desktop/app-origin.ts";
 import {
   describeClash,
   frameworkRuntimeDeps,
@@ -53,7 +68,7 @@ import {
   ownVersionMismatches,
   readDenoConfig,
 } from "../../build/local-checkout-imports.ts";
-import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { desktopRuntimeStatus, projectDesktopBackend } from "../../build/desktop-runtime.ts";
 import {
   DENO_TOOLCHAIN,
   denoToolchainStatus,
@@ -864,16 +879,27 @@ export async function desktopOriginCheck(dir: string, config: unknown): Promise<
  * The packaged launch-policy check, for a desktop project (null otherwise): whether the
  * `laufey-launch.json` the package scripts write would pin the window's bridge (`bridgeOrigins`)
  * and, with passkeys enabled, their relying parties (`passkeyRpIds`), which the strict launch
- * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; and whether the scripts write it at
- * all. Advisory.
+ * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; whether the scripts write it at
+ * all; and whether the runtime reads the microphone / camera grant (`mediaCapture`), without
+ * which `denext desktop package` refuses the project. Advisory.
+ *
+ * The runtime is resolved as the package scripts resolve it (`mediaCaptureRuntime()`: the pin,
+ * `DENEXT_DESKTOP_RUNTIME`, `DENEXT_DESKTOP_RUNTIME_DIR`), but from this process's environment,
+ * which the message says: a package run with other values may differ.
  *
  * @param dir The project directory.
  * @param config The loaded project config.
+ * @param options The environment and the pinned runtime's version (default: this process's and
+ *   the pin's); tests pass both.
  * @returns The check, or `null` for a project without a desktop target.
  */
 export async function desktopLaunchPolicyCheck(
   dir: string,
   config: unknown,
+  options: {
+    readonly env?: (key: string) => string | undefined;
+    readonly runtimeVersion?: string;
+  } = {},
 ): Promise<Check | null> {
   if (!await isDesktopProject(dir)) return null;
   const problems = launchPolicyProblems(
@@ -882,6 +908,30 @@ export async function desktopLaunchPolicyCheck(
     await stalePackageScripts(dir),
     await staleBackendPackageScripts(dir),
   );
+  const media = mediaCaptureRuntimeProblem(
+    config,
+    mediaCaptureRuntime(options.env, options.runtimeVersion),
+    desktopRuntimeLabel(options.env, options.runtimeVersion),
+  );
+  if (media) {
+    problems.push({
+      message: `${media}, so \`denext desktop package\` refuses it (resolved from this shell's ` +
+        "DENEXT_DESKTOP_RUNTIME / DENEXT_DESKTOP_RUNTIME_DIR; a package run with other values " +
+        "may differ)",
+      fix:
+        "upgrade denext once it pins that runtime (`denext upgrade`), or turn the capability off",
+    });
+  }
+  const replaced = denoJsonMediaCaptureProblem(
+    await readDenoJson(dir),
+    mediaCaptureLaunchGrant(
+      config,
+      desktopAppIdentity(config)?.origin ?? DEFAULT_DESKTOP_APP_ORIGIN,
+    ),
+  );
+  if (replaced) problems.push({ message: replaced, fix: DENO_JSON_MEDIA_CAPTURE_FIX });
+  const outDir = await desktopPackageOutDirProblem(dir);
+  if (outDir) problems.push({ message: outDir, fix: DESKTOP_PACKAGE_OUT_DIR_FIX });
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
     : "bridgeOrigins + passkeyRpIds";
@@ -895,12 +945,40 @@ export async function desktopLaunchPolicyCheck(
   };
 }
 
-/** The desktop checks that apply to the project: the app origin, the runtime, the launch policy. */
+/**
+ * The Linux WebRTC check, for a desktop project with the microphone or camera on the webview
+ * backend (null otherwise): no distribution's WebKitGTK is built with WebRTC, so the Linux build
+ * has no `RTCPeerConnection` (`getUserMedia` works). Advisory, whatever the host: any host can
+ * package for Linux.
+ *
+ * @param dir The project directory.
+ * @param config The loaded project config (its `desktop.backend` for Linux, else deno.json's,
+ *   picks the engine).
+ * @returns The check, or `null` when it does not apply.
+ */
+export async function desktopLinuxWebRtcCheck(dir: string, config: unknown): Promise<Check | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const backend = await projectDesktopBackend(dir, { target: "linux", config }).catch(() => null);
+  const problem = linuxWebRtcProblem(config, backend);
+  if (problem === null) return null;
+  return {
+    name: "desktop Linux WebRTC",
+    ok: false,
+    detail: `${problem} — ${LINUX_WEBRTC_FIX}`,
+    critical: false,
+  };
+}
+
+/**
+ * The desktop checks that apply to the project: the app origin, the runtime, the launch policy,
+ * Linux WebRTC.
+ */
 async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
   const checks = [
     await desktopOriginCheck(dir, config),
     await desktopRuntimeCheck(dir, { config }),
     await desktopLaunchPolicyCheck(dir, config),
+    await desktopLinuxWebRtcCheck(dir, config),
   ];
   return checks.filter((c): c is Check => c !== null);
 }

@@ -1273,6 +1273,16 @@ export interface OpenWindowOptions {
    * untrusted content in an app window because of a subset.
    */
   readonly capabilities?: readonly string[];
+  /**
+   * An app-chosen key, unique among the open windows (a duplicate rejects `validation`): 1 to 64
+   * letters, digits, `.`, `_`, `:` or `-`. The window's frame is saved as it moves and when it
+   * closes, and restored the next time the key opens (the bounds this call leaves out), clamped
+   * onto a display connected now; `desktop.app.restoreWindows` reopens the keyed windows open at
+   * the last quit.
+   */
+  readonly key?: string;
+  /** With a `key`: whether the saved frame fills in the bounds left out (default `true`). */
+  readonly restoreBounds?: boolean;
 }
 
 /** One of the app's windows ({@linkcode getWindows}). */
@@ -1283,6 +1293,8 @@ export interface DesktopWindowInfo {
   readonly kind: "main" | "panel" | "window";
   /** Whether it is showing. */
   readonly visible: boolean;
+  /** The key it was opened with (`openWindow({ key })`), if any. */
+  readonly key?: string;
 }
 
 /** One of the app's windows, by id ({@linkcode openWindow}, {@linkcode windowHandle}). */
@@ -1385,7 +1397,12 @@ export async function getWindows(): Promise<DesktopWindowInfo[]> {
     const o = (w ?? {}) as Record<string, unknown>;
     if (typeof o.id !== "string") return [];
     const kind = o.kind === "main" || o.kind === "panel" ? o.kind : "window";
-    return [{ id: o.id, kind, visible: o.visible !== false }];
+    return [{
+      id: o.id,
+      kind,
+      visible: o.visible !== false,
+      ...(typeof o.key === "string" ? { key: o.key } : {}),
+    }];
   });
 }
 

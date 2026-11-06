@@ -348,6 +348,79 @@ Deno.test("desktop build exports the SPA to out/", async () => {
   }
 });
 
+Deno.test("desktop build --entry shell/desktop.ts exports the SPA to the folder that entry serves", async () => {
+  const dir = await tempDir("denext_desktop_build_nested_");
+  try {
+    await Deno.mkdir(join(dir, "shell"));
+    await Deno.writeTextFile(join(dir, "shell", "desktop.ts"), "export {};\n");
+    const r = await runVerb(["build"], dir, { entry: "shell/desktop.ts" });
+    assertEquals(r.code, 0, r.err);
+    // `runDesktop` resolves `out` against the entry's `import.meta.url`: `shell/out`.
+    assertStringIncludes(r.out, `Exported 0 page(s) to ${join(dir, "shell", "out")}`);
+    assert(await exists(join(dir, "shell", "out")));
+    assert(!await exists(join(dir, "out")));
+    assertStringIncludes(await Deno.readTextFile(join(dir, "shell", "out", ".gitignore")), "*\n");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop build: a root entry's outDir is where the SPA is exported, git-ignored; a user's folder is refused", async () => {
+  const dir = await tempDir("denext_desktop_build_root_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'runDesktop({ importMetaUrl: import.meta.url, outDir: "ui" });\n',
+    );
+    const r = await runVerb(["build"], dir);
+    assertEquals(r.code, 0, r.err);
+    assertStringIncludes(r.out, `Exported 0 page(s) to ${join(dir, "ui")}`);
+    assert(!await exists(join(dir, "out")));
+    assertStringIncludes(await Deno.readTextFile(join(dir, "ui", ".gitignore")), "*\n");
+    // Again over its own export: fine.
+    assertEquals((await runVerb(["build"], dir)).code, 0);
+    // A folder of the user's is never replaced.
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'runDesktop({ importMetaUrl: import.meta.url, outDir: "docs" });\n',
+    );
+    await Deno.mkdir(join(dir, "docs"));
+    await Deno.writeTextFile(join(dir, "docs", "notes.md"), "mine");
+    const refused = await runVerb(["build"], dir);
+    assertEquals(refused.code, 1);
+    assertStringIncludes(refused.err, "docs/ exists and is not a denext export");
+    assertEquals(await Deno.readTextFile(join(dir, "docs", "notes.md")), "mine");
+    assert(!await exists(join(dir, "docs", ".gitignore")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop package: a root entry whose outDir the scripts cannot follow is warned about", async () => {
+  const dir = await tempDir("denext_desktop_package_outdir_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'runDesktop({ importMetaUrl: import.meta.url, outDir: "ui" });\n',
+    );
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(join(dir, "scripts", "package-linux.ts"), "Deno.exit(0);\n");
+    const r = await runVerb(["package"], dir, { "target-os": "linux" });
+    assertEquals(r.code, 0, r.err);
+    assertStringIncludes(r.err, 'desktop.ts passes runDesktop outDir "ui" (ui/)');
+    assertStringIncludes(r.err, "remove outDir from desktop.ts");
+    // No outDir: no warning.
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      "runDesktop({ importMetaUrl: import.meta.url });\n",
+    );
+    const quiet = await runVerb(["package"], dir, { "target-os": "linux" });
+    assert(!quiet.err.includes("outDir"), quiet.err);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop run: a failing export stops before any window is opened", async () => {
   const dir = await tempDir("denext_desktop_run_export_");
   try {

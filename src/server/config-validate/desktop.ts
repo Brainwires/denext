@@ -12,6 +12,7 @@ import {
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
 import { desktopBackendProblem } from "../../desktop/engine-backend.ts";
+import { maxWindowsProblem } from "../../desktop/window-config.ts";
 import { permissionListError } from "../../desktop/permission-entries.ts";
 import {
   desktopPermissionsMode,
@@ -20,7 +21,9 @@ import {
 } from "../../desktop/permissions-mode.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
+import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
+import { ptyConfigProblem } from "../../desktop/pty-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
 /** The kinds `desktop.extraPermissions` takes. */
@@ -184,10 +187,14 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  for (const key of ["singleInstance", "keepAlive", "dock"]) {
+  for (const key of ["singleInstance", "keepAlive", "dock", "restoreWindows"]) {
     if (a[key] !== undefined && typeof a[key] !== "boolean") {
       fail(`desktop.app.${key}`, "must be a boolean");
     }
+  }
+  if (a.maxWindows !== undefined) {
+    const problem = maxWindowsProblem(a.maxWindows);
+    if (problem) fail("desktop.app.maxWindows", problem);
   }
   if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
     fail("desktop.app.name", "must be a non-empty string");
@@ -274,6 +281,8 @@ function validateDesktopTray(tray: unknown, fail: Fail): void {
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
   validateDesktopTray(d.tray, fail);
+  const menu = desktopMenuProblem(d.menu);
+  if (menu) fail(`desktop.${menu[0]}`, menu[1]);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);
@@ -471,7 +480,11 @@ export function validateDesktop(
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   validateDesktopPermissions(desktop as Record<string, unknown>, fail);
-  const caps = (desktop as { capabilities?: unknown }).capabilities;
+  validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);
+}
+
+/** `desktop.capabilities`: an object of capability names to `true` or options. */
+function validateDesktopCapabilities(caps: unknown, fail: Fail): void {
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
     fail("desktop.capabilities", "must be an object of capability names to `true` or options");
@@ -482,7 +495,13 @@ export function validateDesktop(
       c.extensions.every((p) => typeof p === "string" && p !== "");
     if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
   }
+  validateCapabilityOptions(c, fail);
+}
+
+/** The capabilities that take an options object: `fs`, `shell`, `passkeys`, `pty`, `microphone`, `camera`. */
+function validateCapabilityOptions(c: Record<string, unknown>, fail: Fail): void {
   validatePasskeys(c.passkeys, fail);
+  for (const key of ["microphone", "camera"]) validateMediaCapture(key, c[key], fail);
   for (const key of ["fs", "shell", "passkeys"]) {
     const v = c[key];
     const ok = v === undefined || typeof v === "boolean" ||
@@ -490,6 +509,54 @@ export function validateDesktop(
     if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
   }
   validateOpenPathAllow(c.shell, fail);
+  const pty = ptyConfigProblem(c.pty);
+  if (pty) fail(pty[0], pty[1]);
+}
+
+/**
+ * Whether `text` holds a character an XML 1.0 document (the macOS `Info.plist` a usage description
+ * goes into) cannot: a C0 control but tab, newline and carriage return, U+FFFE / U+FFFF, or a lone
+ * surrogate.
+ */
+function hasXmlIllegal(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) return true;
+    if (c === 0xfffe || c === 0xffff) return true;
+  }
+  return !text.isWellFormed();
+}
+
+/** `desktop.capabilities.microphone` / `camera`: a boolean, or `{ usageDescription?: string }`. */
+function validateMediaCapture(key: string, value: unknown, fail: Fail): void {
+  if (value === undefined || typeof value === "boolean") return;
+  if (!isPlainObject(value)) {
+    fail(`desktop.capabilities.${key}`, "must be a boolean or { usageDescription?: string }");
+  }
+  // Any other key would still turn the device on (`{ enabled: false }`), or be silently ignored
+  // (`{ origins }`: the grant is the app origin alone).
+  for (const other of Object.keys(value as Record<string, unknown>)) {
+    if (other !== "usageDescription") {
+      fail(
+        `desktop.capabilities.${key}.${other}`,
+        "is not an option (only usageDescription; the grant is always the app's own origin, and " +
+          "`false` turns the device off)",
+      );
+    }
+  }
+  const text = (value as Record<string, unknown>).usageDescription;
+  if (text !== undefined && (typeof text !== "string" || text.trim() === "")) {
+    fail(
+      `desktop.capabilities.${key}.usageDescription`,
+      "must be a non-empty string (what macOS shows when it asks the user)",
+    );
+  }
+  if (typeof text === "string" && hasXmlIllegal(text)) {
+    fail(
+      `desktop.capabilities.${key}.usageDescription`,
+      "must not contain control characters other than tab and newline (Info.plist is XML)",
+    );
+  }
 }
 
 /** `desktop.capabilities.shell.openPathAllowExtensions`: bare extensions (no dot, no path). */

@@ -9,7 +9,8 @@ import {
   formatDesktopDoctor,
   runDesktopDoctor,
 } from "../../build/desktop-doctor.ts";
-import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { desktopRuntimeStatus, projectDesktopBackend } from "../../build/desktop-runtime.ts";
+import { linuxWebRtcProblem } from "../../build/desktop-media-capture.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopBridgeOrigins } from "../../build/desktop-app-config.ts";
 import {
@@ -47,6 +48,31 @@ export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProb
 }
 
 /**
+ * The project's `desktop` config as data, for the doctor's `pty` check: `null` off a desktop
+ * project or when the config can't be read as data (the launch-policy check reports that).
+ */
+async function projectDesktopConfig(dir: string): Promise<unknown | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const config = await readStaticConfig(dir);
+  const desktop = config.keys.desktop;
+  return config.readable && desktop?.kind === "editable" ? desktop.value : null;
+}
+
+/**
+ * Why the project's Linux build has no WebRTC (`linuxWebRtcProblem`), from its config as data and
+ * the project's Linux engine (`desktop.backend` for Linux: the config's, else deno.json's). `null` when it does not apply, or when the config or the backend
+ * can't be read (the launch-policy check reports an unreadable config).
+ */
+export async function projectLinuxWebRtc(dir: string): Promise<string | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const config = await readStaticConfig(dir);
+  const desktop = config.keys.desktop;
+  if (!config.readable || !desktop || desktop.kind !== "editable") return null;
+  const backend = await projectDesktopBackend(dir, { target: "linux" }).catch(() => null);
+  return linuxWebRtcProblem({ desktop: desktop.value }, backend);
+}
+
+/**
  * `denext desktop doctor`.
  *
  * @param ctx The command context (`--linux`, `--json`).
@@ -71,6 +97,8 @@ export async function desktopDoctor(
     runtimeStatus: () => desktopRuntimeStatus({ projectDir: dir, deno: denoExecutable() }),
     deno: denoExecutable(),
     launchPolicy: () => projectLaunchPolicy(dir),
+    desktopConfig: () => projectDesktopConfig(dir),
+    linuxWebRtc: () => projectLinuxWebRtc(dir),
     ...seams,
     os,
     ...(linux ? { linux } : {}),

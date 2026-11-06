@@ -1,0 +1,33 @@
+{
+  "workspace": [],
+  "allowScripts": { "deny": ["npm:@parcel/watcher"] },
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "export": "deno run -A ../../cli.ts export .",
+    "desktop": "deno run -A ../../cli.ts desktop run .",
+    "desktop:dev": "deno run -A ../../cli.ts desktop dev .",
+    "desktop:package": "deno run -A ../../cli.ts desktop package --regenerate-scripts . && deno run -A ../../cli.ts desktop package ."
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/client": "../../src/desktop/client.ts",
+    "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/desktop/app": "../../src/desktop/app.ts"
+  },
+  "fmt": { "lineWidth": 100, "indentWidth": 2, "semiColons": true, "singleQuote": false },
+  "lint": { "plugins": ["../../src/lint/denext-plugin.ts"] },
+  "desktop": {
+    "app": { "name": "Multiwindow", "identifier": "dev.denext.multiwindow" }
+  },
+  "compile": { "include": [".deno-desktop/app.json"] }
+}

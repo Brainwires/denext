@@ -987,6 +987,14 @@ export interface DesktopCapabilitiesConfig {
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
   /**
+   * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;
+   * `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
+   * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
+   * window that started it. `true` takes the defaults.
+   */
+  pty?: boolean | DesktopPtyConfig;
+  /**
    * The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` /
    * `clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps
    * the WebView's `navigator.clipboard` (text).
@@ -1004,10 +1012,60 @@ export interface DesktopCapabilitiesConfig {
    * file without it refuses every ceremony. `false` (or leaving it out) disables it.
    */
   passkeys?: false | DesktopPasskeysConfig;
+  /**
+   * The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never
+   * another origin the window navigates to, nor a sub-frame of another origin, except on Linux,
+   * where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with
+   * `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+   * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
+   * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
+   * 3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older
+   * one. macOS still asks the user once. The options take `usageDescription` only.
+   */
+  microphone?: boolean | DesktopMediaCaptureConfig;
+  /**
+   * The page's `getUserMedia({ video })` gets the camera, as {@link microphone} the microphone
+   * (`NSCameraUsageDescription`, `com.apple.security.device.camera`).
+   */
+  camera?: boolean | DesktopMediaCaptureConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** `desktop.capabilities.pty` options. */
+export interface DesktopPtyConfig {
+  /**
+   * What closing the window that started a terminal (or reloading its page) does to it: `"kill"`
+   * (the default) ends it; `"detach"` keeps it running with no window, and a window finds it with
+   * `listPtys()` and takes it over with `attachPty(id)`, getting the output it missed. Detaching
+   * only helps while the app keeps running with no window (`desktop.app.keepAlive`, or a tray):
+   * `denext desktop doctor` warns otherwise.
+   */
+  onWindowClose?: "kill" | "detach";
+  /**
+   * The most bytes of output kept per terminal for `attachPty` (and its `exit`): 0 keeps none,
+   * else 4096 to 64 MiB. Default 512 KiB.
+   */
+  replayBytes?: number;
+  /**
+   * The programs a page may start, as absolute paths (`/bin/zsh`,
+   * `C:\Windows\System32\cmd.exe`); an entry for another OS is ignored on this one. The
+   * packaged app bakes `--allow-run` for exactly these paths. Default: the OS's login shells and
+   * `/bin/sh` on macOS and Linux, Windows PowerShell and `cmd.exe` on Windows. With no `shell`, a
+   * terminal starts the user's `$SHELL` when it is on the list, else the first entry.
+   */
+  shells?: string[];
+}
+
+/** `desktop.capabilities.microphone` / `camera` options. */
+export interface DesktopMediaCaptureConfig {
+  /**
+   * What macOS shows when it asks the user for the device (`NSMicrophoneUsageDescription` /
+   * `NSCameraUsageDescription`). Default: "<app name> uses your microphone." / "… camera.".
+   */
+  usageDescription?: string;
 }
 
 /** `desktop.capabilities.passkeys` options. */
@@ -1144,6 +1202,20 @@ export interface DesktopConfig {
      * starts. Windows and Linux have no policy.
      */
     activationPolicy?: "regular" | "accessory";
+    /**
+     * Reopen at launch the keyed windows (`windows.open({ key })` in `desktop.ts`,
+     * `openWindow({ key })` in a page) that were open when the app last quit, each at its saved
+     * frame (`DesktopWindows.lastSession` lists them either way). The frames live in one
+     * `windows.json` in the app support folder, so the packaged app is given `--allow-write` for
+     * that folder. Bounds and the display are restored, clamped onto a display connected now;
+     * macOS Spaces are not. Default `false`.
+     */
+    restoreWindows?: boolean;
+    /**
+     * The most windows open at once besides the main window and the tray panel (`openWindow`,
+     * `windows.open`; one more is a `validation` error). An integer from 1 to 64; default 8.
+     */
+    maxWindows?: number;
   };
   /**
    * A tray icon (macOS menu bar extra, Windows notification area, Linux StatusNotifierItem /
@@ -1155,6 +1227,17 @@ export interface DesktopConfig {
    * first window is shown instead.
    */
   tray?: DesktopTrayConfig;
+  /**
+   * The standard window items the backend adds to the application menu, as a "Window" submenu
+   * (merged into a page's `setAppMenu` menu: into its own "Window" submenu when it has one, else
+   * appended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,
+   * opens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the
+   * window instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the
+   * user closed, most recent first, opened again as pages with their keys and frames) and `list`
+   * (the open windows, each focusing its window). On macOS the submenu also carries the standard
+   * Minimize / Zoom / Bring All to Front items.
+   */
+  menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
@@ -1613,6 +1696,19 @@ export interface DesktopTrayMenuEntry {
   separator?: boolean;
 }
 
+/** The application menu's standard window items ({@link DesktopConfig.menu}). */
+export interface DesktopMenuConfig {
+  /** The "Window" submenu's items. */
+  window?: {
+    /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
+    newWindow?: string | false;
+    /** Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed. */
+    reopenClosed?: boolean;
+    /** The open windows, each focusing its window when chosen. */
+    list?: boolean;
+  };
+}
+
 /** The backend-owned tray icon ({@link DesktopConfig.tray}). */
 export interface DesktopTrayConfig {
   /**
@@ -1726,6 +1822,15 @@ export interface DesktopWindowConfig {
    * on macOS a `focusable: false` window already joins every Space.
    */
   visibleOnAllWorkspaces?: boolean;
+  /**
+   * An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`), as
+   * `windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the
+   * app support folder as it moves and when it closes, and restored at the next launch (the saved
+   * position, and the size unless `width` / `height` set one), clamped onto a display connected
+   * now; it is `DesktopWindowRef.key`, found with `windows.byKey`, and in `windows.lastSession()`.
+   * A window opened with the same key is refused.
+   */
+  key?: string;
   /**
    * Make the window a desktop overlay surface on Linux Wayland: where the compositor has
    * wlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)

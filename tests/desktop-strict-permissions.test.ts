@@ -203,7 +203,7 @@ Deno.test("strict: why the runtime can't expand the folder tokens, with the fix"
   const env = (vars: Record<string, string>) => (k: string) => vars[k];
   const denextDeno = { deno: "2.9.8", denext: "3.0.0-denext.8" };
   assertEquals(desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.8", denextDeno), null);
-  assertEquals(desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.9", denextDeno), null);
+  assertEquals(desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.10", denextDeno), null);
   assertStringIncludes(
     desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.8", { deno: "2.9.8" }) ?? "",
     "compiled by stock Deno 2.9.8",

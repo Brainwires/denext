@@ -1,0 +1,34 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "name": "Multiwindow",
+      "identifier": "dev.denext.multiwindow",
+      "keepAlive": true,
+      "restoreWindows": true,
+      "maxWindows": 8
+    },
+    "window": {
+      "key": "workspace",
+      "title": "Workspace",
+      "width": 640,
+      "height": 420
+    },
+    "menu": {
+      "window": {
+        "newWindow": "/",
+        "reopenClosed": true,
+        "list": true
+      }
+    },
+    "capabilities": {
+      "extensions": [
+        "./desktop/counters.ts"
+      ]
+    }
+  }
+}

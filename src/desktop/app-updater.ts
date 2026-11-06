@@ -35,6 +35,7 @@
 //     write (`/Applications` owned by root, Program Files) is `install_not_writable`.
 
 import { killSidecarsNow } from "./sidecar-registry.ts";
+import { appLifecycle } from "./window-lifecycle.ts";
 
 /** Why a full-app update step refused (the runtime's codes, plus `unsupported`). */
 export type AppUpdateErrorCode =
@@ -346,7 +347,9 @@ export async function downloadAppUpdate(
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
- *   request and the helper stands down, leaving the app as it was.
+ *   request and the helper stands down, leaving the app as it was. `quitting: true` also while the
+ *   window lifecycle holds the quit for its `onBeforeQuit` guards and `onAppQuit` hooks: the
+ *   install is issued again once they ran (unless a guard refuses it).
  * @throws {@linkcode AppUpdateError} `not_staged` when nothing was staged in this run.
  */
 export function installAppUpdateAndRelaunch(
@@ -354,8 +357,13 @@ export function installAppUpdateAndRelaunch(
 ): { quitting: boolean } {
   const updater = requireUpdater();
   killSidecarsNow();
+  const issue = () =>
+    updater.applyAndRelaunch(options.force === true ? { force: true } : {}).quitting === true;
   try {
-    return updater.applyAndRelaunch(options.force === true ? { force: true } : {});
+    // Through the window lifecycle when the app has one: a quit its guards or hooks hold is
+    // issued again as this install, not as a plain quit.
+    const lifecycle = appLifecycle();
+    return { quitting: lifecycle ? lifecycle.quit(issue) : issue() };
   } catch (err) {
     rethrow(err);
   }

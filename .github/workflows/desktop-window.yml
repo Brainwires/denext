@@ -90,7 +90,12 @@ jobs:
           - { os: macos-latest, label: macos-arm64 }
           - { os: macos-15-intel, label: macos-x64 }
           - { os: windows-latest, label: windows-x64 }
-    runs-on: ${{ matrix.os }}
+    # The macos-latest entry runs on the self-hosted arm64 runner the repository
+    # variable RUNNER_MACOS_ARM names (a label, or a JSON array) when it is set;
+    # always the image on a pull_request (a self-hosted runner never takes a pull
+    # request's code). The other entries keep their image.
+    # macos-15-intel stays on GitHub: the x64 pool's runner account has no window session.
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     timeout-minutes: 45
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"

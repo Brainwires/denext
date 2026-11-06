@@ -61,6 +61,8 @@ import {
   noDesktopWindows,
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
+import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type { DesktopNewWindowHandler } from "../desktop/window-menu.ts";
 import type {
   DesktopTrayHandle,
   DesktopTrayIcon,
@@ -115,7 +117,27 @@ export {
   type DesktopMainThreadFn,
   type DesktopPermissions,
   type DesktopPickedPathOptions,
+  type DesktopWindowClosedInfo,
+  type DesktopWindowInfo,
 } from "../desktop/extension.ts";
+/** A keyed window of the last session (`DesktopRuntime.windows.lastSession`). */
+export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-store.ts";
+/** `desktop.menu` resolved, and `runDesktop({ newWindow })`'s handler and its context. */
+export type { DesktopMenuSettings, DesktopWindowMenuSettings } from "../desktop/menu-config.ts";
+export type { DesktopNewWindowContext, DesktopNewWindowHandler } from "../desktop/window-menu.ts";
+// Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
+export {
+  createOwnedResources,
+  type OwnedResourceAddOptions,
+  type OwnedResourceAttachment,
+  type OwnedResourceReplayEntry,
+  OwnedResources,
+  type OwnedResourcesClosedWindow,
+  type OwnedResourcesHost,
+  type OwnedResourcesOptions,
+  type OwnedResourcesReplayOptions,
+  type OwnedResourcesWindow,
+} from "../desktop/owned-resources.ts";
 
 // Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
 // `runDesktop({ sidecars })`).
@@ -593,6 +615,17 @@ export interface RunDesktopOptions {
   /** `desktop.tray` from the config (from {@link resolveDesktopCapabilities}); {@link tray} is laid over it. */
   configTray?: DesktopTraySettings;
   /**
+   * `desktop.menu` as `resolveDesktopCapabilities` resolved it: the standard window items the
+   * backend adds to the application menu (New Window, Reopen Closed Window, the open windows).
+   */
+  configMenu?: DesktopMenuSettings;
+  /**
+   * What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),
+   * or `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a
+   * fresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`.
+   */
+  newWindow?: DesktopNewWindowHandler;
+  /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
    * {@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the
@@ -674,6 +707,14 @@ export interface DesktopRuntime {
    * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
    */
   sidecar(name: string): SidecarHandle;
+  /**
+   * Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session
+   * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled
+   * when it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`
+   * hosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not
+   * cancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called.
+   */
+  onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
   /**
    * Set when this launch is a child a module sidecar started (`denextSidecar.spawnSelf` /
    * `childCommand`): the sidecar's name. `runDesktop` then ran that sidecar's module headless
@@ -1486,11 +1527,16 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // capabilities, keepAlive and the Dock): set up once the window is adopted; the close listener
   // consults it so a page-guarded close keeps the app running, and a close quits only after the
   // app's last window unless it is kept alive.
-  const windowsRef: { setup?: DesktopWindowsSetup } = {};
+  // A close before the windows are set up (the sidecars are started first) is kept until then,
+  // so it still goes through the close rules and the lifecycle hooks.
+  const windowsRef: { setup?: DesktopWindowsSetup; closedEarly?: boolean } = {};
   const exit = Deno.exit;
   const appWindow = installWindowCloseHandler(
     undefined,
-    () => windowsRef.setup ? windowsRef.setup.mainClosed() : exit(0),
+    () => {
+      if (windowsRef.setup) windowsRef.setup.mainClosed();
+      else windowsRef.closedEarly = true;
+    },
     (event) => windowsRef.setup?.interceptMainClose(event) ?? false,
   );
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
@@ -1562,17 +1608,25 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     exit,
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
+    ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
+    ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
+    ...(options.newWindow ? { newWindow: options.newWindow } : {}),
   });
   windowsRef.setup = windows;
+  if (windowsRef.closedEarly) windows.mainClosed();
   const registry = windows.registry;
+  const capabilities = [
+    ...(options.capabilities ?? []),
+    ...appEvents.capabilities,
+    ...windows.capabilities,
+    ...(appWindow !== undefined ? [createSpeechCapability(desktopAppApi)] : []),
+    ...(sidecarHost ? [sidecarHost.capability] : []),
+  ];
+  // The capabilities' static window-lifecycle hooks (`onWindowOpened` is replayed for the main
+  // window, open already); their `setup` hosts subscribe through the bridge below.
+  windows.lifecycle?.addCapabilities(capabilities);
   const bridge = createDesktopBridge(
-    [
-      ...(options.capabilities ?? []),
-      ...appEvents.capabilities,
-      ...windows.capabilities,
-      ...(appWindow !== undefined ? [createSpeechCapability(desktopAppApi)] : []),
-      ...(sidecarHost ? [sidecarHost.capability] : []),
-    ],
+    capabilities,
     {
       appSupportDir: options.appSupportDir,
       getWindow: (id) => registry?.get(id)?.window ?? appWindow,
@@ -1583,6 +1637,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
           windowCount: () => registry.count(),
         }
         : {}),
+      ...(windows.lifecycle ? { lifecycle: windows.lifecycle } : {}),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
@@ -1636,6 +1691,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       ),
   });
   startSidecars(sidecarHost);
+  // The keyed windows of the last session (`desktop.app.restoreWindows`), now that the app URL
+  // is known and the tray panel, if any, is registered.
+  windows.restoreSession();
   return {
     window: appWindow,
     windows: windows.windows,
@@ -1649,6 +1707,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
+    onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn) ?? (() => {}),
   };
 }
 
@@ -1682,6 +1741,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
     sidecar: (name) => {
       throw new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`);
     },
+    onBeforeQuit: () => () => {},
     sidecarChild: launch.name,
   };
 }

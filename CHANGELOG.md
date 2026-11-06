@@ -8,6 +8,276 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-11-06
+
+### Added
+
+- **Window lifecycle hooks for desktop extensions.** A capability (`defineDesktopExtension`) can
+  define `onWindowOpened(info)`, `onWindowClosed(info)` and `onAppQuit()`, and the host its
+  `setup(host)` receives has the same as subscriptions (`host.onWindowOpened(fn)` …, each returning
+  its unsubscribe) plus `host.windows()`. `info` is `{ id, kind, key? }` (`DesktopWindowInfo` from
+  `denext/desktop`); `onWindowOpened` is also called for the windows open when the hook is added,
+  so the main window is never missed; `onWindowClosed` fires once a window closed for good, never
+  on a reload or a navigation, with `appQuitting` true when the close is part of the app's quit
+  (Cmd+Q, `quitApp()`, the OS's session end, or the last app window closing without
+  `desktop.app.keepAlive`); `onAppQuit` runs after the closes and the process waits for it, 3
+  seconds at most for every hook together. A hook's error is logged and never keeps a window open.
+  Without any such hook a close and a quit behave exactly as before.
+- **A runtime-side quit guard.** `host.onBeforeQuit(fn)` in an extension's `setup`, and
+  `onBeforeQuit(fn)` on what `runDesktop()` resolves with, are asked before any page's
+  `onBeforeQuit` / `onCloseRequested`; `false` cancels the quit (a refused OS session end asks the
+  OS to stop it, as a page's refusal does). The guards get 5 seconds together, the deadline a
+  page's guards get; a throw or a guard past it does not cancel.
+- **Window keys and remembered frames.** `windows.open({ url, key })` in `desktop.ts` (and
+  `openWindow({ key })` in a page) names a window with an app-chosen key, unique among the open
+  windows (1 to 64 letters, digits, `.`, `_`, `:` or `-`; a duplicate is a `validation` error),
+  found again with `windows.byKey(key)` and reported as `DesktopWindowRef.key`. Its bounds are
+  saved to one `windows.json` in the app support folder as it moves and when it closes, and
+  restored the next time the key opens for the bounds the call leaves out (`restoreBounds: false`
+  keeps the call's), clamped onto a display connected now; macOS Spaces are not restored. A corrupt
+  or missing store is the defaults. `windows.lastSession()` lists the keyed windows open at the
+  last quit (key, path, bounds), and the new `desktop.app.restoreWindows: true` reopens them at
+  launch (it also bakes `--allow-write` for the app support folder into the packaged app).
+- **`desktop.app.maxWindows`** (an integer from 1 to 64, default 8): the most windows open at once
+  besides the main window and the tray panel; the `windows` capability reports it as `max`.
+- **`desktop.menu.window`: the standard window items of the application menu**, as a "Window"
+  submenu, each item its own opt-in: `newWindow: "/"` (New Window, Cmd/Ctrl+N, opens that path
+  with a fresh `window-N` key — the lowest not open, so a reopened window gets its frame back;
+  `runDesktop({ newWindow: (ctx) => ({ url, key }) })` supplies the window instead),
+  `reopenClosed: true` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the user closed,
+  most recent first, opened again as pages with their keys and frames; a quit's closes are not
+  remembered) and `list: true` (the open windows, each showing and focusing its window). On macOS
+  the submenu carries the standard Minimize / Zoom / Bring All to Front items. A page's
+  `setAppMenu` keeps its menu: the items join its own "Window" submenu when it has one, else the
+  submenu is appended, and the backend answers them itself.
+- **`examples/multiwindow`**: a small desktop app with two keyed windows, New Window and Reopen
+  Closed Window from `desktop.menu.window`, the session restored at launch, and one ticking counter
+  per window kept in the app's process with `createOwnedResources` (`onOwnerClosed: "detach"`): a
+  closed window's counter keeps going and the window reopened by its key takes it back with the
+  ticks it missed. Its counter logic is plain code, tested without a window.
+- **`desktop.window.key`** (or `runDesktop({ window: { key } })`): a key for the main window, with
+  the same rules, so its frame is saved and restored at the next launch (the saved position, and
+  the saved size unless `desktop.window.width` / `height` set one, clamped onto a connected
+  display), and the key names it in `windows.byKey`, the lifecycle hooks' `DesktopWindowInfo` and
+  `windows.lastSession()`; a window opened with the same key is refused.
+- **`createOwnedResources()` in `denext/desktop`: per-window backend resources for extensions.** An
+  extension that keeps a PTY, a watcher or a subprocess alive for one window registers it with
+  an owner (`ctx.windowId`) and connects the registry from `setup(host)`. `emit(id, event, data)`
+  reaches the owner window only, as `{ id, data }`. When the owner closes, `onOwnerClosed:
+  "dispose"` (the default) disposes its resources, and `"detach"` keeps them alive with no owner:
+  `ownedBy(key)` finds them for a window reopened with the same key and `attach(id, windowId)`
+  hands one over with what it emitted meanwhile, as `{ event, data }` entries (`replay: { maxBytes,
+  events? }`, a per-resource ring buffer of event data that drops the oldest chunks and keeps the
+  tail of an oversized string or byte chunk; `events` limits which events are kept).
+  The app's quit disposes everything whatever the policy, each dispose bounded by
+  `disposeTimeoutMs`. It needs the host's window lifecycle hooks (`onWindowClosed`, `onAppQuit`,
+  `windows()`).
+- **The `pty` desktop capability: terminals for the page (`denext desktop add pty`).** Over the
+  runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later; before it every
+  call rejects `unsupported` with the reason, and `denext desktop doctor` names the runtime it
+  needs). `denext/desktop/client` gains `spawnPty({ cols, rows, cwd?, shell?, args?, env? })`,
+  `writePty(id, data, { binary? })`, `resizePty`, `killPty(id, signal?)`, `ptyInfo`,
+  `attachPty(id)` (the missed output and exit), `listPtys()`, `onPtyData` (`{ id, seq, data }`,
+  coalesced per ~8 ms or 64 KiB, a repeated `seq` dropped) and `onPtyExit` (`{ id, exitCode,
+  signal }`). Each terminal belongs to the window that started it, through `createOwnedResources`:
+  its events go to that window only, and another window's calls with its id answer `not_found`.
+  `desktop.capabilities.pty` takes `{ onWindowClose: "kill" | "detach", replayBytes, shells }`:
+  closing the window (or reloading its page) kills its terminals by default, or detaches them for
+  `attachPty` (the doctor warns when the app does not outlive its windows). A page starts only a
+  program on `shells` (absolute paths; default the OS's login shells and `/bin/sh`, or PowerShell
+  and `cmd.exe`), which the package scripts bake as the app's `--allow-run` (never an unscoped
+  run) and the doctor lists; `cwd` must be an existing directory, and the page's `env` loses any
+  `LD_*` / `DYLD_*` variable.
+- **Deno Desktop apps can use the microphone and camera.** `denext desktop add microphone` (and
+  `camera`) lets the page's own `getUserMedia` reach the device, for the app's own origin only:
+  never another origin the window navigates to, and never a sub-frame of another origin (except on
+  Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to
+  with `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+  (`"mediaCapture"`), which the webview backend enforces natively; on macOS the bundle's
+  `Info.plist` gets `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` (from
+  `desktop.capabilities.microphone = { usageDescription }`, else "<app> uses your microphone.") and
+  a signed build the Hardened Runtime entitlements `com.apple.security.device.audio-input` /
+  `com.apple.security.device.camera`. It needs Deno Desktop runtime 3.0.0-denext.10 or later: `denext
+  desktop package` refuses an older runtime, which cannot restrict capture to the app's origin, and
+  `denext doctor` says so. An unpackaged window (`denext desktop run` / `dev`) gets no grant and
+  says so at launch. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **The doctors and Linux packaging say when a capturing app has no WebRTC on Linux.** No
+  distribution builds WebKitGTK with WebRTC, so on the webview backend `RTCPeerConnection` is
+  undefined in the Linux app (`getUserMedia` itself works). With the microphone or camera on and the
+  Linux engine not `"cef"`, `denext desktop doctor --linux` and `denext doctor` warn, and `denext
+  desktop package` warns once for a Linux target (it still packages: an app that only records is
+  fine). An app that uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in
+  `denext.config.ts`, so macOS and Windows keep the system WebView. Docs:
+  https://denext.dev/docs/desktop#desktop-media-capture
+- **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
+  3.0.0-denext.10, in an app with `desktop.app.identifier`). A project-file
+  `run: { exec }` is hashed at packaging and baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
+  with no write grant. The runtime writes the file from the binary, denies its folder to the app's
+  writes, and checks the hash in every spawn, so the app's own code can no longer write the program
+  and then run it, nor move a folder above it (the runtime refuses a rename of a folder that holds a
+  denied path, as it does a recursive remove). A file that differs is refused with `NotCapable` and
+  removed; the next start writes it again. An older runtime keeps the copy, its write grant and the
+  package-run warning. The embedded path is relative to the entry `deno desktop` compiles, so the
+  program starts under `denext desktop dev` too (its build compiles `.denext/desktop-dev-entry.ts`);
+  a program that cannot be recorded (a `#` or `,` in its path, a path outside the project) keeps the
+  unscoped grants of a runtime without the check, never a run grant on its copy, which Deno denies
+  the app's writes to.
+- **Node's compile cache for CommonJS modules** (denext's Deno 3.0.0-denext.10).
+  `module.enableCompileCache()`, `module.getCompileCacheDir()`, `module.flushCompileCache()`,
+  `module.constants.compileCacheStatus`, `NODE_COMPILE_CACHE`, `NODE_COMPILE_CACHE_PORTABLE` and
+  `NODE_DISABLE_COMPILE_CACHE` work as in Node: a CommonJS module's V8 code cache is stored and
+  reused on the next run, and a tool that calls `module.enableCompileCache()` unchecked no longer
+  throws. ES modules keep the runtime's own code cache. Each entry is signed (HMAC-SHA256) under a
+  per-user key in `DENO_DIR` that never reaches JavaScript, so an entry another program planted, or
+  one made for other source, is not loaded but rewritten; the default directory is
+  `<DENO_DIR>/node_compile_cache`, not the shared temporary directory, and a directory other users
+  can write is refused. A compiled program (`deno compile`, `denext build --compile`, a Deno Desktop
+  app) never reads or writes the cache.
+- **`node --test` round-out** (denext's Deno 3.0.0-denext.10): `--test-rerun-failures <file>` reruns
+  only what failed (`t.attempt`, `run({ rerunFailuresFilePath })`); test tags reach reporters on
+  every test event, and `--experimental-test-tag-filter=<tag>` / `run({ testTagFilters })` run only
+  the tests with every tag given.
+- **`--seed` makes `node:crypto`'s random functions repeat run to run** (denext's Deno
+  3.0.0-denext.10): `randomInt`, `randomFill` and `randomFillSync` draw from the seeded generator, as
+  `Math.random`, `crypto.getRandomValues` and `randomUUID` already did. Key generation, signing and
+  prime generation keep the OS's generator.
+- **`deno compile` warns when its own flags come after the script** (denext's Deno 3.0.0-denext.10):
+  `deno compile main.ts --output app --allow-net` embeds those flags as the program's arguments
+  instead of applying them. A leading `--` silences the warning; `DENO_COMPILE_ARG_SEPARATOR=strict`
+  or deno.json `"compile": { "argSeparator": "strict" }` requires the `--` and leaves it out of the
+  embedded arguments.
+- **`deno desktop` writes the microphone / camera grant from deno.json** (Deno Desktop runtime
+  3.0.0-denext.10): `desktop.app.mediaCapture` (`{ "microphone": [origins], "camera": [origins] }`,
+  exact origins only) goes into the launch file. A denext app does not need it: `denext desktop
+  package` writes the grant from `desktop.capabilities.microphone` / `camera`.
+
+### Changed
+
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.12`**, with
+  `3.0.0-denext.8` as the rollback. There is no `3.0.0-denext.11` release: `3.0.0-denext.12` carries
+  its work with test and release-gate fixes, so everything above marked "takes effect with
+  3.0.0-denext.10" or needing 3.0.0-denext.11 is now in effect. **Known issue:** terminals (`pty`)
+  are not available on Windows yet; the runtime's `Deno.openPty` throws `NotSupported` there.
+- **`node --test` runs Node's test runner instead of `deno test`** (takes effect with denext's Deno
+  3.0.0-denext.10). Each test file runs in its own process, files are found with Node's patterns, and
+  Node's reporters (`spec`, `tap`, `dot`, `junit`, `lcov` or a custom one), `run()` and
+  `--experimental-test-coverage` work as in Node. What changes for a project that relied on the old
+  behaviour:
+  - Only files matching Node's default pattern run (`test.*`, `test-*.*`, `*.test.*`, `*-test.*`,
+    `*_test.*` and everything under `test/`, in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts`;
+    `node_modules` is skipped). `*.test.jsx` and `*.test.tsx` files no longer run, and helper files
+    under `test/` now run as test files.
+  - `deno.json`'s `test.include` and `test.exclude` are ignored, and test files are not
+    type-checked.
+  - `Deno.test` tests do not run under `node --test`: a file that calls `Deno.test()` fails with an
+    error that says to run it with `deno test`. `denext test` and `deno test` are unchanged.
+  - The output is Node's, so a script that parses `ok | N passed` needs updating. A failing test
+    still exits with 1, and a custom reporter that throws ends the run with 7, as in Node.
+  - `node --test --watch` still runs `deno test --watch`.
+- **`--import`, `--experimental-loader` and `--require=<module>` in `NODE_OPTIONS` take effect**
+  (denext's Deno 3.0.0-denext.10), in Node's order: loaders, then imports, then the command line's
+  preloads, under `deno run` as well as `node`. A `NODE_OPTIONS` left over from Node tooling (say
+  `--import tsx`) now loads that module in every process that reads it, and stops with `Module not
+  found` when it can't be resolved.
+
+### Fixed
+
+- **Server bundles keep the `node:` prefix on Node built-ins.** A bundle built through the Deno
+  loader (the compat App Router's server bundle among them) imported a `node:` built-in by its bare
+  name (`import { DatabaseSync } from "sqlite"`, `import "zlib"`), so on runtime
+  3.0.0-denext.12, which like Node refuses a bare import of a built-in that exists only with the
+  prefix (`sqlite`, `test`, `sea`), a server importing `node:sqlite` failed to start. Every
+  built-in now stays a `node:` import.
+- **The context-menu plugin builds for iOS 15 against the newest iOS SDK.** It set a menu
+  item's `subtitle`, which UIKit marks iOS 16+, unconditionally, so `denext mobile add
+  context-menu` wrote a plugin the iOS 15 deployment target refused to compile with Xcode 27.1's
+  SDK. The subtitle is now set on iOS 16 and later; iOS 15 shows the title alone.
+- **A program sidecar works with a desktop entry below the project root.** With `denext desktop
+  run` / `dev --entry app/desktop.ts`, the app resolves a sidecar's `exec` (`./bin/server`) from
+  the entry's folder (`app/bin/server`), but the build embedded, hashed and recorded the file at
+  the project root (`bin/server`), so the sidecar's program was missing from the app or its
+  recorded grant named another file. The `--include`, the recorded hash and the embedded path now
+  name the file the app resolves. An entry at the project root (every packaged app) is unchanged.
+- **Extensions, module sidecars, Node backends and the UI work with a desktop entry below the
+  project root.** The app resolves a relative `desktop.capabilities.extensions` module, a module sidecar's
+  `run.module` and a Node backend's bundle (`.deno-desktop/sidecars/<name>/`) from the folder of the
+  entry, but `denext desktop run` / `dev --entry app/desktop.ts` embedded them from the project
+  root, so the app could not load them. The build now embeds the extension and the module the app
+  loads (`app/ext.ts`) and writes the bundle to `app/.deno-desktop/sidecars/<name>/`. The UI
+  export follows the same rule: `runDesktop` serves `out` (or its `outDir`) from the entry's folder,
+  so `denext desktop run` / `build --entry app/desktop.ts` now export to `app/out/` (or to the
+  entry's literal `outDir`, resolved from `app/`) and `run` embeds that folder, where a nested entry's
+  window had no UI before. A root `desktop.ts` that passes `outDir: "ui"` now gets its export in
+  `ui/` too. An export folder other than `out/` gets a `.gitignore` of `*`, and one that holds files
+  but is not a denext export is refused rather than replaced. The packaging scripts still export to
+  and embed `out/`, so `denext desktop package` and `denext doctor` warn when `desktop.ts` passes
+  another `outDir`. An entry at the project root with no `outDir` (the scaffold's) is unchanged.
+- **A `desktop.app.mediaCapture` in deno.json is no longer replaced silently.** denext writes the
+  packaged app's `laufey-launch.json` after `deno desktop`, with its own grant (the app origin
+  alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant
+  never reached the app. `denext desktop package` now warns and `denext doctor` reports it when
+  deno.json's grant differs. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **A `denext desktop run` / `dev` window no longer takes deno.json's microphone / camera grant.**
+  `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a loopback dev
+  server's too) into the window's `laufey-launch.json`, which no environment variable overrides, so
+  an unpackaged window granted capture to those origins although denext said it got none. The window
+  is now built from a copy of deno.json without the key (`--config`, written beside deno.json and
+  removed after the build), so the grant is never written, with a warning naming it.
+- **`denext desktop package` says when a program sidecar runs unchecked.** On a runtime that checks
+  a program sidecar's recorded hash, a program that cannot be recorded (no `desktop.app.identifier`,
+  a `,`, `#`, `%` or `?` in its path, a file outside the project or one that cannot be read), or an
+  unscoped `--allow-run` from `desktop.extraPermissions`, a capability or a sidecar's permissions,
+  gave every program sidecar an unscoped `--allow-run` and a write grant on its cache folder with no
+  word; the package run now warns, naming the cause. A `%` or `?` in the path is no longer recorded:
+  the app resolves such a path to another file, so the sidecar could not start.
+- **`desktop.capabilities.microphone` / `camera` with an unknown option is off, not on, in a
+  packaging script.** The scripts read the config without validating it, so `{ enabled: false }`
+  turned the device on; now only `true` or `{ usageDescription }` does (`denext` still reports the
+  key as a config error).
+- **`denext desktop run` / `build` / `dev --entry` refuse an entry outside the project.** The build
+  writes a Node backend's bundles (and removes stale ones) and the UI export beside the entry, so an
+  entry such as `../other/desktop.ts` wrote and deleted outside the project.
+- **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.10), so
+  `net.connect()`'s default `dns.ADDRCONFIG` takes effect: on a machine with no IPv6, AAAA records
+  no longer come back and slow down family autoselection. `dns.ADDRCONFIG`, `dns.ALL` and
+  `dns.V4MAPPED` are the operating system's values, as in Node.js, and on glibc an `EAI_ADDRFAMILY`
+  failure is reported as `EAI_ADDRFAMILY`, not `ENOTFOUND`.
+- **`node --test` failure stacks and TypeScript coverage look like Node's** (denext's Deno
+  3.0.0-denext.10): the runner's own frames show as `node:internal/...`, CommonJS frames show the
+  file path, and a `.ts` file's coverage maps back to its own lines, functions and branches. `run()`
+  no longer emits a file's first events before the caller can listen, and `node` started from
+  `child_process` with arguments it can't parse exits with 9 and `node: <message>` instead of
+  throwing from `spawn()`.
+- **Deno Desktop runtime fixes** (Deno Desktop runtime 3.0.0-denext.10): a CEF app on an Intel Mac no
+  longer crashes in Chromium's teardown when it quits (about once in 5,600 quits; the shutdown now
+  ends with `_exit` once the helpers have ended, as on Windows); a window is created hidden, sized,
+  then shown, so a Wayland compositor maps it at the size asked for instead of 800x600 under load;
+  CEF keeps a window created hidden hidden until it is shown, on every OS; a custom-scheme page's
+  localStorage commit waits up to 10 s instead of 1 s, which lost a launch's localStorage a few
+  times in 10,000 on a loaded machine; a macOS CEF launch right after a quit no longer fails with
+  exit 134 ("Library not loaded") from Chrome's code-signing clone; WebView2's print to PDF, script
+  execution and DevTools wait for the web view to be ready; and WebKitGTK's print to PDF on a window
+  that never loaded anything is refused instead of crashing.
+
+### Security
+
+- **V8 15.6.75.38** (from 15.6.75.33; 3.0.0-denext.10) in denext's Deno and the Deno Desktop runtime,
+  with five security merges, among them **CVE-2026-121057** (High, type confusion in module star
+  exports) and **CVE-2026-121137** (High, type confusion when a debugger breaks inside optimized
+  WebAssembly; reachable only with an inspector session attached).
+- **denext's Deno 3.0.0-denext.10: `deno compile`, `deno desktop` and `deno install` no longer build
+  `NODE_OPTIONS`' `--import`, `--experimental-loader` or `--require` modules into the program they
+  write.** Those preloads would run at every launch of the built program, so a `NODE_OPTIONS` left
+  in a build machine's environment shipped with it; they are ignored with one warning naming them.
+  `--preload` and `--require` on the command line still apply.
+- **A rename needs write access to every path it moves** (denext's Deno and the Deno Desktop runtime
+  3.0.0-denext.10): `--deny-write=a/b` now stops `Deno.rename("a", "c")`.
+- **The runtime's release builds are hardened** (from 3.0.0-denext.10): no build caches in a tag
+  build, pinned runner images, the CEF staleness gate enforced, a V8 or CEF pin more than 14 days
+  behind its branch's newest patch fails the build, and each archive's `BUILD_INFO.json` records the
+  exact build toolchain.
+
 ## [4.12.0] - 2026-11-04
 
 ### Added
@@ -21054,7 +21324,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.12.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.0...development
+[4.13.0]: https://jsr.io/@denext/denext@4.13.0
 [4.12.0]: https://jsr.io/@denext/denext@4.12.0
 [4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12

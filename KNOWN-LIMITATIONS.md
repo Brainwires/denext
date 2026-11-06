@@ -654,6 +654,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
+- **Terminals (`pty`) need runtime 3.0.0-denext.11** (`Deno.openPty`); under an older runtime
+  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.12) has no terminals on Windows
+  yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
+  own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
+  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
+  folder on Linux only.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
@@ -686,6 +692,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   you build yourself over that folder reads files without the per-file check: one changed after
   launch is served as it is. `runDesktop` is not affected. A hand-built server should use
   `openDesktopUi` and read through its overlay's `read`.
+- **No WebRTC on Linux's webview backend:** no distribution builds WebKitGTK with WebRTC, so
+  `RTCPeerConnection` is undefined there; `getUserMedia` works, so recording is fine. An app that
+  uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in `denext.config.ts` (macOS and
+  Windows keep the system WebView);
+  `denext desktop doctor --linux`, `denext doctor` and a Linux `desktop package` warn
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **The microphone and camera are granted to the app origin only.** denext writes the packaged
+  app's `laufey-launch.json` after `deno desktop` and replaces any `desktop.app.mediaCapture` in
+  deno.json with its own grant: the app origin alone, for the kinds `desktop.capabilities.microphone`
+  / `camera` turn on. No other origin can be granted; `denext desktop package` warns and `denext
+  doctor` reports a deno.json grant that differs
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
@@ -697,7 +715,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.8). Chrome's
+- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.12). Chrome's
   fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
@@ -705,8 +723,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
   5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
   in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
-  other OSes are not affected. The fix comes with the next runtime
-  ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
+  other OSes are not affected. Runtime 3.0.0-denext.10 fixes it (its CEF shutdown ends with `_exit`
+  once the helpers have ended) ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
@@ -753,7 +771,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
   `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
   unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
-  the app from writing it. Under
+  the app from writing it. Runtime 3.0.0-denext.10 and later (with `desktop.app.identifier`) lifts
+  that: the run grant records the program's SHA-256, no write grant is
+  baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
+  remains on macOS and Linux: another program of the same user that changes the file between the
+  check and the exec can run for a moment before the child is killed (`outputSync()` has no kill).
+  On Linux that check compares timestamps, which ext4 keeps to a coarse clock (a 1 ms tick on a
+  1000 Hz kernel, measured on Linux 6.8; multigrain timestamps, from 6.13, refine a timestamp that
+  has been read), so a same-length rewrite with the mode put back within that tick of the file's
+  last change goes unseen; that program must already be able to write the file, which the app's
+  own code cannot. An unscoped write grant could change a binary that is not signed, and with
+  unscoped read and write the app could symlink a folder above the program's before the runtime
+  first writes it and race a spawn the same way. Under
   `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
   the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime

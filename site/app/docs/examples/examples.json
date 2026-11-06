@@ -414,6 +414,20 @@
       "runFrom": "example"
     },
     {
+      "name": "multiwindow",
+      "title": "Multiwindow (keyed windows, a Window menu and counters that outlive their window)",
+      "blurb": "A small denext desktop app with two keyed windows (the main \"workspace\" and a \"notes\" window), New Window and Reopen Closed Window from desktop.menu.window, frames and the session that come back at…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/multiwindow",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext task desktop    # export + open the windows (denext's pinned Deno Desktop runtime)\ndenext task dev        # the page in a browser (the desktop calls say \"unavailable\")",
+      "runFrom": "example"
+    },
+    {
       "name": "native",
       "title": "denext native example — desktop + mobile",
       "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (denext task export → out/).",

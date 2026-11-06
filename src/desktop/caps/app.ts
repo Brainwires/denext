@@ -46,6 +46,7 @@
 import { base64ToBytes } from "../../mobile/base64.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
+import type { BackendMenu } from "../window-menu.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
@@ -174,6 +175,12 @@ export interface AppController {
   createBackendTray(options: Record<string, unknown>): Promise<BackendTray | { reason: string }>;
   /** Whether a tray icon (the backend's or a page's) is showing: a way back into the app. */
   hasTray(): boolean;
+  /**
+   * Set (or clear) the backend's "Window" submenu (`desktop.menu.window`): merged into the page's
+   * application menu — into its own "Window" submenu when it has one, else appended — and the
+   * application menu re-applied. Its clicks go to the submenu's `onClick`, never to the pages.
+   */
+  setBackendMenu(menu: BackendMenu | undefined): void;
   /** A window closed for good: remove the trays its page made and its queue. */
   windowClosed(windowId: string): void;
   /** Queue an action for every window (the backend tray's clicks; tests). */
@@ -286,12 +293,58 @@ interface AppState {
   readonly queues: Map<string, PullQueue<AppAction>>;
   readonly trays: Map<string, LiveTray>;
   appMenuIds: Set<string>;
+  /** The page's application menu, as last set (merged with the backend's submenu). */
+  pageMenu: DesktopMenuItem[] | undefined;
+  /** The backend's "Window" submenu (`desktop.menu.window`), if any. */
+  backendMenu: BackendMenu | undefined;
   dockMenuIds: Set<string>;
   nextTray: number;
   installed: boolean;
   readonly activity: UserActivityHandle;
   /** Settles once the backend tray is made (or failed). */
   trayPending: Promise<unknown>;
+}
+
+/** The label of the submenu the backend's window items join (case-insensitive). */
+const WINDOW_SUBMENU_LABEL = "window";
+
+/**
+ * The page's application menu with the backend's "Window" submenu merged in: into the page's own
+ * "Window" submenu (after a separator) when it has one, else appended as a submenu; with no page
+ * menu, the submenu alone.
+ */
+function mergedAppMenu(s: AppState): DesktopMenuItem[] | undefined {
+  const backend = s.backendMenu;
+  if (!backend) return s.pageMenu;
+  const page = s.pageMenu ?? [];
+  let merged = false;
+  const out = page.map((entry): DesktopMenuItem => {
+    if (
+      merged || typeof entry !== "object" || !("submenu" in entry) ||
+      entry.submenu.label.trim().toLowerCase() !== WINDOW_SUBMENU_LABEL
+    ) return entry;
+    merged = true;
+    const own = entry.submenu.items;
+    const items = own.length > 0 && backend.items.length > 0
+      ? [...own, "separator" as const, ...backend.items]
+      : [...own, ...backend.items];
+    return { submenu: { label: entry.submenu.label, items } };
+  });
+  if (!merged) out.push({ submenu: { label: "Window", items: backend.items } });
+  return out;
+}
+
+/** Apply the application menu (the page's merged with the backend's), where the runtime can. */
+function applyAppMenu(s: AppState): void {
+  const menu = mergedAppMenu(s);
+  if (menu === undefined || typeof s.win?.setApplicationMenu !== "function") return;
+  try {
+    s.win.setApplicationMenu(menu);
+  } catch (err) {
+    console.warn(
+      `desktop: the application menu could not be set: ${err instanceof Error ? err.message : err}`,
+    );
+  }
 }
 
 /** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
@@ -608,8 +661,9 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
           );
         }
         const { items, ids } = nativeMenu(argsOf(args).menu);
-        win.setApplicationMenu(items);
+        s.pageMenu = items;
         s.appMenuIds = ids;
+        applyAppMenu(s);
         return null;
       },
     },
@@ -745,7 +799,9 @@ function installAppEvents(s: AppState): void {
   s.activity.install();
   s.win?.addEventListener("menuclick", (e) => {
     const id = clickedId(e);
-    if (id !== undefined && s.appMenuIds.has(id)) pushAction(s, { source: "menu", id });
+    if (id === undefined) return;
+    if (s.backendMenu?.ids.has(id)) return s.backendMenu.onClick(id);
+    if (s.appMenuIds.has(id)) pushAction(s, { source: "menu", id });
   });
   s.dock?.addEventListener("menuclick", (e) => {
     const id = clickedId(e);
@@ -781,6 +837,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
     queues: new Map(),
     trays: new Map(),
     appMenuIds: new Set(),
+    pageMenu: undefined,
+    backendMenu: undefined,
     dockMenuIds: new Set(),
     nextTray: 1,
     installed: false,
@@ -802,6 +860,10 @@ export function createAppController(options: AppControllerOptions): AppControlle
     install: () => installAppEvents(s),
     createBackendTray: (opts) => createBackendTray(s, opts),
     hasTray: () => s.trays.size > 0,
+    setBackendMenu: (menu) => {
+      s.backendMenu = menu;
+      applyAppMenu(s);
+    },
     windowClosed: (windowId) => {
       destroyTrays(s, windowId);
       s.queues.delete(windowId);

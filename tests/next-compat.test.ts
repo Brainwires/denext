@@ -398,6 +398,62 @@ Deno.test({
   }
 });
 
+// The deno-loader answered a `node:` import as an external of the bare name, so the SSR bundle
+// imported `"sqlite"` / `"zlib"`: a runtime that refuses a bare prefix-only built-in (`sqlite`,
+// `test`, `sea`) failed to load it. Every built-in stays `node:` through the loader.
+Deno.test({
+  name: "SSR bundle: Node built-ins keep their node: prefix through the deno-loader",
+}, async () => {
+  const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
+  const { frameworkFileUrl } = await import("../src/build/bundle.ts");
+  const { join, toFileUrl } = await import("@std/path");
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_node_prefix_" }));
+  try {
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { "denext/": frameworkFileUrl("") } }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "entry.ts"),
+      'import { DatabaseSync } from "node:sqlite";\nimport { gzipSync } from "node:zlib";\n' +
+        'import fs from "fs";\n' +
+        "const db = new DatabaseSync(':memory:');\n" +
+        "export const ok = db.prepare('SELECT 1 AS n').get()?.n === 1 && " +
+        "typeof gzipSync === 'function' && typeof fs.readFileSync === 'function';\n",
+    );
+    await bundleNextCompatModules({
+      entryPoints: { app: join(dir, "entry.ts") },
+      outdir: join(dir, "out"),
+      configPath: join(dir, "deno.json"),
+      platform: "deno",
+      denextExternal: true,
+      denoLoader: true,
+      absWorkingDir: dir,
+    });
+    const out = await Deno.readTextFile(join(dir, "out", "app.js"));
+    for (const name of ["sqlite", "zlib", "fs"]) {
+      assertStringIncludes(out, `from "node:${name}"`, `node:${name} kept`);
+      assert(!out.includes(`from "${name}"`), `no bare "${name}" import`);
+    }
+    // The bundle loads and runs (a bare `sqlite` is refused by Deno's resolver).
+    const run = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        "--no-config",
+        `const m = await import(${JSON.stringify(toFileUrl(join(dir, "out", "app.js")).href)}); ` +
+        "if (m.ok !== true) Deno.exit(3);",
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(run.code, 0, new TextDecoder().decode(run.stderr));
+  } finally {
+    const esbuild = await import("../src/build/esbuild/mod.ts");
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 // An app INSIDE a denext checkout (examples/clerk) has its `.denext/` output and node_modules
 // under the framework root. On Windows the loader shim re-resolves every absolute path as its
 // file:// URL, so a whole-root external rule marked the build's own entry point and injected

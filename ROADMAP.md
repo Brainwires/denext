@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.12.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.13.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -175,11 +175,11 @@ seeded fallback. No Deno has the hook below yet.
 - **Bit-level reproducible runtime builds** (floating setup-deno / brew / apt, rust-cache on tags).
   _Why 5.x: Low._
 - **Node compatibility, continuing:** `node:test`, `async_hooks`, TLS, CLI flags, HTTP edge cases,
-  the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the compile
-  cache, `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).
+  the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the ES-module
+  compile cache (CommonJS's landed in 3.0.0-denext.10), `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).
   _Why 5.x: a continuous track with no 5.0 promise._
-- **Upstream carries:** the npm side-effects cache, deterministic mode (seeded `randomInt` /
-  `randomFillSync` first: a correctness bug under `--seed`, and cheap), the `deno compile` `--`
-  warning, native image operations. _Why 5.x: separate runtime features._
+- **Upstream carries:** the npm side-effects cache, native image operations (seeded `node:crypto`
+  under `--seed` and the `deno compile` `--` warning landed in runtime 3.0.0-denext.10). _Why 5.x:
+  separate runtime features._
 - **Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15 Linux-only enabled node tests
   that need a macOS / Windows check.** _Why 5.x: Small, no user report._

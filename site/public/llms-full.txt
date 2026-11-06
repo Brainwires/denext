@@ -632,11 +632,14 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`; written to
-`desktop.capabilities`), plus desktop-only
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `microphone`, `camera`; written to
+`desktop.capabilities`; `microphone` / `camera` work only in a packaged app on runtime 3.0.0-denext.10+
+(laufey API 53; test capture UI in a browser under `denext dev`), and Linux's webview backend has no
+WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
+`pty` (runtime 3.0.0-denext.11+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
@@ -665,7 +668,20 @@ icon from the first frame), `openWindow({ url, overlay, focusable: false, … })
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
-`setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
+`desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
+windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
+support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
+connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
+`windows.lastSession()` lists the keyed windows open at the
+last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
+at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reopenClosed: true, list: true }` adds
+New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s window), Reopen Closed Window
+(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+(`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
+as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
+`onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
+guards; the OS session-end rules are the pages'). With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
@@ -717,7 +733,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.8 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.12 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1247,7 +1263,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.8 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's 3.0.0-denext.12 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -1664,7 +1680,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.12.0"` — The denext framework version.
+- `VERSION: "4.13.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1903,8 +1919,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopInstallersConfig` — DesktopConfig.installers: the installer formats per OS, and what they say about the app.
 - `interface DesktopLinuxConfig` — DesktopConfig.linux: Linux launch settings of the packaged app.
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
+- `interface DesktopMediaCaptureConfig` — desktop.capabilities.microphone / camera options.
+- `interface DesktopMenuConfig` — The application menu's standard window items (DesktopConfig.menu).
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
+- `interface DesktopPtyConfig` — desktop.capabilities.pty options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
 - `interface DesktopSidecarLoginShellEnvConfig` — DesktopSidecarConfig.loginShellEnv with options.
@@ -2900,7 +2919,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop`
 
-- `buildDesktopBundle(entryUrl: string, os: "linux" | "windows", o: DesktopBundleOptions): Promise<string>` — Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable).
+- `buildDesktopBundle(entryUrl: string, os: "linux" | "windows", o: DesktopBundleOptions): Promise<string>` — Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.
 - `buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>` — Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the postinst / postrm refresh the desktop and icon databases (debMaintainerScript).
 - `buildDesktopMsi(o: BuildMsiOptions): Promise<string>` — Author and build the .msi for a finished Windows bundle with WiX 5 (wix build); the .wxs is kept beside the .msi for inspection. Windows-only (WiX builds on Windows).
 - `buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<string>` — Build an .rpm for a finished Linux bundle with rpmbuild (Fedora/RHEL, apt install rpm on Debian/Ubuntu, brew install rpm on macOS). Same installed layout as the .deb.
@@ -2911,6 +2930,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>` — Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.
 - `cefHelperEntitlements(path: string): Readonly<Record<string, boolean>> | undefined` — Chromium's default entitlements for the CEF helper app path lies in (… Helper (Renderer).app and its executable), or undefined for any other code.
 - `createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: (windowToken: string | null) => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string, windowBindings?: boolean): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createOwnedResources<T>(options: OwnedResourcesOptions<T>): OwnedResources<T>` — Build a registry of per-window resources for a desktop extension.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, readonly DesktopInstallerFormat[]>>` — The formats built when neither --format nor desktop.installers.<os> names any.
 - `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
 - `defineSidecar<D>(definition: D): D` — Declare a sidecar with its type checked (an identity function, for runDesktop({ sidecars })).
@@ -2948,16 +2968,19 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopExtensionHost` — What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.
 - `desktopHasTool(cmd: string): Promise<boolean>` — Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.
 - `desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: readonly string[]): Promise<string[]>` — The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists, else one derived from the app's own icon (deriveDesktopIcon: the web manifest, the apple-touch-icon, … into .deno-desktop/; none: no icon, and deno desktop uses its default). Paths are relative to the project.
-- `desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
+- `desktopIncludeArgs(entryUrl: string, os?: DesktopOs, appEntry?: string): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
 - `type DesktopInstallerFormat = (typeof DESKTOP_INSTALLER_FORMATS)[keyof typeof DESKTOP_INSTALLER_FORMATS][number]` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: readonly string[], add?: readonly string[]): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
-- `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with. With neither a profile nor config entitlements, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.
+- `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged. The device entitlements need a runtime that enforces the launch file's grant: with either capability on and any other runtime, packaging is refused here, before the build.
 - `interface DesktopMacosSigning` — What desktop.macos resolves to for one packaging run.
 - `interface DesktopMacosSigningOptions` — Options for desktopMacosSigning.
 - `type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject` — A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.
+- `interface DesktopMenuSettings` — desktop.menu, resolved.
 - `interface DesktopMsiProbe` — Seams for desktopMsiProblem.
 - `desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>` — Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).
+- `interface DesktopNewWindowContext` — What runDesktop({ newWindow }) receives: the windows open now.
+- `type DesktopNewWindowHandler = (ctx: DesktopNewWindowContext) => DesktopOpenWindowOptions | undefined` — How desktop.ts supplies the window New Window opens (runDesktop({ newWindow })): the open options (url and key at least; a key already open is a validation error), or undefined to open nothing. Without it New Window opens desktop.menu.window.newWindow with the suggested key.
 - `desktopNpmArgs(entryUrl: string): Promise<string[]>` — desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.
 - `interface DesktopOpenWindowOptions` — The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).
 - `desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>` — Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).
@@ -2982,6 +3005,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: readonly string[], pin?: { readonly version: string }): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. From 3.0.0-rc.5 that is the runtime's default, so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
+- `interface DesktopSessionWindow` — A keyed window that was open at the last exit (WindowStore.lastSession).
 - `desktopSignWindows(files: readonly string[], deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).
 - `interface DesktopSignWindowsDeps` — What desktopSignWindows runs commands and reads settings through (tests stub them).
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
@@ -3005,6 +3029,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: "msi" | "deb" | "rpm", version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
+- `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
+- `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
+- `interface DesktopWindowMenuSettings` — The standard window items (desktop.menu.window), resolved.
 - `interface DesktopWindowRef` — One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).
 - `interface DesktopWindows` — The app's windows, as desktop.ts drives them (DesktopRuntime.windows).
 - `type DesktopWindowsArch = "x86_64" | "arm64"` — A Windows bundle's architecture, as the package script names it.
@@ -3024,6 +3051,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MacosSigningEntitlementsOptions` — Options for macosSigningEntitlements.
 - `type NotaryCredentials = { readonly kind: "keychain-profile"; readonly profile: string } | { readonly kind: "api-key"; readonly key: string; readonly keyId: string; readonly issuer?: string }` — How xcrun notarytool authenticates: a keychain profile, or an App Store Connect API key.
 - `notarytoolSubmitArgs(file: string, credentials: NotaryCredentials, json?: boolean): string[]` — The xcrun notarytool submit … --wait argv for file (a .zip, .dmg or .pkg).
+- `interface OwnedResourceAddOptions` — Options for OwnedResources.add.
+- `interface OwnedResourceAttachment` — What OwnedResources.attach returns.
+- `interface OwnedResourceReplayEntry` — One retained event: what OwnedResources.attach replays.
+- `class OwnedResources<T>` — A registry of per-window resources (build it with createOwnedResources). Keep it at module scope in the extension and call OwnedResources.connect from the extension's setup(host).
+- `interface OwnedResourcesClosedWindow extends OwnedResourcesWindow` — A closed window, as OwnedResourcesHost.onWindowClosed reports it.
+- `interface OwnedResourcesHost` — The part of an extension's setup(host) host that OwnedResources.connect uses: its emit, the window lifecycle hooks and the open windows.
+- `interface OwnedResourcesOptions<T>` — Options for createOwnedResources.
+- `interface OwnedResourcesReplayOptions` — The replay buffer's options (OwnedResourcesOptions.replay).
+- `interface OwnedResourcesWindow` — A window as OwnedResourcesHost describes it.
 - `parseDesktopPackageArgs(argv: readonly string[], spec: DesktopPackageArgSpec): DesktopPackageArgs` — Parse a package script's arguments: --arch <mode>, --no-export, --no-sign, --format <list> (repeatable), the script's legacy installer flags, and -h / --help. An unknown argument or an --arch outside spec.arches throws.
 - `class PickedPaths` — The runtime's picked-path set. One instance per launch is threaded (by the caps resolver) into the dialogs cap (which adds a pick) and the fs / shell caps (which resolve a handle back to a confined path).
 - `interface PickedTarget` — A resolved access: the confined absolute path plus the root dir to ensure before a write.
@@ -3031,7 +3067,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `planDesktopInstallers(os: DesktopOs, config: unknown, requested?: readonly string[], add?: readonly string[]): DesktopInstallerPlan` — Which installers to build for os: requested (--format) when it names any, else desktop.installers.<os> from the config, else DEFAULT_DESKTOP_INSTALLERS. add (a script's legacy --dmg / --appimage) is appended to whichever list applies.
 - `type PowerShellRunner = (script: string, env: Record<string, string>) => Promise<{ readonly code: number; readonly stdout: string } | null>` — Runs a PowerShell script with extra environment; null when PowerShell did not run.
 - `interface PreparedDesktopPackage` — What prepareDesktopPackage resolved.
-- `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, "formats" | "add" | "export">): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), dist/, unless --no-export the static export (deno task export), then the .deno-desktop/app.json + compile.include + deno.json desktop.app sync and the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about).
+- `prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, "formats" | "add" | "export">): Promise<PreparedDesktopPackage>` — A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), dist/, unless --no-export the static export (deno task export), then the .deno-desktop/app.json + compile.include + deno.json desktop.app sync and the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about). A Linux run with the microphone or camera on the webview backend is warned, once, that WebKitGTK has no WebRTC (linuxWebRtcProblem).
 - `type ProxyModule = typeof ./dev-proxy.ts` — The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.
 - `readDesktopTreeManifest(pe: Uint8Array): DesktopTreeManifest | null` — The DENEXT_TREE manifest an executable carries, or null when it has none.
 - `interface ResolvedDesktop` — What resolveDesktopCapabilities returns — spread straight into runDesktop.
@@ -3067,7 +3103,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop. With desktop.update.ui set it first requires the export to carry a sequenced OTA manifest (desktopUiUpdateFloorProblem), so no app ships its UI updater without a downgrade floor.
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
-- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>` — Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an "accessory" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
+- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>` — Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an "accessory" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The microphone or camera on a runtime that does not enforce the grant is refused (assertMediaCaptureRuntime) before anything is written.
 
 ### `denext/desktop/updater`
 
@@ -3105,6 +3141,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/client`
 
+- `attachPty(id: string): Promise<PtyAttachment>` — Take a terminal over: one this window owns (after a reload) or a detached one. Its later events come to this window. Drop a replayed data whose seq an onPtyData handler has already seen. An ended terminal is forgotten once its replay is returned.
 - `claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult>` — Make this app the handler of scheme (one of its desktop.app.deepLinks), taking it over from another app. **Only on an explicit user action** — a "Make this app the handler of myapp: links" button after openAuthSession rejected scheme_owned_by_other_app — because the other app loses the scheme. On macOS the OS may confirm it with the user; a Windows "UserChoice" cannot be overridden (registered: false). It must run inside that click: where the webview reports user activation (navigator.userActivation) and there is none, it rejects user_activation_required without calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this app's own or an unclaimed scheme is registered without force), and only once per scheme per launch.
 - `interface ClaimDeepLinkSchemeResult extends DeepLinkSchemeOwner` — What claimDeepLinkScheme reports.
 - `deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchemeOwner>` — Which app handles scheme, one of the app's desktop.app.deepLinks (denext's pinned Deno Desktop runtime). A snapshot, and advisory: any program of the same user can register itself for a scheme at any time, so keep PKCE and state on every sign-in.
@@ -3125,14 +3162,31 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopWebSocketUrl(path: string): string` — The URL for a WebSocket from this page to its own server at path ("/api/socket", or a bare query "?room=1" for /): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsUrl; the server then sees GET <path>), else wss:// / ws:// on the page's own host. Off a page (no location) it returns the absolute path as is.
 - `desktopWsUrl(): string | undefined` — The pinned runtime's WebSocket relay URL (ws://127.0.0.1:<port>/.deno-desktop-relay/<token>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path to it (desktopWebSocketUrl does), and don't hand it to other code.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `killPty(id: string, signal?: PtySignal): Promise<void>` — Send a signal to a terminal's program (default SIGHUP, as closing a terminal does); its onPtyExit follows. An ended terminal is forgotten.
+- `listPtys(): Promise<PtySession[]>` — The terminals this window owns, and the detached ones (which any window may attach).
 - `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap: an extension's name (its handlers emit the events it declares with ctx.emit), or a built-in capability that emits events (today only the echo diagnostic's pong). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
+- `onPtyData(handler: (event: PtyDataEvent) => void): () => void` — Call handler with each chunk of output of this window's terminals. A chunk delivered twice (the event stream reconnected) is dropped by its seq. Off desktop it does nothing.
+- `onPtyExit(handler: (event: PtyExitEvent) => void): () => void` — Call handler once for each of this window's terminals that ends (its program exited or was killed). Off desktop it does nothing.
 - `onSidecarStatus(name: string, handler: (status: SidecarStatus) => void): () => void` — Call handler with the sidecar's status on every change (a status emitted before the page subscribed is delivered once it does). Off desktop it does nothing.
+- `interface PtyAttachment` — What attachPty resolves to.
+- `interface PtyDataEvent` — A chunk of a terminal's output (onPtyData).
+- `interface PtyExitEvent` — A terminal's end (onPtyExit).
+- `ptyInfo(id: string): Promise<PtyInfo>` — A terminal's process id, and (on Linux) the foreground process's name and folder.
+- `interface PtyInfo` — What ptyInfo resolves to.
+- `type PtyReplayEntry = { readonly event: "data"; readonly seq: number; readonly data: string } | { readonly event: "exit"; readonly exitCode: number; readonly signal: string | null }` — One entry of attachPty's replay, oldest first.
+- `interface PtySession` — One terminal listPtys reports.
+- `type PtySignal = "SIGHUP" | "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"` — The signals killPty sends.
+- `interface PtySpawned` — What spawnPty resolves to.
+- `interface PtySpawnOptions` — Options for spawnPty.
+- `resizePty(id: string, cols: number, rows: number): Promise<void>` — Change a terminal's size (the program gets SIGWINCH).
 - `restartSidecar(name: string): Promise<SidecarStatus>` — Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt count), e.g. from a "Restart backend" button after it failed.
 - `sidecarInfo(name: string): Promise<SidecarInfo>` — What the page may know about a sidecar: its state, loopback port and url, and the values its definition exposes (expose, e.g. a per-launch token the page presents to it).
 - `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
 - `type SidecarState = "idle" | "starting" | "ready" | "backoff" | "stopping" | "stopped" | "failed"` — A sidecar's lifecycle state.
 - `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
+- `spawnPty(options: PtySpawnOptions): Promise<PtySpawned>` — Start a terminal running an allowed shell.
+- `writePty(id: string, data: string, options: { readonly binary?: boolean }): Promise<void>` — Send input to a terminal, in order with the previous writes.
 
 ### `denext/desktop/window`
 

@@ -100,6 +100,8 @@ jobs:
 
   ios:
     if: github.event_name != 'workflow_dispatch' || inputs.ios
+    # Stays on GitHub's image: xcodebuild and the iOS SDK need Xcode, which the
+    # self-hosted macOS images (Command Line Tools only) do not have.
     runs-on: macos-15
     timeout-minutes: 90
     defaults:

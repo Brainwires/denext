@@ -342,6 +342,10 @@ ignorePatterns = [
   # real host) stays analyzed and is tested against a fake host by tests/hangar.test.ts.
   "examples/hangar/desktop.ts",
   "examples/hangar/desktop/**",
+  # examples/multiwindow: the Deno Desktop entry and the `counters` desktop extension (loaded by
+  # path from denext.config.ts); lib/counters.ts is tested by tests/multiwindow-example.test.ts.
+  "examples/multiwindow/desktop.ts",
+  "examples/multiwindow/desktop/**",
   "examples/hangar/lib/deno-host.ts",
   "examples/hangar/app/**",
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O

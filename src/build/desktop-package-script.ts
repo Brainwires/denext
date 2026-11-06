@@ -42,6 +42,12 @@ import {
 } from "./code-signing.ts";
 import { basename, dirname, fromFileUrl, join, toFileUrl } from "@std/path";
 import { runToExit } from "./exited-output.ts";
+import {
+  assertMediaCaptureRuntime,
+  LINUX_WEBRTC_FIX,
+  linuxWebRtcProblem,
+} from "./desktop-media-capture.ts";
+import { desktopRuntimeLabel, mediaCaptureRuntime } from "./desktop-launch-policy.ts";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -329,7 +335,9 @@ export interface PreparedDesktopPackage {
  * `desktop.installers.<os>`, else the defaults), `dist/`, unless `--no-export` the static export
  * (`deno task export`), then the `.deno-desktop/app.json` + `compile.include` + deno.json
  * `desktop.app` sync and the package metadata (read after that sync wrote the deep links into
- * deno.json; a made-up version or identifier is warned about).
+ * deno.json; a made-up version or identifier is warned about). A Linux run with the microphone or
+ * camera on the webview backend is warned, once, that WebKitGTK has no WebRTC
+ * ({@linkcode linuxWebRtcProblem}).
  *
  * The sync runs AFTER the export, right before `deno desktop` reads deno.json: under
  * `denext desktop package` the CLI's CSS re-exec keeps a backup of the project's deno.json while the
@@ -353,6 +361,10 @@ export async function prepareDesktopPackage(
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName, os);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta, os)) console.warn(line);
+  const webrtc = os === "linux"
+    ? linuxWebRtcProblem(await loadConfigBeside(entryUrl), meta.backend)
+    : null;
+  if (webrtc) console.warn(`  ⚠ ${webrtc}. For ${LINUX_WEBRTC_FIX}.`);
   return { name: desktopSlug(appName), plan, meta };
 }
 
@@ -645,18 +657,26 @@ export async function desktopWithAppVersion<T>(
  * the webview backend's `laufey-launch.json` beside the executable, and on Windows the tree
  * manifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and
  * version; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it
- * signs the executable).
+ * signs the executable). The microphone or camera on a runtime that does not enforce the launch
+ * file's grant is refused before the build.
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
  * @param o The target, output and icon candidates.
  * @returns The bundle directory.
+ * @throws {Error} When the microphone or camera is on and the runtime does not read the grant.
  */
 export async function buildDesktopBundle(
   entryUrl: string,
   os: "linux" | "windows",
   o: DesktopBundleOptions,
 ): Promise<string> {
+  // Before the build: writeLaufeyLaunchConfig would refuse it only after.
+  assertMediaCaptureRuntime(
+    await loadConfigBeside(entryUrl),
+    mediaCaptureRuntime(),
+    desktopRuntimeLabel(),
+  );
   await Deno.remove(o.out, { recursive: true }).catch(() => {});
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(entryUrl, o.target);

@@ -45,6 +45,24 @@ export default function Desktop() {
           (what the window serves).
         </li>
         <li>
+          <code>--entry app/desktop.ts</code> (<code>run</code>, <code>dev</code>,{" "}
+          <code>build</code>) uses another entry. <code>runDesktop</code> serves{" "}
+          <code>out</code>, or its <code>outDir</code>, from the entry&apos;s folder, so{" "}
+          <code>run</code> and <code>build</code>{" "}
+          export there (<code>app/out/</code>, or the entry&apos;s literal <code>outDir: "…"</code>
+          {" "}
+          resolved from its folder; a root <code>desktop.ts</code> with <code>outDir: "ui"</code>
+          {" "}
+          exports to <code>ui/</code>) and <code>run</code> embeds that folder. A folder other than
+          {" "}
+          <code>out/</code> gets a <code>.gitignore</code> of{" "}
+          <code>*</code>, and one that holds files but is not a denext export is refused, never
+          replaced. The packaging scripts always compile the root <code>desktop.ts</code>{" "}
+          and export to and embed <code>out/</code>: <code>denext desktop package</code> and{" "}
+          <code>denext doctor</code> warn when <code>desktop.ts</code> passes another{" "}
+          <code>outDir</code>.
+        </li>
+        <li>
           <code>denext desktop package</code> — build the app and its{" "}
           <a href="#desktop-installers">installers</a> for the host OS;{" "}
           <code>--target-os linux</code> or <code>windows</code>{" "}
@@ -836,8 +854,9 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
         own teardown when it quits, about once in 5,600 launches. The app has already finished by
         then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
-        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
-        next runtime.
+        silicon, the WebView backend and the other OSes are not affected. Runtime 3.0.0-denext.10
+        fixes it: its CEF shutdown ends with <code>_exit</code>{" "}
+        once the helpers have ended, as on Windows, instead of running exit&apos;s destructors.
       </p>
       <p>
         The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
@@ -2158,6 +2177,37 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>none</td>
           </tr>
+          <tr>
+            <td>
+              <code>microphone</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ audio: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
+            </td>
+            <td>
+              none (the webview captures; macOS: <code>NSMicrophoneUsageDescription</code> and the
+              {" "}
+              <code>audio-input</code> entitlement)
+            </td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>camera</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ video: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
+            </td>
+            <td>
+              none (macOS: <code>NSCameraUsageDescription</code> and the <code>camera</code>{" "}
+              entitlement)
+            </td>
+            <td>none</td>
+          </tr>
         </tbody>
       </table>
       <Callout kind="note">
@@ -2348,6 +2398,94 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         into the app&apos;s folders) for a save that must work everywhere (see{" "}
         <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
       </p>
+
+      <h3 id="desktop-pty">Terminals (pty)</h3>
+      <p>
+        <code>denext desktop add pty</code>{" "}
+        gives the page terminals: a shell started on a pseudo-terminal in the app&apos;s Deno
+        process, its output streamed to the window, for a terminal emulator such as xterm.js. It is
+        built on the runtime&apos;s{" "}
+        <code>Deno.openPty</code>, so it needs denext&apos;s Deno Desktop runtime{" "}
+        <code>3.0.0-denext.11</code> or later; under an older one every call rejects{" "}
+        <code>unsupported</code> with the reason, and <code>denext desktop doctor</code>{" "}
+        names the runtime it needs. The functions come from <code>denext/desktop/client</code>:
+      </p>
+      <Code lang="ts">
+        {`import {
+  attachPty, killPty, listPtys, onPtyData, onPtyExit, resizePty, spawnPty, writePty,
+} from "denext/desktop/client";
+
+// Subscribe first: a shell's first output can arrive before spawnPty resolves.
+onPtyData(({ id, data }) => terminals.get(id)?.write(data)); // { id, seq, data }
+onPtyExit(({ id, exitCode, signal }) => ended(id, exitCode, signal));
+
+const { id, pid, shell, cwd } = await spawnPty({ cols: xterm.cols, rows: xterm.rows });
+xterm.onData((data) => writePty(id, data));
+xterm.onBinary((data) => writePty(id, data, { binary: true })); // one byte per character
+xterm.onResize(({ cols, rows }) => resizePty(id, cols, rows));
+await killPty(id); // SIGHUP; or "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"`}
+      </Code>
+      <p>
+        <code>spawnPty</code> takes <code>cols</code> and <code>rows</code>, and optionally{" "}
+        <code>shell</code>, <code>args</code> (default <code>["-l"]</code>{" "}
+        on macOS and Linux, a login shell), <code>cwd</code>{" "}
+        (an absolute path to an existing directory; default the home folder) and <code>env</code>
+        {" "}
+        (set over the app&apos;s environment). Output arrives coalesced, one <code>data</code>{" "}
+        event per about 8 ms or 64 KiB, decoded as UTF-8. Each event carries a <code>seq</code>{" "}
+        that grows by one per terminal; the event stream is at-least-once, and{" "}
+        <code>onPtyData</code> drops a <code>seq</code> it has seen. <code>ptyInfo(id)</code>{" "}
+        gives the process id and, on Linux, the foreground process&apos;s name and folder.
+      </p>
+      <p>
+        Each terminal belongs to the window that started it: its events go to that window only, and
+        another window that sends its id (to write, resize, kill, inspect or attach it) gets{" "}
+        <code>not_found</code>, as for an id that does not exist. Ids are random. Closing the
+        window, or reloading its page, kills its terminals (<code>SIGHUP</code>, then{" "}
+        <code>SIGKILL</code>{" "}
+        if the program ignores it), and the app&apos;s quit kills them all. With{" "}
+        <code>onWindowClose: "detach"</code> they keep running instead: <code>listPtys()</code>{" "}
+        lists the window&apos;s own and the detached ones, and <code>attachPty(id)</code>{" "}
+        takes one over and returns what it missed (<code>replayBytes</code>{" "}
+        of output per terminal, and its exit if it ended meanwhile). That helps only while the app
+        outlives the window (<code>desktop.app.keepAlive</code>, or a tray), so the doctor warns
+        otherwise.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: {
+    pty: {
+      onWindowClose: "detach", // default "kill"
+      replayBytes: 1024 * 1024, // default 512 KiB; 0 keeps none
+      shells: ["/bin/zsh", "/opt/homebrew/bin/fish", "C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe"],
+    },
+  },
+},`}
+      </Code>
+      <Callout kind="note">
+        <strong>What a page can start.</strong> Only a program on <code>shells</code>{" "}
+        (absolute paths; an entry for another OS is ignored), by default the OS&apos;s login shells
+        and <code>/bin/sh</code> on macOS and Linux, Windows PowerShell and <code>cmd.exe</code>
+        {" "}
+        on Windows. With no <code>shell</code>, a terminal starts the user&apos;s{" "}
+        <code>$SHELL</code> when it is on the list, else the first entry. The package scripts bake
+        {" "}
+        <code>--allow-run</code>{" "}
+        for exactly those paths, never an unscoped run, so the runtime refuses any other program
+        too; <code>denext desktop doctor</code> prints the list. The page&apos;s <code>env</code>
+        {" "}
+        never carries a variable whose name starts with <code>LD_</code> or <code>DYLD_</code>{" "}
+        (the runtime refuses them under a scoped{" "}
+        <code>--allow-run</code>), and a parent terminal&apos;s (<code>TMUX</code>, …) is not
+        inherited. A shell is still full trust: what is typed into it runs as the user, so enable
+        {" "}
+        <code>pty</code>{" "}
+        only in an app whose page you trust with that. On Windows the pinned runtime
+        (3.0.0-denext.12) has no terminals yet: opening one rejects with{" "}
+        <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
+        own VT sequences even for plain text.
+      </Callout>
 
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
       <p>
@@ -2657,7 +2795,8 @@ onCloseRequested(({ reason }) => {
         the app, never another site. The new window&apos;s page has the app&apos;s desktop
         capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
         <code>denext/desktop/window</code>{" "}
-        calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+        calls act on itself. At most 8 are open at once besides the main window and the tray panel
+        (<code>desktop.app.maxWindows</code>, 1 to 64).
       </p>
       <p>
         A <code>capabilities</code>{" "}
@@ -2689,6 +2828,99 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
       </p>
+      <h4 id="desktop-window-keys">Keys, frames and the last session</h4>
+      <p>
+        A window opened with a <code>key</code>{" "}
+        (app-chosen, unique among the open windows; 1 to 64 letters, digits, <code>.</code>,{" "}
+        <code>_</code>, <code>:</code> or <code>-</code>) is found again with{" "}
+        <code>windows.byKey(key)</code>, and its frame is remembered: the bounds are saved to one
+        {" "}
+        <code>windows.json</code>{" "}
+        in the app support folder as the window moves and when it closes, and the next time the key
+        opens they fill in the bounds the call leaves out (<code>x</code>, <code>y</code>,{" "}
+        <code>width</code>, <code>height</code>; <code>restoreBounds: false</code>{" "}
+        keeps the call&apos;s). A saved frame is clamped onto a display connected now, so a window
+        last seen on a monitor that is gone opens on one that is here. Bounds and the display are
+        what is restored; macOS Spaces are not (the runtime does not report which Space a window is
+        on). A corrupt or missing store is the defaults, never an error.{" "}
+        <code>windows.lastSession()</code>{" "}
+        lists the keyed windows that were open when the app last quit (each with its key, path and
+        bounds; a window the user closed is not among them), and{" "}
+        <code>desktop.app.restoreWindows: true</code>{" "}
+        reopens them at launch, which also gives the packaged app <code>--allow-write</code>{" "}
+        for its app support folder (without it, or the <code>fs</code> / <code>sqlite</code> /{" "}
+        <code>updates</code> capability or{" "}
+        <code>desktop.extraPermissions.write</code>, the save is skipped with one warning). The main
+        window takes a key too: <code>desktop.window.key: "workspace"</code> (or{" "}
+        <code>runDesktop({"{ window: { key } }"})</code>) saves its frame the same way and restores
+        it at the next launch — the saved position, and the saved size unless{" "}
+        <code>desktop.window.width</code> / <code>height</code> set one — and the key names it in
+        {" "}
+        <code>byKey</code>, the lifecycle hooks and <code>lastSession()</code>.
+      </p>
+      <Code lang="ts">
+        {`// desktop.ts — a "New Window" that remembers where each window was
+const app = await runDesktop({ ... });
+onAppMenuItem((id) => {
+  if (id !== "new") return;
+  const key = \`win-\${Date.now()}\`;
+  app.windows.open({ url: "/", key, width: 1000, height: 700 }); // the saved frame fills in x, y
+});
+console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the last quit`}
+      </Code>
+      <h4 id="desktop-window-lifecycle">Window lifecycle hooks and the quit</h4>
+      <p>
+        An extension (<code>defineDesktopExtension</code>) can follow the windows: static{" "}
+        <code>onWindowOpened(info)</code>, <code>onWindowClosed(info)</code> and{" "}
+        <code>onAppQuit()</code>{" "}
+        hooks on the capability, or the same as subscriptions on the host its{" "}
+        <code>setup(host)</code> receives (<code>host.onWindowOpened(fn)</code>,{" "}
+        <code>host.onWindowClosed(fn)</code>,{" "}
+        <code>host.onAppQuit(fn)</code>, each returning its unsubscribe), plus{" "}
+        <code>host.windows()</code>, the open windows now. <code>info</code> is{" "}
+        <code>{"{ id, kind, key? }"}</code>. <code>onWindowOpened</code>{" "}
+        is also called for the windows open when the hook is added, so the main window is never
+        missed. <code>onWindowClosed</code>{" "}
+        fires once a window closed for good, never on a reload or a navigation (that is{" "}
+        <code>onPageLoad</code>), with <code>appQuitting</code>{" "}
+        true when the close is part of the app&apos;s quit: Cmd+Q,{" "}
+        <code>quitApp()</code>, the OS&apos;s session end, or the last app window closing without
+        {" "}
+        <code>desktop.app.keepAlive</code>. <code>onAppQuit</code>{" "}
+        runs after the windows&apos; closes, and the process waits for it, at most 3 seconds for
+        every hook together. An error in a hook is logged and never keeps a window open or the app
+        running.
+      </p>
+      <p>
+        A guard on the runtime side, <code>host.onBeforeQuit(fn)</code> (or{" "}
+        <code>app.onBeforeQuit(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with), is asked before any page&apos;s <code>onBeforeQuit</code> /{" "}
+        <code>onCloseRequested</code>: returning (or resolving) <code>false</code>{" "}
+        cancels the quit. The guards get 5 seconds together, the deadline a page&apos;s guards get;
+        one that throws or runs past it does not cancel, so a quit is never held for good. The OS
+        session-end rules are the pages&apos;: a refusal asks the OS to stop the logout, which macOS
+        ignores for an accessory app, and macOS takes no input for the app while a session end is
+        pending.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/sessions.ts — one resource per window, let go with the window
+import { defineDesktopExtension } from "denext/desktop";
+
+const sessions = new Map<string, Session>();
+export default defineDesktopExtension({
+  name: "sessions",
+  methods: { /* … */ },
+  onWindowOpened: ({ id }) => void sessions.set(id, startSession()),
+  onWindowClosed: async ({ id, appQuitting }) => {
+    await sessions.get(id)?.end({ flush: !appQuitting });
+    sessions.delete(id);
+  },
+  onAppQuit: () => pool.close(), // awaited, 3 s at most
+  setup: (host) => {
+    host.onBeforeQuit(async () => !(await hasUnsavedWork())); // false keeps the app running
+  },
+});`}
+      </Code>
       <p id="desktop-background-throttling">
         A window&apos;s page keeps running while the window is hidden, minimized or covered, with
         its timers slowed to about once a second (Electron&apos;s default). For a hidden window that
@@ -2701,6 +2933,37 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         the CEF backend throttle a hidden page without freezing it either way. The main window is
         the one the runtime starts with, which is always throttled.
       </p>
+      <h4 id="desktop-window-menu">The standard window items</h4>
+      <p>
+        <code>desktop.menu.window</code>{" "}
+        adds a "Window" submenu to the application menu, each item its own opt-in:{" "}
+        <code>newWindow: "/"</code> (New Window, Cmd/Ctrl+N, opens that path with a fresh{" "}
+        <code>window-N</code> key, the lowest not open, so a reopened window gets its frame back;
+        {" "}
+        <code>runDesktop({"{ newWindow: (ctx) => ({ url, key }) }"})</code> in{" "}
+        <code>desktop.ts</code> supplies the window instead, with{" "}
+        <code>ctx.suggestedKey</code>, the open windows and the configured path, or{" "}
+        <code>undefined</code> to open nothing), <code>reopenClosed: true</code>{" "}
+        (Reopen Closed Window, Cmd/Ctrl+Shift+T as in Chromium and Safari: the keyed windows the
+        user closed, most recent first, opened again as pages with their keys and frames — a
+        resource an extension disposed with the window does not come back — a quit&apos;s closes are
+        not remembered) and <code>list: true</code>{" "}
+        (the open windows by title, key or id, each showing and focusing its window). On macOS the
+        submenu starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s
+        Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
+        keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
+        else the submenu is appended; the backend answers these items itself, so{" "}
+        <code>onAppMenuItem</code> never sees them.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default { desktop: { menu: { window: { newWindow: "/", reopenClosed: true, list: true } } } };
+
+// desktop.ts — give New Window its own key and page
+const app = await runDesktop({
+  newWindow: ({ suggestedKey }) => ({ url: "/workspace", key: suggestedKey, title: "Workspace" }),
+});`}
+      </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -3199,6 +3462,91 @@ const state = await setLaunchAtLogin(true);
 if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
       </Code>
 
+      <h3 id="desktop-media-capture">The microphone and camera</h3>
+      <p>
+        A page captures with the web&apos;s own <code>navigator.mediaDevices.getUserMedia</code>
+        {" "}
+        (a voice UI, a video call). On denext&apos;s runtime the window refuses every request by
+        default. <code>denext desktop add microphone</code> (and{" "}
+        <code>camera</code>) grants the device to the app&apos;s own origin alone (<code>
+          desktop.app.origin
+        </code>, else{" "}
+        <code>app://localhost</code>): never another origin the window navigates to, and never a
+        sub-frame of another origin, even one the page delegates the device to with{" "}
+        <code>allow="microphone"</code>{" "}
+        (on Linux, where WebKitGTK does not say which frame asks, such a delegation is honoured).
+        Packaging writes three things:
+      </p>
+      <ul>
+        <li>
+          the grant in the packaged app&apos;s <code>laufey-launch.json</code>{" "}
+          (<code>"mediaCapture"</code>), which the webview backend enforces natively: WKWebView,
+          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.10 or later.
+          An older runtime does not enforce it (each engine asks, or refuses, by its own rules, for
+          whatever origin asks), so <code>denext desktop package</code>{" "}
+          refuses to package the microphone or camera on one, and <code>denext doctor</code>{" "}
+          says so;
+        </li>
+        <li>
+          that grant replaces any <code>desktop.app.mediaCapture</code> in deno.json:{" "}
+          <code>deno desktop</code>{" "}
+          writes deno.json&apos;s into the launch file, and denext rewrites the file after it, so
+          the packaged app grants exactly the kinds <code>desktop.capabilities</code>{" "}
+          turns on, to the app origin, and no other origin. <code>denext desktop package</code>{" "}
+          warns and <code>denext doctor</code> reports it when deno.json sets a different grant;
+        </li>
+        <li>
+          on macOS, <code>NSMicrophoneUsageDescription</code> /{" "}
+          <code>NSCameraUsageDescription</code> in{" "}
+          <code>Info.plist</code>: the text macOS shows when it asks the user, from{" "}
+          <code>{"{ usageDescription }"}</code>{" "}
+          (default: &quot;&lt;app&gt; uses your microphone.&quot;). Without it macOS would end the
+          app the first time the page captures;
+        </li>
+        <li>
+          on a signed macOS build, the Hardened Runtime entitlements{" "}
+          <code>com.apple.security.device.audio-input</code> /{" "}
+          <code>com.apple.security.device.camera</code> (a <code>false</code> in{" "}
+          <code>desktop.macos.entitlements</code> wins).
+        </li>
+      </ul>
+      <p>
+        The OS still asks the user: macOS once per app (System Settings › Privacy &amp; Security),
+        Windows through its privacy switches for desktop apps. A refusal there reaches the page as
+        {" "}
+        <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
+        {" "}
+        <code>dev</code>) has no launch file, usage description or entitlement, so it has no grant
+        (from runtime 3.0.0-denext.10 it refuses the device): build and test the capture UI in the
+        browser with <code>denext dev</code>, where the browser asks.
+      </p>
+      <p>
+        WebRTC on Linux needs the CEF backend. No distribution builds WebKitGTK with WebRTC, so on
+        the webview backend <code>RTCPeerConnection</code> is undefined in the Linux app;{" "}
+        <code>getUserMedia</code>{" "}
+        itself works, so an app that only records is fine. An app that uses WebRTC gives Linux the
+        CEF backend in <code>denext.config.ts</code>:{" "}
+        <code>desktop: {"{"} backend: {"{"} linux: "cef" {"}"} {"}"}</code>{" "}
+        (Chromium, about 150 MB larger, on Linux only; macOS and Windows keep the system WebView,
+        which has WebRTC). <code>denext desktop doctor --linux</code> and <code>denext doctor</code>
+        {" "}
+        warn when the microphone or camera is on with the webview backend, and{" "}
+        <code>denext desktop package</code> warns once for a Linux target.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: {
+    microphone: { usageDescription: "Acme listens while you hold the talk key." },
+  },
+  // WebRTC on Linux too: Chromium there, the system WebView on macOS and Windows.
+  backend: { linux: "cef" },
+},
+
+// the page
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
+      </Code>
+
       <h3 id="desktop-devtools">DevTools</h3>
       <p>
         The web inspector (F12, the context menu, Safari&apos;s Develop menu, remote debugging) is
@@ -3222,7 +3570,13 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
         <code>denext/desktop/client</code>. The page half (<code>desktopExtension</code>,{" "}
         <code>onDesktopEvent</code>) is in <code>denext/desktop/client</code>;{" "}
-        <code>defineDesktopExtension</code> is exported from <code>denext/desktop</code>:
+        <code>defineDesktopExtension</code> is exported from{" "}
+        <code>denext/desktop</code>. A relative path (<code>
+          "./desktop/extensions/scanner.ts"
+        </code>) is resolved from the folder of the entry that calls{" "}
+        <code>resolveDesktopCapabilities</code> (the project root for{" "}
+        <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -3314,6 +3668,83 @@ export default defineDesktopExtension({
 
 // a "use client" component
 onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPercent(percent));`}
+      </Code>
+
+      <h3 id="desktop-owned-resources">Resources a window owns: PTYs, watchers, subprocesses</h3>
+      <p>
+        An extension that keeps something alive for one window (a terminal&apos;s PTY, a file
+        watcher, a subprocess) registers it in <code>createOwnedResources()</code> from{" "}
+        <code>denext/desktop</code>, connected from <code>setup(host)</code>.{" "}
+        <code>sessions.emit(id, event, data)</code>{" "}
+        sends to the resource&apos;s owner window only, never to every window, as{" "}
+        <code>{"{ id, data }"}</code> (an unknown id is a no-op that returns{" "}
+        <code>false</code>). When the owner closes, the default{" "}
+        <code>onOwnerClosed: "dispose"</code> disposes its resources. <code>"detach"</code>{" "}
+        keeps them alive with no owner and remembers the window&apos;s{" "}
+        <code>key</code>: a window reopened with that key finds them with{" "}
+        <code>sessions.ownedBy(key)</code> and takes one over with{" "}
+        <code>sessions.attach(id, ctx.windowId)</code>, which returns what it emitted meanwhile. Use
+        {" "}
+        <code>"detach"</code> only with{" "}
+        <code>replay</code>, and give the user a way to end a detached resource (<code>
+          sessions.detached()
+        </code>{" "}
+        lists them): it lives until <code>sessions.remove(id)</code>{" "}
+        or the app quits. When the app quits, or a window closes because it is quitting, every
+        resource is disposed whatever the policy; each <code>dispose</code> is awaited for at most
+        {" "}
+        <code>disposeTimeoutMs</code> (5 s), and a failure is logged without stopping the others.
+      </p>
+      <p>
+        <code>replay: {"{ maxBytes }"}</code>{" "}
+        keeps each resource&apos;s recent events, emitted while owned or detached, and{" "}
+        <code>attach</code> returns them as <code>{"{ event, data }"}</code>{" "}
+        entries, oldest first, so a page can tell a terminal&apos;s output from its{" "}
+        <code>exit</code>. <code>replay.events</code>{" "}
+        limits which events are kept (all of them by default); one left out is still sent to the
+        owner. The buffer holds <code>maxBytes</code>{" "}
+        of event data per resource, the event names not counted: a string counts its UTF-8 bytes, an
+        {" "}
+        <code>ArrayBuffer</code> or typed array its{" "}
+        <code>byteLength</code>, anything else its JSON. The oldest whole chunks go first; one chunk
+        larger than the whole buffer keeps its last <code>maxBytes</code>{" "}
+        bytes when it is a string or bytes, and is dropped otherwise.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/terminal.ts: runs in the Deno process only
+import { createOwnedResources, defineDesktopExtension } from "denext/desktop";
+const sessions = createOwnedResources<Pty>({
+  onOwnerClosed: "detach", // survive the window; "dispose" (the default) ends with it
+  dispose: (pty) => pty.kill(),
+  replay: { maxBytes: 256 * 1024, events: ["output", "exit"] }, // not "title"
+});
+export default defineDesktopExtension({
+  name: "terminal",
+  events: ["output", "exit", "title"],
+  setup: (host) => sessions.connect(host),
+  methods: {
+    open: {
+      handler: (_args, ctx) => {
+        const id = crypto.randomUUID();
+        const pty = spawnPty(); // your PTY
+        sessions.add(id, pty, { owner: ctx.windowId });
+        pty.onData((text) => sessions.emit(id, "output", text));
+        pty.onExit((code) => sessions.emit(id, "exit", code));
+        return id;
+      },
+    },
+    // a window reopened with openWindow({ key: "terminal" }) restores its sessions
+    restore: { handler: () => sessions.ownedBy("terminal") },
+    resume: {
+      handler: (args, ctx) => sessions.attach((args as { id: string }).id, ctx.windowId ?? "main"),
+    },
+  },
+});
+
+// a "use client" component: replay first, then the live events
+const { replay } = await terminal.resume({ id });
+for (const { event, data } of replay) event === "output" ? write(id, data) : showExit(id, data);
+onDesktopEvent<{ id: string; data: string }>("terminal", "output", ({ id, data }) => write(id, data));`}
       </Code>
 
       <h3 id="desktop-picked-path">A picked file&apos;s path, for a host program</h3>
@@ -3467,12 +3898,15 @@ export default defineDesktopExtension({
           <code>run: {"{ module }"}</code> runs a module{" "}
           <strong>inside the app&apos;s own Deno runtime</strong>, in a dedicated worker with Node
           compatibility. No second binary ships (a Deno CLI would add about 100 MB), and the worker
-          cannot outlive the app. A Node backend names its{" "}
-          <code>nodeModules</code>: the package scripts and <code>denext desktop run</code>{" "}
-          bundle it into <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
-          (every npm import inlined) and embed the folder in the app. The packages it loads with
+          cannot outlive the app. The module is relative to the folder of the entry that calls{" "}
+          <code>runDesktop</code> (the project root for <code>desktop.ts</code>; <code>app/</code>
           {" "}
-          <code>require</code>{" "}
+          for <code>denext desktop run --entry app/desktop.ts</code>). A Node backend names its{" "}
+          <code>nodeModules</code> (both relative to the project): the package scripts and{" "}
+          <code>denext desktop run</code> bundle it into{" "}
+          <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
+          beside that entry (every npm import inlined) and embed the folder in the app. The packages
+          it loads with <code>require</code>{" "}
           at run time (those that carry a native addon, with only the target OS&apos;s prebuilds,
           and those listed in{" "}
           <code>external</code>) travel as one archive beside it and are unpacked into the
@@ -3482,8 +3916,11 @@ export default defineDesktopExtension({
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
-          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder (
+          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), relative to the
+          folder of the entry that calls <code>runDesktop</code> (the project root for{" "}
+          <code>desktop.ts</code>, which packaging compiles;{" "}
+          <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
+          <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
@@ -3492,8 +3929,31 @@ export default defineDesktopExtension({
           {" "}
           <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
           every <code>--allow-run</code>{" "}
-          path, so a run grant on the copy would leave the app unable to write it. It gets the
-          sidecar&apos;s variables, and one JSON line on stdin (
+          path, so a run grant on the copy would leave the app unable to write it. From runtime
+          3.0.0-denext.10 (the same app) the program&apos;s SHA-256, taken at packaging, is baked
+          into the run grant, and the runtime keeps the file itself: it writes it from the binary to
+          {" "}
+          <code>sidecars/&lt;name&gt;/&lt;sha256&gt;/&lt;file&gt;</code>, denies that folder to the
+          app&apos;s writes (no write grant is baked for it) and checks the hash at every spawn, in
+          the spawn itself, so <code>new Deno.Command(path)</code>{" "}
+          in the app gets the same answer. A file that differs is refused with{" "}
+          <code>NotCapable</code>{" "}
+          and removed, and the next start (the supervisor&apos;s restart) writes it again. A limit
+          stays on macOS and Linux: another program of the same user that changes the file in the
+          microseconds between the check and the exec can run for a moment before the runtime sees
+          it and kills the child (<code>outputSync()</code>{" "}
+          has no such kill). On Linux that check compares the file&apos;s timestamps, which ext4
+          keeps to a coarse clock (a 1 ms tick on a 1000 Hz kernel, measured on Linux 6.8; kernels
+          with multigrain timestamps, 6.13 and later, refine a timestamp that has been read), so a
+          rewrite of the same length with the mode put back, inside the tick after the file last
+          changed, goes unseen; such a program must already be able to write the file, which the
+          app&apos;s own code can&apos;t. On Windows the file is locked for the spawn. Code holding
+          unscoped <code>--allow-read</code> and <code>--allow-write</code>{" "}
+          could put a symlink where a folder above the program&apos;s will be before the runtime
+          first writes it and race the spawn the same way, but such an app can change what the
+          user&apos;s own programs run anyway. The hash covers that one file, not what the program
+          loads or runs in turn. The program gets the sidecar&apos;s variables, and one JSON line on
+          stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>
@@ -3733,7 +4193,8 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         <code>permissions</code> is baked into the package like{" "}
         <code>desktop.extraPermissions</code>, and a program of the project bakes an unscoped{" "}
         <code>--allow-run</code>{" "}
-        (it runs from the cache folder, whose path is only known on the user&apos;s machine).
+        (it runs from the cache folder, whose path is only known on the user&apos;s machine), unless
+        the runtime can scope it as above.
       </p>
 
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>

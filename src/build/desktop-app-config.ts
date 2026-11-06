@@ -45,10 +45,21 @@ import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/w
 import {
   activationPolicyRuntime,
   desktopPasskeyRpIds,
+  desktopRuntimeLabel,
   initialOverlayRuntime,
+  mediaCaptureRuntime,
   PASSKEY_RP_IDS_FIX,
+  readProjectDenoJson,
   strictLaunchRuntime,
 } from "./desktop-launch-policy.ts";
+import {
+  assertMediaCaptureRuntime,
+  DENO_JSON_MEDIA_CAPTURE_FIX,
+  denoJsonMediaCaptureProblem,
+  type DesktopMediaKind,
+  mediaCaptureLaunchGrant,
+  withMediaUsageDescriptions,
+} from "./desktop-media-capture.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
@@ -88,6 +99,14 @@ export interface LaufeyLaunchConfig {
    * refuses any other RP ID with `invalid_rp` before the OS sees it; an empty list refuses all.
    */
   readonly passkeyRpIds?: string[];
+  /**
+   * The documents that get the microphone and / or camera (file only, no env var, runtime
+   * `3.0.0-denext.10`+): the app origin alone, per kind enabled in `desktop.capabilities`
+   * (`microphone`, `camera`). laufey refuses every other origin, and a sub-frame of another origin
+   * (except on Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates
+   * the device to with `allow="microphone"` gets it).
+   */
+  readonly mediaCapture?: Partial<Record<DesktopMediaKind, string[]>>;
   /**
    * The strict launch policy (file only, runtime `3.0.0-denext.1`+): a policy key the file leaves
    * out refuses instead of allowing (no `bridgeOrigins` / `customSchemes`: the bridge serves no
@@ -415,7 +434,8 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
 
 /**
  * The packaged app's `laufey-launch.json` settings from `desktop.app`, `desktop.inspectable`,
- * `desktop.capabilities.passkeys` (`passkeyRpIds`), (on Linux) `desktop.linux.requireSandbox` and
+ * `desktop.capabilities.passkeys` (`passkeyRpIds`), `desktop.capabilities.microphone` / `camera`
+ * (`mediaCapture`, the app origin alone), (on Linux) `desktop.linux.requireSandbox` and
  * (on Windows) `desktop.windows.proxy`: the bridge always pinned ({@linkcode desktopBridgeOrigins}),
  * and on a strict runtime `"strictPolicy": true`, so whatever the file leaves out fails closed.
  *
@@ -423,6 +443,7 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
  * @param os The target OS.
  * @param strict Whether the runtime reads `"strictPolicy"` (`strictLaunchRuntime`).
  * @param policyKnown Whether the runtime reads `"activationPolicy"` (`activationPolicyRuntime`).
+ * @param mediaKnown Whether the runtime reads `"mediaCapture"` (`mediaCaptureRuntime`).
  * @returns The settings.
  */
 function packagedLaunchConfig(
@@ -430,10 +451,17 @@ function packagedLaunchConfig(
   os: DesktopOs,
   strict: boolean,
   policyKnown: boolean,
+  mediaKnown: boolean,
 ): LaufeyLaunchConfig {
   const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
   const activationPolicy = macActivationPolicy(config, os, policyKnown);
   const passkeyRpIds = desktopPasskeyRpIds(config);
+  const mediaCapture = mediaKnown
+    ? mediaCaptureLaunchGrant(
+      config,
+      desktopAppIdentity(config)?.origin ?? DEFAULT_DESKTOP_APP_ORIGIN,
+    )
+    : undefined;
   // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
   // written: without it the runtime would leave them on.
   return {
@@ -441,11 +469,51 @@ function packagedLaunchConfig(
     inspectable: desktopInspectable(config, "package"),
     bridgeOrigins: desktopBridgeOrigins(config),
     ...(passkeyRpIds ? { passkeyRpIds } : {}),
+    ...(mediaCapture ? { mediaCapture } : {}),
     ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
     ...(proxy ? { proxy } : {}),
     ...(activationPolicy ? { activationPolicy } : {}),
     ...(strict ? { strictPolicy: true } : {}),
   };
+}
+
+/**
+ * Rewrite the bundle's `Info.plist` with `edit`; a bundle with none (never one `deno desktop`
+ * writes) is left alone.
+ */
+async function editInfoPlist(plist: string, edit: (text: string) => string): Promise<void> {
+  const text = await Deno.readTextFile(plist).catch((e) => {
+    if (e instanceof Deno.errors.NotFound) return null;
+    throw e;
+  });
+  if (text !== null) await Deno.writeTextFile(plist, edit(text));
+}
+
+/**
+ * The macOS bundle's `Info.plist` keys the config sets: `NSUserActivityTypes`, the microphone /
+ * camera usage descriptions and an accessory app's `LSUIElement`. Before code-signing.
+ */
+async function writeMacBundleKeys(
+  config: unknown,
+  bundle: string,
+  launch: LaufeyLaunchConfig,
+): Promise<void> {
+  const types = desktopUserActivityTypes(config);
+  const plist = join(bundle, "Contents", "Info.plist");
+  if (types.length > 0) {
+    await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+  }
+  // The text macOS shows when it asks for the microphone / camera: without it macOS ends the app
+  // the first time the page captures. Only beside the grant: on a runtime that does not enforce
+  // it, the missing text is what keeps any other origin from capturing (packaging refuses one).
+  if (launch.mediaCapture) {
+    await editInfoPlist(plist, (text) => withMediaUsageDescriptions(text, config));
+  }
+  // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
+  // app could never show its Dock icon again (`setActivationPolicy` is missing there).
+  if (launch.activationPolicy === "accessory") {
+    await editInfoPlist(plist, (text) => withActivationPolicy(text, "accessory"));
+  }
 }
 
 /** Options for {@linkcode writeLaufeyLaunchConfig}. */
@@ -460,6 +528,12 @@ export interface LaufeyLaunchWriteOptions {
    * pinned runtime from `3.0.0-denext.6`).
    */
   readonly activationPolicy?: boolean;
+  /**
+   * Whether the runtime reads `"mediaCapture"` (default `mediaCaptureRuntime()`: denext's pinned
+   * runtime from `3.0.0-denext.10`). Without it a config with the microphone or camera on is
+   * refused.
+   */
+  readonly mediaCapture?: boolean;
 }
 
 /**
@@ -468,13 +542,16 @@ export interface LaufeyLaunchWriteOptions {
  * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
  * `NSUserActivityTypes`, and marks an `"accessory"` app `LSUIElement` (no Dock tile at launch;
  * {@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed
- * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
+ * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The
+ * microphone or camera on a runtime that does not enforce the grant is refused
+ * ({@linkcode assertMediaCaptureRuntime}) before anything is written.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
  * @param bundle The `.app` (macOS) or bundle directory (Windows / Linux) `deno desktop` wrote.
  * @param options Whether the runtime is strict (default: from the pin and the env).
  * @returns The path written (always written: it carries `inspectable`).
+ * @throws {Error} When the microphone or camera is on and the runtime does not read the grant.
  */
 export async function writeLaufeyLaunchConfig(
   entryUrl: string,
@@ -483,11 +560,14 @@ export async function writeLaufeyLaunchConfig(
   options: LaufeyLaunchWriteOptions = {},
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
+  const mediaKnown = options.mediaCapture ?? mediaCaptureRuntime();
+  assertMediaCaptureRuntime(config, mediaKnown, desktopRuntimeLabel());
   const launch = packagedLaunchConfig(
     config,
     os,
     options.strict ?? strictLaunchRuntime(),
     options.activationPolicy ?? activationPolicyRuntime(),
+    mediaKnown,
   );
   if (launch.passkeyRpIds?.length === 0) {
     console.warn(
@@ -495,26 +575,17 @@ export async function writeLaufeyLaunchConfig(
         `refuses every passkey ceremony (invalid_rp): ${PASSKEY_RP_IDS_FIX}.`,
     );
   }
+  const replaced = new URL("../", entryUrl).protocol === "file:"
+    ? denoJsonMediaCaptureProblem(
+      await readProjectDenoJson(fromFileUrl(new URL("../", entryUrl))),
+      launch.mediaCapture,
+    )
+    : null;
+  if (replaced) console.warn(`  denext: WARNING: ${replaced} — ${DENO_JSON_MEDIA_CAPTURE_FIX}.`);
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
-  if (os === "darwin") {
-    const types = desktopUserActivityTypes(config);
-    const plist = join(bundle, "Contents", "Info.plist");
-    if (types.length > 0) {
-      await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
-    }
-    // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
-    // app could never show its Dock icon again (`setActivationPolicy` is missing there).
-    if (launch.activationPolicy === "accessory") {
-      // A bundle with no Info.plist (never one `deno desktop` writes) has nothing to mark.
-      const text = await Deno.readTextFile(plist).catch((e) => {
-        if (e instanceof Deno.errors.NotFound) return null;
-        throw e;
-      });
-      if (text !== null) await Deno.writeTextFile(plist, withActivationPolicy(text, "accessory"));
-    }
-  }
+  if (os === "darwin") await writeMacBundleKeys(config, bundle, launch);
   return path;
 }
 

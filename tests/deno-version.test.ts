@@ -179,7 +179,10 @@ Deno.test("compareDenoVersions: the fork's 3.0.0-denext.N line outranks every 3.
     "3.0.0-rc.10",
     "3.0.0-denext.1",
     "3.0.0-denext.2",
+    "3.0.0-denext.8",
+    "3.0.0-denext.9",
     "3.0.0-denext.10",
+    "3.0.0-denext.11",
     "3.0.0",
     "3.0.1",
   ];

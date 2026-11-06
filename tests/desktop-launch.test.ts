@@ -7,20 +7,28 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_DEV_ENTRY_FILE,
+  DESKTOP_EXPORT_GITIGNORE,
   desktopDevEntrySource,
+  desktopEntryOutDir,
+  desktopExportTargetProblem,
   desktopLaunchBuildArgs,
   desktopLaunchBuildPlan,
   desktopLaunchBundle,
   desktopLaunchExecutable,
   desktopLaunchName,
   desktopLaunchScratchDir,
+  desktopPackageOutDirProblem,
+  desktopProjectEntry,
+  desktopRunConfig,
   isInsideDir,
+  markDesktopExport,
   withNetHosts,
   writeDesktopDevEntry,
 } from "../src/build/desktop-launch.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "../src/build/desktop-dev-build.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { desktopDevProxyDecision } from "../src/build/desktop.ts";
+import { desktopLaunchPolicyCheck } from "../src/cli/commands/doctor.ts";
 
 /** A project whose config enables capabilities that widen the permissions, plus an extension. */
 async function project(): Promise<{ dir: string; config: unknown }> {
@@ -146,6 +154,326 @@ Deno.test("desktop dev: no export embedded, the generated entry, a LAN host adde
     assertEquals(plan.args.at(-1), entry);
   } finally {
     await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop dev: a recorded program sidecar names its file relative to the generated entry", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_sidecar_" });
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "");
+    await Deno.mkdir(join(dir, "bin"));
+    await Deno.writeTextFile(join(dir, "bin", "server"), "packaged");
+    const config = {
+      desktop: {
+        app: { name: "My App", identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "desktop.ts");
+    const runGrant = async (entry: string) =>
+      (await desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        appEntry: "desktop.ts",
+        dev: entry !== "desktop.ts",
+        scratch,
+        sidecarIntegrity: true,
+      })).args.find((a) => a.startsWith("--allow-run"));
+    // The runtime resolves `#embedded=` from the compiled entry's folder (`.denext/`).
+    assertStringIncludes((await runGrant(entry)) ?? "", "#embedded=../bin/server");
+    assertStringIncludes((await runGrant("desktop.ts")) ?? "", "#embedded=bin/server");
+  } finally {
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / dev --entry app/desktop.ts: a program sidecar is the file the app resolves", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_nested_" });
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.mkdir(join(dir, "app", "bin"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "app", "desktop.ts"), "");
+    await Deno.writeTextFile(join(dir, "app", "bin", "server"), "packaged");
+    const config = {
+      desktop: {
+        app: { name: "My App", identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    // The `--include`s are read from the project's config file, as a packaging script reads them.
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      `export default ${JSON.stringify(config)};\n`,
+    );
+    const plan = (entry: string, dev: boolean) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        appEntry: "app/desktop.ts",
+        dev,
+        scratch,
+        sidecarIntegrity: true,
+      });
+    const included = (args: string[]) =>
+      args.flatMap((a, i) => args[i - 1] === "--include" ? [a] : []);
+    // `desktop run` compiles the entry itself: the app resolves `./bin/server` from `app/`.
+    const run = (await plan("app/desktop.ts", false)).args;
+    assert(included(run).includes("app/bin/server"), run.join(" "));
+    assertStringIncludes(
+      run.find((a) => a.startsWith("--allow-run")) ?? "",
+      "#embedded=bin/server",
+    );
+    // `desktop dev` compiles the generated entry, which imports `app/desktop.ts`.
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "app/desktop.ts");
+    const dev = (await plan(entry, true)).args;
+    assert(included(dev).includes("app/bin/server"), dev.join(" "));
+    assertStringIncludes(
+      dev.find((a) => a.startsWith("--allow-run")) ?? "",
+      "#embedded=../app/bin/server",
+    );
+  } finally {
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A project whose app entry is `app/desktop.ts`, with an extension, a module and a Node backend. */
+async function nestedProject(): Promise<{ dir: string; config: unknown }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_nested_inc_" });
+  const files: Record<string, string> = {
+    "deno.json": "{}",
+    "desktop.ts": "",
+    "app/desktop.ts": "",
+    "app/ext.ts": "",
+    "app/worker/main.ts": "",
+    "srv/main.mjs": "console.log(1);\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  await Deno.mkdir(join(dir, "srv", "node_modules"));
+  const config = {
+    desktop: {
+      app: { name: "My App", identifier: "com.example.app" },
+      capabilities: { extensions: ["./ext.ts", "jsr:@x/ext"] },
+      sidecars: [
+        { name: "worker", run: { module: "./worker/main.ts" } },
+        { name: "api", run: { module: "srv/main.mjs", nodeModules: "srv/node_modules" } },
+      ],
+    },
+  };
+  await Deno.writeTextFile(
+    join(dir, "denext.config.ts"),
+    `export default ${JSON.stringify(config)};\n`,
+  );
+  return { dir, config };
+}
+
+/** The `--include` values of `args`. */
+function includes(args: readonly string[]): string[] {
+  return args.flatMap((a, i) => args[i - 1] === "--include" ? [a] : []);
+}
+
+Deno.test("desktop run / dev --entry app/desktop.ts: an extension, a module sidecar and a Node backend's bundle are embedded where the app loads them", async () => {
+  const { dir, config } = await nestedProject();
+  const scratch = await desktopLaunchScratchDir(dir);
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const plan = (entry: string, dev: boolean) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        appEntry: "app/desktop.ts",
+        dev,
+        scratch,
+      });
+    // What the app loads, resolved as it resolves them against `app/desktop.ts`'s URL.
+    const base = toFileUrl(join(dir, "app", "desktop.ts")).href;
+    const fromApp = (spec: string) =>
+      new URL(spec, base).href.slice(toFileUrl(dir).href.length + 1);
+    const want = [
+      fromApp("./ext.ts"),
+      "jsr:@x/ext",
+      fromApp("./.deno-desktop/sidecars/api"),
+      fromApp("./worker/main.ts"),
+    ];
+    assertEquals(want, [
+      "app/ext.ts",
+      "jsr:@x/ext",
+      "app/.deno-desktop/sidecars/api",
+      "app/worker/main.ts",
+    ]);
+    const check = (got: string[], what: string) => {
+      assert(got.includes("app/ext.ts"), `${what}: the extension (${got.join(" ")})`);
+      assert(got.includes("app/worker/main.ts"), `${what}: the module sidecar (${got.join(" ")})`);
+      assert(
+        got.includes("app/.deno-desktop/sidecars/api"),
+        `${what}: the Node backend's bundle (${got.join(" ")})`,
+      );
+    };
+    // `desktop run` compiles the entry itself.
+    const run = includes((await plan("app/desktop.ts", false)).args);
+    check(run, "desktop run");
+    // The UI is the export beside the entry, which `runDesktop` serves by default.
+    assertEquals(run, ["app/out", ...want]);
+    // The bundle is on disk where the app loads it.
+    const main = join(dir, "app", ".deno-desktop", "sidecars", "api", "main.mjs");
+    assert(await Deno.stat(main).then(() => true, () => false), main);
+    // `desktop dev` compiles the generated entry, which imports `app/desktop.ts`.
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "app/desktop.ts");
+    const dev = includes((await plan(entry, true)).args);
+    check(dev, "desktop dev");
+    assertEquals(dev, want);
+  } finally {
+    console.log = log;
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / dev: an entry at the project root gets the same flags and includes as before", async () => {
+  const { dir, config } = await nestedProject();
+  const scratch = await desktopLaunchScratchDir(dir);
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const plan = (entry: string, dev: boolean, appEntry?: string) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        ...(appEntry === undefined ? {} : { appEntry }),
+        dev,
+        scratch,
+      });
+    const run = (await plan("desktop.ts", false)).args;
+    // Every path as written in the config, the bundle in the project's `.deno-desktop/`.
+    assertEquals(includes(run), [
+      "out",
+      "./ext.ts",
+      "jsr:@x/ext",
+      ".deno-desktop/sidecars/api",
+      "./worker/main.ts",
+    ]);
+    assertEquals((await plan("desktop.ts", false, "desktop.ts")).args, run);
+    assertEquals((await plan("desktop.ts", false, "./desktop.ts")).args, run);
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "desktop.ts");
+    const dev = (await plan(entry, true, "desktop.ts")).args;
+    assertEquals(includes(dev), includes(run).slice(1));
+    assertEquals(
+      dev.filter((a) => a.startsWith("--allow-")),
+      run.filter((a) => a.startsWith("--allow-")),
+    );
+  } finally {
+    console.log = log;
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for a root entry with no outDir", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_entry_out_" });
+  try {
+    await Deno.mkdir(join(dir, "app"));
+    const entry = async (rel: string, source: string) => {
+      await Deno.writeTextFile(join(dir, rel), source);
+      return await desktopEntryOutDir(dir, rel);
+    };
+    // A root entry with no outDir: `out`, as before.
+    assertEquals(
+      await entry("desktop.ts", "runDesktop({ importMetaUrl: import.meta.url });"),
+      "out",
+    );
+    assertEquals(await desktopEntryOutDir(dir, "./desktop.ts"), "out");
+    assertEquals(await desktopPackageOutDirProblem(dir), null);
+    // A root entry's literal outDir is the folder it serves, which packaging cannot follow.
+    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "dist" });'), "dist");
+    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "./out" });'), "out");
+    assertEquals(await entry("desktop.ts", "runDesktop({ outDir: `ui/` });"), "ui");
+    const problem = await desktopPackageOutDirProblem(dir);
+    assertStringIncludes(problem ?? "", 'outDir "ui/" (ui/)');
+    assertStringIncludes(problem ?? "", "would have no UI");
+    // `denext doctor` names it.
+    const check = await desktopLaunchPolicyCheck(dir, {}, {
+      env: () => undefined,
+      runtimeVersion: "3.0.0-denext.10",
+    });
+    assert(!check!.ok);
+    assertStringIncludes(check!.detail, 'outDir "ui/"');
+    // A nested entry: `out` (or its literal `outDir`) resolved from its folder, as runDesktop does.
+    assertEquals(
+      await entry("app/desktop.ts", "runDesktop({ importMetaUrl: import.meta.url });"),
+      "app/out",
+    );
+    assertEquals(await entry("app/desktop.ts", 'runDesktop({ outDir: "../out" });'), "out");
+    assertEquals(
+      await entry("app/desktop.ts", "runDesktop({ outDir: 'ui/dist' });"),
+      "app/ui/dist",
+    );
+    assertEquals(
+      await entry("app/desktop.ts", `runDesktop({ outDir: ${JSON.stringify(join(dir, "web"))} });`),
+      "web",
+    );
+    assertEquals(await desktopEntryOutDir(dir, "app\\missing.ts"), "app/out");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / build: an export folder other than out is used only when it is new, empty or an export, and is git-ignored", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_export_target_" });
+  try {
+    assertEquals(await desktopExportTargetProblem(dir, "out"), null);
+    // New: exported and marked.
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null);
+    await Deno.mkdir(join(dir, "shell", "out"), { recursive: true });
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null, "empty");
+    await markDesktopExport(dir, "shell/out");
+    assertEquals(
+      await Deno.readTextFile(join(dir, "shell", "out", ".gitignore")),
+      DESKTOP_EXPORT_GITIGNORE,
+    );
+    await Deno.writeTextFile(join(dir, "shell", "out", "index.html"), "");
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null, "marked");
+    // An export written by `denext export --out ui`.
+    await Deno.mkdir(join(dir, "ui", "_denext"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "ui", "index.html"), "");
+    assertEquals(await desktopExportTargetProblem(dir, "ui"), null);
+    // A user's folder: never replaced, never written into.
+    await Deno.mkdir(join(dir, "docs"));
+    await Deno.writeTextFile(join(dir, "docs", "notes.md"), "mine");
+    assertStringIncludes(
+      (await desktopExportTargetProblem(dir, "docs")) ?? "",
+      "docs/ exists and is not a denext export",
+    );
+    await Deno.writeTextFile(join(dir, "file"), "");
+    assertStringIncludes((await desktopExportTargetProblem(dir, "file")) ?? "", "not a folder");
+    // The root `out` is never marked (the scaffold's .gitignore already lists it).
+    await Deno.mkdir(join(dir, "out"));
+    await markDesktopExport(dir, "out");
+    assertEquals(
+      await Deno.stat(join(dir, "out", ".gitignore")).then(() => true, () => false),
+      false,
+    );
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -314,4 +642,96 @@ Deno.test("desktopDevProxyDecision: a dev build proxies; a packaged app still ig
     desktopDevProxyDecision("http://192.168.1.5:3000", true, packaged, true).proxy,
     true,
   );
+});
+
+Deno.test("desktopRunConfig: the build of an unpackaged window never sees deno.json's media grant", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_media_" });
+  try {
+    // No deno.json, or one without the key: the build reads the project's own config.
+    const none = await desktopRunConfig(dir);
+    assertEquals([none.args, none.dropped], [[], null]);
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { app: { name: "App" } }, imports: { "@/": "./src/" } }),
+    );
+    assertEquals((await desktopRunConfig(dir)).args, []);
+
+    // What `deno desktop` would write into the bundle's laufey-launch.json: any exact origin, a
+    // loopback dev server's too. The build gets a copy beside deno.json without it, so nothing in
+    // the signed bundle is edited after the build.
+    const own = {
+      desktop: {
+        app: {
+          name: "App",
+          mediaCapture: { microphone: ["http://127.0.0.1:3000", "https://x.example"] },
+        },
+      },
+      imports: { "@/": "./src/" },
+      compile: { include: [".deno-desktop/app.json"] },
+    };
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(own));
+    const run = await desktopRunConfig(dir);
+    assertEquals(run.args.length, 2);
+    assertEquals(run.args[0], "--config");
+    const file = run.args[1];
+    // Beside deno.json: its relative paths, lockfile and workspace resolve the same.
+    assertEquals(join(file, ".."), dir);
+    assertStringIncludes(run.dropped ?? "", "https://x.example");
+    assertEquals(JSON.parse(await Deno.readTextFile(file)), {
+      desktop: { app: { name: "App" } },
+      imports: { "@/": "./src/" },
+      compile: { include: [".deno-desktop/app.json"] },
+    });
+    // The project's own deno.json is untouched.
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))), own);
+
+    // The build is planned with it (before `--output` and the entry).
+    const plan = await desktopLaunchBuildPlan({
+      projectDir: dir,
+      config: {},
+      os: "linux",
+      denoFlags: [],
+      entry: "desktop.ts",
+      dev: true,
+      scratch: dir,
+      configArgs: run.args,
+    });
+    const at = plan.args.indexOf("--config");
+    assert(at > 0 && plan.args[at + 1] === file, plan.args.join(" "));
+    assert(at < plan.args.indexOf("--output"), plan.args.join(" "));
+
+    await run.cleanup();
+    assertEquals(await Deno.stat(file).then(() => true, () => false), false);
+    // deno.jsonc too.
+    await Deno.remove(join(dir, "deno.json"));
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      '// comment\n{ "desktop": { "app": { "mediaCapture": { "camera": ["https://y.example"] } } } }',
+    );
+    const jsonc = await desktopRunConfig(dir);
+    assertEquals(JSON.parse(await Deno.readTextFile(jsonc.args[1])), { desktop: { app: {} } });
+    await jsonc.cleanup();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopProjectEntry: an --entry outside the project is refused (the build writes beside it)", () => {
+  const dir = join(Deno.cwd(), "proj");
+  assertEquals(desktopProjectEntry(dir, "desktop.ts"), "desktop.ts");
+  assertEquals(desktopProjectEntry(dir, "app/desktop.ts"), "app/desktop.ts");
+  assertEquals(desktopProjectEntry(dir, "./app/../desktop.ts"), "desktop.ts");
+  assertEquals(desktopProjectEntry(dir, join(dir, "app", "desktop.ts")), "app/desktop.ts");
+  for (
+    const entry of ["../other/desktop.ts", "app/../../desktop.ts", ".", join(Deno.cwd(), "x.ts")]
+  ) {
+    let threw = false;
+    try {
+      desktopProjectEntry(dir, entry);
+    } catch (err) {
+      threw = true;
+      assertStringIncludes(String(err), "outside the project");
+    }
+    assert(threw, entry);
+  }
 });

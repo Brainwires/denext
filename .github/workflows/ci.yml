@@ -547,9 +547,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.8
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.8-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 24e1ba8af8bbe724c15ec70f2c608f06c5e82a618dfd95cf1159241e75c63d0e
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.12
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: bc274a95c56ad7d2974c67817ca5e2dd43690eab86c6389d8c786fc189d247c8
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -634,6 +634,8 @@ jobs:
   # + swiftc, so the Linux jobs never run it; this job does, on every event, and fails if the
   # compiled case was ignored rather than passed.
   ios-export-router:
+    # Stays on GitHub's image: swiftc against the iOS SDK needs Xcode, which the
+    # self-hosted macOS images (Command Line Tools only) do not have.
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -774,7 +776,10 @@ jobs:
   # is ignored off darwin, so this job fails if it was ignored rather than passed. Heavy (PRs,
   # `main` and a manual dispatch), like `windows-tests`; a release needs it green.
   macos-tests:
-    runs-on: macos-latest
+    # macOS: the self-hosted arm64 runner the repository variable RUNNER_MACOS_ARM
+    # names (a label, or a JSON array), else macos-latest; always macos-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 90
     steps:
