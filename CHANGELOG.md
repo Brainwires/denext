@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-11-06
+
 ### Added
 
 - **Window lifecycle hooks for desktop extensions.** A capability (`defineDesktopExtension`) can
@@ -21322,7 +21324,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.12.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.0...development
+[4.13.0]: https://jsr.io/@denext/denext@4.13.0
 [4.12.0]: https://jsr.io/@denext/denext@4.12.0
 [4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12
