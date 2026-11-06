@@ -121,6 +121,11 @@ dependency lists.
 { "imports": { "next-intl": "jsr:@denext/denext/next-intl" } }
 ```
 
+The request config (`i18n/request.ts`, `getRequestConfig(…)`) registers when its module
+runs. On Next.js `createNextIntlPlugin` wires it; on denext something the server renders imports
+it: `denext migrate` adds `import "../i18n/request";` (the relative path to the file the plugin
+names, else `./(src/)i18n/request.*`) to each root layout. A hand-built app does the same.
+
 ## ICU messages
 
 Messages are formatted by a first-party ICU implementation built on the standard

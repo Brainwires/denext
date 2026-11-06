@@ -37,7 +37,17 @@ import {
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG, machineEnvIn } from "./next-config-eval.ts";
+import {
+  CONFIG_PLUGIN_CALLS,
+  evalNextConfigProgram,
+  LOAD_NEXT_CONFIG,
+  machineEnvIn,
+} from "./next-config-eval.ts";
+import {
+  type ConfigPluginCall,
+  type NextIntlMigrateInfo,
+  wireNextIntlRequestConfig,
+} from "./next-intl-migrate.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { VERSION } from "../version.ts";
@@ -539,6 +549,11 @@ export interface MigrateResult {
   prisma?: PrismaMigrateInfo;
   /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
   nextAuth?: NextAuthMigrateInfo;
+  /**
+   * Present when the next.config wraps the config with next-intl's `createNextIntlPlugin`: the
+   * request config found, and the root layouts migrate made import it.
+   */
+  nextIntl?: NextIntlMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
   /** Present when {@link kind} is `"tanstack-start"` — the Start options carried and dropped. */
@@ -1074,6 +1089,8 @@ interface NextConfigTranslation {
    * than serializing the live plugin fns or dropping them.
    */
   mdx?: boolean;
+  /** The stubbed config plugins the config called (`createNextIntlPlugin`), when evaluated. */
+  plugins?: ConfigPluginCall[];
 }
 
 /** next.config keys denext maps straight through (same names/shapes as Next). */
@@ -1166,6 +1183,8 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
+// The stubbed plugins' calls (createNextIntlPlugin's request config path).
+out.plugins = ${CONFIG_PLUGIN_CALLS};
 console.log(${JSON.stringify(NEXT_EVAL_MARKER)} + JSON.stringify(out));
 // Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
 // the event loop alive or crash asynchronously after the config object was already handed
@@ -1235,8 +1254,11 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
-  const value = result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">;
-  return { ...base, ...withoutMachineEnv(value) };
+  const value = result.value as Pick<
+    NextConfigTranslation,
+    "fields" | "rules" | "dropped" | "plugins"
+  >;
+  return { ...base, ...withoutMachineEnv(value), plugins: value.plugins ?? [] };
 }
 
 /**
@@ -1644,6 +1666,12 @@ async function migrateNextProject(
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   const nextAuth = await nextAuthMigrateInfo(dir, deps, pagesRouter);
+  const nextIntl = await wireNextIntlRequestConfig(
+    dir,
+    deps,
+    next && { file: next.file, plugins: next.raw ? null : next.plugins ?? [] },
+    written,
+  );
   return {
     kind: "next",
     wrote: written,
@@ -1655,6 +1683,7 @@ async function migrateNextProject(
     denoJsonExists,
     prisma,
     ...(nextAuth ? { nextAuth } : {}),
+    ...(nextIntl ? { nextIntl } : {}),
     nextConfig: nextConfigReport(next),
     capacitor,
   };

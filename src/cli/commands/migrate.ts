@@ -298,6 +298,23 @@ function reportNextAuth(n: NonNullable<MigrateResult["nextAuth"]>): void {
   printReviewNotes(n.notes, 4);
 }
 
+/** The next-auth and next-intl wiring, for the apps that use them. */
+function reportIntlAndAuth(r: MigrateResult): void {
+  if (r.nextAuth) reportNextAuth(r.nextAuth);
+  if (r.nextIntl) reportNextIntl(r.nextIntl);
+}
+
+/** The next-intl request config: which root layouts migrate made import it. */
+function reportNextIntl(n: NonNullable<MigrateResult["nextIntl"]>): void {
+  if (n.requestConfig && n.wired.length > 0) {
+    console.log(
+      `  ▸ next-intl: ${n.wired.join(", ")} now import ${n.requestConfig} ` +
+        "(what createNextIntlPlugin wires on Next.js).",
+    );
+  }
+  printReviewNotes(n.notes, 4);
+}
+
 /** The Expo app config's static reading: where from, what it could not read. */
 function reportExpoConfig(e: NonNullable<MigrateResult["expo"]>): void {
   console.log(
@@ -873,7 +890,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       reportTanstackStart(r);
       if (r.effect) reportEffect(r);
       if (r.prisma) reportPrisma(r.prisma);
-      if (r.nextAuth) reportNextAuth(r.nextAuth);
+      reportIntlAndAuth(r);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
       if (r.patches) reportPatches(r.patches);
       if (r.importClashes) reportImportClashes(r.importClashes);

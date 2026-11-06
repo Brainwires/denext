@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext migrate` carries a next.config wrapped by next-intl's `createNextIntlPlugin` and wires
+  the request config.** The plugin loads a native file watcher, so evaluating the config failed
+  (`NotCapable: Requires ffi`) and every key (`basePath`, `redirects`, `rewrites`, `headers`, …)
+  was left for a hand port; nothing imported `i18n/request.ts` either, so `getRequestConfig()`
+  never registered. The next.config evaluator (shared with `denext ui`'s next.config panel) now
+  stubs `next-intl/plugin`, in ESM and CommonJS configs, recording the request config it names,
+  and migrate adds a side-effect import of that file (or next-intl's default
+  `./(src/)i18n/request.*`) to each root layout that lacks one. `--check` lists the layouts.
 - **`nodeResolve` follows the import map's aliases.** The compat build's `node_modules` resolver
   claimed every bare import it could find on disk ahead of the import map, so a package
   `denext migrate` aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled
