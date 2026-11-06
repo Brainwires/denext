@@ -62,6 +62,8 @@ The download is checked against its SHA-256 before it is cached; on macOS, denex
 the page hashes of the binary's ad-hoc code signature (Tailwind's macOS releases ship with a stale
 one that Apple Silicon kernels can kill at launch), so the cached file differs from the release
 asset in those hash bytes only.
+A project with Tailwind v3 installed (`node_modules/tailwindcss` at `3.x`, as in a migrated
+Next.js app) is compiled with its own v3 CLI instead, so v3 configs and utilities keep working.
 `denext create --tailwind` sets all of this up.
 
 In a compat build (`compatibilityMode`, as in a migrated Vite, Remix or TanStack Start app), a

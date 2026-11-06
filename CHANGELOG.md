@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **The `tailwind` config block compiles a Tailwind v3 project with its own v3 CLI.** It ran the
+  bundled v4 binary even when `node_modules/tailwindcss` is 3.x, so a v3 app's build failed on
+  v3-only utilities ("Cannot apply unknown utility class `border-border`"). The block now detects
+  the installed version the same way a `?url` stylesheet import already did.
 - **macOS packaging builds the `.dmg` at a private mount point instead of under `/Volumes`.** The
   `scripts/package-macos.ts` that `denext create --desktop` scaffolds (and `denext desktop package
   --regenerate-scripts` rewrites) creates a blank read-write image, attaches it with
