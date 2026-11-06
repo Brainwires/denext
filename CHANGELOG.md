@@ -181,6 +181,16 @@ and this project adheres to
 
 ### Fixed
 
+- **Server bundles keep the `node:` prefix on Node built-ins.** A bundle built through the Deno
+  loader (the compat App Router's server bundle among them) imported a `node:` built-in by its bare
+  name (`import { DatabaseSync } from "sqlite"`, `import "zlib"`), so on runtime
+  3.0.0-denext.12, which like Node refuses a bare import of a built-in that exists only with the
+  prefix (`sqlite`, `test`, `sea`), a server importing `node:sqlite` failed to start. Every
+  built-in now stays a `node:` import.
+- **The context-menu plugin builds for iOS 15 against the newest iOS SDK.** It set a menu
+  item's `subtitle`, which UIKit marks iOS 16+, unconditionally, so `denext mobile add
+  context-menu` wrote a plugin the iOS 15 deployment target refused to compile with Xcode 27.1's
+  SDK. The subtitle is now set on iOS 16 and later; iOS 15 shows the title alone.
 - **A program sidecar works with a desktop entry below the project root.** With `denext desktop
   run` / `dev --entry app/desktop.ts`, the app resolves a sidecar's `exec` (`./bin/server`) from
   the entry's folder (`app/bin/server`), but the build embedded, hashed and recorded the file at

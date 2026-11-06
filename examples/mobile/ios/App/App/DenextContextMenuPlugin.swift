@@ -173,7 +173,10 @@ enum DenextMenuBuilder {
             let action = UIAction(title: label, image: image, attributes: attributes) { _ in
                 onSelect(id)
             }
-            if let subtitle = item["subtitle"] as? String { action.subtitle = subtitle }
+            // `UIMenuElement.subtitle` is iOS 16+; iOS 15 shows the title alone.
+            if #available(iOS 16.0, *), let subtitle = item["subtitle"] as? String {
+                action.subtitle = subtitle
+            }
             return action
         }
     }
