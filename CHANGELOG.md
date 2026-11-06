@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **next-intl compat: `useTranslations()`, `useFormatter()` and the provider's value are
+  referentially stable.** They were rebuilt on every render, so an effect keyed on the translator
+  (`useCallback(load, [t])` + `useEffect(() => load(), [load])`) ran on every render and a
+  fetch inside it looped. Each is now memoized on its inputs (namespace, locale, messages, time
+  zone, formats), as in next-intl.
 - **A compat build on a JSR-installed or binary denext no longer fails on `jsr:@denext/og`.** The
   prebuilt compat runtime kept denext's codec packages (`@denext/og`, `@denext/photon`,
   `@denext/avif`) external only in their bare spelling, while JSR publishes them as

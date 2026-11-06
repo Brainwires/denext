@@ -14,7 +14,7 @@
  * @module
  */
 
-import { h, useContext } from "../../../mod.ts";
+import { h, useContext, useMemo } from "../../../mod.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
 import {
   type IntlConfig,
@@ -150,6 +150,9 @@ function useIntl(): IntlConfig {
   return config;
 }
 
+/** The catalog of a provider given no `messages` (one object, so the value stays stable). */
+const EMPTY_MESSAGES: NestedMessages = {};
+
 /** Props for {@link NextIntlClientProvider}. */
 export interface NextIntlClientProviderProps {
   /** The active locale. */
@@ -173,13 +176,13 @@ export interface NextIntlClientProviderProps {
  * @returns The provider element.
  */
 export function NextIntlClientProvider(props: NextIntlClientProviderProps): VNode {
-  const value: IntlConfig = {
-    locale: props.locale,
-    messages: props.messages ?? {},
-    timeZone: props.timeZone,
-    now: props.now,
-    formats: props.formats,
-  };
+  const { locale, messages, timeZone, now, formats } = props;
+  // One value while the inputs are unchanged (as next-intl memoizes it): a fresh object per
+  // render re-rendered every consumer and rebuilt every translator below the provider.
+  const value = useMemo<IntlConfig>(
+    () => ({ locale, messages: messages ?? EMPTY_MESSAGES, timeZone, now, formats }),
+    [locale, messages, timeZone, now?.getTime(), formats],
+  );
   return h(IntlContext, { value, children: props.children });
 }
 
@@ -197,7 +200,9 @@ export const IntlProvider: typeof NextIntlClientProvider = NextIntlClientProvide
  */
 export function useTranslations(namespace?: string): Translator {
   const { messages, locale } = useIntl();
-  return makeTranslator(namespace, messages, locale);
+  // Referentially stable while the namespace, catalog and locale are, as in next-intl: a
+  // translator in a `useCallback` / `useEffect` dependency list must not change every render.
+  return useMemo(() => makeTranslator(namespace, messages, locale), [namespace, messages, locale]);
 }
 
 /** The active locale. */
@@ -246,7 +251,11 @@ export interface Formatter {
  */
 export function useFormatter(): Formatter {
   const { locale, timeZone, now, formats } = useIntl();
-  return createFormatter({ locale, timeZone, now, formats });
+  // Stable while its inputs are, like useTranslations.
+  return useMemo(
+    () => createFormatter({ locale, timeZone, now, formats }),
+    [locale, timeZone, now, formats],
+  );
 }
 
 /** Pick a sensible unit for a millisecond delta and format it relatively. */

@@ -112,6 +112,9 @@ writes the aliases for you). The client surface is `NextIntlClientProvider`,
 rendering. `createNavigation(routing)` returns a locale-prefixing `Link`,
 `usePathname`, `useRouter`, `redirect`/`permanentRedirect` and a reverse-mapping
 `getPathname` — including localized `pathnames`, per-locale URL translation.
+As in next-intl, `useTranslations()` and `useFormatter()` return the same function while the
+namespace, locale and messages are unchanged, so they are safe in `useCallback` / `useEffect`
+dependency lists.
 
 ```jsonc
 // deno.json
