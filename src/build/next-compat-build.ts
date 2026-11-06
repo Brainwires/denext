@@ -562,6 +562,11 @@ export interface BuildNextCompatFlightOptions {
    */
   usesLiveView?: boolean;
   /**
+   * Whether the app renders next-intl's provider (build-time scan for its name): the generated
+   * Flight entry registers its client boundary. Defaults to `true` when unset.
+   */
+  usesNextIntl?: boolean;
+  /**
    * How the generated Flight entry gets the class-component runtime (see
    * {@link ClassRuntimeMode}). Defaults to `"lazy"` (loaded on demand when the document says a
    * class rendered). See {@link generateFlightEntry}.
@@ -651,6 +656,7 @@ export async function buildNextCompatFlightEntry(
       {},
       options.usesSingletons ?? true,
       options.usesLiveView ?? true,
+      options.usesNextIntl ?? true,
     ),
   );
   await bundleNextCompatModules({

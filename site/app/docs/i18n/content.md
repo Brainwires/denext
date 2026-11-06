@@ -116,6 +116,13 @@ As in next-intl, `useTranslations()` and `useFormatter()` return the same functi
 namespace, locale and messages are unchanged, so they are safe in `useCallback` / `useEffect`
 dependency lists.
 
+`NextIntlClientProvider` is a client boundary, as in next-intl: render it from the root layout (a
+Server Component) and both the Server Components below it and the `"use client"` components
+below it read its locale and messages. The provider's `locale`, `messages`, `timeZone`, `now` and
+`formats` cross to the browser in the page's payload; a function prop (`onError`,
+`getMessageFallback`) cannot, so a provider rendered from a Server Component drops it there, with
+a warning in dev. Pass only the namespaces the client components need to keep that payload small.
+
 ```jsonc
 // deno.json
 { "imports": { "next-intl": "jsr:@denext/denext/next-intl" } }

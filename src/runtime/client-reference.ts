@@ -32,6 +32,12 @@ export interface ClientRefInfo {
    * the module declares no such export.
    */
   moduleHydrate?: unknown;
+  /**
+   * A framework context provider (`denext#NextIntlClientProvider`): it renders no DOM of its own,
+   * only a context around its children. An island carved beneath it hydrates on its own root, so
+   * its Flight is wrapped in this reference (with this provider's props) to keep the context.
+   */
+  islandProvider?: boolean;
 }
 
 /** Compose a client-reference id from a module client id and an export name. */

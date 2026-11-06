@@ -29,6 +29,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_client": "src/client/mod.ts",
   "denext_jsx-runtime": "src/jsx/jsx-runtime.ts",
   "denext_live": "src/live.ts",
+  // next-intl's provider boundary (`denext#NextIntlClientProvider`), which the Flight entry registers.
+  "denext_next-intl": "src/compat/next-intl/index.ts",
   "denext_lazy": "src/lazy.ts",
   // Loaded on demand by the client (`class-loader.ts`) when a class component first renders; a
   // missing entry here 404s the whole module graph and the page never hydrates.

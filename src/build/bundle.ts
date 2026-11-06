@@ -676,6 +676,15 @@ export function appUsesLiveView(rootDir: string, extraFiles: string[] = []): Pro
 }
 
 /**
+ * Whether any source file under `rootDir` renders next-intl's provider (`NextIntlClientProvider`
+ * or `IntlProvider`) — the build-time signal that makes the Flight entry register the provider's
+ * client boundary (see {@linkcode generateFlightEntry}'s `usesNextIntl`).
+ */
+export function appUsesNextIntl(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => /IntlProvider|IntlClientProvider/.test(c), extraFiles);
+}
+
+/**
  * Whether any source file under `rootDir` (or in `extraFiles`, e.g. sibling workspace
  * modules) uses class components — the build-time PRELOAD HINT that makes the generated
  * entry install the class runtime eagerly instead of on demand (see
@@ -936,6 +945,22 @@ configureLive({
 }
 
 /**
+ * next-intl's provider is a client boundary (`denext#NextIntlClientProvider`, see
+ * src/compat/next-intl/index.ts): a page whose root layout renders it from a Server Component
+ * reconstructs it through this registry, so `"use client"` islands below it read its context.
+ * Registered only when the app renders the provider (`usesNextIntl`, a scan for its name),
+ * so every other app bundles none of the next-intl compat.
+ */
+function flightNextIntlBlock(usesNextIntl: boolean): { intlImport: string; intlRegister: string } {
+  if (!usesNextIntl) return { intlImport: "", intlRegister: "" };
+  return {
+    intlImport: `import { NextIntlClientBoundary } from "denext/next-intl";\n`,
+    intlRegister:
+      `// next-intl's provider boundary (the app renders NextIntlClientProvider).\nregistry.set("denext#NextIntlClientProvider", NextIntlClientBoundary);\n`,
+  };
+}
+
+/**
  * How a generated browser entry gets the class-component runtime (the on-demand
  * `denext/class-runtime` chunk: mount/update/unmount lifecycle, setState batching, class
  * error boundaries), installed into the reconciler seam (class-support.ts):
@@ -1157,6 +1182,7 @@ export function generateFlightEntry(
   features: Record<string, boolean> = {},
   usesSingletons = true,
   usesLiveView = true,
+  usesNextIntl = true,
 ): string {
   const entries = [...boundary.client.entries()];
   // Islands are code-split: one dynamic `import()` per island module, run on demand for the
@@ -1172,13 +1198,14 @@ export function generateFlightEntry(
     usesLive,
     usesLiveView,
   );
+  const { intlImport, intlRegister } = flightNextIntlBlock(usesNextIntl);
   const { classImport, classInstall, classBoot } = classSupportBlock(classRuntime);
   const { activityImport, activityInstall } = activitySupportBlock(usesActivity);
   const { vtImport, vtInstall } = viewTransitionSupportBlock(usesViewTransition);
   const { singletonImport, singletonInstall } = singletonSupportBlock(usesSingletons);
   return `// denext generated Flight entry — do not edit.
 ${clientInstrumentationImport(instrumentationClient)}${clientImport}
-${liveImport}${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}
+${liveImport}${intlImport}${classImport}${activityImport}${vtImport}${singletonImport}${refreshImport}
 ${
     featureSeedBlock(features)
   }${classInstall}${activityInstall}${vtInstall}${singletonInstall}const registry = new Map();
@@ -1217,7 +1244,7 @@ registry.ensure = (flight) => {
   }
   return Promise.all(jobs).then(() => undefined);
 };
-${enableRefresh}${liveRegister}
+${enableRefresh}${liveRegister}${intlRegister}
 // A Server Action reference in a payload calls through the on-demand action-call chunk (the
 // dispatch and the wire encoder), loaded by the first reference a page revives.
 setActionCallLoader(() => import("denext/action-call"));
@@ -1295,6 +1322,12 @@ export interface BundleOptions {
    * tree-shaken out. Defaults to `true` when unset (dev and callers that don't scan).
    */
   usesLiveView?: boolean;
+  /**
+   * Whether the app renders next-intl's provider (from an {@linkcode appUsesNextIntl} scan). When
+   * false, the generated Flight entry does not register its client boundary, so the next-intl
+   * compat is not bundled. Defaults to `true` when unset (dev and callers that don't scan).
+   */
+  usesNextIntl?: boolean;
   /**
    * How the generated entry gets the class-component runtime — see
    * {@linkcode ClassRuntimeMode}. Defaults to `"lazy"` (load on demand when the document
@@ -1391,6 +1424,7 @@ export async function bundleFlightEntry(
       seeded,
       opts.usesSingletons ?? true,
       opts.usesLiveView ?? true,
+      opts.usesNextIntl ?? true,
     ),
     {
       configPath: opts.configPath,
@@ -1611,6 +1645,9 @@ export async function prepareConfig(
     // And for `denext/class-runtime`: the generated entry loads the class-component
     // runtime on demand (a page that renders a class), so function-only apps bundle none.
     "denext/class-runtime": frameworkFileUrl("src/class-runtime.ts"),
+    // next-intl's provider boundary: the Flight entry registers it from `denext/next-intl` when
+    // the app renders the provider (the module an aliased `next-intl` import resolves to).
+    "denext/next-intl": frameworkFileUrl("src/compat/next-intl/index.ts"),
     // SPA mode's `client:*` deferred mounts: the build's island rewrite imports `SpaIsland`
     // from it (spa-islands.ts), so only an app with a directive bundles it.
     "denext/spa-island": frameworkFileUrl("src/spa-island.ts"),

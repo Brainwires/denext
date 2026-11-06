@@ -707,7 +707,8 @@ export async function renderClientIsland(
   // own and exist again after hydration, so they are not checked.
   if (!wasInside) warnDroppedFunctionProps(`<${componentDisplayName(type)}>`, rest);
   if (parsed.strategy === "only") {
-    const flight = await islandFlightInside(r, ref.id, rest, prefix, scopes, wasInside);
+    const inside = await islandFlightInside(r, ref.id, rest, prefix, scopes, wasInside);
+    const flight = await inIslandProviders(r, inside, scopes);
     carveIsland(r, node, { id: prefix, strategy: "only", flight }, wasInside);
     warnClientOnlySeoContent(rest.children as VNodeChildren, prefix);
     return islandWrapper(prefix, "only", undefined, "");
@@ -718,7 +719,13 @@ export async function renderClientIsland(
   );
   const ranEffect = r.effects.count > effectsBefore;
   r.insideIsland = true; // this island's subtree + children are "inside" it
-  const htmlDual = await r.renderChild(rendered, scopes, head);
+  const htmlDual = await withIslandProvider(
+    ref,
+    rest,
+    prefix,
+    scopes,
+    () => r.renderChild(rendered, scopes, head),
+  );
   const strategy = pickIslandStrategy(parsed.strategy, r.resumable, ranEffect, htmlDual.html);
   // A nested island that is not carved contributes no Flight of its own: the enclosing
   // island's hydration re-renders it from client code, and its children were authored by
@@ -728,8 +735,65 @@ export async function renderClientIsland(
   if (!strategy && wasInside) return { html: htmlDual.html, flight: null };
   const flight = await islandFlightInside(r, ref.id, rest, prefix, scopes, wasInside);
   if (!strategy) return { html: htmlDual.html, flight };
-  carveIsland(r, node, { id: prefix, strategy, param: parsed.param, flight }, wasInside);
+  const carved = await inIslandProviders(r, flight, scopes);
+  carveIsland(r, node, { id: prefix, strategy, param: parsed.param, flight: carved }, wasInside);
   return islandWrapper(prefix, strategy, parsed.param, htmlDual.html);
+}
+
+/** The provider-scope key of an enclosing {@link ClientRefInfo.islandProvider} reference. */
+const ISLAND_PROVIDER_FRAME: unique symbol = /* @__PURE__ */ Symbol("denext.islandProviderFrame");
+
+/** An enclosing context-provider reference, as an island carved beneath it re-emits it. */
+interface IslandProviderFrame {
+  /** The provider's client-reference id. */
+  refId: string;
+  /** Its props, without children. */
+  props: Record<string, unknown>;
+  /** Its tree-path prefix. */
+  prefix: string;
+}
+
+/**
+ * Render an island's subtree; when the island is a context provider
+ * ({@link ClientRefInfo.islandProvider}), with a frame in the provider scopes naming it, so an
+ * island carved beneath it can carry it ({@link inIslandProviders}).
+ */
+async function withIslandProvider(
+  ref: ClientRefInfo,
+  props: Record<string, unknown>,
+  prefix: string,
+  scopes: ProviderScope[],
+  render: () => Dual | Promise<Dual>,
+): Promise<Dual> {
+  if (!ref.islandProvider) return await render();
+  const { children: _children, ...rest } = props;
+  const frame: IslandProviderFrame = { refId: ref.id, props: rest, prefix };
+  scopes.push(new Map([[ISLAND_PROVIDER_FRAME, frame]]));
+  try {
+    return await render();
+  } finally {
+    scopes.pop();
+  }
+}
+
+/**
+ * A carved island's Flight wrapped in every context-provider reference above it (outermost
+ * first): the island hydrates on a root of its own, so without them it would lose the
+ * providers' context (a `useTranslations()` island under `NextIntlClientProvider`).
+ */
+async function inIslandProviders(
+  r: IslandRenderer,
+  flight: FlightNode,
+  scopes: ProviderScope[],
+): Promise<FlightNode> {
+  let out = flight;
+  for (let i = scopes.length - 1; i >= 0; i--) {
+    const frame = scopes[i].get(ISLAND_PROVIDER_FRAME) as IslandProviderFrame | undefined;
+    if (!frame) continue;
+    const p = await serializeFlightProps(frame.props, (v) => r.serializeValue(v, scopes));
+    out = flightClientRef(frame.refId, p, frame.prefix, [out]);
+  }
+  return out;
 }
 
 /**

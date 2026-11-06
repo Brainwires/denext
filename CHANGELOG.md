@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Fixed
 
+- **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
+  (a Server Component), its context never reached the `"use client"` components below it, so a
+  `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The
+  provider still provides the context on the server, so Server Components below it read it as
+  before, and now renders the framework client reference `denext#NextIntlClientProvider` with its
+  `locale`, `messages`, `timeZone`, `now` and `formats`: the browser resolves it to the same
+  provider, on the page root and around every `client:*` island carved beneath it. Function props
+  (`onError`, `getMessageFallback`) are dropped on the client, with a dev warning, as next-intl
+  documents. The Flight entry registers the boundary only when the app renders the provider (a
+  build scan), so other apps bundle none of the next-intl compat. `denext/next-intl` exports the
+  boundary as `NextIntlClientBoundary`, for that entry; apps keep rendering the provider.
 - **`denext migrate` pins npm dependencies at their installed versions and keeps an existing
   `node_modules`.** It pinned the floor of each package.json range (`"^6.42.0"` installed as
   6.48.0 became `npm:openai@6.42.0`), and under `nodeModulesDir: "auto"` Deno then installed a
