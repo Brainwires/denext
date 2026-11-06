@@ -23,7 +23,8 @@ permissions:
 jobs:
   e2e:
     if: inputs.job == 'all' || inputs.job == 'e2e'
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Stays on GitHub's image: its 1M-row scroll perf test needs more CPU than a pool container's 4.
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
