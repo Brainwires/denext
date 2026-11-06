@@ -2481,8 +2481,10 @@ desktop: {
         inherited. A shell is still full trust: what is typed into it runs as the user, so enable
         {" "}
         <code>pty</code>{" "}
-        only in an app whose page you trust with that. On Windows the terminal is a ConPTY, whose
-        output carries its own VT sequences even for plain text.
+        only in an app whose page you trust with that. On Windows the pinned runtime
+        (3.0.0-denext.12) has no terminals yet: opening one rejects with{" "}
+        <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
+        own VT sequences even for plain text.
       </Callout>
 
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
