@@ -1498,6 +1498,32 @@ export interface LocalAliases {
   readonly exact: Map<string, string>;
 }
 
+/**
+ * Whether a deno config's import map sends bare `spec` anywhere but npm: an exact entry, else
+ * the longest matching prefix entry, whose value is not an `npm:` specifier (`jsr:`, a URL, a
+ * path). `nodeResolve` leaves such an import to the import map instead of walking
+ * `node_modules`, where a package `denext migrate` aliased (`next-intl`, `server-only`) is
+ * usually still installed.
+ *
+ * @param configPath The app's `deno.json`.
+ * @returns A predicate over bare specifiers (always false when the config has no imports).
+ */
+export async function readNonNpmAliases(configPath: string): Promise<(spec: string) => boolean> {
+  const map = await importMapOf(configPath);
+  const exact = new Map<string, string>();
+  const prefixes: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(map)) {
+    if (typeof v !== "string") continue;
+    if (k.endsWith("/")) prefixes.push([k, v]);
+    else exact.set(k, v);
+  }
+  prefixes.sort((a, b) => b[0].length - a[0].length);
+  return (spec) => {
+    const target = exact.get(spec) ?? prefixes.find(([k]) => spec.startsWith(k))?.[1];
+    return target !== undefined && !target.startsWith("npm:");
+  };
+}
+
 /** A deno config's `imports` (empty when it is absent or unparseable). */
 async function importMapOf(configPath: string): Promise<Record<string, unknown>> {
   try {

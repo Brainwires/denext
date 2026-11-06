@@ -90,6 +90,7 @@ import {
   minDepAgeConfig,
   readFrameworkJson,
   readLocalAliases,
+  readNonNpmAliases,
 } from "./bundle.ts";
 import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
@@ -2222,6 +2223,8 @@ async function selfPackageDir(fromDir: string, name: string): Promise<string | n
  *   globs and `catalog:`/`workspace:*` version strings stop mattering). denext's resolver
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
+ * @param importMapPath The app's `deno.json`: under `"all"`, an app import its import map
+ *   sends anywhere but `npm:` (a `denext migrate` alias) is left to the import map.
  */
 /**
  * owner-dir → its package.json `sideEffects`: `false` (every file is side-effect free), the
@@ -2364,8 +2367,14 @@ export function catalogResolverPlugin(
   packages: Set<string> | "all",
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
+  importMapPath?: string,
 ): esbuild.Plugin {
   const all = packages === "all";
+  // `"all"`: the app's import-map entries that point anywhere but npm (loaded once).
+  let aliased: Promise<(spec: string) => boolean> | undefined;
+  const isAliased = (spec: string) =>
+    (aliased ??= importMapPath ? readNonNpmAliases(importMapPath) : Promise.resolve(() => false))
+      .then((has) => has(spec));
   return {
     name: all ? "denext-node-modules-resolver" : "denext-pnpm-catalog-resolver",
     setup(build) {
@@ -2376,6 +2385,10 @@ export function catalogResolverPlugin(
         // denext's own runtime imports — never intercept them. (The narrow catalog set is
         // always plain package names, so this only gates the `"all"` path.)
         if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
+        // An app import the import map sends to jsr: / a URL / a file (`denext migrate`'s
+        // `next-intl` → denext) is the map's, even while the npm package is still installed.
+        // A package's own imports keep Node resolution, as Deno's import map does not reach them.
+        if (all && !inNodeModules(args.importer) && await isAliased(args.path)) return null;
         // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
         // what lets a workspace package's SOURCE file (outside the app root) resolve its
         // deps from its own `node_modules`, not just the app's.
@@ -2567,7 +2580,9 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
   if (!options.absWorkingDir) return [];
   const exts = options.platformExtensions;
   if (options.resolveAllNodeModules) {
-    return [catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts)];
+    return [
+      catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts, options.configPath),
+    ];
   }
   const plugins: esbuild.Plugin[] = [];
   if (options.boundaryPackages && options.boundaryPackages.length > 0) {

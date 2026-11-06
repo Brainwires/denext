@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`nodeResolve` follows the import map's aliases.** The compat build's `node_modules` resolver
+  claimed every bare import it could find on disk ahead of the import map, so a package
+  `denext migrate` aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled
+  from npm whenever it was still installed — with next-intl, every page failed with
+  "`getTranslations` is not supported in Client Components". An app import the import map sends
+  to `jsr:`, a URL or a file now follows the map; `npm:` entries and a dependency's own imports
+  resolve from `node_modules` as before.
 - **next-intl compat: `useTranslations()`, `useFormatter()` and the provider's value are
   referentially stable.** They were rebuilt on every render, so an effect keyed on the translator
   (`useCallback(load, [t])` + `useEffect(() => load(), [load])`) ran on every render and a
