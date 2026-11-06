@@ -248,6 +248,37 @@ function withHoistedNodeModules(plugin: esbuild.Plugin): esbuild.Plugin {
   };
 }
 
+/**
+ * `plugin` (the loader) with its Node built-ins kept as `node:` specifiers. The loader answers a
+ * `node:` import (namespace `node`) as an external of the bare name (`node:sqlite` → `sqlite`),
+ * so the bundle imported `"sqlite"`, `"zlib"`, `"fs"`. Deno, like Node, refuses a bare import of
+ * a built-in that exists only with the prefix (`sqlite`, `test`, `sea`), and needs the prefix for
+ * the others once no import map maps them; every built-in keeps it.
+ *
+ * @param plugin The loader plugin.
+ * @returns The same plugin, its Node built-ins external as `node:<name>`.
+ */
+function withNodePrefix(plugin: esbuild.Plugin): esbuild.Plugin {
+  return {
+    name: plugin.name,
+    setup(build) {
+      return plugin.setup({
+        ...build,
+        onResolve: (opts, cb) =>
+          build.onResolve(opts, async (args) => {
+            const result = await cb(args);
+            if (args.namespace !== "node" || !result?.external || result.path === undefined) {
+              return result;
+            }
+            return result.path.startsWith("node:")
+              ? result
+              : { ...result, path: `node:${result.path}` };
+          }),
+      });
+    },
+  };
+}
+
 /** The loader plugin's options on Windows (see the header for why they differ). */
 function windowsLoaderOptions(options: DenoPluginsOptions): DenoPluginsOptions {
   if (options.configPath === undefined) return options;
@@ -448,7 +479,9 @@ export function denoLoaderPlugins(
     return [
       denoResolverPlugin(options) as esbuild.Plugin,
       withBoundedDenoInfo(
-        withHoistedNodeModules(withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin)),
+        withHoistedNodeModules(
+          withLoaderMap(withNodePrefix(denoLoaderPlugin(options) as esbuild.Plugin)),
+        ),
         bounds.infoDeadlineMs,
       ),
     ];
@@ -461,7 +494,9 @@ export function denoLoaderPlugins(
     withWindowsWasmPaths(denoResolverPlugin(resolverOptions) as esbuild.Plugin),
     withBoundedDenoInfo(
       withHoistedNodeModules(withLoaderMap(
-        withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+        withNodePrefix(
+          withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+        ),
       )),
       bounds.infoDeadlineMs,
     ),
