@@ -3928,9 +3928,9 @@ export default defineDesktopExtension({
           <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
           every <code>--allow-run</code>{" "}
           path, so a run grant on the copy would leave the app unable to write it. From runtime
-          3.0.0-denext.10 (once denext pins it; the same app) the program&apos;s SHA-256, taken at
-          packaging, is baked into the run grant, and the runtime keeps the file itself: it writes
-          it from the binary to{" "}
+          3.0.0-denext.10 (the same app) the program&apos;s SHA-256, taken at packaging, is baked
+          into the run grant, and the runtime keeps the file itself: it writes it from the binary to
+          {" "}
           <code>sidecars/&lt;name&gt;/&lt;sha256&gt;/&lt;file&gt;</code>, denies that folder to the
           app&apos;s writes (no write grant is baked for it) and checks the hash at every spawn, in
           the spawn itself, so <code>new Deno.Command(path)</code>{" "}

@@ -108,7 +108,7 @@ and this project adheres to
   `denext.config.ts`, so macOS and Windows keep the system WebView. Docs:
   https://denext.dev/docs/desktop#desktop-media-capture
 - **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
-  3.0.0-denext.10, once denext pins it, in an app with `desktop.app.identifier`). A project-file
+  3.0.0-denext.10, in an app with `desktop.app.identifier`). A project-file
   `run: { exec }` is hashed at packaging and baked as
   `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
   with no write grant. The runtime writes the file from the binary, denies its folder to the app's
@@ -152,6 +152,11 @@ and this project adheres to
 
 ### Changed
 
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.12`**, with
+  `3.0.0-denext.8` as the rollback. There is no `3.0.0-denext.11` release: `3.0.0-denext.12` carries
+  its work with test and release-gate fixes, so everything above marked "takes effect with
+  3.0.0-denext.10" or needing 3.0.0-denext.11 is now in effect. **Known issue:** terminals (`pty`)
+  are not available on Windows yet; the runtime's `Deno.openPty` throws `NotSupported` there.
 - **`node --test` runs Node's test runner instead of `deno test`** (takes effect with denext's Deno
   3.0.0-denext.10). Each test file runs in its own process, files are found with Node's patterns, and
   Node's reporters (`spec`, `tap`, `dot`, `junit`, `lcov` or a custom one), `run()` and

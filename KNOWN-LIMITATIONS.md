@@ -655,7 +655,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
 - **Terminals (`pty`) need runtime 3.0.0-denext.11** (`Deno.openPty`); under an older runtime
-  every call rejects `unsupported`. On Windows the terminal is a ConPTY, whose output carries its
+  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.12) has no terminals on Windows
+  yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
   with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
   folder on Linux only.
@@ -714,7 +715,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.8). Chrome's
+- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.12). Chrome's
   fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
@@ -770,8 +771,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
   `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
   unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
-  the app from writing it. Runtime 3.0.0-denext.10 (with `desktop.app.identifier`, from the denext
-  release that pins it) lifts that: the run grant records the program's SHA-256, no write grant is
+  the app from writing it. Runtime 3.0.0-denext.10 and later (with `desktop.app.identifier`) lifts
+  that: the run grant records the program's SHA-256, no write grant is
   baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
   remains on macOS and Linux: another program of the same user that changes the file between the
   check and the exec can run for a moment before the child is killed (`outputSync()` has no kill).

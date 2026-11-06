@@ -49,8 +49,8 @@ The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then
 `3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, … (there is no `3.0.0-denext.4` release). That is semver's order with one
 exception: denext ranks the `3.0.0-denext.N` releases above every `3.0.0-rc.N`, where plain semver
 would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS line, and
-denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.8`, so the rows marked "rc.6",
-"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7" and "denext.8" below apply to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
+denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.12`, so the rows marked "rc.6",
+"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7", "denext.8" and "denext.10" below apply to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
 escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From
