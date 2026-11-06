@@ -634,6 +634,8 @@ jobs:
   # + swiftc, so the Linux jobs never run it; this job does, on every event, and fails if the
   # compiled case was ignored rather than passed.
   ios-export-router:
+    # Stays on GitHub's image: swiftc against the iOS SDK needs Xcode, which the
+    # self-hosted macOS images (Command Line Tools only) do not have.
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -774,7 +776,10 @@ jobs:
   # is ignored off darwin, so this job fails if it was ignored rather than passed. Heavy (PRs,
   # `main` and a manual dispatch), like `windows-tests`; a release needs it green.
   macos-tests:
-    runs-on: macos-latest
+    # macOS: the self-hosted arm64 runner the repository variable RUNNER_MACOS_ARM
+    # names (a label, or a JSON array), else macos-latest; always macos-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 90
     steps:
