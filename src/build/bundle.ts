@@ -1524,8 +1524,12 @@ export async function readNonNpmAliases(configPath: string): Promise<(spec: stri
   };
 }
 
-/** A deno config's `imports` (empty when it is absent or unparseable). */
-async function importMapOf(configPath: string): Promise<Record<string, unknown>> {
+/**
+ * A deno config's `imports` (empty when it is absent or unparseable).
+ *
+ * @param configPath The deno config.
+ */
+export async function importMapOf(configPath: string): Promise<Record<string, unknown>> {
   try {
     return (JSON.parse(await Deno.readTextFile(configPath)) as {
       imports?: Record<string, unknown>;

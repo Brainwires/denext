@@ -85,6 +85,7 @@ import {
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
+  importMapOf,
   loaderConfigPath,
   type LocalAliases,
   minDepAgeConfig,
@@ -1044,6 +1045,92 @@ export function resolveWithinRuntime(
   return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
 }
 
+/** Specifiers the runtime plugin already claims by name (React family, `next/*`, `denext/*`). */
+const CLAIMED_BY_NAME = /^(?:react|react-dom|react-is|next|next-auth|denext)(?:\/|$)/;
+
+/** `jsr:@denext/denext[@range][/sub]` → its subpath (`""` for the root). */
+const DENEXT_JSR = /^jsr:@denext\/denext(?:@[^/]*)?(?:\/(.+))?$/;
+
+/**
+ * The app's import-map entries that alias a package to one of denext's own subpaths —
+ * `"next-intl": "jsr:@denext/denext@^4/next-intl"` (what `denext migrate` writes), or the
+ * framework source file in a local checkout — keyed by the aliased specifier, valued by the
+ * `denext/<sub>` specifier it stands for. Only subpaths the bundles map (a prebuilt runtime file,
+ * or a server-only external); specifiers the runtime plugin claims by name are left out.
+ *
+ * @param configPath The app's `deno.json`.
+ */
+export async function denextAliasTargets(configPath: string): Promise<Map<string, string>> {
+  const byUrl = await frameworkExportsByUrl();
+  const base = dirname(configPath);
+  const out = new Map<string, string>();
+  for (const [spec, value] of Object.entries(await importMapOf(configPath))) {
+    if (typeof value !== "string" || spec.endsWith("/") || CLAIMED_BY_NAME.test(spec)) continue;
+    const target = denextSubpathOf(value, base, byUrl);
+    if (target && isBundledDenextSubpath(target)) out.set(spec, target);
+  }
+  return out;
+}
+
+/** The framework's `deno.json` exports by module URL: URL → `denext[/sub]` specifier. */
+async function frameworkExportsByUrl(): Promise<Map<string, string>> {
+  const exportsMap = (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+  const byUrl = new Map<string, string>();
+  for (const [key, rel] of Object.entries(exportsMap ?? {})) {
+    byUrl.set(frameworkFileUrl(rel), key === "." ? "denext" : `denext/${key.slice(2)}`);
+  }
+  return byUrl;
+}
+
+/** The `denext[/sub]` specifier an import-map value names (JSR, or a framework module URL). */
+function denextSubpathOf(
+  value: string,
+  base: string,
+  byUrl: ReadonlyMap<string, string>,
+): string | undefined {
+  const jsr = DENEXT_JSR.exec(value);
+  if (jsr) return jsr[1] ? `denext/${jsr[1]}` : "denext";
+  return byUrl.get(/^\.\.?\//.test(value) ? toFileUrl(resolve(base, value)).href : value);
+}
+
+/** Whether the bundles map `spec`: a prebuilt runtime file, or a server-only external. */
+function isBundledDenextSubpath(spec: string): boolean {
+  return Object.hasOwn(DENEXT_RUNTIME_FILES, spec) || DENEXT_SERVER_SUBPATHS.has(spec);
+}
+
+/**
+ * esbuild plugin: an import the app's import map aliases to one of denext's own subpaths
+ * ({@link denextAliasTargets}: `next-intl`, `server-only`, `better-sqlite3` after `denext
+ * migrate`) is resolved as that `denext/<sub>` specifier — the prebuilt runtime file, or the
+ * server-only external — exactly as `denext/next-intl` itself. Left to the deno-loader, a `jsr:`
+ * target fails without a lockfile, or bundles a second copy of denext (a second hook dispatcher
+ * and context); left to `nodeResolve`, the still-installed npm package was bundled.
+ *
+ * @param configPath The app's `deno.json`.
+ */
+function denextAliasPlugin(configPath: string): esbuild.Plugin {
+  let targets: Promise<Map<string, string>> | undefined;
+  return {
+    name: "denext-import-map-denext-alias",
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const sub = (await (targets ??= denextAliasTargets(configPath))).get(args.path);
+        if (!sub) return null;
+        const resolved = await resolveOnBehalf(build, args, sub);
+        if (resolved.errors.length > 0) return { errors: resolved.errors };
+        return {
+          path: resolved.path,
+          namespace: resolved.namespace,
+          external: resolved.external,
+          sideEffects: resolved.sideEffects,
+          pluginData: resolved.pluginData,
+        };
+      });
+    },
+  };
+}
+
 /** {@link runtimeEntryPoints} of the running framework, inverted: module URL → prebuilt file. */
 let entryFileByUrl: Map<string, string> | undefined;
 
@@ -1353,6 +1440,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
   const plugins: esbuild.Plugin[] = [
     envPoisonPlugin(options.platform === "deno"),
     denextRuntimePlugin(options.runtimeDir),
+    denextAliasPlugin(options.configPath),
   ];
   // Browser bundles: stub Node built-ins that appear only in npm libs' Node-only
   // code paths (the deno/SSR platform keeps the real built-ins).
@@ -2767,6 +2855,7 @@ async function compatPlugins(
     options.denextExternal
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
+    denextAliasPlugin(options.configPath),
     ...(await sourcePlugins(options, workerBuild)),
     appResolverPlugin(options.configPath, options.platformExtensions, options.appPlatform),
     nodeModulesFileUrlPlugin(),

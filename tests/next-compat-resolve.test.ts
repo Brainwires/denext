@@ -9,6 +9,7 @@ import {
   appResolverPlugin,
   BROWSER_CONDITIONS,
   catalogResolverPlugin,
+  denextAliasTargets,
   resolveInPackageDir,
   SSR_CONDITIONS,
 } from "../src/build/next-compat.ts";
@@ -263,6 +264,36 @@ Deno.test("nodeResolve: an import-map alias to jsr:/a URL wins over the installe
     assert(!out.includes("NPM_SERVER_ONLY"), out);
   } finally {
     await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denextAliasTargets: import-map aliases to denext's own subpaths, by JSR or local file", async () => {
+  const fwSrc = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
+  const dir = await pkg({
+    "deno.json": JSON.stringify({
+      imports: {
+        "next-intl": "jsr:@denext/denext@^4.13.0/next-intl",
+        "next-intl/server": "jsr:@denext/denext/next-intl/server",
+        "server-only": fwSrc("src/compat/server-only.ts"),
+        "my-denext": "jsr:@denext/denext@^4",
+        // Claimed by name already, a prefix entry, an unknown subpath, another package.
+        "react": "jsr:@denext/denext@^4/react",
+        "next-intl/": "jsr:@denext/denext@^4/next-intl/",
+        "made-up": "jsr:@denext/denext@^4/not-a-subpath",
+        "zod": "jsr:@zod/zod@^4",
+      },
+    }),
+  });
+  try {
+    const targets = await denextAliasTargets(join(dir, "deno.json"));
+    assertEquals(Object.fromEntries(targets), {
+      "next-intl": "denext/next-intl",
+      "next-intl/server": "denext/next-intl/server",
+      "server-only": "denext/server-only",
+      "my-denext": "denext",
+    });
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

@@ -25,13 +25,16 @@ and this project adheres to
   stubs `next-intl/plugin`, in ESM and CommonJS configs, recording the request config it names,
   and migrate adds a side-effect import of that file (or next-intl's default
   `./(src/)i18n/request.*`) to each root layout that lacks one. `--check` lists the layouts.
-- **`nodeResolve` follows the import map's aliases.** The compat build's `node_modules` resolver
-  claimed every bare import it could find on disk ahead of the import map, so a package
-  `denext migrate` aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled
-  from npm whenever it was still installed — with next-intl, every page failed with
-  "`getTranslations` is not supported in Client Components". An app import the import map sends
-  to `jsr:`, a URL or a file now follows the map; `npm:` entries and a dependency's own imports
-  resolve from `node_modules` as before.
+- **The compat build honors the import-map aliases `denext migrate` writes.** The `nodeResolve`
+  resolver claimed every bare import it could find on disk ahead of the import map, so a package
+  migrate aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled from npm
+  whenever it was still installed — with next-intl, every page failed with "`getTranslations` is
+  not supported in Client Components". Without the npm package, the `jsr:` alias reached the
+  deno-loader, which failed without a lockfile. An alias to one of denext's own subpaths now
+  resolves exactly as that `denext/…` specifier (the prebuilt runtime, one copy of denext's
+  hooks and contexts, or the server-only external); any other alias to `jsr:`, a URL or a file
+  follows the import map; `npm:` entries and a dependency's own imports resolve from
+  `node_modules` as before.
 - **next-intl compat: `useTranslations()`, `useFormatter()` and the provider's value are
   referentially stable.** They were rebuilt on every render, so an effect keyed on the translator
   (`useCallback(load, [t])` + `useEffect(() => load(), [load])`) ran on every render and a
