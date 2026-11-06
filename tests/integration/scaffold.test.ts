@@ -315,6 +315,70 @@ Deno.test("scaffoldFiles: the macOS script sizes the .dmg image explicitly (hdiu
   assertStringIncludes(src, "dmgSizeMb(await treeBytes(app))");
 });
 
+Deno.test("scaffoldFiles: the macOS script builds the .dmg at a private mount point, never under /Volumes", () => {
+  // `hdiutil create -srcfolder` mounts its scratch image under /Volumes, which a sandboxed runner
+  // refuses (and fails there intermittently): the script creates a blank read-write image, attaches
+  // it with -mountrandom inside its own temp folder, fills it with ditto, detaches and converts.
+  const src = scaffoldFiles({ dir: "/x", desktop: true })
+    .find((f) => f.path === "scripts/package-macos.ts")!.content;
+  assert(!src.includes("-srcfolder"), "no hdiutil create -srcfolder");
+  assert(!src.includes("/Volumes/"), "no /Volumes path");
+  const m = src.match(
+    /async function makeDmg\(app: string\): Promise<string> \{\n([\s\S]*?)\n\}\n/,
+  );
+  assert(m, "makeDmg present");
+  const body = m[1];
+  const order = [
+    '"create",',
+    '"-fs",',
+    '"HFS+",',
+    '"attach",',
+    '"-nobrowse",',
+    '"-noautoopen",',
+    '"-mountrandom",',
+    '"-plist",',
+    '"ditto", app',
+    "await detachDmg(mount)",
+    '"convert", rw, "-format", "UDZO"',
+  ].map((needle) => {
+    const at = body.indexOf(needle);
+    assert(at >= 0, `makeDmg has ${needle}`);
+    return at;
+  });
+  assertEquals(
+    order,
+    [...order].sort((a, b) => a - b),
+    "create → attach → ditto → detach → convert",
+  );
+  // The scratch image lives in a temp folder beside the .dmg (the build's own out dir), which is
+  // always removed, with a forced detach when the image is still attached.
+  assertStringIncludes(body, 'Deno.makeTempDir({ dir: outDir, prefix: ".dmg-" })');
+  assertStringIncludes(body, "} finally {");
+  assertStringIncludes(body, '"detach", mount, "-force"');
+  assertStringIncludes(body, "Deno.remove(tmp, { recursive: true })");
+  // The mount point comes from `hdiutil attach -plist`, XML-unescaped.
+  const entities = src.match(/const XML_ENTITIES: Record<string, string> = (\{[\s\S]*?\});\n/);
+  const parse = src.match(
+    /function plistMountPoint\(xml: string\): string \| undefined \{\n([\s\S]*?)\n\}\n/,
+  );
+  assert(entities && parse, "plistMountPoint present");
+  const plistMountPoint = new Function(
+    "xml",
+    `const XML_ENTITIES = ${entities[1]};\n${parse[1].replace("e: string", "e")}`,
+  ) as (xml: string) => string | undefined;
+  const plist = `<plist><dict><key>system-entities</key><array>
+<dict><key>dev-entry</key><string>/dev/disk9</string></dict>
+<dict><key>dev-entry</key><string>/dev/disk9s1</string>
+<key>mount-point</key>
+\t<string>/out/.dmg-x/dmg.AbC &amp; &lt;1&gt;</string></dict></array></dict></plist>`;
+  assertEquals(plistMountPoint(plist), "/out/.dmg-x/dmg.AbC & <1>");
+  assertEquals(plistMountPoint("<plist><dict></dict></plist>"), undefined);
+  // A busy volume is retried with backoff; only the last try forces the detach.
+  assertStringIncludes(src, "async function detachDmg(mount: string, tries = 5)");
+  assertStringIncludes(src, '...(last ? ["-force"] : [])');
+  assertStringIncludes(src, "/busy/i.test(r.stderr)");
+});
+
 Deno.test("scaffoldFiles: the macOS script says deno desktop's ad-hoc pass is a pre-sign it replaces", () => {
   // `deno desktop` seals every bundle it compiles, ad-hoc when deno.json names no identity, and
   // logs 'Codesigning bundle with identity "-"' even when DENEXT_CODESIGN_IDENTITY is set. The

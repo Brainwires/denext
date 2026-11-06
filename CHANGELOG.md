@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS packaging builds the `.dmg` at a private mount point instead of under `/Volumes`.** The
+  `scripts/package-macos.ts` that `denext create --desktop` scaffolds (and `denext desktop package
+  --regenerate-scripts` rewrites) creates a blank read-write image, attaches it with
+  `-mountrandom` inside a temporary folder beside the `.dmg` in `dist/`, copies the `.app` in with
+  `ditto`, detaches it (retrying while the volume is busy) and converts it to the same compressed
+  UDZO image, where it used `hdiutil create -srcfolder`, which mounts its scratch image under
+  `/Volumes`. Packaging now works on a sandboxed CI runner that refuses writes to `/Volumes`, and
+  no longer fails intermittently with hdiutil's "Directory not empty" or "No space left on device".
+  The image holds the same `.app` as before. Regenerate an existing project's scripts to pick it
+  up.
+
 ## [4.13.0] - 2026-11-06
 
 ### Added

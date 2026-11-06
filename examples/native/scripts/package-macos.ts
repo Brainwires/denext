@@ -335,7 +335,7 @@ async function notarize(app: string, profile: string): Promise<void> {
 }
 
 /** Image size in MiB for a .dmg of `bytes` of content: 25% headroom plus 64 MiB. hdiutil's own
- * estimate for `-srcfolder` runs short on some macOS images ("No space left on device"); with
+ * estimate for a copied tree runs short on some macOS images ("No space left on device"); with
  * UDZO the final image is still compressed, so the headroom only sizes the temporary image. */
 function dmgSizeMb(bytes: number): number {
   return Math.ceil((bytes * 1.25) / (1024 * 1024)) + 64;
@@ -352,23 +352,112 @@ async function treeBytes(path: string): Promise<number> {
   return total;
 }
 
+/** Run a tool with its output captured (never throws on a non-zero exit). */
+async function capture(
+  cmd: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out = await new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const text = new TextDecoder();
+  return {
+    code: out.code,
+    stdout: text.decode(out.stdout),
+    stderr: text.decode(out.stderr),
+  };
+}
+
+const XML_ENTITIES: Record<string, string> = {
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  amp: "&",
+};
+
+/** The mount point in `hdiutil attach -plist` output, XML-unescaped; undefined when none. */
+function plistMountPoint(xml: string): string | undefined {
+  const m = xml.match(/<key>mount-point<\/key>\s*<string>([^<]*)<\/string>/);
+  return m?.[1].replace(
+    /&(lt|gt|quot|apos|amp);/g,
+    (_, e: string) => XML_ENTITIES[e],
+  );
+}
+
+/** Detach a mounted image, retrying with backoff while it is busy; the last try forces it. */
+async function detachDmg(mount: string, tries = 5): Promise<void> {
+  for (let i = 1; i <= tries; i++) {
+    const last = i === tries;
+    const r = await capture([
+      "hdiutil",
+      "detach",
+      mount,
+      ...(last ? ["-force"] : []),
+    ]);
+    if (r.code === 0) return;
+    if (last || !/busy/i.test(r.stderr)) {
+      throw new Error(`hdiutil detach failed (${r.code}): ${r.stderr.trim()}`);
+    }
+    await new Promise((done) => setTimeout(done, 500 * 2 ** (i - 1)));
+  }
+}
+
+/**
+ * Wrap a .app in a compressed disk image beside it. The image is built read-write, attached at a
+ * private mount point inside a temporary folder beside the .dmg (`-mountrandom`, never
+ * /Volumes), filled with ditto, detached and converted to UDZO. Creating the image from a source
+ * folder would mount its scratch image under /Volumes, which a sandboxed runner refuses, and fails
+ * intermittently there ("Directory not empty", "No space left on device").
+ */
 async function makeDmg(app: string): Promise<string> {
   const dmg = app.replace(/\.app$/, ".dmg");
+  const bundle = app.split("/").pop()!;
   await Deno.remove(dmg).catch(() => {});
-  await run([
-    "hdiutil",
-    "create",
-    "-volname",
-    app.split("/").pop()!.replace(/\.app$/, ""),
-    "-srcfolder",
-    app,
-    "-size",
-    `${dmgSizeMb(await treeBytes(app))}m`,
-    "-ov",
-    "-format",
-    "UDZO",
-    dmg,
-  ]);
+  const outDir = dmg.includes("/") ? dmg.slice(0, dmg.lastIndexOf("/")) : ".";
+  const tmp = await Deno.realPath(
+    await Deno.makeTempDir({ dir: outDir, prefix: ".dmg-" }),
+  );
+  const rw = `${tmp}/rw.dmg`;
+  let mount: string | undefined;
+  try {
+    await run([
+      "hdiutil",
+      "create",
+      "-size",
+      `${dmgSizeMb(await treeBytes(app))}m`,
+      "-fs",
+      "HFS+",
+      "-volname",
+      bundle.replace(/\.app$/, ""),
+      "-ov",
+      rw,
+    ]);
+    const attach = await capture([
+      "hdiutil",
+      "attach",
+      "-nobrowse",
+      "-noautoopen",
+      "-mountrandom",
+      tmp,
+      "-plist",
+      rw,
+    ]);
+    mount = attach.code === 0 ? plistMountPoint(attach.stdout) : undefined;
+    if (!mount) {
+      throw new Error(
+        `hdiutil attach failed (${attach.code}): ${attach.stderr.trim()}`,
+      );
+    }
+    await run(["ditto", app, `${mount}/${bundle}`]);
+    await detachDmg(mount);
+    mount = undefined;
+    await run(["hdiutil", "convert", rw, "-format", "UDZO", "-ov", "-o", dmg]);
+  } finally {
+    if (mount) await capture(["hdiutil", "detach", mount, "-force"]);
+    await Deno.remove(tmp, { recursive: true }).catch(() => {});
+  }
   return dmg;
 }
 
