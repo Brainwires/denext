@@ -16,6 +16,7 @@
 // NETWORK-REQUIRED (GitHub fetch + yarn install): `deno task test:migration-bed`.
 
 import { type Bed, runBed } from "./_bed.ts";
+import { missingProgram } from "./_programs.ts";
 
 /** The home screen's button whose label is `text`, clicked. */
 const press = (text: string) =>
@@ -57,6 +58,11 @@ const TAMAGUI: Bed = {
   },
 };
 
+/** The starter is a yarn 4 workspace: without yarn the bed can't install it. */
+const noYarn = await missingProgram("yarn");
+
 Deno.test({
-  name: "migration bed: Tamagui's starter (Expo app) builds, renders and navigates on the web",
+  name: "migration bed: Tamagui's starter (Expo app) builds, renders and navigates on the web" +
+    (noYarn ? ` (skipped: ${noYarn})` : ""),
+  ignore: noYarn !== undefined,
 }, (t) => runBed(t, TAMAGUI));
