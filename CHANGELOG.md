@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A compat build on a JSR-installed or binary denext no longer fails on `jsr:@denext/og`.** The
+  prebuilt compat runtime kept denext's codec packages (`@denext/og`, `@denext/photon`,
+  `@denext/avif`) external only in their bare spelling, while JSR publishes them as
+  `jsr:@denext/og@^x.y.z`, so an app whose `middleware.ts` imported `next/server` failed with
+  `readfile '<app>/.denext/server/runtime/jsr:@denext/og@…'`. Both spellings now stay external.
 - **The `tailwind` config block compiles a Tailwind v3 project with its own v3 CLI.** It ran the
   bundled v4 binary even when `node_modules/tailwindcss` is 3.x, so a v3 app's build failed on
   v3-only utilities ("Cannot apply unknown utility class `border-border`"). The block now detects

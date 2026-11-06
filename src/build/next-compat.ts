@@ -1027,11 +1027,17 @@ function serverOnlyExternalResolver(): (
  * can surface on any runtime file.) denext's native helper packages
  * (`@denext/og`/`@denext/photon`/`@denext/avif`, used by next/og etc.) are NOT prebuilt
  * runtime files on disk, so they stay external — the platform loader resolves them (jsr,
- * or the local workspace) at load time, same as `node:`.
+ * or the local workspace) at load time, same as `node:`. Both spellings, as in
+ * {@link CODEC_EXTERNALS}: JSR rewrites the published sources' bare imports to
+ * `jsr:@denext/og@^x.y.z`, which a binary or JSR-installed denext prebuilds from.
+ *
+ * @param args The esbuild resolve arguments of an import inside the runtime namespace.
  */
-function resolveWithinRuntime(args: esbuild.OnResolveArgs): esbuild.OnResolveResult | null {
+export function resolveWithinRuntime(
+  args: esbuild.OnResolveArgs,
+): esbuild.OnResolveResult | null {
   if (args.path.startsWith("node:")) return null;
-  if (/^@denext\/(og|photon|avif)(\/|$)/.test(args.path)) {
+  if (/^(?:jsr:)?@denext\/(?:og|photon|avif)(?:@[^/]*)?(?:\/|$)/.test(args.path)) {
     return { path: args.path, external: true };
   }
   return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
