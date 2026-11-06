@@ -36,7 +36,10 @@ concurrency:
 
 jobs:
   drift:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
