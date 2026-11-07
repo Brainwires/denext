@@ -307,6 +307,94 @@ denext job --history                 # recent runs, through the configured histo
         <a href="/docs/cli#deno-verbs">the CLI reference</a>).
       </Callout>
 
+      <h2 id="os-scheduler">Run on the OS scheduler</h2>
+      <p>
+        A schedule fires only while a denext server is running. On a machine with no server, such as
+        a laptop or a build box, <code>denext job install</code>{" "}
+        hands the project's schedules to the operating system's scheduler instead. Each scheduled
+        job (its own <code>schedule</code> plus <code>scheduledJobs</code>{" "}
+        from the config, the same merge the server makes) becomes one entry that runs{" "}
+        <code>denext job &lt;name&gt;</code> in the project directory:
+      </p>
+      <Code lang="bash">
+        {`denext job install                # every scheduled job, for the logged-in user
+denext job install cleanup        # just this one (others stay as they are)
+denext job install --dry-run      # print the files and scheduler commands, change nothing
+denext job install --uninstall    # remove this project's entries (or name jobs to remove)
+sudo denext job install --system  # the machine's scheduler, still run as you`}
+      </Code>
+      <ul>
+        <li>
+          <strong>macOS:</strong> a launchd agent per job in <code>~/Library/LaunchAgents</code>
+          {" "}
+          (<code>/Library/LaunchDaemons</code> with <code>--system</code>), loaded with{" "}
+          <code>launchctl bootstrap</code>. Output goes to{" "}
+          <code>.denext/logs/jobs/&lt;job&gt;.log</code>.
+        </li>
+        <li>
+          <strong>Linux:</strong> a systemd timer and service per job in{" "}
+          <code>~/.config/systemd/user</code> (<code>/etc/systemd/system</code> with{" "}
+          <code>--system</code>). Where no systemd user manager runs, the jobs go into the user's
+          crontab instead, each between two marker lines, with output in the same log files.
+        </li>
+        <li>
+          <strong>Windows:</strong> a Task Scheduler task per job under{" "}
+          <code>\denext\&lt;project id&gt;\</code>. A user task runs while you are logged on, and a
+          {" "}
+          <code>--system</code>{" "}
+          one whether or not you are (it needs an administrator prompt). A run still going when the
+          next one is due is not started again.
+        </li>
+      </ul>
+      <p>
+        Every entry carries a <code>denext-managed</code>{" "}
+        marker and the project's id (a fingerprint of its directory). Installing again replaces the
+        project's entries and removes the ones for jobs that are no longer scheduled. An uninstall
+        removes only this project's entries, and nothing else in the scheduler is touched. The
+        entries run the <code>denext</code> binary the installer put in <code>~/.denext/bin</code>
+        {" "}
+        (or{" "}
+        <code>$DENEXT_INSTALL/bin</code>). Without one, they run the current Deno on denext's CLI
+        module, and the command warns that this path can change when the toolchain is upgraded.
+      </p>
+      <h3 id="os-scheduler-time-zones">Time zones</h3>
+      <p>
+        Schedules stay UTC on every scheduler. systemd timers are written in UTC (<code>
+          OnCalendar=… UTC
+        </code>), so they need no conversion. launchd, cron and Task Scheduler read their calendars
+        in local time, so the schedule is shifted by the machine's offset from UTC (the zone this
+        process sees, <code>TZ</code>{" "}
+        included). In a zone with a single offset all year the shift is exact. In a zone with
+        daylight saving time the entry fires at each local time the schedule can map to (03:00 UTC
+        is 21:00 or 22:00 in Chicago), and passes <code>--if-due "&lt;cron&gt;"</code> to{" "}
+        <code>denext job</code>, which runs the job only in a minute the UTC expression matches and
+        otherwise exits without doing anything. A schedule that every offset maps alike, such as
+        {" "}
+        <code>*/5 * * * *</code>, needs no guard.
+      </p>
+      <p>
+        Some schedules are refused, with nothing changed and an error that names the field:
+      </p>
+      <ul>
+        <li>
+          A schedule that names a day of the month or a month, at a time that falls on a different
+          local day (<code>0 3 1 * *</code>{" "}
+          is the evening of the last day of the previous month in the Americas). A weekday is
+          shifted with the run, so <code>0 3 * * 1</code> becomes Sunday evening there.
+        </li>
+        <li>
+          One that launchd or Task Scheduler can't hold. launchd has no step syntax, so an entry
+          gets at most 1000 calendar entries. Task Scheduler allows 48 triggers per task, and each
+          evenly spaced run of times uses one.
+        </li>
+      </ul>
+      <Callout>
+        A run that the OS starts late, such as a launchd job caught up after the Mac wakes from
+        sleep, is skipped when the entry carries the <code>--if-due</code>{" "}
+        guard, because its minute no longer matches. Entries without the guard run late instead.
+        Re-run <code>denext job install</code> after moving the machine to another time zone.
+      </Callout>
+
       <h2 id="long-running">Long-running jobs</h2>
       <p>
         A job is a run that ends. Work that should run for the life of the server — a queue
