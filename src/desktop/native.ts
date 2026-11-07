@@ -639,6 +639,19 @@ export async function notifySetCategories(
 }
 
 /**
+ * What the OS's privacy switches say about `kind` for this app (`app`'s `capabilities`: Windows,
+ * the runtime after 3.0.0-denext.13): `"allowed"`, `"denied"`, or `null` when they say nothing (no switch
+ * set, macOS / Linux, an older runtime).
+ */
+export async function osMediaAccess(
+  kind: "microphone" | "camera",
+): Promise<"allowed" | "denied" | null> {
+  const out = await desktopRpc<Record<string, unknown>>("app", "capabilities", {});
+  const value = out?.[kind === "microphone" ? "microphoneAccess" : "cameraAccess"];
+  return value === "allowed" || value === "denied" ? value : null;
+}
+
+/**
  * The notification permission on desktop (`request`: prompt when undecided): `granted`, `denied`,
  * `prompt`, or `unsupported` where the OS has no notifications.
  */

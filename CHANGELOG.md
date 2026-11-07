@@ -38,6 +38,20 @@ and this project adheres to
   never allow a script URL. `<Markdown>` has no hooks and renders in Server and Client Components;
   it builds elements from the rendered document, never an HTML string. Docs:
   https://denext.dev/docs/markdown.
+- **Deno Desktop on Windows reports the microphone and camera privacy switches.**
+  `appCapabilities()` from `denext/desktop/app` has `microphoneAccess` / `cameraAccess`
+  (`"allowed"`, `"denied"`, or `null` when no switch is set; `"unknown"` before the runtime has
+  them) and `microphoneAccessReason` / `cameraAccessReason`, which name the switch that refuses
+  (the device-wide one, the user's "Microphone access", or "Let desktop apps access your
+  microphone") and where it is in Settings. In a desktop window `checkPermission("microphone")` /
+  `("camera")` from `denext/mobile` reads `"blocked"` while the switch is off, and
+  `requestPermission` returns that without prompting. The runtime's window (laufey) refuses such
+  a request itself with `NotAllowedError`, as macOS does, instead of granting it and leaving the
+  engine to fail to open the device. It reads the switches at each request, so turning one back on
+  takes effect without a relaunch. This needs the Deno Desktop runtime after 3.0.0-denext.13; on
+  older runtimes the new facts read `"unknown"`. The docs now say that microphone and camera
+  capture is packaged-only (runtime 3.0.0-denext.10+) and what each OS adds
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 
 ### Changed
 

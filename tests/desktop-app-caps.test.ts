@@ -1411,6 +1411,10 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     windowBlurReason: null,
     passkeys: "unknown",
     passkeysReason: null,
+    microphoneAccess: "unknown",
+    microphoneAccessReason: null,
+    cameraAccess: "unknown",
+    cameraAccessReason: null,
     bounce: false,
     dockMenu: false,
     dockVisibility: false,
@@ -1796,6 +1800,56 @@ Deno.test("app: the Linux CEF sandbox and the file chooser follow the probe (run
     "unknown",
     null,
   ]);
+  assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null, "unknown", null]);
+  assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
+});
+
+Deno.test("app: Windows' microphone and camera privacy switches follow the probe (the runtime after 3.0.0-denext.13)", async () => {
+  const capsWith = async (features: Record<string, unknown> | undefined) => {
+    const cap = createAppController({
+      window: undefined,
+      api: features ? { platformFeatures: () => Promise.resolve(features) } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "windows",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    return [
+      caps.microphoneAccess,
+      caps.microphoneAccessReason,
+      caps.cameraAccess,
+      caps.cameraAccessReason,
+    ];
+  };
+  // The desktop-apps switch off for the microphone: denied with the runtime's reason; the camera's
+  // reason never travels with "allowed".
+  assertEquals(
+    await capsWith({
+      microphoneAccess: "denied",
+      microphoneAccessReason:
+        " Windows keeps the microphone from desktop apps (Settings > Privacy & security > Microphone > Let desktop apps access your microphone) ",
+      cameraAccess: "allowed",
+      cameraAccessReason: "ignored",
+    }),
+    [
+      "denied",
+      "Windows keeps the microphone from desktop apps (Settings > Privacy & security > Microphone > Let desktop apps access your microphone)",
+      "allowed",
+      null,
+    ],
+  );
+  // No switch set, and macOS / Linux: null.
+  assertEquals(await capsWith({ microphoneAccess: null, cameraAccess: null }), [
+    null,
+    null,
+    null,
+    null,
+  ]);
+  // An odd value, or a runtime before the switches (no key), reads unknown.
+  assertEquals(
+    await capsWith({ microphoneAccess: "Deny", cameraAccess: true, cameraAccessReason: "x" }),
+    ["unknown", null, "unknown", null],
+  );
   assertEquals(await capsWith(NO_TRAY_HOST), ["unknown", null, "unknown", null]);
   assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
 });
