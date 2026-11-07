@@ -96,6 +96,12 @@ and this project adheres to
   Reading the key another process made first now goes through the same read as an existing key,
   so a restored Deno cache and a fresh one run (and cover) the same code; a key file too short
   to be one is still neither used nor replaced, and no listing is trusted under it.
+- **`denext ui`'s JSR search no longer times out before it dials on a loaded machine.** Its
+  five-second deadline was armed when `fetch` was called, but a fetch dials only when the event
+  loop next polls it, so a UI process that was busy or starved of CPU past the deadline aborted
+  the search with no connection made ("timed out"). The deadline now runs from the moment the
+  request is dispatched (the loop's next turn), for searches, package metadata and config reads
+  alike, and still covers the body read.
 - **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
   (a Server Component), its context never reached the `"use client"` components below it, so a
   `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The

@@ -879,9 +879,10 @@ async function checkOfflineSearch(ui: Ui): Promise<void> {
 
 /** The control: without `--offline` the same search leaves the process — into the trap. */
 async function checkOnlineSearch(ui: Ui, trap: NetTrap): Promise<void> {
-  // A search can spend its whole 5 s deadline before it dials (a cold fetch client on a loaded
-  // machine), failing as "timed out" with the trap never reached. The control only needs one
-  // search to reach the trap, so it asks again (each try still a failed search, never cached).
+  // The search's deadline runs from the moment it is dispatched (src/ui/jsr.ts), so a UI process
+  // starved on a loaded machine still dials the trap before it can time out (pinned by
+  // tests/ui-jsr-deadline.test.ts). The control only needs one search to reach the trap, and asks
+  // again if one does not (each try still a failed search, never cached).
   const reasons: string[] = [];
   for (let attempt = 0; attempt < ONLINE_SEARCH_ATTEMPTS && trap.hits === 0; attempt++) {
     const twin = await getJson(ui, "/api/plugins?q=denext");
