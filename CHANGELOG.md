@@ -27,6 +27,10 @@ and this project adheres to
   provenance check's `gh auth status` is given 20 s (past it, the provenance is reported as not
   checked, as for a signed-out `gh`) and `gh attestation verify` 180 s (past it, the download is
   refused with how to retry or rely on the SHA-256 pin alone).
+- **`@denext/backend`'s `s3()` storage driver no longer waits forever on a stalled store.** Each
+  call to S3 / R2 / MinIO gets `requestTimeoutMs` (new, default 5 minutes; `0` restores no limit)
+  for its answer's headers, then fails with a `storage:` error; a download's body still streams
+  without a deadline.
 
 ## [4.13.1] - 2026-11-07
 
