@@ -20,6 +20,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext toolchain status --verify` is tested on a content hash alone.** A new test changes a
+  `typescript-check/` file to a same-size stub and puts the stamped mtime back, so only the
+  re-hash `--verify` does can catch it; the language-server test's changed stub now differs in
+  size too, so no detection in the suite rides on a file's mtime.
 - **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
   (a Server Component), its context never reached the `"use client"` components below it, so a
   `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The
