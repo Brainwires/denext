@@ -3332,8 +3332,8 @@ export default {
     window: { show: false },     // no window at launch
     tray: {
       icon: "/tray.png",         // public/tray.png
-      tooltip: "Hangar",
-      menu: [{ id: "open", label: "Open Hangar" }, { separator: true }, { role: "quit" }],
+      tooltip: "My App",
+      menu: [{ id: "open", label: "Open My App" }, { separator: true }, { role: "quit" }],
       panel: { url: "/panel", width: 360, height: 480 },
     },
   },
