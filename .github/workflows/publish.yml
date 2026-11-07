@@ -526,7 +526,11 @@ jobs:
   windows-arm-check:
     needs: release
     if: startsWith(github.ref_name, 'v')
-    runs-on: windows-11-arm
+    # The self-hosted Windows arm64 runner the repository variable
+    # RUNNER_WINDOWS_ARM names (a label, or a JSON array), else windows-11-arm; always
+    # windows-11-arm on a pull_request (a self-hosted runner never takes a pull
+    # request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-11-arm"' || (startsWith(vars.RUNNER_WINDOWS_ARM, '[') && vars.RUNNER_WINDOWS_ARM || format('"{0}"', vars.RUNNER_WINDOWS_ARM || 'windows-11-arm'))) }}
     permissions:
       contents: read
     steps:

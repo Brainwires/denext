@@ -991,8 +991,11 @@ denext desktop package --target-os windows --format msi,zip`}
       <ul>
         <li>
           <strong>macOS</strong> — the <code>.app</code> always; <code>dmg</code>{" "}
-          (a drag-to-Applications disk image, <code>hdiutil</code>) and <code>pkg</code>{" "}
-          (<code>productbuild</code>, installing into <code>/Applications</code>{" "}
+          (a drag-to-Applications disk image,{" "}
+          <code>hdiutil</code>; built at a private mount point in a temporary folder beside it,
+          never under <code>/Volumes</code>, so it works on a sandboxed CI runner) and{" "}
+          <code>pkg</code> (<code>productbuild</code>, installing into <code>/Applications</code>
+          {" "}
           — what MDM tools and <code>installer -pkg</code> deploy). Set{" "}
           <code>DENEXT_INSTALLER_IDENTITY</code> to a <em>Developer ID Installer</em>{" "}
           identity to sign the <code>.pkg</code>; with <code>DENEXT_NOTARY_PROFILE</code>{" "}
@@ -2482,7 +2485,7 @@ desktop: {
         {" "}
         <code>pty</code>{" "}
         only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.12) has no terminals yet: opening one rejects with{" "}
+        (3.0.0-denext.13) has no terminals yet: opening one rejects with{" "}
         <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
         own VT sequences even for plain text.
       </Callout>

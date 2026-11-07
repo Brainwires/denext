@@ -1103,7 +1103,8 @@ OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-wi
 `3.0.0-denext.7` is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes.
 `3.0.0-denext.8` moves the CLI and the runtime to V8 15.6 (Chrome Extended Stable 156) and CEF to 156.0.15 (Chromium 156.0.8078.80); the CLI embeds the expected `denort` SHA-256s, adds `Deno.disarmResourceLimits(import.meta)` and keeps the type check's npm copy under `DENO_DIR`, and the runtime adds OS quits to the close handlers, `backgroundThrottling`, the `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` permission tokens and stricter full-app update checks. The
 `3.0.0-denext.10` moves V8 to 15.6.75.38 and adds Node's `node --test` runner, the CommonJS compile cache and `NODE_OPTIONS` preloads.
-`3.0.0-denext.12` (the build denext pins today; there is no `3.0.0-denext.11` release) adds `Deno.openPty` and `Deno.Command`'s `pty` option (not on Windows yet), `crypto.argon2()`, `node:stream/iter`, `node:zlib/iter` and `node:vfs`, and makes `--seed` pin the time zone and locale. The
+`3.0.0-denext.12` (there is no `3.0.0-denext.11` release) adds `Deno.openPty` and `Deno.Command`'s `pty` option (not on Windows yet), `crypto.argon2()`, `node:stream/iter`, `node:zlib/iter` and `node:vfs`, and makes `--seed` pin the time zone and locale.
+`3.0.0-denext.13` (the build denext pins today) loads a native Node addon a package ships, such as node-pty's, in packaged apps instead of the built-in shim. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

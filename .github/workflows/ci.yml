@@ -53,7 +53,10 @@ jobs:
   # coverage. Excludes the heavy build/bundle integration tests (see the
   # `integration` job) so this job stays the short critical path.
   check:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Every job has a limit (the default is 6 h, held by a stall). Sized from recent green runs:
     # check ≤ 15 min, integration / next-compat ≤ 3, coverage ≤ 52; about 3× / +40 min margin.
     timeout-minutes: 45
@@ -179,7 +182,10 @@ jobs:
   # `integration` job that runs the whole file is skipped on a push, so a bundle regression would
   # otherwise show up only locally. One build: a minute or two.
   bundle-budget:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -213,7 +219,10 @@ jobs:
   # unchanged lockfile stops the release too. cargo-audit is the release's prebuilt binary,
   # SHA-256-pinned and cached; no Rust toolchain is installed. Seconds.
   cargo-audit:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 10
     env:
       CARGO_AUDIT_VERSION: "0.22.2"
@@ -258,7 +267,10 @@ jobs:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
   # Split out so it runs in parallel with `check` instead of extending it.
   integration:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 30
@@ -298,7 +310,10 @@ jobs:
   # headless-Chromium e2e suite (dispatched before a release, e2e.yml) — they run on every PR to catch
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 30
@@ -547,9 +562,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.12
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.12-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: bc274a95c56ad7d2974c67817ca5e2dd43690eab86c6389d8c786fc189d247c8
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.13
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.13-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 38e12cd9c586ecc23dbea072090bb593b2bd577d305deefc129b08ecb132d251
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -713,7 +728,11 @@ jobs:
   # machine. Heavy (both suites on one runner): PRs, `main` and a manual dispatch, like
   # `integration`. The JDK is there for the same reason as in `check` (the Android templates).
   windows-tests:
-    runs-on: windows-latest
+    # The self-hosted Windows x64 runner the repository variable
+    # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
+    # windows-latest on a pull_request (a self-hosted runner never takes a pull
+    # request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
@@ -826,7 +845,11 @@ jobs:
   # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
   # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
   windows-resolve:
-    runs-on: windows-latest
+    # The self-hosted Windows x64 runner the repository variable
+    # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
+    # windows-latest on a pull_request (a self-hosted runner never takes a pull
+    # request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 15
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
     # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).

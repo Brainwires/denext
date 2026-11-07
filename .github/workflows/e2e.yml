@@ -23,6 +23,7 @@ permissions:
 jobs:
   e2e:
     if: inputs.job == 'all' || inputs.job == 'e2e'
+    # Stays on GitHub's image: its 1M-row scroll perf test needs more CPU than a pool container's 4.
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -74,7 +75,7 @@ jobs:
       - name: Install Playwright's Chromium and WebKit
         # tests/e2e/spa-shell.e2e.test.ts drives both engines through playwright-core (pinned in
         # deno.json); under CI=1 it fails rather than skips when they are missing.
-        run: deno run -A npm:playwright-core@1.63.0 install --with-deps chromium webkit
+        run: deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium webkit
 
       - name: E2E tests (headless Chromium via astral)
         # astral downloads a pinned Chromium on first run; the suite builds example
@@ -97,7 +98,7 @@ jobs:
   # calling `runBed` (see _bed.ts); bump a pin deliberately and say why in the commit.
   migration-beds:
     if: inputs.job == 'all' || inputs.job == 'migration-beds'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Above one bed's summed step deadlines (~55 min for a full stall) so the harness's own
     # `[killed after …]` diagnostics print instead of the runner cutting the job first.
     timeout-minutes: 120
@@ -134,7 +135,7 @@ jobs:
         # A bed with a `browser` check (tests/migration-bed/_bed.ts) hydrates a page in headless
         # Chromium through astral, which downloads its own pinned Chromium but not the shared
         # libraries it links; this installs them (and Playwright's Chromium), as the e2e job does.
-        run: deno run -A npm:playwright-core@1.63.0 install --with-deps chromium
+        run: deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium
 
       - name: Migration beds
         run: deno task test:migration-bed
@@ -147,7 +148,10 @@ jobs:
   # `deno task test:stress --seed <seed>`.
   timer-stress:
     if: inputs.job == 'all' || inputs.job == 'timer-stress'
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

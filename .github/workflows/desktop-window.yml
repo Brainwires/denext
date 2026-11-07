@@ -90,12 +90,11 @@ jobs:
           - { os: macos-latest, label: macos-arm64 }
           - { os: macos-15-intel, label: macos-x64 }
           - { os: windows-latest, label: windows-x64 }
-    # The macos-latest entry runs on the self-hosted arm64 runner the repository
-    # variable RUNNER_MACOS_ARM names (a label, or a JSON array) when it is set;
-    # always the image on a pull_request (a self-hosted runner never takes a pull
-    # request's code). The other entries keep their image.
-    # macos-15-intel stays on GitHub: the x64 pool's runner account has no window session.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # Every entry runs on GitHub's images. The self-hosted macOS pool can't run this
+    # test: its download checks drive the save dialog with osascript, which needs the
+    # Automation (TCC) grant GitHub's image has and the pool's image doesn't.
+    # The windows-latest entry needs an interactive desktop; our Windows runners run in session 0.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
@@ -164,7 +163,10 @@ jobs:
     name: results by OS
     needs: window-test
     if: always()
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # pull_request (a self-hosted runner never takes a pull request's code).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
