@@ -564,6 +564,7 @@ jobs:
 
   installers-linux:
     name: installers (ubuntu-latest — .deb via apt, .rpm via dnf)
+    # Stays on GitHub-hosted: it `sudo apt-get install`s the .deb and runs dnf in `docker run` (no sudo, no Docker socket on the self-hosted Linux pool).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:

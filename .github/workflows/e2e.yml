@@ -182,6 +182,7 @@ jobs:
   # to the toolchain. The steps are scripts/ci/no-deno-e2e.sh.
   no-deno:
     if: inputs.job == 'all' || inputs.job == 'no-deno'
+    # Stays on GitHub-hosted: the clean Debian machine is a `docker run` container (no Docker socket on the self-hosted Linux pool).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

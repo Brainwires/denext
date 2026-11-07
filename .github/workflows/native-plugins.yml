@@ -60,6 +60,7 @@ env:
 
 jobs:
   android:
+    # Stays on GitHub-hosted: Gradle needs the Android SDK (not in the self-hosted Linux pool's image).
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:

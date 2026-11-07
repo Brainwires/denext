@@ -66,6 +66,7 @@ concurrency:
 
 jobs:
   publish:
+    # Stays on GitHub-hosted: JSR provenance (OIDC) from a self-hosted runner is unverified (npm refuses it outright).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -210,6 +211,7 @@ jobs:
           - target: aarch64-pc-windows-msvc
             os: ubuntu-latest
             smoke: false
+    # Stays on GitHub-hosted: the Windows signing step runs `sudo apt-get install osslsigncode` (sudo is inert on the self-hosted Linux pool).
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -368,6 +370,7 @@ jobs:
         include:
           - { os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }
           - { os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }
+    # Stays on GitHub-hosted: no Linux arm64 pool for ubuntu-24.04-arm, and the macOS leg runs x86_64 under Rosetta, not verified on the self-hosted macOS image.
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -418,7 +421,8 @@ jobs:
   release:
     needs: [binaries, smoke]
     if: startsWith(github.ref_name, 'v')
-    runs-on: ubuntu-latest
+    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a pull_request).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     permissions:
       contents: write # create the release and attach the assets
       id-token: write # sign the build-provenance attestation (Sigstore, keyless)
@@ -489,7 +493,8 @@ jobs:
   package-managers:
     needs: release
     if: startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')
-    runs-on: ubuntu-latest
+    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a pull_request).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     permissions:
       contents: read
     steps:
@@ -567,7 +572,8 @@ jobs:
   macos-check:
     needs: release
     if: startsWith(github.ref_name, 'v')
-    runs-on: macos-latest
+    # The self-hosted arm64 runner RUNNER_MACOS_ARM names, else macos-latest (always on a pull_request).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     permissions:
       contents: read
     steps:
