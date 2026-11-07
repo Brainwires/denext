@@ -152,6 +152,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     serverModules: new Map(),
     usesLive: false,
     usesLiveView: false,
+    usesNextIntl: false,
     ...scans,
     compatServerModules: {},
   };

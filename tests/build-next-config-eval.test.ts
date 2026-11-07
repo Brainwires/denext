@@ -9,6 +9,7 @@ import {
   projectImportMap,
 } from "../src/build/eval-config-isolation.ts";
 import {
+  CONFIG_PLUGIN_CALLS,
   evalNextConfigProgram,
   LOAD_NEXT_CONFIG,
   type NextConfigEvalResult,
@@ -879,3 +880,55 @@ Deno.test("configIsolation: no config keeps discovery, a config gets no-config a
     assertFalse(await Deno.stat(path).then(() => true, () => false));
   });
 });
+
+/** An installed next-intl whose `next-intl/plugin` fails to load, as its native watcher does. */
+const NEXT_INTL_PACKAGE: Record<string, string> = {
+  "app/package.json": '{"dependencies":{"next-intl":"4.0.0"}}',
+  "app/node_modules/next-intl/package.json": JSON.stringify({
+    name: "next-intl",
+    version: "4.0.0",
+    exports: { "./plugin": { import: "./esm/plugin.js", require: "./cjs/plugin.cjs" } },
+  }),
+  "app/node_modules/next-intl/esm/plugin.js": 'throw new Error("NotCapable: Requires ffi");\n',
+  "app/node_modules/next-intl/cjs/plugin.cjs": 'throw new Error("NotCapable: Requires ffi");\n',
+};
+
+/** Echo the config and the plugin calls the evaluator recorded. */
+const ECHO_WITH_PLUGINS = program(
+  `console.log(${
+    JSON.stringify(MARKER)
+  } + JSON.stringify({ cfg, plugins: ${CONFIG_PLUGIN_CALLS} }));\nDeno.exit(0);`,
+);
+
+for (const withDenoJson of [false, true]) {
+  const extra: Record<string, string> = withDenoJson ? { "app/deno.json": "{}" } : {};
+  const label = withDenoJson ? " (a deno.json project)" : "";
+  Deno.test(`createNextIntlPlugin is stubbed in an ESM config${label}`, async () => {
+    await withHostile({
+      ...NEXT_INTL_PACKAGE,
+      ...extra,
+      "app/next.config.mjs": 'import createNextIntlPlugin from "next-intl/plugin";\n' +
+        'const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");\n' +
+        'export default withNextIntl({ basePath: "/docs" });\n',
+    }, async (dir) => {
+      assertEquals(valueOf(await evalIn(dir, "next.config.mjs", ECHO_WITH_PLUGINS)), {
+        cfg: { basePath: "/docs" },
+        plugins: [{ name: "next-intl/plugin", arg: "./src/i18n/request.ts" }],
+      });
+    });
+  });
+  Deno.test(`createNextIntlPlugin is stubbed in a CommonJS config${label}`, async () => {
+    await withHostile({
+      ...NEXT_INTL_PACKAGE,
+      ...extra,
+      "app/next.config.js": 'const createNextIntlPlugin = require("next-intl/plugin");\n' +
+        "module.exports = createNextIntlPlugin({ requestConfig: './i18n/req.ts' })(" +
+        "{ trailingSlash: true });\n",
+    }, async (dir) => {
+      assertEquals(valueOf(await evalIn(dir, "next.config.js", ECHO_WITH_PLUGINS)), {
+        cfg: { trailingSlash: true },
+        plugins: [{ name: "next-intl/plugin", arg: { requestConfig: "./i18n/req.ts" } }],
+      });
+    });
+  });
+}

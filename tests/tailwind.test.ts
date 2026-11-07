@@ -183,6 +183,48 @@ Deno.test({
   },
 });
 
+// The config's `tailwind` block on a Tailwind v3 install compiles with the app's own v3 CLI, never
+// the bundled v4 binary (which rejects v3-only utilities such as `@apply border-border`).
+Deno.test({
+  name: "buildAppCss: the tailwind block on a v3 install runs the v3 CLI, not the v4 binary",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_tw_block_v3_" });
+    const saved = ["TAILWIND_BIN", "DENO_BIN"].map((k) => [k, Deno.env.get(k)] as const);
+    try {
+      Deno.env.set("TAILWIND_BIN", await writeStubProject(dir));
+      await Deno.mkdir(join(dir, "node_modules", "tailwindcss"), { recursive: true });
+      await Deno.writeTextFile(
+        join(dir, "node_modules", "tailwindcss", "package.json"),
+        JSON.stringify({ version: "3.4.17" }),
+      );
+      const denoStub = join(dir, "deno-stub.sh");
+      await Deno.writeTextFile(
+        denoStub,
+        `#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then printf '.tw-v3{color:red}\\n' > "$2"; fi; shift; done\n`,
+      );
+      await Deno.chmod(denoStub, 0o755);
+      Deno.env.set("DENO_BIN", denoStub);
+
+      await buildAppCss({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        tailwind: {
+          input: join(dir, "styles", "tailwind.css"),
+          output: join(dir, "app", "globals.css"),
+        },
+      });
+      const compiled = await Deno.readTextFile(join(dir, "app", "globals.css"));
+      assertStringIncludes(compiled, ".tw-v3");
+      assert(!compiled.includes(".tw-generated"), "the v4 binary must not compile a v3 app");
+    } finally {
+      for (const [k, v] of saved) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
 /**
  * Run `fn` with a custom Tailwind version pinned to `pin` (the env a custom release needs) and a
  * fresh cache directory, restoring the environment after.

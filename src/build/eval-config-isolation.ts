@@ -157,21 +157,38 @@ const NO_LOCK = "--no-lock";
  *
  * @param dir The project directory, every symlink in its path resolved.
  * @param root Its containment root, resolved the same way.
+ * @param stubs Exact import-map entries laid over the project's (the evaluator's stand-ins for
+ *   config plugins that cannot load in it); with no `deno.json` they are the whole map.
  * @returns The flags, and how to clean up after the evaluation.
  */
-export async function configIsolation(dir: string, root: string): Promise<ConfigIsolation> {
+export async function configIsolation(
+  dir: string,
+  root: string,
+  stubs: Readonly<Record<string, string>> = {},
+): Promise<ConfigIsolation> {
   const nothing = () => Promise.resolve();
-  if (!await discoversDenoConfig(dir)) return { flags: [NO_LOCK], dispose: nothing };
+  const stubbed = Object.keys(stubs).length > 0;
+  if (!await discoversDenoConfig(dir)) {
+    if (!stubbed) return { flags: [NO_LOCK], dispose: nothing };
+    return await withMapFile([NO_LOCK], { imports: { ...stubs }, scopes: {} });
+  }
   const flags = [
     NO_LOCK,
     "--no-config",
     "--unstable-sloppy-imports",
     "--unstable-bare-node-builtins",
   ];
-  const map = await projectImportMap(dir, root);
+  const project = await projectImportMap(dir, root);
+  const map = { imports: { ...project.imports, ...stubs }, scopes: project.scopes };
   if (Object.keys(map.imports).length + Object.keys(map.scopes).length === 0) {
     return { flags, dispose: nothing };
   }
+  return await withMapFile(flags, map);
+}
+
+/** `flags` plus `--import-map` naming `map` written to a temp file (removed by `dispose`). */
+async function withMapFile(flags: string[], map: ImportMap): Promise<ConfigIsolation> {
+  const nothing = () => Promise.resolve();
   // A file, not a `data:` URL: a migrated app's alias map can pass Windows' command-line limit.
   // Nothing in the evaluator may write, and the grant doesn't reach this file unless the project
   // itself is under the temp directory, where a config reads only what its own project declared.

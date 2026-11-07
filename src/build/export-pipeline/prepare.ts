@@ -16,6 +16,7 @@ import {
   appUsesHrefParams,
   appUsesImageBlur,
   appUsesIsoIslands,
+  appUsesNextIntl,
   appUsesViewTransition,
 } from "../bundle.ts";
 import { resolveCacheComponents, resolveCacheLifeProfiles } from "../../server/config.ts";
@@ -200,6 +201,7 @@ export async function prepareExport(
   const usesFormActions = await appUsesFormActions(paths.projectDir, outside);
   const usesHrefParams = await appUsesHrefParams(paths.projectDir, outside);
   const usesHookBoundaries = await appUsesHookBoundaries(paths.projectDir, outside);
+  const usesNextIntl = await appUsesNextIntl(paths.projectDir, outside);
   const outDir = await freshStagingDir(finalOutDir);
   const clientOut = join(outDir, "_denext", "client");
   await ensureDir(clientOut);
@@ -230,6 +232,7 @@ export async function prepareExport(
     usesFormActions,
     usesHrefParams,
     usesHookBoundaries,
+    usesNextIntl,
     pages: 0,
     skipped: [],
   };

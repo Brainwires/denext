@@ -161,7 +161,12 @@ the React family and the Next compat surface at denext:
 above is an excerpt of what it generates, shown so you can audit or hand-tune it
 (the real one also maps `denext` itself, the rest of the `react-dom/*` family, and
 every `next/*` and `next-intl/*` subpath denext ships); a fresh compat project gets
-the same map from `denext create --compatibility`.
+the same map from `denext create --compatibility`. Each of your other npm
+dependencies is pinned as `npm:name@version` at the version your package manager
+installed (its `node_modules`, else `package-lock.json` / `pnpm-lock.yaml`), not
+the floor of its range. When `node_modules` already holds every pin, migrate
+writes `"nodeModulesDir": "manual"`, so Deno uses that tree instead of installing
+a second one; otherwise `"auto"`, as above.
 
 ```sh
 denext migrate
@@ -560,7 +565,11 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 1. **Probe dependencies** (§1) — know your blockers before touching code.
 2. **Run `denext migrate`** in the project — it writes the `deno.json` import map
    (§3) and `denext.config.ts`, and translates `next.config.*`; it only creates
-   config files and never rewrites your source unless you add `--codemod`.
+   config files and never rewrites your source unless you add `--codemod`. The
+   one exception is next-intl: a config wrapped by `createNextIntlPlugin` is
+   evaluated with the plugin stubbed, and each root layout gets an
+   `import "…/i18n/request";` line so `getRequestConfig()` registers (the
+   wiring the plugin does on Next.js; the line is harmless there).
 3. **Port a bounded slice first** — a few public/marketing pages through the
    next-compat build; confirm dev + a production build serve and hydrate.
 4. **Migrate route handlers + middleware** (§4), smoke-testing server SDKs (§6).

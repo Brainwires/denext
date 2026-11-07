@@ -14,8 +14,9 @@
  * @module
  */
 
-import { h, useContext } from "../../../mod.ts";
+import { h, useContext, useMemo } from "../../../mod.ts";
 import type { VNode, VNodeChild } from "../../jsx/types.ts";
+import { CLIENT_REF } from "../../runtime/client-reference.ts";
 import {
   type IntlConfig,
   IntlContext,
@@ -150,6 +151,9 @@ function useIntl(): IntlConfig {
   return config;
 }
 
+/** The catalog of a provider given no `messages` (one object, so the value stays stable). */
+const EMPTY_MESSAGES: NestedMessages = {};
+
 /** Props for {@link NextIntlClientProvider}. */
 export interface NextIntlClientProviderProps {
   /** The active locale. */
@@ -162,25 +166,75 @@ export interface NextIntlClientProviderProps {
   now?: Date;
   /** Named formats (`formats.dateTime.short`, …) for `useFormatter`. */
   formats?: IntlFormats;
+  /**
+   * next-intl's error handler. Accepted for parity; a function cannot cross from a Server
+   * Component to the client, so a server-rendered provider drops it there (a dev warning says
+   * so, as next-intl documents). denext's compat does not call it.
+   */
+  onError?: (error: IntlError) => void;
+  /**
+   * next-intl's missing-message fallback. Accepted for parity and dropped on the client like
+   * {@link NextIntlClientProviderProps.onError}; denext's compat does not call it.
+   */
+  getMessageFallback?: (info: { error: IntlError; key: string; namespace?: string }) => string;
   /** The subtree that consumes translations. */
   children?: VNodeChild;
 }
 
+/** The provider's context value, one object while its inputs are unchanged. */
+function useProviderValue(props: NextIntlClientProviderProps): IntlConfig {
+  const { locale, messages, timeZone, now, formats } = props;
+  // One value while the inputs are unchanged (as next-intl memoizes it): a fresh object per
+  // render re-rendered every consumer and rebuilt every translator below the provider.
+  return useMemo<IntlConfig>(
+    () => ({ locale, messages: messages ?? EMPTY_MESSAGES, timeZone, now, formats }),
+    [locale, messages, timeZone, now?.getTime(), formats],
+  );
+}
+
+/** The client-reference id the boundary is emitted under (and the Flight entry registers). */
+const PROVIDER_REF_ID = "denext#NextIntlClientProvider";
+
 /**
- * Provide locale, messages, time zone, and "now" to descendant hooks.
+ * The client half of {@link NextIntlClientProvider}: the framework client reference
+ * `denext#NextIntlClientProvider`, so `"use client"` islands below a provider rendered from a
+ * Server Component read its context after hydration (its props — locale, messages, time zone,
+ * now, formats — cross in the Flight payload; functions are dropped). Registered by the
+ * generated Flight entry; not something to render by hand.
+ *
+ * @param props The provider configuration.
+ * @returns The provider element.
+ */
+export function NextIntlClientBoundary(props: NextIntlClientProviderProps): VNode {
+  return h(IntlContext, { value: useProviderValue(props), children: props.children });
+}
+Object.defineProperty(NextIntlClientBoundary, "displayName", { value: "NextIntlClientProvider" });
+Object.defineProperty(NextIntlClientBoundary, CLIENT_REF, {
+  value: {
+    clientId: "denext",
+    name: "NextIntlClientProvider",
+    id: PROVIDER_REF_ID,
+    // It renders no DOM of its own: an island carved beneath it hydrates wrapped in it.
+    islandProvider: true,
+  },
+  enumerable: false,
+  configurable: true,
+});
+
+/**
+ * Provide locale, messages, time zone, and "now" to descendant hooks — Server Components and
+ * `"use client"` islands alike. On the server it provides the context to the Server Components
+ * below it (they read it during the Flight pass) and renders {@link NextIntlClientBoundary}, the
+ * client reference that provides the same context in the browser.
  *
  * @param props The provider configuration.
  * @returns The provider element.
  */
 export function NextIntlClientProvider(props: NextIntlClientProviderProps): VNode {
-  const value: IntlConfig = {
-    locale: props.locale,
-    messages: props.messages ?? {},
-    timeZone: props.timeZone,
-    now: props.now,
-    formats: props.formats,
-  };
-  return h(IntlContext, { value, children: props.children });
+  return h(IntlContext, {
+    value: useProviderValue(props),
+    children: h(NextIntlClientBoundary, { ...props }),
+  });
 }
 
 /**
@@ -197,7 +251,9 @@ export const IntlProvider: typeof NextIntlClientProvider = NextIntlClientProvide
  */
 export function useTranslations(namespace?: string): Translator {
   const { messages, locale } = useIntl();
-  return makeTranslator(namespace, messages, locale);
+  // Referentially stable while the namespace, catalog and locale are, as in next-intl: a
+  // translator in a `useCallback` / `useEffect` dependency list must not change every render.
+  return useMemo(() => makeTranslator(namespace, messages, locale), [namespace, messages, locale]);
 }
 
 /** The active locale. */
@@ -246,7 +302,11 @@ export interface Formatter {
  */
 export function useFormatter(): Formatter {
   const { locale, timeZone, now, formats } = useIntl();
-  return createFormatter({ locale, timeZone, now, formats });
+  // Stable while its inputs are, like useTranslations.
+  return useMemo(
+    () => createFormatter({ locale, timeZone, now, formats }),
+    [locale, timeZone, now, formats],
+  );
 }
 
 /** Pick a sensible unit for a millisecond delta and format it relatively. */

@@ -823,3 +823,63 @@ Deno.test("migrate: a next.config rule that reads a machine path is left out, ne
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// next-intl's `createNextIntlPlugin` loads a native watcher (`NotCapable: Requires ffi` in the
+// evaluator), so the whole next.config used to be left for a hand port, and nothing imported the
+// request config the plugin wires on Next.js.
+const NEXT_INTL_APP: Tree = {
+  "package.json": {
+    name: "intl",
+    dependencies: { next: "15.3.0", react: "19.1.0", "next-intl": "4.0.0" },
+  },
+  "node_modules/next-intl/package.json": {
+    name: "next-intl",
+    version: "4.0.0",
+    exports: { "./plugin": { import: "./esm/plugin.js", require: "./cjs/plugin.cjs" } },
+  },
+  "node_modules/next-intl/esm/plugin.js": 'throw new Error("NotCapable: Requires ffi");\n',
+  "node_modules/next-intl/cjs/plugin.cjs": 'throw new Error("NotCapable: Requires ffi");\n',
+  "next.config.mjs": 'import createNextIntlPlugin from "next-intl/plugin";\n' +
+    'const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");\n' +
+    "export default withNextIntl({\n" +
+    '  basePath: "/shop",\n' +
+    '  async redirects() { return [{ source: "/old", destination: "/new", permanent: true }]; },\n' +
+    "});\n",
+  "src/i18n/request.ts": 'import { getRequestConfig } from "next-intl/server";\n' +
+    "export default getRequestConfig(async () => ({ locale: 'en', messages: {} }));\n",
+  "src/app/[locale]/layout.tsx": "// The root layout.\n" +
+    "export default function L({ children }) { return children; }\n",
+  "src/app/[locale]/page.tsx": "export default function P() { return null; }\n",
+};
+
+Deno.test("migrate --check: a next-intl app's config is evaluated and its request config wired", async () => {
+  const report = await checkAndCompare(NEXT_INTL_APP);
+  const wont = JSON.stringify(report.wontMigrate);
+  assertFalse(wont.includes("could not be evaluated"), wont);
+  assert(
+    report.review.some((f) =>
+      f.item === "src/app/[locale]/layout.tsx" && f.reason.includes("src/i18n/request.ts")
+    ),
+    JSON.stringify(report.review),
+  );
+  const dir = await tempDir();
+  try {
+    await writeTree(dir, NEXT_INTL_APP);
+    const result = await migrateProject(dir, {});
+    assertEquals(result.nextIntl?.wired, ["src/app/[locale]/layout.tsx"]);
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(config, '"/shop"');
+    assertStringIncludes(config, '"source":"/old"');
+    const layout = await Deno.readTextFile(join(dir, "src/app/[locale]/layout.tsx"));
+    assert(
+      layout.startsWith('// The root layout.\nimport "../../i18n/request";'),
+      layout,
+    );
+    // A second run leaves the wired layout alone.
+    const again = await migrateProject(dir, {});
+    assertEquals(again.nextIntl?.wired, []);
+    assertEquals(await Deno.readTextFile(join(dir, "src/app/[locale]/layout.tsx")), layout);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

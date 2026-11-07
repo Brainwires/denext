@@ -37,7 +37,18 @@ import {
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG, machineEnvIn } from "./next-config-eval.ts";
+import {
+  CONFIG_PLUGIN_CALLS,
+  evalNextConfigProgram,
+  LOAD_NEXT_CONFIG,
+  machineEnvIn,
+} from "./next-config-eval.ts";
+import { nodeModulesDirFor, pinInstalledVersions } from "./migrate-installed-versions.ts";
+import {
+  type ConfigPluginCall,
+  type NextIntlMigrateInfo,
+  wireNextIntlRequestConfig,
+} from "./next-intl-migrate.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { VERSION } from "../version.ts";
@@ -300,6 +311,22 @@ function classifyDeps(
 }
 
 /**
+ * {@link classifyDeps}, then (when pinning) each `npm:` pin moved from its range floor to the
+ * version the project installed (./migrate-installed-versions.ts), so Deno resolves the same
+ * versions the package manager did.
+ */
+async function classifyAndPin(
+  dir: string,
+  deps: Record<string, string>,
+  imports: Record<string, string>,
+  opts: { dropRemix?: boolean; pin: boolean },
+): Promise<DepClassification> {
+  const classified = classifyDeps(deps, imports, opts);
+  if (opts.pin) await pinInstalledVersions(dir, imports);
+  return classified;
+}
+
+/**
  * Build the App-Router import map shared by the Next and Remix paths: the `denext`/`denext/*`
  * entries (plus `denext/remix`(`/server`) for the Remix path), the react/next family aliases,
  * `server-only`/`client-only` no-ops + `mdx/types`, the app's tsconfig path aliases, and — in
@@ -539,6 +566,11 @@ export interface MigrateResult {
   prisma?: PrismaMigrateInfo;
   /** Present when the app depends on `next-auth` — its major, the v4 APIs and adapters found. */
   nextAuth?: NextAuthMigrateInfo;
+  /**
+   * Present when the next.config wraps the config with next-intl's `createNextIntlPlugin`: the
+   * request config found, and the root layouts migrate made import it.
+   */
+  nextIntl?: NextIntlMigrateInfo;
   /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
   expo?: ExpoMigrateInfo;
   /** Present when {@link kind} is `"tanstack-start"` — the Start options carried and dropped. */
@@ -943,8 +975,9 @@ async function writeAppRouterDenoJson(
   const denoJson = {
     tasks: appRouterTasks(R, prismaWiring, cap, start),
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
-    // otherwise the App-Router native passes resolve npm deps via `auto`.
-    nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
+    // otherwise the package manager's node_modules is the one tree when it holds every pin,
+    // else the App-Router native passes resolve npm deps via `auto`.
+    nodeModulesDir: prismaWiring?.nodeModulesDir ?? await nodeModulesDirFor(dir, imports),
     ...(prismaWiring?.links.length ? { links: prismaWiring.links } : {}),
     unstable: withDenextUnstable(undefined, ["sloppy-imports"]),
     compilerOptions: {
@@ -1074,6 +1107,8 @@ interface NextConfigTranslation {
    * than serializing the live plugin fns or dropping them.
    */
   mdx?: boolean;
+  /** The stubbed config plugins the config called (`createNextIntlPlugin`), when evaluated. */
+  plugins?: ConfigPluginCall[];
 }
 
 /** next.config keys denext maps straight through (same names/shapes as Next). */
@@ -1166,6 +1201,8 @@ if (cfg && typeof cfg === "object") {
   }
   for (const k of Object.keys(cfg)) if (DROP.includes(k)) out.dropped.push(k);
 }
+// The stubbed plugins' calls (createNextIntlPlugin's request config path).
+out.plugins = ${CONFIG_PLUGIN_CALLS};
 console.log(${JSON.stringify(NEXT_EVAL_MARKER)} + JSON.stringify(out));
 // Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
 // the event loop alive or crash asynchronously after the config object was already handed
@@ -1235,8 +1272,11 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
-  const value = result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">;
-  return { ...base, ...withoutMachineEnv(value) };
+  const value = result.value as Pick<
+    NextConfigTranslation,
+    "fields" | "rules" | "dropped" | "plugins"
+  >;
+  return { ...base, ...withoutMachineEnv(value), plugins: value.plugins ?? [] };
 }
 
 /**
@@ -1644,6 +1684,12 @@ async function migrateNextProject(
   // package + setup script) runs after the config is written.
   const prisma = prismaWiring ? await prismaWiring.finalize() : undefined;
   const nextAuth = await nextAuthMigrateInfo(dir, deps, pagesRouter);
+  const nextIntl = await wireNextIntlRequestConfig(
+    dir,
+    deps,
+    next && { file: next.file, plugins: next.raw ? null : next.plugins ?? [] },
+    written,
+  );
   return {
     kind: "next",
     wrote: written,
@@ -1655,6 +1701,7 @@ async function migrateNextProject(
     denoJsonExists,
     prisma,
     ...(nextAuth ? { nextAuth } : {}),
+    ...(nextIntl ? { nextIntl } : {}),
     nextConfig: nextConfigReport(next),
     capacitor,
   };
@@ -1775,8 +1822,9 @@ async function readAppDeps(dir: string): Promise<Record<string, string>> {
  * The generated import map for an App Router app plus the dependency classification.
  * App Router has Deno-native build passes (the boundary/exports reader imports app
  * modules) — not only the esbuild compat bundle — so Deno itself must resolve app npm
- * deps. The proven shape is `nodeModulesDir:"auto"` + a pinned `npm:name@version` per
- * dep (these go in the generated deno.json; package.json/the lockfile are never touched).
+ * deps. The proven shape is a pinned `npm:name@version` per dep, at the version the project
+ * installed (these go in the generated deno.json; package.json/the lockfile are never touched),
+ * with `nodeModulesDir:"manual"` when node_modules holds every pin, else `"auto"`.
  * Deps with an unpinnable `catalog:`/`workspace:*` version are left to the installed
  * node_modules + the default-on tolerant resolver instead of a (bogus) pin.
  *
@@ -1793,7 +1841,7 @@ async function resolveAppRouterImports(
   { imports: Record<string, string>; hasEffect: boolean } & ReturnType<typeof classifyDeps>
 > {
   const imports = await buildAppRouterImports(dir, R, deps);
-  const classified = classifyDeps(deps, imports, { pin: true });
+  const classified = await classifyAndPin(dir, deps, imports, { pin: true });
   const hasEffect = "effect" in deps;
   if (hasEffect) Object.assign(imports, R.effectEntry());
   return { imports, hasEffect, ...classified };
@@ -1843,19 +1891,25 @@ async function writeMigratedConfig(
 // ── Remix migration (assisted: config + route-tree transform) ─────────────────
 
 /**
- * The shared setup both Remix-family migrations do: reject a pnp tree, resolve denext, and
- * build the App-Router import map with the Remix compat aliases.
+ * The shared setup both Remix-family migrations do: reject a pnp tree, resolve denext, build
+ * the App-Router import map with the Remix compat aliases, and classify the deps like the Next
+ * path, additionally dropping Remix's own `@remix-run/*` / react-router toolchain (its
+ * route/data model is ported, not run); passthrough deps are npm-pinned at their installed
+ * versions.
  */
 async function remixAppBase(
   dir: string,
   deps: Record<string, string>,
   options: MigrateOptions,
-): Promise<{ R: DenextResolver; imports: Record<string, string> }> {
+): Promise<
+  { R: DenextResolver; imports: Record<string, string>; classified: DepClassification }
+> {
   const { pnp } = await detectPackageManager(dir);
   if (pnp) throw pnpUnsupported(dir);
   const R = await denextResolver(denextVersion(), options.denextLocalPath);
   const imports = await buildAppRouterImports(dir, R, deps, { remix: true });
-  return { R, imports };
+  const classified = await classifyAndPin(dir, deps, imports, { dropRemix: true, pin: true });
+  return { R, imports, classified };
 }
 
 /** True for a React Router v7 framework-mode app: `app/routes.ts` (or `src/app/routes.ts`). */
@@ -1882,10 +1936,9 @@ async function migrateReactRouterProject(
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult> {
-  const { R, imports } = await remixAppBase(dir, deps, options);
-  // Classify first (it npm-pins passthrough deps like `react-router`), THEN assert the aliases
-  // so they win over any pin — RR's client/router runtime IS denext's.
-  const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });
+  // The base classifies first (it npm-pins passthrough deps like `react-router`), THEN the
+  // aliases are asserted so they win over any pin — RR's client/router runtime IS denext's.
+  const { R, imports, classified } = await remixAppBase(dir, deps, options);
   Object.assign(imports, R.reactRouterEntries());
   imports["react-router"] = imports["denext/remix"];
   imports["react-router-dom"] = imports["denext/remix"];
@@ -1966,10 +2019,7 @@ async function migrateRemixProject(
   deps: Record<string, string>,
   options: MigrateOptions,
 ): Promise<MigrateResult> {
-  const { R, imports } = await remixAppBase(dir, deps, options);
-  // Classify deps like the Next path, additionally dropping Remix's own `@remix-run/*` /
-  // react-router toolchain (its route/data model is ported, not run).
-  const classified = classifyDeps(deps, imports, { dropRemix: true, pin: true });
+  const { R, imports, classified } = await remixAppBase(dir, deps, options);
 
   const written: string[] = [];
   // A compat-mode denext.config.ts (no next.config to translate). Never clobber a
@@ -3455,7 +3505,7 @@ async function migrateSpaProject(
   // Classify deps for the summary. With nodeModulesDir:"manual" (pnpm) the npm deps
   // resolve from the installed node_modules, so no `npm:` import entries are emitted;
   // with "auto" they are pinned as `npm:name@version` like the Next path.
-  const classified = classifyDeps(deps, imports, { pin: !manual });
+  const classified = await classifyAndPin(dir, deps, imports, { pin: !manual });
   // A Preact app: Preact, its JSX runtime, Preact Signals and preact-iso point at denext (over
   // the npm pins classifyDeps wrote for them).
   if (preact) Object.assign(imports, preactImports(R, deps));
@@ -3678,7 +3728,7 @@ async function migrateExpoProject(
   const pkg = await readJson(join(dir, "package.json")) ?? {};
   const entry = await requireExpoWebEntry(dir, pkg, deps);
   const imports = await spaImportMap(dir, deps, R, false);
-  const classified = classifyDeps(deps, imports, { pin: pm === null });
+  const classified = await classifyAndPin(dir, deps, imports, { pin: pm === null });
   const config = await readExpoAppConfig(dir);
   const { title, identity, appearance, desktopPackages } = expoAppFacts(config, pkg, deps);
   const nodeModulesDir = pm !== null ? "manual" : "auto";

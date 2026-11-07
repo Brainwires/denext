@@ -230,6 +230,20 @@ function transformFindings(r: MigrateResult): MigrateFinding[] {
   return out;
 }
 
+/** The root layouts migrate made import the next-intl request config, and its notes. */
+function nextIntlFindings(r: MigrateResult): MigrateFinding[] {
+  const n = r.nextIntl;
+  if (!n) return [];
+  return [
+    ...n.wired.map((layout) => ({
+      item: layout,
+      reason: `imports ${n.requestConfig} so next-intl's getRequestConfig() registers ` +
+        "(createNextIntlPlugin's job on Next.js)",
+    })),
+    ...n.notes.map((reason) => ({ item: "next-intl", reason })),
+  ];
+}
+
 /** What an Expo app leaves to the user: unreadable config, native-only packages, Metro. */
 function expoFindings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const e = r.expo;
@@ -443,6 +457,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...spaProxyFindings(r),
       ...viteEmitterFindings(r),
       ...transformFindings(r),
+      ...nextIntlFindings(r),
       ...tanstackStartFindings(r),
       ...expo.review,
       ...appIconFindings(r),

@@ -8,6 +8,7 @@ import { localModulesOutside } from "../module-graph.ts";
 import {
   appImportsLive,
   appUsesLiveView,
+  appUsesNextIntl,
   bundleFlightEntry,
   bundleRoutes,
   generateGlobalErrorEntry,
@@ -171,6 +172,7 @@ export async function computeBoundary(ctx: BuildContext): Promise<void> {
   const outside = await localModulesOutside(ctx.projectDir, ctx.manifest.pages);
   ctx.usesLive = await appImportsLive(ctx.projectDir, outside);
   ctx.usesLiveView = ctx.usesLive && await appUsesLiveView(ctx.projectDir, outside);
+  ctx.usesNextIntl = await appUsesNextIntl(ctx.projectDir, outside);
 }
 
 /**
@@ -207,6 +209,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     ...clientResolution(ctx),
     usesLive: ctx.usesLive,
     usesLiveView: ctx.usesLiveView,
+    usesNextIntl: ctx.usesNextIntl,
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,

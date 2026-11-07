@@ -18,6 +18,59 @@ and this project adheres to
   keeps the fixed interval. The timer is unref'd, and the plugin's teardown still waits for a pass
   in flight.
 
+### Fixed
+
+- **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
+  (a Server Component), its context never reached the `"use client"` components below it, so a
+  `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The
+  provider still provides the context on the server, so Server Components below it read it as
+  before, and now renders the framework client reference `denext#NextIntlClientProvider` with its
+  `locale`, `messages`, `timeZone`, `now` and `formats`: the browser resolves it to the same
+  provider, on the page root and around every `client:*` island carved beneath it. Function props
+  (`onError`, `getMessageFallback`) are dropped on the client, with a dev warning, as next-intl
+  documents. The Flight entry registers the boundary only when the app renders the provider (a
+  build scan), so other apps bundle none of the next-intl compat. `denext/next-intl` exports the
+  boundary as `NextIntlClientBoundary`, for that entry; apps keep rendering the provider.
+- **`denext migrate` pins npm dependencies at their installed versions and keeps an existing
+  `node_modules`.** It pinned the floor of each package.json range (`"^6.42.0"` installed as
+  6.48.0 became `npm:openai@6.42.0`), and under `nodeModulesDir: "auto"` Deno then installed a
+  second tree of those older versions into `node_modules/.deno`. A pin now takes the installed
+  package's version (its `node_modules`, else `package-lock.json` / `pnpm-lock.yaml`, else the
+  range floor as before), and the App Router and React Router paths write
+  `nodeModulesDir: "manual"` when `node_modules` holds every pin at its pinned version.
+- **`denext migrate` carries a next.config wrapped by next-intl's `createNextIntlPlugin` and wires
+  the request config.** The plugin loads a native file watcher, so evaluating the config failed
+  (`NotCapable: Requires ffi`) and every key (`basePath`, `redirects`, `rewrites`, `headers`, …)
+  was left for a hand port; nothing imported `i18n/request.ts` either, so `getRequestConfig()`
+  never registered. The next.config evaluator (shared with `denext ui`'s next.config panel) now
+  stubs `next-intl/plugin`, in ESM and CommonJS configs, recording the request config it names,
+  and migrate adds a side-effect import of that file (or next-intl's default
+  `./(src/)i18n/request.*`) to each root layout that lacks one. `--check` lists the layouts.
+- **The compat build honors the import-map aliases `denext migrate` writes.** The `nodeResolve`
+  resolver claimed every bare import it could find on disk ahead of the import map, so a package
+  migrate aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled from npm
+  whenever it was still installed — with next-intl, every page failed with "`getTranslations` is
+  not supported in Client Components". Without the npm package, the `jsr:` alias reached the
+  deno-loader, which failed without a lockfile. An alias to one of denext's own subpaths now
+  resolves exactly as that `denext/…` specifier (the prebuilt runtime, one copy of denext's
+  hooks and contexts, or the server-only external); any other alias to `jsr:`, a URL or a file
+  follows the import map; `npm:` entries and a dependency's own imports resolve from
+  `node_modules` as before.
+- **next-intl compat: `useTranslations()`, `useFormatter()` and the provider's value are
+  referentially stable.** They were rebuilt on every render, so an effect keyed on the translator
+  (`useCallback(load, [t])` + `useEffect(() => load(), [load])`) ran on every render and a
+  fetch inside it looped. Each is now memoized on its inputs (namespace, locale, messages, time
+  zone, formats), as in next-intl.
+- **A compat build on a JSR-installed or binary denext no longer fails on `jsr:@denext/og`.** The
+  prebuilt compat runtime kept denext's codec packages (`@denext/og`, `@denext/photon`,
+  `@denext/avif`) external only in their bare spelling, while JSR publishes them as
+  `jsr:@denext/og@^x.y.z`, so an app whose `middleware.ts` imported `next/server` failed with
+  `readfile '<app>/.denext/server/runtime/jsr:@denext/og@…'`. Both spellings now stay external.
+- **The `tailwind` config block compiles a Tailwind v3 project with its own v3 CLI.** It ran the
+  bundled v4 binary even when `node_modules/tailwindcss` is 3.x, so a v3 app's build failed on
+  v3-only utilities ("Cannot apply unknown utility class `border-border`"). The block now detects
+  the installed version the same way a `?url` stylesheet import already did.
+
 ## [4.13.1] - 2026-11-07
 
 ### Changed

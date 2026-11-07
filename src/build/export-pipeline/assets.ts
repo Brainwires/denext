@@ -277,6 +277,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       instrumentationClient: ctx.paths.instrumentationClientPath,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      usesNextIntl: ctx.usesNextIntl,
     });
   } else {
     const flightBundle = await bundleFlightEntry(boundary, {
@@ -290,6 +291,7 @@ export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
       instrumentationClient: ctx.paths.instrumentationClientPath,
       usesActivity: ctx.usesActivity,
       usesViewTransition: ctx.usesViewTransition,
+      usesNextIntl: ctx.usesNextIntl,
       ...scanGates(ctx),
     });
     await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
