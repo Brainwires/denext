@@ -2,13 +2,12 @@
 // scheduled jobs as OS scheduler entries (src/cli/job-install/). Reached from `denext job`, which
 // hands over when its first positional is `install`.
 
-import { join, resolve } from "@std/path";
+import { fromFileUrl, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";
 import { resolveProject } from "../../build/paths.ts";
 import { discoverJobs } from "../../server/job-loader.ts";
 import { collectSchedules, jobNames } from "../../server/jobs.ts";
 import { runtimeStateDir } from "../../server/standalone.ts";
-import { entrypointArg, isStandaloneBinary } from "../self-exec.ts";
 import {
   dryRunHost,
   type DryRunStep,
@@ -51,10 +50,17 @@ function thisDenext(): { argv: string[]; warning?: string } {
         return undefined;
       }
     },
-    standalone: isStandaloneBinary(),
+    // Read here, not through ../self-exec.ts: `job.ts` imports this module, and a compiled app's
+    // binary runs `job`, so self-exec's toolchain imports would put the build pipeline in it.
+    standalone: (Deno.build as { standalone?: boolean }).standalone === true,
     execPath: Deno.execPath(),
-    cliModule: entrypointArg(new URL("../../../cli.ts", import.meta.url).href),
+    cliModule: cliModuleArg(new URL("../../../cli.ts", import.meta.url).href),
   });
+}
+
+/** The CLI module a scheduler entry runs: a path for a local checkout, else the module URL. */
+function cliModuleArg(moduleUrl: string): string {
+  return moduleUrl.startsWith("file://") ? fromFileUrl(moduleUrl) : moduleUrl;
 }
 
 /** A dry run's steps, as a reader (or a shell) takes them. */
