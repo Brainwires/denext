@@ -16,6 +16,10 @@ and this project adheres to
   call is killed after 60 s, and the DevTools `/json/list` request and WebSocket connect are bounded
   by the run's timeout (60 s by default), as each CDP command already was; the forward is removed
   either way.
+- **A fresh Deno Desktop runtime download no longer hangs on a stalled github.com.** The default
+  provenance check's `gh auth status` is given 20 s (past it, the provenance is reported as not
+  checked, as for a signed-out `gh`) and `gh attestation verify` 180 s (past it, the download is
+  refused with how to retry or rely on the SHA-256 pin alone).
 
 ## [4.13.1] - 2026-11-07
 

@@ -466,8 +466,39 @@ async function downloadVerified(
   }
 }
 
-/** Run a program to completion with inherited output; resolves its exit code. */
-export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<number>;
+/**
+ * Run a program to completion with inherited output; resolves its exit code. With
+ * `timeoutMs`, the default runner kills it past that and rejects with a
+ * {@linkcode RuntimeCommandTimeout}.
+ */
+export type RuntimeCommandRunner = (
+  cmd: string,
+  args: string[],
+  options?: { readonly timeoutMs?: number },
+) => Promise<number>;
+
+/** A program the default runners killed for running past its `timeoutMs`. */
+export class RuntimeCommandTimeout extends Error {
+  /**
+   * @param cmd The program.
+   * @param timeoutMs Its deadline.
+   */
+  constructor(cmd: string, timeoutMs: number) {
+    super(`${cmd} did not finish within ${timeoutMs / 1000} s`);
+    this.name = "RuntimeCommandTimeout";
+  }
+}
+
+/** How long `gh auth status` may take: it reaches github.com. */
+const GH_AUTH_TIMEOUT_MS = 20_000;
+
+/** How long `gh attestation verify` may take: it fetches the attestation and its trust root. */
+const GH_ATTEST_TIMEOUT_MS = 180_000;
+
+/** The abort signal for `timeoutMs` (none without one). */
+function deadline(timeoutMs: number | undefined): AbortSignal | undefined {
+  return timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
+}
 
 /** The macOS tools the runtime's bundle harmonizing runs, from the OS's own /usr/bin only. */
 const MACOS_SYSTEM_TOOLS = new Set(["plutil", "codesign"]);
@@ -509,10 +540,17 @@ export function runtimeProgram(
   return tool;
 }
 
-const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
-  (await new Deno.Command(runtimeProgram(cmd), { args, stdout: "inherit", stderr: "inherit" })
-    .output())
-    .code;
+const defaultRunner: RuntimeCommandRunner = async (cmd, args, options) => {
+  const signal = deadline(options?.timeoutMs);
+  const out = await new Deno.Command(runtimeProgram(cmd), {
+    args,
+    stdout: "inherit",
+    stderr: "inherit",
+    ...(signal ? { signal } : {}),
+  }).output();
+  if (signal?.aborted) throw new RuntimeCommandTimeout(cmd, options!.timeoutMs!);
+  return out.code;
+};
 
 /**
  * The workflow (in the runtime's repository) that builds and attests every pinned runtime
@@ -556,7 +594,10 @@ export function runtimeAttestationArgs(archive: string, repository: string, tag:
  */
 export async function ghSignedIn(run: CaptureRunner = capture): Promise<boolean> {
   try {
-    return (await run("gh", ["auth", "status", "--hostname", "github.com"])).code === 0;
+    const args = ["auth", "status", "--hostname", "github.com"];
+    // Bounded: a stalled github.com must not hang every fresh runtime download (a timeout is
+    // "not signed in", which says the provenance was not checked).
+    return (await run("gh", args, { timeoutMs: GH_AUTH_TIMEOUT_MS })).code === 0;
   } catch {
     return false;
   }
@@ -586,8 +627,17 @@ async function attest(
 ): Promise<void> {
   let code: number;
   try {
-    code = await run("gh", runtimeAttestationArgs(archive, pin.repository, pin.tag));
-  } catch {
+    code = await run("gh", runtimeAttestationArgs(archive, pin.repository, pin.tag), {
+      timeoutMs: GH_ATTEST_TIMEOUT_MS,
+    });
+  } catch (err) {
+    if (err instanceof RuntimeCommandTimeout) {
+      throw new Error(
+        `denext: the provenance check of ${archive} did not finish within ` +
+          `${GH_ATTEST_TIMEOUT_MS / 1000} s (gh attestation verify); retry, or set ` +
+          `${DESKTOP_RUNTIME_ATTEST_ENV}=0 to rely on the SHA-256 pin alone.`,
+      );
+    }
     throw new Error(
       `denext: ${DESKTOP_RUNTIME_ATTEST_ENV}=1 needs the GitHub CLI (gh) to verify the runtime's ` +
         "build provenance; install gh or drop the flag (the SHA-256 pin is still enforced).",
@@ -598,14 +648,20 @@ async function attest(
   }
 }
 
-/** Run a program to completion, capturing stdout + stderr as text. */
+/**
+ * Run a program to completion, capturing stdout + stderr as text. With `timeoutMs`, the default
+ * runner kills it past that and rejects with a {@linkcode RuntimeCommandTimeout}.
+ */
 export type CaptureRunner = (
   cmd: string,
   args: string[],
+  options?: { readonly timeoutMs?: number },
 ) => Promise<{ code: number; text: string }>;
 
-const capture: CaptureRunner = async (cmd, args) => {
-  const out = await runToExit(runtimeProgram(cmd), { args });
+const capture: CaptureRunner = async (cmd, args, options) => {
+  const signal = deadline(options?.timeoutMs);
+  const out = await runToExit(runtimeProgram(cmd), { args, ...(signal ? { signal } : {}) });
+  if (signal?.aborted) throw new RuntimeCommandTimeout(cmd, options!.timeoutMs!);
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };
