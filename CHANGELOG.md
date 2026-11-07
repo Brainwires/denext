@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext job install` installs a project's scheduled jobs in the OS scheduler.** Each job with
+  a `schedule` (its own, or from `scheduledJobs` in the config) becomes one entry that runs
+  `denext job <name>` in the project directory. On macOS that is a launchd agent, on Linux a
+  systemd timer (or the user's crontab when no systemd user manager runs), and on Windows a Task
+  Scheduler task, so the jobs run without a server. `--system` uses the machine's scheduler and
+  still runs the jobs as the installing user, and `--dry-run` prints the files and commands without
+  changing anything. Every entry is marked with the project's id: installing again replaces the
+  project's entries, and `--uninstall` removes only them. Schedules stay UTC. systemd timers are
+  written in UTC. For launchd, cron and Task Scheduler the schedule is shifted to local time; in a
+  zone with daylight saving time the entry fires at every local time the schedule can map to and
+  runs the job behind the new `denext job <name> --if-due <cron>` guard. A schedule whose day of
+  the month or month would move to another local day is refused with the field named, and so is
+  one with more calendar entries or triggers than the scheduler allows. See
+  https://denext.dev/docs/jobs#os-scheduler.
+
 ### Changed
 
 - **An idle webhooks deliverer wakes rarely (`@denext/backend`).** Under `delivery: "auto"` it

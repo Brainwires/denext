@@ -447,7 +447,7 @@ function denoCron():
 const DENO_CRON_NAME_MAX = 64;
 
 /** FNV-1a over a string, as 8 hex digits — a cheap, synchronous fingerprint for a name. */
-function fnv1a(text: string): string {
+export function fnv1a(text: string): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i);
