@@ -319,6 +319,9 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "platform": u("src/platform.ts"),
     // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
     "result": u("src/result.ts"),
+    // `denext/markdown` — renderMarkdown / <Markdown>, which builds its elements with the one
+    // jsx runtime; usable from "use client" modules too.
+    "markdown": u("src/markdown/mod.ts"),
   };
 }
 
@@ -904,6 +907,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/feature": "feature.js",
   "denext/platform": "platform.js",
   "denext/result": "result.js",
+  "denext/markdown": "markdown.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
   "denext/mobile/clerk": "mobile-clerk.js",
