@@ -259,6 +259,24 @@ denext mobile dev                  # localhost: the iOS simulator (or Android + 
 denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mobile/`}
       </Code>
       <p>
+        <code>--lan</code>{" "}
+        binds the machine&apos;s LAN IPv4: the one on the interface with the default route, which
+        the OS&apos;s own routing tool reports (<code>route -n get default</code> on macOS,{" "}
+        <code>ip -4 route show default</code> on Linux, <code>route print</code>{" "}
+        on Windows). A default route through a VPN or tunnel (<code>utun</code>, <code>tun</code>,
+        {" "}
+        <code>tap</code>, <code>wg</code>, <code>ppp</code>, <code>ipsec</code>,{" "}
+        <code>tailscale</code>,{" "}
+        <code>zt</code>) is skipped, since a phone beside the machine is not on it. Then the primary
+        interface by name (<code>en0</code>, <code>eth0</code>, <code>wlan*</code>,{" "}
+        <code>wlp*</code>,{" "}
+        <code>enp*</code>), then the first other non-loopback, non-link-local IPv4. Without{" "}
+        <code>--allow-run</code>{" "}
+        for the routing tool it is never asked (no permission prompt), and the name order decides.
+        On a machine with several networks (a VM or lab bridge on <code>en0</code>), pass{" "}
+        <code>--host &lt;address&gt;</code> to choose.
+      </p>
+      <p>
         Then run the app from Xcode (or{" "}
         <code>npx cap run ios</code>/<code>android</code>). The page origin <em>is</em>{" "}
         the dev server, so the reload stream and the dev origin check work unchanged. The config
@@ -2246,6 +2264,20 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         process is gone, whenever there is a network). The body never passes through the WebView,
         and CORS does not apply. Install it whenever you want progress, pause and resume, or a
         transfer that outlives the page on a phone.
+      </p>
+      <p>
+        On Android each live transfer&apos;s request headers are kept in a file named by the SHA-256
+        of its whole <code>id</code>{" "}
+        and checked against it on every read, so two transfers never share one (before, two ids with
+        the same hash code and length did, and one transfer&apos;s headers, an{" "}
+        <code>Authorization</code>{" "}
+        say, could reach the other&apos;s URL). That needs the plugin from file-transfer template
+        generation 6 (denext 4.11.1): re-run <code>denext mobile add file-transfer</code>{" "}
+        and ship a new binary. Its first launch moves the old files to their new names and deletes
+        one it can&apos;t attribute to a single transfer, which then resumes without its headers.
+        {" "}
+        <code>denext mobile doctor --release</code> reports <code>transfer-generations</code>{" "}
+        for a plugin from an older generation.
       </p>
       <p>
         <code>downloadToFile</code> takes the first of these that is there:

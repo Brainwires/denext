@@ -2409,7 +2409,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         process, its output streamed to the window, for a terminal emulator such as xterm.js. It is
         built on the runtime&apos;s{" "}
         <code>Deno.openPty</code>, so it needs denext&apos;s Deno Desktop runtime{" "}
-        <code>3.0.0-denext.11</code> or later; under an older one every call rejects{" "}
+        <code>3.0.0-denext.12</code>{" "}
+        or later (there is no 3.0.0-denext.11 release); under an older one every call rejects{" "}
         <code>unsupported</code> with the reason, and <code>denext desktop doctor</code>{" "}
         names the runtime it needs. The functions come from <code>denext/desktop/client</code>:
       </p>
@@ -2835,7 +2836,8 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, â€
       <p>
         A window opened with a <code>key</code>{" "}
         (app-chosen, unique among the open windows; 1 to 64 letters, digits, <code>.</code>,{" "}
-        <code>_</code>, <code>:</code> or <code>-</code>) is found again with{" "}
+        <code>_</code>, <code>:</code> or{" "}
+        <code>-</code>, starting with a letter or digit) is found again with{" "}
         <code>windows.byKey(key)</code>, and its frame is remembered: the bounds are saved to one
         {" "}
         <code>windows.json</code>{" "}
