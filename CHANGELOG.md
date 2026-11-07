@@ -12,6 +12,10 @@ and this project adheres to
 
 - **`denext crash-report test` no longer waits forever on a self-test child that hangs.** The
   toolchain's `deno --version` it runs is killed after 60 s, and the test fails saying so.
+- **`denext profile --android` no longer hangs on an unresponsive device or WebView.** Each `adb`
+  call is killed after 60 s, and the DevTools `/json/list` request and WebSocket connect are bounded
+  by the run's timeout (60 s by default), as each CDP command already was; the forward is removed
+  either way.
 
 ## [4.13.1] - 2026-11-07
 

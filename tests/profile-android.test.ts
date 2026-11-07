@@ -366,6 +366,58 @@ Deno.test("capacitorAppId: the Capacitor config's appId is the default package",
   }
 });
 
+Deno.test({
+  name: "adbRunner: an adb that hangs is killed past the deadline",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir();
+    try {
+      const hang = join(dir, "adb");
+      await Deno.writeTextFile(hang, "#!/bin/sh\nexec sleep 30\n");
+      await Deno.chmod(hang, 0o755);
+      const started = Date.now();
+      await assertRejects(() => adbRunner(hang, 200)(["devices"]), Error, "did not finish within");
+      assert(Date.now() - started < 10_000);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("CdpConnection.open: a socket that never answers the handshake times out", async () => {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const held: Deno.Conn[] = [];
+  const accepting = (async () => {
+    for await (const c of listener) held.push(c); // accepted, never answered
+  })();
+  try {
+    await assertRejects(
+      () => CdpConnection.open(`ws://127.0.0.1:${listener.addr.port}/devtools/page/X`, 100),
+      Error,
+      "timed out after 100 ms",
+    );
+  } finally {
+    listener.close();
+    for (const c of held) c.close();
+    await accepting.catch(() => {});
+  }
+});
+
+Deno.test("profileAndroid: a /json/list that never answers times out and removes the forward", async () => {
+  const adb = fakeAdb(9);
+  const stalled: typeof fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    });
+  await assertRejects(() =>
+    profileAndroid({ package: "dev.example.app", timeoutMs: 50 }, {
+      run: adb.run,
+      fetch: stalled,
+    })
+  );
+  assert(adb.calls.at(-1)?.includes("forward --remove tcp:9"));
+});
+
 Deno.test("adbRunner: runs the binary; a missing one says how to get adb", async () => {
   const out = await adbRunner(Deno.execPath())(["--version"]);
   assertEquals(out.code, 0);
