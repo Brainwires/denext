@@ -2486,6 +2486,19 @@
     "trySync:function",
     "unwrapOr:function"
   ],
+  "denext/markdown": [
+    "Markdown:function",
+    "MarkdownCodeProps:interface",
+    "MarkdownComponents:typeAlias",
+    "MarkdownElementProps:interface",
+    "MarkdownHtmlMode:typeAlias",
+    "MarkdownOptions:interface",
+    "MarkdownProps:interface",
+    "MarkdownUrlKind:typeAlias",
+    "SanitizeOptions:interface",
+    "renderMarkdown:function",
+    "sanitizeHtml:function"
+  ],
   "denext/jsx-directives": [
     "ClientDirectives:interface"
   ],

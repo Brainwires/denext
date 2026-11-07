@@ -32,6 +32,7 @@ export const DOC_LINT_MODULES: readonly string[] = [
   "src/gleam.ts",
   "src/platform.ts",
   "src/result.ts",
+  "src/markdown/mod.ts",
   "src/jsx-directives.ts",
   "src/virtual-masonry.ts",
   "src/mvu.ts",

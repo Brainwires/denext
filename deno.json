@@ -48,6 +48,7 @@
     "./gleam": "./src/gleam.ts",
     "./platform": "./src/platform.ts",
     "./result": "./src/result.ts",
+    "./markdown": "./src/markdown/mod.ts",
     "./jsx-directives": "./src/jsx-directives.ts",
     "./virtual-masonry": "./src/virtual-masonry.ts",
     "./mobile": "./src/mobile/mod.ts",

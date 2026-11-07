@@ -1,6 +1,6 @@
 /**
  * The allowlist HTML sanitizer behind `renderMarkdown(body, { html: "sanitize" })` (internal;
- * its public surface is re-exported from `./markdown.ts`).
+ * its public surface is re-exported from `denext/markdown`).
  *
  * Raw HTML is tokenized with a tolerant, HTML-spec-shaped tokenizer, built into a tree of open
  * elements, and **re-serialized from that tree**: no byte of the original markup is passed
@@ -924,7 +924,7 @@ function feed(writer: HtmlWriter, token: HtmlToken, trusted: boolean): void {
  * closed, and comments, processing instructions, CDATA and doctypes are gone. Idempotent.
  *
  * ```ts
- * import { sanitizeHtml } from "@denext/content-collections/markdown";
+ * import { sanitizeHtml } from "denext/markdown";
  * sanitizeHtml(`<a href="javascript:alert(1)" onclick="x()">hi</a><script>x()</script>`);
  * // → "<a>hi</a>"
  * ```

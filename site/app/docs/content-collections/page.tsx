@@ -138,7 +138,13 @@ export default async function Blog() {
         callouts, GFM tables, inline and reference-style links and images, footnotes, emphasis; raw
         HTML is escaped and script-scheme links and image sources dropped); a <code>.mdx</code>{" "}
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
-        Pass <code>components</code> to map elements or MDX components to your own.
+        Pass <code>components</code> to map elements or MDX components to your own. The{" "}
+        <code>.md</code> renderer is denext's own, public as{" "}
+        <a href="/docs/markdown">
+          <code>denext/markdown</code>
+        </a>{" "}
+        (<code>renderMarkdown</code> and a <code>&lt;Markdown&gt;</code>{" "}
+        component with swappable elements) for Markdown that isn't in a collection.
       </p>
       <h3>Raw HTML in Markdown (opt-in)</h3>
       <p>
@@ -201,7 +207,7 @@ export default {
 
 // Per call, or outside a collection:
 // await renderContent(post, { markdown: { html: "sanitize" } });
-// import { renderMarkdown, sanitizeHtml } from "@denext/content-collections/markdown";`}
+// import { renderMarkdown, sanitizeHtml } from "denext/markdown"; // or "@denext/content-collections/markdown"`}
       </Code>
       <Code lang="tsx">
         {`// app/blog/[id]/page.tsx

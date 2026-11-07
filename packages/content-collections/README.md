@@ -95,7 +95,8 @@ document (`{ h1: Heading, Callout }`).
 - **Rendering:** `body` is the raw MD/MDX source (render it yourself if you like), and the
   runtime renders it for you: `await renderContent(entry)` or `<Content entry={entry} />`
   (server-only). A `.md` entry renders through the package's first-party, zero-dependency
-  Markdown renderer at request time (`@denext/content-collections/markdown` — headings with ids,
+  Markdown renderer at request time (denext's `denext/markdown`, re-exported as
+  `@denext/content-collections/markdown` — headings with ids,
   nested lists, fenced and indented code, code spans of any backtick-run length, blockquotes /
   `> [!NOTE]` callouts, GFM pipe tables, inline and reference-style links and images, GFM
   footnotes (`[^1]`, a numbered section with back-links), emphasis; raw HTML is escaped, and

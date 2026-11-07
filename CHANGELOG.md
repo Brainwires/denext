@@ -24,6 +24,20 @@ and this project adheres to
   the month or month would move to another local day is refused with the field named, and so is
   one with more calendar entries or triggers than the scheduler allows. See
   https://denext.dev/docs/jobs#os-scheduler.
+- **`denext/markdown`: the first-party Markdown renderer, public.** `renderMarkdown(source,
+  options?)` returns HTML and `<Markdown source={…} components={{ h1: MyH1, a: MyLink, code:
+  MyCode }} />` renders the same document as denext elements, each element swappable for an app's
+  own component (a `code` override also gets `inline` and a fenced block's `lang`; a tag name
+  renames the element). It is the renderer content collections' `.md` entries already used, so it
+  keeps their safety: raw HTML escaped by default (`html: "sanitize"` keeps allowlisted HTML,
+  `sanitizeHtml()` runs the sanitizer alone), `javascript:` / `vbscript:` / `data:` link and image
+  URLs dropped after entity decoding, and the link-label attribute-injection fix
+  (GHSA-3q88-358h-83j3) in both render paths. New options: `headingIds: false`,
+  `allowDataImages: true` (a Markdown image with a base64 PNG / GIF / JPEG / WebP `data:` URL, never
+  SVG and never a link) and `urlPolicy(url, kind)`, which can refuse more links and images but
+  never allow a script URL. `<Markdown>` has no hooks and renders in Server and Client Components;
+  it builds elements from the rendered document, never an HTML string. Docs:
+  https://denext.dev/docs/markdown.
 
 ### Changed
 
