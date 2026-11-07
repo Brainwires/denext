@@ -575,6 +575,26 @@ prints it and never writes it to disk.
 5. Cut a denext patch release through the normal gates (`deno task release`, then merge
    `development → main`). Publish a GitHub advisory if security is involved.
 6. Optionally point the fork release's notes at the revocation (its assets stay immutable).
+7. Record the entry in `security/runtime-revocations.json`, the unsigned entries file the
+   repository keeps as the list's source, so the next whole-list signing keeps it.
+
+**Signing the whole list from the repository's entries file.** `security/runtime-revocations.json`
+holds every revocation, unsigned, in canonical form (`deno task revocations canonical <file>`
+rewrites one; `--check` refuses one that isn't; a test keeps the committed file canonical and
+checks that it revokes neither of the checked-out pins nor their rollbacks). On the machine with
+the key:
+
+```sh
+deno task revocations sign security/runtime-revocations.json --no-publish
+deno task revocations verify .denext/runtime-revocations.json
+DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root> \
+  deno task revocations publish .denext/runtime-revocations.json
+deno task revocations verify
+```
+
+`sign` prints what the list does to the checked-out pins before it reads the key, and refuses an
+entries file that leaves out an entry the published list has (that would un-revoke it) unless
+`--force`. Without `--no-publish` it publishes at once.
 
 **Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
 There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign
