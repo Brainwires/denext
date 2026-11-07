@@ -421,8 +421,8 @@ jobs:
   release:
     needs: [binaries, smoke]
     if: startsWith(github.ref_name, 'v')
-    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a pull_request).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a fork's pull_request / pull_request_target).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     permissions:
       contents: write # create the release and attach the assets
       id-token: write # sign the build-provenance attestation (Sigstore, keyless)
@@ -493,8 +493,8 @@ jobs:
   package-managers:
     needs: release
     if: startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')
-    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a pull_request).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a fork's pull_request / pull_request_target).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     permissions:
       contents: read
     steps:
@@ -533,9 +533,9 @@ jobs:
     if: startsWith(github.ref_name, 'v')
     # The self-hosted Windows arm64 runner the repository variable
     # RUNNER_WINDOWS_ARM names (a label, or a JSON array), else windows-11-arm; always
-    # windows-11-arm on a pull_request (a self-hosted runner never takes a pull
-    # request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-11-arm"' || (startsWith(vars.RUNNER_WINDOWS_ARM, '[') && vars.RUNNER_WINDOWS_ARM || format('"{0}"', vars.RUNNER_WINDOWS_ARM || 'windows-11-arm'))) }}
+    # windows-11-arm on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
+    # pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-11-arm"' || (startsWith(vars.RUNNER_WINDOWS_ARM, '[') && vars.RUNNER_WINDOWS_ARM || format('"{0}"', vars.RUNNER_WINDOWS_ARM || 'windows-11-arm'))) }}
     permissions:
       contents: read
     steps:
@@ -572,8 +572,8 @@ jobs:
   macos-check:
     needs: release
     if: startsWith(github.ref_name, 'v')
-    # The self-hosted arm64 runner RUNNER_MACOS_ARM names, else macos-latest (always on a pull_request).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # The self-hosted arm64 runner RUNNER_MACOS_ARM names, else macos-latest (always on a fork's pull_request / pull_request_target).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     permissions:
       contents: read
     steps:
