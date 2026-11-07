@@ -704,6 +704,19 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   / `camera` turn on. No other origin can be granted; `denext desktop package` warns and `denext
   doctor` reports a deno.json grant that differs
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **Microphone and camera capture works only in a packaged app, on Deno Desktop runtime
+  3.0.0-denext.10 or later.** `denext desktop package` writes the grant, macOS's usage strings and
+  its device entitlements; `denext desktop run` / `dev` windows have none, so from that runtime
+  they refuse `getUserMedia` (`NotAllowedError`). Test capture in the browser (`denext dev`) or a
+  packaged build. The OS then has its own say. macOS asks once per app (TCC), and an unsigned or
+  ad-hoc signed build may be refused without asking. On Windows the privacy switches (Settings ›
+  Privacy & security › Microphone / Camera, including "Let desktop apps access…") refuse the
+  device. From the runtime after 3.0.0-denext.13 the window refuses up front (`NotAllowedError`),
+  `checkPermission` reads `"blocked"` and `appCapabilities()` reports
+  `microphoneAccess` / `cameraAccess: "denied"` with the switch. Before it, the engine fails to
+  open the device with its own error and nothing reports why. Linux has no OS consent for the
+  devices: the grant is the only gate
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

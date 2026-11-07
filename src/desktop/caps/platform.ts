@@ -6,7 +6,9 @@
  * 2.9.7-denext.12 adds the Chromium sandbox a Linux CEF window runs in and the file chooser a Linux
  * dialog uses, each with the runtime's reason. Runtime 3.0.0-rc.1 adds, on Linux, whether the
  * compositor blurs behind a window (KWin's blur) and whether passkeys with USB security keys work
- * (libwebauthn), each with the runtime's reason when not. The runtime (laufey) does the probing:
+ * (libwebauthn), each with the runtime's reason when not. The runtime after 3.0.0-denext.13 adds, on Windows,
+ * whether the OS's privacy switches let the app use the microphone and the camera (and which switch
+ * refuses). The runtime (laufey) does the probing:
  * D-Bus names, the Secret Service's lock state, the portal versions, the cookie store. denext only
  * validates what it answered and passes it on, so the page learns WHY a feature is missing.
  *
@@ -55,6 +57,9 @@ export type WindowBlur = "kwin-wayland" | "kwin-x11";
 /** Linux: passkeys with USB security keys work (libwebauthn beside the runtime's host). */
 export type LinuxPasskeys = "security-keys";
 
+/** Windows: what the OS's privacy switches say about a device for this desktop app. */
+export type MediaAccess = "allowed" | "denied";
+
 /** The probe facts the capabilities surface. */
 export interface PlatformFacts {
   /** Linux: `wayland` / `x11` / `tty` / `unknown`; `null` on macOS and Windows. */
@@ -101,6 +106,17 @@ export interface PlatformFacts {
   readonly passkeys: LinuxPasskeys | null | Unknown;
   /** Linux: why not, when `passkeys` is `null`. */
   readonly passkeysReason: string | null;
+  /**
+   * Windows: whether the OS's privacy switches let this desktop app use the microphone; `null`
+   * when no switch is set (and on macOS / Linux). Probed on every call.
+   */
+  readonly microphoneAccess: MediaAccess | null | Unknown;
+  /** Windows: which switch refuses, when `microphoneAccess` is `"denied"`. */
+  readonly microphoneAccessReason: string | null;
+  /** Windows: as `microphoneAccess`, for the camera. */
+  readonly cameraAccess: MediaAccess | null | Unknown;
+  /** Windows: which switch refuses, when `cameraAccess` is `"denied"`. */
+  readonly cameraAccessReason: string | null;
 }
 
 /** The longest runtime reason passed on. */
@@ -138,6 +154,10 @@ const UNKNOWN_FACTS: PlatformFacts = Object.freeze({
   windowBlurReason: null,
   passkeys: "unknown",
   passkeysReason: null,
+  microphoneAccess: "unknown",
+  microphoneAccessReason: null,
+  cameraAccess: "unknown",
+  cameraAccessReason: null,
 });
 
 const BADGE_SHOWS = new Set(["dock", "launcher-entry", "title"]);
@@ -146,6 +166,7 @@ const SANDBOX_MODES = new Set(["namespace", "setuid", "chromium", "off"]);
 const FILE_CHOOSERS = new Set(["portal", "gtk"]);
 const WINDOW_BLURS = new Set(["kwin-wayland", "kwin-x11"]);
 const LINUX_PASSKEYS = new Set(["security-keys"]);
+const MEDIA_ACCESS = new Set(["allowed", "denied"]);
 
 /** `value` when it is `null` or in `allowed`, else `"unknown"` (an older runtime omits the key). */
 function oneOfOrNull<T extends string>(
@@ -209,6 +230,27 @@ export async function platformFacts(api: DesktopAppApi | undefined): Promise<Pla
     ...notificationAndBadgeFacts(raw),
     ...sandboxAndChooserFacts(raw),
     ...blurAndPasskeyFacts(raw),
+    ...mediaAccessFacts(raw),
+  };
+}
+
+/**
+ * Windows' privacy switches for the microphone and camera (the runtime after 3.0.0-denext.13): `"unknown"`
+ * before it; the reason only with `"denied"`.
+ */
+function mediaAccessFacts(
+  raw: Record<string, unknown>,
+): Pick<
+  PlatformFacts,
+  "microphoneAccess" | "microphoneAccessReason" | "cameraAccess" | "cameraAccessReason"
+> {
+  const microphone = oneOfOrNull<MediaAccess>(raw.microphoneAccess, MEDIA_ACCESS);
+  const camera = oneOfOrNull<MediaAccess>(raw.cameraAccess, MEDIA_ACCESS);
+  return {
+    microphoneAccess: microphone,
+    microphoneAccessReason: microphone === "denied" ? reasonText(raw.microphoneAccessReason) : null,
+    cameraAccess: camera,
+    cameraAccessReason: camera === "denied" ? reasonText(raw.cameraAccessReason) : null,
   };
 }
 
@@ -258,6 +300,10 @@ function notificationAndBadgeFacts(
   | "windowBlurReason"
   | "passkeys"
   | "passkeysReason"
+  | "microphoneAccess"
+  | "microphoneAccessReason"
+  | "cameraAccess"
+  | "cameraAccessReason"
 > {
   const badge: BadgeShows | Unknown = BADGE_SHOWS.has(raw.badge as string)
     ? raw.badge as BadgeShows

@@ -3514,15 +3514,51 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         </li>
       </ul>
       <p>
-        The OS still asks the user: macOS once per app (System Settings › Privacy &amp; Security),
-        Windows through its privacy switches for desktop apps. A refusal there reaches the page as
+        <strong>Capture works only in a packaged app, on runtime 3.0.0-denext.10 or later.</strong>
         {" "}
-        <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
+        The grant, the usage descriptions and the entitlements are all written by{" "}
+        <code>denext desktop package</code>. An unpackaged window (<code>denext desktop run</code> /
         {" "}
-        <code>dev</code>) has no launch file, usage description or entitlement, so it has no grant
-        (from runtime 3.0.0-denext.10 it refuses the device): build and test the capture UI in the
-        browser with <code>denext dev</code>, where the browser asks.
+        <code>dev</code>) has none of them, so it has no grant: from runtime 3.0.0-denext.10 it
+        refuses <code>getUserMedia</code> with <code>NotAllowedError</code>, and{" "}
+        <code>desktop run</code> / <code>dev</code>{" "}
+        say so when the capability is on. Build and test the capture UI in the browser with{" "}
+        <code>denext dev</code>, where the browser asks, then try it in a packaged build. A grant
+        only lets the request past the window; the OS still has its own say:
       </p>
+      <ul>
+        <li>
+          <strong>macOS</strong>{" "}
+          asks the user once per app (System Settings › Privacy &amp; Security › Microphone /
+          Camera), showing the{" "}
+          <code>usageDescription</code>. A signed build needs the device entitlements packaging
+          adds; an unsigned or ad-hoc signed build may be refused without a prompt. A refusal
+          reaches the page as <code>NotAllowedError</code>.
+        </li>
+        <li>
+          <strong>Windows</strong>{" "}
+          needs nothing at packaging. It has privacy switches (Settings › Privacy &amp; security ›
+          Microphone / Camera): one for the whole device, the user&apos;s{" "}
+          &quot;Microphone access&quot;, and &quot;Let desktop apps access your microphone&quot;,
+          which covers every Deno Desktop app. With one off, the window refuses the device itself
+          (<code>NotAllowedError</code>, before any grant),{" "}
+          <code>checkPermission("microphone")</code> from <code>denext/mobile</code> reads{" "}
+          <code>"blocked"</code>, and <code>appCapabilities()</code> from{" "}
+          <code>denext/desktop/app</code> reports <code>microphoneAccess: "denied"</code>{" "}
+          (<code>cameraAccess</code> for the camera) with the switch in{" "}
+          <code>microphoneAccessReason</code>, so the app can send the user to Settings. Each
+          request reads the switches again, so turning one back on works without a relaunch. This
+          needs the Deno Desktop runtime after 3.0.0-denext.13 (laufey&apos;s privacy-switch check);
+          on an older one these facts read <code>"unknown"</code>{" "}
+          and the engine fails to open the device with an error of its own.
+        </li>
+        <li>
+          <strong>Linux</strong>{" "}
+          has no consent of its own for these devices: the grant is the only gate (with
+          WebKitGTK&apos;s sub-frame caveat above). A Flatpak&apos;s camera portal would ask too,
+          but denext doesn&apos;t package Flatpaks.
+        </li>
+      </ul>
       <p>
         WebRTC on Linux needs the CEF backend. No distribution builds WebKitGTK with WebRTC, so on
         the webview backend <code>RTCPeerConnection</code> is undefined in the Linux app;{" "}
