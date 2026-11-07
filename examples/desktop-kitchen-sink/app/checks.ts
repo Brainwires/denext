@@ -1821,8 +1821,8 @@ interface SavedDownload {
 
 /**
  * A page download through the runtime's save dialog: ask the runner to answer the dialog (Return,
- * accepting the proposed name in the folder it pointed the dialogs at), start the download with
- * `start`, and return the file's content once it landed there.
+ * or its Save button on Windows, accepting the proposed name in the folder it pointed the dialogs
+ * at), start the download with `start`, and return the file's content once it landed there.
  */
 async function saveThroughDialog(
   setup: KitchenSetup,

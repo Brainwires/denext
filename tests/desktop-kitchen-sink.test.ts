@@ -2,7 +2,7 @@
 // decision its geometry checks skip on. The window test itself runs in CI's desktop-window
 // workflow; these run with the unit suite.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { tiledReason } from "../examples/desktop-kitchen-sink/app/geometry.ts";
 
 /** i3 on the Pi's 4K screen: a tiled window, under i3bar's 20 px. */
@@ -71,11 +71,13 @@ Deno.test("kitchen sink geometry: real failures stay failures", () => {
 // --- the window test's flags and results document -------------------------------------------
 
 import {
+  encodePowerShell,
   parseWindowTestArgs,
   privateLanAddress,
   resultsDocument,
   runtimeOf,
   saveDialogKeys,
+  windowsDialogButtonScript,
 } from "../examples/desktop-kitchen-sink/e2e/window-test.ts";
 import {
   ATTACHMENT_NAME,
@@ -194,11 +196,36 @@ Deno.test("kitchen sink window test: a save dialog is answered with Return, dism
   assertEquals(mac.driver, "osascript");
   assertStringIncludes(mac.accept.join(" "), "key code 36"); // Return
   assertStringIncludes(mac.dismiss.join(" "), "key code 53"); // Escape
-  const win = saveDialogKeys("windows")!;
-  assertEquals(win.driver, "sendkeys");
-  assertStringIncludes(win.accept.at(-1)!, "SendKeys('~')");
-  assertStringIncludes(win.dismiss.at(-1)!, "SendKeys('{ESC}')");
+  // Windows: the dialog's own Save / Cancel button through UI Automation, which needs no focus.
+  const win = saveDialogKeys("windows", "KitchenSink-x64")!;
+  assertEquals(win.driver, "uia");
+  const decode = (cmd: readonly string[]) => {
+    assertEquals(cmd.slice(0, 4), [
+      "powershell",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+    ]);
+    const bytes = Uint8Array.from(atob(cmd[4]), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-16le").decode(bytes);
+  };
+  assertEquals(decode(win.accept), windowsDialogButtonScript("KitchenSink-x64", "1", 8));
+  assertEquals(decode(win.dismiss), windowsDialogButtonScript("KitchenSink-x64", "2", 2));
   assertEquals(saveDialogKeys("freebsd"), null);
+});
+
+Deno.test("kitchen sink window test: the Windows dialog script names the app's process and the button", () => {
+  const script = windowsDialogButtonScript("KitchenSink-x64", "1", 8);
+  assertStringIncludes(script, "Get-Process -Name 'KitchenSink-x64'");
+  assertStringIncludes(script, "(Is ($A::AutomationIdProperty) '1')");
+  assertStringIncludes(script, "AddSeconds(8)");
+  assertStringIncludes(script, "InvokePattern");
+  // The name is spliced into the script: anything but a plain process name is refused.
+  assertThrows(() => windowsDialogButtonScript("x'; Remove-Item C:\\ #", "1", 8));
+  // Non-ASCII survives the UTF-16LE encoding.
+  const text = "Write-Output 'ü€'";
+  const bytes = Uint8Array.from(atob(encodePowerShell(text)), (c) => c.charCodeAt(0));
+  assertEquals(new TextDecoder("utf-16le").decode(bytes), text);
 });
 
 Deno.test("kitchen sink: the app origin's attachment is a download with the name the check expects", async () => {

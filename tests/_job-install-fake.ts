@@ -1,7 +1,8 @@
 // The fake OS scheduler the `denext job install` tests run against: files, a crontab and Task
 // Scheduler's task list in memory, every tool run recorded, so no test installs anything.
 
-import { basename, dirname } from "@std/path";
+import * as hostPath from "@std/path";
+import * as posixPath from "@std/path/posix";
 import type {
   RunOptions,
   SchedulerHost,
@@ -45,6 +46,8 @@ export class FakeHost implements SchedulerHost {
     );
   }
   readDir(path: string): Promise<string[]> {
+    // The simulated OS's paths, not this machine's: a darwin host on Windows still has `/Users`.
+    const { basename, dirname } = this.os === "windows" ? hostPath : posixPath;
     return Promise.resolve(
       [...this.files.keys()].filter((p) => dirname(p) === path).map((p) => basename(p)).sort(),
     );

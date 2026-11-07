@@ -7,20 +7,20 @@
 // planned (and every schedule translated) before the first change, so a schedule the scheduler
 // can't express stops the command with nothing changed.
 
-import { join } from "@std/path";
 import { cronError } from "../../runtime/cron.ts";
 import { fnv1a } from "../../server/jobs.ts";
 import { crontabBackend } from "./crontab.ts";
 import type { SchedulerHost } from "./host.ts";
 import { launchdBackend } from "./launchd.ts";
 import { schtasksBackend } from "./schtasks.ts";
-import type {
-  Backend,
-  BackendContext,
-  BackendName,
-  EntrySpec,
-  InstallScope,
-  ProjectRef,
+import {
+  type Backend,
+  type BackendContext,
+  type BackendName,
+  type EntrySpec,
+  type InstallScope,
+  pathsFor,
+  type ProjectRef,
 } from "./spec.ts";
 import { systemdBackend } from "./systemd.ts";
 import { DUE_SEPARATOR, ScheduleTranslationError, translateSchedules } from "./translate.ts";
@@ -142,7 +142,13 @@ function selectJobs(
 }
 
 /** One job's entry for `backend`. */
-function entryFor(req: InstallRequest, backend: Backend, job: string, crons: string[]): EntrySpec {
+function entryFor(
+  req: InstallRequest,
+  os: string,
+  backend: Backend,
+  job: string,
+  crons: string[],
+): EntrySpec {
   const offsets = backend.clock === "utc" ? [0] : req.offsets;
   const schedule = translateSchedules(crons, offsets);
   const slug = jobSlug(job);
@@ -157,17 +163,22 @@ function entryFor(req: InstallRequest, backend: Backend, job: string, crons: str
       job,
       ...(schedule.guarded ? ["--if-due", crons.join(DUE_SEPARATOR)] : []),
     ],
-    logFile: join(req.project.stateDir, "logs", "jobs", `${slug}.log`),
+    logFile: pathsFor(os).join(req.project.stateDir, "logs", "jobs", `${slug}.log`),
   };
 }
 
 /** Every entry to install, or one error naming every job that can't be. */
-function planEntries(req: InstallRequest, backend: Backend, warnings: string[]): EntrySpec[] {
+function planEntries(
+  req: InstallRequest,
+  os: string,
+  backend: Backend,
+  warnings: string[],
+): EntrySpec[] {
   const { jobs, errors } = selectJobs(req, warnings);
   const entries: EntrySpec[] = [];
   for (const [job, crons] of jobs) {
     try {
-      const entry = entryFor(req, backend, job, crons);
+      const entry = entryFor(req, os, backend, job, crons);
       backend.validate(entry);
       entries.push(entry);
     } catch (err) {
@@ -210,7 +221,7 @@ export async function runJobInstall(
   }
   const warnings: string[] = [];
   const primary = backends[0];
-  const entries = req.mode === "install" ? planEntries(req, primary, warnings) : [];
+  const entries = req.mode === "install" ? planEntries(req, host.os, primary, warnings) : [];
   const filter = req.names.length > 0 ? new Set(req.names.map(jobSlug)) : null;
   const replacing = new Set(entries.map((e) => e.slug));
   const removed: { backend: BackendName; slug: string }[] = [];
@@ -266,6 +277,7 @@ export interface DenextCommandEnv {
  */
 export function denextCommand(e: DenextCommandEnv): { argv: string[]; warning?: string } {
   if (e.standalone) return { argv: [e.execPath] };
+  const { join } = pathsFor(e.os);
   const home = e.env("HOME") ?? e.env("USERPROFILE");
   const install = e.env("DENEXT_INSTALL") || (home ? join(home, ".denext") : null);
   const bin = install ? join(install, "bin", e.os === "windows" ? "denext.exe" : "denext") : null;

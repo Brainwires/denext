@@ -2,7 +2,8 @@
 // is an agent in ~/Library/LaunchAgents (the `gui/<uid>` domain); a system one a daemon in
 // /Library/LaunchDaemons (the `system` domain) that runs as the installing user (`UserName`).
 
-import { dirname, join } from "@std/path";
+// POSIX paths whatever machine renders the entry: the scheduler is a POSIX one.
+import { dirname, join } from "@std/path/posix";
 import type { SchedulerHost } from "./host.ts";
 import {
   type Backend,

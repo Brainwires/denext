@@ -1,8 +1,24 @@
 // The shapes every `denext job install` backend shares: one job's entry, the project it belongs
 // to, and the marker that tells denext's entries apart from everything else the scheduler holds.
 
+import * as hostPath from "@std/path";
+import * as posixPath from "@std/path/posix";
 import type { SchedulerHost } from "./host.ts";
 import type { TranslatedSchedule } from "./translate.ts";
+
+/**
+ * The path functions for the scheduler's OS: POSIX for launchd, systemd and cron (a plist or a
+ * unit names `/Users/u/...` whichever machine renders it), the host's own for Task Scheduler,
+ * which only runs on Windows.
+ *
+ * @param os The scheduler host's OS (`darwin`, `linux`, `windows`, ...).
+ */
+export function pathsFor(os: string): {
+  join(...paths: string[]): string;
+  dirname(path: string): string;
+} {
+  return os === "windows" ? hostPath : posixPath;
+}
 
 /** `user`: the logged-in user's scheduler. `system`: the machine's, run as the installing user. */
 export type InstallScope = "user" | "system";

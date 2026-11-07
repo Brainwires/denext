@@ -11,6 +11,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import {
   backoffDelay,
   deliverWebhooks,
@@ -594,7 +595,8 @@ Deno.test("startWebhookDelivery: its timer never keeps the process alive", async
       "eval",
       "--no-check",
       "--config",
-      new URL("../deno.json", import.meta.url).pathname,
+      // A file path, not the URL's pathname (`/C:/...` on Windows, which Deno can't open).
+      fromFileUrl(new URL("../deno.json", import.meta.url)),
       script,
     ],
     stdin: "null",

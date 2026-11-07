@@ -797,7 +797,8 @@ export function appResolverPlugin(
         // resort (a real npm package won't have a matching file under the root, and the
         // probe only claims an actual file), so `import x from "app/context/y"` works.
         const isRelative = p === "." || p === ".." || p.startsWith("./") || p.startsWith("../");
-        if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
+        // `isAbsolute`: a Windows path (`C:\app\main.js`) has no `/` but is a path too.
+        if ((!isRelative && /\//.test(p) && !p.startsWith("@")) || isAbsolute(p)) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
           const rootProbe = probe(resolve(dirname(configPath), p), args.importer);
@@ -2488,7 +2489,7 @@ export function catalogResolverPlugin(
     setup(build) {
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.namespace !== "file" && args.namespace !== "") return null;
-        if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        if (args.path.startsWith(".") || isAbsolute(args.path)) return null;
         // Scheme specifiers (npm:/jsr:/node:/http:/data:) belong to the deno-loader and
         // denext's own runtime imports — never intercept them. (The narrow catalog set is
         // always plain package names, so this only gates the `"all"` path.)

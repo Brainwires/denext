@@ -51,7 +51,7 @@ export interface RunnerDownloads {
   /** Why there is no {@link RunnerDownloads.base}. */
   readonly skip: string | null;
   /**
-   * How the runner answers a page download's save dialog (`xdotool`, `osascript`, `sendkeys`), or
+   * How the runner answers a page download's save dialog (`xdotool`, `osascript`, `uia`), or
    * `null` with {@link RunnerDownloads.dialogSkip}.
    */
   readonly dialogs: string | null;

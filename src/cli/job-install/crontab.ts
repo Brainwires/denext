@@ -3,7 +3,8 @@
 // every other line of the crontab is kept byte for byte. cron reads its lines in local time, so
 // the schedule is the translated one.
 
-import { dirname } from "@std/path";
+// POSIX paths whatever machine renders the entry: the scheduler is a POSIX one.
+import { dirname } from "@std/path/posix";
 import type { SchedulerHost } from "./host.ts";
 import { type Backend, type BackendContext, check, type EntrySpec, marker } from "./spec.ts";
 import { type CalendarRule, timeGroups } from "./translate.ts";

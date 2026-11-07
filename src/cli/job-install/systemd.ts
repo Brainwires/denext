@@ -3,7 +3,8 @@
 // entry goes to ~/.config/systemd/user (`systemctl --user`); a system one to /etc/systemd/system,
 // running as the installing user (`User=`).
 
-import { join } from "@std/path";
+// POSIX paths whatever machine renders the entry: the scheduler is a POSIX one.
+import { join } from "@std/path/posix";
 import type { SchedulerHost } from "./host.ts";
 import {
   type Backend,
