@@ -988,7 +988,7 @@ export interface DesktopCapabilitiesConfig {
   keepAwake?: boolean;
   /**
    * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
-   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later, not on Windows yet;
    * `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
    * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
    * window that started it. `true` takes the defaults.
@@ -1024,7 +1024,7 @@ export interface DesktopCapabilitiesConfig {
    */
   microphone?: boolean | DesktopMediaCaptureConfig;
   /**
-   * The page's `getUserMedia({ video })` gets the camera, as {@link microphone} the microphone
+   * The page's `getUserMedia({ video })` gets the camera, as `microphone` does the microphone
    * (`NSCameraUsageDescription`, `com.apple.security.device.camera`).
    */
   camera?: boolean | DesktopMediaCaptureConfig;
@@ -1823,7 +1823,8 @@ export interface DesktopWindowConfig {
    */
   visibleOnAllWorkspaces?: boolean;
   /**
-   * An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`), as
+   * An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`, starting with a
+   * letter or digit), as
    * `windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the
    * app support folder as it moves and when it closes, and restored at the next launch (the saved
    * position, and the size unless `width` / `height` set one), clamped onto a display connected

@@ -30,6 +30,7 @@ import {
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
   RUNTIME_VERIFIED_AT,
+  RuntimeCommandTimeout,
   runtimeProgram,
   runtimeRehashDue,
   verifiedRuntime,
@@ -540,6 +541,35 @@ Deno.test("ghSignedIn: gh auth status's exit code; a missing gh is signed out", 
   assertEquals(seen, [["gh", "auth", "status", "--hostname", "github.com"]]);
   assertEquals(await ghSignedIn(() => Promise.resolve({ code: 1, text: "not logged in" })), false);
   assertEquals(await ghSignedIn(() => Promise.reject(new Deno.errors.NotFound("gh"))), false);
+});
+
+Deno.test("ghSignedIn and attest: both gh calls are bounded; a timeout is reported, not hung", async () => {
+  const deadlines: (number | undefined)[] = [];
+  const timedOut = await ghSignedIn((cmd, _args, options) => {
+    deadlines.push(options?.timeoutMs);
+    return Promise.reject(new RuntimeCommandTimeout(cmd, options!.timeoutMs!));
+  });
+  assertEquals(timedOut, false); // a stalled github.com is "not signed in"
+  assert((deadlines[0] ?? 0) > 0);
+  const f = await fixture(await fixtureArchive("t"));
+  try {
+    const err = await assertRejects(
+      () =>
+        ensure(f, {
+          attest: true,
+          run: (cmd, _args, options) => {
+            deadlines.push(options?.timeoutMs);
+            return Promise.reject(new RuntimeCommandTimeout(cmd, options!.timeoutMs!));
+          },
+        }),
+      Error,
+    );
+    assertStringIncludes(err.message, "did not finish within");
+    assertStringIncludes(err.message, "DENEXT_DESKTOP_RUNTIME_ATTEST=0");
+    assert((deadlines[1] ?? 0) > 0);
+  } finally {
+    await f.close();
+  }
 });
 
 Deno.test("runtimeProgram: macOS plutil / codesign come from the OS's tool folders, never PATH", () => {

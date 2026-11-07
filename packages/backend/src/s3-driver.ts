@@ -50,7 +50,17 @@ export interface S3DriverOptions {
   publicEndpoint?: string;
   /** The `fetch` to call (tests, proxies). Default: the global `fetch`. */
   fetch?: typeof fetch;
+  /**
+   * How long one call to the store may wait for its answer's headers, in ms: a stalled store
+   * then fails the call instead of holding it (and the request that made it) open. It covers
+   * sending the body (a single upload or one part, at most 8 MiB), not reading a download's body.
+   * Default 300 000 (5 minutes); `0` waits indefinitely.
+   */
+  requestTimeoutMs?: number;
 }
+
+/** {@linkcode S3DriverOptions.requestTimeoutMs}'s default. */
+const S3_REQUEST_TIMEOUT_MS = 300_000;
 
 /** Server-side part size for a streamed upload of unknown length (≥ S3's 5 MiB minimum). */
 const SERVER_PART_SIZE = 8 * 1024 * 1024;
@@ -166,6 +176,31 @@ interface Call {
   body?: Uint8Array;
 }
 
+/**
+ * `fetchFn(url, init)` aborted when its answer's headers take longer than `timeoutMs` (`0`: no
+ * limit); the deadline ends with the headers, so a body streaming after them is not cut off.
+ */
+async function fetchWithDeadline(
+  fetchFn: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (!controller.signal.aborted) throw err;
+    throw new Error(
+      `storage: the S3 store did not answer a ${init.method} within ${timeoutMs / 1000} s ` +
+        "(S3DriverOptions.requestTimeoutMs)",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The S3 REST calls the driver makes, signed. */
 class S3Client {
   readonly #options: S3DriverOptions;
@@ -200,11 +235,16 @@ class S3Client {
       payloadHash,
     );
     delete signed.headers.host; // fetch sets it
-    const res = await this.#fetch(signed.url, {
-      method: c.method,
-      headers: signed.headers,
-      body: c.body && c.method !== "GET" && c.method !== "HEAD" ? c.body as BodyInit : undefined,
-    });
+    const res = await fetchWithDeadline(
+      this.#fetch,
+      signed.url,
+      {
+        method: c.method,
+        headers: signed.headers,
+        body: c.body && c.method !== "GET" && c.method !== "HEAD" ? c.body as BodyInit : undefined,
+      },
+      this.#options.requestTimeoutMs ?? S3_REQUEST_TIMEOUT_MS,
+    );
     if (res.ok) return res;
     if (res.status === 404 && allow404) {
       await res.body?.cancel();

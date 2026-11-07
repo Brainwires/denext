@@ -335,9 +335,11 @@ export function supportsDesktopDataToken(version: string): boolean {
 /**
  * The first Deno Desktop runtime with `Deno.openPty` (a pseudo-terminal: a program started on a
  * PTY, its output as a stream, `resize` and `kill`; checked against `--allow-run` like
- * `Deno.Command`), which the `pty` desktop capability is built on.
+ * `Deno.Command`), which the `pty` desktop capability is built on. (Its work was tagged
+ * `3.0.0-denext.11`, which never passed the release gate: `3.0.0-denext.12` is the first release
+ * that has it, so that is the version every message names.)
  */
-export const FIRST_PTY_RUNTIME = "3.0.0-denext.11";
+export const FIRST_PTY_RUNTIME = "3.0.0-denext.12";
 
 /**
  * Whether the Deno Desktop runtime `version` has `Deno.openPty` (from

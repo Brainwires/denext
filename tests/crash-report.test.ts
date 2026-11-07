@@ -19,6 +19,7 @@ import {
   crashReportCheck,
   crashReportTest,
   crashReportUrlProblem,
+  runSelftest,
 } from "../src/build/crash-report.ts";
 import { crashReportAction, crashReportCommand } from "../src/cli/commands/crash-report.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
@@ -183,6 +184,39 @@ Deno.test("crash-report test: refusals and a child that did not panic", async ()
   assertEquals(calm.ok, false);
   assertStringIncludes(calm.lines[0], "did not panic");
   assertStringIncludes(calm.lines[0], "is ignored");
+});
+
+Deno.test("crash-report test: a self-test child that hangs is reported, not waited on", async () => {
+  const result = await crashReportTest({
+    env: envOf({ [CRASH_REPORT_URL_ENV]: TOKEN_URL }),
+    deno: "deno",
+    runtime: "3.0.0-denext.5",
+    version: VERSION,
+    run: () => Promise.resolve({ code: 137, stderr: "", timedOut: true }),
+  });
+  assertEquals(result.ok, false);
+  assertStringIncludes(result.lines[0], "did not finish within 60 s");
+});
+
+Deno.test({
+  name: "crash-report test: the real child runner kills a child past its deadline",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir();
+    try {
+      const hang = join(dir, "hang.sh");
+      await Deno.writeTextFile(hang, "#!/bin/sh\nexec sleep 30\n");
+      await Deno.chmod(hang, 0o755);
+      const started = Date.now();
+      const out = await runSelftest(hang, {}, 200);
+      assertEquals(out.timedOut, true);
+      assert(Date.now() - started < 10_000, "killed well before the child's own 30 s");
+      const quick = await runSelftest(Deno.execPath(), {}, 30_000);
+      assertEquals([quick.code, quick.timedOut], [0, false]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
 
 Deno.test("denext crash-report: the action, its exit code and output", async () => {

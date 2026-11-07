@@ -52,6 +52,10 @@ and this project adheres to
   older runtimes the new facts read `"unknown"`. The docs now say that microphone and camera
   capture is packaged-only (runtime 3.0.0-denext.10+) and what each OS adds
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **`denext mobile doctor --store | --release` flags an outdated `DenextTransfer` plugin**
+  (`transfer-generations`): file-transfer files from an older template generation than this denext
+  writes, and on Android one from before generation 6 (where two transfers could share one saved
+  request-headers file) says so. Re-run `denext mobile add file-transfer` and ship a new binary.
 
 ### Changed
 
@@ -128,6 +132,26 @@ and this project adheres to
   bundled v4 binary even when `node_modules/tailwindcss` is 3.x, so a v3 app's build failed on
   v3-only utilities ("Cannot apply unknown utility class `border-border`"). The block now detects
   the installed version the same way a `?url` stylesheet import already did.
+- **`denext crash-report test` no longer waits forever on a self-test child that hangs.** The
+  toolchain's `deno --version` it runs is killed after 60 s, and the test fails saying so.
+- **`denext profile --android` no longer hangs on an unresponsive device or WebView.** Each `adb`
+  call is killed after 60 s, and the DevTools `/json/list` request and WebSocket connect are bounded
+  by the run's timeout (60 s by default), as each CDP command already was; the forward is removed
+  either way.
+- **A fresh Deno Desktop runtime download no longer hangs on a stalled github.com.** The default
+  provenance check's `gh auth status` is given 20 s (past it, the provenance is reported as not
+  checked, as for a signed-out `gh`) and `gh attestation verify` 180 s (past it, the download is
+  refused with how to retry or rely on the SHA-256 pin alone).
+- **`@denext/backend`'s `s3()` storage driver no longer waits forever on a stalled store.** Each
+  call to S3 / R2 / MinIO gets `requestTimeoutMs` (new, default 5 minutes; `0` restores no limit)
+  for its answer's headers, then fails with a `storage:` error; a download's body still streams
+  without a deadline.
+- **The `pty` desktop capability on Windows says it is unsupported, not that the program failed.**
+  The runtime's `Deno.openPty` throws `NotSupported` on Windows; `spawnPty()` now rejects
+  `unsupported` (it said `spawn_failed`, "the program could not be started"), `denext desktop
+  doctor` warns about a Windows build with `pty` on, and `denext desktop add pty` says terminals are
+  not on Windows yet. Messages and docs name `3.0.0-denext.12` as the first runtime with terminals
+  (there is no `3.0.0-denext.11` release).
 
 ## [4.13.1] - 2026-11-07
 

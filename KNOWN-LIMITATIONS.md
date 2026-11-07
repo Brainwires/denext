@@ -654,7 +654,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
-- **Terminals (`pty`) need runtime 3.0.0-denext.11** (`Deno.openPty`); under an older runtime
+- **Terminals (`pty`) need runtime 3.0.0-denext.12 or later** (`Deno.openPty`); under an older runtime
   every call rejects `unsupported`. The pinned runtime (3.0.0-denext.13) has no terminals on Windows
   yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
@@ -733,11 +733,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
-- **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
-  5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
-  in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
-  other OSes are not affected. Runtime 3.0.0-denext.10 fixes it (its CEF shutdown ends with `_exit`
-  once the helpers have ended) ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships

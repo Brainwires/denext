@@ -411,7 +411,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "onPtyData",
       "onPtyExit",
     ],
-    // Deno.openPty (runtime 3.0.0-denext.11), checked against --allow-run like Deno.Command. The
+    // Deno.openPty (runtime 3.0.0-denext.12), checked against --allow-run like Deno.Command. The
     // defaults shown here; a configured `pty.shells` replaces them (desktopPtyRunPaths).
     os: {
       darwin: { run: PTY_DEFAULT_SHELLS.darwin },
@@ -420,11 +420,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     },
     trust: "full",
     notes:
-      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.11): --allow-run of the allowed shells only",
+      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; not on Windows yet): --allow-run of the allowed shells only",
     manual: [
       "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
       'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
-      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.11 or later; before it every call rejects `unsupported`.",
+      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later; before it every call rejects `unsupported`. On Windows the runtime has no terminals yet: spawnPty() rejects `unsupported` there.",
     ],
   },
   microphone: {

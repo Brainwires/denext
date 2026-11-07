@@ -40,6 +40,11 @@ import {
   AUTH_SESSION_TEMPLATE_VERSION,
 } from "./auth-session-native-templates.ts";
 import { SETTINGS_TEMPLATE_VERSION } from "./settings-native-templates.ts";
+import {
+  TRANSFER_ANDROID_FILES,
+  TRANSFER_IOS_FILES,
+  TRANSFER_TEMPLATE_VERSION,
+} from "./transfer-native-templates.ts";
 import { loadNativeDirs, nativeJoin, nativeRel, nativeText } from "./capacitor-native-dirs.ts";
 
 /** Which question the doctor answers. */
@@ -1562,6 +1567,64 @@ async function settingsPlatforms(p: MobileProject): Promise<[string, number][]> 
   return out;
 }
 
+/** The `DenextTransfer` plugin files, per platform. */
+const TRANSFER_TEMPLATE_FILES = {
+  iOS: Object.keys(TRANSFER_IOS_FILES).map((name) => `ios/App/App/${name}`),
+  Android: Object.keys(TRANSFER_ANDROID_FILES).map(
+    (name) => `android/app/src/main/java/dev/denext/transfer/${name}`,
+  ),
+} as const;
+
+/**
+ * The generation whose Android store names a transfer's saved-headers file by the SHA-256 of
+ * its whole id (before it, two ids sharing a hash code and length shared one file).
+ */
+const TRANSFER_HEADERS_GENERATION = 6;
+
+/**
+ * A `DenextTransfer` plugin (`denext mobile add file-transfer`) from an older template
+ * generation than this denext writes: it misses the fixes made since (on Android before
+ * generation 6, two transfers could share one saved-headers file).
+ */
+const transferGenerations: Check = {
+  id: "transfer-generations",
+  profiles: ["store", "release"],
+  applies: async (p) => (await transferPlatforms(p)).length > 0,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const [platform, generation] of await transferPlatforms(p)) {
+      if (generation >= TRANSFER_TEMPLATE_VERSION) continue;
+      const headers = platform === "Android" && generation < TRANSFER_HEADERS_GENERATION
+        ? ": two transfers can share one saved request-headers file, so a resumed transfer " +
+          "may send another one's headers"
+        : "";
+      findings.push({
+        check: "transfer-generations",
+        level: "warning",
+        message: `${platform}: the DenextTransfer plugin is template generation ${generation}, ` +
+          `older than this denext's ${TRANSFER_TEMPLATE_VERSION}${headers}`,
+        fix: "run `denext mobile add file-transfer` (an unedited file is upgraded, an edited " +
+          "one needs `--force` or the changes merged by hand); then ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
+/** The platforms with marked `DenextTransfer` files, and their oldest generation. */
+async function transferPlatforms(p: MobileProject): Promise<[string, number][]> {
+  const out: [string, number][] = [];
+  for (const platform of ["iOS", "Android"] as const) {
+    const generations = await templateGenerations(
+      p.root,
+      "transfer",
+      TRANSFER_TEMPLATE_FILES[platform],
+    );
+    if (generations.size > 0) out.push([platform, Math.min(...generations.values())]);
+  }
+  return out;
+}
+
 /** Every Java / Kotlin source of the Android app outside denext's OTA package, as text. */
 async function androidAppSources(root: string): Promise<{ path: string; text: string }[]> {
   const out: { path: string; text: string }[] = [];
@@ -1634,6 +1697,7 @@ const CHECKS: readonly Check[] = [
   otaGenerations,
   authSessionGenerations,
   settingsGenerations,
+  transferGenerations,
   androidRouteProcessor,
 ];
 

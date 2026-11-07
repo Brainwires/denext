@@ -6,7 +6,14 @@
 // allowed shells only (src/build/desktop-capabilities.ts), the config validator, and the doctor's
 // `pty` check.
 
-import { assert, assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import {
   type DenoPty,
   type DenoPtyOptions,
@@ -360,8 +367,14 @@ Deno.test("pty.spawn: an env under a scoped --allow-env reads the known names on
   await t.quit();
 });
 
-Deno.test("pty.spawn: a NotCapable from the runtime is forbidden; another failure spawn_failed", async () => {
-  for (const [name, code] of [["NotCapable", "forbidden"], ["Error", "spawn_failed"]]) {
+Deno.test("pty.spawn: NotCapable is forbidden, NotSupported (Windows) unsupported, else spawn_failed", async () => {
+  for (
+    const [name, code] of [
+      ["NotCapable", "forbidden"],
+      ["NotSupported", "unsupported"],
+      ["Error", "spawn_failed"],
+    ]
+  ) {
     const t = setup({
       openPty: () => {
         const e = new Error("denied /bin/zsh");
@@ -648,10 +661,10 @@ Deno.test("pty: without Deno.openPty every method rejects unsupported with the r
   await t.quit();
 });
 
-Deno.test("FIRST_PTY_RUNTIME: Deno.openPty from 3.0.0-denext.11", () => {
-  assertEquals(FIRST_PTY_RUNTIME, "3.0.0-denext.11");
-  assert(supportsPty("3.0.0-denext.11"));
+Deno.test("FIRST_PTY_RUNTIME: Deno.openPty from 3.0.0-denext.12 (no .11 release)", () => {
+  assertEquals(FIRST_PTY_RUNTIME, "3.0.0-denext.12");
   assert(supportsPty("3.0.0-denext.12"));
+  assert(supportsPty("3.0.0-denext.13"));
   assert(!supportsPty("3.0.0-denext.10"));
   assert(!supportsPty("3.0.0-rc.6"));
   assert(!supportsPty("not a version"));
@@ -746,7 +759,7 @@ Deno.test("desktop add pty: the catalog entry shows the default shells per OS", 
 // --- doctor --------------------------------------------------------------------------------------
 
 Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive", () => {
-  assertEquals(ptyDoctorCheck({ capabilities: {} }, "linux", "3.0.0-denext.11"), null);
+  assertEquals(ptyDoctorCheck({ capabilities: {} }, "linux", "3.0.0-denext.12"), null);
   const old = ptyDoctorCheck({ capabilities: { pty: true } }, "darwin", "3.0.0-denext.8")!;
   assertEquals(old.pty, {
     runAllow: ["/bin/zsh", "/bin/bash", "/bin/sh"],
@@ -761,15 +774,15 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
   );
 
   const detach = { capabilities: { pty: { onWindowClose: "detach" } } };
-  const lonely = ptyDoctorCheck(detach, "linux", "3.0.0-denext.11")!;
+  const lonely = ptyDoctorCheck(detach, "linux", "3.0.0-denext.12")!;
   assertEquals(lonely.findings.length, 1);
   assert(lonely.findings[0].message.includes("keepAlive"));
   assertEquals(
-    ptyDoctorCheck({ ...detach, app: { keepAlive: true } }, "linux", "3.0.0-denext.11")!.findings,
+    ptyDoctorCheck({ ...detach, app: { keepAlive: true } }, "linux", "3.0.0-denext.12")!.findings,
     [],
   );
   assertEquals(
-    ptyDoctorCheck({ ...detach, tray: { icon: "/t.png" } }, "linux", "3.0.0-denext.11")!.findings,
+    ptyDoctorCheck({ ...detach, tray: { icon: "/t.png" } }, "linux", "3.0.0-denext.12")!.findings,
     [],
     "a tray keeps the app alive by default",
   );
@@ -777,20 +790,23 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
     ptyDoctorCheck(
       { ...detach, tray: { icon: "/t.png" }, app: { keepAlive: false } },
       "linux",
-      "3.0.0-denext.11",
+      "3.0.0-denext.12",
     )!.findings.length,
     1,
   );
   const none = ptyDoctorCheck(
     { capabilities: { pty: { shells: ["/bin/sh"] } } },
     "windows",
-    "3.0.0-denext.11",
+    "3.0.0-denext.12",
   )!;
-  assertEquals(none.findings.map((f) => f.check), ["pty"]);
+  // Windows: no terminals in the runtime yet, and no Windows program on the list.
+  assertEquals(none.findings.map((f) => f.check), ["pty", "pty"]);
+  assertStringIncludes(none.findings[0].message, "no terminals on Windows");
+  assertStringIncludes(none.findings[1].message, "lists no program for windows");
   const bad = ptyDoctorCheck(
     { capabilities: { pty: { shells: ["sh"] } } },
     "linux",
-    "3.0.0-denext.11",
+    "3.0.0-denext.12",
   )!;
   assertEquals([bad.pty, bad.findings[0].level], [null, "error"]);
 });

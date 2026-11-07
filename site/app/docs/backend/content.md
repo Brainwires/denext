@@ -99,7 +99,7 @@ restart. In production a missing secret is an error the first time a URL is sign
 
 ### Drivers
 
-**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch? })`** talks to
+**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch?, requestTimeoutMs? })`** talks to
 AWS S3, Cloudflare R2, MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version
 4 computed by `crypto.subtle` (no SDK). Every denext bucket is a key prefix in the one S3 bucket:
 `avatars/u1/me.png`. Credentials default to `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
@@ -108,7 +108,9 @@ AWS is addressed virtual-host style, a custom `endpoint` path style; `pathStyle`
 When browsers reach the store under another name than the server does (the Docker stack's
 `http://minio:9000` is only resolvable inside the containers), set `publicEndpoint` (or
 `S3_PUBLIC_ENDPOINT`): every URL handed to a browser — presigned uploads, downloads and multipart
-parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep `endpoint`.
+parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep `endpoint`. Each of the server's calls waits at most `requestTimeoutMs` (default 5 minutes; `0`: no limit)
+for the store's answer, body upload included (one call sends at most 8 MiB) but not a download's
+body, so a stalled store fails the call instead of holding the request open.
 
 | Store         | Options                                                                             |
 | ------------- | ----------------------------------------------------------------------------------- |
