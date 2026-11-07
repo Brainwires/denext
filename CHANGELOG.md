@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.13.1] - 2026-11-07
+
+### Changed
+
+- **Pinned denext's Deno toolchain and the Deno Desktop runtime to `3.0.0-denext.13`** (rollback:
+  `3.0.0-denext.12`).
+
 ### Fixed
 
 - **macOS packaging builds the `.dmg` at a private mount point instead of under `/Volumes`.** The
@@ -23,11 +30,6 @@ and this project adheres to
 - **Deno Desktop apps that load a native Node addon such as node-pty work again in packaged builds:**
   runtime 3.0.0-denext.13 uses the package's own addon instead of the built-in node-pty shim when
   the package ships one (#134).
-
-### Changed
-
-- **Pinned denext's Deno toolchain and the Deno Desktop runtime to `3.0.0-denext.13`** (rollback:
-  `3.0.0-denext.12`).
 
 ## [4.13.0] - 2026-11-06
 
@@ -21345,7 +21347,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.1...development
+[4.13.1]: https://jsr.io/@denext/denext@4.13.1
 [4.13.0]: https://jsr.io/@denext/denext@4.13.0
 [4.12.0]: https://jsr.io/@denext/denext@4.12.0
 [4.11.13]: https://jsr.io/@denext/denext@4.11.13
