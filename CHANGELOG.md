@@ -31,6 +31,12 @@ and this project adheres to
   call to S3 / R2 / MinIO gets `requestTimeoutMs` (new, default 5 minutes; `0` restores no limit)
   for its answer's headers, then fails with a `storage:` error; a download's body still streams
   without a deadline.
+- **The `pty` desktop capability on Windows says it is unsupported, not that the program failed.**
+  The runtime's `Deno.openPty` throws `NotSupported` on Windows; `spawnPty()` now rejects
+  `unsupported` (it said `spawn_failed`, "the program could not be started"), `denext desktop
+  doctor` warns about a Windows build with `pty` on, and `denext desktop add pty` says terminals are
+  not on Windows yet. Messages and docs name `3.0.0-denext.12` as the first runtime with terminals
+  (there is no `3.0.0-denext.11` release).
 
 ## [4.13.1] - 2026-11-07
 

@@ -24,7 +24,7 @@
  * the output (and the exit) it missed.
  *
  * Every call rejects `unavailable` off desktop or when the capability is not enabled, and
- * `unsupported` under a Deno Desktop runtime older than 3.0.0-denext.11 (no `Deno.openPty`).
+ * `unsupported` under a Deno Desktop runtime older than 3.0.0-denext.12 (no `Deno.openPty`), and on Windows, where the runtime has no terminals yet.
  *
  * Client-safe: web APIs only, nothing runs at import.
  *

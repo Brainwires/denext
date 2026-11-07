@@ -988,7 +988,7 @@ export interface DesktopCapabilitiesConfig {
   keepAwake?: boolean;
   /**
    * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
-   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later, not on Windows yet;
    * `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
    * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
    * window that started it. `true` takes the defaults.
