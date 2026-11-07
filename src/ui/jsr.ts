@@ -5,8 +5,8 @@
 //   with `new URL` (the user's query only ever lands in a search parameter), carry no
 //   credentials, and refuse every redirect (`redirect: "error"`, plus a 3xx check for fetch
 //   implementations that hand one back);
-// - each request is bounded by a five-second deadline that also covers the body read, and holds
-//   even when a fetch implementation ignores its abort signal;
+// - each request is bounded by a five-second deadline, from the moment it is dispatched, that
+//   also covers the body read, and holds even when a fetch implementation ignores its abort signal;
 // - the body is read through its stream with a hard 64 KiB cap enforced on the reader — the
 //   stream is cancelled the moment the cap is crossed, an oversized `content-length` is refused
 //   before a byte is read — and must be `application/json`;
@@ -282,10 +282,20 @@ export async function fetchJsrConfig(
 
 // ── the bounded request ──────────────────────────────────────────────────────
 
-/** GET `url` as JSON under every bound in the header comment; never throws. */
+/**
+ * GET `url` as JSON under every bound in the header comment; never throws.
+ *
+ * The deadline is armed on the event loop's next turn, not when `fetch` is called: a fetch dials
+ * only when the loop polls it, so a loop that is busy (or a process starved of CPU) until past a
+ * deadline armed at the call would abort the request before it ever left — "timed out" with no
+ * connection made. Armed a turn later, it runs from the moment the request was dispatched.
+ */
 async function getJson(url: URL, opts: JsrRequestOptions): Promise<Fetched> {
   const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(), opts.timeoutMs ?? TIMEOUT_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = setTimeout(() => {
+    timer = setTimeout(() => deadline.abort(), opts.timeoutMs ?? TIMEOUT_MS);
+  }, 0);
   const signal = opts.signal ? AbortSignal.any([deadline.signal, opts.signal]) : deadline.signal;
   try {
     return await request(url, opts.fetch ?? fetch, signal);
@@ -293,6 +303,7 @@ async function getJson(url: URL, opts: JsrRequestOptions): Promise<Fetched> {
     if (opts.signal?.aborted) return failure("aborted");
     return failure(deadline.signal.aborted ? "timed out" : "unreachable");
   } finally {
+    clearTimeout(arm);
     clearTimeout(timer);
   }
 }
