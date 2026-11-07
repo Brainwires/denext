@@ -179,13 +179,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-    # The macos-latest entry runs on the self-hosted arm64 runner the repository
-    # variable RUNNER_MACOS_ARM names, the ubuntu-latest entries on the self-hosted
-    # x64 runner RUNNER_LINUX_X64 names (each a label, or a JSON array) when it is
-    # set; always the image on a pull_request (a self-hosted runner never takes a
-    # pull request's code). The other entries keep their image.
-    # The windows-latest entry stays on GitHub's image: it needs an interactive desktop (the real PasswordVault test); our Windows runners run in session 0.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # Each matrix entry below runs on a self-hosted runner when its repository variable
+    # names one (a label, or a JSON array):
+    #   macos-latest → RUNNER_MACOS_ARM
+    #   windows-latest → RUNNER_WINDOWS_X64
+    #   ubuntu-latest → RUNNER_LINUX_X64
+    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
+    # runner never takes a pull request's code). Other entries keep their image.
+    # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -213,12 +215,14 @@ jobs:
       matrix:
         # Linux has no CLI backend: its store is the pinned runtime's (the window test covers it).
         os: [windows-latest, macos-latest]
-    # The macos-latest entry runs on the self-hosted arm64 runner the repository
-    # variable RUNNER_MACOS_ARM names (a label, or a JSON array) when it is set;
-    # always the image on a pull_request (a self-hosted runner never takes a pull
-    # request's code). The other entries keep their image.
-    # The windows-latest entry stays on GitHub's image: it needs an interactive desktop (PasswordVault); our Windows runners run in session 0.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # Each matrix entry below runs on a self-hosted runner when its repository variable
+    # names one (a label, or a JSON array):
+    #   macos-latest → RUNNER_MACOS_ARM
+    #   windows-latest → RUNNER_WINDOWS_X64
+    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
+    # runner never takes a pull request's code). Other entries keep their image.
+    # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -398,8 +402,13 @@ jobs:
               archive: denext-native-x64-windows.zip,
               exe: denext-native-x64/denext-native-x64.exe,
             }
-    # The windows-latest entry launches the app: it needs an interactive desktop; our Windows runners run in session 0.
-    runs-on: ${{ matrix.os }}
+    # Each matrix entry below runs on a self-hosted runner when its repository variable
+    # names one (a label, or a JSON array):
+    #   windows-latest → RUNNER_WINDOWS_X64
+    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
+    # runner never takes a pull request's code). Other entries keep their image.
+    # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 20
     defaults:
       run:
@@ -766,7 +775,7 @@ jobs:
   # release (scripts/release-ci.ts DESKTOP_CI_JOBS).
   windows-arm:
     name: windows on arm (windows-11-arm — desktop tests, install.ps1, Arm64 .msi)
-    # Needs an interactive desktop (PasswordVault, WebView2); our Windows runners run in session 0.
+    # Needs an interactive desktop (PasswordVault, WebView2); the self-hosted ARM pool waits for a base fix.
     runs-on: windows-11-arm
     timeout-minutes: 75
     steps:
