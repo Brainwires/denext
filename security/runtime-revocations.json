@@ -1,0 +1,494 @@
+{
+  "revoked": [
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.8",
+      "reason": "V8 lacks fixes for two High V8 CVEs and three more security merges",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-v7wx-2v39-pxcf",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.7",
+      "reason": "V8 lacks fixes for 29 V8 CVEs; --deny-* could be bypassed on Windows (GHSA-xj55-hh75-hc66)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-6p3v-hr2g-w4hx",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.6",
+      "reason": "V8 lacks fixes for 29 V8 CVEs; --deny-* could be bypassed on Windows (GHSA-xj55-hh75-hc66)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-6p3v-hr2g-w4hx",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.5",
+      "reason": "V8 lacks fixes for 29 V8 CVEs; --deny-* could be bypassed on Windows (GHSA-xj55-hh75-hc66)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-6p3v-hr2g-w4hx",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.3",
+      "reason": "V8 lacks fixes for 29 V8 CVEs; --deny-* could be bypassed on Windows (GHSA-xj55-hh75-hc66)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-6p3v-hr2g-w4hx",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.2",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.1",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.6",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.5",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.4",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.3",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.2",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-rc.1",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.22",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.21",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.20",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.19",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.18",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.17",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.16",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.15",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.14",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.13",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.12",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.11",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.10",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.9",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.8",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.7",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.6",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.5",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.4",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.3",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.2",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "cli",
+      "version": "2.9.7-denext.1",
+      "reason": "V8 lacks fixes for two V8 bugs exploited in the wild and 29 more V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.8",
+      "reason": "V8 lacks fixes for two High V8 CVEs; on WebView2, any document can open the screen-capture picker (GHSA-48gr-m98g-phg4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-v7wx-2v39-pxcf",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.7",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for 29 V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.6",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for 29 V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.5",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for 29 V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.3",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for 29 V8 CVEs (GHSA-6p3v-hr2g-w4hx)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.2",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-denext.1",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.6",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.5",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.4",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.3",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.2",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "3.0.0-rc.1",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.22",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.21",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.20",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.19",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.18",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.17",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.16",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.15",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.14",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.13",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.12",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.11",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.10",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.9",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.8",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.7",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.6",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.5",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.4",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.3",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.2",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    },
+    {
+      "component": "desktop",
+      "version": "2.9.7-denext.1",
+      "reason": "the CEF host's Chromium lacks Chrome security fixes; V8 lacks fixes for two V8 bugs exploited in the wild (GHSA-qr84-w8xw-f7r4)",
+      "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj",
+      "fixedIn": "denext 4.13.0 (runtime 3.0.0-denext.12)"
+    }
+  ]
+}
