@@ -37,6 +37,19 @@ and this project adheres to
 
 ### Fixed
 
+- **Soft-navigation prefetches no longer fetch a page twice, and same-page hash links no longer
+  prefetch the page that is showing (#105).** The server redirects every page URL to its
+  `trailingSlash` spelling (`/today` to `/today/` with the option on, `/docs/` to `/docs` with it
+  off), so a `<Link>` written the other way was fetched once for the redirect and again for the
+  page. Prefetches and soft navigations now ask for the server's spelling directly, from
+  `trailingSlash` in the page's hydration data, with the same exemptions as the redirect (the
+  root, `/_denext` paths, files). A page no denext server rendered keeps its URLs as written. The
+  hash is no longer part of the prefetch, so links to one page with different hashes share a
+  single fetch, and a link such as `/#about` on `/` is not prefetched at all.
+- **A framework root without a trailing slash resolves the runtime entries under it (#106).**
+  `runtimeEntryPoints("/a/denext")`, and a `frameworkRoot` passed to the runtime prebuild, resolved
+  every entry under `/a/` because the last path segment was dropped. A root given as a path or a
+  URL now gets its trailing slash added.
 - **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
   (a Server Component), its context never reached the `"use client"` components below it, so a
   `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The

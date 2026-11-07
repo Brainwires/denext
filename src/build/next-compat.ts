@@ -238,6 +238,19 @@ export function normalizeNextSpecifier(spec: string): string {
 }
 
 /**
+ * A framework root as the base URL its files resolve against: a bare filesystem path becomes a
+ * `file://` URL, and the result always ends in `/`. `new URL("src/x.ts", base)` replaces the
+ * base's last segment, so a root without the slash (`/a/denext`, the path a caller passes as
+ * `frameworkRoot`) resolved every entry under its parent (`/a/src/x.ts`).
+ *
+ * @param root An absolute URL or an absolute filesystem path, with or without the slash.
+ */
+function frameworkBase(root: string): string {
+  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(root) ? root : toFileUrl(root).href;
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+/**
  * denext source entrypoints prebuilt into the shared runtime (one graph). `baseUrl` may be
  * ANY absolute URL — `file://` for a checkout, `https://jsr.io/@denext/denext/<v>/` when the
  * framework runs from JSR (the common production case), `http://` in tests — or a plain
@@ -247,7 +260,7 @@ export function normalizeNextSpecifier(spec: string): string {
  * compat-mode app installed from JSR.
  */
 export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
-  const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
+  const base = frameworkBase(baseUrl);
   const u = (rel: string) => new URL(rel, base).href;
   return {
     ...coreRuntimeEntries(u),
@@ -431,7 +444,10 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
 export interface PrebuildOptions {
   /** Output directory for the prebuilt runtime files. */
   outDir: string;
-  /** denext framework root (defaults to the running framework). */
+  /**
+   * denext framework root (defaults to the running framework): a URL or a filesystem path, with
+   * or without a trailing slash.
+   */
   frameworkRoot?: string;
   /** Path to the project's `deno.json` (for the deno loader's resolution). */
   configPath?: string;
@@ -473,7 +489,7 @@ const CODEC_EXTERNALS = [
 export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<string> {
   // A URL base (file:// from a checkout, https:// from JSR) so the runtime entry points and
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
-  const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
+  const rootUrl = frameworkBase(options.frameworkRoot ?? frameworkRootUrl());
   const outDir = resolve(options.outDir);
   // Only what denext's graph imports (the root map's test-only `effect`, `jsqr`, … left out). The
   // app's packages don't enter this framework-only graph, so there is nothing of the app's to
