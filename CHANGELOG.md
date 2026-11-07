@@ -59,6 +59,13 @@ and this project adheres to
 
 ### Changed
 
+- **A `build --compile` binary turns its baked idle trim off through the runtime, once the runtime
+  can.** With `DENEXT_IDLE_TRIM=0` in its environment, a binary on a runtime that reads
+  `DENO_UNSTABLE_IDLE_TRIM` again when a trim is due sets it to `0` and starts no timer; on the
+  runtimes released so far it still wakes its event loop at half the idle delay so it never trims,
+  and that timer stays the fallback when the variable can't be set. The runtime check is gated on
+  `FIRST_IDLE_TRIM_ENV_OFF_RUNTIME`, a placeholder above every release until the toolchain pin
+  moves to the runtime that ships the change, so nothing changes yet.
 - **An idle webhooks deliverer wakes rarely (`@denext/backend`).** Under `delivery: "auto"` it
   polled every `pollIntervalMs` (5 s) forever on a timer that kept the process alive. The
   trigger's NOTIFY already wakes it at once, so the poll is a safety net now: `pollIntervalMs`

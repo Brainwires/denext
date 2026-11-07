@@ -10,8 +10,10 @@
 // Opt-outs: `start: { idleTrim: false }` in denext.config, or `DENEXT_IDLE_TRIM=0` in the
 // environment of the command that starts the server (or writes the file that does) — for a
 // `build --compile` executable, which has the trim baked in, `DENEXT_IDLE_TRIM=0` when the binary
-// runs too (it then keeps its event loop from ever going idle long enough to trim). A
-// `DENO_UNSTABLE_IDLE_TRIM` the user set themselves is left alone.
+// runs too: on a runtime that reads `DENO_UNSTABLE_IDLE_TRIM` again when a trim is due
+// (Brainwires/deno DENEXT.md item 269) the binary sets it to `0`; on an older one it keeps its event
+// loop from ever going idle long enough to trim. A `DENO_UNSTABLE_IDLE_TRIM` the user set
+// themselves is left alone where denext starts the server.
 //
 // The config's opt-out is the evaluated value: what the last `denext build` recorded in its deploy
 // manifest; only before a first build, the file's text (comments ignored).
@@ -19,7 +21,7 @@
 import { join } from "@std/path";
 import { CONFIG_FILES } from "./config-files.ts";
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
-import { supportsIdleTrim } from "./deno-version.ts";
+import { currentDenoIdentity, supportsIdleTrim, supportsIdleTrimEnvOff } from "./deno-version.ts";
 
 /** The environment variable denext's Deno reads at start to turn the idle trim on (`1`). */
 export const IDLE_TRIM_ENV = "DENO_UNSTABLE_IDLE_TRIM";
@@ -87,8 +89,8 @@ export function idleTrimEnv(inputs: IdleTrimInputs): Record<string, string> {
 
 /**
  * The flags a `build --compile` executable gets baked in: `--unstable-idle-trim` when
- * {@linkcode idleTrimOn}. A baked flag cannot be turned off when the binary runs; a
- * `DENEXT_IDLE_TRIM=0` then holds the trim off instead ({@linkcode holdOffBakedIdleTrim}).
+ * {@linkcode idleTrimOn}. A `DENEXT_IDLE_TRIM=0` when the binary runs turns it off again
+ * ({@linkcode holdOffBakedIdleTrim}).
  *
  * @param inputs The toolchain compiling (`undefined` off it), the config's opt-out, the environment.
  * @returns The flags.
@@ -168,27 +170,48 @@ export async function configDisablesIdleTrim(dir: string): Promise<boolean> {
 /** The runtime's default idle delay before a trim (`DENO_IDLE_TRIM_DELAY_MS`), in ms. */
 const DEFAULT_TRIM_DELAY_MS = 1000;
 
+/** How {@linkcode holdOffBakedIdleTrim} reaches the process (seams for tests). */
+export interface HoldOffSeams {
+  /** Starts the repeating timer. */
+  readonly every?: (fn: () => void, ms: number) => void;
+  /** The version of denext's Deno running the binary (`undefined`: stock Deno). */
+  readonly runtime?: string | undefined;
+  /** Sets an environment variable of this process. */
+  readonly setEnv?: (name: string, value: string) => void;
+}
+
 /**
- * Keep a `build --compile` executable that has the idle trim baked in from ever trimming, when
- * `DENEXT_IDLE_TRIM=0` is set as it runs. A baked flag can't be turned off once the binary has
- * started, but the runtime trims only after its event loop has gone `DENO_IDLE_TRIM_DELAY_MS`
- * (default 1 s) without a wake-up, so an unref'd timer firing at half that delay keeps it from
- * ever being idle that long (and costs one empty callback per half-delay; it never keeps the
- * process alive).
+ * Keep a `build --compile` executable that has the idle trim baked in from trimming, when
+ * `DENEXT_IDLE_TRIM=0` is set as it runs. A runtime from
+ * `FIRST_IDLE_TRIM_ENV_OFF_RUNTIME` (src/build/deno-version.ts) reads `DENO_UNSTABLE_IDLE_TRIM` again each time a
+ * trim is due, so the binary sets it to `0` (Brainwires/deno DENEXT.md item 269). An older runtime
+ * read it only at start, but it trims only after its event loop has gone `DENO_IDLE_TRIM_DELAY_MS`
+ * (default 1 s) without a wake-up, so there an unref'd timer firing at half that delay keeps it
+ * from ever being idle that long (one empty callback per half-delay; it never keeps the process
+ * alive). It is also the fallback when the variable can't be set.
  *
  * @param baked Whether the binary was compiled with the trim baked in.
  * @param env Reads an environment variable.
- * @param every Starts the repeating timer (a seam for tests).
- * @returns Whether the trim is held off.
+ * @param seams The timer, the running runtime's version and the environment writer.
+ * @returns How the trim is held off: `"env"`, `"timer"`, or `false` (it runs).
  */
 export function holdOffBakedIdleTrim(
   baked: boolean,
   env: (name: string) => string | undefined = readEnv,
-  every: (fn: () => void, ms: number) => void = (fn, ms) => Deno.unrefTimer(setInterval(fn, ms)),
-): boolean {
+  seams: HoldOffSeams = {},
+): "env" | "timer" | false {
   if (!baked || env(IDLE_TRIM_OPT_OUT_ENV) !== "0") return false;
+  const runtime = "runtime" in seams ? seams.runtime : currentDenoIdentity().denext;
+  if (runtime !== undefined && supportsIdleTrimEnvOff(runtime)) {
+    if (env(IDLE_TRIM_ENV) === "0") return "env"; // already off, from the start
+    try {
+      (seams.setEnv ?? ((name, value) => Deno.env.set(name, value)))(IDLE_TRIM_ENV, "0");
+      return "env";
+    } catch { /* no permission to set it: hold it off with the timer */ }
+  }
+  const every = seams.every ?? ((fn, ms) => Deno.unrefTimer(setInterval(fn, ms)));
   const raw = Number(env("DENO_IDLE_TRIM_DELAY_MS")?.trim());
   const delay = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TRIM_DELAY_MS;
   every(() => {}, Math.max(1, Math.floor(delay / 2)));
-  return true;
+  return "timer";
 }
