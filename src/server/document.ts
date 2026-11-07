@@ -45,6 +45,11 @@ export interface HydrationData {
   /** The app's basePath (from denext.config), so client `<Link>` can prefix URLs. */
   basePath?: string;
   /**
+   * `true` when the app enforces trailing slashes (denext.config `trailingSlash`), so the client
+   * prefetches and soft-navigates to the spelling the server serves instead of its 308.
+   */
+  trailingSlash?: boolean;
+  /**
    * Parallel-route slot state: slot key → the pathname it last matched. The client echoes
    * it on soft-nav fetches so unmatched slots keep their content (`server/slot-state.ts`).
    */

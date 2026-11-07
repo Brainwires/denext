@@ -80,6 +80,50 @@ function withBase(path: string): string {
   return b + path;
 }
 
+/** The document {@linkcode trailingSlashRule} last read, and what it said. */
+let slashRead: { doc: unknown; on: boolean | null } | undefined;
+
+/**
+ * Whether the app enforces trailing slashes (`trailingSlash` in the hydration data), or `null`
+ * on a page with no hydration data — one no denext server rendered (a SPA on a static host),
+ * whose URLs are left as written.
+ */
+function trailingSlashRule(): boolean | null {
+  if (typeof document === "undefined") return null;
+  if (slashRead?.doc !== document) {
+    const rendered = !!document.getElementById?.("__denext_data");
+    slashRead = { doc: document, on: rendered ? readData().trailingSlash === true : null };
+  }
+  return slashRead.on;
+}
+
+/**
+ * `url` with its path spelled the way the server serves the page: the server 308s a page URL to
+ * its `trailingSlash` form (src/server/request-pipeline.ts `canonicalizePath`), so a route fetch
+ * for the other spelling was answered twice. The same exemptions: the root, `/_denext` paths, a
+ * file (a last segment with an extension) and a path with `//` (which the server collapses).
+ */
+function canonicalRoute(url: URL): URL {
+  const slash = trailingSlashRule();
+  const path = url.pathname;
+  if (slash === null) return url;
+  if (path === "/" || path.startsWith("/_denext") || /\.[^/]+$/.test(path) || path.includes("//")) {
+    return url;
+  }
+  const canonical = slash ? (path.endsWith("/") ? path : `${path}/`) : path.replace(/\/+$/, "");
+  if (canonical === path) return url;
+  const out = new URL(url.href);
+  out.pathname = canonical;
+  return out;
+}
+
+/** The URL a route fetch asks for: the canonical path, without the hash (never sent anyway). */
+function routeHref(url: URL): string {
+  const out = new URL(url.href);
+  out.hash = "";
+  return out.href;
+}
+
 /** Strip basePath from a location pathname so app code sees app-relative paths. */
 function stripBase(path: string): string {
   const b = basePath();
@@ -296,14 +340,17 @@ export function setFlightNavigator(fn: FlightNavigator): void {
  */
 export function prefetch(href: string): void {
   if (typeof location === "undefined") return;
-  const url = new URL(withBase(href), location.href);
+  const url = canonicalRoute(new URL(withBase(href), location.href));
   if (url.origin !== location.origin) return;
+  // A hash link to the page that is showing (`/#about` on `/`) scrolls; it loads nothing.
+  if (url.hash && routeHref(url) === routeHref(canonicalRoute(new URL(location.href)))) return;
   // Skip if in-flight ("") or still-fresh; a TTL-expired entry is dropped here
   // and re-fetched below.
-  const key = prefetchKey(url.href);
+  const target = routeHref(url);
+  const key = prefetchKey(target);
   if (prefetchGet(key) !== undefined) return;
   prefetchStore(key, "", false, false); // dedupe in-flight
-  prefetchQueue.push({ href: url.href, key });
+  prefetchQueue.push({ href: target, key });
   pumpPrefetches();
 }
 
@@ -415,7 +462,8 @@ export async function navigate(
   href: string,
   options: NavigateOptions = {},
 ): Promise<void> {
-  const url = new URL(withBase(href), location.href);
+  // The spelling the server serves (no 308 round trip), which is also the prefetch's key.
+  const url = canonicalRoute(new URL(withBase(href), location.href));
 
   // Cross-origin: fall back to a full navigation.
   if (url.origin !== location.origin) {
@@ -456,10 +504,11 @@ async function loadRoute(
   url: URL,
   signal: string,
 ): Promise<RouteResponse | null> {
-  const prefetched = signal ? null : prefetchGet(prefetchKey(url.href));
+  const target = routeHref(url);
+  const prefetched = signal ? null : prefetchGet(prefetchKey(target));
   if (prefetched && prefetched.body.length > 0) return prefetched;
   try {
-    return await fetchRoute(url.href, true, signal);
+    return await fetchRoute(target, true, signal);
   } catch {
     return null;
   }
@@ -1130,16 +1179,20 @@ export function useSearchParams(
 }
 
 /** Read the server-embedded hydration data (params, messages, etc.). */
-function readData(): { params?: Record<string, string>; messages?: Messages; basePath?: string } {
+/** The hydration data fields this module reads. */
+interface ClientData {
+  params?: Record<string, string>;
+  messages?: Messages;
+  basePath?: string;
+  trailingSlash?: boolean;
+}
+
+function readData(): ClientData {
   if (typeof document === "undefined") return {};
   try {
     const el = document.getElementById("__denext_data");
     if (!el) return {};
-    return JSON.parse(el.textContent ?? "{}") as {
-      params?: Record<string, string>;
-      messages?: Messages;
-      basePath?: string;
-    };
+    return JSON.parse(el.textContent ?? "{}") as ClientData;
   } catch {
     return {};
   }
