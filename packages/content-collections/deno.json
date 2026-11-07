@@ -33,7 +33,6 @@
       "codegen.ts",
       "runtime.ts",
       "markdown.ts",
-      "html-sanitize.ts",
       "command.ts",
       "README.md",
       "CHANGELOG.md",

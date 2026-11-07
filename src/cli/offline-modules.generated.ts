@@ -273,6 +273,7 @@ import "../jsx/render-to-string.ts";
 import "../lazy.ts";
 import "../lint/denext-plugin.ts";
 import "../live.ts";
+import "../markdown/mod.ts";
 import "../mobile/clerk.ts";
 import "../mobile/mod.ts";
 import "../mvu.ts";

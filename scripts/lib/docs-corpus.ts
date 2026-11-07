@@ -44,7 +44,7 @@ export interface MdSection {
 }
 
 /**
- * The docs renderer's heading anchor (packages/content-collections/markdown.ts `slugify`, which
+ * The docs renderer's heading anchor (src/markdown/render.ts `slugify`, which
  * the JSX TOC in site/lib/toc.ts mirrors): lower-case, tags and punctuation dropped, one
  * hyphen per whitespace character (runs are NOT collapsed, matching GitHub).
  */

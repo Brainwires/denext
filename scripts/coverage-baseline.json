@@ -83,8 +83,6 @@
   "packages/content-collections/codegen.ts": [100, 100, 100],
   "packages/content-collections/command.ts": [96, 89, 100],
   "packages/content-collections/config.ts": [98, 96, 100],
-  "packages/content-collections/html-sanitize.ts": [99, 96, 100],
-  "packages/content-collections/markdown.ts": [99, 96, 100],
   "packages/content-collections/mod.ts": [100, 92, 100],
   "packages/content-collections/runtime.ts": [100, 97, 100],
   "packages/docs-corpus/mod.ts": [100, 0, 0],

@@ -1094,6 +1094,12 @@ export default async function Blog() {
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
 
+**Markdown anywhere (no plugin):** `renderMarkdown(src, { html?: "escape" | "sanitize",
+headingIds?, allowDataImages?, urlPolicy? })` from `denext/markdown` returns HTML (raw HTML escaped
+by default; `javascript:` / `data:` URLs dropped); `<Markdown source={md} components={{ a: MyLink,
+code: MyCode }} />` renders the same document as elements with your components (server or client;
+a `code` override gets `inline` / `lang`). Docs: https://denext.dev/docs/markdown
+
 **Gleam:** `denext add gleam:<package>` compiles a Gleam package to
 JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
 `@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own

@@ -1,5 +1,17 @@
 # @denext/content-collections
 
+## [Unreleased]
+
+- Requires `@denext/denext` ^4.14.0.
+
+### Changed
+
+- **The Markdown renderer moved into denext as `denext/markdown`.**
+  `@denext/content-collections/markdown` re-exports it (`renderMarkdown`, `sanitizeHtml` and the
+  option types), so `.md` entries render exactly as before. Its new options (`headingIds`,
+  `allowDataImages`, `urlPolicy`) and `<Markdown>` with swappable components come from
+  `denext/markdown`.
+
 ## [0.7.1] - 2026-10-20
 
 - Requires `@denext/denext` ^4.5.1.
