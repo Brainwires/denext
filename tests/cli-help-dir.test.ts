@@ -275,3 +275,40 @@ Deno.test("with no per-user cache directory no listing is written or trusted", a
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("the listing key is made in a fresh DENO_DIR; a short or unwritable one trusts nothing", async () => {
+  // Every other test here reads the key the machine's own cache already holds, so the path that
+  // MAKES the key ran only on a cache without one (a fresh CI runner, not a restored DENO_DIR).
+  // Each case points DENO_DIR at its own directory, so each key path is new to this process.
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_key_" });
+  const saved = Deno.env.get("DENO_DIR");
+  const listed = [{ name: "seed", summary: "ok" }];
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    // No key yet: one is made (32 bytes, owner-only), and a listing under it is trusted.
+    const fresh = join(dir, "fresh-cache");
+    Deno.env.set("DENO_DIR", fresh);
+    await writeCommandCache(dir, listed);
+    assertEquals(await readCommandCache(dir), listed);
+    const key = join(fresh, "denext", "command-cache.key");
+    assertEquals((await Deno.readFile(key)).length, 32);
+    if (Deno.build.os !== "windows") assertEquals((await Deno.stat(key)).mode! & 0o777, 0o600);
+    // A key file too short to be one is neither used nor replaced: no listing is trusted.
+    const short = join(dir, "short-cache");
+    await Deno.mkdir(join(short, "denext"), { recursive: true });
+    await Deno.writeFile(join(short, "denext", "command-cache.key"), new Uint8Array(8));
+    Deno.env.set("DENO_DIR", short);
+    await writeCommandCache(dir, listed);
+    assertEquals(await readCommandCache(dir), null);
+    assertEquals((await Deno.readFile(join(short, "denext", "command-cache.key"))).length, 8);
+    // A cache that can't be written (DENO_DIR is a file): no key, so no listing is trusted.
+    const blocked = join(dir, "blocked-cache");
+    await Deno.writeTextFile(blocked, "");
+    Deno.env.set("DENO_DIR", blocked);
+    await writeCommandCache(dir, listed);
+    assertEquals(await readCommandCache(dir), null);
+  } finally {
+    saved === undefined ? Deno.env.delete("DENO_DIR") : Deno.env.set("DENO_DIR", saved);
+    await Deno.remove(dir, { recursive: true });
+  }
+});

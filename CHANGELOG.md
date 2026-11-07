@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **An idle webhooks deliverer wakes rarely (`@denext/backend`).** Under `delivery: "auto"` it
+  polled every `pollIntervalMs` (5 s) forever on a timer that kept the process alive. The
+  trigger's NOTIFY already wakes it at once, so the poll is a safety net now: `pollIntervalMs`
+  after a pass that found work, doubling up to the new `maxPollIntervalMs` (60 s) while passes
+  find nothing, never later than the earliest pending event is due; a client without `listen()`
+  keeps the fixed interval. The timer is unref'd, and the plugin's teardown still waits for a pass
+  in flight.
+
 ## [4.13.1] - 2026-11-07
 
 ### Changed

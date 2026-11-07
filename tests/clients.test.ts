@@ -191,8 +191,61 @@ const tools = {
   mypy: await hasTool("python3", ["-m", "mypy", "--version"]),
   go: await hasTool("go", ["version"]),
   swift: await hasTool("swiftc", ["--version"]),
-  kotlin: !!Deno.env.get("DENEXT_KOTLINC"),
 };
+
+/** What the Kotlin golden compile does here. */
+type KotlinPlan =
+  | { readonly kind: "run"; readonly kotlinc: string }
+  | { readonly kind: "skip"; readonly reason: string }
+  | { readonly kind: "fail"; readonly reason: string };
+
+/**
+ * Whether the Kotlin goldens compile, skip or fail here. `DENEXT_KOTLINC` opts in (kotlinc is
+ * slow to start, so it is never probed on PATH), and the program it names must run. Locally a
+ * variable naming no working kotlinc skips with that reason; on CI (`CI` / `GITHUB_ACTIONS` is
+ * `true`) the job set it on purpose, so a broken kotlinc fails instead of hiding the test.
+ *
+ * @param env Env reader.
+ * @param runs Whether `kotlinc -version` runs.
+ * @returns The plan.
+ */
+async function kotlinPlan(
+  env: (key: string) => string | undefined,
+  runs: (kotlinc: string) => Promise<boolean>,
+): Promise<KotlinPlan> {
+  const kotlinc = env("DENEXT_KOTLINC") || undefined;
+  if (!kotlinc) return { kind: "skip", reason: "set DENEXT_KOTLINC" };
+  if (await runs(kotlinc)) return { kind: "run", kotlinc };
+  const onCi = env("CI") === "true" || env("GITHUB_ACTIONS") === "true";
+  return onCi
+    ? { kind: "fail", reason: `CI sets DENEXT_KOTLINC but it does not run (${kotlinc})` }
+    : { kind: "skip", reason: `DENEXT_KOTLINC=${kotlinc} does not run` };
+}
+
+const kotlin = await kotlinPlan(
+  (k) => Deno.env.get(k),
+  (kotlinc) => hasTool(kotlinc, ["-version"]),
+);
+
+Deno.test("clients: a kotlinc that does not run skips locally and fails on CI", async () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  const broken = () => Promise.resolve(false);
+  assertEquals(await kotlinPlan(env({}), broken), { kind: "skip", reason: "set DENEXT_KOTLINC" });
+  assertEquals(await kotlinPlan(env({ DENEXT_KOTLINC: "kotlinc" }), broken), {
+    kind: "skip",
+    reason: "DENEXT_KOTLINC=kotlinc does not run",
+  });
+  for (const ci of ["CI", "GITHUB_ACTIONS"]) {
+    assertEquals(await kotlinPlan(env({ DENEXT_KOTLINC: "kotlinc", [ci]: "true" }), broken), {
+      kind: "fail",
+      reason: "CI sets DENEXT_KOTLINC but it does not run (kotlinc)",
+    });
+  }
+  assertEquals(
+    await kotlinPlan(env({ DENEXT_KOTLINC: "kotlinc", CI: "true" }), () => Promise.resolve(true)),
+    { kind: "run", kotlinc: "kotlinc" },
+  );
+});
 
 /** A temp dir holding both goldens of `lang`. */
 async function goldens(lang: ClientLanguage): Promise<{ dir: string; files: string[] }> {
@@ -258,11 +311,17 @@ Deno.test({ name: "clients: the Swift goldens type-check", ignore: !tools.swift 
   }
 });
 
-Deno.test({ name: "clients: the Kotlin goldens compile", ignore: !tools.kotlin }, async () => {
+Deno.test({
+  name: `clients: the Kotlin goldens compile${
+    kotlin.kind === "skip" ? ` (skipped: ${kotlin.reason})` : ""
+  }`,
+  ignore: kotlin.kind === "skip",
+}, async () => {
+  if (kotlin.kind !== "run") throw new Error(kotlin.kind === "fail" ? kotlin.reason : "skipped");
   const { dir, files } = await goldens("kotlin");
   try {
     for (const file of files) {
-      const r = await run(Deno.env.get("DENEXT_KOTLINC")!, ["-d", join(dir, "out"), file]);
+      const r = await run(kotlin.kotlinc, ["-d", join(dir, "out"), file]);
       assert(r?.ok, r?.text);
     }
   } finally {

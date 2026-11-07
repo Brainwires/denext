@@ -244,12 +244,22 @@ Deno.test("a typescript-check/ file changed after install is caught by --verify 
   try {
     await install(w);
     const dir = join(w.root, VERSION, TARGET, "typescript-check");
-    await Deno.writeFile(join(dir, "lib.es5.d.ts"), enc.encode("interface Array<U> {}\n"));
+    // Each replacement differs in SIZE as well as content: a same-size write can land on the
+    // mtime the stamp recorded (a coarse clock, a loaded machine), and then only the size and the
+    // hash tell it apart.
+    const lib = enc.encode("interface Array<Changed> {}\n");
+    assert(lib.length !== LIB.length);
+    await Deno.writeFile(join(dir, "lib.es5.d.ts"), lib);
     assertEquals((await status(w)).state, "ok", "a lib file is only re-hashed with verify");
     const verified = await status(w, true);
     assertEquals(verified.state, "refused");
     assertStringIncludes(verified.detail, "files changed since they were installed");
-    await Deno.writeFile(join(dir, "tsc"), enc.encode("#!/bin/sh\necho Version 6.6.6\n"));
+    const tsc = enc.encode("#!/bin/sh\necho Version 6.6.66\n");
+    assert(tsc.length !== TSC.length);
+    const { atime, mtime } = await Deno.stat(join(dir, "tsc"));
+    await Deno.writeFile(join(dir, "tsc"), tsc);
+    // Put the stamped mtime back, as a same-tick write would leave it: the size still tells.
+    await Deno.utime(join(dir, "tsc"), atime!, mtime!);
     assertStringIncludes((await status(w)).detail, "changed since it was installed");
   } finally {
     await w.close();
