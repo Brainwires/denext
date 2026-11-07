@@ -19,6 +19,7 @@ import { backend, rlsMigrations, type RlsOptions, rlsSetupSql } from "../package
 import { db } from "../packages/backend/server.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import { RLS_SETUP, sessionClaims } from "../packages/backend/src/rls.ts";
+import { identityScope, isRequestIdentity } from "../packages/backend/src/identity.ts";
 import { type FakeSqlClient, fakeSqlClient } from "./helpers/fake-sql-client.ts";
 
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
@@ -173,6 +174,30 @@ Deno.test("db.service() and db({ as: 'service' }) are the connecting role's clie
     const before = sql.statements.length;
     await db.service()`select 1 as one`;
     assertEquals(since(sql, before), ["select 1 as one"]);
+  } finally {
+    tearDown();
+  }
+});
+
+Deno.test("db({ as }) takes a request identity only with a Supabase role", async () => {
+  const sql = await setUp();
+  try {
+    const before = sql.statements.length;
+    for (const role of ["postgres", "supabase_admin", "none", "", "ANON"]) {
+      const as = { source: "jwt", role, claims: {} } as never;
+      await assertRejects(() => whoAmI(db({ as })), TypeError);
+      assertThrows(() => identityScope(as), TypeError, "role");
+      assertEquals(isRequestIdentity(as), false);
+    }
+    assertEquals(
+      since(sql, before).filter((s) => s.includes("set_config('role'")),
+      [],
+      "no role was set for a refused identity",
+    );
+    // The three roles are still taken.
+    for (const role of ["anon", "authenticated", "service_role"] as const) {
+      assertEquals(isRequestIdentity({ source: "jwt", role, claims: {} }), true);
+    }
   } finally {
     tearDown();
   }

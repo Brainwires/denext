@@ -92,7 +92,15 @@ export function isIdentityError(value: unknown): value is IdentityError {
 export function isRequestIdentity(value: unknown): value is RequestIdentity {
   const v = value as Partial<RequestIdentity> | null;
   return typeof v === "object" && v !== null && typeof v.source === "string" &&
-    typeof v.role === "string" && typeof v.claims === "object";
+    isIdentityRole(v.role) && typeof v.claims === "object";
+}
+
+/** The roles a request identity may carry (Supabase's), and so the only ones `db()` sets. */
+const IDENTITY_ROLES: ReadonlySet<string> = new Set(["anon", "authenticated", "service_role"]);
+
+/** Whether `role` is one of the {@linkcode IdentityRole}s. */
+function isIdentityRole(role: unknown): role is IdentityRole {
+  return typeof role === "string" && IDENTITY_ROLES.has(role);
 }
 
 /** Options for {@linkcode resolveIdentity}. */
@@ -344,8 +352,15 @@ export async function resolveIdentity(
  *
  * @param identity The identity.
  * @returns The scope.
+ * @throws TypeError When the role is not `anon`, `authenticated` or `service_role`.
  */
 export function identityScope(identity: RequestIdentity): RlsScope {
+  if (!isIdentityRole(identity.role)) {
+    throw new TypeError(
+      `@denext/backend: an identity's role must be "anon", "authenticated" or "service_role" ` +
+        `(got ${JSON.stringify(identity.role)})`,
+    );
+  }
   const claims = { ...identity.claims, role: identity.role };
   if (identity.role === "authenticated") return authenticatedScope(claims);
   return { role: identity.role, claims: JSON.stringify(claims) };

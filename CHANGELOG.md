@@ -82,6 +82,13 @@ and this project adheres to
   `runtimeEntryPoints("/a/denext")`, and a `frameworkRoot` passed to the runtime prebuild, resolved
   every entry under `/a/` because the last path segment was dropped. A root given as a path or a
   URL now gets its trailing slash added.
+- **`@denext/backend` hardening: `db({ as })` and `Prefer`.** A request identity handed to
+  `db({ as })` (and `identityScope()`) must carry the role `anon`, `authenticated` or
+  `service_role`; any other role is a `TypeError` before a statement runs, and
+  `isRequestIdentity()` answers `false` for it. The auto-REST `Prefer` header reads its own
+  tokens only, so `constructor` / `toString` / `__proto__` are unknown tokens (ignored, or a
+  `PGRST122` under `handling=strict`), never a preference.
+
 - **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
   (a Server Component), its context never reached the `"use client"` components below it, so a
   `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The

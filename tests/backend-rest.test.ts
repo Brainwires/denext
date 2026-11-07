@@ -1214,6 +1214,24 @@ Deno.test("profiles: Accept-Profile / Content-Profile pick an exposed schema", a
   }
 });
 
+Deno.test("Prefer: an Object.prototype name is an unknown token, never a preference", async () => {
+  const app = await restApp(() => [{ body: '[{"id":7}]', n: "1", total: "1" }]);
+  try {
+    for (const token of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      const strict = await app.call("/rest/v1/notes", {
+        headers: { prefer: `handling=strict, ${token}` },
+      });
+      assertEquals([strict.status, (await strict.json()).code], [400, "PGRST122"], token);
+      const lenient = await app.call("/rest/v1/notes", { headers: { prefer: token } });
+      assertEquals(lenient.status, 200, token);
+      assertEquals(lenient.headers.get("preference-applied"), null, token);
+      await lenient.body?.cancel();
+    }
+  } finally {
+    tearDown();
+  }
+});
+
 Deno.test("Prefer: strict handling, headers-only, tx=rollback, max-affected, planned counts", async () => {
   let n = "1";
   const app = await restApp((seen) =>
