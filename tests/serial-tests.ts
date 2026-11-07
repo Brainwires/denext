@@ -66,6 +66,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/integration/server-action-stubs.test.ts",
   "tests/jail-scripts.test.ts",
   "tests/job-discovery.test.ts",
+  // Deletes and restores HOME / USERPROFILE around one case (the real scheduler host's home).
+  "tests/job-install-host.test.ts",
   "tests/legacy-migrate-job.test.ts",
   "tests/live-views.test.ts",
   // Sets and restores DENEXT_CHILD_PROBE around one case (the probed loader `deno info`).

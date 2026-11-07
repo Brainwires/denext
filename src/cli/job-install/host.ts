@@ -50,18 +50,19 @@ export interface SchedulerHost {
 }
 
 /** Where each tool is run from: launchd's own, else the OS's system directories. */
-function toolPath(tool: SchedulerTool): string | null {
+export function schedulerToolPath(tool: SchedulerTool): string | null {
   if (tool === "launchctl") return "/bin/launchctl";
   return systemToolPath(tool);
 }
 
 /** Runs a tool by its absolute path; `127` when it isn't installed. */
 async function runTool(
+  pathOf: (tool: SchedulerTool) => string | null,
   tool: SchedulerTool,
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<ToolResult> {
-  const path = toolPath(tool);
+  const path = pathOf(tool);
   if (!path) return { code: 127, stdout: "", stderr: `${tool}: not found` };
   try {
     const child = new Deno.Command(path, {
@@ -86,8 +87,19 @@ async function runTool(
   }
 }
 
-/** This machine, for real. */
-export function realSchedulerHost(): SchedulerHost {
+/** Options for {@linkcode realSchedulerHost}. */
+export interface RealHostOptions {
+  /** Where each tool is run from (default: {@linkcode schedulerToolPath}); tests point it away. */
+  readonly toolPath?: (tool: SchedulerTool) => string | null;
+}
+
+/**
+ * This machine, for real.
+ *
+ * @param options Where the tools are run from.
+ */
+export function realSchedulerHost(options: RealHostOptions = {}): SchedulerHost {
+  const pathOf = options.toolPath ?? schedulerToolPath;
   const env = (name: string) => {
     try {
       return Deno.env.get(name);
@@ -132,7 +144,7 @@ export function realSchedulerHost(): SchedulerHost {
         if (!(err instanceof Deno.errors.NotFound)) throw err;
       }
     },
-    run: runTool,
+    run: (tool, args, runOptions) => runTool(pathOf, tool, args, runOptions),
   };
 }
 

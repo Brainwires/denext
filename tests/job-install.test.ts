@@ -9,146 +9,20 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { basename, dirname, join } from "@std/path";
+import { basename, join } from "@std/path";
 import type { CommandContext } from "../src/cli/command.ts";
-import { jobInstallVerb } from "../src/cli/commands/job-install.ts";
+import { type JobInstallDeps, jobInstallVerb } from "../src/cli/commands/job-install.ts";
 import { jobCommand } from "../src/cli/commands/job.ts";
 import { crontabSlugs, withoutBlocks } from "../src/cli/job-install/crontab.ts";
-import {
-  dryRunHost,
-  type DryRunStep,
-  type RunOptions,
-  type SchedulerHost,
-  type SchedulerTool,
-  type ToolResult,
-} from "../src/cli/job-install/host.ts";
-import {
-  denextCommand,
-  type InstallRequest,
-  jobSlug,
-  projectId,
-  runJobInstall,
-} from "../src/cli/job-install/install.ts";
+import { dryRunHost, type DryRunStep, type SchedulerHost } from "../src/cli/job-install/host.ts";
+import { denextCommand, jobSlug, runJobInstall } from "../src/cli/job-install/install.ts";
 import { launchdIntervals } from "../src/cli/job-install/launchd.ts";
 import { taskSlugs, windowsArg } from "../src/cli/job-install/schtasks.ts";
 import { onCalendarValues } from "../src/cli/job-install/systemd.ts";
 import { translateSchedules } from "../src/cli/job-install/translate.ts";
 import { splitWindowsCommandLine } from "../src/cli/windows-command-line.ts";
 import { clearJobs } from "../src/server/jobs.ts";
-
-/** One recorded tool run. */
-interface Ran {
-  readonly tool: SchedulerTool;
-  readonly args: readonly string[];
-  readonly stdin?: string;
-}
-
-/** An OS scheduler in memory: files, a crontab, Task Scheduler's task list. */
-class FakeHost implements SchedulerHost {
-  readonly files = new Map<string, string | Uint8Array>();
-  readonly dirs = new Set<string>();
-  readonly ran: Ran[] = [];
-  /** `null`: no `crontab` program. */
-  crontab: string | null = "";
-  systemdUser = true;
-  systemdSystem = true;
-  readonly tasks = new Set<string>();
-  readonly uid = 501;
-
-  constructor(
-    readonly os: string,
-    readonly home: string,
-    private readonly vars: Record<string, string> = {},
-  ) {}
-
-  env(name: string): string | undefined {
-    return this.vars[name];
-  }
-  readTextFile(path: string): Promise<string | null> {
-    const data = this.files.get(path);
-    return Promise.resolve(
-      data === undefined ? null : typeof data === "string" ? data : new TextDecoder().decode(data),
-    );
-  }
-  readDir(path: string): Promise<string[]> {
-    return Promise.resolve(
-      [...this.files.keys()].filter((p) => dirname(p) === path).map((p) => basename(p)).sort(),
-    );
-  }
-  writeFile(path: string, data: string | Uint8Array): Promise<void> {
-    this.files.set(path, data);
-    return Promise.resolve();
-  }
-  ensureDir(path: string): Promise<void> {
-    this.dirs.add(path);
-    return Promise.resolve();
-  }
-  remove(path: string): Promise<void> {
-    this.files.delete(path);
-    return Promise.resolve();
-  }
-  run(tool: SchedulerTool, args: readonly string[], options: RunOptions = {}): Promise<ToolResult> {
-    this.ran.push({ tool, args, ...(options.stdin === undefined ? {} : { stdin: options.stdin }) });
-    return Promise.resolve(this.answer(tool, args, options));
-  }
-  private answer(tool: SchedulerTool, args: readonly string[], options: RunOptions): ToolResult {
-    const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" });
-    if (tool === "systemctl" && args.includes("show-environment")) {
-      const up = args[0] === "--user" ? this.systemdUser : this.systemdSystem;
-      return up ? ok() : { code: 1, stdout: "", stderr: "Failed to connect to bus" };
-    }
-    if (tool === "crontab") return this.crontabAnswer(args, options);
-    if (tool === "schtasks") return this.schtasksAnswer(args);
-    return ok();
-  }
-  private crontabAnswer(args: readonly string[], options: RunOptions): ToolResult {
-    if (this.crontab === null) return { code: 127, stdout: "", stderr: "crontab: not found" };
-    if (args[0] === "-") {
-      this.crontab = options.stdin ?? "";
-      return { code: 0, stdout: "", stderr: "" };
-    }
-    return this.crontab === ""
-      ? { code: 1, stdout: "", stderr: "crontab: no crontab for u" }
-      : { code: 0, stdout: this.crontab, stderr: "" };
-  }
-  private schtasksAnswer(args: readonly string[]): ToolResult {
-    const name = args[args.indexOf("/TN") + 1];
-    if (args[0] === "/Create") this.tasks.add(name);
-    if (args[0] === "/Delete") this.tasks.delete(name);
-    const listing = [...this.tasks].map((t) => `"${t}","N/A","Ready"`).join("\r\n");
-    return { code: 0, stdout: args[0] === "/Query" ? listing : "SUCCESS", stderr: "" };
-  }
-  /** The runs that changed something. */
-  changes(): Ran[] {
-    return this.ran.filter((r) =>
-      !(r.tool === "systemctl" && r.args.includes("show-environment")) &&
-      !(r.tool === "crontab" && r.args[0] === "-l") &&
-      !(r.tool === "schtasks" && r.args[0] === "/Query")
-    );
-  }
-}
-
-const PROJECT = "/work/my app";
-const ID = await projectId(PROJECT);
-const OTHER_ID = await projectId("/work/other");
-
-/** A request for the test project. */
-function request(over: Partial<InstallRequest> = {}): InstallRequest {
-  return {
-    project: { dir: PROJECT, id: ID, stateDir: `${PROJECT}/.denext` },
-    scope: "user",
-    mode: "install",
-    names: [],
-    schedules: [
-      { cron: "0 3 * * *", job: "cleanup" },
-      { cron: "*/15 * * * *", job: "reports/daily" },
-    ],
-    knownJobs: ["cleanup", "reports/daily", "manual"],
-    denext: ["/Users/u/.denext/bin/denext"],
-    offsets: [-360, -300],
-    ...over,
-  };
-}
+import { FakeHost, ID, OTHER_ID, PROJECT, request } from "./_job-install-fake.ts";
 
 /** The XML's tags balance (a cheap well-formedness check; Deno has no XML parser). */
 function assertBalancedXml(xml: string): void {
@@ -614,6 +488,141 @@ Deno.test("the verb refuses --user with --system", async () => {
       )
     );
     assertStringIncludes(out.join("\n"), "not both");
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Run the verb on `host` for `dir` quietly; returns its exit code and the printed text. */
+async function verb(
+  dir: string,
+  host: SchedulerHost,
+  positionals: string[],
+  flags: CommandContext["flags"] = {},
+  deps: Omit<JobInstallDeps, "host"> = { offsets: [0], denext: { argv: ["/bin/denext"] } },
+  json = false,
+): Promise<{ code: number; text: string }> {
+  let code = -1;
+  const ctx = ctxFor(dir, positionals, flags);
+  const { out } = await quietly(async () => {
+    code = await jobInstallVerb({ ...ctx, global: { ...ctx.global, json } }, { host, ...deps });
+  });
+  return { code, text: out.join("\n") };
+}
+
+Deno.test("the verb's --json prints the report, with a dry run's steps", async () => {
+  const dir = await project();
+  try {
+    const dry = await verb(
+      dir,
+      new FakeHost("linux", "/home/u"),
+      ["install"],
+      {
+        "dry-run": true,
+      },
+      undefined,
+      true,
+    );
+    assertEquals(dry.code, 0);
+    const report = JSON.parse(dry.text);
+    assertEquals(report.backend, "systemd");
+    assertEquals(report.installed.map((e: { job: string }) => e.job), ["cleanup"]);
+    assert(report.steps.some((s: DryRunStep) => s.kind === "write"));
+    const real = await verb(
+      dir,
+      new FakeHost("linux", "/home/u"),
+      ["install"],
+      {},
+      undefined,
+      true,
+    );
+    assertFalse("steps" in JSON.parse(real.text));
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the verb prints a dry run's mkdir, run and removal steps, and the DST guard", async () => {
+  const dir = await project();
+  const host = new FakeHost("darwin", "/Users/u");
+  try {
+    const shifting = { offsets: [-360, -300], denext: { argv: ["/bin/denext"] } };
+    const dry = await verb(dir, host, ["install"], { "dry-run": true }, shifting);
+    assertEquals(dry.code, 0);
+    assertStringIncludes(dry.text, "mkdir -p ");
+    assertStringIncludes(dry.text, "launchctl bootstrap gui/501 ");
+    assertStringIncludes(dry.text, "would install cleanup: 30 6 * * 1; 0 3 * * * UTC (launchd)");
+    assertStringIncludes(dry.text, "local time moves (UTC-06:00, UTC-05:00)");
+    // Installed for real (on the fake), then a dry-run uninstall lists the removal.
+    assertEquals((await verb(dir, host, ["install"])).code, 0);
+    const undo = await verb(dir, host, ["install"], { "dry-run": true, uninstall: true });
+    assertStringIncludes(undo.text, "launchctl bootout gui/501/");
+    assertStringIncludes(undo.text, "rm /Users/u/Library/LaunchAgents/");
+    assertStringIncludes(undo.text, "would remove cleanup (launchd)");
+    assert(host.files.size > 0, "a dry run removes nothing");
+    // Uninstalled for real; a second uninstall has nothing to do.
+    await verb(dir, host, ["install"], { uninstall: true });
+    const again = await verb(dir, host, ["install"], { uninstall: true });
+    assertStringIncludes(again.text, "Nothing of this project's to remove.");
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the verb prints the crontab a dry run would write, and the fallback warning", async () => {
+  const dir = await project();
+  const host = new FakeHost("linux", "/home/u");
+  host.systemdUser = false;
+  try {
+    const dry = await verb(dir, host, ["install"], { "dry-run": true }, {
+      offsets: [0],
+      denext: { argv: ["/cache/deno", "run", "-A", "cli.ts"], warning: "no installed denext" },
+    });
+    assertStringIncludes(dry.text, "denext: no installed denext");
+    assertStringIncludes(dry.text, "crontab -\n# (stdin)\n");
+    assertStringIncludes(dry.text, "(crontab)");
+    assertEquals(host.crontab, "", "a dry run writes no crontab");
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the verb: --system, no scheduled jobs, a config warning, and this machine's denext", async () => {
+  let dir = await project();
+  try {
+    const system = await verb(dir, new FakeHost("linux", "/home/u", { USER: "bob" }), ["install"], {
+      system: true,
+      "dry-run": true,
+    });
+    assertEquals(system.code, 0);
+    assertStringIncludes(system.text, "# write /etc/systemd/system/");
+    assertStringIncludes(system.text, "User=bob");
+    // A config schedule naming no job is a printed warning; with no schedule left there's
+    // nothing to install (a fresh project: config and job modules are cached per path).
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+    dir = await Deno.makeTempDir({ prefix: "denext_job_install_" });
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.mkdir(join(dir, "jobs"));
+    await Deno.writeTextFile(
+      join(dir, "jobs/manual.ts"),
+      `import { defineJob } from "${new URL("../src/server/jobs.ts", import.meta.url).href}";\n` +
+        `export default defineJob({ handler: () => {} });\n`,
+    );
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      `export default { scheduledJobs: { "0 1 * * *": "missing" } };\n`,
+    );
+    // No `denext` / `offsets`: the verb works out this machine's own (the fake host still
+    // stands in for the scheduler).
+    const none = await verb(dir, new FakeHost("linux", "/home/u"), ["install"], {}, {});
+    assertEquals(none.code, 0);
+    assertStringIncludes(none.text, `denext: scheduledJobs names "missing"`);
+    assertStringIncludes(none.text, "No scheduled jobs to install.");
   } finally {
     clearJobs();
     await Deno.remove(dir, { recursive: true });
