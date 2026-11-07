@@ -431,7 +431,13 @@ export default defineDesktopExtension({
       handler: async (_args, ctx) => {
         const dir = await outDir(ctx.appSupportDir);
         if (!dir) return { lines: null };
-        const text = await Deno.readTextFile(join(dir, "bin", "browser.log")).catch(() => "");
+        let text = "";
+        try {
+          text = await Deno.readTextFile(join(dir, "bin", "browser.log"));
+        } catch (err) {
+          // Not asked yet; anything else is reported (a refused or locked read is not "nothing").
+          if (!(err instanceof Deno.errors.NotFound)) return { lines: [], error: message(err) };
+        }
         return { lines: text.split(/\r?\n/).filter((l) => l !== "") };
       },
     },

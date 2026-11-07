@@ -675,6 +675,9 @@ async function copyTree(from: string, to: string): Promise<void> {
 
 // --- the stand-in browser ----------------------------------------------------------------------
 
+/** The argument of the stand-in browser's warm-up run, which records nothing (its `WARM_UP`). */
+const BROWSER_STUB_WARM_UP = "--kitchen-sink-warm-up";
+
 /** Put a stand-in for the system browser opener in `<scratch>/bin` (first on the app's PATH): it
  * records the URL it is asked to open in `bin/browser.log` and opens nothing. */
 async function installBrowserStub(): Promise<string> {
@@ -692,6 +695,25 @@ async function installBrowserStub(): Promise<string> {
       opener,
       "e2e/browser-stub.ts",
     ]);
+    // Run the new executable once before the app needs it: the first start of a freshly built,
+    // unsigned program can wait on the antivirus's verdict (Defender's cloud check holds it up to
+    // 10 s or more on a desktop that has it on), longer than a check waits for the browser to be
+    // asked. The verdict is kept for the file, so the app's launch of it is a plain start.
+    const started = performance.now();
+    const warm = await new Deno.Command(opener, {
+      args: [BROWSER_STUB_WARM_UP],
+      stdout: "null",
+      stderr: "piped",
+    })
+      .output();
+    if (!warm.success) {
+      throw new Error(
+        `the stand-in browser failed its warm-up run: ${
+          new TextDecoder().decode(warm.stderr).trim()
+        }`,
+      );
+    }
+    log(`the stand-in browser's first run took ${Math.round(performance.now() - started)} ms`);
   } else {
     await Deno.writeTextFile(
       opener,
@@ -887,10 +909,16 @@ export interface SaveDialogKeys {
  * A Windows PowerShell script that presses one button of `app`'s file dialog through UI
  * Automation: it waits up to `waitSeconds` for a dialog (`#32770`) among the windows of the
  * processes named `app` (a top-level one, or one owned by the app's window, which UI Automation
- * lists under its owner), then invokes the button with `automationId` (`1`: Save, `2`: Cancel).
+ * lists under its owner), then for the button among the dialog's descendants: the one with
+ * `automationId` (`1`: Save, `2`: Cancel; the Common Item Dialog's Save can be a split button),
+ * else the one named Save / Cancel. It presses it with its InvokePattern. When no such button
+ * shows (a localized dialog, a tree UI Automation does not expose), it sends the dialog the
+ * command its keyboard would: `WM_COMMAND` with the dialog's default button (`DM_GETDEFID`, else
+ * `IDOK`) to save, `IDCANCEL` to cancel, and says so on stderr with the buttons it did see.
  * Unlike a key press it needs no focus: a key goes to the foreground window, which on a desktop
  * the runner's job did not start from (an autologon console session, a scheduled task) need not
- * be the dialog. It fails with the reason when there is no such process, dialog or button.
+ * be the dialog. It fails with the reason when there is no such process or dialog. Progress
+ * records are off, so its stderr is the reason, not PowerShell's serialized progress.
  *
  * @param app The app's process name (its executable's name without `.exe`).
  * @param automationId The button's AutomationId.
@@ -902,11 +930,15 @@ export function windowsDialogButtonScript(
   waitSeconds: number,
 ): string {
   if (!/^[A-Za-z0-9._-]+$/.test(app)) throw new Error(`not a process name: ${app}`);
+  const names = automationId === "1" ? "'Save', '&Save'" : "'Cancel'";
   return [
     "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
     "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
     "$A = [System.Windows.Automation.AutomationElement]",
+    "$Type = [System.Windows.Automation.ControlType]",
     "$Children = [System.Windows.Automation.TreeScope]::Children",
+    "$Descendants = [System.Windows.Automation.TreeScope]::Descendants",
     "function Is($property, $value) { New-Object System.Windows.Automation.PropertyCondition($property, $value) }",
     `$ids = @(Get-Process -Name '${app}' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })`,
     `if ($ids.Count -eq 0) { [Console]::Error.WriteLine('no ${app} process'); exit 3 }`,
@@ -926,13 +958,44 @@ export function windowsDialogButtonScript(
     "if ($null -eq $dialog) {",
     `  [Console]::Error.WriteLine('no file dialog of ${app} within ${waitSeconds} s'); exit 4`,
     "}",
-    "$button = $dialog.FindFirst([System.Windows.Automation.TreeScope]::Descendants, " +
-    `(New-Object System.Windows.Automation.AndCondition((Is ($A::AutomationIdProperty) '${automationId}'), ` +
-    "(Is ($A::ControlTypeProperty) ([System.Windows.Automation.ControlType]::Button)))))",
-    "if ($null -eq $button) {",
-    `  [Console]::Error.WriteLine("the dialog '$($dialog.Current.Name)' has no button ${automationId}"); exit 5`,
+    "$buttonish = New-Object System.Windows.Automation.OrCondition(" +
+    "(Is ($A::ControlTypeProperty) $Type::Button), (Is ($A::ControlTypeProperty) $Type::SplitButton))",
+    `$names = @(${names})`,
+    "$seen = @()",
+    // The dialog's window comes before its controls: give them up to 3 s more past the deadline.
+    "$buttonDeadline = (Get-Date).AddSeconds(3)",
+    "if ($buttonDeadline -lt $deadline) { $buttonDeadline = $deadline }",
+    "$button = $null",
+    "while ($true) {",
+    "  $buttons = @($dialog.FindAll($Descendants, $buttonish))",
+    `  $button = $buttons | Where-Object { $_.Current.AutomationId -eq '${automationId}' } | Select-Object -First 1`,
+    "  if ($null -eq $button) { $button = $buttons | Where-Object { $names -contains $_.Current.Name } | Select-Object -First 1 }",
+    "  if ($null -ne $button -or (Get-Date) -ge $buttonDeadline) {",
+    `    $seen = @($buttons | ForEach-Object { "'$($_.Current.Name)' id=$($_.Current.AutomationId) $($_.Current.ControlType.ProgrammaticName)" })`,
+    "    break",
+    "  }",
+    "  Start-Sleep -Milliseconds 250",
     "}",
-    "$button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()",
+    "$pattern = $null",
+    "if ($null -ne $button -and $button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {",
+    "  $pattern.Invoke(); exit 0",
+    "}",
+    // The keyboard's command, by message: it needs neither the button's element nor focus.
+    "Add-Type -Namespace KitchenSink -Name User32 -MemberDefinition (" +
+    `'[DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr w, uint m, IntPtr a, IntPtr b);' + ` +
+    `'[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr w, uint m, IntPtr a, IntPtr b);')`,
+    "$hwnd = [IntPtr]$dialog.Current.NativeWindowHandle",
+    "if ($hwnd -eq [IntPtr]::Zero) {",
+    `  [Console]::Error.WriteLine("the dialog '$($dialog.Current.Name)' has no button ${automationId} and no window handle (buttons: $($seen -join ', '))"); exit 5`,
+    "}",
+    automationId === "1"
+      ? "$def = [KitchenSink.User32]::SendMessage($hwnd, 0x400, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64(); " +
+        "$command = if ((($def -shr 16) -band 0xFFFF) -eq 0x534B) { $def -band 0xFFFF } else { 1 }"
+      : "$command = 2",
+    "if (-not [KitchenSink.User32]::PostMessage($hwnd, 0x111, [IntPtr]$command, [IntPtr]::Zero)) {",
+    `  [Console]::Error.WriteLine("the dialog '$($dialog.Current.Name)' refused WM_COMMAND $command (buttons: $($seen -join ', '))"); exit 5`,
+    "}",
+    `[Console]::Error.WriteLine("no invocable button ${automationId} in the dialog '$($dialog.Current.Name)' (buttons: $($seen -join ', ')): sent WM_COMMAND $command")`,
   ].join("\n");
 }
 
@@ -1024,9 +1087,9 @@ async function press(cmd: readonly string[]): Promise<string> {
     success: false,
     stderr: new TextEncoder().encode(err.message),
   }));
-  return out.success
-    ? "ok"
-    : `failed: ${new TextDecoder().decode(out.stderr).trim().slice(0, 200)}`;
+  const said = new TextDecoder().decode(out.stderr).trim().slice(0, 300);
+  if (!out.success) return `failed: ${said}`;
+  return said ? `ok (${said})` : "ok";
 }
 
 /** A file's content once its size stops changing (the engine may still be writing it). */

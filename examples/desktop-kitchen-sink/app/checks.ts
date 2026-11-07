@@ -1097,7 +1097,12 @@ const securityChecks: Check[] = [
         async () => ((await kitchen.browserLog({})).lines as string[] | null)?.includes(url),
         "the stand-in browser to be asked for the URL",
         10_000,
-        async () => `${JSON.stringify((await kitchen.browserLog({})).lines)}; session ${settled}`,
+        async () => {
+          const seen = await kitchen.browserLog({}) as { lines: string[] | null; error?: string };
+          return `${JSON.stringify(seen.lines)}${
+            seen.error ? ` (reading it: ${seen.error})` : ""
+          }; session ${settled}`;
+        },
       );
       // The system browser reports no cancellation: the page shows its Cancel overlay meanwhile.
       const overlay = document.getElementById("denext-auth-cancel");

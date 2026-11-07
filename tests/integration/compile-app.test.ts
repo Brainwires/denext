@@ -167,9 +167,26 @@ export async function GET(): Promise<Response> {
   return new Response("slow done");
 }
 `,
-    // A stand-in for an app-owned pool nothing closes: a ref'd timer started at boot.
+    // A stand-in for an app-owned pool nothing closes: a ref'd timer started at boot. It also says
+    // when the shutdown signal reached the process (once: the listener then stops trapping, so it
+    // holds nothing open), the start a shutdown check's timing is measured from.
     "instrumentation.ts": `export function register() {
   if (Deno.env.get("FIXTURE_HOLD_OPEN")) setInterval(() => {}, 1000);
+  const signals: Deno.Signal[] = Deno.build.os === "windows"
+    ? ["SIGINT", "SIGBREAK", "SIGTERM"]
+    : ["SIGINT", "SIGTERM"];
+  const each = (fn: (sig: Deno.Signal) => void) => {
+    for (const sig of signals) {
+      try {
+        fn(sig);
+      } catch { /* not a signal this platform delivers */ }
+    }
+  };
+  const said = () => {
+    console.log("${SIGNALLED}");
+    each((sig) => Deno.removeSignalListener(sig, said));
+  };
+  each((sig) => Deno.addSignalListener(sig, said));
 }
 `,
     "jobs/ping.ts": `import { defineJob } from "denext/server";
@@ -197,6 +214,10 @@ async function writeFixture(dir: string): Promise<void> {
 
 /** What the fixture's slow route prints when its handler starts: a stop waits for it. */
 const SLOW_STARTED = "fixture: slow handler started";
+/** What the fixture prints when the shutdown signal reaches it. */
+const SIGNALLED = "fixture: shutdown signal received";
+/** What the server prints when the drain deadline ends a process an open handle holds. */
+const LINGER_EXIT = "open handle";
 
 const dec = new TextDecoder();
 
@@ -281,7 +302,8 @@ interface Served {
   stop(withinMs?: number): Promise<string>;
   /**
    * SIGTERM while a request to `path` is in flight: its body, how long the process took to exit
-   * after the signal, and the output.
+   * after the signal reached it (to its drain-deadline exit notice when it printed one), and the
+   * output.
    */
   stopDuring(path: string): Promise<{ text: string; exitMs: number; output: string }>;
 }
@@ -302,9 +324,18 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
   });
   const child = server.child;
   let output = "";
+  // When each marker line first arrived: both come from the server and cross the same relay, so
+  // their difference is the server's own time between them, whatever the pipes and the console
+  // relay add on a loaded machine.
+  const seenAt = new Map<string, number>();
   const drain = async (stream: ReadableStream<Uint8Array>) => {
     const d = new TextDecoder();
-    for await (const chunk of stream) output += d.decode(chunk, { stream: true });
+    for await (const chunk of stream) {
+      output += d.decode(chunk, { stream: true });
+      for (const marker of [SIGNALLED, LINGER_EXIT]) {
+        if (!seenAt.has(marker) && output.includes(marker)) seenAt.set(marker, performance.now());
+      }
+    }
   };
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
@@ -351,7 +382,12 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
     signalled = true;
     const text = await inFlight;
     const out = await stop(DRAIN_MS + 10_000);
-    return { text, exitMs: performance.now() - at, output: out };
+    const exitedAt = performance.now();
+    // From the moment the server got the signal (else the stop) to the drain deadline's exit
+    // notice (else the exit): the deadline the server kept, not how long a slow console relay
+    // took to deliver the event and report the exit (the stop above bounds those).
+    const from = seenAt.get(SIGNALLED) ?? at;
+    return { text, exitMs: (seenAt.get(LINGER_EXIT) ?? exitedAt) - from, output: out };
   };
   for (let i = 0; i < 1200 && port !== undefined && !exited; i++) {
     try {

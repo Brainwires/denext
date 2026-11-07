@@ -5,6 +5,13 @@
 
 import { dirname, join } from "@std/path";
 
+/** The argument of the window test's warm-up run (`BROWSER_STUB_WARM_UP` there). */
+const WARM_UP = "--kitchen-sink-warm-up";
+
 const log = join(dirname(Deno.execPath()), "browser.log");
-// rundll32's argv is `url.dll,FileProtocolHandler <url>`: record the URL (the last argument).
-await Deno.writeTextFile(log, `${Deno.args.at(-1) ?? ""}\n`, { append: true });
+// The window test runs it once with WARM_UP before the app starts (see `installBrowserStub`):
+// that run records nothing.
+if (Deno.args[0] !== WARM_UP) {
+  // rundll32's argv is `url.dll,FileProtocolHandler <url>`: record the URL (the last argument).
+  await Deno.writeTextFile(log, `${Deno.args.at(-1) ?? ""}\n`, { append: true });
+}

@@ -217,9 +217,24 @@ Deno.test("kitchen sink window test: a save dialog is answered with Return, dism
 Deno.test("kitchen sink window test: the Windows dialog script names the app's process and the button", () => {
   const script = windowsDialogButtonScript("KitchenSink-x64", "1", 8);
   assertStringIncludes(script, "Get-Process -Name 'KitchenSink-x64'");
-  assertStringIncludes(script, "(Is ($A::AutomationIdProperty) '1')");
   assertStringIncludes(script, "AddSeconds(8)");
+  // No progress records: stderr carries the reason, not PowerShell's CLIXML progress stream.
+  assertStringIncludes(script, "$ProgressPreference = 'SilentlyContinue'");
+  // The Common Item Dialog's Save is a descendant (a button or a split button), found by its
+  // AutomationId, else by its name, and pressed through its InvokePattern.
+  assertStringIncludes(script, "TreeScope]::Descendants");
+  assertStringIncludes(script, "$Type::SplitButton");
+  assertStringIncludes(script, "$_.Current.AutomationId -eq '1'");
+  assertStringIncludes(script, "$names = @('Save', '&Save')");
   assertStringIncludes(script, "InvokePattern");
+  // Else (a localized or unexposed button) the dialog's default command, by WM_COMMAND.
+  assertStringIncludes(script, "SendMessage($hwnd, 0x400"); // DM_GETDEFID
+  assertStringIncludes(script, "PostMessage($hwnd, 0x111"); // WM_COMMAND
+  const cancel = windowsDialogButtonScript("KitchenSink-x64", "2", 2);
+  assertStringIncludes(cancel, "$_.Current.AutomationId -eq '2'");
+  assertStringIncludes(cancel, "$names = @('Cancel')");
+  assertStringIncludes(cancel, "$command = 2"); // IDCANCEL
+  assert(!cancel.includes("0x400"), "Cancel never asks for the default button");
   // The name is spliced into the script: anything but a plain process name is refused.
   assertThrows(() => windowsDialogButtonScript("x'; Remove-Item C:\\ #", "1", 8));
   // Non-ASCII survives the UTF-16LE encoding.
