@@ -13,6 +13,15 @@
   `listen()` keeps the fixed `pollIntervalMs`. The timer is unref'd; the plugin's teardown still
   waits for a pass in flight.
 
+### Fixed
+
+- **`db({ as })` takes a request identity only with a Supabase role.** `anon`, `authenticated`
+  or `service_role`; any other role is a `TypeError` (from `identityScope()` too) before a
+  statement runs, and `isRequestIdentity()` answers `false` for it.
+- **The auto-REST `Prefer` header reads its own tokens only.** `constructor`, `toString` and
+  `__proto__` are unknown tokens (ignored, or a `PGRST122` under `handling=strict`), never a
+  preference.
+
 ## 0.8.1 - 2026-11-02
 
 ### Added
