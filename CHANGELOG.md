@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext crash-report test` no longer waits forever on a self-test child that hangs.** The
+  toolchain's `deno --version` it runs is killed after 60 s, and the test fails saying so.
+
 ## [4.13.1] - 2026-11-07
 
 ### Changed
