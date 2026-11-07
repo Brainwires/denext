@@ -353,15 +353,19 @@ jobs:
   # against the same service containers as the `backend-integration` job, so the code only a real
   # Postgres / PostGIS / MinIO reaches counts toward the gate instead of being ignored.
   coverage:
-    # Stays on GitHub's image: its Postgres / PostGIS / MinIO / Redis `services:` containers need
-    # Docker, which the self-hosted Linux pool's job containers do not have (no docker-in-docker).
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner RUNNER_LINUX_X64 names, else ubuntu-latest; always
+    # ubuntu-latest on a pull_request (as `check`). Our pool's job containers have no Docker, so
+    # there the `services:` below are skipped (an empty image) and the pool's launcher starts this
+    # job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
+    # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
+    # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 90
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -372,7 +376,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       postgis:
-        image: postgis/postgis:17-3.5
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -383,7 +387,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       minio:
-        image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -391,7 +395,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: redis:7-alpine
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -437,15 +441,21 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Use this runner's job services (our pool; GitHub's image uses the services above)
+        if: ${{ !startsWith(github.event_name, 'pull_request') && vars.RUNNER_LINUX_X64 != '' }}
+        run: bash scripts/ci/job-services-env.sh
+
       - name: Wait for MinIO
         run: |
           for i in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0
+            curl -fsS "$DENEXT_TEST_S3_ENDPOINT/minio/health/live" && exit 0
             sleep 1
           done
           exit 1
 
       - name: Enable logical decoding on the Postgres service (wal_level = logical)
+        # GitHub's image only: our pool's job Postgres starts with wal_level = logical.
+        if: ${{ startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '' }}
         run: |
           pg=${{ job.services.postgres.id }}
           docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
@@ -505,15 +515,19 @@ jobs:
   # Every one of these tests is IGNORED without its service, so this job also fails if any test
   # was ignored: a green run means each one really ran. Heavy (PRs, `main`, a dispatch).
   backend-integration:
-    # Stays on GitHub's image: its Postgres / PostGIS / MinIO / Redis `services:` containers need
-    # Docker, which the self-hosted Linux pool's job containers do not have (no docker-in-docker).
-    runs-on: ubuntu-latest
+    # Linux: the self-hosted x64 runner RUNNER_LINUX_X64 names, else ubuntu-latest; always
+    # ubuntu-latest on a pull_request (as `check`). Our pool's job containers have no Docker, so
+    # there the `services:` below are skipped (an empty image) and the pool's launcher starts this
+    # job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
+    # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
+    # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 20
     services:
       postgres:
         # Postgres 17 with the pgvector extension available (the vector search tests create it).
-        image: pgvector/pgvector:pg17
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -526,7 +540,7 @@ jobs:
       postgis:
         # Only tests/backend-rest-supabase-integration.test.ts's GeoJSON case uses this one
         # (`Accept: application/geo+json` needs PostGIS); everything else runs on postgres:17.
-        image: postgis/postgis:17-3.5
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -539,7 +553,7 @@ jobs:
       minio:
         # MinIO publishes no public images any more (minio/minio and quay.io/minio refuse
         # pulls); Bitnami's legacy build is the same server, and its entrypoint serves /data.
-        image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -547,7 +561,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: redis:7-alpine
+        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -591,15 +605,21 @@ jobs:
           key: ${{ runner.os }}-deno-backend-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-backend-
 
+      - name: Use this runner's job services (our pool; GitHub's image uses the services above)
+        if: ${{ !startsWith(github.event_name, 'pull_request') && vars.RUNNER_LINUX_X64 != '' }}
+        run: bash scripts/ci/job-services-env.sh
+
       - name: Wait for MinIO
         run: |
           for i in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:9100/minio/health/live && exit 0
+            curl -fsS "$DENEXT_TEST_S3_ENDPOINT/minio/health/live" && exit 0
             sleep 1
           done
           exit 1
 
       - name: Enable logical decoding on the Postgres service (wal_level = logical)
+        # GitHub's image only: our pool's job Postgres starts with wal_level = logical.
+        if: ${{ startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '' }}
         run: |
           pg=${{ job.services.postgres.id }}
           docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
