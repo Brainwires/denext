@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext mobile doctor --store | --release` flags an outdated `DenextTransfer` plugin**
+  (`transfer-generations`): file-transfer files from an older template generation than this denext
+  writes, and on Android one from before generation 6 (where two transfers could share one saved
+  request-headers file) says so. Re-run `denext mobile add file-transfer` and ship a new binary.
+
 ### Fixed
 
 - **`denext crash-report test` no longer waits forever on a self-test child that hangs.** The
