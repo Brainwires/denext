@@ -132,6 +132,15 @@ and this project adheres to
 - **`desktopRequireTool("dpkg-deb", …)` says how to install `dpkg`** (apt, dnf, brew), as it does
   for the other tools, and `desktopHasTool` is documented with the package-script helpers.
 
+### Fixed
+
+- **Application menu clicks no longer depend on the main window (Deno Desktop).** On a runtime
+  that delivers menu clicks app-wide (a `"menuclick"` event on `Deno.desktop`), the application
+  menu's items, the page's and the `desktop.menu.window` ones alike, are taken from that event:
+  New Window, Reopen Closed Window and the window list keep working after the main window closes
+  while the app stays up (`desktop.app.keepAlive`, a tray), and a click is no longer lost while
+  another window is key. Older runtimes keep taking the clicks from the main window.
+
 ### Security
 
 - **The Deno Desktop secure store keeps each caller's items apart.** The runtime can't tell the

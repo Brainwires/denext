@@ -9,6 +9,7 @@ import type { DesktopCapCtx } from "../src/desktop/extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../src/desktop/launch-events.ts";
 import type { RegistryWindow } from "../src/desktop/window-registry.ts";
 import { setUpDesktopWindows } from "../src/desktop/app-windows.ts";
+import { FIRST_APP_MENU_EVENT_RUNTIME } from "../src/build/deno-version.ts";
 import { desktopMenuProblem, resolveDesktopMenuSettings } from "../src/desktop/menu-config.ts";
 import type { DesktopNewWindowHandler } from "../src/desktop/window-menu.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -84,11 +85,18 @@ function setup(
     menu?: { newWindow?: string | false; reopenClosed?: boolean; list?: boolean };
     newWindow?: DesktopNewWindowHandler;
     title?: string;
+    runtimeVersion?: string;
+    keepAlive?: boolean;
+    /** A `Deno.desktop` with no `addEventListener` (a runtime without the listener API). */
+    noListenerApi?: boolean;
   } = {},
 ) {
   FakeWin.made = [];
   const main = new FakeWin();
   const api = quittingApi(() => FakeWin.made);
+  if (options.noListenerApi) {
+    Object.defineProperty(api, "addEventListener", { value: undefined });
+  }
   const warnings: string[] = [];
   const s = setUpDesktopWindows({
     window: main,
@@ -104,6 +112,8 @@ function setup(
       window: options.menu ?? { newWindow: "/", reopenClosed: true, list: true },
     },
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
+    ...(options.runtimeVersion !== undefined ? { runtimeVersion: options.runtimeVersion } : {}),
+    ...(options.keepAlive !== undefined ? { appSettings: { keepAlive: options.keepAlive } } : {}),
   });
   main.addEventListener("close", (e) => {
     if (s.interceptMainClose(e)) return;
@@ -324,4 +334,70 @@ Deno.test("window menu: desktop.menu is checked at config load and at launch", (
     Error,
     "desktop.menu.window.newWindow",
   );
+});
+
+/** An app-level application-menu click (`Deno.desktop`'s `"menuclick"`). */
+function appClick(api: EventTarget, id: string): void {
+  api.dispatchEvent(new CustomEvent("menuclick", { detail: { id } }));
+}
+
+Deno.test("window menu: a runtime before the app-level menu event takes the clicks from the main window", () => {
+  const older = setup({ runtimeVersion: "3.0.0-denext.13" });
+  // Deno.desktop's event is not listened to: nothing opens.
+  appClick(older.api, "denext:window:new");
+  assertEquals(older.s.windows.list().length, 1);
+  older.main.click("denext:window:new");
+  assertEquals(older.s.windows.list().length, 2);
+  // A new enough runtime whose Deno.desktop has no listener API: still the main window's.
+  const noApi = setup({ runtimeVersion: FIRST_APP_MENU_EVENT_RUNTIME, noListenerApi: true });
+  noApi.main.click("denext:window:new");
+  assertEquals(noApi.s.windows.list().length, 2);
+});
+
+Deno.test("window menu: the app-level menu event drives the menu, and the main window's is not also heard", async () => {
+  const { s, main, api } = setup({ runtimeVersion: FIRST_APP_MENU_EVENT_RUNTIME });
+  appClick(api, "denext:window:new");
+  assertEquals(s.windows.list().map((w) => w.key), ["workspace", "window-1"]);
+  // Never handled twice: the main window's event is not listened to on this runtime.
+  main.click("denext:window:new");
+  assertEquals(s.windows.list().length, 2);
+  // The page's own items still reach the pages, once.
+  const app = s.app!.capability;
+  await app.methods.setAppMenu.handler({
+    menu: [{ label: "File", children: [{ id: "open", label: "Open", enabled: true }] }],
+  }, ctx());
+  appClick(api, "open");
+  main.click("open");
+  assertEquals(await app.methods.take.handler({}, ctx()), [{ source: "menu", id: "open" }]);
+});
+
+Deno.test("window menu: with a non-main window key, its clicks still arrive (app-level event)", () => {
+  const { s, api } = setup({ runtimeVersion: FIRST_APP_MENU_EVENT_RUNTIME });
+  appClick(api, "denext:window:new");
+  const other = FakeWin.made.at(-1)!;
+  other.calls.length = 0;
+  // The other window is key: the runtime delivers on Deno.desktop, not on the main window.
+  appClick(api, `denext:window:focus:${s.windows.byKey("window-1")!.id}`);
+  assertEquals(other.calls, ["show", "focus"]);
+  appClick(api, "denext:window:new");
+  assertEquals(s.windows.list().length, 3);
+});
+
+Deno.test("window menu: Reopen Closed Window and the list keep working after the main window closes (keepAlive)", () => {
+  const { s, main, api } = setup({ runtimeVersion: FIRST_APP_MENU_EVENT_RUNTIME, keepAlive: true });
+  appClick(api, "denext:window:new"); // window-1
+  appClick(api, "denext:window:new"); // window-2
+  assert(FakeWin.made[2].userClose());
+  // The main window goes; the app stays up (keepAlive) and its menu keeps answering.
+  assert(main.userClose());
+  assertEquals(s.windows.list().map((w) => w.key), ["window-1"]);
+  assertEquals(s.menu!.closed().map((c) => c.key), ["window-2"]);
+  appClick(api, "denext:window:reopen");
+  assertEquals(s.windows.list().map((w) => w.key), ["window-1", "window-2"]);
+  const first = FakeWin.made[1];
+  first.calls.length = 0;
+  appClick(api, `denext:window:focus:${s.windows.byKey("window-1")!.id}`);
+  assertEquals(first.calls, ["show", "focus"]);
+  appClick(api, "denext:window:new");
+  assertEquals(s.windows.list().length, 3);
 });

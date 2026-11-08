@@ -521,6 +521,28 @@ export function supportsSidecarIntegrity(version: string): boolean {
   return compareDenoVersions(version, FIRST_SIDECAR_INTEGRITY_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime that delivers the application menu's clicks app-wide: a
+ * `"menuclick"` event on `Deno.desktop` carrying the item's `id`, whichever window is key and
+ * after the main window closed (Brainwires/deno `feat/app-menu-event`, laufey API 55). Before it
+ * the clicks arrive on the main window only.
+ *
+ * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries the event yet. Set this to the
+ * release that does when the runtime pin moves to it.
+ */
+export const FIRST_APP_MENU_EVENT_RUNTIME: string = NEXT_RUNTIME;
+
+/**
+ * Whether the Deno Desktop runtime `version` delivers application-menu clicks on `Deno.desktop`
+ * (from {@linkcode FIRST_APP_MENU_EVENT_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the app-level `"menuclick"` event fires.
+ */
+export function supportsAppMenuEvent(version: string): boolean {
+  return compareDenoVersions(version, FIRST_APP_MENU_EVENT_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 
