@@ -1,9 +1,12 @@
 // Windows Authenticode helpers for the window test's signing phases (`e2e/window-test.ts`): two
 // throwaway self-signed code-signing certificates created at test time in CurrentUser\My (exported
 // to temporary .pfx files whose random passwords live only in this process and the child
-// environments that need them), the signer of each PE file read back with
-// `Get-AuthenticodeSignature`, and, on an elevated runner that opted in, the certificates trusted
-// machine-wide (LocalMachine\Root + TrustedPublisher) for the trusted-update phases, then removed.
+// environments that need them), the signer of each PE file read back from its own embedded
+// signature, and, on an elevated runner that opted in, the certificates trusted machine-wide
+// (LocalMachine\Root + TrustedPublisher) for the trusted-update phases, then removed. A non-admin
+// runner can instead hand the test two such certificates it created and trusted for this job
+// (`KITCHEN_SINK_TRUSTED_CERTS`, see {@linkcode providedTestCerts}); the test then only reads the
+// machine stores.
 //
 // Nothing here touches CurrentUser\Root (adding to it asks the user in a dialog), and every removal
 // matches the thumbprints this run created, never anything else in a store.
@@ -30,9 +33,16 @@ export interface FileSignature {
   readonly path: string;
   /** `Get-AuthenticodeSignature`'s Status (`Valid`, `UnknownError` for an untrusted root, ...). */
   readonly status: string;
-  /** The signer certificate's thumbprint, or `null` when the file is unsigned. */
+  /**
+   * `Get-AuthenticodeSignature` answered from a security catalog, not the file's own signature:
+   * it prefers a catalog that lists the file's hash, and the Authenticode hash leaves the
+   * signature out, so a re-signed copy of a DLL Windows has a catalog for (the VC++ runtime on a
+   * Windows 11 desktop) still reads as Microsoft's. `status` is then the catalog's.
+   */
+  readonly catalog: boolean;
+  /** The embedded signature's signer thumbprint, or `null` when the file carries none. */
   readonly thumbprint: string | null;
-  /** Whether the signature carries a timestamp countersignature. */
+  /** Whether the embedded signature carries a timestamp countersignature. */
   readonly timestamped: boolean;
 }
 
@@ -143,7 +153,9 @@ export async function removeTestCerts(dir: string, certs: readonly TestCert[]): 
 }
 
 /**
- * The Authenticode signature of each file.
+ * The Authenticode signature of each file: the signer and timestamp of the signature embedded in
+ * the file (its PE certificate table, decoded as PKCS #7), which is what the runtime's update check
+ * reads (`WinVerifyTrust` on the file), and `Get-AuthenticodeSignature`'s status.
  *
  * @param dir A private temporary folder.
  * @param files The files.
@@ -159,14 +171,40 @@ export async function fileSignatures(
     dir,
     "signatures",
     [
+      "Add-Type -AssemblyName System.Security",
+      // The PKCS #7 blob of the PE's certificate table (data directory 4, a file offset), or null.
+      "function Embedded([string]$path) {",
+      "  $fs = [IO.File]::OpenRead($path)",
+      "  try {",
+      "    $r = New-Object IO.BinaryReader($fs)",
+      "    $fs.Position = 0x3c; $pe = $r.ReadInt32()",
+      "    $fs.Position = $pe + 24; $magic = $r.ReadUInt16()",
+      "    $fs.Position = $pe + 24 + $(if ($magic -eq 0x20b) { 112 } else { 96 }) + 4 * 8",
+      "    $at = $r.ReadUInt32(); $size = $r.ReadUInt32()",
+      "    if ($at -eq 0 -or $size -le 8) { return $null }",
+      "    $fs.Position = $at; $length = $r.ReadUInt32(); $null = $r.ReadUInt32()",
+      "    $der = $r.ReadBytes([int]$length - 8)",
+      "  } finally { $fs.Dispose() }",
+      // The DER's own length: the table entry may be padded past it.
+      "  $n = $der[1]; $body = 2",
+      "  if ($n -band 0x80) { $k = $n -band 0x7f; $n = 0; for ($i = 0; $i -lt $k; $i++) { $n = $n * 256 + $der[2 + $i] }; $body = 2 + $k }",
+      "  $cms = New-Object System.Security.Cryptography.Pkcs.SignedCms",
+      "  $cms.Decode([byte[]]$der[0..($body + $n - 1)])",
+      "  return $cms",
+      "}",
+      // RFC 3161 (signtool /tr) or a legacy Authenticode countersignature (/t).
+      "$stampOids = '1.3.6.1.4.1.311.3.3.1', '1.2.840.113549.1.9.6'",
       "$files = Get-Content -Raw -LiteralPath $env:KS_LIST | ConvertFrom-Json",
       "$out = foreach ($f in $files) {",
       "  $s = Get-AuthenticodeSignature -LiteralPath $f",
+      "  $cms = Embedded $f",
+      "  $signer = if ($cms) { $cms.SignerInfos[0] } else { $null }",
       "  [pscustomobject]@{",
       "    path = $f",
       '    status = "$($s.Status)"',
-      "    thumbprint = $(if ($s.SignerCertificate) { $s.SignerCertificate.Thumbprint } else { $null })",
-      "    timestamped = [bool]$s.TimeStamperCertificate",
+      "    catalog = \"$($s.SignatureType)\" -eq 'Catalog'",
+      "    thumbprint = $(if ($signer) { $signer.Certificate.Thumbprint } else { $null })",
+      "    timestamped = [bool]($signer -and @($signer.UnsignedAttributes | Where-Object { $stampOids -contains $_.Oid.Value }).Count)",
       "  }",
       "}",
       "ConvertTo-Json -InputObject @($out) -Compress",
@@ -195,6 +233,65 @@ export async function isElevated(dir: string): Promise<boolean> {
       ".IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
   );
   return text === "True";
+}
+
+/**
+ * The two certificates a non-admin runner created and trusted machine-wide for this job:
+ * `<dir>/certs.json` lists `{ label, subject, thumbprint, pfx, password, cer }` for `A` and `B`
+ * (the runner's pre-job scrub writes it, readable by the job's account only, and removes the
+ * certificates from every store after the job). `null` when `dir` is unset.
+ *
+ * @param dir `KITCHEN_SINK_TRUSTED_CERTS`.
+ * @returns A and B, in that order.
+ */
+export async function providedTestCerts(dir: string | undefined): Promise<TestCert[] | null> {
+  if (!dir) return null;
+  const listed = JSON.parse(await Deno.readTextFile(join(dir, "certs.json"))) as TestCert[];
+  const certs = ["A", "B"].map((label) => {
+    const cert = listed.find((c) => c.label === label);
+    if (!cert) throw new Error(`${join(dir, "certs.json")} has no certificate ${label}`);
+    for (const key of ["subject", "thumbprint", "pfx", "password", "cer"] as const) {
+      if (typeof cert[key] !== "string" || cert[key] === "") {
+        throw new Error(`${join(dir, "certs.json")}: certificate ${label} has no ${key}`);
+      }
+    }
+    if (!/^[0-9A-F]{40}$/.test(cert.thumbprint)) {
+      throw new Error(`certificate ${label}'s thumbprint ${JSON.stringify(cert.thumbprint)}`);
+    }
+    return { ...cert, label };
+  });
+  return certs;
+}
+
+/**
+ * The thumbprints among `certs` that are NOT in both machine stores a trusted test certificate
+ * needs (reading them needs no administrator).
+ *
+ * @param dir A private temporary folder.
+ * @param certs The certificates.
+ * @returns `<label> (<store>)` for each one missing.
+ */
+export async function untrustedTestCerts(
+  dir: string,
+  certs: readonly TestCert[],
+): Promise<string[]> {
+  const text = await powershell(
+    dir,
+    "trusted",
+    [
+      "$thumbs = $env:KS_THUMBS -split ','",
+      `$missing = foreach ($store in ${TRUST_STORES.map((s) => `'${s}'`).join(", ")}) {`,
+      '  $have = @(Get-ChildItem -Path "Cert:\\LocalMachine\\$store" | ForEach-Object { $_.Thumbprint })',
+      '  foreach ($t in $thumbs) { if ($have -notcontains $t) { "$t $store" } }',
+      "}",
+      "ConvertTo-Json -InputObject @($missing) -Compress",
+    ].join("\n"),
+    { KS_THUMBS: thumbList(certs) },
+  );
+  return (JSON.parse(text) as string[]).map((entry) => {
+    const [thumb, store] = entry.split(" ");
+    return `${certs.find((c) => c.thumbprint === thumb)?.label ?? thumb} (LocalMachine\\${store})`;
+  });
 }
 
 /** The machine stores a trusted test certificate goes into (and comes out of). */

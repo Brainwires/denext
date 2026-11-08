@@ -1,6 +1,7 @@
 // `@denext/backend` webhook retention against a REAL Postgres: settled events past their
 // retention are deleted (delivered after `deliveredMs`, failed after `failedMs`), pending ones and
-// younger ones are kept, through the `backend_webhooks_0002` index.
+// younger ones are kept, through the `backend_webhooks_0002` index. And the background
+// deliverer's next wait reads the earliest pending event's due time.
 //
 // Opt-in, on denext's Deno runtime (the built-in `Deno.SQL`):
 //
@@ -11,7 +12,7 @@
 // Ignored without DENEXT_TEST_POSTGRES_URL or Deno.SQL; tests/backend-webhooks.test.ts covers the
 // statements and the schedule against a scripted client.
 
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { builtinSql } from "../src/server/postgres.ts";
 import { installPostgres } from "../packages/backend/src/postgres.ts";
 import {
@@ -19,6 +20,7 @@ import {
   installWebhooks,
   purgeWebhookEvents,
   resolveWebhooks,
+  startWebhookDelivery,
 } from "../packages/backend/src/webhooks.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 
@@ -71,6 +73,50 @@ Deno.test({
         "select 1 from pg_indexes where indexname = 'webhook_events_settled_idx'",
       );
       assertEquals(index.length, 1);
+    } finally {
+      installWebhooks(undefined);
+      installPostgres(undefined);
+      await env.drop();
+    }
+  },
+});
+
+Deno.test({
+  name: `webhooks on a real Postgres: an idle deliverer wakes when the next retry is due${
+    reason ? ` (skipped: ${reason})` : ""
+  }`,
+  ignore: reason !== undefined,
+  async fn() {
+    const env = await postgresEnvironment(true, SQL!, URL_!);
+    try {
+      installPostgres({ sql: env.app, rls: { migrate: false } });
+      const config = resolveWebhooks({ pollIntervalMs: 60_000, retention: false });
+      installWebhooks(config);
+      const info = console.info;
+      console.info = () => {};
+      try {
+        await ensureWebhooksMigrated(env.app);
+      } finally {
+        console.info = info;
+      }
+      await env.app.unsafe(
+        "insert into supabase_functions.webhook_events (hook, payload, next_attempt_at) " +
+          "values ('later', '{}', now() + interval '7 seconds')",
+      );
+      const waits: number[] = [];
+      let armed!: () => void;
+      const first = new Promise<void>((resolve) => armed = resolve);
+      const stop = startWebhookDelivery(config, {
+        set: (_fn, ms) => {
+          waits.push(ms);
+          armed();
+          return ms;
+        },
+        clear: () => {},
+      });
+      await first;
+      await stop();
+      assert(waits[0] > 5000 && waits[0] <= 7000, `waits until the retry is due: ${waits}`);
     } finally {
       installWebhooks(undefined);
       installPostgres(undefined);

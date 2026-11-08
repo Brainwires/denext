@@ -10,7 +10,8 @@
 // on this machine's private address (a whole file, and one aborted mid-transfer that must leave no
 // partial file), and an `<a download>` blob export and a `Content-Disposition: attachment` response
 // whose save dialogs the runner answers (Return in the folder LAUFEY_TEST_DOWNLOAD_DIR points them
-// at: xdotool, System Events or SendKeys), each file checked where it landed. Then the full-app
+// at: xdotool or System Events; on Windows UI Automation presses the dialog's Save button), each
+// file checked where it landed. Then the full-app
 // update itself: a
 // copy of the app downloads, verifies and installs a second build (99.0.0, same throwaway key), the
 // new version's trial launch deliberately does not confirm, and the next launch must roll it back.
@@ -21,8 +22,10 @@
 // `desktopSignWindows`, and every PE file of each bundle must carry the expected signer. The
 // "trusted update" phases need the certificates trusted machine-wide, which only an elevated
 // process can do without a dialog, so they run only elevated AND with
-// KITCHEN_SINK_TRUST_TEST_ROOT=1 (the CI workflow's hosted runner); elsewhere they are skipped
-// with the reason. There the A-signed 1.0.0 must refuse the B-signed build (`os_signature`), stage
+// KITCHEN_SINK_TRUST_TEST_ROOT=1 (the CI workflow's hosted runner), or on a non-admin runner that
+// created and trusted the two certificates for the job itself (KITCHEN_SINK_TRUSTED_CERTS: a
+// folder whose certs.json lists them; the test then signs with those and only reads the machine
+// stores); elsewhere they are skipped with the reason. There the A-signed 1.0.0 must refuse the B-signed build (`os_signature`), stage
 // the A-signed one as `authenticode`, install it and confirm it, and the relaunch must stay on it.
 // The certificates are removed from every store at the end. Timestamps come from
 // DENEXT_SIGN_TIMESTAMP_URL (default DigiCert's); when that server is unreachable the builds are
@@ -57,7 +60,7 @@
 // `appCapabilities()`, `windowCapabilities()`, which the output also prints), and with
 // GITHUB_STEP_SUMMARY set a Markdown table of them, skips listed with their reasons.
 
-import { DELIMITER, dirname, fromFileUrl, join, resolve } from "@std/path";
+import { basename, DELIMITER, dirname, fromFileUrl, join, resolve } from "@std/path";
 import {
   generateOtaKeyPair,
   importOtaSigningKey,
@@ -82,10 +85,12 @@ import {
   ensureSigntool,
   fileSignatures,
   isElevated,
+  providedTestCerts,
   removeTestCerts,
   type TestCert,
   timestampServerReachable,
   trustTestCerts,
+  untrustedTestCerts,
   untrustTestCerts,
 } from "./windows-signing.ts";
 import pin from "../../../src/build/desktop-runtime-pin.json" with { type: "json" };
@@ -426,6 +431,11 @@ interface Signing {
   skipped: string | null;
   /** The certificates created (removed again by {@link cleanupSigning}). */
   certs: TestCert[];
+  /**
+   * The runner's own certificates (`KITCHEN_SINK_TRUSTED_CERTS`), already trusted machine-wide
+   * and removed by the runner: none created, none trusted or removed here.
+   */
+  provided: TestCert[] | null;
   /** The private temporary folder holding the .pfx / .cer files and PowerShell scripts. */
   tmp: string | null;
 }
@@ -451,6 +461,7 @@ function skippedSigning(reason: string): Signing {
     builds: null,
     skipped: reason,
     certs: [],
+    provided: null,
     tmp: null,
   };
 }
@@ -493,7 +504,7 @@ async function assertSignedBy(
   if (wrong.length) {
     const say = (s: (typeof sigs)[number]) =>
       `${s.path.slice(bundle.length + 1)}: ${s.thumbprint ?? "unsigned"}` +
-      `${s.timestamped ? "" : ", no timestamp"} (${s.status})`;
+      `${s.timestamped ? "" : ", no timestamp"} (${s.status}${s.catalog ? " from a catalog" : ""})`;
     throw new Error(
       `${wrong.length} of ${files.length} PE files not signed by ${cert.label} ` +
         `(${cert.thumbprint}): ${wrong.map(say).join("; ")}`,
@@ -522,6 +533,7 @@ async function signPhase(publicKey: string): Promise<Signing> {
     builds: null,
     skipped: null,
     certs: [],
+    provided: null,
     tmp,
   };
   currentSigning = signing;
@@ -551,17 +563,24 @@ async function signPhase(publicKey: string): Promise<Signing> {
   let b!: TestCert;
   await step(SIGN_CHECKS.setup, async () => {
     if (!signtool) throw new Error("signtool not found (install the Windows SDK)");
-    a = await createTestCert(tmp, "A");
-    signing.certs.push(a);
-    b = await createTestCert(tmp, "B");
-    signing.certs.push(b);
+    const provided = await providedTestCerts(Deno.env.get("KITCHEN_SINK_TRUSTED_CERTS"));
+    if (provided) {
+      signing.provided = provided;
+      [a, b] = provided;
+    } else {
+      a = await createTestCert(tmp, "A");
+      signing.certs.push(a);
+      b = await createTestCert(tmp, "B");
+      signing.certs.push(b);
+    }
     timestamp = await timestampServerReachable(TIMESTAMP_URL);
     if (!timestamp) {
       log(
         `WARNING: the timestamp server ${TIMESTAMP_URL} is unreachable: signing WITHOUT timestamps`,
       );
     }
-    return `${signtool}; A ${a.thumbprint}, B ${b.thumbprint}; ` +
+    return `${signtool}; ${signing.provided ? "the runner's " : ""}A ${a.thumbprint}, ` +
+      `B ${b.thumbprint}; ` +
       (timestamp
         ? `timestamps from ${TIMESTAMP_URL}`
         : `${TIMESTAMP_URL} unreachable: no timestamps`);
@@ -656,6 +675,9 @@ async function copyTree(from: string, to: string): Promise<void> {
 
 // --- the stand-in browser ----------------------------------------------------------------------
 
+/** The argument of the stand-in browser's warm-up run, which records nothing (its `WARM_UP`). */
+const BROWSER_STUB_WARM_UP = "--kitchen-sink-warm-up";
+
 /** Put a stand-in for the system browser opener in `<scratch>/bin` (first on the app's PATH): it
  * records the URL it is asked to open in `bin/browser.log` and opens nothing. */
 async function installBrowserStub(): Promise<string> {
@@ -673,6 +695,25 @@ async function installBrowserStub(): Promise<string> {
       opener,
       "e2e/browser-stub.ts",
     ]);
+    // Run the new executable once before the app needs it: the first start of a freshly built,
+    // unsigned program can wait on the antivirus's verdict (Defender's cloud check holds it up to
+    // 10 s or more on a desktop that has it on), longer than a check waits for the browser to be
+    // asked. The verdict is kept for the file, so the app's launch of it is a plain start.
+    const started = performance.now();
+    const warm = await new Deno.Command(opener, {
+      args: [BROWSER_STUB_WARM_UP],
+      stdout: "null",
+      stderr: "piped",
+    })
+      .output();
+    if (!warm.success) {
+      throw new Error(
+        `the stand-in browser failed its warm-up run: ${
+          new TextDecoder().decode(warm.stderr).trim()
+        }`,
+      );
+    }
+    log(`the stand-in browser's first run took ${Math.round(performance.now() - started)} ms`);
   } else {
     await Deno.writeTextFile(
       opener,
@@ -857,30 +898,138 @@ export function privateLanAddress(
   return found?.address ?? null;
 }
 
-/** The keystrokes that answer a save dialog on one OS: Return accepts, Escape dismisses. */
+/** The commands that answer a save dialog on one OS: one accepts it, one dismisses it. */
 export interface SaveDialogKeys {
-  readonly driver: "xdotool" | "osascript" | "sendkeys";
+  readonly driver: "xdotool" | "osascript" | "uia";
   readonly accept: readonly string[];
   readonly dismiss: readonly string[];
 }
 
 /**
- * How the runner presses a key in the focused save dialog on `os`: `xdotool` (X11), System Events
- * through `osascript` (macOS: the runner needs the Accessibility permission, which hosted runners
- * grant) and WScript.Shell's `SendKeys` (Windows); `null` elsewhere.
+ * A Windows PowerShell script that presses one button of `app`'s file dialog through UI
+ * Automation: it waits up to `waitSeconds` for a dialog (`#32770`) among the windows of the
+ * processes named `app` (a top-level one, or one owned by the app's window, which UI Automation
+ * lists under its owner), then for the button among the dialog's descendants: the one with
+ * `automationId` (`1`: Save, `2`: Cancel; the Common Item Dialog's Save can be a split button),
+ * else the one named Save / Cancel. It presses it with its InvokePattern. When no such button
+ * shows (a localized dialog, a tree UI Automation does not expose), it sends the dialog the
+ * command its keyboard would: `WM_COMMAND` with the dialog's default button (`DM_GETDEFID`, else
+ * `IDOK`) to save, `IDCANCEL` to cancel, and says so on stderr with the buttons it did see.
+ * Unlike a key press it needs no focus: a key goes to the foreground window, which on a desktop
+ * the runner's job did not start from (an autologon console session, a scheduled task) need not
+ * be the dialog. It fails with the reason when there is no such process or dialog. Progress
+ * records are off, so its stderr is the reason, not PowerShell's serialized progress.
+ *
+ * @param app The app's process name (its executable's name without `.exe`).
+ * @param automationId The button's AutomationId.
+ * @param waitSeconds How long to wait for the dialog to appear.
  */
-export function saveDialogKeys(os: string): SaveDialogKeys | null {
+export function windowsDialogButtonScript(
+  app: string,
+  automationId: "1" | "2",
+  waitSeconds: number,
+): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(app)) throw new Error(`not a process name: ${app}`);
+  const names = automationId === "1" ? "'Save', '&Save'" : "'Cancel'";
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes",
+    "$A = [System.Windows.Automation.AutomationElement]",
+    "$Type = [System.Windows.Automation.ControlType]",
+    "$Children = [System.Windows.Automation.TreeScope]::Children",
+    "$Descendants = [System.Windows.Automation.TreeScope]::Descendants",
+    "function Is($property, $value) { New-Object System.Windows.Automation.PropertyCondition($property, $value) }",
+    `$ids = @(Get-Process -Name '${app}' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })`,
+    `if ($ids.Count -eq 0) { [Console]::Error.WriteLine('no ${app} process'); exit 3 }`,
+    `$deadline = (Get-Date).AddSeconds(${waitSeconds})`,
+    "$dialog = $null",
+    "while ($null -eq $dialog -and (Get-Date) -lt $deadline) {",
+    "  foreach ($id in $ids) {",
+    "    foreach ($w in $A::RootElement.FindAll($Children, (Is ($A::ProcessIdProperty) ([int]$id)))) {",
+    "      if ($w.Current.ClassName -eq '#32770') { $dialog = $w; break }",
+    "      $owned = $w.FindFirst($Children, (Is ($A::ClassNameProperty) '#32770'))",
+    "      if ($null -ne $owned) { $dialog = $owned; break }",
+    "    }",
+    "    if ($null -ne $dialog) { break }",
+    "  }",
+    "  if ($null -eq $dialog) { Start-Sleep -Milliseconds 250 }",
+    "}",
+    "if ($null -eq $dialog) {",
+    `  [Console]::Error.WriteLine('no file dialog of ${app} within ${waitSeconds} s'); exit 4`,
+    "}",
+    "$buttonish = New-Object System.Windows.Automation.OrCondition(" +
+    "(Is ($A::ControlTypeProperty) $Type::Button), (Is ($A::ControlTypeProperty) $Type::SplitButton))",
+    `$names = @(${names})`,
+    "$seen = @()",
+    // The dialog's window comes before its controls: give them up to 3 s more past the deadline.
+    "$buttonDeadline = (Get-Date).AddSeconds(3)",
+    "if ($buttonDeadline -lt $deadline) { $buttonDeadline = $deadline }",
+    "$button = $null",
+    "while ($true) {",
+    "  $buttons = @($dialog.FindAll($Descendants, $buttonish))",
+    `  $button = $buttons | Where-Object { $_.Current.AutomationId -eq '${automationId}' } | Select-Object -First 1`,
+    "  if ($null -eq $button) { $button = $buttons | Where-Object { $names -contains $_.Current.Name } | Select-Object -First 1 }",
+    "  if ($null -ne $button -or (Get-Date) -ge $buttonDeadline) {",
+    `    $seen = @($buttons | ForEach-Object { "'$($_.Current.Name)' id=$($_.Current.AutomationId) $($_.Current.ControlType.ProgrammaticName)" })`,
+    "    break",
+    "  }",
+    "  Start-Sleep -Milliseconds 250",
+    "}",
+    "$pattern = $null",
+    "if ($null -ne $button -and $button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {",
+    "  $pattern.Invoke(); exit 0",
+    "}",
+    // The keyboard's command, by message: it needs neither the button's element nor focus.
+    "Add-Type -Namespace KitchenSink -Name User32 -MemberDefinition (" +
+    `'[DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr w, uint m, IntPtr a, IntPtr b);' + ` +
+    `'[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr w, uint m, IntPtr a, IntPtr b);')`,
+    "$hwnd = [IntPtr]$dialog.Current.NativeWindowHandle",
+    "if ($hwnd -eq [IntPtr]::Zero) {",
+    `  [Console]::Error.WriteLine("the dialog '$($dialog.Current.Name)' has no button ${automationId} and no window handle (buttons: $($seen -join ', '))"); exit 5`,
+    "}",
+    automationId === "1"
+      ? "$def = [KitchenSink.User32]::SendMessage($hwnd, 0x400, [IntPtr]::Zero, [IntPtr]::Zero).ToInt64(); " +
+        "$command = if ((($def -shr 16) -band 0xFFFF) -eq 0x534B) { $def -band 0xFFFF } else { 1 }"
+      : "$command = 2",
+    "if (-not [KitchenSink.User32]::PostMessage($hwnd, 0x111, [IntPtr]$command, [IntPtr]::Zero)) {",
+    `  [Console]::Error.WriteLine("the dialog '$($dialog.Current.Name)' refused WM_COMMAND $command (buttons: $($seen -join ', '))"); exit 5`,
+    "}",
+    `[Console]::Error.WriteLine("no invocable button ${automationId} in the dialog '$($dialog.Current.Name)' (buttons: $($seen -join ', ')): sent WM_COMMAND $command")`,
+  ].join("\n");
+}
+
+/** A script as `powershell -EncodedCommand` takes it: UTF-16LE, base64. */
+export function encodePowerShell(script: string): string {
+  let binary = "";
+  for (let i = 0; i < script.length; i++) {
+    const unit = script.charCodeAt(i);
+    binary += String.fromCharCode(unit & 0xff, unit >> 8);
+  }
+  return btoa(binary);
+}
+
+/**
+ * How the runner answers the save dialog on `os`: a key press in the focused dialog with
+ * `xdotool` (X11) or System Events through `osascript` (macOS: the runner needs the Accessibility
+ * permission, which hosted runners grant), and on Windows the dialog's own Save / Cancel button
+ * through UI Automation ({@linkcode windowsDialogButtonScript}; `app` names the app's process);
+ * `null` elsewhere.
+ */
+export function saveDialogKeys(os: string, app = "KitchenSink"): SaveDialogKeys | null {
   const osascript = (code: number) => [
     "osascript",
     "-e",
     `tell application "System Events" to key code ${code}`,
   ];
-  const sendKeys = (keys: string) => [
+  // -EncodedCommand (UTF-16LE, base64): the multi-line script reaches PowerShell with no
+  // command-line quoting in between.
+  const uia = (automationId: "1" | "2", waitSeconds: number) => [
     "powershell",
     "-NoProfile",
     "-NonInteractive",
-    "-Command",
-    `(New-Object -ComObject WScript.Shell).SendKeys('${keys}')`,
+    "-EncodedCommand",
+    encodePowerShell(windowsDialogButtonScript(app, automationId, waitSeconds)),
   ];
   switch (os) {
     case "linux":
@@ -892,15 +1041,19 @@ export function saveDialogKeys(os: string): SaveDialogKeys | null {
     case "darwin":
       return { driver: "osascript", accept: osascript(36), dismiss: osascript(53) };
     case "windows":
-      return { driver: "sendkeys", accept: sendKeys("~"), dismiss: sendKeys("{ESC}") };
+      // Save waits for the dialog (a fresh profile's first one is slow to open); Cancel only
+      // cleans up after three tries, so it barely waits.
+      return { driver: "uia", accept: uia("1", 8), dismiss: uia("2", 2) };
     default:
       return null;
   }
 }
 
 /** This OS's save dialog keys when they can be pressed here, else why not. */
-async function saveDialogDriver(): Promise<{ keys: SaveDialogKeys | null; skip: string | null }> {
-  const keys = saveDialogKeys(OS);
+async function saveDialogDriver(
+  app: string,
+): Promise<{ keys: SaveDialogKeys | null; skip: string | null }> {
+  const keys = saveDialogKeys(OS, app);
   if (!keys) return { keys: null, skip: `no save dialog driver for ${OS}` };
   if (OS === "linux") {
     if (linuxSessionType() !== "x11") return { keys: null, skip: "xdotool needs an X11 session" };
@@ -934,9 +1087,9 @@ async function press(cmd: readonly string[]): Promise<string> {
     success: false,
     stderr: new TextEncoder().encode(err.message),
   }));
-  return out.success
-    ? "ok"
-    : `failed: ${new TextDecoder().decode(out.stderr).trim().slice(0, 200)}`;
+  const said = new TextDecoder().decode(out.stderr).trim().slice(0, 300);
+  if (!out.success) return `failed: ${said}`;
+  return said ? `ok (${said})` : "ok";
 }
 
 /** A file's content once its size stops changing (the engine may still be writing it). */
@@ -952,26 +1105,28 @@ async function settledText(file: string): Promise<string | null> {
 }
 
 /**
- * Answer the save dialog a page download opened: press Return (up to three times, the dialog may
- * still be opening) until `name` lands in {@link DOWNLOAD_DIR}, else Escape so no dialog stays up.
+ * Answer the save dialog a page download opened: press Return / Save (up to three times, the
+ * dialog may still be opening) until `name` lands in {@link DOWNLOAD_DIR}, else Escape / Cancel so
+ * no dialog stays up.
  */
 async function answerSaveDialog(
   keys: SaveDialogKeys,
   name: string,
 ): Promise<{ landed: boolean; text: string | null; detail: string }> {
   const file = join(DOWNLOAD_DIR, name);
+  const [yes, no] = keys.driver === "uia" ? ["Save", "Cancel"] : ["Return", "Escape"];
   const steps: string[] = [];
   for (let attempt = 0; attempt < 3 && !(await exists(file)); attempt++) {
     await sleep(attempt === 0 ? 2000 : 1000);
     if (await exists(file)) break;
-    steps.push(`Return ${await press(keys.accept)}`);
+    steps.push(`${yes} ${await press(keys.accept)}`);
     const until = Date.now() + 5000;
     while (Date.now() < until && !(await exists(file))) await sleep(200);
   }
   if (await exists(file)) {
     return { landed: true, text: await settledText(file), detail: steps.join("; ") };
   }
-  steps.push(`Escape ${await press(keys.dismiss)}`);
+  steps.push(`${no} ${await press(keys.dismiss)}`);
   const there = await Array.fromAsync(Deno.readDir(DOWNLOAD_DIR)).catch(() => []);
   steps.push(`${DOWNLOAD_DIR} holds ${there.map((e) => e.name).join(", ") || "nothing"}`);
   return { landed: false, text: null, detail: `${keys.driver}: ${steps.join("; ")}` };
@@ -1396,6 +1551,7 @@ async function trustedUpdate(signing: Signing | null, bin: string, updateBase: s
     const why = signing?.skipped ?? "the sign phase failed (see its checks)";
     return { reports: skippedTrusted(`no signed builds: ${why}`), problems: [] };
   }
+  if (signing.provided) return await preTrustedUpdate(signing, bin, updateBase);
   if (!(await isElevated(signing.tmp))) {
     return {
       reports: skippedTrusted("needs an elevated runner to trust a test root"),
@@ -1456,6 +1612,44 @@ async function trustedUpdate(signing: Signing | null, bin: string, updateBase: s
       problems.push(`removing the trusted test certificates failed: ${err}`);
     });
   }
+  return { reports, problems };
+}
+
+/**
+ * The trusted update with the runner's own certificates (`KITCHEN_SINK_TRUSTED_CERTS`, a non-admin
+ * runner): they must already be in LocalMachine\Root + TrustedPublisher and the A-signed 1.0.0
+ * must read Valid; nothing is trusted or removed here (the runner removes them after the job).
+ */
+async function preTrustedUpdate(signing: Signing, bin: string, updateBase: string) {
+  const reports: Report[] = [];
+  const problems: string[] = [];
+  const started = performance.now();
+  const check = (status: "pass" | "fail", detail: string) =>
+    reports.push({
+      phase: "trusted-update",
+      pid: Deno.pid,
+      expected: [TRUST_CHECK],
+      results: [{ name: TRUST_CHECK, status, detail, ms: Math.round(performance.now() - started) }],
+    });
+  try {
+    const missing = await untrustedTestCerts(signing.tmp!, signing.provided!);
+    if (missing.length) {
+      throw new Error(`the runner's certificates are not trusted: ${missing.join(", ")}`);
+    }
+    const [sig] = await fileSignatures(signing.tmp!, [await executableOf(signing.builds!.v1)]);
+    if (sig.status !== "Valid") throw new Error(`the A-signed 1.0.0 still reads ${sig.status}`);
+    check(
+      "pass",
+      "A and B in LocalMachine\\Root + TrustedPublisher (the runner's, for this job); the A-signed " +
+        "1.0.0 reads Valid",
+    );
+  } catch (err) {
+    check("fail", err instanceof Error ? err.message : String(err));
+    return { reports, problems };
+  }
+  const up = await trustedLaunches(signing.builds!.v1, bin, updateBase);
+  reports.push(...up.reports);
+  problems.push(...up.problems);
   return { reports, problems };
 }
 
@@ -1772,7 +1966,7 @@ async function main(): Promise<void> {
     const signed = withUpdate ? signing?.builds ?? null : null;
     const updates = await startUpdateServer(keys, bundle, update, signed);
     const downloads = await startDownloadServer(lanHost);
-    const driver = await saveDialogDriver();
+    const driver = await saveDialogDriver(basename(exe).replace(/\.exe$/i, ""));
     dialogKeys = driver.keys;
     runnerDownloads = {
       base: downloads.base,

@@ -1097,7 +1097,12 @@ const securityChecks: Check[] = [
         async () => ((await kitchen.browserLog({})).lines as string[] | null)?.includes(url),
         "the stand-in browser to be asked for the URL",
         10_000,
-        async () => `${JSON.stringify((await kitchen.browserLog({})).lines)}; session ${settled}`,
+        async () => {
+          const seen = await kitchen.browserLog({}) as { lines: string[] | null; error?: string };
+          return `${JSON.stringify(seen.lines)}${
+            seen.error ? ` (reading it: ${seen.error})` : ""
+          }; session ${settled}`;
+        },
       );
       // The system browser reports no cancellation: the page shows its Cancel overlay meanwhile.
       const overlay = document.getElementById("denext-auth-cancel");
@@ -1821,8 +1826,8 @@ interface SavedDownload {
 
 /**
  * A page download through the runtime's save dialog: ask the runner to answer the dialog (Return,
- * accepting the proposed name in the folder it pointed the dialogs at), start the download with
- * `start`, and return the file's content once it landed there.
+ * or its Save button on Windows, accepting the proposed name in the folder it pointed the dialogs
+ * at), start the download with `start`, and return the file's content once it landed there.
  */
 async function saveThroughDialog(
   setup: KitchenSetup,

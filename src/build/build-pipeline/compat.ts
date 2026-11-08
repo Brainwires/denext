@@ -73,6 +73,7 @@ async function compatFlight(ctx: BuildContext): Promise<void> {
     flightFile: FLIGHT_BUNDLE_FILE,
     usesLive: ctx.usesLive,
     usesLiveView: ctx.usesLiveView,
+    usesNextIntl: ctx.usesNextIntl,
     classRuntime: ctx.classRuntime,
     usesActivity: ctx.usesActivity,
     usesViewTransition: ctx.usesViewTransition,

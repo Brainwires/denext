@@ -11,10 +11,12 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import {
   backoffDelay,
   deliverWebhooks,
   installWebhooks,
+  nextPollDelay,
   purgeWebhookEvents,
   resolveWebhooks,
   signWebhook,
@@ -31,6 +33,29 @@ import { type ScriptedSql, scriptedSql } from "./helpers/scripted-sql.ts";
 
 const SECRET = "whsec_" + btoa("0123456789abcdef");
 
+/** The deliverer's timer seam, driven by hand: the waits it asked for and the armed callback. */
+function handTimers() {
+  let pending: (() => void) | undefined;
+  const waits: number[] = [];
+  return {
+    waits,
+    armed: () => pending !== undefined,
+    fire: () => {
+      const fn = pending;
+      pending = undefined;
+      fn?.();
+    },
+    set(fn: () => void, ms: number) {
+      pending = fn;
+      waits.push(ms);
+      return fn;
+    },
+    clear(id: unknown) {
+      if (id === pending) pending = undefined;
+    },
+  };
+}
+
 Deno.test("resolveWebhooks: defaults and validation", () => {
   const r = resolveWebhooks(
     {},
@@ -40,6 +65,13 @@ Deno.test("resolveWebhooks: defaults and validation", () => {
     [r.secret, r.maxAttempts, r.backoffMs, r.maxBackoffMs, r.pollIntervalMs, r.delivery, r.migrate],
     ["from-env", 8, 10_000, 3_600_000, 5000, "auto", true],
   );
+  assertEquals(r.maxPollIntervalMs, 60_000);
+  assertEquals(
+    resolveWebhooks({ pollIntervalMs: 90_000 }).maxPollIntervalMs,
+    90_000,
+    "never below pollIntervalMs",
+  );
+  assertThrows(() => resolveWebhooks({ maxPollIntervalMs: 0 }), TypeError, "maxPollIntervalMs");
   assertEquals(
     resolveWebhooks({ hooks: { a: { url: "https://h.test/x" } } }).hooks.a.url,
     "https://h.test/x",
@@ -302,21 +334,11 @@ Deno.test("startWebhookDelivery: a pass at start, on NOTIFY and on the timer; st
   installPostgres({ sql, rls: { migrate: false } });
   const config = resolveWebhooks({ pollIntervalMs: 20, migrate: false });
   installWebhooks(config);
-  let tick: (() => void) | undefined;
-  const realSetInterval = globalThis.setInterval;
-  globalThis.setInterval = ((fn: () => void) => {
-    tick = fn;
-    return 0;
-  }) as unknown as typeof setInterval;
-  let stop!: () => Promise<void>;
-  try {
-    stop = startWebhookDelivery(config);
-  } finally {
-    globalThis.setInterval = realSetInterval;
-  }
+  const timers = handTimers();
+  const stop = startWebhookDelivery(config, timers);
   try {
     await reached(1); // the pass at start, held at the gate
-    assert(tick, "the poll timer is armed");
+    assert(!timers.armed(), "no timer while a pass runs");
     assert(sql.listeners.has(WEBHOOK_CHANNEL));
     const notify = sql.listeners.get(WEBHOOK_CHANNEL)!;
     notify();
@@ -325,14 +347,15 @@ Deno.test("startWebhookDelivery: a pass at start, on NOTIFY and on the timer; st
     await reached(2);
     await settled();
     assertEquals(passes, 2, "two NOTIFYs during a pass: one more pass");
-    tick!();
+    assert(timers.armed(), "the poll timer is armed after the pass");
+    timers.fire();
     await reached(3); // the timer
     await settled();
     assertEquals(passes, 3);
     await stop();
     assert(!sql.listeners.has(WEBHOOK_CHANNEL), "unlistened");
+    assert(!timers.armed(), "stop clears the timer");
     notify();
-    tick!();
     await settled();
     assertEquals(passes, 3, "no pass after stop");
   } finally {
@@ -353,7 +376,7 @@ Deno.test("startWebhookDelivery: a failing pass is logged, not thrown", async ()
   const warn = console.warn;
   console.warn = (line: string) => warnings.push(line);
   try {
-    const stop = startWebhookDelivery(config);
+    const stop = startWebhookDelivery(config, handTimers());
     // stop() waits for the pass in flight (the one at start), so its warning is written.
     await stop();
     assertStringIncludes(warnings.join("\n"), "database down");
@@ -468,18 +491,8 @@ Deno.test("startWebhookDelivery: the retention cleanup runs after a pass, at mos
   installPostgres({ sql, rls: { migrate: false } });
   const config = resolveWebhooks({ migrate: false });
   installWebhooks(config);
-  let tick: (() => void) | undefined;
-  const realSetInterval = globalThis.setInterval;
-  globalThis.setInterval = ((fn: () => void) => {
-    tick = fn;
-    return 0;
-  }) as unknown as typeof setInterval;
-  let stop!: () => Promise<void>;
-  try {
-    stop = startWebhookDelivery(config);
-  } finally {
-    globalThis.setInterval = realSetInterval;
-  }
+  const timers = handTimers();
+  const stop = startWebhookDelivery(config, timers);
   const settled = async (n: number) => {
     for (let i = 0; i < 50 && passes < n; i++) await new Promise((r) => setTimeout(r, 1));
     await new Promise((r) => setTimeout(r, 5));
@@ -487,12 +500,114 @@ Deno.test("startWebhookDelivery: the retention cleanup runs after a pass, at mos
   try {
     await settled(1);
     assertEquals(purges, 1, "the first pass cleans up");
-    tick!();
+    timers.fire();
     await settled(2);
     assertEquals([passes, purges], [2, 1], "not again within the hour");
   } finally {
     await stop();
     installWebhooks(undefined);
     installPostgres(undefined);
+  }
+});
+
+Deno.test("nextPollDelay: back off while a LISTENing deliverer finds nothing, reset on work", () => {
+  const config = resolveWebhooks({ migrate: false });
+  let wait = config.pollIntervalMs;
+  const idle: number[] = [];
+  for (let i = 0; i < 6; i++) idle.push(wait = nextPollDelay(config, wait, false, true, null));
+  assertEquals(idle, [10_000, 20_000, 40_000, 60_000, 60_000, 60_000]);
+  assertEquals(nextPollDelay(config, wait, true, true, null), 5000, "work resets the wait");
+  assertEquals(nextPollDelay(config, 60_000, false, false, null), 5000, "no LISTEN: no back-off");
+  assertEquals(nextPollDelay(config, 40_000, false, true, 12_345.2), 12_346, "a retry due sooner");
+  assertEquals(nextPollDelay(config, 40_000, false, true, 0), 1, "one already due");
+  assertEquals(nextPollDelay(config, 5000, false, true, 3_600_000), 10_000);
+});
+
+Deno.test("startWebhookDelivery: an idle LISTENing deliverer waits longer each pass; work resets it", async () => {
+  let leased = 0;
+  let dueIn: number | null = null;
+  const sql = scriptedSql((text) => {
+    if (text.includes("WITH due AS")) {
+      if (leased === 0) return [];
+      leased--;
+      return [{
+        id: "1",
+        hook: "nowhere",
+        method: "POST",
+        headers: {},
+        params: {},
+        timeout_ms: null,
+        payload: {},
+        attempts: 1,
+      }];
+    }
+    if (text.includes("min(next_attempt_at)")) return [{ ms: dueIn }];
+    return [];
+  }, { withListen: true });
+  installPostgres({ sql, rls: { migrate: false } });
+  const config = resolveWebhooks({ migrate: false, retention: false });
+  installWebhooks(config);
+  const timers = handTimers();
+  const armed = async () => {
+    for (let i = 0; i < 100 && !timers.armed(); i++) await new Promise((r) => setTimeout(r, 1));
+    assert(timers.armed());
+  };
+  const stop = startWebhookDelivery(config, timers);
+  try {
+    await armed(); // the pass at start: nothing, and the client LISTENs
+    for (let i = 0; i < 5; i++) {
+      timers.fire();
+      await armed();
+    }
+    assertEquals(timers.waits, [10_000, 20_000, 40_000, 60_000, 60_000, 60_000]);
+    leased = 1; // a NOTIFY brings work (an event with no target: recorded as failed)
+    sql.listeners.get(WEBHOOK_CHANNEL)!();
+    await armed();
+    assertEquals(timers.waits.at(-1), 5000, "work resets the wait");
+    dueIn = 7_000; // a retry due in 7 s caps the next wait
+    timers.fire();
+    await armed();
+    assertEquals(timers.waits.at(-1), 7_000);
+  } finally {
+    await stop();
+    installWebhooks(undefined);
+    installPostgres(undefined);
+  }
+});
+
+Deno.test("startWebhookDelivery: its timer never keeps the process alive", async () => {
+  // A program that starts the deliverer and never stops it must still exit on its own.
+  const script = `
+    import { installPostgres } from ${
+    JSON.stringify(import.meta.resolve("../packages/backend/src/postgres.ts"))
+  };
+    import { installWebhooks, resolveWebhooks, startWebhookDelivery } from ${
+    JSON.stringify(import.meta.resolve("../packages/backend/src/webhooks.ts"))
+  };
+    import { scriptedSql } from ${JSON.stringify(import.meta.resolve("./helpers/scripted-sql.ts"))};
+    installPostgres({ sql: scriptedSql(() => []), rls: { migrate: false } });
+    const config = resolveWebhooks({ migrate: false, retention: false });
+    installWebhooks(config);
+    startWebhookDelivery(config);
+  `;
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      "--no-check",
+      "--config",
+      // A file path, not the URL's pathname (`/C:/...` on Windows, which Deno can't open).
+      fromFileUrl(new URL("../deno.json", import.meta.url)),
+      script,
+    ],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
+  try {
+    const { code, stderr } = await child.output();
+    assertEquals(code, 0, new TextDecoder().decode(stderr));
+  } finally {
+    clearTimeout(timeout);
   }
 });

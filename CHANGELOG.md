@@ -8,6 +8,180 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-11-08
+
+### Added
+
+- **`denext job install` installs a project's scheduled jobs in the OS scheduler.** Each job with
+  a `schedule` (its own, or from `scheduledJobs` in the config) becomes one entry that runs
+  `denext job <name>` in the project directory. On macOS that is a launchd agent, on Linux a
+  systemd timer (or the user's crontab when no systemd user manager runs), and on Windows a Task
+  Scheduler task, so the jobs run without a server. `--system` uses the machine's scheduler and
+  still runs the jobs as the installing user, and `--dry-run` prints the files and commands without
+  changing anything. Every entry is marked with the project's id: installing again replaces the
+  project's entries, and `--uninstall` removes only them. Schedules stay UTC. systemd timers are
+  written in UTC. For launchd, cron and Task Scheduler the schedule is shifted to local time; in a
+  zone with daylight saving time the entry fires at every local time the schedule can map to and
+  runs the job behind the new `denext job <name> --if-due <cron>` guard. A schedule whose day of
+  the month or month would move to another local day is refused with the field named, and so is
+  one with more calendar entries or triggers than the scheduler allows. See
+  https://denext.dev/docs/jobs#os-scheduler.
+- **`denext/markdown`: the first-party Markdown renderer, public.** `renderMarkdown(source,
+  options?)` returns HTML and `<Markdown source={…} components={{ h1: MyH1, a: MyLink, code:
+  MyCode }} />` renders the same document as denext elements, each element swappable for an app's
+  own component (a `code` override also gets `inline` and a fenced block's `lang`; a tag name
+  renames the element). It is the renderer content collections' `.md` entries already used, so it
+  keeps their safety: raw HTML escaped by default (`html: "sanitize"` keeps allowlisted HTML,
+  `sanitizeHtml()` runs the sanitizer alone), `javascript:` / `vbscript:` / `data:` link and image
+  URLs dropped after entity decoding, and the link-label attribute-injection fix
+  (GHSA-3q88-358h-83j3) in both render paths. New options: `headingIds: false`,
+  `allowDataImages: true` (a Markdown image with a base64 PNG / GIF / JPEG / WebP `data:` URL, never
+  SVG and never a link) and `urlPolicy(url, kind)`, which can refuse more links and images but
+  never allow a script URL. `<Markdown>` has no hooks and renders in Server and Client Components;
+  it builds elements from the rendered document, never an HTML string. Docs:
+  https://denext.dev/docs/markdown.
+- **Deno Desktop on Windows reports the microphone and camera privacy switches.**
+  `appCapabilities()` from `denext/desktop/app` has `microphoneAccess` / `cameraAccess`
+  (`"allowed"`, `"denied"`, or `null` when no switch is set; `"unknown"` before the runtime has
+  them) and `microphoneAccessReason` / `cameraAccessReason`, which name the switch that refuses
+  (the device-wide one, the user's "Microphone access", or "Let desktop apps access your
+  microphone") and where it is in Settings. In a desktop window `checkPermission("microphone")` /
+  `("camera")` from `denext/mobile` reads `"blocked"` while the switch is off, and
+  `requestPermission` returns that without prompting. The runtime's window (laufey) refuses such
+  a request itself with `NotAllowedError`, as macOS does, instead of granting it and leaving the
+  engine to fail to open the device. It reads the switches at each request, so turning one back on
+  takes effect without a relaunch. This needs the Deno Desktop runtime after 3.0.0-denext.13; on
+  older runtimes the new facts read `"unknown"`. The docs now say that microphone and camera
+  capture is packaged-only (runtime 3.0.0-denext.10+) and what each OS adds
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **`denext mobile doctor --store | --release` flags an outdated `DenextTransfer` plugin**
+  (`transfer-generations`): file-transfer files from an older template generation than this denext
+  writes, and on Android one from before generation 6 (where two transfers could share one saved
+  request-headers file) says so. Re-run `denext mobile add file-transfer` and ship a new binary.
+
+### Changed
+
+- **A `build --compile` binary turns its baked idle trim off through the runtime, once the runtime
+  can.** With `DENEXT_IDLE_TRIM=0` in its environment, a binary on a runtime that reads
+  `DENO_UNSTABLE_IDLE_TRIM` again when a trim is due sets it to `0` and starts no timer; on the
+  runtimes released so far it still wakes its event loop at half the idle delay so it never trims,
+  and that timer stays the fallback when the variable can't be set. The runtime check is gated on
+  `FIRST_IDLE_TRIM_ENV_OFF_RUNTIME`, a placeholder above every release until the toolchain pin
+  moves to the runtime that ships the change, so nothing changes yet.
+- **An idle webhooks deliverer wakes rarely (`@denext/backend`).** Under `delivery: "auto"` it
+  polled every `pollIntervalMs` (5 s) forever on a timer that kept the process alive. The
+  trigger's NOTIFY already wakes it at once, so the poll is a safety net now: `pollIntervalMs`
+  after a pass that found work, doubling up to the new `maxPollIntervalMs` (60 s) while passes
+  find nothing, never later than the earliest pending event is due; a client without `listen()`
+  keeps the fixed interval. The timer is unref'd, and the plugin's teardown still waits for a pass
+  in flight.
+
+### Fixed
+
+- **Soft-navigation prefetches no longer fetch a page twice, and same-page hash links no longer
+  prefetch the page that is showing (#105).** The server redirects every page URL to its
+  `trailingSlash` spelling (`/today` to `/today/` with the option on, `/docs/` to `/docs` with it
+  off), so a `<Link>` written the other way was fetched once for the redirect and again for the
+  page. Prefetches and soft navigations now ask for the server's spelling directly, from
+  `trailingSlash` in the page's hydration data, with the same exemptions as the redirect (the
+  root, `/_denext` paths, files). A page no denext server rendered keeps its URLs as written. The
+  hash is no longer part of the prefetch, so links to one page with different hashes share a
+  single fetch, and a link such as `/#about` on `/` is not prefetched at all.
+- **A framework root without a trailing slash resolves the runtime entries under it (#106).**
+  `runtimeEntryPoints("/a/denext")`, and a `frameworkRoot` passed to the runtime prebuild, resolved
+  every entry under `/a/` because the last path segment was dropped. A root given as a path or a
+  URL now gets its trailing slash added.
+- **`@denext/backend` hardening: `db({ as })` and `Prefer`.** A request identity handed to
+  `db({ as })` (and `identityScope()`) must carry the role `anon`, `authenticated` or
+  `service_role`; any other role is a `TypeError` before a statement runs, and
+  `isRequestIdentity()` answers `false` for it. The auto-REST `Prefer` header reads its own
+  tokens only, so `constructor` / `toString` / `__proto__` are unknown tokens (ignored, or a
+  `PGRST122` under `handling=strict`), never a preference.
+- **`denext toolchain status --verify` is tested on a content hash alone.** A new test changes a
+  `typescript-check/` file to a same-size stub and puts the stamped mtime back, so only the
+  re-hash `--verify` does can catch it; the language-server test's changed stub now differs in
+  size too, so no detection in the suite rides on a file's mtime.
+- **The project-verb listing key reads the same way whether or not the cache already holds it.**
+  Reading the key another process made first now goes through the same read as an existing key,
+  so a restored Deno cache and a fresh one run (and cover) the same code; a key file too short
+  to be one is still neither used nor replaced, and no listing is trusted under it.
+- **`denext ui`'s JSR search no longer times out before it dials on a loaded machine.** Its
+  five-second deadline was armed when `fetch` was called, but a fetch dials only when the event
+  loop next polls it, so a UI process that was busy or starved of CPU past the deadline aborted
+  the search with no connection made ("timed out"). The deadline now runs from the moment the
+  request is dispatched (the loop's next turn), for searches, package metadata and config reads
+  alike, and still covers the body read.
+- **next-intl compat: `NextIntlClientProvider` is a client boundary.** Rendered from a root layout
+  (a Server Component), its context never reached the `"use client"` components below it, so a
+  `useTranslations()` there threw `no <NextIntlClientProvider> found` in the browser. The
+  provider still provides the context on the server, so Server Components below it read it as
+  before, and now renders the framework client reference `denext#NextIntlClientProvider` with its
+  `locale`, `messages`, `timeZone`, `now` and `formats`: the browser resolves it to the same
+  provider, on the page root and around every `client:*` island carved beneath it. Function props
+  (`onError`, `getMessageFallback`) are dropped on the client, with a dev warning, as next-intl
+  documents. The Flight entry registers the boundary only when the app renders the provider (a
+  build scan), so other apps bundle none of the next-intl compat. `denext/next-intl` exports the
+  boundary as `NextIntlClientBoundary`, for that entry; apps keep rendering the provider.
+- **`denext migrate` pins npm dependencies at their installed versions and keeps an existing
+  `node_modules`.** It pinned the floor of each package.json range (`"^6.42.0"` installed as
+  6.48.0 became `npm:openai@6.42.0`), and under `nodeModulesDir: "auto"` Deno then installed a
+  second tree of those older versions into `node_modules/.deno`. A pin now takes the installed
+  package's version (its `node_modules`, else `package-lock.json` / `pnpm-lock.yaml`, else the
+  range floor as before), and the App Router and React Router paths write
+  `nodeModulesDir: "manual"` when `node_modules` holds every pin at its pinned version.
+- **`denext migrate` carries a next.config wrapped by next-intl's `createNextIntlPlugin` and wires
+  the request config.** The plugin loads a native file watcher, so evaluating the config failed
+  (`NotCapable: Requires ffi`) and every key (`basePath`, `redirects`, `rewrites`, `headers`, …)
+  was left for a hand port; nothing imported `i18n/request.ts` either, so `getRequestConfig()`
+  never registered. The next.config evaluator (shared with `denext ui`'s next.config panel) now
+  stubs `next-intl/plugin`, in ESM and CommonJS configs, recording the request config it names,
+  and migrate adds a side-effect import of that file (or next-intl's default
+  `./(src/)i18n/request.*`) to each root layout that lacks one. `--check` lists the layouts.
+- **The compat build honors the import-map aliases `denext migrate` writes.** The `nodeResolve`
+  resolver claimed every bare import it could find on disk ahead of the import map, so a package
+  migrate aliases to denext (`next-intl`, `server-only`, `better-sqlite3`) was bundled from npm
+  whenever it was still installed — with next-intl, every page failed with "`getTranslations` is
+  not supported in Client Components". Without the npm package, the `jsr:` alias reached the
+  deno-loader, which failed without a lockfile. An alias to one of denext's own subpaths now
+  resolves exactly as that `denext/…` specifier (the prebuilt runtime, one copy of denext's
+  hooks and contexts, or the server-only external); any other alias to `jsr:`, a URL or a file
+  follows the import map; `npm:` entries and a dependency's own imports resolve from
+  `node_modules` as before.
+- **next-intl compat: `useTranslations()`, `useFormatter()` and the provider's value are
+  referentially stable.** They were rebuilt on every render, so an effect keyed on the translator
+  (`useCallback(load, [t])` + `useEffect(() => load(), [load])`) ran on every render and a
+  fetch inside it looped. Each is now memoized on its inputs (namespace, locale, messages, time
+  zone, formats), as in next-intl.
+- **A compat build on a JSR-installed or binary denext no longer fails on `jsr:@denext/og`.** The
+  prebuilt compat runtime kept denext's codec packages (`@denext/og`, `@denext/photon`,
+  `@denext/avif`) external only in their bare spelling, while JSR publishes them as
+  `jsr:@denext/og@^x.y.z`, so an app whose `middleware.ts` imported `next/server` failed with
+  `readfile '<app>/.denext/server/runtime/jsr:@denext/og@…'`. Both spellings now stay external.
+- **The `tailwind` config block compiles a Tailwind v3 project with its own v3 CLI.** It ran the
+  bundled v4 binary even when `node_modules/tailwindcss` is 3.x, so a v3 app's build failed on
+  v3-only utilities ("Cannot apply unknown utility class `border-border`"). The block now detects
+  the installed version the same way a `?url` stylesheet import already did.
+- **`denext crash-report test` no longer waits forever on a self-test child that hangs.** The
+  toolchain's `deno --version` it runs is killed after 60 s, and the test fails saying so.
+- **`denext profile --android` no longer hangs on an unresponsive device or WebView.** Each `adb`
+  call is killed after 60 s, and the DevTools `/json/list` request and WebSocket connect are bounded
+  by the run's timeout (60 s by default), as each CDP command already was; the forward is removed
+  either way.
+- **A fresh Deno Desktop runtime download no longer hangs on a stalled github.com.** The default
+  provenance check's `gh auth status` is given 20 s (past it, the provenance is reported as not
+  checked, as for a signed-out `gh`) and `gh attestation verify` 180 s (past it, the download is
+  refused with how to retry or rely on the SHA-256 pin alone).
+- **`@denext/backend`'s `s3()` storage driver no longer waits forever on a stalled store.** Each
+  call to S3 / R2 / MinIO gets `requestTimeoutMs` (new, default 5 minutes; `0` restores no limit)
+  for its answer's headers, then fails with a `storage:` error; a download's body still streams
+  without a deadline.
+- **The `pty` desktop capability on Windows says it is unsupported, not that the program failed.**
+  The runtime's `Deno.openPty` throws `NotSupported` on Windows; `spawnPty()` now rejects
+  `unsupported` (it said `spawn_failed`, "the program could not be started"), `denext desktop
+  doctor` warns about a Windows build with `pty` on, and `denext desktop add pty` says terminals are
+  not on Windows yet. Messages and docs name `3.0.0-denext.12` as the first runtime with terminals
+  (there is no `3.0.0-denext.11` release).
+
 ## [4.13.1] - 2026-11-07
 
 ### Changed
@@ -21347,7 +21521,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.14.0...development
+[4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
 [4.13.0]: https://jsr.io/@denext/denext@4.13.0
 [4.12.0]: https://jsr.io/@denext/denext@4.12.0

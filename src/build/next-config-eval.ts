@@ -40,6 +40,71 @@ if (typeof cfg === "function") cfg = await cfg("phase-production-build", { defau
 cfg = await cfg;
 `;
 
+/** Where the evaluator's plugin stand-ins record their calls (a `globalThis` key). */
+const PLUGIN_CALLS_KEY = "denext.nextConfigPluginCalls";
+
+/**
+ * A JavaScript expression, for a program's translation code, that evaluates to the calls of
+ * the stubbed config plugins (see {@link CONFIG_PLUGIN_STUBS}): `{ name, arg }` each, in order,
+ * where `name` is the plugin's module (`"next-intl/plugin"`) and `arg` what the config passed.
+ */
+export const CONFIG_PLUGIN_CALLS = `(globalThis[Symbol.for(${
+  JSON.stringify(PLUGIN_CALLS_KEY)
+})] ?? [])`;
+
+/**
+ * The source of a stand-in plugin: records `(arg)`, returns the identity config wrapper.
+ *
+ * @param nameExpr A JavaScript expression for the plugin's module name.
+ */
+function stubPluginSource(nameExpr: string): string {
+  return `(arg) => {
+  const key = Symbol.for(${JSON.stringify(PLUGIN_CALLS_KEY)});
+  (globalThis[key] ??= []).push({ name: ${nameExpr}, arg });
+  return (config = {}) => config;
+}`;
+}
+
+/**
+ * Config plugins the evaluator replaces with a stand-in: each only wires build tooling around
+ * the config object, and loading the real one fails in the evaluator. `next-intl/plugin`
+ * (`createNextIntlPlugin`) loads a native file watcher (`NotCapable: Requires ffi`) and only
+ * points next-intl at the app's request config, which the stand-in records instead. ESM
+ * configs reach a stand-in through the evaluator's import map, CommonJS ones through Node's
+ * module cache ({@link STUB_REQUIRE_CACHE}).
+ */
+const CONFIG_PLUGIN_STUBS: readonly string[] = ["next-intl/plugin"];
+
+/** The import-map entries that send each stubbed plugin to its `data:` stand-in module. */
+function stubImports(): Record<string, string> {
+  return Object.fromEntries(
+    CONFIG_PLUGIN_STUBS.map((name) => [
+      name,
+      `data:text/javascript,${
+        encodeURIComponent(`export default ${stubPluginSource(JSON.stringify(name))};`)
+      }`,
+    ]),
+  );
+}
+
+/**
+ * Runs before the config loads: a CommonJS config's `require("next-intl/plugin")` returns the
+ * stand-in, seeded into Node's module cache under the file the package would load. A plugin the
+ * project does not have installed is skipped (the config fails as it would anyway).
+ */
+const STUB_REQUIRE_CACHE = `
+{
+  const { createRequire } = await import("node:module");
+  const req = createRequire(Deno.args[0]);
+  for (const name of ${JSON.stringify(CONFIG_PLUGIN_STUBS)}) {
+    let id;
+    try { id = req.resolve(name); } catch { continue; }
+    const stub = ${stubPluginSource("name")};
+    req.cache[id] = { id, filename: id, loaded: true, exports: stub, children: [], paths: [] };
+  }
+}
+`;
+
 /** What {@linkcode evalNextConfigProgram} runs. */
 export interface NextConfigEvalOptions {
   /**
@@ -320,11 +385,12 @@ export async function evalNextConfigProgram(
   // config can't read (no file, no argv, no env), so a config that prints its own marker
   // line — to plant keys or code in what the caller writes — can't forge the result.
   const marker = `${options.marker}${crypto.randomUUID()}:`;
-  const program = MASK_MACHINE_ENV + options.program.replaceAll(options.marker, marker);
+  const program = MASK_MACHINE_ENV + STUB_REQUIRE_CACHE +
+    options.program.replaceAll(options.marker, marker);
   // stdout carries the result; stderr is discarded unless the evaluation fails, then the
   // evaluator runs once more with it piped for the error text (see quietThenExplain: a quiet
   // stderr pipe held for a child's whole life starves other children's reads on Windows).
-  const isolation = await configIsolation(dir, root);
+  const isolation = await configIsolation(dir, root, stubImports());
   const evaluate = async (
     stderr: StderrMode,
   ): Promise<Deno.CommandOutput | NextConfigEvalResult> => {

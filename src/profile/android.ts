@@ -57,22 +57,37 @@ export interface DevtoolsTarget {
   description?: string;
 }
 
+/** How long one `adb` invocation may run before it is killed (ms). */
+const ADB_TIMEOUT_MS = 60_000;
+
 /**
- * Runs the `adb` binary (`$ADB` when set).
+ * Runs the `adb` binary (`$ADB` when set), each invocation killed past `timeoutMs` (an
+ * unauthorized or wedged device can leave adb waiting forever).
  *
  * @param adb The binary.
+ * @param timeoutMs The deadline of one invocation.
  * @returns A runner.
  */
-export function adbRunner(adb = Deno.env.get("ADB") || "adb"): AdbRunner {
+export function adbRunner(
+  adb = Deno.env.get("ADB") || "adb",
+  timeoutMs: number = ADB_TIMEOUT_MS,
+): AdbRunner {
   return async (args) => {
     let out: Deno.CommandOutput;
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       // Until adb exits: the adb server it may start on first use keeps its pipes open.
-      out = await runToExit(adb, { args: [...args] });
+      out = await runToExit(adb, { args: [...args], signal });
     } catch {
       throw new Error(
         `denext profile --android: ${adb} is not on the PATH (install the Android SDK ` +
           "platform-tools, or point $ADB at adb).",
+      );
+    }
+    if (signal.aborted) {
+      throw new Error(
+        `denext profile --android: \`adb ${args.join(" ")}\` did not finish within ` +
+          `${timeoutMs / 1000} s (is the device connected and authorized?).`,
       );
     }
     const dec = new TextDecoder();
@@ -256,8 +271,20 @@ export class CdpConnection {
   static open(url: string, timeoutMs = 60_000): Promise<CdpConnection> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
-      ws.onopen = () => resolve(new CdpConnection(ws, timeoutMs));
-      ws.onerror = () => reject(new Error(`${PREFIX} could not connect to ${url}.`));
+      // The connect is bounded too: a forwarded socket nobody answers never opens or errors.
+      const timer = setTimeout(() => {
+        ws.onopen = ws.onerror = null;
+        ws.close();
+        reject(new Error(`${PREFIX} connecting to ${url} timed out after ${timeoutMs} ms.`));
+      }, timeoutMs);
+      ws.onopen = () => {
+        clearTimeout(timer);
+        resolve(new CdpConnection(ws, timeoutMs));
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error(`${PREFIX} could not connect to ${url}.`));
+      };
     });
   }
 
@@ -393,9 +420,15 @@ export function remotePage(conn: CdpConnection) {
   return { page, cdp };
 }
 
-/** List the forwarded port's pages. */
-async function listTargets(port: number, fetchFn: typeof fetch): Promise<DevtoolsTarget[]> {
-  const res = await fetchFn(`http://127.0.0.1:${port}/json/list`);
+/** List the forwarded port's pages, within `timeoutMs`. */
+async function listTargets(
+  port: number,
+  fetchFn: typeof fetch,
+  timeoutMs: number,
+): Promise<DevtoolsTarget[]> {
+  const res = await fetchFn(`http://127.0.0.1:${port}/json/list`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok) throw new Error(`${PREFIX} /json/list answered ${res.status}.`);
   return await res.json() as DevtoolsTarget[];
 }
@@ -441,7 +474,7 @@ export async function profileAndroid(
   }
   let conn: CdpConnection | undefined;
   try {
-    const target = pickPage(await listTargets(port, fetchFn));
+    const target = pickPage(await listTargets(port, fetchFn, options.timeoutMs ?? 60_000));
     const origin = new URL(target.url).origin;
     if (origin === "null") throw new Error(`${PREFIX} the page (${target.url}) has no origin.`);
     conn = await CdpConnection.open(socketUrl(target, port), options.timeoutMs);

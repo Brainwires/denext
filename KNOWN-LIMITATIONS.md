@@ -654,7 +654,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
-- **Terminals (`pty`) need runtime 3.0.0-denext.11** (`Deno.openPty`); under an older runtime
+- **Terminals (`pty`) need runtime 3.0.0-denext.12 or later** (`Deno.openPty`); under an older runtime
   every call rejects `unsupported`. The pinned runtime (3.0.0-denext.13) has no terminals on Windows
   yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
@@ -704,6 +704,19 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   / `camera` turn on. No other origin can be granted; `denext desktop package` warns and `denext
   doctor` reports a deno.json grant that differs
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **Microphone and camera capture works only in a packaged app, on Deno Desktop runtime
+  3.0.0-denext.10 or later.** `denext desktop package` writes the grant, macOS's usage strings and
+  its device entitlements; `denext desktop run` / `dev` windows have none, so from that runtime
+  they refuse `getUserMedia` (`NotAllowedError`). Test capture in the browser (`denext dev`) or a
+  packaged build. The OS then has its own say. macOS asks once per app (TCC), and an unsigned or
+  ad-hoc signed build may be refused without asking. On Windows the privacy switches (Settings ›
+  Privacy & security › Microphone / Camera, including "Let desktop apps access…") refuse the
+  device. From the runtime after 3.0.0-denext.13 the window refuses up front (`NotAllowedError`),
+  `checkPermission` reads `"blocked"` and `appCapabilities()` reports
+  `microphoneAccess` / `cameraAccess: "denied"` with the switch. Before it, the engine fails to
+  open the device with its own error and nothing reports why. Linux has no OS consent for the
+  devices: the grant is the only gate
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
@@ -720,11 +733,6 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
-- **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
-  5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
-  in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
-  other OSes are not affected. Runtime 3.0.0-denext.10 fixes it (its CEF shutdown ends with `_exit`
-  once the helpers have ended) ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships

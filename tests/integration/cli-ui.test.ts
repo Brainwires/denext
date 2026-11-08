@@ -41,6 +41,8 @@ const DISCOVERY_TIMEOUT_MS = "60000";
 // of its event loop. What the tests assert is that ONE signal drains the server; how fast is
 // not their subject, and a tight bound here has aborted releases on a loaded machine.
 const SHUTDOWN_TIMEOUT_MS = 120_000;
+/** How many searches the online control makes before it gives up on reaching the trap. */
+const ONLINE_SEARCH_ATTEMPTS = 3;
 
 /** The project's config — the fixture the config editor writes into. */
 const CONFIG = `// the app's own config — this comment must survive every write
@@ -877,10 +879,21 @@ async function checkOfflineSearch(ui: Ui): Promise<void> {
 
 /** The control: without `--offline` the same search leaves the process — into the trap. */
 async function checkOnlineSearch(ui: Ui, trap: NetTrap): Promise<void> {
-  const twin = await getJson(ui, "/api/plugins?q=denext");
-  assertEquals(twin.jsr.available, true);
-  assertEquals(twin.jsr.search?.ok, false, "the trap drops the connection, so the search fails");
-  assert(trap.hits > 0, "the trap saw the search — so a zero under --offline means something");
+  // The search's deadline runs from the moment it is dispatched (src/ui/jsr.ts), so a UI process
+  // starved on a loaded machine still dials the trap before it can time out (pinned by
+  // tests/ui-jsr-deadline.test.ts). The control only needs one search to reach the trap, and asks
+  // again if one does not (each try still a failed search, never cached).
+  const reasons: string[] = [];
+  for (let attempt = 0; attempt < ONLINE_SEARCH_ATTEMPTS && trap.hits === 0; attempt++) {
+    const twin = await getJson(ui, "/api/plugins?q=denext");
+    assertEquals(twin.jsr.available, true);
+    assertEquals(twin.jsr.search?.ok, false, "the trap drops the connection, so the search fails");
+    reasons.push(String(twin.jsr.search?.reason));
+  }
+  assert(
+    trap.hits > 0,
+    `the trap saw the search — so a zero under --offline means something (${reasons.join(", ")})`,
+  );
 }
 
 /** A verb run from the panel under `--offline` holds no `net` permission (`--deny-net` wins). */

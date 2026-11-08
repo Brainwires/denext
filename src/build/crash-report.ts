@@ -157,11 +157,14 @@ export interface CrashReportTestOptions {
   readonly runtime: string | undefined;
   /** denext's version (the application name). */
   readonly version: string;
-  /** Run `deno --version` with `env` added; resolves its exit code and standard error. */
+  /**
+   * Run `deno --version` with `env` added; resolves its exit code and standard error, and
+   * `timedOut` when it was killed past its deadline.
+   */
   readonly run?: (
     deno: string,
     env: Record<string, string>,
-  ) => Promise<{ code: number; stderr: string }>;
+  ) => Promise<SelftestRun>;
 }
 
 /** The outcome of `denext crash-report test`. */
@@ -172,19 +175,55 @@ export interface CrashReportTestResult {
   readonly lines: string[];
 }
 
-/** Run `deno --version` with `env` added, its output captured. */
-async function runSelftest(
+/** What one self-test child did. */
+export interface SelftestRun {
+  /** Its exit code (the kill's, when {@linkcode SelftestRun.timedOut}). */
+  readonly code: number;
+  /** Its standard error. */
+  readonly stderr: string;
+  /** Whether it was killed for running past its deadline. */
+  readonly timedOut?: boolean;
+}
+
+/**
+ * How long the self-test child may run (ms). The runtime waits about 5 s on an `https:` POST, so
+ * a child still running well past that is hung, and is killed rather than waited on forever.
+ */
+const SELFTEST_TIMEOUT_MS = 60_000;
+
+/**
+ * Run `deno --version` with `env` added, its output captured; killed past `timeoutMs`.
+ *
+ * @param deno The Deno binary.
+ * @param env The variables to add.
+ * @param timeoutMs The deadline.
+ * @returns Its exit code and standard error, and whether it timed out.
+ */
+export async function runSelftest(
   deno: string,
   env: Record<string, string>,
-): Promise<{ code: number; stderr: string }> {
-  const out = await new Deno.Command(deno, {
+  timeoutMs: number = SELFTEST_TIMEOUT_MS,
+): Promise<SelftestRun> {
+  const child = new Deno.Command(deno, {
     args: ["--version"],
     env,
     stdin: "null",
     stdout: "null",
     stderr: "piped",
-  }).output();
-  return { code: out.code, stderr: new TextDecoder().decode(out.stderr) };
+  }).spawn();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      child.kill("SIGKILL");
+    } catch { /* it exited meanwhile */ }
+  }, timeoutMs);
+  try {
+    const out = await child.output();
+    return { code: out.code, stderr: new TextDecoder().decode(out.stderr), timedOut };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** A file's bytes, or none when it does not exist yet. */
@@ -255,7 +294,16 @@ export async function crashReportTest(
     [CRASH_REPORT_SELFTEST_ENV]: "1",
     ...crashReportAppEnv({ ...options, runtime: "path" }),
   };
-  const { code, stderr } = await (options.run ?? runSelftest)(options.deno, env);
+  const { code, stderr, timedOut } = await (options.run ?? runSelftest)(options.deno, env);
+  if (timedOut) {
+    return {
+      ok: false,
+      lines: [
+        `denext crash-report test: the self-test did not finish within ` +
+        `${SELFTEST_TIMEOUT_MS / 1000} s and was stopped, so it could not be checked`,
+      ],
+    };
+  }
   if (code === 0) {
     const warning = stderr.split("\n").find((l) => l.includes(CRASH_REPORT_URL_ENV));
     return {

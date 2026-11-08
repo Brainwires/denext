@@ -734,7 +734,14 @@ async function compileAppTailwind(
   minify: boolean | undefined,
   cwd: string,
 ): Promise<void> {
-  await compileTailwind({ input: tailwind.input, output: tailwind.output, minify, cwd });
+  // `projectDir` picks the app's own Tailwind v3 CLI over the bundled v4 binary when v3 is installed.
+  await compileTailwind({
+    input: tailwind.input,
+    output: tailwind.output,
+    minify,
+    cwd,
+    projectDir: cwd,
+  });
   if (!tailwind.postprocess) return;
   const css = await Deno.readTextFile(tailwind.output);
   const next = await tailwind.postprocess(css);

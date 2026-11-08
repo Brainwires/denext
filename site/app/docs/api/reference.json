@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.13.1\"",
+          "signature": "VERSION: \"4.14.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16897,7 +16897,7 @@
               "kind": "property",
               "name": "pty",
               "signature": "pty?: boolean | DesktopPtyConfig",
-              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;\n`unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
+              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later, not on Windows yet;\n`unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
             },
             {
               "kind": "property",
@@ -16927,7 +16927,7 @@
               "kind": "property",
               "name": "camera",
               "signature": "camera?: boolean | DesktopMediaCaptureConfig",
-              "doc": "The page's `getUserMedia({ video })` gets the camera, as {@link microphone} the microphone\n(`NSCameraUsageDescription`, `com.apple.security.device.camera`)."
+              "doc": "The page's `getUserMedia({ video })` gets the camera, as `microphone` does the microphone\n(`NSCameraUsageDescription`, `com.apple.security.device.camera`)."
             },
             {
               "kind": "property",
@@ -18107,7 +18107,7 @@
               "kind": "property",
               "name": "key",
               "signature": "key?: string",
-              "doc": "An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`), as\n`windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the\napp support folder as it moves and when it closes, and restored at the next launch (the saved\nposition, and the size unless `width` / `height` set one), clamped onto a display connected\nnow; it is `DesktopWindowRef.key`, found with `windows.byKey`, and in `windows.lastSession()`.\nA window opened with the same key is refused."
+              "doc": "An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`, starting with a\nletter or digit), as\n`windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the\napp support folder as it moves and when it closes, and restored at the next launch (the saved\nposition, and the size unless `width` / `height` set one), clamped onto a display connected\nnow; it is `DesktopWindowRef.key`, found with `windows.byKey`, and in `windows.lastSession()`.\nA window opened with the same key is refused."
             },
             {
               "kind": "property",
@@ -20749,6 +20749,12 @@
               "name": "basePath",
               "signature": "basePath?: string",
               "doc": "The app's basePath (from denext.config), so client `<Link>` can prefix URLs."
+            },
+            {
+              "kind": "property",
+              "name": "trailingSlash",
+              "signature": "trailingSlash?: boolean",
+              "doc": "`true` when the app enforces trailing slashes (denext.config `trailingSlash`), so the client\nprefetches and soft-navigates to the spelling the server serves instead of its 308."
             },
             {
               "kind": "property",
@@ -54360,8 +54366,8 @@
           "slug": "appCapabilities-fn",
           "kind": "function",
           "signature": "appCapabilities(): Promise<AppCapabilities>",
-          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads \"unknown\".",
-          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads `\"unknown\"`.",
+          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads \"unknown\".",
+          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches\n(the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads `\"unknown\"`.",
           "params": [],
           "returns": "The capabilities.",
           "examples": [],
@@ -54510,6 +54516,30 @@
               "name": "passkeysReason",
               "signature": "readonly passkeysReason: string | null",
               "doc": "Linux, when `passkeys` is `null`: why (the runtime's reason), or `null`."
+            },
+            {
+              "kind": "property",
+              "name": "microphoneAccess",
+              "signature": "readonly microphoneAccess: \"allowed\" | \"denied\" | PlatformUnknown | null",
+              "doc": "Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›\nPrivacy & security › Microphone: the device-wide switch, \"Microphone access\" and \"Let desktop\napps access your microphone\"): `\"allowed\"`, or `\"denied\"`, in which case the window refuses\nthe page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`\ncapability on, and `checkPermission(\"microphone\")` reads `\"blocked\"`. `null` when no switch is\nset, and on macOS / Linux. Probed on every call (the user can flip a switch while the app\nruns). `\"unknown\"` before the runtime after 3.0.0-denext.13."
+            },
+            {
+              "kind": "property",
+              "name": "microphoneAccessReason",
+              "signature": "readonly microphoneAccessReason: string | null",
+              "doc": "Windows, when `microphoneAccess` is `\"denied\"`: which switch refuses and where it is."
+            },
+            {
+              "kind": "property",
+              "name": "cameraAccess",
+              "signature": "readonly cameraAccess: \"allowed\" | \"denied\" | PlatformUnknown | null",
+              "doc": "Windows: as `microphoneAccess`, for the camera (Settings › Privacy & security › Camera)."
+            },
+            {
+              "kind": "property",
+              "name": "cameraAccessReason",
+              "signature": "readonly cameraAccessReason: string | null",
+              "doc": "Windows, when `cameraAccess` is `\"denied\"`: which switch refuses and where it is."
             },
             {
               "kind": "property",
@@ -57053,7 +57083,7 @@
           "kind": "function",
           "signature": "checkPermission(name: PermissionName): Promise<PermissionState>",
           "doc": "The current status of a permission, without prompting (see PermissionState for what each status means).",
-          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
+          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`\nwhile the OS's privacy switch for the device is off (the runtime after 3.0.0-denext.13;\n`appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
           "params": [
             {
               "name": "name",

@@ -99,7 +99,7 @@ restart. In production a missing secret is an error the first time a URL is sign
 
 ### Drivers
 
-**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch? })`** talks to
+**`s3({ region, bucket, endpoint?, credentials?, pathStyle?, publicEndpoint?, fetch?, requestTimeoutMs? })`** talks to
 AWS S3, Cloudflare R2, MinIO and other S3-compatible stores over `fetch`, with AWS Signature Version
 4 computed by `crypto.subtle` (no SDK). Every denext bucket is a key prefix in the one S3 bucket:
 `avatars/u1/me.png`. Credentials default to `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
@@ -108,7 +108,9 @@ AWS is addressed virtual-host style, a custom `endpoint` path style; `pathStyle`
 When browsers reach the store under another name than the server does (the Docker stack's
 `http://minio:9000` is only resolvable inside the containers), set `publicEndpoint` (or
 `S3_PUBLIC_ENDPOINT`): every URL handed to a browser — presigned uploads, downloads and multipart
-parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep `endpoint`.
+parts — is signed for that host (SigV4 signs `Host`), while the server's own calls keep `endpoint`. Each of the server's calls waits at most `requestTimeoutMs` (default 5 minutes; `0`: no limit)
+for the store's answer, body upload included (one call sends at most 8 MiB) but not a download's
+body, so a stalled store fails the call instead of holding the request open.
 
 | Store         | Options                                                                             |
 | ------------- | ----------------------------------------------------------------------------------- |
@@ -1759,8 +1761,11 @@ create trigger order_created after insert on orders for each row
   A trigger written for Supabase with a URL instead works only when `allowUrls` lists a prefix of
   it; any other target is recorded as failed and never fetched. Redirects are not followed.
 - **Delivery.** The event is stored in `supabase_functions.webhook_events` in the same transaction
-  as the change, and `denext dev` / `denext start` deliver it at once (NOTIFY) or within
-  `pollIntervalMs`. A non-2xx answer or a network error is retried with exponential backoff
+  as the change, and `denext dev` / `denext start` deliver it at once (NOTIFY). The deliverer
+  also looks on its own, as a safety net for a missed NOTIFY: `pollIntervalMs` (5 s) after a pass
+  that found work, doubling up to `maxPollIntervalMs` (60 s) while passes find nothing, and never
+  later than the next retry is due. A client that cannot LISTEN looks every `pollIntervalMs`. Its
+  timer never keeps the process alive, and shutdown waits for a pass in flight. A non-2xx answer or a network error is retried with exponential backoff
   (`backoffMs`, doubled up to `maxBackoffMs`) until `maxAttempts`, then marked failed. Several app
   instances share the work without sending one event twice at once; delivery is at least once,
   so receivers dedupe on `webhook-id`. `delivery: "manual"` leaves it to `deliverWebhooks()` (from

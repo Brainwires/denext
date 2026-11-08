@@ -411,7 +411,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "onPtyData",
       "onPtyExit",
     ],
-    // Deno.openPty (runtime 3.0.0-denext.11), checked against --allow-run like Deno.Command. The
+    // Deno.openPty (runtime 3.0.0-denext.12), checked against --allow-run like Deno.Command. The
     // defaults shown here; a configured `pty.shells` replaces them (desktopPtyRunPaths).
     os: {
       darwin: { run: PTY_DEFAULT_SHELLS.darwin },
@@ -420,11 +420,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     },
     trust: "full",
     notes:
-      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.11): --allow-run of the allowed shells only",
+      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; not on Windows yet): --allow-run of the allowed shells only",
     manual: [
       "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
       'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
-      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.11 or later; before it every call rejects `unsupported`.",
+      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later; before it every call rejects `unsupported`. On Windows the runtime has no terminals yet: spawnPty() rejects `unsupported` there.",
     ],
   },
   microphone: {
@@ -438,7 +438,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("microphone"),
-      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows asks through Settings › Privacy › Microphone (desktop apps).',
+      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Microphone, "Let desktop apps access your microphone") the window refuses the device and appCapabilities().microphoneAccess reads "denied" with the reason (Deno Desktop runtime after 3.0.0-denext.13). Linux asks nobody.',
     ],
   },
   camera: {
@@ -450,7 +450,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("camera"),
-      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows asks through Settings › Privacy › Camera (desktop apps).',
+      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Camera, "Let desktop apps access your camera") the window refuses the device and appCapabilities().cameraAccess reads "denied" with the reason (Deno Desktop runtime after 3.0.0-denext.13). Linux asks nobody.',
     ],
   },
   passkeys: {

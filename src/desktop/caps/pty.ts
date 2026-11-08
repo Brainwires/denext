@@ -43,7 +43,7 @@ import { createOwnedResources, type OwnedResourcesHost } from "../owned-resource
 import { FIRST_PTY_RUNTIME } from "../../build/deno-version.ts";
 import { isPtyShellFor, type PtyOs, type ResolvedPtyConfig } from "../pty-config.ts";
 
-/** `Deno.openPty`'s options (runtime 3.0.0-denext.11). */
+/** `Deno.openPty`'s options (runtime 3.0.0-denext.12). */
 export interface DenoPtyOptions {
   readonly cmd: string;
   readonly args?: string[];
@@ -61,7 +61,7 @@ export interface DenoPtyStatus {
   readonly signal: string | null;
 }
 
-/** `Deno.Pty` (runtime 3.0.0-denext.11). */
+/** `Deno.Pty` (runtime 3.0.0-denext.12). */
 export interface DenoPty {
   readonly pid: number;
   readonly readable: ReadableStream<Uint8Array>;
@@ -365,18 +365,33 @@ function ownedHost(host: DesktopExtensionHost): OwnedResourcesHost {
   };
 }
 
-/** Open the PTY; the runtime's refusal is `forbidden`, any other failure `spawn_failed`. */
+/** Why the runtime has no terminals on this OS (its `Deno.openPty` throws `NotSupported`). */
+const PTY_PLATFORM_UNSUPPORTED_REASON =
+  "the pty capability is not available on this OS: denext's Deno Desktop runtime has no " +
+  "terminals here yet (Windows)";
+
+/**
+ * Open the PTY; the runtime's refusal is `forbidden`, an OS it has no terminals on
+ * `unsupported`, any other failure `spawn_failed` (the runtime's message stays on the host: it
+ * can name host paths).
+ */
 function startPty(open: OpenPty, options: DenoPtyOptions): DenoPty {
   try {
     return open(options);
   } catch (err) {
-    const denied = err instanceof Error && err.name === "NotCapable";
-    throw new DesktopCapError(
-      denied ? "forbidden" : "spawn_failed",
-      denied
-        ? "pty: the app may not run that program (its --allow-run does not list it)"
-        : "pty: the program could not be started",
-    );
+    const name = err instanceof Error ? err.name : "";
+    if (name === "NotCapable") {
+      throw new DesktopCapError(
+        "forbidden",
+        "pty: the app may not run that program (its --allow-run does not list it)",
+      );
+    }
+    if (name === "NotSupported") {
+      throw new DesktopCapError("unsupported", PTY_PLATFORM_UNSUPPORTED_REASON, {
+        data: { reason: PTY_PLATFORM_UNSUPPORTED_REASON },
+      });
+    }
+    throw new DesktopCapError("spawn_failed", "pty: the program could not be started");
   }
 }
 

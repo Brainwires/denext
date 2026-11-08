@@ -34,6 +34,7 @@ export const NAV: {
       { slug: "monorepo", label: "Monorepos" },
       { slug: "data", label: "Data & caching" },
       { slug: "content-collections", label: "Content collections" },
+      { slug: "markdown", label: "Markdown" },
       { slug: "typed-api", label: "Typed API" },
       { slug: "route-handler-recipes", label: "Route handler recipes" },
       { slug: "openapi", label: "OpenAPI & docs" },

@@ -634,9 +634,13 @@ every `--platform` target included.
   that resolves bare npm specifiers straight from the app's installed
   `node_modules`, honoring `exports` wildcard globs. This is what lets an
   unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
-  `exports` — the reason `denext migrate` never rewrites `package.json`. Set
-  `false` to force app deps back through Deno's strict `npm:` loader (escape
-  hatch).
+  `exports` — the reason `denext migrate` never rewrites `package.json`. An app
+  import that the `deno.json` import map sends anywhere but `npm:` follows the
+  import map, even while that package is still installed; an alias to one of
+  denext's own subpaths (the `jsr:@denext/denext/next-intl`, `server-only`, …
+  entries `denext migrate` writes) is that `denext/…` module, from the prebuilt
+  runtime. A dependency's own imports keep Node resolution. Set `false` to force
+  app deps back through Deno's strict `npm:` loader (escape hatch).
 - **`lists`** — `"denext" | "library"` (default `"library"`). `"denext"` runs
   `@legendapp/list/react` (LegendList's DOM build), imported by the app or its packages, on
   denext's `VirtualList` with LegendList's props, ref methods and cell hooks, in SPA mode and

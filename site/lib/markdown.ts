@@ -1,7 +1,7 @@
 // A small, first-party, zero-dependency Markdown renderer for the docs site.
 //
 // Frontmatter parsing for the docs' `.md` pages; the Markdown → HTML renderer lives in
-// `packages/content-collections/markdown.ts` (first-party, zero-dependency — no npm markdown
+// `src/markdown/render.ts` (`denext/markdown`; first-party, zero-dependency — no npm markdown
 // stack in the tree) and is re-exported from here. Its fenced-code output matches the site's
 // <Code> component exactly.
 
@@ -144,9 +144,9 @@ export function rewriteMdLinks(md: string, sourcePath: string): string {
   }).join("\n");
 }
 
-// The renderer itself is the first-party one @denext/content-collections ships (moved there
-// so content collections and the docs render Markdown identically); re-exported for callers.
-import { renderMarkdown } from "../../packages/content-collections/markdown.ts";
+// The renderer itself is denext's public `denext/markdown` one (which @denext/content-collections
+// re-exports, so content collections and the docs render Markdown identically); re-exported here.
+import { renderMarkdown } from "../../src/markdown/render.ts";
 import { DOC_URLS, exampleRoute, GITHUB_BLOB, GITHUB_REPO, GITHUB_TREE } from "./docs-map.ts";
 export { renderMarkdown };
 

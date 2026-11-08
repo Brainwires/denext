@@ -56,8 +56,17 @@ export interface WebhooksOptions {
   backoffMs?: number;
   /** The longest retry delay in ms (default 3 600 000). */
   maxBackoffMs?: number;
-  /** How often the deliverer looks for due events, in ms (default 5000; NOTIFY wakes it sooner). */
+  /**
+   * How soon the deliverer looks again after a pass that found work, in ms (default 5000). The
+   * trigger's NOTIFY wakes it at once; while the client is LISTENing and passes find nothing, the
+   * wait doubles up to `maxPollIntervalMs`, and it is never longer than the next retry's due time.
+   */
   pollIntervalMs?: number;
+  /**
+   * The longest wait between two passes while the client is LISTENing and nothing is due, in ms
+   * (default 60 000; at least `pollIntervalMs`). Without LISTEN every wait is `pollIntervalMs`.
+   */
+  maxPollIntervalMs?: number;
   /**
    * `"auto"` (default): `denext dev` / `denext start` deliver in the background. `"manual"`: only
    * `deliverWebhooks()` does (from a job, say).
@@ -85,6 +94,7 @@ export interface ResolvedWebhooks {
   backoffMs: number;
   maxBackoffMs: number;
   pollIntervalMs: number;
+  maxPollIntervalMs: number;
   delivery: "auto" | "manual";
   retention: { deliveredMs: number; failedMs: number } | null;
   migrate: boolean;
@@ -150,6 +160,11 @@ export function resolveWebhooks(
     hooks[name] = { ...target, url: checkUrl(target?.url, `webhooks.hooks.${name}.url`) };
   }
   const delivery = o.delivery ?? "auto";
+  const pollIntervalMs = positiveOption(
+    o.pollIntervalMs,
+    5000,
+    "backend(): webhooks.pollIntervalMs",
+  );
   if (delivery !== "auto" && delivery !== "manual") {
     throw new TypeError(`backend(): webhooks.delivery must be "auto" or "manual"`);
   }
@@ -160,7 +175,11 @@ export function resolveWebhooks(
     maxAttempts: positiveOption(o.maxAttempts, 8, "backend(): webhooks.maxAttempts"),
     backoffMs: positiveOption(o.backoffMs, 10_000, "backend(): webhooks.backoffMs"),
     maxBackoffMs: positiveOption(o.maxBackoffMs, 3_600_000, "backend(): webhooks.maxBackoffMs"),
-    pollIntervalMs: positiveOption(o.pollIntervalMs, 5000, "backend(): webhooks.pollIntervalMs"),
+    pollIntervalMs,
+    maxPollIntervalMs: Math.max(
+      pollIntervalMs,
+      positiveOption(o.maxPollIntervalMs, 60_000, "backend(): webhooks.maxPollIntervalMs"),
+    ),
     delivery,
     retention: resolveRetention(o.retention),
     migrate: o.migrate !== false,
@@ -718,18 +737,83 @@ export async function webhookEvents(
   }));
 }
 
+/** Milliseconds until the earliest pending event is due (`null`: none pending). */
+async function nextDueInMs(sql: SqlClient): Promise<number | null> {
+  const [row] = await sql.unsafe<{ ms: unknown }>(
+    "SELECT (extract(epoch FROM min(next_attempt_at) - now()) * 1000)::float8 AS ms " +
+      "FROM supabase_functions.webhook_events WHERE status = 'pending'",
+  );
+  const ms = row?.ms === null || row?.ms === undefined ? NaN : Number(row.ms);
+  return Number.isFinite(ms) ? Math.max(0, ms) : null;
+}
+
 /**
- * The background deliverer (`delivery: "auto"`): a pass every `pollIntervalMs`, and one at once
- * on the trigger's NOTIFY when the client can LISTEN. Passes never overlap.
+ * The wait before the next pass: `pollIntervalMs` after a pass that found work (or one that
+ * failed) or while nothing LISTENs; otherwise the last wait doubled, up to `maxPollIntervalMs`.
+ * Never past the earliest pending event's due time (a retry, or an expired lease).
  *
  * @param config The resolved options.
+ * @param last The previous wait.
+ * @param found Whether the pass found work (`true` for a failed pass too).
+ * @param listening Whether the trigger's NOTIFY reaches the deliverer.
+ * @param dueInMs Milliseconds until the earliest pending event is due, if known.
+ * @returns The wait in ms.
+ */
+export function nextPollDelay(
+  config: ResolvedWebhooks,
+  last: number,
+  found: boolean,
+  listening: boolean,
+  dueInMs: number | null,
+): number {
+  const base = found || !listening
+    ? config.pollIntervalMs
+    : Math.min(Math.max(last * 2, config.pollIntervalMs), config.maxPollIntervalMs);
+  // An event already due (a lease another deliverer let lapse) is taken on the next tick.
+  return dueInMs === null ? base : Math.max(1, Math.min(base, Math.ceil(dueInMs)));
+}
+
+/** The timer seam of {@linkcode startWebhookDelivery} (tests). */
+interface DeliveryTimers {
+  /** Starts a one-shot timer that must not keep the process alive. */
+  set(fn: () => void, ms: number): unknown;
+  /** Clears one. */
+  clear(id: unknown): void;
+}
+
+/** One-shot timers that never keep the process alive: the server's own work does. */
+const unrefTimers: DeliveryTimers = {
+  set: (fn, ms) => {
+    const id = setTimeout(fn, ms);
+    Deno.unrefTimer(id);
+    return id;
+  },
+  clear: (id) => clearTimeout(id as number),
+};
+
+/**
+ * The background deliverer (`delivery: "auto"`): a pass at start, one at once on the trigger's
+ * NOTIFY when the client can LISTEN, and one after each wait ({@linkcode nextPollDelay}: by default
+ * 5 s after work, doubling to 60 s while a LISTENing deliverer finds nothing, never past the next
+ * retry).
+ * Passes never overlap. Its timer is unref'd: it never keeps the process alive, and the plugin's
+ * teardown (`stop`) waits for a pass in flight.
+ *
+ * @param config The resolved options.
+ * @param timers The timer seam (tests).
  * @returns A stop function.
  */
-export function startWebhookDelivery(config: ResolvedWebhooks): () => Promise<void> {
+export function startWebhookDelivery(
+  config: ResolvedWebhooks,
+  timers: DeliveryTimers = unrefTimers,
+): () => Promise<void> {
   let running: Promise<unknown> | undefined;
   let again = false;
   let stopped = false;
+  let listening = false;
   let cleanedAt = -Infinity;
+  let wait = config.pollIntervalMs;
+  let timer: unknown;
   /** The retention cleanup, at most once an hour, after a pass (a failure is retried next pass). */
   const cleanup = async () => {
     if (!config.retention || Date.now() - cleanedAt < CLEANUP_EVERY_MS) return;
@@ -744,25 +828,41 @@ export function startWebhookDelivery(config: ResolvedWebhooks): () => Promise<vo
       );
     }
   };
+  /** One pass; whether it found work (a failed pass counts, so the next one comes soon). */
+  const deliver = async (): Promise<{ found: boolean; dueInMs: number | null }> => {
+    try {
+      const r = await deliverWebhooks();
+      await cleanup();
+      return {
+        found: r.delivered + r.retrying + r.failed > 0,
+        dueInMs: await nextDueInMs(db.service()),
+      };
+    } catch (error) {
+      console.warn(
+        `[@denext/backend] webhooks: delivery pass failed: ${(error as Error)?.message ?? error}`,
+      );
+      return { found: true, dueInMs: null };
+    }
+  };
   const pass = () => {
     if (stopped) return;
     if (running) {
       again = true;
       return;
     }
-    running = deliverWebhooks().then(cleanup).catch((error) => {
-      console.warn(
-        `[@denext/backend] webhooks: delivery pass failed: ${(error as Error)?.message ?? error}`,
-      );
-    }).finally(() => {
+    if (timer !== undefined) timers.clear(timer);
+    timer = undefined;
+    running = deliver().then(({ found, dueInMs }) => {
       running = undefined;
+      if (stopped) return;
       if (again) {
         again = false;
-        pass();
+        return pass();
       }
+      wait = nextPollDelay(config, wait, found, listening, dueInMs);
+      timer = timers.set(pass, wait);
     });
   };
-  const timer = setInterval(pass, config.pollIntervalMs);
   let unlisten: (() => unknown) | undefined;
   try {
     const sql = db.service() as SqlClient & {
@@ -770,6 +870,7 @@ export function startWebhookDelivery(config: ResolvedWebhooks): () => Promise<vo
     };
     sql.listen?.(WEBHOOK_CHANNEL, pass).then((sub) => {
       unlisten = sub?.unlisten?.bind(sub);
+      listening = true;
       if (stopped) unlisten?.();
     }).catch(() => {});
   } catch {
@@ -778,7 +879,8 @@ export function startWebhookDelivery(config: ResolvedWebhooks): () => Promise<vo
   pass();
   return async () => {
     stopped = true;
-    clearInterval(timer);
+    if (timer !== undefined) timers.clear(timer);
+    timer = undefined;
     try {
       await unlisten?.();
     } catch {

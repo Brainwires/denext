@@ -94,6 +94,8 @@ export interface ExportContext {
   readonly usesHrefParams: boolean;
   /** Whether the app may use Preact's `useErrorBoundary` (scan; `__DENEXT_HOOK_BOUNDARIES__`). */
   readonly usesHookBoundaries: boolean;
+  /** Whether the app renders next-intl's provider (scan; the Flight entry registers it). */
+  readonly usesNextIntl: boolean;
   /**
    * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
    * when the app has no global-error.tsx).

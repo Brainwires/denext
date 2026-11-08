@@ -85,11 +85,13 @@ import {
   frameworkFileUrl,
   frameworkImports,
   frameworkRootUrl,
+  importMapOf,
   loaderConfigPath,
   type LocalAliases,
   minDepAgeConfig,
   readFrameworkJson,
   readLocalAliases,
+  readNonNpmAliases,
 } from "./bundle.ts";
 import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
@@ -236,6 +238,19 @@ export function normalizeNextSpecifier(spec: string): string {
 }
 
 /**
+ * A framework root as the base URL its files resolve against: a bare filesystem path becomes a
+ * `file://` URL, and the result always ends in `/`. `new URL("src/x.ts", base)` replaces the
+ * base's last segment, so a root without the slash (`/a/denext`, the path a caller passes as
+ * `frameworkRoot`) resolved every entry under its parent (`/a/src/x.ts`).
+ *
+ * @param root An absolute URL or an absolute filesystem path, with or without the slash.
+ */
+function frameworkBase(root: string): string {
+  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(root) ? root : toFileUrl(root).href;
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+/**
  * denext source entrypoints prebuilt into the shared runtime (one graph). `baseUrl` may be
  * ANY absolute URL — `file://` for a checkout, `https://jsr.io/@denext/denext/<v>/` when the
  * framework runs from JSR (the common production case), `http://` in tests — or a plain
@@ -245,7 +260,7 @@ export function normalizeNextSpecifier(spec: string): string {
  * compat-mode app installed from JSR.
  */
 export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
-  const base = /^[a-z][a-z0-9+.-]*:\/\//i.test(baseUrl) ? baseUrl : toFileUrl(baseUrl).href;
+  const base = frameworkBase(baseUrl);
   const u = (rel: string) => new URL(rel, base).href;
   return {
     ...coreRuntimeEntries(u),
@@ -304,6 +319,9 @@ function coreRuntimeEntries(u: EntryUrl): Record<string, string> {
     "platform": u("src/platform.ts"),
     // `denext/result` — Result values + exhaustive match, usable from "use client" modules.
     "result": u("src/result.ts"),
+    // `denext/markdown` — renderMarkdown / <Markdown>, which builds its elements with the one
+    // jsx runtime; usable from "use client" modules too.
+    "markdown": u("src/markdown/mod.ts"),
   };
 }
 
@@ -429,7 +447,10 @@ function reactNativeRuntimeEntries(u: EntryUrl): Record<string, string> {
 export interface PrebuildOptions {
   /** Output directory for the prebuilt runtime files. */
   outDir: string;
-  /** denext framework root (defaults to the running framework). */
+  /**
+   * denext framework root (defaults to the running framework): a URL or a filesystem path, with
+   * or without a trailing slash.
+   */
   frameworkRoot?: string;
   /** Path to the project's `deno.json` (for the deno loader's resolution). */
   configPath?: string;
@@ -471,7 +492,7 @@ const CODEC_EXTERNALS = [
 export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<string> {
   // A URL base (file:// from a checkout, https:// from JSR) so the runtime entry points and
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
-  const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
+  const rootUrl = frameworkBase(options.frameworkRoot ?? frameworkRootUrl());
   const outDir = resolve(options.outDir);
   // Only what denext's graph imports (the root map's test-only `effect`, `jsqr`, … left out). The
   // app's packages don't enter this framework-only graph, so there is nothing of the app's to
@@ -776,7 +797,8 @@ export function appResolverPlugin(
         // resort (a real npm package won't have a matching file under the root, and the
         // probe only claims an actual file), so `import x from "app/context/y"` works.
         const isRelative = p === "." || p === ".." || p.startsWith("./") || p.startsWith("../");
-        if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
+        // `isAbsolute`: a Windows path (`C:\app\main.js`) has no `/` but is a path too.
+        if ((!isRelative && /\//.test(p) && !p.startsWith("@")) || isAbsolute(p)) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
           const rootProbe = probe(resolve(dirname(configPath), p), args.importer);
@@ -886,6 +908,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/feature": "feature.js",
   "denext/platform": "platform.js",
   "denext/result": "result.js",
+  "denext/markdown": "markdown.js",
   "denext/mobile": "mobile.js",
   // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
   "denext/mobile/clerk": "mobile-clerk.js",
@@ -1027,14 +1050,106 @@ function serverOnlyExternalResolver(): (
  * can surface on any runtime file.) denext's native helper packages
  * (`@denext/og`/`@denext/photon`/`@denext/avif`, used by next/og etc.) are NOT prebuilt
  * runtime files on disk, so they stay external — the platform loader resolves them (jsr,
- * or the local workspace) at load time, same as `node:`.
+ * or the local workspace) at load time, same as `node:`. Both spellings, as in
+ * {@link CODEC_EXTERNALS}: JSR rewrites the published sources' bare imports to
+ * `jsr:@denext/og@^x.y.z`, which a binary or JSR-installed denext prebuilds from.
+ *
+ * @param args The esbuild resolve arguments of an import inside the runtime namespace.
  */
-function resolveWithinRuntime(args: esbuild.OnResolveArgs): esbuild.OnResolveResult | null {
+export function resolveWithinRuntime(
+  args: esbuild.OnResolveArgs,
+): esbuild.OnResolveResult | null {
   if (args.path.startsWith("node:")) return null;
-  if (/^@denext\/(og|photon|avif)(\/|$)/.test(args.path)) {
+  if (/^(?:jsr:)?@denext\/(?:og|photon|avif)(?:@[^/]*)?(?:\/|$)/.test(args.path)) {
     return { path: args.path, external: true };
   }
   return { path: resolve(dirname(args.importer), args.path), namespace: DENEXT_NS };
+}
+
+/** Specifiers the runtime plugin already claims by name (React family, `next/*`, `denext/*`). */
+const CLAIMED_BY_NAME = /^(?:react|react-dom|react-is|next|next-auth|denext)(?:\/|$)/;
+
+/** `jsr:@denext/denext[@range][/sub]` → its subpath (`""` for the root). */
+const DENEXT_JSR = /^jsr:@denext\/denext(?:@[^/]*)?(?:\/(.+))?$/;
+
+/**
+ * The app's import-map entries that alias a package to one of denext's own subpaths —
+ * `"next-intl": "jsr:@denext/denext@^4/next-intl"` (what `denext migrate` writes), or the
+ * framework source file in a local checkout — keyed by the aliased specifier, valued by the
+ * `denext/<sub>` specifier it stands for. Only subpaths the bundles map (a prebuilt runtime file,
+ * or a server-only external); specifiers the runtime plugin claims by name are left out.
+ *
+ * @param configPath The app's `deno.json`.
+ */
+export async function denextAliasTargets(configPath: string): Promise<Map<string, string>> {
+  const byUrl = await frameworkExportsByUrl();
+  const base = dirname(configPath);
+  const out = new Map<string, string>();
+  for (const [spec, value] of Object.entries(await importMapOf(configPath))) {
+    if (typeof value !== "string" || spec.endsWith("/") || CLAIMED_BY_NAME.test(spec)) continue;
+    const target = denextSubpathOf(value, base, byUrl);
+    if (target && isBundledDenextSubpath(target)) out.set(spec, target);
+  }
+  return out;
+}
+
+/** The framework's `deno.json` exports by module URL: URL → `denext[/sub]` specifier. */
+async function frameworkExportsByUrl(): Promise<Map<string, string>> {
+  const exportsMap = (await readFrameworkJson("deno.json")).exports as Record<string, string>;
+  const byUrl = new Map<string, string>();
+  for (const [key, rel] of Object.entries(exportsMap ?? {})) {
+    byUrl.set(frameworkFileUrl(rel), key === "." ? "denext" : `denext/${key.slice(2)}`);
+  }
+  return byUrl;
+}
+
+/** The `denext[/sub]` specifier an import-map value names (JSR, or a framework module URL). */
+function denextSubpathOf(
+  value: string,
+  base: string,
+  byUrl: ReadonlyMap<string, string>,
+): string | undefined {
+  const jsr = DENEXT_JSR.exec(value);
+  if (jsr) return jsr[1] ? `denext/${jsr[1]}` : "denext";
+  return byUrl.get(/^\.\.?\//.test(value) ? toFileUrl(resolve(base, value)).href : value);
+}
+
+/** Whether the bundles map `spec`: a prebuilt runtime file, or a server-only external. */
+function isBundledDenextSubpath(spec: string): boolean {
+  return Object.hasOwn(DENEXT_RUNTIME_FILES, spec) || DENEXT_SERVER_SUBPATHS.has(spec);
+}
+
+/**
+ * esbuild plugin: an import the app's import map aliases to one of denext's own subpaths
+ * ({@link denextAliasTargets}: `next-intl`, `server-only`, `better-sqlite3` after `denext
+ * migrate`) is resolved as that `denext/<sub>` specifier — the prebuilt runtime file, or the
+ * server-only external — exactly as `denext/next-intl` itself. Left to the deno-loader, a `jsr:`
+ * target fails without a lockfile, or bundles a second copy of denext (a second hook dispatcher
+ * and context); left to `nodeResolve`, the still-installed npm package was bundled.
+ *
+ * @param configPath The app's `deno.json`.
+ */
+function denextAliasPlugin(configPath: string): esbuild.Plugin {
+  let targets: Promise<Map<string, string>> | undefined;
+  return {
+    name: "denext-import-map-denext-alias",
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, async (args) => {
+        if (args.namespace !== "file" && args.namespace !== "") return null;
+        const sub = (await (targets ??= denextAliasTargets(configPath))).get(args.path);
+        if (!sub) return null;
+        const resolved = await resolveOnBehalf(build, args, sub);
+        if (resolved.errors.length > 0) return { errors: resolved.errors };
+        return {
+          path: resolved.path,
+          namespace: resolved.namespace,
+          external: resolved.external,
+          sideEffects: resolved.sideEffects,
+          pluginData: resolved.pluginData,
+        };
+      });
+    },
+  };
 }
 
 /** {@link runtimeEntryPoints} of the running framework, inverted: module URL → prebuilt file. */
@@ -1346,6 +1461,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
   const plugins: esbuild.Plugin[] = [
     envPoisonPlugin(options.platform === "deno"),
     denextRuntimePlugin(options.runtimeDir),
+    denextAliasPlugin(options.configPath),
   ];
   // Browser bundles: stub Node built-ins that appear only in npm libs' Node-only
   // code paths (the deno/SSR platform keeps the real built-ins).
@@ -2216,6 +2332,8 @@ async function selfPackageDir(fromDir: string, name: string): Promise<string | n
  *   globs and `catalog:`/`workspace:*` version strings stop mattering). denext's resolver
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the
  *   deno-loader still gets its shot — the plugin only ever resolves MORE, never less.
+ * @param importMapPath The app's `deno.json`: under `"all"`, an app import its import map
+ *   sends anywhere but `npm:` (a `denext migrate` alias) is left to the import map.
  */
 /**
  * owner-dir → its package.json `sideEffects`: `false` (every file is side-effect free), the
@@ -2358,18 +2476,28 @@ export function catalogResolverPlugin(
   packages: Set<string> | "all",
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
+  importMapPath?: string,
 ): esbuild.Plugin {
   const all = packages === "all";
+  // `"all"`: the app's import-map entries that point anywhere but npm (loaded once).
+  let aliased: Promise<(spec: string) => boolean> | undefined;
+  const isAliased = (spec: string) =>
+    (aliased ??= importMapPath ? readNonNpmAliases(importMapPath) : Promise.resolve(() => false))
+      .then((has) => has(spec));
   return {
     name: all ? "denext-node-modules-resolver" : "denext-pnpm-catalog-resolver",
     setup(build) {
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.namespace !== "file" && args.namespace !== "") return null;
-        if (args.path.startsWith(".") || args.path.startsWith("/")) return null;
+        if (args.path.startsWith(".") || isAbsolute(args.path)) return null;
         // Scheme specifiers (npm:/jsr:/node:/http:/data:) belong to the deno-loader and
         // denext's own runtime imports — never intercept them. (The narrow catalog set is
         // always plain package names, so this only gates the `"all"` path.)
         if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
+        // An app import the import map sends to jsr: / a URL / a file (`denext migrate`'s
+        // `next-intl` → denext) is the map's, even while the npm package is still installed.
+        // A package's own imports keep Node resolution, as Deno's import map does not reach them.
+        if (all && !inNodeModules(args.importer) && await isAliased(args.path)) return null;
         // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
         // what lets a workspace package's SOURCE file (outside the app root) resolve its
         // deps from its own `node_modules`, not just the app's.
@@ -2561,7 +2689,9 @@ function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Pl
   if (!options.absWorkingDir) return [];
   const exts = options.platformExtensions;
   if (options.resolveAllNodeModules) {
-    return [catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts)];
+    return [
+      catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts, options.configPath),
+    ];
   }
   const plugins: esbuild.Plugin[] = [];
   if (options.boundaryPackages && options.boundaryPackages.length > 0) {
@@ -2746,6 +2876,7 @@ async function compatPlugins(
     options.denextExternal
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
+    denextAliasPlugin(options.configPath),
     ...(await sourcePlugins(options, workerBuild)),
     appResolverPlugin(options.configPath, options.platformExtensions, options.appPlatform),
     nodeModulesFileUrlPlugin(),

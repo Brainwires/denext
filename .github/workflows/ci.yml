@@ -353,6 +353,8 @@ jobs:
   # against the same service containers as the `backend-integration` job, so the code only a real
   # Postgres / PostGIS / MinIO reaches counts toward the gate instead of being ignored.
   coverage:
+    # Stays on GitHub's image: its Postgres / PostGIS / MinIO / Redis `services:` containers need
+    # Docker, which the self-hosted Linux pool's job containers do not have (no docker-in-docker).
     runs-on: ubuntu-latest
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
@@ -503,6 +505,8 @@ jobs:
   # Every one of these tests is IGNORED without its service, so this job also fails if any test
   # was ignored: a green run means each one really ran. Heavy (PRs, `main`, a dispatch).
   backend-integration:
+    # Stays on GitHub's image: its Postgres / PostGIS / MinIO / Redis `services:` containers need
+    # Docker, which the self-hosted Linux pool's job containers do not have (no docker-in-docker).
     runs-on: ubuntu-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 20

@@ -220,6 +220,22 @@ export interface AppCapabilities {
   readonly passkeys: "security-keys" | PlatformUnknown | null;
   /** Linux, when `passkeys` is `null`: why (the runtime's reason), or `null`. */
   readonly passkeysReason: string | null;
+  /**
+   * Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›
+   * Privacy & security › Microphone: the device-wide switch, "Microphone access" and "Let desktop
+   * apps access your microphone"): `"allowed"`, or `"denied"`, in which case the window refuses
+   * the page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`
+   * capability on, and `checkPermission("microphone")` reads `"blocked"`. `null` when no switch is
+   * set, and on macOS / Linux. Probed on every call (the user can flip a switch while the app
+   * runs). `"unknown"` before the runtime after 3.0.0-denext.13.
+   */
+  readonly microphoneAccess: "allowed" | "denied" | PlatformUnknown | null;
+  /** Windows, when `microphoneAccess` is `"denied"`: which switch refuses and where it is. */
+  readonly microphoneAccessReason: string | null;
+  /** Windows: as `microphoneAccess`, for the camera (Settings › Privacy & security › Camera). */
+  readonly cameraAccess: "allowed" | "denied" | PlatformUnknown | null;
+  /** Windows, when `cameraAccess` is `"denied"`: which switch refuses and where it is. */
+  readonly cameraAccessReason: string | null;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
@@ -276,7 +292,8 @@ const SECRET_STATES = [
  * the runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the
  * tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);
  * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and
- * native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads `"unknown"`.
+ * native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches
+ * (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads `"unknown"`.
  *
  * @returns The capabilities.
  */
@@ -311,6 +328,10 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     windowBlurReason: text(raw, "windowBlurReason"),
     passkeys: oneOf(raw, "passkeys", ["security-keys", null] as const),
     passkeysReason: text(raw, "passkeysReason"),
+    microphoneAccess: oneOf(raw, "microphoneAccess", ["allowed", "denied", null] as const),
+    microphoneAccessReason: text(raw, "microphoneAccessReason"),
+    cameraAccess: oneOf(raw, "cameraAccess", ["allowed", "denied", null] as const),
+    cameraAccessReason: text(raw, "cameraAccessReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
     dockVisibility: flag("dockVisibility"),

@@ -23,6 +23,8 @@ import {
   type ScheduledEntry,
 } from "../../server/jobs.ts";
 import { commandMeta } from "../command-meta.ts";
+import { isDue } from "../job-install/translate.ts";
+import { jobInstallVerb } from "./job-install.ts";
 
 /** Discover this project's jobs, keeping the resolved paths the caller also needs. */
 async function loadJobs(ctx: CommandContext): Promise<{ names: string[]; paths: ProjectPaths }> {
@@ -201,6 +203,37 @@ async function runOne(paths: ProjectPaths, name: string, payload: unknown): Prom
   }
 }
 
+/**
+ * `--if-due <cron;cron…>`: whether this minute (UTC) is one the schedule matches. The entries
+ * `denext job install` writes for a zone with daylight saving time fire at every local time the
+ * schedule can map to and pass this, so the job runs only at the UTC minutes it names. Checked
+ * before any job module loads; a malformed expression exits 1.
+ */
+function dueNow(list: string): boolean {
+  try {
+    return isDue(list);
+  } catch (err) {
+    console.error(`denext: --if-due: ${err instanceof Error ? err.message : String(err)}`);
+    Deno.exit(1);
+  }
+}
+
+/**
+ * `denext job install …` (its own verb), and an `--if-due` run outside its minute: both are done
+ * before any job module loads.
+ *
+ * @returns Whether the command is finished.
+ */
+async function handledBeforeLoading(ctx: CommandContext): Promise<boolean> {
+  if (ctx.positionals[0] === "install") {
+    const code = await jobInstallVerb(ctx);
+    if (code !== 0) Deno.exit(code);
+    return true;
+  }
+  const due = ctx.flags["if-due"];
+  return typeof due === "string" && !dueNow(due);
+}
+
 /** `undefined | string | string[]` → a string array. */
 function schedulesOf(schedule: string | string[] | undefined): string[] {
   return schedule == null ? [] : Array.isArray(schedule) ? schedule : [schedule];
@@ -242,6 +275,7 @@ export const jobCommand: CommandSpec = {
       await historyVerb(ctx, await resolveProject(resolve(ctx.global.cwd ?? ".")));
       return;
     }
+    if (await handledBeforeLoading(ctx)) return;
     const { names, paths } = await loadJobs(ctx);
     const name = ctx.positionals[0];
     if (ctx.flags.list === true || !name) return printListing(ctx, paths, names, !name);

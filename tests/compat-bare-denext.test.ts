@@ -145,3 +145,48 @@ Deno.test("compat SPA export: every client denext subpath, mapped to JSR, bundle
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// `denext migrate` aliases `next-intl` (and `server-only`, …) to denext's JSR subpaths but leaves
+// the npm package installed. Under `nodeResolve` the installed package was bundled; handed to the
+// deno-loader instead, a `jsr:` target fails without a lockfile or bundles a second denext. An
+// import-map alias to a denext subpath is that subpath: the prebuilt runtime file.
+const NEXT_INTL_DECOY = "NPM_NEXT_INTL_DECOY";
+for (const installed of [true, false]) {
+  Deno.test(
+    `compat SPA export: next-intl aliased to denext's JSR subpath is the prebuilt runtime${
+      installed ? " (npm next-intl installed)" : ""
+    }`,
+    async () => {
+      const dir = await project({
+        "src/main.tsx": `import { createRoot } from "denext/react-dom/client";\n` +
+          `import { NextIntlClientProvider, useTranslations } from "next-intl";\n` +
+          `function Hi(){ const t = useTranslations(); return <p>{t("hi")}</p>; }\n` +
+          `createRoot(document.getElementById("root")!).render(\n` +
+          `  <NextIntlClientProvider locale="en" messages={{ hi: "INTL_HI" }}><Hi/>` +
+          `</NextIntlClientProvider>);\n`,
+        ...(installed
+          ? {
+            "package.json": JSON.stringify({ dependencies: { "next-intl": "4.0.0" } }),
+            "node_modules/next-intl/package.json": JSON.stringify({
+              name: "next-intl",
+              version: "4.0.0",
+              main: "index.js",
+            }),
+            "node_modules/next-intl/index.js": `throw new Error("${NEXT_INTL_DECOY}");\n`,
+          }
+          : {}),
+      });
+      try {
+        const config = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
+        config.imports["next-intl"] = `${JSR}/next-intl`;
+        await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(config));
+        const js = await clientJs((await exportInChild(dir, { platform: "web" })).outDir);
+        assert(!js.includes(NEXT_INTL_DECOY), "the installed npm next-intl was bundled");
+        assertStringIncludes(js, "no <NextIntlClientProvider> found");
+        assertEquals(count(js, DISPATCHER), 1, "exactly one copy of denext's hooks");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    },
+  );
+}

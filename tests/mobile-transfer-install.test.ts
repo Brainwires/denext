@@ -11,6 +11,8 @@ import {
   mainActivitySource,
 } from "../src/build/mobile-native-install.ts";
 import { withAppDelegateBackgroundTransfers } from "../src/build/mobile-native-config.ts";
+import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
+import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import {
   isPristineTransferTemplate,
   TRANSFER_TEMPLATE_VERSION,
@@ -188,4 +190,24 @@ Deno.test("transfer templates keep request headers out of backups and drop them 
   assertStringIncludes(android, "context.getNoBackupFilesDir()");
   assertStringIncludes(android, `saved.remove("headers");`);
   assertStringIncludes(android, "} else if (finished(record)) {\n            file.delete();");
+});
+
+Deno.test("mobile doctor: transfer-generations flags a DenextTransfer plugin from an older generation", async () => {
+  await inProject(async (dir) => {
+    await addMobileCapabilities({ capabilities: ["file-transfer"], cwd: dir, run });
+    const doctor = async () =>
+      (await runMobileDoctor({ root: dir, profile: "release" })).findings.filter((f) =>
+        f.check === "transfer-generations"
+      );
+    assertEquals(await doctor(), [], "a fresh install is current");
+    await Deno.writeTextFile(
+      join(dir, "android/app/src/main/java/dev/denext/transfer/DenextTransferStore.java"),
+      await renderMarkedTemplate("transfer", 5, "// store 5\n"),
+    );
+    const found = await doctor();
+    assertEquals(found.map((f) => [f.message.split(":")[0], f.level]), [["Android", "warning"]]);
+    assertStringIncludes(found[0].message, "template generation 5");
+    assertStringIncludes(found[0].message, "saved request-headers file");
+    assertStringIncludes(found[0].fix, "denext mobile add file-transfer");
+  });
 });

@@ -316,6 +316,22 @@ async function desktopNotifications(
   return normalize(got.value as RawState, true);
 }
 
+/**
+ * `blocked` when the page runs in a Deno Desktop window and the OS keeps `name` (the microphone or
+ * camera) from the app (Windows' privacy switches, the runtime after 3.0.0-denext.13): the window then
+ * refuses `getUserMedia` whatever the WebView's own permission says. `undefined` otherwise, and the
+ * WebView answers (also when the probe fails: it only ever adds a refusal).
+ */
+async function desktopMediaBlocked(name: PermissionName): Promise<PermissionState | undefined> {
+  if ((name !== "microphone" && name !== "camera") || !onDesktop()) return undefined;
+  try {
+    const got = await viaDesktop("app", (d) => d.osMediaAccess(name));
+    return got?.value === "denied" ? "blocked" : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The status of `name` without prompting (see {@linkcode checkPermission}). */
 async function check(fn: string, name: PermissionName): Promise<PermissionState> {
   checkName(fn, name);
@@ -324,6 +340,8 @@ async function check(fn: string, name: PermissionName): Promise<PermissionState>
     const desktop = await desktopNotifications(fn, false);
     if (desktop) return desktop;
   }
+  const blocked = await desktopMediaBlocked(name);
+  if (blocked) return blocked;
   const found = nativeSource(name);
   if (found) return normalize(found.source.read(await found.plugin.checkPermissions()), true);
   const web = WEB_SOURCES[name];
@@ -359,7 +377,9 @@ function notAnswerable(fn: string, name: PermissionName): PermissionError {
  * `notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the
  * web (and for `microphone`, which the WebView itself asks for) the browser's Permissions /
  * Notifications API. In a Deno Desktop window with the `notifications` capability,
- * `notifications` is the OS's own setting. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
+ * `notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`
+ * while the OS's privacy switch for the device is off (the runtime after 3.0.0-denext.13;
+ * `appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
  * here can answer: a plugin that is not installed and no browser API.
  *
  * @param name The permission.

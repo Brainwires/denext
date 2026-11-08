@@ -569,6 +569,40 @@ Deno.test("s3 storage: public objects redirect to a short-lived presigned GET; a
   }
 });
 
+Deno.test("s3(): a store that never answers fails the call after requestTimeoutMs", async () => {
+  const stalled = (_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    });
+  const store = s3({
+    endpoint: S3_ENDPOINT,
+    region: "us-east-1",
+    bucket: "assets",
+    credentials: CREDENTIALS,
+    fetch: stalled as typeof fetch,
+    requestTimeoutMs: 50,
+  });
+  const err = await assertRejects(() => store.head("b", "k"), Error);
+  assertStringIncludes(err.message, "did not answer a HEAD within 0.05 s");
+  // The deadline ends with the headers: a body still streaming after them is not cut off.
+  let signal: AbortSignal | undefined;
+  const answering = s3({
+    endpoint: S3_ENDPOINT,
+    region: "us-east-1",
+    bucket: "assets",
+    credentials: CREDENTIALS,
+    fetch: ((_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return Promise.resolve(new Response("x", { status: 200 }));
+    }) as typeof fetch,
+    requestTimeoutMs: 20,
+  });
+  const got = await answering.get("b", "k");
+  await new Promise((r) => setTimeout(r, 60));
+  assertEquals(signal?.aborted, false);
+  assertEquals(await new Response(got!.body).text(), "x");
+});
+
 Deno.test("s3(): options, addressing styles and credentials", async () => {
   const seen: string[] = [];
   const spy = (input: RequestInfo | URL) => {

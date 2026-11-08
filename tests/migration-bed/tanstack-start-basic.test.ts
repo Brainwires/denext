@@ -8,7 +8,9 @@
 // Pin: 140efa4 ("ci: Version Packages (#8701)", 2026-10-14), whose example asks for
 // @tanstack/react-start ^1.169.2 and @tanstack/react-router ^1.170.44 — the versions
 // examples/tanstack-start runs. Those two are pinned exactly before the install, so the bed does
-// not float to a Start release the plugin has not met. The posts and users pages fetch from
+// not float to a Start release the plugin has not met. `@tanstack/react-router-devtools` is pinned
+// too (1.167.2, peer router ^1.170.36): its `^1.167.2` range floated to 1.167.3, which wants
+// router ^1.170.46 and made npm refuse the tree (ERESOLVE) against the pinned 1.170.44. The posts and users pages fetch from
 // jsonplaceholder.typicode.com at render, so they are not asserted.
 // NETWORK-REQUIRED (GitHub fetch + npm install): `deno task test:migration-bed`.
 
@@ -26,6 +28,7 @@ const START_BASIC: Bed = {
       "set",
       "dependencies.@tanstack/react-start=1.169.2",
       "dependencies.@tanstack/react-router=1.170.44",
+      "dependencies.@tanstack/react-router-devtools=1.167.2",
     ],
     ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
   ],

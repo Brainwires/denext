@@ -69,7 +69,8 @@ export function preferencesOf(request: Request): Preferences {
     .filter((t) => t !== "");
   const unknown: string[] = [];
   for (const token of tokens) {
-    const set = PREFERENCE_TOKENS[token];
+    // Own keys only: `constructor`, `toString`, `__proto__` are unknown tokens, not preferences.
+    const set = Object.hasOwn(PREFERENCE_TOKENS, token) ? PREFERENCE_TOKENS[token] : undefined;
     const max = /^max-affected=(\d{1,9})$/.exec(token);
     if (set) set(prefs);
     else if (max) prefs.maxAffected = Number(max[1]);

@@ -76,6 +76,16 @@ export function ptyDoctorCheck(
       fix: `upgrade denext to a release that pins runtime ${FIRST_PTY_RUNTIME} or later`,
     });
   }
+  if (os === "windows") {
+    findings.push({
+      check: "pty",
+      level: "warning",
+      message: "denext's Deno Desktop runtime has no terminals on Windows yet (Deno.openPty " +
+        "throws NotSupported): every spawnPty() there rejects `unsupported`",
+      fix: "give the page a fallback for Windows (check the `unsupported` code), or leave pty " +
+        "out of the Windows build",
+    });
+  }
   if (config.shells.length === 0) {
     findings.push({
       check: "pty",

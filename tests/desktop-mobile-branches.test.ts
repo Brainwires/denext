@@ -1046,3 +1046,38 @@ Deno.test("desktop downloads: without fs.download the record is dropped for the 
   });
   resetFileTransfersForTesting();
 });
+
+Deno.test("permissions: Windows' privacy switch off reads blocked for the microphone / camera on desktop", async () => {
+  let access: Record<string, unknown> = { microphoneAccess: "denied", cameraAccess: "allowed" };
+  await inDesktop({ app: { capabilities: () => access } }, async (rt) => {
+    // The OS keeps the microphone from the app: blocked, and a request doesn't prompt.
+    assertEquals(await checkPermission("microphone"), "blocked");
+    assertEquals(await requestPermission("microphone"), "blocked");
+    assert(calls(rt).every((c) => c.at === "app.capabilities"));
+    // Allowed (or no switch set): the WebView answers, as before (Deno has no such web permission).
+    await assertRejects(() => checkPermission("camera"), Error, "nothing here can answer");
+    access = { microphoneAccess: null, cameraAccess: "denied" };
+    await assertRejects(() => checkPermission("microphone"), Error, "nothing here can answer");
+    assertEquals(await checkPermission("camera"), "blocked");
+    // Only the devices ask the OS.
+    const before = rt.calls.length;
+    await assertRejects(() => checkPermission("location"));
+    assertEquals(rt.calls.length, before);
+  });
+});
+
+Deno.test("permissions: a failing desktop probe never refuses the microphone itself", async () => {
+  await inDesktop({
+    app: {
+      capabilities: () => {
+        throw new Error("probe broke");
+      },
+    },
+  }, async () => {
+    await assertRejects(() => checkPermission("microphone"), Error, "nothing here can answer");
+  });
+  // No app capability at all (an older runtime): the web path, as before.
+  await inDesktop({}, async () => {
+    await assertRejects(() => checkPermission("microphone"), Error, "nothing here can answer");
+  });
+});

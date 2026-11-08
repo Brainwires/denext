@@ -494,7 +494,7 @@ to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS moment
 survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
+`useKeepAwake`, `hideSplash`, `speak`/`stopSpeaking` (the OS engine with `denext mobile add text-to-speech`, which the Android WebView needs, else Web Speech; a Deno Desktop window falls back to the runtime's OS speech with no `desktop add`), `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
@@ -635,7 +635,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
-`pty` (runtime 3.0.0-denext.11+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
+`pty` (runtime 3.0.0-denext.12+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
@@ -717,7 +717,12 @@ leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/packag
 `launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
 `--allow-sys`, which the pinned runtime requires for them), and
 `denext desktop package --regenerate-scripts` rewrites them from the current template (a `.bak`
-and a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+and a diff for each changed file). `desktop.permissions: "strict"` (or `{ mode: "strict", env: ["MY_VAR"] }`;
+runtime 3.0.0-denext.8+ and `desktop.app.identifier`) scopes the baked `--allow-read` to the app's data /
+cache folders, the capabilities' reads and `extraPermissions.read`, and `--allow-env` to the runtime's
+variables plus `permissions.env` / `extraPermissions.env` (an undeclared read throws `NotCapable`); it
+never falls back: `desktop package` fails without the runtime or identifier (`run` / `dev` warn), and
+`dialogs`, `$DOCUMENTS`, a `"*"`, a program sidecar or `loginShellEnv` are refused. Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
 the bundle. The engine: `desktop.backend` (`"webview"` | `"cef"`, or per OS `{ linux: "cef" }` in
@@ -1093,6 +1098,12 @@ export default async function Blog() {
 // at build.
 // CLI: `denext content build | list | validate` (validate exits 1 on a schema failure — a CI gate).
 ```
+
+**Markdown anywhere (no plugin):** `renderMarkdown(src, { html?: "escape" | "sanitize",
+headingIds?, allowDataImages?, urlPolicy? })` from `denext/markdown` returns HTML (raw HTML escaped
+by default; `javascript:` / `data:` URLs dropped); `<Markdown source={md} components={{ a: MyLink,
+code: MyCode }} />` renders the same document as elements with your components (server or client;
+a `code` override gets `inline` / `lang`). Docs: https://denext.dev/docs/markdown
 
 **Gleam:** `denext add gleam:<package>` compiles a Gleam package to
 JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as

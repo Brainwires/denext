@@ -66,6 +66,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/integration/server-action-stubs.test.ts",
   "tests/jail-scripts.test.ts",
   "tests/job-discovery.test.ts",
+  // Deletes and restores HOME / USERPROFILE around one case (the real scheduler host's home).
+  "tests/job-install-host.test.ts",
   "tests/legacy-migrate-job.test.ts",
   "tests/live-views.test.ts",
   // Sets and restores DENEXT_CHILD_PROBE around one case (the probed loader `deno info`).
@@ -159,6 +161,10 @@ export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
     "warnStockDeprecation sets DENEXT_STOCK_DEPRECATION_SHOWN=1 (set-once, one constant) only on " +
     "a stock-Deno path run with the process's own env; tests pass env / setEnv seams, and the " +
     "real process tree runs in `deno eval` children",
+  "src/build/idle-trim.ts":
+    "holdOffBakedIdleTrim sets DENO_UNSTABLE_IDLE_TRIM=0 only inside a compiled binary compiled " +
+    "with the trim baked in, run with DENEXT_IDLE_TRIM=0 on a runtime that rereads the variable " +
+    "(runStandalone); tests pass their own setEnv / runtime seams",
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",

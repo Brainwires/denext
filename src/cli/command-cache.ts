@@ -61,12 +61,25 @@ function keyPath(): string {
 /** The listing key once read (or made), per key path. */
 const keys = new Map<string, Promise<CryptoKey | null>>();
 
-/** The key file's bytes, made (32 random bytes, owner-only) when there is none yet. */
-async function keyBytes(path: string): Promise<Uint8Array | null> {
+/** The key file's bytes: `null` when it is too short to be a key, `undefined` when unreadable. */
+async function readKeyFile(path: string): Promise<Uint8Array | null | undefined> {
   try {
     const bytes = await Deno.readFile(path);
-    if (bytes.length >= 32) return bytes;
-  } catch { /* none yet */ }
+    return bytes.length >= 32 ? bytes : null;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The key file's bytes, made (32 random bytes, owner-only) when there is none yet. A key file
+ * too short to be one is neither used nor replaced. Making it and reading the one another process
+ * made first share {@linkcode readKeyFile}, so a cache that already holds the key and one that
+ * doesn't run the same reads (and cover the same code).
+ */
+async function keyBytes(path: string): Promise<Uint8Array | null> {
+  const existing = await readKeyFile(path);
+  if (existing !== undefined) return existing;
   const fresh = crypto.getRandomValues(new Uint8Array(32));
   try {
     await Deno.mkdir(dirname(path), { recursive: true });
@@ -74,12 +87,8 @@ async function keyBytes(path: string): Promise<Uint8Array | null> {
     return fresh;
   } catch {
     // Another process made it first (read theirs), or the cache can't be written (no key).
-    try {
-      const bytes = await Deno.readFile(path);
-      return bytes.length >= 32 ? bytes : null;
-    } catch {
-      return null;
-    }
+    const theirs = await readKeyFile(path);
+    return theirs ?? null;
   }
 }
 

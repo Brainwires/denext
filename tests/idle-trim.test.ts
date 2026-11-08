@@ -4,7 +4,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { FIRST_IDLE_TRIM_RUNTIME, supportsIdleTrim } from "../src/build/deno-version.ts";
+import {
+  FIRST_IDLE_TRIM_ENV_OFF_RUNTIME,
+  FIRST_IDLE_TRIM_RUNTIME,
+  supportsIdleTrim,
+  supportsIdleTrimEnvOff,
+} from "../src/build/deno-version.ts";
 import {
   configDisablesIdleTrim,
   configTextDisablesIdleTrim,
@@ -146,24 +151,73 @@ Deno.test("idle trim: DENEXT_IDLE_TRIM=0 when a compiled binary runs holds a bak
   const timers: number[] = [];
   const every = (_fn: () => void, ms: number) => void timers.push(ms);
   const env = (vars: Record<string, string>) => (n: string) => vars[n];
-  assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), every), true);
+  // A runtime that reads DENO_UNSTABLE_IDLE_TRIM only at start: the timer holds the trim off.
+  const old = { every, runtime: toolchainPin.version };
+  assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), old), "timer");
   assertEquals(timers, [500], "woken twice per default 1 s idle delay");
   assertEquals(
     holdOffBakedIdleTrim(
       true,
       env({ DENEXT_IDLE_TRIM: "0", DENO_IDLE_TRIM_DELAY_MS: "300" }),
-      every,
+      old,
     ),
-    true,
+    "timer",
   );
   assertEquals(timers.at(-1), 150, "half the delay the runtime was given");
-  assertEquals(holdOffBakedIdleTrim(true, env({}), every), false, "no opt-out: the trim runs");
-  assertEquals(holdOffBakedIdleTrim(false, env({ DENEXT_IDLE_TRIM: "0" }), every), false);
-  assertEquals(timers.length, 2);
+  assertEquals(holdOffBakedIdleTrim(true, env({}), old), false, "no opt-out: the trim runs");
+  assertEquals(holdOffBakedIdleTrim(false, env({ DENEXT_IDLE_TRIM: "0" }), old), false);
+  // Stock Deno (no marker): the timer too.
+  assertEquals(
+    holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), { every, runtime: undefined }),
+    "timer",
+  );
+  assertEquals(timers.length, 3);
   // The compiled entry tells the binary whether the trim was baked in.
   const baked = entrySource("file:///p/.denext/compile/main.ts", "file:///p/", true);
   assertStringIncludes(baked, "Deno.args, { idleTrimBaked: true });");
   assert(!entrySource("file:///p/.denext/compile/main.ts", "file:///p/").includes("idleTrimBaked"));
+});
+
+Deno.test("idle trim: on a runtime that rereads DENO_UNSTABLE_IDLE_TRIM, the binary sets it to 0 and starts no timer", () => {
+  // Inert until the pin moves to the release with Brainwires/deno DENEXT.md item 269.
+  assert(!supportsIdleTrimEnvOff(toolchainPin.version), "the pinned runtime predates item 269");
+  assert(supportsIdleTrimEnvOff(FIRST_IDLE_TRIM_ENV_OFF_RUNTIME));
+  const runtime = FIRST_IDLE_TRIM_ENV_OFF_RUNTIME;
+  const timers: number[] = [];
+  const every = (_fn: () => void, ms: number) => void timers.push(ms);
+  const set: [string, string][] = [];
+  const setEnv = (name: string, value: string) => void set.push([name, value]);
+  const env = (vars: Record<string, string>) => (n: string) => vars[n];
+  const seams = { every, runtime, setEnv };
+  assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), seams), "env");
+  assertEquals(set, [[IDLE_TRIM_ENV, "0"]]);
+  // DENEXT_IDLE_TRIM=0 wins over a DENO_UNSTABLE_IDLE_TRIM=1, as the timer did.
+  assertEquals(
+    holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0", [IDLE_TRIM_ENV]: "1" }), seams),
+    "env",
+  );
+  assertEquals(set.length, 2);
+  // Already 0 from the start (the runtime turned it off then): nothing to set.
+  assertEquals(
+    holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0", [IDLE_TRIM_ENV]: "0" }), seams),
+    "env",
+  );
+  assertEquals(set.length, 2);
+  assertEquals(timers, [], "no timer on such a runtime");
+  // No opt-out, or nothing baked: untouched.
+  assertEquals(holdOffBakedIdleTrim(true, env({}), seams), false);
+  assertEquals(holdOffBakedIdleTrim(false, env({ DENEXT_IDLE_TRIM: "0" }), seams), false);
+  assertEquals(set.length, 2);
+  // The variable can't be set (no env permission): the timer is the fallback.
+  const refused = {
+    every,
+    runtime,
+    setEnv: () => {
+      throw new Deno.errors.NotCapable("env");
+    },
+  };
+  assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), refused), "timer");
+  assertEquals(timers, [500]);
 });
 
 Deno.test("idle trim: only the `start` verb's child gets it", async () => {

@@ -112,11 +112,26 @@ writes the aliases for you). The client surface is `NextIntlClientProvider`,
 rendering. `createNavigation(routing)` returns a locale-prefixing `Link`,
 `usePathname`, `useRouter`, `redirect`/`permanentRedirect` and a reverse-mapping
 `getPathname` — including localized `pathnames`, per-locale URL translation.
+As in next-intl, `useTranslations()` and `useFormatter()` return the same function while the
+namespace, locale and messages are unchanged, so they are safe in `useCallback` / `useEffect`
+dependency lists.
+
+`NextIntlClientProvider` is a client boundary, as in next-intl: render it from the root layout (a
+Server Component) and both the Server Components below it and the `"use client"` components
+below it read its locale and messages. The provider's `locale`, `messages`, `timeZone`, `now` and
+`formats` cross to the browser in the page's payload; a function prop (`onError`,
+`getMessageFallback`) cannot, so a provider rendered from a Server Component drops it there, with
+a warning in dev. Pass only the namespaces the client components need to keep that payload small.
 
 ```jsonc
 // deno.json
 { "imports": { "next-intl": "jsr:@denext/denext/next-intl" } }
 ```
+
+The request config (`i18n/request.ts`, `getRequestConfig(…)`) registers when its module
+runs. On Next.js `createNextIntlPlugin` wires it; on denext something the server renders imports
+it: `denext migrate` adds `import "../i18n/request";` (the relative path to the file the plugin
+names, else `./(src/)i18n/request.*`) to each root layout. A hand-built app does the same.
 
 ## ICU messages
 

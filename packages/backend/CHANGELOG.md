@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- **An idle webhooks deliverer wakes rarely.** Under `delivery: "auto"` the background
+  deliverer used to look for due events every `pollIntervalMs` (5 s) forever, on a timer that
+  kept the process alive. The trigger's NOTIFY already wakes it at once, so the poll is now a
+  safety net: `pollIntervalMs` after a pass that found work, doubling up to the new
+  `maxPollIntervalMs` (default 60 s) while passes find nothing, and never later than the earliest
+  pending event is due (a retry, or a lease another instance let lapse). A client without
+  `listen()` keeps the fixed `pollIntervalMs`. The timer is unref'd; the plugin's teardown still
+  waits for a pass in flight.
+
+### Fixed
+
+- **`db({ as })` takes a request identity only with a Supabase role.** `anon`, `authenticated`
+  or `service_role`; any other role is a `TypeError` (from `identityScope()` too) before a
+  statement runs, and `isRequestIdentity()` answers `false` for it.
+- **The auto-REST `Prefer` header reads its own tokens only.** `constructor`, `toString` and
+  `__proto__` are unknown tokens (ignored, or a `PGRST122` under `handling=strict`), never a
+  preference.
+
 ## 0.8.1 - 2026-11-02
 
 ### Added

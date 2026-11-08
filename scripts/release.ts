@@ -322,7 +322,7 @@ function renderRelease(version: string, date: string, groups: Map<string, string
 }
 
 /**
- * The id the docs site gives a heading — `packages/content-collections/markdown.ts`'s
+ * The id the docs site gives a heading — `src/markdown/render.ts`'s
  * `slugify`, which `site/lib/toc.ts` mirrors: lowercase, everything but word characters,
  * whitespace and dashes dropped, whitespace to dashes. `## [2.5.0-rc.1] - 2026-09-14` is
  * `250-rc1---2026-09-14`, and `## [2.5.0] - 2026-09-18` is `250---2026-09-18`.

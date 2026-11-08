@@ -203,10 +203,15 @@ Deno.test("useActionState rethrows an action's ordinary error into the error bou
   g.__denextDev = true; // the boundary sees the real message
   try {
     (container.childNodes[0] as FakeElement).dispatch("submit");
-    await tick();
-    await tick();
-    flushSync();
-    assertEquals((container.childNodes[0] as FakeElement).textContent, "caught:db down");
+    // The rethrow lands in a transition render (a timer, then 5 ms time slices): wait for it
+    // rather than for a fixed two timer turns, which a slow or coarse-timer host (Windows'
+    // 15.6 ms tick) can outrun.
+    const text = () => (container.childNodes[0] as FakeElement).textContent;
+    for (let turn = 0; turn < 300 && text() !== "caught:db down"; turn++) {
+      await tick();
+      flushSync();
+    }
+    assertEquals(text(), "caught:db down");
   } finally {
     delete g.__denextDev;
     root.unmount();
