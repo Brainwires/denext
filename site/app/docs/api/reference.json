@@ -17235,13 +17235,39 @@
               "kind": "property",
               "name": "publisher",
               "signature": "publisher?: string",
-              "doc": "Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer\n(`\"Name <email>\"` there) and the `.rpm` Vendor. Default: the app name."
+              "doc": "Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer\n(with {@link email}: `\"Name <email>\"`) and the `.rpm` Vendor. Default: the app name."
+            },
+            {
+              "kind": "property",
+              "name": "email",
+              "signature": "email?: string",
+              "doc": "The publisher's contact address: the `.deb` Maintainer becomes `\"<publisher> <email>\"` (what\nDebian policy asks for), and it is the `.rpm` Packager and the AppStream `update_contact`.\nWithout it the Maintainer is the publisher alone."
             },
             {
               "kind": "property",
               "name": "description",
               "signature": "description?: string",
               "doc": "One line describing the app, for the package managers. Default `\"<name> desktop application\"`."
+            }
+          ]
+        },
+        {
+          "name": "DesktopLinuxAppImageConfig",
+          "slug": "DesktopLinuxAppImageConfig",
+          "kind": "interface",
+          "signature": "interface DesktopLinuxAppImageConfig",
+          "doc": "DesktopLinuxConfig.appImage: the AppImage's host requirements.",
+          "docFull": "{@link DesktopLinuxConfig.appImage}: the AppImage's host requirements.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "requires",
+              "signature": "requires?: string[]",
+              "doc": "Shared libraries (sonames, e.g. `\"libvte-2.91.so.0\"`) the app needs on the host beyond the\nbackend's own (WebKitGTK 4.1 and GTK 3 for the webview backend), listed in the AppImage's\nAppStream metainfo. An AppImage bundles neither: the host must provide them."
             }
           ]
         },
@@ -17262,6 +17288,62 @@
               "name": "requireSandbox",
               "signature": "requireSandbox?: boolean",
               "doc": "Refuse to start where the CEF backend would run web content without Chromium's sandbox: no\nunprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an\nAppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The\napp then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox),\n…`) and exits with status 78 before the runtime loads. Default `false`: the app starts\nunsandboxed there and `appCapabilities().sandbox` reads `\"off\"`. The package scripts write it\nto the Linux bundle's `laufey-launch.json` (`\"requireSandbox\": true`), where\n`LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's\npinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows."
+            },
+            {
+              "kind": "property",
+              "name": "desktopEntry",
+              "signature": "desktopEntry?: DesktopLinuxDesktopEntryConfig",
+              "doc": "What every `.desktop` entry denext writes says about the app (the `.deb` / `.rpm` entry, the\nbundle's own entry the `.tar.gz` and AppImage carry). Default: `Categories=Utility;` and no\nother key."
+            },
+            {
+              "kind": "property",
+              "name": "appImage",
+              "signature": "appImage?: DesktopLinuxAppImageConfig",
+              "doc": "The AppImage's AppStream metadata."
+            }
+          ]
+        },
+        {
+          "name": "DesktopLinuxDesktopEntryConfig",
+          "slug": "DesktopLinuxDesktopEntryConfig",
+          "kind": "interface",
+          "signature": "interface DesktopLinuxDesktopEntryConfig",
+          "doc": "DesktopLinuxConfig.desktopEntry: freedesktop Desktop Entry keys. Values are escaped per the Desktop Entry specification (\\\\, \\n, \\; in a list); a value with a control character is refused.",
+          "docFull": "{@link DesktopLinuxConfig.desktopEntry}: freedesktop Desktop Entry keys. Values are escaped per\nthe Desktop Entry specification (`\\\\`, `\\n`, `\\;` in a list); a value with a control character is\nrefused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "categories",
+              "signature": "categories?: string[]",
+              "doc": "`Categories`: freedesktop menu categories, e.g. `[\"System\", \"TerminalEmulator\"]` for a\nterminal. Each is letters, digits and `-` (`X-` for a vendor one). Default `[\"Utility\"]`."
+            },
+            {
+              "kind": "property",
+              "name": "keywords",
+              "signature": "keywords?: string[]",
+              "doc": "`Keywords`: extra search terms for the launcher (a `;` in one is escaped)."
+            },
+            {
+              "kind": "property",
+              "name": "genericName",
+              "signature": "genericName?: string",
+              "doc": "`GenericName`: what kind of app it is (`\"Terminal\"`, `\"Text Editor\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "startupWMClass",
+              "signature": "startupWMClass?: string",
+              "doc": "`StartupWMClass`: the window class the launcher matches the app's windows by. Default: the\napp id, which the window carries (`LAUFEY_APP_ID`); set it only for a window that reports\nanother class."
+            },
+            {
+              "kind": "property",
+              "name": "mimeTypes",
+              "signature": "mimeTypes?: string[]",
+              "doc": "`MimeType`: the file types the app opens (`\"text/plain\"`), after the deep-link schemes'\n`x-scheme-handler/*`. With no deep link the launcher passes the opened files as `%F`."
             }
           ]
         },
@@ -44790,12 +44872,85 @@
       "module": "denext/desktop",
       "symbols": [
         {
+          "name": "AppImageToolRunner",
+          "slug": "AppImageToolRunner",
+          "kind": "typeAlias",
+          "signature": "type AppImageToolRunner = (cmd: string, args: string[], env: Record<string, string>) => Promise<void>",
+          "doc": "Runs a tool; throws on a non-zero exit.",
+          "docFull": "Runs a tool; throws on a non-zero exit.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildDesktopAppImage",
+          "slug": "buildDesktopAppImage",
+          "kind": "function",
+          "signature": "buildDesktopAppImage(o: BuildDesktopAppImageOptions): Promise<string>",
+          "doc": "Build an AppImage from a finished Linux bundle (its .desktop entry already rewritten by buildDesktopBundle): the AppDir holds the bundle, the entry at the root and as usr/share/applications/<id>.desktop, the icon as <id>.png / .svg and .DirIcon, the AppStream metainfo usr/share/metainfo/<id>.metainfo.xml (with the host libraries, appImageRequires) and an AppRun that execs the launcher with LAUFEY_APP_ID; appimagetool --runtime-file wraps it around the pinned runtime (ensureAppImageRuntime), with ARCH set for the target.",
+          "docFull": "Build an AppImage from a finished Linux bundle (its `.desktop` entry already rewritten by\n`buildDesktopBundle`): the AppDir holds the bundle, the entry at the root and as\n`usr/share/applications/<id>.desktop`, the icon as `<id>.png` / `.svg` and `.DirIcon`, the\nAppStream metainfo `usr/share/metainfo/<id>.metainfo.xml` (with the host libraries,\n{@linkcode appImageRequires}) and an `AppRun` that execs the launcher with `LAUFEY_APP_ID`;\n`appimagetool --runtime-file` wraps it around the pinned runtime ({@linkcode ensureAppImageRuntime}),\nwith `ARCH` set for the target.",
+          "params": [
+            {
+              "name": "o",
+              "doc": "The bundle, metadata and output."
+            }
+          ],
+          "returns": "The AppImage's path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildDesktopAppImageOptions",
+          "slug": "BuildDesktopAppImageOptions",
+          "kind": "interface",
+          "signature": "interface BuildDesktopAppImageOptions extends BuildLinuxPackageOptions",
+          "doc": "What buildDesktopAppImage builds.",
+          "docFull": "What {@linkcode buildDesktopAppImage} builds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "runtimeFile",
+              "signature": "readonly runtimeFile?: string",
+              "doc": "The runtime to prepend (default: the pinned one, {@linkcode ensureAppImageRuntime})."
+            },
+            {
+              "kind": "property",
+              "name": "appimagetool",
+              "signature": "readonly appimagetool?: string",
+              "doc": "The `appimagetool` to run (default `appimagetool` on PATH)."
+            },
+            {
+              "kind": "property",
+              "name": "date",
+              "signature": "readonly date?: string",
+              "doc": "The metainfo's release date (default: `SOURCE_DATE_EPOCH`'s, else today's)."
+            },
+            {
+              "kind": "property",
+              "name": "run",
+              "signature": "readonly run?: AppImageToolRunner",
+              "doc": "Runs `appimagetool` (test seam; default `Deno.Command` with inherited stdio)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "BuildLinuxPackageOptions",
+              "ref": "denext-desktop/BuildLinuxPackageOptions"
+            }
+          ]
+        },
+        {
           "name": "buildDesktopBundle",
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
           "params": [
             {
               "name": "entryUrl",
@@ -46109,8 +46264,8 @@
           "slug": "desktopHasTool",
           "kind": "function",
           "signature": "desktopHasTool(cmd: string): Promise<boolean>",
-          "doc": "Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.",
-          "docFull": "Whether a command is on PATH. No shell is involved: on Windows `where.exe` is run with the name\nas one argument; elsewhere each `PATH` directory is checked for an executable file of that name.\nA name that is not a plain command (a path separator, whitespace, a shell or wildcard character)\nis never found.",
+          "doc": "Whether a command is on PATH: the probe the package scripts (and desktopRequireTool) use before shelling out to an installer tool, so a missing one can be skipped or reported with its install hint instead of failing mid-build. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.",
+          "docFull": "Whether a command is on PATH: the probe the package scripts (and {@linkcode desktopRequireTool})\nuse before shelling out to an installer tool, so a missing one can be skipped or reported with\nits install hint instead of failing mid-build. No shell is involved: on Windows `where.exe` is\nrun with the name as one argument; elsewhere each `PATH` directory is checked for an executable\nfile of that name. A name that is not a plain command (a path separator, whitespace, a shell or\nwildcard character) is never found.",
           "params": [
             {
               "name": "cmd",
@@ -46118,7 +46273,9 @@
             }
           ],
           "returns": "Whether it resolves.",
-          "examples": [],
+          "examples": [
+            "Skip an optional step when its tool is missing\n```ts\nimport { desktopHasTool } from \"denext/desktop\";\n\nif (await desktopHasTool(\"appstreamcli\")) {\n  // validate the AppStream metadata\n}\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -46824,6 +46981,24 @@
               "name": "description",
               "signature": "readonly description: string",
               "doc": "One line describing the app (`desktop.installers.description`)."
+            },
+            {
+              "kind": "property",
+              "name": "email",
+              "signature": "readonly email?: string",
+              "doc": "The publisher's address (`desktop.installers.email`): the `.deb` Maintainer's `<email>`, the\n`.rpm` Packager, the AppStream update contact."
+            },
+            {
+              "kind": "property",
+              "name": "desktopEntry",
+              "signature": "readonly desktopEntry?: DesktopLinuxDesktopEntryConfig",
+              "doc": "The Linux `.desktop` keys (`desktop.linux.desktopEntry`)."
+            },
+            {
+              "kind": "property",
+              "name": "appImageRequires",
+              "signature": "readonly appImageRequires?: readonly string[]",
+              "doc": "Extra host libraries the AppImage needs (`desktop.linux.appImage.requires`)."
             },
             {
               "kind": "property",

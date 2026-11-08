@@ -99,6 +99,50 @@ and this project adheres to
   and rejects with `unsupported` before it. `openWindow` opens a window as `desktop.ts`'s
   `windows.open` does. See https://denext.dev/docs/desktop#desktop-host-confirm.
 
+- **`desktop.linux.desktopEntry`: what the Linux `.desktop` entries say about the app.**
+  `categories` (default `["Utility"]`; a terminal sets `["System", "TerminalEmulator"]`),
+  `keywords`, `genericName`, `startupWMClass` and `mimeTypes` reach every entry denext writes: the
+  `.deb` / `.rpm` launcher and the bundle's own entry the `.tar.gz` and AppImage carry. Values are
+  escaped per the Desktop Entry specification, and the config refuses a category, MIME type or
+  window class that could add a line or a key. File types with no deep link launch with `%F`. See
+  https://denext.dev/docs/desktop#desktop-linux-entry.
+- **AppStream metainfo in the Linux packages.** The `.deb`, `.rpm` and AppImage install
+  `usr/share/metainfo/<desktop.app.identifier>.metainfo.xml` (name, summary, license, developer,
+  the `.desktop` file it launches, an OARS content rating and the version as its release), so
+  software centres list the app. The AppImage's also lists the libraries the host must provide:
+  the backend's (WebKitGTK 4.1 and GTK 3 for the webview backend) plus
+  `desktop.linux.appImage.requires`.
+- **`desktop.installers.email`.** The `.deb` Maintainer becomes `Publisher <email>` (what Debian
+  policy asks for), and the address is the `.rpm` Packager and the metainfo's update contact.
+  Without it the Maintainer stays the publisher alone.
+- **`buildDesktopAppImage` in `denext/desktop`**, which `scripts/package-linux.ts` now calls: the
+  AppDir carries the entry at its root and under `usr/share/applications/`, the icon under the
+  entry's id and as `.DirIcon`, the metainfo, and an `AppRun` that launches with the app id the
+  entry's `StartupWMClass` matches. Regenerate the script with
+  `denext desktop package --regenerate-scripts`.
+- **`denext desktop doctor`'s `native-addons` check**: a Node-API addon (`*.node`) in the project's
+  `node_modules` or `.deno-desktop/` built against a distribution's shared Node.js (a `NEEDED
+  libnode.so.*` entry) is reported, with the fix.
+
+### Changed
+
+- **The AppImage runtime is pinned.** `appimagetool` used to prepend whatever type2-runtime's
+  moving `continuous` release held; the package script now downloads type2-runtime `20251108` for
+  x86_64 or aarch64 once into the toolchain cache, verifies its SHA-256 (a mismatch fails the
+  build) and passes it as `--runtime-file`.
+- **The Linux bundle's own `.desktop` entry is rewritten after `deno desktop` writes it**: `Name`
+  is `desktop.app.name` instead of the bundle directory's `<name>-<arch>`, `Icon` names the entry's
+  id with the icon copied beside it (it was `AppIcon`, which no icon theme resolves), and the
+  `desktop.linux.desktopEntry` keys apply. Every Linux package script gets this from
+  `buildDesktopBundle`, with no regeneration.
+- **A Linux package refuses a Node-API addon that links `libnode`.** One built against a
+  distribution's `nodejs` package cannot load in the app's runtime; the package script now fails
+  naming the addon and the fix (rebuild it against Node's own headers, or use the npm prebuilt)
+  instead of shipping an app whose first `require()` of it fails. With no `readelf`, `objdump` or
+  `ldd` on the host the check is skipped with a note.
+- **`desktopRequireTool("dpkg-deb", …)` says how to install `dpkg`** (apt, dnf, brew), as it does
+  for the other tools, and `desktopHasTool` is documented with the package-script helpers.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

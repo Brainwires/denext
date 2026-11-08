@@ -379,6 +379,15 @@ function validateDesktopInstallers(installers: unknown, fail: Fail): void {
       fail(`desktop.installers.${key}`, "must be a non-empty string");
     }
   }
+  if (i.email !== undefined && !isInstallerEmail(i.email)) {
+    fail("desktop.installers.email", 'must be an email address ("apps@example.com")');
+  }
+}
+
+/** Whether `v` is one plain `local@domain.tld` address (what a `.deb` Maintainer can carry). */
+function isInstallerEmail(v: unknown): boolean {
+  return typeof v === "string" && v.length <= 254 &&
+    /^[^\s@<>(),;:"\[\]]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v);
 }
 
 /** Whether `v` is one entitlement value: a string, a finite number, a boolean or a string array. */
@@ -446,13 +455,78 @@ function validateDesktopWindows(windows: unknown, fail: Fail): void {
   }
 }
 
-/** `desktop.linux`: `{ requireSandbox?: boolean }`. */
+/** `desktop.linux`: `{ requireSandbox?: boolean, desktopEntry?, appImage? }`. */
 function validateDesktopLinux(linux: unknown, fail: Fail): void {
   if (linux === undefined) return;
-  if (!isPlainObject(linux)) fail("desktop.linux", "must be { requireSandbox? }");
-  const require = (linux as Record<string, unknown>).requireSandbox;
-  if (require !== undefined && typeof require !== "boolean") {
+  if (!isPlainObject(linux)) {
+    fail("desktop.linux", "must be { requireSandbox?, desktopEntry?, appImage? }");
+  }
+  const l = linux as Record<string, unknown>;
+  if (l.requireSandbox !== undefined && typeof l.requireSandbox !== "boolean") {
     fail("desktop.linux.requireSandbox", "must be a boolean");
+  }
+  validateDesktopEntry(l.desktopEntry, fail);
+  validateLinuxAppImage(l.appImage, fail);
+}
+
+/** A string with no control character (a Desktop Entry value is one line). */
+function isOneLine(v: unknown): v is string {
+  // deno-lint-ignore no-control-regex
+  return typeof v === "string" && v.trim() !== "" && !/[\x00-\x1f\x7f]/.test(v);
+}
+
+/** The keys `desktop.linux.desktopEntry` takes. */
+const DESKTOP_ENTRY_KEYS = ["categories", "keywords", "genericName", "startupWMClass", "mimeTypes"];
+
+/** `desktop.linux.desktopEntry`: freedesktop Desktop Entry keys. */
+function validateDesktopEntry(entry: unknown, fail: Fail): void {
+  if (entry === undefined) return;
+  const field = "desktop.linux.desktopEntry";
+  if (!isPlainObject(entry)) fail(field, `must be { ${DESKTOP_ENTRY_KEYS.join("?, ")}? }`);
+  const e = entry as Record<string, unknown>;
+  const unknown = Object.keys(e).find((k) => !DESKTOP_ENTRY_KEYS.includes(k));
+  if (unknown) {
+    fail(`${field}.${unknown}`, `is not a key (expected ${DESKTOP_ENTRY_KEYS.join(", ")})`);
+  }
+  const list = (key: string, ok: (s: string) => boolean, what: string) => {
+    const v = e[key];
+    if (v !== undefined && (!Array.isArray(v) || !v.every((s) => isOneLine(s) && ok(s)))) {
+      fail(`${field}.${key}`, `must be an array of ${what}`);
+    }
+  };
+  list("categories", (s) => /^[A-Za-z0-9-]+$/.test(s), 'categories ("System", "X-Vendor")');
+  list("keywords", () => true, "one-line strings");
+  list(
+    "mimeTypes",
+    (s) => /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(s),
+    'MIME types ("text/plain")',
+  );
+  if (e.genericName !== undefined && !isOneLine(e.genericName)) {
+    fail(`${field}.genericName`, "must be a non-empty one-line string");
+  }
+  const wmClass = e.startupWMClass;
+  if (
+    wmClass !== undefined && !(typeof wmClass === "string" && /^[A-Za-z0-9._-]+$/.test(wmClass))
+  ) {
+    fail(`${field}.startupWMClass`, "must be a window class (letters, digits, '.', '_', '-')");
+  }
+}
+
+/** `desktop.linux.appImage`: `{ requires?: string[] }` (sonames). */
+function validateLinuxAppImage(appImage: unknown, fail: Fail): void {
+  if (appImage === undefined) return;
+  if (!isPlainObject(appImage) || Object.keys(appImage).some((k) => k !== "requires")) {
+    fail("desktop.linux.appImage", "must be { requires? }");
+  }
+  const req = (appImage as Record<string, unknown>).requires;
+  if (
+    req !== undefined &&
+    !(Array.isArray(req) && req.every((s) => typeof s === "string" && /^[A-Za-z0-9._+-]+$/.test(s)))
+  ) {
+    fail(
+      "desktop.linux.appImage.requires",
+      'must be an array of library sonames ("libvte-2.91.so.0")',
+    );
   }
 }
 

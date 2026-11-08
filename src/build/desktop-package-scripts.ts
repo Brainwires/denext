@@ -706,7 +706,8 @@ export const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *                tar.gz    the bundle directory
  *                deb       Debian/Ubuntu package (built by denext; no tool needed)
  *                rpm       Fedora/RHEL/openSUSE package (needs \`rpmbuild\`)
- *                appimage  a single-file AppImage (needs \`appimagetool\`)
+ *                appimage  a single-file AppImage (needs \`appimagetool\`; the AppImage runtime
+ *                          is denext's pinned, SHA-256-verified type2 runtime)
  *              The .deb/.rpm install to /usr/lib/<app>, link /usr/bin/<app>, and register the
  *              launcher, the icon and the deno.json \`desktop.app.deepLinks\` schemes. A default
  *              format whose tool is missing is skipped with a warning; one you asked for fails.
@@ -716,7 +717,9 @@ export const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *                    deno.json's). The bundle's name, identifier and icon come from
  *                    denext.config.ts \`desktop.app\` (\`icons.linux\`, a PNG), else deno.json.
  *   deno.json \`version\` is the package version; denext.config.ts \`desktop.installers\`
- *   \`publisher\` / \`description\` fill the package metadata.
+ *   \`publisher\` / \`email\` / \`description\` fill the package metadata, and
+ *   \`desktop.linux.desktopEntry\` (categories, keywords, …) / \`desktop.linux.appImage\` every
+ *   .desktop entry and AppStream metainfo; all read when the script runs.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
@@ -737,6 +740,7 @@ import type { DesktopPackageMeta } from "denext/desktop";
 // come from Deno's cache whatever this project's node_modules mode is: in a pnpm workspace
 // (nodeModulesDir "manual") Deno would look for them in node_modules, fail, and rewrite the root
 // package.json from pnpm-workspace.yaml. The script re-runs itself once under that flag.
+// fallow-ignore-next-line code-duplication
 if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
   const age = Deno.env.get("DENEXT_MIN_DEP_AGE");
   const { code } = await new Deno.Command(Deno.execPath(), {
@@ -754,13 +758,13 @@ if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
 }
 
 const {
+  buildDesktopAppImage,
   buildDesktopBundle,
   buildDesktopDeb,
   buildDesktopRpm,
   buildDesktopTarball,
   desktopPackageArches,
   desktopRequireTool,
-  desktopRun: run,
   desktopToolGate,
   desktopVersionProblem,
   parseDesktopPackageArgs,
@@ -799,28 +803,6 @@ async function tarball(
   return await buildDesktopTarball({ bundleDir: dir, out: tgz });
 }
 
-/** Build an AppImage for a bundle with appimagetool; returns its path. */
-async function appImage(
-  name: string,
-  arch: "x86_64" | "arm64",
-  dir: string,
-): Promise<string> {
-  const appdir = \`\${dir}.AppDir\`;
-  await Deno.remove(appdir, { recursive: true }).catch(() => {});
-  await Deno.mkdir(appdir, { recursive: true });
-  // AppDir layout: the bundle contents + the .desktop at the root + an AppRun → exe.
-  await run(["cp", "-r", \`\${dir}/.\`, appdir]);
-  const exe = \`\${name}-\${LABELS[arch]}\`;
-  await Deno.writeTextFile(
-    \`\${appdir}/AppRun\`,
-    \`#!/bin/sh\\nHERE=$(dirname "$0")\\nexec "$HERE/\${exe}" "$@"\\n\`,
-  );
-  await Deno.chmod(\`\${appdir}/AppRun\`, 0o755);
-  const outFile = \`dist/\${name}-\${LABELS[arch]}.AppImage\`;
-  await run(["appimagetool", appdir, outFile]);
-  return outFile;
-}
-
 /** Wrap one finished bundle in each planned installer; returns their paths. */
 async function installers(
   name: string,
@@ -854,7 +836,8 @@ async function installers(
       format === "appimage" &&
       await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
     ) {
-      out.push(await appImage(name, arch, dir));
+      // The AppDir (entry, icon, AppStream metainfo) around the pinned AppImage runtime.
+      out.push(await buildDesktopAppImage({ ...pkg, out: \`\${base}.AppImage\` }));
     }
   }
   return out;

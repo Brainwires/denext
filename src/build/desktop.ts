@@ -236,6 +236,14 @@ export { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 // and the flags a build on it gets (`--unstable-no-legacy-abort` before runtime 3.0.0-rc.5).
 export { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
 
+// scripts/package-linux.ts's AppImage: the AppDir (entry, icon, AppStream metainfo, AppRun) wrapped
+// by appimagetool around denext's pinned, SHA-256-verified type2 runtime.
+export {
+  type AppImageToolRunner,
+  buildDesktopAppImage,
+  type BuildDesktopAppImageOptions,
+} from "./desktop-appimage.ts";
+
 // The installers the scaffolded package scripts build from a finished bundle (`desktop.installers`,
 // `--format`): the per-OS format plan, the package metadata, and the .msi / .deb / .rpm / .tar.gz builders.
 export {

@@ -738,7 +738,13 @@ never falls back: `desktop package` fails without the runtime or identifier (`ru
 `dialogs`, `$DOCUMENTS`, a `"*"`, a program sidecar or `loginShellEnv` are refused. Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
-the bundle. The engine: `desktop.backend` (`"webview"` | `"cef"`, or per OS `{ linux: "cef" }` in
+the bundle. `desktop.installers.email` makes the `.deb` Maintainer `Publisher <email>`.
+`desktop.linux.desktopEntry: { categories, keywords, genericName, startupWMClass, mimeTypes }`
+fills every `.desktop` denext writes (default `Categories=Utility;`; a terminal:
+`["System", "TerminalEmulator"]`), the bundle's own entry included (name, icon id); the packages
+carry AppStream metainfo (`desktop.linux.appImage.requires` adds host sonames to the AppImage's), the
+AppImage is built on a SHA-256-pinned type2 runtime and needs WebKitGTK 4.1 / GTK 3 on the host
+(webview backend), and an addon linking `libnode.so.*` fails Linux packaging. The engine: `desktop.backend` (`"webview"` | `"cef"`, or per OS `{ linux: "cef" }` in
 denext.config.ts; deno.json's takes one string), resolved for each build's target.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the

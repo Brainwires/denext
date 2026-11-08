@@ -628,6 +628,7 @@ Deno.test("stage: owned paths; a non-theme-size icon goes to the theme size belo
       "/usr/share/applications/com.acme.myapp.desktop",
       "/usr/share/pixmaps/com.acme.myapp.png",
       "/usr/share/icons/hicolor/512x512/apps/com.acme.myapp.png",
+      "/usr/share/metainfo/com.acme.myapp.metainfo.xml",
       "/usr/share/dbus-1/services/com.acme.myapp.service",
     ]);
     const paths = (await walkBundle(join(dir, "root"))).map((e) => e.path);
@@ -653,6 +654,7 @@ Deno.test("stage: an SVG icon is scalable; a non-square PNG is pixmaps only", {
     assertEquals(owned.slice(3), [
       "/usr/share/pixmaps/com.acme.myapp.png",
       "/usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg",
+      "/usr/share/metainfo/com.acme.myapp.metainfo.xml",
       "/usr/share/dbus-1/services/com.acme.myapp.service",
     ]);
     assertEquals(
@@ -676,7 +678,11 @@ Deno.test("stage: a bundle with no icon installs none, and the entry names none"
     await Deno.remove(join(bundle, "AppIcon.png"));
     const root = join(dir, "root");
     const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
-    assertEquals(owned.length, 4, "the bundle, the link, the entry, the D-Bus service file");
+    assertEquals(
+      owned.length,
+      5,
+      "the bundle, the link, the entry, the AppStream metainfo, the D-Bus service file",
+    );
     const entry = await Deno.readTextFile(
       join(root, "usr/share/applications/com.acme.myapp.desktop"),
     );

@@ -28,6 +28,15 @@ import {
 } from "./desktop-capabilities.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { resolveDesktopBackend } from "../desktop/engine-backend.ts";
+import {
+  appStreamDate,
+  desktopEntryList,
+  desktopEntryString,
+  linuxEntryKeys,
+  linuxEntryValues,
+  linuxMetainfo,
+} from "./desktop-linux-entry.ts";
+import type { DesktopLinuxDesktopEntryConfig } from "../server/config.ts";
 
 /** Every installer format, by the OS it is built for. */
 export const DESKTOP_INSTALLER_FORMATS = {
@@ -171,6 +180,15 @@ export interface DesktopPackageMeta {
   readonly publisher: string;
   /** One line describing the app (`desktop.installers.description`). */
   readonly description: string;
+  /**
+   * The publisher's address (`desktop.installers.email`): the `.deb` Maintainer's `<email>`, the
+   * `.rpm` Packager, the AppStream update contact.
+   */
+  readonly email?: string;
+  /** The Linux `.desktop` keys (`desktop.linux.desktopEntry`). */
+  readonly desktopEntry?: DesktopLinuxDesktopEntryConfig;
+  /** Extra host libraries the AppImage needs (`desktop.linux.appImage.requires`). */
+  readonly appImageRequires?: readonly string[];
   /** The reverse-DNS app identifier (deno.json `desktop.app.identifier`). */
   readonly identifier: string;
   /** The deep-link URL schemes the installer registers (`desktop.app.deepLinks`). */
@@ -313,6 +331,8 @@ export function packageMetaFrom(
     version: appVersion(deno, pkg) ?? "1.0.0",
     publisher: str(installers.publisher) ?? name,
     description: str(installers.description) ?? `${name} desktop application`,
+    ...(str(installers.email) ? { email: str(installers.email) } : {}),
+    ...linuxMetaFrom(field(cfgDesktop, "linux")),
     identifier,
     deepLinks: schemes(denoApp.deepLinks ?? cfgApp.deepLinks),
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
@@ -320,6 +340,20 @@ export function packageMetaFrom(
     backend: resolveDesktopBackend(cfgDesktop.backend, os) ??
       str(field(deno, "desktop").backend) ?? "webview",
     secureStore: capabilityOn(field(cfgDesktop, "capabilities"), "secureStore", "secure-store"),
+  };
+}
+
+/** The `desktop.linux` keys the package metadata carries (`desktopEntry`, `appImage.requires`). */
+function linuxMetaFrom(linux: Obj): Pick<DesktopPackageMeta, "desktopEntry" | "appImageRequires"> {
+  const entry = linux.desktopEntry;
+  const requires = field(linux, "appImage").requires;
+  return {
+    ...(typeof entry === "object" && entry !== null && !Array.isArray(entry)
+      ? { desktopEntry: entry as DesktopLinuxDesktopEntryConfig }
+      : {}),
+    ...(Array.isArray(requires)
+      ? { appImageRequires: requires.filter((r): r is string => typeof r === "string") }
+      : {}),
   };
 }
 
@@ -861,6 +895,20 @@ function linuxDeps(backend: string): ReadonlyArray<readonly [string, string]> {
 }
 
 /**
+ * The shared libraries (sonames) the app loads from the host: its backend's, and libsecret when
+ * the secure store is on. What the `.deb` / `.rpm` depend on, and what an AppImage needs there.
+ *
+ * @param meta The package metadata.
+ * @returns The sonames.
+ */
+export function linuxHostLibraries(meta: DesktopPackageMeta): string[] {
+  return [
+    ...linuxDeps(meta.backend).map(([so]) => so),
+    ...(meta.secureStore === true ? ["libsecret-1.so.0"] : []),
+  ];
+}
+
+/**
  * The packages an enabled capability needs, as (Debian package, RPM package): the secure store's
  * libsecret, which the runtime `dlopen`s (`libsecret-1.so.0`) to reach the Secret Service.
  */
@@ -906,18 +954,24 @@ export function linuxDesktopEntry(meta: DesktopPackageMeta, icon = true): string
   const pkg = debianPackageName(meta.name);
   const id = linuxAppId(meta);
   const env = `LAUFEY_APP_ID=${id}${meta.singleInstance ? " LAUFEY_SINGLE_INSTANCE=1" : ""}`;
-  const mime = meta.deepLinks.map((s) => `x-scheme-handler/${s};`).join("");
+  const keys = linuxEntryKeys(meta);
+  const values = linuxEntryValues(keys);
+  const mime = [...meta.deepLinks.map((s) => `x-scheme-handler/${s}`), ...keys.mimeTypes];
+  // One field code: a deep link's URL (`%u`), else the opened files (`%F`).
+  const code = meta.deepLinks.length > 0 ? " %u" : keys.mimeTypes.length > 0 ? " %F" : "";
   return [
     "[Desktop Entry]",
     "Type=Application",
-    `Name=${oneLine(meta.name)}`,
-    `Comment=${oneLine(meta.description)}`,
-    `Exec=env ${env} ${pkg}${mime ? " %u" : ""}`,
+    `Name=${desktopEntryString(oneLine(meta.name))}`,
+    ...(values.GenericName ? [`GenericName=${values.GenericName}`] : []),
+    `Comment=${desktopEntryString(oneLine(meta.description))}`,
+    `Exec=env ${env} ${pkg}${code}`,
     ...(icon ? [`Icon=${id}`] : []),
-    `StartupWMClass=${id}`,
+    `StartupWMClass=${values.StartupWMClass ?? id}`,
     "Terminal=false",
-    "Categories=Utility;",
-    ...(mime ? [`MimeType=${mime}`] : []),
+    `Categories=${values.Categories}`,
+    ...(values.Keywords ? [`Keywords=${values.Keywords}`] : []),
+    ...(mime.length > 0 ? [`MimeType=${desktopEntryList(mime)}`] : []),
     "",
   ].join("\n");
 }
@@ -925,7 +979,10 @@ export function linuxDesktopEntry(meta: DesktopPackageMeta, icon = true): string
 /**
  * The app id a Linux package installs under: `desktop.app.identifier` when it is a valid
  * `.desktop` file id, else `com.deno.desktop.<package>`. It names the `.desktop` entry, the
- * window's `StartupWMClass` and the icon.
+ * window's `StartupWMClass`, the icon and the AppStream metainfo.
+ *
+ * @param meta The package metadata.
+ * @returns The app id.
  */
 function linuxAppId(meta: DesktopPackageMeta): string {
   return /^[A-Za-z0-9.-]+$/.test(meta.identifier)
@@ -1239,6 +1296,13 @@ export async function stageLinuxRoot(
   const apps = join(root, "usr", "share", "applications");
   await Deno.mkdir(apps, { recursive: true });
   await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta, icons.length > 0));
+  const metainfo = `usr/share/metainfo/${id}.metainfo.xml`;
+  await Deno.mkdir(dirname(join(root, metainfo)), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, metainfo),
+    linuxMetainfo(meta, { id, date: appStreamDate(linuxBuildTime()) }),
+  );
+  owned.push(`/${metainfo}`);
   const service = linuxDbusService(meta);
   if (service) {
     const services = join(root, "usr", "share", "dbus-1", "services");
@@ -1252,6 +1316,16 @@ export async function stageLinuxRoot(
 /** The Debian architecture of a bundle arch. */
 function debianArch(arch: "x86_64" | "arm64"): "amd64" | "arm64" {
   return arch === "arm64" ? "arm64" : "amd64";
+}
+
+/**
+ * The `.deb` Maintainer / `.rpm` Packager: `Publisher <email>` with `desktop.installers.email`,
+ * else the publisher alone (dpkg accepts it; lintian, which wants an address, flags it).
+ */
+function maintainer(meta: DesktopPackageMeta): string {
+  const email = meta.email ? oneLine(meta.email).replace(/[<>]/g, "") : "";
+  const name = oneLine(meta.publisher).replace(/[<>]/g, "");
+  return email ? `${name} <${email}>` : name;
 }
 
 /**
@@ -1271,7 +1345,7 @@ export function debControl(
     `Package: ${debianPackageName(meta.name)}`,
     `Version: ${linuxPackageVersion(meta.version)}`,
     `Architecture: ${debianArch(arch)}`,
-    `Maintainer: ${oneLine(meta.publisher)}`,
+    `Maintainer: ${maintainer(meta)}`,
     `Installed-Size: ${installedKiB}`,
     `Depends: ${
       [
@@ -1395,8 +1469,12 @@ export interface BuildLinuxPackageOptions {
   readonly out: string;
 }
 
-/** The entry timestamp: `SOURCE_DATE_EPOCH` when set (reproducible builds), else now. */
-function buildTime(): number {
+/**
+ * The entry timestamp: `SOURCE_DATE_EPOCH` when set (reproducible builds), else now.
+ *
+ * @returns Seconds since the epoch.
+ */
+export function linuxBuildTime(): number {
   const epoch = Number(Deno.env.get("SOURCE_DATE_EPOCH"));
   return Number.isFinite(epoch) && epoch > 0 ? Math.floor(epoch) : Math.floor(Date.now() / 1000);
 }
@@ -1420,7 +1498,7 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
     const pkg = debianPackageName(o.meta.name);
     const entries = (await walkBundle(stage)).map((e) => linuxPackageEntry(e, pkg));
     const kib = Math.ceil(entries.reduce((n, e) => n + e.size, 0) / 1024);
-    const mtime = buildTime();
+    const mtime = linuxBuildTime();
     await Deno.mkdir(controlDir);
     await Deno.writeTextFile(join(controlDir, "control"), debControl(o.meta, o.arch, kib));
     for (const script of ["postinst", "postrm"] as const) {
@@ -1468,7 +1546,7 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
   ];
   await Deno.writeFile(
     o.out,
-    await gzipBytes(await tarEntries(dirname(o.bundleDir), entries, buildTime())),
+    await gzipBytes(await tarEntries(dirname(o.bundleDir), entries, linuxBuildTime())),
   );
   return o.out;
 }
@@ -1506,6 +1584,7 @@ export function rpmSpec(
     `Summary: ${lit(oneLine(meta.description))}`,
     `License: ${lit(oneLine(meta.license ?? "Proprietary"))}`,
     `Vendor: ${lit(oneLine(meta.publisher))}`,
+    ...(meta.email ? [`Packager: ${lit(maintainer(meta))}`] : []),
     "AutoReqProv: no",
     ...requires,
     "%global debug_package %{nil}",

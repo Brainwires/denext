@@ -687,7 +687,9 @@
     "DesktopExtraPermissions:interface",
     "DesktopFsConfig:interface",
     "DesktopInstallersConfig:interface",
+    "DesktopLinuxAppImageConfig:interface",
     "DesktopLinuxConfig:interface",
+    "DesktopLinuxDesktopEntryConfig:interface",
     "DesktopMacosConfig:interface",
     "DesktopMediaCaptureConfig:interface",
     "DesktopMenuConfig:interface",
@@ -1927,6 +1929,8 @@
     "subscribeBoundaries:function"
   ],
   "denext/desktop": [
+    "AppImageToolRunner:typeAlias",
+    "BuildDesktopAppImageOptions:interface",
     "BuildDesktopTarballOptions:interface",
     "BuildLinuxPackageOptions:interface",
     "BuildMsiOptions:interface",
@@ -2053,6 +2057,7 @@
     "SystemStatsSubscribeOptions:interface",
     "V8_ENTITLEMENTS:variable",
     "WindowsTrustDeps:interface",
+    "buildDesktopAppImage:function",
     "buildDesktopBundle:function",
     "buildDesktopDeb:function",
     "buildDesktopMsi:function",
