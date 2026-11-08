@@ -93,12 +93,12 @@ jobs:
     # Each matrix entry below runs on a self-hosted runner when its repository variable
     # names one (a label, or a JSON array):
     #   windows-latest → RUNNER_WINDOWS_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
     # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
     # The macOS entries stay on GitHub's images: the download checks drive the save dialog
     # with osascript, which needs the Automation (TCC) grant the self-hosted pool's image lacks.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 45
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
@@ -169,8 +169,8 @@ jobs:
     if: always()
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

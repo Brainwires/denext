@@ -42,6 +42,7 @@ env:
 
 jobs:
   android:
+    # Stays on GitHub-hosted: Gradle needs the Android SDK (not in the self-hosted Linux pool's image).
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:
@@ -111,6 +112,7 @@ jobs:
 
   ios:
     if: inputs.ios
+    # Stays on GitHub-hosted: xcodebuild and the iOS SDK need Xcode (the self-hosted macOS pools have the Command Line Tools only).
     runs-on: macos-15
     timeout-minutes: 75
     defaults:
@@ -146,6 +148,7 @@ jobs:
           path: examples/mobile/dist/mobile/
 
   android-examples:
+    # Stays on GitHub-hosted: Gradle needs the Android SDK (not in the self-hosted Linux pool's image).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -185,6 +188,7 @@ jobs:
 
   ios-examples:
     if: inputs.ios
+    # Stays on GitHub-hosted: xcodebuild and the iOS SDK need Xcode (the self-hosted macOS pools have the Command Line Tools only).
     runs-on: macos-15
     timeout-minutes: 75
     strategy:

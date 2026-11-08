@@ -184,10 +184,10 @@ jobs:
     #   macos-latest → RUNNER_MACOS_ARM
     #   windows-latest → RUNNER_WINDOWS_X64
     #   ubuntu-latest → RUNNER_LINUX_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
     # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -219,10 +219,10 @@ jobs:
     # names one (a label, or a JSON array):
     #   macos-latest → RUNNER_MACOS_ARM
     #   windows-latest → RUNNER_WINDOWS_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
     # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -242,9 +242,9 @@ jobs:
     # names one (a label, or a JSON array):
     #   windows-latest → RUNNER_WINDOWS_X64
     #   ubuntu-latest → RUNNER_LINUX_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 20
     defaults:
       run:
@@ -335,9 +335,9 @@ jobs:
     #   macos-latest → RUNNER_MACOS_ARM
     #   windows-latest → RUNNER_WINDOWS_X64
     #   ubuntu-latest → RUNNER_LINUX_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 30
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
@@ -405,10 +405,10 @@ jobs:
     # Each matrix entry below runs on a self-hosted runner when its repository variable
     # names one (a label, or a JSON array):
     #   windows-latest → RUNNER_WINDOWS_X64
-    # Unset, the entry keeps its image; always the image on a pull_request (a self-hosted
-    # runner never takes a pull request's code). Other entries keep their image.
+    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
+    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
     # The windows entry runs on the self-hosted Windows x64 runner (interactive desktop session) when RUNNER_WINDOWS_X64 is set.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 20
     defaults:
       run:
@@ -450,8 +450,8 @@ jobs:
     name: scaffold + package-script drift
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -473,9 +473,9 @@ jobs:
         os: [ubuntu-22.04, macos-latest]
     # The macos-latest entry runs on the self-hosted arm64 runner the repository
     # variable RUNNER_MACOS_ARM names (a label, or a JSON array) when it is set;
-    # always the image on a pull_request (a self-hosted runner never takes a pull
-    # request's code). The other entries keep their image.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # always the image on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
+    # pull_request runs on it). The other entries keep their image.
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -564,6 +564,7 @@ jobs:
 
   installers-linux:
     name: installers (ubuntu-latest — .deb via apt, .rpm via dnf)
+    # Stays on GitHub-hosted: it `sudo apt-get install`s the .deb and runs dnf in `docker run` (no sudo, no Docker socket on the self-hosted Linux pool).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -658,8 +659,8 @@ jobs:
     name: installers (macos-latest — .dmg mounted, .pkg installed; unsigned)
     # macOS: the self-hosted arm64 runner the repository variable RUNNER_MACOS_ARM
     # names (a label, or a JSON array), else macos-latest; always macos-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     timeout-minutes: 45
     defaults:
       run:
@@ -706,9 +707,9 @@ jobs:
     name: install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)
     # The self-hosted Windows x64 runner the repository variable
     # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
-    # windows-latest on a pull_request (a self-hosted runner never takes a pull
-    # request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
+    # pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -899,9 +900,10 @@ jobs:
     # The macos-latest entry runs on the self-hosted arm64 runner the repository
     # variable RUNNER_MACOS_ARM names, the ubuntu-latest entries on the self-hosted
     # x64 runner RUNNER_LINUX_X64 names (each a label, or a JSON array) when it is
-    # set; always the image on a pull_request (a self-hosted runner never takes a
-    # pull request's code). The other entries keep their image.
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') || (matrix.os != 'macos-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # set; always the image on a fork's pull_request / pull_request_target (a
+    # self-hosted runner never takes a fork's code; a same-repo pull_request runs on
+    # it). The other entries keep their image.
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

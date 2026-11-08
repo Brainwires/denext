@@ -55,8 +55,8 @@ jobs:
   check:
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Every job has a limit (the default is 6 h, held by a stall). Sized from recent green runs:
     # check ≤ 15 min, integration / next-compat ≤ 3, coverage ≤ 52; about 3× / +40 min margin.
     timeout-minutes: 45
@@ -184,8 +184,8 @@ jobs:
   bundle-budget:
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -221,8 +221,8 @@ jobs:
   cargo-audit:
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 10
     env:
       CARGO_AUDIT_VERSION: "0.22.2"
@@ -269,8 +269,8 @@ jobs:
   integration:
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 30
@@ -312,8 +312,8 @@ jobs:
   next-compat:
     # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
     # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 30
@@ -754,9 +754,9 @@ jobs:
   windows-tests:
     # The self-hosted Windows x64 runner the repository variable
     # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
-    # windows-latest on a pull_request (a self-hosted runner never takes a pull
-    # request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
+    # pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
@@ -821,8 +821,8 @@ jobs:
   macos-tests:
     # macOS: the self-hosted arm64 runner the repository variable RUNNER_MACOS_ARM
     # names (a label, or a JSON array), else macos-latest; always macos-latest on a
-    # pull_request (a self-hosted runner never takes a pull request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 90
     steps:
@@ -871,9 +871,9 @@ jobs:
   windows-resolve:
     # The self-hosted Windows x64 runner the repository variable
     # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
-    # windows-latest on a pull_request (a self-hosted runner never takes a pull
-    # request's code).
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
+    # pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
     timeout-minutes: 15
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
     # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
