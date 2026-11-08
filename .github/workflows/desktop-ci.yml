@@ -40,6 +40,10 @@
 #   6. `denext create`'s scaffold (tests/integration/scaffold.test.ts), which holds the generated
 #      `scripts/package-*.ts` to the examples' copies — CI's integration job runs it on PRs and
 #      `main` only, so a template change pushed to `development` is checked here.
+#   7. The AppImage on Linux (`scripts/ci/desktop-appimage-smoke.sh`): examples/native packaged with
+#      `--format appimage`, its AppDir's .desktop entry and AppStream metainfo checked (and
+#      `appstreamcli validate-tree`), the AppImage launched under Xvfb; and the libnode check
+#      (`scripts/ci/desktop-libnode-check.ts`) on real ELF Node-API addons built in the job.
 #
 # workflow_dispatch is available once this workflow reaches the default branch; the `push` trigger
 # (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
@@ -141,6 +145,7 @@ on:
       - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-*.ts"
       - "scripts/ci/_packaged-app.ts"
+      - "scripts/ci/desktop-appimage-smoke.sh"
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
       - "tests/integration/scaffold.test.ts"
@@ -523,6 +528,63 @@ jobs:
       - name: Packaged app with sidecars (Linux, Xvfb)
         if: runner.os == 'Linux'
         run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-sidecar-smoke.ts
+
+  # The AppImage end to end on Linux (scripts/ci/desktop-appimage-smoke.sh, one phase per step):
+  # Linux packaging's libnode check refuses a real Node-API addon linked against a stub
+  # `libnode.so.<abi>` and passes one that is not; examples/native packages with
+  # `--format appimage` (the pinned appimagetool, unpacked: no FUSE in a container); the extracted
+  # AppDir's .desktop entry has Name, Icon and Categories, its AppStream metainfo is well-formed and
+  # `appstreamcli validate-tree` finds no error; and the AppImage itself starts under Xvfb
+  # (`--appimage-extract-and-run` without FUSE), listens and stays up.
+  linux-appimage-smoke:
+    name: AppImage smoke (linux-x64 — package, AppStream, launch, libnode addon check)
+    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
+    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
+    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    timeout-minutes: 30
+    env:
+      DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.8" # exactly: the pinned runtime refuses another deno for `package`
+      - name: Cache the Deno Desktop runtime
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/deno/denext-desktop-runtime
+          key: desktop-runtime-appimage-linux-x64-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
+      # The pool's image has these; a hosted runner installs what it lacks. A display, a D-Bus
+      # session and the WebKitGTK runtime for the launch, binutils + a C compiler for the addons.
+      - name: Linux — a display, a D-Bus session, the WebKitGTK runtime, a C toolchain
+        run: |
+          missing=()
+          for t in xvfb-run:xvfb xauth:xauth dbus-run-session:dbus cc:build-essential readelf:binutils desktop-file-validate:desktop-file-utils; do
+            command -v "${t%%:*}" >/dev/null || missing+=("${t#*:}")
+          done
+          ldconfig -p | grep 'libwebkit2gtk-4\.1\.so\.0' >/dev/null || missing+=(libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends dbus-x11 "${missing[@]}"
+          fi
+      - name: appimagetool (pinned, SHA-256-checked)
+        run: bash scripts/ci/desktop-appimage-smoke.sh appimagetool
+      - name: The libnode check on real ELF addons
+        run: bash scripts/ci/desktop-appimage-smoke.sh libnode
+      - name: Install examples/native's npm packages
+        working-directory: examples/native
+        run: deno install
+      - name: denext desktop package --format appimage
+        working-directory: examples/native
+        run: deno run -A ../../cli.ts desktop package . --format appimage && ls -la dist
+      - name: The AppDir — .desktop entry, icon, metainfo, appstreamcli validate-tree
+        run: bash scripts/ci/desktop-appimage-smoke.sh inspect examples/native/dist
+      - name: Launch the AppImage (Xvfb)
+        run: bash scripts/ci/desktop-appimage-smoke.sh launch examples/native/dist
 
   # The installer jobs package examples/native with a deep-link scheme added (and, on Windows, two
   # versions), so each installer has a scheme to register and the .msi an upgrade to perform.
