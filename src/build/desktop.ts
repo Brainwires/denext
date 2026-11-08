@@ -125,6 +125,14 @@ export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-st
 /** `desktop.menu` resolved, and `runDesktop({ newWindow })`'s handler and its context. */
 export type { DesktopMenuSettings, DesktopWindowMenuSettings } from "../desktop/menu-config.ts";
 export type { DesktopNewWindowContext, DesktopNewWindowHandler } from "../desktop/window-menu.ts";
+// The machine's aggregate CPU, GPU and memory load, straight from the runtime (no bridge).
+export {
+  system,
+  type SystemStats,
+  type SystemStatsApi,
+  type SystemStatsOptions,
+  type SystemStatsSubscribeOptions,
+} from "../desktop/system-stats.ts";
 // Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
 export {
   createOwnedResources,

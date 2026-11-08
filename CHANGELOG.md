@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **System stats for desktop apps.** `denext desktop add system-stats` enables `system.stats()` /
+  `system.onStats(cb, { intervalMs })`, from `denext/desktop/client` for the page and from
+  `denext/desktop` for the app's own process: the machine's aggregate CPU (total, and per core
+  with `perCore`), GPU and memory load in percent, as a `SystemStats` sample. The CPU figure is the
+  load since the caller's previous sample (each window, and each subscription, has its own
+  sampler); the runtime samples only while a subscription runs and skips ticks while every window
+  is hidden; a window's subscriptions end with it. Aggregate figures only, so the capability bakes
+  no Deno permission. It needs denext's Deno Desktop runtime after 3.0.0-denext.13
+  (`Deno.desktop.systemStats`); under an older one every call rejects `unsupported`, and a
+  packaged app that does not list the capability gets `forbidden`.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

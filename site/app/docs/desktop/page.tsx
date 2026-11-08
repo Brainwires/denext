@@ -2151,6 +2151,21 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
           </tr>
           <tr>
             <td>
+              <code>system-stats</code>
+            </td>
+            <td>
+              <a href="#desktop-system-stats">
+                <code>system.stats</code>, <code>system.onStats</code>
+              </a>{" "}
+              (<code>denext/desktop/client</code> and{" "}
+              <code>denext/desktop</code>: aggregate CPU, GPU and memory load; pinned runtime after
+              3.0.0-denext.13)
+            </td>
+            <td>none</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
               <code>updates</code>
             </td>
             <td>
@@ -2490,6 +2505,74 @@ desktop: {
         <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
         own VT sequences even for plain text.
       </Callout>
+
+      <h3 id="desktop-system-stats">System stats</h3>
+      <p>
+        <code>denext desktop add system-stats</code>{" "}
+        lets the app show how busy the machine is: the CPU, GPU and memory load, in percent, from
+        {" "}
+        <code>system.stats()</code> and <code>system.onStats()</code>. The page imports{" "}
+        <code>system</code> from{" "}
+        <code>denext/desktop/client</code>; code in the app&apos;s own process (an extension,{" "}
+        <code>desktop.ts</code>) imports the same shape from{" "}
+        <code>denext/desktop</code>, which reads the runtime directly. It is built on the
+        runtime&apos;s{" "}
+        <code>Deno.desktop.systemStats</code>, so it needs denext&apos;s Deno Desktop runtime after
+        {" "}
+        <code>3.0.0-denext.13</code>; under an older one every call is <code>unsupported</code>.
+      </p>
+      <Code lang="ts">
+        {`import { system, type SystemStats } from "denext/desktop/client";
+
+const now: SystemStats = await system.stats(); // { perCore: true } adds cpu.cores
+// {
+//   at: 1767225600000,                       // ms since the epoch
+//   cpu: { total: 23.5, cores?: [41, 6, …] },
+//   gpu: { utilization: 12, devices?: [{ name: "Apple M3", utilization: 12 }] },
+//   memory: { pressure: 38, usedBytes?: 12884901888, totalBytes?: 34359738368 },
+// }
+
+const stop = system.onStats((s) => render(s), {
+  intervalMs: 2000, // at least 1000, else a RangeError
+  onError: (err) => showUnavailable(err), // unavailable, unsupported, forbidden
+});
+stop(); // ends the subscription and its sampler`}
+      </Code>
+      <p>
+        Every figure is a percentage from 0 to 100, and one the OS does not report is{" "}
+        <code>null</code>{" "}
+        (an optional field is left out). The CPU figure is the share of time the cores were busy
+        since this caller&apos;s previous sample: each window has its own sampler for{" "}
+        <code>stats()</code>{" "}
+        (the first call primes it, about 100 ms) and each subscription one of its own, so two
+        callers never take each other&apos;s deltas. The runtime samples only while a subscription
+        runs, and skips its ticks while every app window is hidden. Samples go to the subscribing
+        window only, and a window&apos;s subscriptions end when it closes or its page reloads.
+      </p>
+      <p>
+        The figures are aggregate only: no process list, no names beyond the GPU&apos;s. So the
+        capability bakes no Deno permission; the runtime serves it to an app whose packaged launch
+        config lists <code>systemStats</code>, and answers <code>forbidden</code>{" "}
+        (the runtime&apos;s <code>NotCapable</code>) otherwise. Where the numbers come from:
+      </p>
+      <ul>
+        <li>
+          macOS: <code>host_processor_info</code> (CPU), IOKit&apos;s <code>IOAccelerator</code>
+          {" "}
+          <code>PerformanceStatistics</code> (GPU) and the <code>memorystatus</code>{" "}
+          level (memory pressure).
+        </li>
+        <li>
+          Linux: <code>/proc/stat</code> (CPU), <code>/proc/meminfo</code> (memory), amdgpu&apos;s
+          {" "}
+          <code>gpu_busy_percent</code> and NVML where the NVIDIA driver provides it (GPU;{" "}
+          <code>null</code> otherwise).
+        </li>
+        <li>
+          Windows: <code>GetSystemTimes</code> (CPU), the PDH <code>GPU Engine</code>{" "}
+          counters (GPU) and <code>GlobalMemoryStatusEx</code> (memory).
+        </li>
+      </ul>
 
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
       <p>

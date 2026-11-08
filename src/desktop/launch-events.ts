@@ -31,6 +31,7 @@
 import { basename } from "@std/path";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import { PickedPaths } from "./picked-paths.ts";
+import type { DenoSystemStatsApi } from "./system-stats-shape.ts";
 
 /** Who handles a deep-link scheme, as `Deno.desktop.getSchemeOwner` reports it. */
 export interface SchemeOwnerInfo {
@@ -327,6 +328,12 @@ export interface DesktopAppApi {
    * capability and `speak()` in `denext/mobile`): AVSpeechSynthesizer, SAPI, speech-dispatcher.
    */
   readonly speech?: DesktopSpeechApi;
+  /**
+   * Aggregate CPU, GPU and memory load (denext's Deno Desktop runtime after 3.0.0-denext.13, behind
+   * the `systemStats` capability and `system.stats` in `denext/desktop` / `denext/desktop/client`).
+   * Its calls reject `NotCapable` unless the app bakes the `systemStats` capability.
+   */
+  readonly systemStats?: DenoSystemStatsApi;
 }
 
 /** The runtime's text to speech (`Deno.desktop.speech`), as denext expects it. */

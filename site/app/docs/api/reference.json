@@ -16883,6 +16883,12 @@
             },
             {
               "kind": "property",
+              "name": "systemStats",
+              "signature": "systemStats?: boolean",
+              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime after\n3.0.0-denext.13 (`unsupported` before it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
+            },
+            {
+              "kind": "property",
               "name": "updates",
               "signature": "updates?: boolean",
               "doc": "The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from\n`denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app\n({@link DesktopUpdateConfig.manifestUrl}, denext's pinned runtime), with download progress."
@@ -49397,7 +49403,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "runtimeConfig",
@@ -50380,6 +50386,148 @@
           "returns": "What changed.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "system",
+          "slug": "system",
+          "kind": "variable",
+          "signature": "system: SystemStatsApi",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { system } from \"denext/desktop\";\n\nconst { cpu, memory } = await system.stats();\nconst stop = system.onStats((s) => console.log(s.cpu.total), { intervalMs: 2000 });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SystemStats",
+          "slug": "SystemStats",
+          "kind": "interface",
+          "signature": "interface SystemStats",
+          "doc": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).",
+          "docFull": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not\nreport here is `null` (an optional field is left out).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "at",
+              "signature": "readonly at: number",
+              "doc": "When the sample was taken, in ms since the epoch."
+            },
+            {
+              "kind": "property",
+              "name": "cpu",
+              "signature": "readonly cpu: { readonly total: number | null; readonly cores?: readonly number[] }",
+              "doc": "The CPUs: `total` is the share of time every core was busy since this caller's previous\nsample (`null` when no figure is available), `cores` the same per core (with `perCore`)."
+            },
+            {
+              "kind": "property",
+              "name": "gpu",
+              "signature": "readonly gpu: { readonly utilization: number | null; readonly devices?: readonly { readonly name: string; readonly utilization: number | null }[] }",
+              "doc": "The GPUs: `utilization` is the busiest figure the OS reports (`null` when it reports none),\n`devices` each GPU by name."
+            },
+            {
+              "kind": "property",
+              "name": "memory",
+              "signature": "readonly memory: { readonly pressure: number | null; readonly usedBytes?: number; readonly totalBytes?: number }",
+              "doc": "Memory: `pressure` is how close the machine is to running out (`null` when the OS gives no\nfigure), with the bytes in use and in all where the OS reports them."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsApi",
+          "slug": "SystemStatsApi",
+          "kind": "interface",
+          "signature": "interface SystemStatsApi",
+          "doc": "What system is: the aggregate machine load.",
+          "docFull": "What `system` is: the aggregate machine load.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "stats",
+              "signature": "stats(options?: SystemStatsOptions): Promise<SystemStats>",
+              "doc": "One sample. Its CPU figure is the load since this caller's previous `stats()` (the first call\nprimes the sampler, ~100 ms).",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "perCore adds each core's figure."
+                }
+              ],
+              "returns": "The sample. Rejects unsupported under a runtime without system stats, forbidden when the app does not enable desktop.capabilities.systemStats."
+            },
+            {
+              "kind": "method",
+              "name": "onStats",
+              "signature": "onStats(callback: (stats: SystemStats) => void, options: SystemStatsSubscribeOptions): () => void",
+              "doc": "Sample every `intervalMs` (at least 1000) until the returned function is called; the runtime\nskips ticks while every app window is hidden.",
+              "params": [
+                {
+                  "name": "callback",
+                  "doc": "Called with each sample."
+                },
+                {
+                  "name": "options",
+                  "doc": "intervalMs and perCore."
+                }
+              ],
+              "returns": "The unsubscribe. Throws a RangeError for an intervalMs under 1000, and the unsupported / forbidden errors SystemStatsApi.stats rejects with."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsOptions",
+          "slug": "SystemStatsOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsOptions",
+          "doc": "Options for system.stats().",
+          "docFull": "Options for `system.stats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "perCore",
+              "signature": "readonly perCore?: boolean",
+              "doc": "Also report each core's figure (`cpu.cores`)."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsSubscribeOptions",
+          "slug": "SystemStatsSubscribeOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsSubscribeOptions extends SystemStatsOptions",
+          "doc": "Options for system.onStats().",
+          "docFull": "Options for `system.onStats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "intervalMs",
+              "signature": "readonly intervalMs: number",
+              "doc": "How often to sample, in ms: a finite number of at least {@linkcode MIN_STATS_INTERVAL_MS}."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsOptions",
+              "ref": "denext-desktop/SystemStatsOptions"
+            }
+          ]
         },
         {
           "name": "V8_ENTITLEMENTS",
@@ -52433,6 +52581,172 @@
           "returns": "Its id, process id, program and folder. Rejects forbidden for a program not on desktop.capabilities.pty.shells, validation for a bad size, a cwd that is not an existing directory or malformed env, and busy past 64 terminals.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "system",
+          "slug": "system",
+          "kind": "variable",
+          "signature": "system: SystemStatsClient",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime after 3.0.0-denext.13).",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, denext's Deno Desktop runtime after 3.0.0-denext.13).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SystemStats",
+          "slug": "SystemStats",
+          "kind": "interface",
+          "signature": "interface SystemStats",
+          "doc": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).",
+          "docFull": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not\nreport here is `null` (an optional field is left out).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "at",
+              "signature": "readonly at: number",
+              "doc": "When the sample was taken, in ms since the epoch."
+            },
+            {
+              "kind": "property",
+              "name": "cpu",
+              "signature": "readonly cpu: { readonly total: number | null; readonly cores?: readonly number[] }",
+              "doc": "The CPUs: `total` is the share of time every core was busy since this caller's previous\nsample (`null` when no figure is available), `cores` the same per core (with `perCore`)."
+            },
+            {
+              "kind": "property",
+              "name": "gpu",
+              "signature": "readonly gpu: { readonly utilization: number | null; readonly devices?: readonly { readonly name: string; readonly utilization: number | null }[] }",
+              "doc": "The GPUs: `utilization` is the busiest figure the OS reports (`null` when it reports none),\n`devices` each GPU by name."
+            },
+            {
+              "kind": "property",
+              "name": "memory",
+              "signature": "readonly memory: { readonly pressure: number | null; readonly usedBytes?: number; readonly totalBytes?: number }",
+              "doc": "Memory: `pressure` is how close the machine is to running out (`null` when the OS gives no\nfigure), with the bytes in use and in all where the OS reports them."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsClient",
+          "slug": "SystemStatsClient",
+          "kind": "interface",
+          "signature": "interface SystemStatsClient",
+          "doc": "What system is.",
+          "docFull": "What {@linkcode system} is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "stats",
+              "signature": "stats(options?: SystemStatsOptions): Promise<SystemStats>",
+              "doc": "One sample. Its CPU figure is the load since this window's previous `stats()` (the first call\nprimes the sampler, ~100 ms).",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "perCore adds each core's figure."
+                }
+              ],
+              "returns": "The sample."
+            },
+            {
+              "kind": "method",
+              "name": "onStats",
+              "signature": "onStats(callback: (stats: SystemStats) => void, options: SystemStatsWatchOptions): () => void",
+              "doc": "Sample every `intervalMs` (at least 1000) until the returned function is called.",
+              "params": [
+                {
+                  "name": "callback",
+                  "doc": "Called with each sample."
+                },
+                {
+                  "name": "options",
+                  "doc": "intervalMs, perCore and onError."
+                }
+              ],
+              "returns": "The unsubscribe. Throws a RangeError for an intervalMs under 1000."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsOptions",
+          "slug": "SystemStatsOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsOptions",
+          "doc": "Options for system.stats().",
+          "docFull": "Options for `system.stats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "perCore",
+              "signature": "readonly perCore?: boolean",
+              "doc": "Also report each core's figure (`cpu.cores`)."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsSubscribeOptions",
+          "slug": "SystemStatsSubscribeOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsSubscribeOptions extends SystemStatsOptions",
+          "doc": "Options for system.onStats().",
+          "docFull": "Options for `system.onStats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "intervalMs",
+              "signature": "readonly intervalMs: number",
+              "doc": "How often to sample, in ms: a finite number of at least {@linkcode MIN_STATS_INTERVAL_MS}."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsOptions",
+              "ref": "denext-desktop-client/SystemStatsOptions"
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsWatchOptions",
+          "slug": "SystemStatsWatchOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsWatchOptions extends SystemStatsSubscribeOptions",
+          "doc": "Options for SystemStatsClient.onStats.",
+          "docFull": "Options for {@linkcode SystemStatsClient.onStats}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "onError",
+              "signature": "readonly onError?: (error: unknown) => void",
+              "doc": "Called when the subscription could not start (`unavailable` off desktop, `unsupported`,\n`forbidden`, …) with the `DesktopBridgeError`; no sample follows."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsSubscribeOptions",
+              "ref": "denext-desktop-client/SystemStatsSubscribeOptions"
+            }
+          ]
         },
         {
           "name": "writePty",

@@ -382,6 +382,19 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "launch-at-login: turn it on only when the user asks (a settings toggle): it makes the app start with every login. macOS 13+ may answer `requires-approval` until the user allows it in System Settings › Login Items; it needs a signed app bundle.",
     ],
   },
+  "system-stats": {
+    key: "systemStats",
+    value: true,
+    api: [
+      "system.stats (denext/desktop/client, denext/desktop)",
+      "system.onStats",
+    ],
+    // A runtime API (Deno.desktop.systemStats) with no --allow-* of its own: the runtime serves it
+    // to an app whose .deno-desktop/app.json bakes the capability (NotCapable otherwise).
+    trust: "none",
+    notes:
+      "aggregate CPU / GPU / memory load in percent, no per-process data (pinned runtime from the release after 3.0.0-denext.13; every call is `unsupported` under an older one)",
+  },
   updates: {
     key: "updates",
     value: true,
