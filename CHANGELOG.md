@@ -33,6 +33,15 @@ and this project adheres to
   Dock's reopen and `windows.lastSession()` (persisted, so the next launch does not restore it);
   the menu follows. Its saved frame is kept.
 
+### Fixed
+
+- **Application menu clicks no longer depend on the main window (Deno Desktop).** On a runtime
+  that delivers menu clicks app-wide (a `"menuclick"` event on `Deno.desktop`), the application
+  menu's items, the page's and the `desktop.menu.window` ones alike, are taken from that event:
+  New Window, Reopen Closed Window and the window list keep working after the main window closes
+  while the app stays up (`desktop.app.keepAlive`, a tray), and a click is no longer lost while
+  another window is key. Older runtimes keep taking the clicks from the main window.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

@@ -245,7 +245,8 @@ export interface DesktopWindowsOptions {
   /**
    * The Deno Desktop runtime's version (default `Deno.version.deno`): from `3.0.0-denext.7` the
    * main window with `desktop.window.overlay` and the tray panel are layer-shell overlays where
-   * the compositor has layer-shell, so they report `setPosition` on Wayland.
+   * the compositor has layer-shell, so they report `setPosition` on Wayland; from
+   * `FIRST_APP_MENU_EVENT_RUNTIME` the application menu's clicks come from `Deno.desktop`.
    */
   readonly runtimeVersion?: string;
 }
@@ -628,6 +629,7 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     ...(st.dock ? { dock: st.dock } : {}),
     os: st.os,
     windows: () => st.registry?.list().map((w) => w.id) ?? ["main"],
+    ...(o.runtimeVersion !== undefined ? { runtimeVersion: o.runtimeVersion } : {}),
   });
   st.app = app;
   st.menu = createMenu(st, registry, app);
