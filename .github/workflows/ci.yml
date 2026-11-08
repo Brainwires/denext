@@ -752,11 +752,11 @@ jobs:
   # machine. Heavy (both suites on one runner): PRs, `main` and a manual dispatch, like
   # `integration`. The JDK is there for the same reason as in `check` (the Android templates).
   windows-tests:
-    # The self-hosted Windows x64 runner the repository variable
-    # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
+    # The self-hosted Windows x64 CLI runner (session 0, no desktop: this job opens no window) the repository variable
+    # RUNNER_WINDOWS_X64_CLI names (a label, or a JSON array), else RUNNER_WINDOWS_X64, else windows-latest; always
     # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
     # pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
@@ -869,11 +869,11 @@ jobs:
   # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
   # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
   windows-resolve:
-    # The self-hosted Windows x64 runner the repository variable
-    # RUNNER_WINDOWS_X64 names (a label, or a JSON array), else windows-latest; always
+    # The self-hosted Windows x64 CLI runner (session 0, no desktop: this job opens no window) the repository variable
+    # RUNNER_WINDOWS_X64_CLI names (a label, or a JSON array), else RUNNER_WINDOWS_X64, else windows-latest; always
     # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
     # pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest'))) }}
     timeout-minutes: 15
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
     # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
