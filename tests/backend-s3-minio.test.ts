@@ -395,9 +395,10 @@ Deno.test({
  * MinIO checks the signature against the Host it receives, so a URL signed for one address is
  * refused at the other.
  */
-function storeRelay(target: URL): { port: number; close(): void } {
+function storeRelay(target: URL): { port: number; close(): Promise<void> } {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const conns = new Set<Deno.Conn>();
+  const relays = new Set<Promise<void>>();
   const relay = async (client: Deno.Conn) => {
     conns.add(client);
     try {
@@ -414,16 +415,21 @@ function storeRelay(target: URL): { port: number; close(): void } {
       // the client went away, or the relay was closed
     }
   };
-  (async () => {
+  const accepting = (async () => {
     try {
-      for await (const client of listener) relay(client);
+      for await (const client of listener) {
+        const done = relay(client);
+        relays.add(done);
+        done.finally(() => relays.delete(done));
+      }
     } catch {
       // closed
     }
   })();
   return {
     port: (listener.addr as Deno.NetAddr).port,
-    close() {
+    // Everything the relay opened is closed and every pipe settled before the test ends.
+    async close() {
       listener.close();
       for (const c of conns) {
         try {
@@ -432,6 +438,8 @@ function storeRelay(target: URL): { port: number; close(): void } {
           // already closed
         }
       }
+      await accepting;
+      await Promise.allSettled([...relays]);
     },
   };
 }
@@ -440,9 +448,6 @@ Deno.test(
   {
     name: "minio: publicEndpoint — browser URLs signed for another hostname of the store",
     ignore,
-    // The relay's connections close with the test; their pipes settle a tick later.
-    sanitizeOps: false,
-    sanitizeResources: false,
   },
   async () => {
     await ensureBucket();
@@ -494,7 +499,7 @@ Deno.test(
       await bucket.remove("public-host.txt");
     } finally {
       await a.close();
-      relay.close();
+      await relay.close();
     }
   },
 );
