@@ -155,7 +155,8 @@ Deno.test({
 
       // Supabase's `migration down`: reset, re-apply up to the version before the last one, seed.
       await assertRejects(
-        () => run(DB_ACTIONS, ["rollback"], { "force-reset": true }),
+        // yes: false overrides the runner's default --yes: the refusal is what is under test
+        () => run(DB_ACTIONS, ["rollback"], { "force-reset": true, yes: false }),
         Error,
         "--yes",
       );
