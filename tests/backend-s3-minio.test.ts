@@ -390,27 +390,66 @@ Deno.test({
 });
 
 /**
- * A second name of the store's host for the publicEndpoint test: `localhost` and `127.0.0.1` are
- * the same loopback MinIO; a store on another host (a CI pool's job services) has no second name
- * this test can count on, so the test is skipped there.
+ * A loopback TCP relay to the store: the same MinIO under a second address (`127.0.0.1:<port>`),
+ * whatever host the store itself is on (loopback here, a CI pool's job-services address there).
+ * MinIO checks the signature against the Host it receives, so a URL signed for one address is
+ * refused at the other.
  */
-const SECOND_HOST_NAME = (() => {
-  if (!ENDPOINT) return undefined;
-  const host = new URL(ENDPOINT).hostname;
-  return host === "localhost" ? "127.0.0.1" : host === "127.0.0.1" ? "localhost" : undefined;
-})();
+function storeRelay(target: URL): { port: number; close(): void } {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const conns = new Set<Deno.Conn>();
+  const relay = async (client: Deno.Conn) => {
+    conns.add(client);
+    try {
+      const upstream = await Deno.connect({
+        hostname: target.hostname,
+        port: Number(target.port || (target.protocol === "https:" ? 443 : 80)),
+      });
+      conns.add(upstream);
+      await Promise.allSettled([
+        client.readable.pipeTo(upstream.writable),
+        upstream.readable.pipeTo(client.writable),
+      ]);
+    } catch {
+      // the client went away, or the relay was closed
+    }
+  };
+  (async () => {
+    try {
+      for await (const client of listener) relay(client);
+    } catch {
+      // closed
+    }
+  })();
+  return {
+    port: (listener.addr as Deno.NetAddr).port,
+    close() {
+      listener.close();
+      for (const c of conns) {
+        try {
+          c.close();
+        } catch {
+          // already closed
+        }
+      }
+    },
+  };
+}
 
 Deno.test(
   {
     name: "minio: publicEndpoint — browser URLs signed for another hostname of the store",
-    ignore: ignore || SECOND_HOST_NAME === undefined,
+    ignore,
+    // The relay's connections close with the test; their pipes settle a tick later.
+    sanitizeOps: false,
+    sanitizeResources: false,
   },
   async () => {
     await ensureBucket();
-    // The same MinIO under a second name: one for the browser, the other for the server.
+    // The same MinIO under a second address: the relay's for the browser, its own for the server.
     const internal = new URL(ENDPOINT!);
-    const publicUrl = new URL(ENDPOINT!);
-    publicUrl.hostname = SECOND_HOST_NAME!;
+    const relay = storeRelay(internal);
+    const publicUrl = new URL(`${internal.protocol}//127.0.0.1:${relay.port}`);
     const a = await backendApp({
       driver: s3({
         endpoint: internal.origin,
@@ -428,9 +467,9 @@ Deno.test(
         size: 6,
       });
       assertEquals(new URL(plan.url).hostname, publicUrl.hostname);
-      // The signature covers Host: the same URL sent to the internal name is refused.
+      // The signature covers Host: the same URL sent to the store's own address is refused.
       const wrongHost = new URL(plan.url);
-      wrongHost.hostname = internal.hostname;
+      wrongHost.host = internal.host;
       const refused = await fetch(wrongHost, {
         method: "PUT",
         headers: plan.headers,
@@ -455,6 +494,7 @@ Deno.test(
       await bucket.remove("public-host.txt");
     } finally {
       await a.close();
+      relay.close();
     }
   },
 );
