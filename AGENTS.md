@@ -484,7 +484,9 @@ own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
-discovery child. `--offline` keeps the UI and every process it starts off the network.
+discovery child. `--offline` runs the UI and its denext children with the network denied;
+programs a project verb itself spawns aren't bound (a guardrail against accidental network use,
+not a sandbox).
 Docs: https://denext.dev/docs/ui
 
 **A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `runtimePlatform()`

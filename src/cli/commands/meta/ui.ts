@@ -14,7 +14,7 @@ export const uiMeta: CommandMeta = {
   usage: "  denext ui                    Serve the UI for the current project and open it\n" +
     "  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n" +
     "  denext ui --read-only        Browse without offering any write\n" +
-    "  denext ui --offline          Keep the UI and the processes it starts off the network\n" +
+    "  denext ui --offline          Deny the network to the UI and its denext children (a guardrail)\n" +
     "  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n" +
     "  The UI binds and is opened at 127.0.0.1 only (never localhost, whose cookies every\n" +
     "  local server shares). The printed URL carries a per-launch 256-bit token that is\n" +
@@ -38,9 +38,9 @@ export const uiMeta: CommandMeta = {
     {
       name: "offline",
       type: "boolean",
-      help: "Never reach the network: no JSR search; denext verbs and doctor run with " +
+      help: "Deny the UI the network: no JSR search; denext verbs and doctor run with " +
         "--deny-net --cached-only, deno install with --cached-only; deno task, denext dev and " +
-        "plugin add/remove are refused (combines with --read-only)",
+        "plugin add/remove are refused; a program a verb spawns is not bound (combines with --read-only)",
     },
     {
       name: "token",

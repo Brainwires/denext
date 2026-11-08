@@ -1,7 +1,8 @@
-// `denext ui --offline`, said once. The contract: nothing the UI starts reaches the network.
+// `denext ui --offline`, said once. The contract: the UI and its denext children run with the
+// network denied (a guardrail against accidental network use, not a sandbox).
 // Every denext-CLI child (the commands listing, a verb run, `denext doctor`) runs under
 // `--deny-net --cached-only` (`proc.ts`), and Setup's `deno install` under `--cached-only`.
-// The two discovery children (`commands --json`, `task --list --json`) add `--deny-run`, so the
+// The two discovery children (`commands --json`, `job --list --json`) add `--deny-run`, so the
 // config they evaluate cannot spawn its way around `--deny-net`; a verb run and `doctor` keep
 // `--allow-run`, so a process one of THOSE starts is the one thing the flags do not reach.
 // An operation no flag can keep off the network is refused instead — with the status, and the

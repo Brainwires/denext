@@ -12,7 +12,7 @@ nothing installed, and binds loopback only.
 denext ui                    # serve the current project and open a browser
 denext ui ./my-app --port 6000
 denext ui --read-only        # browse; every mutation is refused
-denext ui --offline          # nothing the UI starts reaches the network
+denext ui --offline          # the UI and its denext children run with the network denied
 denext ui --no-open --json   # print { url, port, token } and keep serving
 ```
 
@@ -23,16 +23,16 @@ tab's SSE connection cannot hold the drain.
 
 ## Flags
 
-| Flag              | Default | What it does                                                                                                      |
-| ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `[dir]`           | `.`     | The project directory to manage                                                                                   |
-| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                                                           |
-| `--no-open`       | off     | Don't launch a browser — print the URL instead                                                                    |
-| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                                                                 |
-| `--offline`       | off     | Nothing the UI starts reaches the network — see [Working offline](#working-offline) (combines with `--read-only`) |
-| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters)                                    |
-| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)                                        |
-| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving                                                  |
+| Flag              | Default | What it does                                                                                                                       |
+| ----------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `[dir]`           | `.`     | The project directory to manage                                                                                                    |
+| `--port <port>`   | `5177`  | Port to listen on. `0` picks a free one                                                                                            |
+| `--no-open`       | off     | Don't launch a browser — print the URL instead                                                                                     |
+| `--read-only`     | off     | Refuse every mutation with a `403` before it runs                                                                                  |
+| `--offline`       | off     | The UI and its denext children run with the network denied — see [Working offline](#working-offline) (combines with `--read-only`) |
+| `--token <token>` | minted  | Use this session token instead of a fresh 256-bit one (at least 22 characters)                                                     |
+| `--ui-dev`        | off     | Internal: watch `src/ui` and reload open pages on change (a checkout only)                                                         |
+| `--json` (global) | off     | Print `{ url, port, token }` as one JSON line, then keep serving                                                                   |
 
 **The port is a requirement when you name one.** Left to the default, `5177` falls
 forward through at most ten ports when it is busy and the URL it prints says which one it
@@ -125,8 +125,8 @@ where it runs.
 `https://api.jsr.io` and `https://jsr.io`. Each request carries no credentials, refuses every
 redirect, has a five-second deadline that also covers reading the body, and reads at most
 64 KiB of `application/json`; what comes back is normalised and escaped like any other
-untrusted text. `denext ui --offline` turns it off (and keeps every process the UI starts off
-the network too — see [Working offline](#working-offline)), and so does a process that does not
+untrusted text. `denext ui --offline` turns it off (and denies the network to the denext
+children the UI starts too — see [Working offline](#working-offline)), and so does a process that does not
 already hold net permission for the host a request needs (`api.jsr.io` to search, `jsr.io` to
 add a package) — the UI queries that permission and never prompts for it. The page's CSP is unchanged: the browser still talks only to the UI
 (`connect-src 'self'`), and the registry is called by the server.
@@ -155,7 +155,7 @@ takes the default mode).
 
 ### Working offline
 
-`denext ui --offline` keeps the UI **and every process it starts** off the network. The UI's
+`denext ui --offline` runs the UI **and its denext children** with the network denied. The UI's
 own JSR search is off, the denext-CLI children it starts run with the network denied, and an
 operation no flag can keep off the network is refused:
 
