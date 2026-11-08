@@ -658,7 +658,7 @@
       "errorText": [],
       "affects": { "stack": "Next.js with @next/mdx or config plugins", "versions": "any" },
       "cause": "The wrapper stores the plugin functions in a closure that only its webpack loader reads.",
-      "denext": "`denext migrate` evaluates the config in a sandboxed subprocess (read access to the project only), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.",
+      "denext": "`denext migrate` evaluates the config in a subprocess with read access to the project only (no write, run or network grant), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.",
       "upstreamFirst": null,
       "evidence": [
         {

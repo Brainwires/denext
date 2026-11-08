@@ -1522,7 +1522,9 @@ an edit anywhere in the functions directory restarts the workers, and a function
 server runs is found on its first request. By default a worker has the server's permissions;
 `permissions` gives one its own (`{ net: true, env: true, read: false }`), which needs Deno's worker
 options: add `"unstable": ["worker-options"]` to `deno.json` (the plugin refuses to start without it
-rather than let Deno exit on the first request). Functions run from source — `denext build` does not
+rather than let Deno exit on the first request). A worker's permissions are a least-privilege
+guardrail, not a sandbox for a function you don't trust:
+[Permission flags are guardrails](/docs/security#permission-flags-are-guardrails). Functions run from source — `denext build` does not
 bundle them — so deploy the `functions/` directory with the app, as with `jobs/`.
 
 The directory is `functions/`, or `supabase/functions/` when only that exists (a project moved from

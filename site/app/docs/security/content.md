@@ -77,9 +77,10 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    — the stable `cacheComponents` opt-in — but resumes dynamic holes by buffered
    server-side splice, not the streaming-resume mechanism the Cache-Components
    CVE targets.)
-5. **Deno permission model.** The process runs under explicit `--allow-*`
-   grants; an RCE or path-traversal that did land is still boxed by the sandbox
-   the user granted.
+5. **Deno permission model as a guardrail.** The production process runs under
+   explicit least-privilege `--allow-*` grants, which narrows what a bug, an RCE or a
+   path traversal that did land can reach. That is defence in depth, not a sandbox
+   for hostile code: see [Permission flags are guardrails](#permission-flags-are-guardrails).
 
 The flip side: a few things are **our** responsibility precisely _because_ we
 reimplement them — see [Known Gaps](#known-gaps--residual-risk).
@@ -263,7 +264,8 @@ the package folder itself must resolve inside the project or its workspace root.
 An installed `denext` (the compiled binary, or
 `deno install -g`, whose launcher names its own config) reads a project's files as data until a
 verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
-(a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
+(it does evaluate a `next.config.*`, in a child with read access to the project only and no
+write, run or network grant: a narrow [guardrail](#permission-flags-are-guardrails), not a sandbox), `routes`, `info`, `generate`, `codemod`,
 `audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
 `desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
 `denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the
@@ -294,6 +296,32 @@ every mutation **by the UI**, but it cannot stop your own config and plugin
 `setup()`s from executing inside that short-lived discovery child — which is
 exactly why the child, and not this process, is where they run. Every write is
 previewed as a diff before it is applied.
+
+### Permission flags are guardrails
+
+denext writes least-privilege `--allow-*` flags wherever it can: the `start` task, the Docker
+image, the systemd unit, a `build --compile` binary, the desktop packaging scripts and the child
+processes the CLI and `denext ui` start. They reduce the blast radius of a bug or a supply-chain
+mistake. They are not a sandbox for hostile code: Deno's permissions are checked inside the
+process that holds them, and several grants hand over more than their name suggests.
+
+- **`--allow-run` is full trust.** A spawned program runs with the OS user's rights, not Deno's
+  permissions, so it can do everything the other flags withhold.
+- **`--allow-ffi` is full trust**, and so is loading a Node-API addon (a `.node` file): native code
+  is not bound by Deno's permissions.
+- **`--allow-write` to a config or startup file is an escalation path.** Writing `deno.json`,
+  `denext.config.ts`, `.env`, the app's own source, a shell rc file or a launch agent gets code run
+  later with broader permissions, or by another program. Keep write grants to data directories
+  (`.denext`, a database file, a storage folder).
+- **`--allow-net` to localhost reaches local services**: a dev server, a database, the desktop
+  runtime's relay, a cloud metadata endpoint. Each one is an escalation path, so scope network
+  grants to the hosts the app needs where you can.
+- **`--allow-env` and `--allow-read` of secrets leak them.** Anything that can read an API key,
+  a session secret or a credentials file can pass it on through any channel the process has.
+
+Treat code you haven't reviewed as having every permission the process could reach this way, and
+run it only where that is acceptable: [Untrusted repositories](#untrusted-repositories) lists which
+verbs run a project's code. An OS-enforced mode for fixed permission sets is planned.
 
 ### `denext dashboard` — a password-gated database GUI
 
