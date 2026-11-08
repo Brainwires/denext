@@ -3058,6 +3058,51 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         ignores for an accessory app, and macOS takes no input for the app while a session end is
         pending.
       </p>
+      <p id="desktop-host-confirm">
+        <code>host.confirm(options)</code>{" "}
+        asks the user with the OS&apos;s own message box (NSAlert, TaskDialogIndirect,
+        GtkMessageDialog) and your button labels: <code>message</code>, <code>detail</code>,{" "}
+        <code>title</code>, <code>buttons</code> (at most 16; none is one "OK"),{" "}
+        <code>defaultId</code> (Return), <code>cancelId</code> (Escape) and <code>kind</code>{" "}
+        (<code>"info"</code>, <code>"warning"</code>,{" "}
+        <code>"error"</code>). The box is app-modal, so it works with no window open, from an{" "}
+        <code>onBeforeQuit</code>{" "}
+        guard after the last window closed or in a tray app. It resolves the pressed button&apos;s
+        index; a box dismissed without a button resolves <code>cancelId</code>, or <code>null</code>
+        {" "}
+        without one. Bad options reject with{" "}
+        <code>validation</code>; a runtime without native message boxes (<code>
+          Deno.desktop.dialog.showMessageBox
+        </code>, Deno Desktop runtime 3.0.0-denext.14) rejects with <code>unsupported</code>.{" "}
+        <code>host.openWindow(options)</code> opens a window exactly as <code>desktop.ts</code>
+        &apos;s <code>windows.open</code>{" "}
+        does (the same options, keys and window limit) and returns it, so an extension can show a
+        window from a tray item or a timer.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/jobs.ts — ask before quitting with a job running, even with no window open
+import { defineDesktopExtension } from "denext/desktop";
+
+export default defineDesktopExtension({
+  name: "jobs",
+  methods: { /* … */ },
+  setup: (host) => {
+    host.onBeforeQuit(async () => {
+      if (!jobs.running()) return true;
+      const choice = await host.confirm({
+        message: "A job is still running. Quit anyway?",
+        detail: "The job stops and its progress is lost.",
+        buttons: ["Quit", "Show Job", "Cancel"],
+        defaultId: 2,
+        cancelId: 2,
+        kind: "warning",
+      }).catch(() => 0); // no message boxes on this runtime: quit
+      if (choice === 1) host.openWindow({ url: "/jobs", key: "jobs" });
+      return choice === 0;
+    });
+  },
+});`}
+      </Code>
       <Code lang="ts">
         {`// desktop/extensions/sessions.ts — one resource per window, let go with the window
 import { defineDesktopExtension } from "denext/desktop";

@@ -91,6 +91,14 @@ and this project adheres to
   let a resource with structured chunks size them and keep a tail; without `cut` an oversized
   structured chunk is dropped and counted.
 
+- **`host.confirm(options)` and `host.openWindow(options)` for desktop extensions.** `confirm`
+  shows the OS's own message box with your button labels (`message`, `detail`, `title`, `buttons`,
+  `defaultId`, `cancelId`, `kind`) and resolves the pressed button's index, or `cancelId` / `null`
+  for a box dismissed without one. It is app-modal, so an `onBeforeQuit` guard can ask with no
+  window open. It needs Deno Desktop runtime 3.0.0-denext.14 (`Deno.desktop.dialog.showMessageBox`)
+  and rejects with `unsupported` before it. `openWindow` opens a window as `desktop.ts`'s
+  `windows.open` does. See https://denext.dev/docs/desktop#desktop-host-confirm.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

@@ -688,7 +688,9 @@ New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
 as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
 `onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
-guards; the OS session-end rules are the pages'). With no tray host (stock GNOME)
+guards; the OS session-end rules are the pages'); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
+is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
+3.0.0-denext.14, else `unsupported`), and `host.openWindow(options)` is `windows.open`. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own

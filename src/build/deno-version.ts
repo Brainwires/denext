@@ -217,6 +217,28 @@ export function supportsDesktopBakedCapabilities(version: string): boolean {
 }
 
 /**
+ * The first release of denext's Deno Desktop runtime with native message boxes:
+ * `Deno.desktop.dialog.showMessageBox` (Brainwires/deno `feat/desktop-message-dialog`, laufey API 54:
+ * NSAlert, TaskDialogIndirect, GtkMessageDialog, app-modal with no window open), which an
+ * extension host's `confirm` uses.
+ *
+ * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries it yet. Set this to the release
+ * that does (3.0.0-denext.14) when the toolchain pin moves to it.
+ */
+export const FIRST_MESSAGE_DIALOG_RUNTIME: string = NEXT_RUNTIME;
+
+/**
+ * Whether the Deno Desktop runtime `version` has `Deno.desktop.dialog.showMessageBox` (from
+ * {@linkcode FIRST_MESSAGE_DIALOG_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version.
+ * @returns Whether the runtime shows native message boxes.
+ */
+export function supportsMessageDialog(version: string): boolean {
+  return compareDenoVersions(version, FIRST_MESSAGE_DIALOG_RUNTIME) >= 0;
+}
+
+/**
  * The first release of denext's Deno with the process resource limits (Brainwires/deno DENEXT.md
  * item 92: `--max-memory`, `--max-cpu-time` and `--max-time` on `deno run` and `deno compile`).
  */

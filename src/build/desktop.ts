@@ -122,6 +122,7 @@ export {
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopConfirmOptions,
   type DesktopEmitOptions,
   type DesktopExtensionHost,
   type DesktopMainThreadFn,
@@ -1704,6 +1705,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
         }
         : {}),
       ...(windows.lifecycle ? { lifecycle: windows.lifecycle } : {}),
+      // An extension host's openWindow is desktop.ts's windows.open.
+      ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
