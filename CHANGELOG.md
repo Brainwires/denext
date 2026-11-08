@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-11-08
+
 ### Added
 
 - **`denext job install` installs a project's scheduled jobs in the OS scheduler.** Each job with
@@ -21519,7 +21521,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.13.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.14.0...development
+[4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
 [4.13.0]: https://jsr.io/@denext/denext@4.13.0
 [4.12.0]: https://jsr.io/@denext/denext@4.12.0

@@ -1691,7 +1691,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.13.1"` — The denext framework version.
+- `VERSION: "4.14.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -3278,7 +3278,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/desktop/app`
 
 - `type ActivationPolicy = "regular" | "accessory" | "prohibited"` — The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all.
-- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads "unknown".
+- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads "unknown".
 - `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
 - `interface AppMenuAction` — A clickable menu item.
 - `type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | "separator"` — One entry of an application, tray or Dock menu.
