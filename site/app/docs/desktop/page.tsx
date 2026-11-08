@@ -2612,7 +2612,8 @@ onCloseRequested(({ reason }) => {
         <li>
           <strong>Chrome</strong>: <code>setTitleBarStyle</code> (<code>"hidden"</code> /{" "}
           <code>"hiddenInset"</code>, macOS), <code>setWindowButtonPosition</code>{" "}
-          (the traffic lights), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
+          (the traffic lights; <code>desktop.window.windowButtonPosition</code>{" "}
+          sets them at launch), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
           <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
           on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
           <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>,
@@ -2822,7 +2823,14 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         <code>"hiddenInset"</code> draw the page under the traffic lights); its own{" "}
         <code>titleBar</code> overrides it, <code>"default"</code>{" "}
         keeps the OS&apos;s title bar, and a frameless window has none to style. The traffic
-        lights&apos; position is per window (<code>setWindowButtonPosition</code> from its page).
+        lights&apos; position follows the same rule:{" "}
+        <code>desktop.window.windowButtonPosition</code>{" "}
+        (<code>{"{ x, y }"}</code>, the close button&apos;s top-left corner in points from the
+        window&apos;s top-left) places them on the main window and every opened window, a
+        window&apos;s own <code>windowButtonPosition</code> overrides it (<code>null</code>{" "}
+        keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
+        moves them later from a page. It is applied after the title bar style, needs denext&apos;s
+        pinned runtime, and is ignored on Windows and Linux.
       </p>
       <p>
         A <code>capabilities</code>{" "}

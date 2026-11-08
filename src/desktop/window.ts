@@ -1229,6 +1229,12 @@ export interface OpenWindowOptions {
    * `"default"` keeps the OS's title bar.
    */
   readonly titleBar?: TitleBarStyle;
+  /**
+   * Where the macOS traffic lights sit (the close button's top-left corner, in points from the
+   * window's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;
+   * `null` keeps the OS's place. Elsewhere the runtime has no such buttons and ignores it.
+   */
+  readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
   /** Screen x of the top-left corner (see the module docs for the units). */
   readonly x?: number;
   /** Screen y. */

@@ -17,7 +17,11 @@ import {
   setUpDesktopWindows,
 } from "../src/desktop/app-windows.ts";
 import { desktopMenuProblem, resolveDesktopMenuSettings } from "../src/desktop/menu-config.ts";
-import { resolveDesktopWindowSettings } from "../src/desktop/window-config.ts";
+import {
+  applyDesktopWindowSettings,
+  resolveDesktopWindowSettings,
+  windowButtonPositionProblem,
+} from "../src/desktop/window-config.ts";
 import { openWindowStore } from "../src/desktop/window-store.ts";
 import { injectDesktopGlobal } from "../src/build/desktop.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -71,6 +75,10 @@ class FakeWin extends EventTarget implements RegistryWindow {
   }
   setTitleBarStyle(style: string): boolean {
     this.calls.push(`titleBar:${style}`);
+    return true;
+  }
+  setWindowButtonPosition(position: { x: number; y: number } | null): boolean {
+    this.calls.push(`buttons:${JSON.stringify(position)}`);
     return true;
   }
   setApplicationMenu(menu: DesktopMenuItem[]) {
@@ -520,5 +528,88 @@ Deno.test('menu config: reopenClosed takes true / false / "list"', () => {
       ),
     Error,
     "desktop.menu.window.reopenClosed",
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// desktop.window.windowButtonPosition
+// ---------------------------------------------------------------------------------------------
+
+/** The traffic-light moves recorded on `win`. */
+const buttonCalls = (win: FakeWin) => win.calls.filter((c) => c.startsWith("buttons"));
+
+Deno.test("windowButtonPosition: the main window and opened windows take it; a window's own wins", () => {
+  const { s, main } = setup({
+    windowSettings: { titleBar: "hidden", windowButtonPosition: { x: 14, y: 20 } },
+  });
+  // After the title bar style (a style change puts the buttons back).
+  const i = main.calls.indexOf("titleBar:hidden");
+  assert(i >= 0 && main.calls.indexOf('buttons:{"x":14,"y":20}') > i, main.calls.join(" "));
+  s.windows.open({ url: "/a" });
+  assertEquals(buttonCalls(FakeWin.made[1]), ['buttons:{"x":14,"y":20}']);
+  s.windows.open({ url: "/b", windowButtonPosition: { x: 8.6, y: 30 } });
+  assertEquals(buttonCalls(FakeWin.made[2]), ['buttons:{"x":9,"y":30}']);
+  // null keeps the OS's place; a frameless window has no buttons.
+  s.windows.open({ url: "/c", windowButtonPosition: null });
+  s.windows.open({ url: "/d", frameless: true });
+  assertEquals(buttonCalls(FakeWin.made[3]), []);
+  assertEquals(buttonCalls(FakeWin.made[4]), []);
+  // Unset: nothing is moved.
+  const plain = setup({ windowSettings: { titleBar: "hidden" } });
+  plain.s.windows.open({ url: "/a" });
+  assertEquals(buttonCalls(plain.main), []);
+  assertEquals(buttonCalls(FakeWin.made[1]), []);
+});
+
+Deno.test("windowButtonPosition: a frameless main window is left alone; the stock runtime warns", () => {
+  const frameless = new FakeWin();
+  applyDesktopWindowSettings(frameless, { frameless: true, windowButtonPosition: { x: 1, y: 1 } });
+  assertEquals(buttonCalls(frameless), []);
+  const warnings: string[] = [];
+  const bare = { setTitle() {} };
+  applyDesktopWindowSettings(bare, { windowButtonPosition: { x: 1, y: 1 } }, (m) => {
+    warnings.push(m);
+  });
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "desktop.window.windowButtonPosition");
+});
+
+Deno.test("windowButtonPosition: checked in the config, at launch and in a page's openWindow", () => {
+  assertEquals(windowButtonPositionProblem({ x: 0, y: 12 }), null);
+  assertEquals(windowButtonPositionProblem([1, 2]), "must be { x, y }");
+  assertStringIncludes(windowButtonPositionProblem({ x: -1, y: 0 }) ?? "", "x must be");
+  assertStringIncludes(windowButtonPositionProblem({ x: 1, y: Infinity }) ?? "", "y must be");
+  assertStringIncludes(windowButtonPositionProblem({ x: 1 }) ?? "", "y must be");
+  assertEquals(
+    resolveDesktopWindowSettings({ window: { windowButtonPosition: { x: 12.4, y: 18 } } })
+      .windowButtonPosition,
+    { x: 12, y: 18 },
+  );
+  assertThrows(
+    () => resolveDesktopWindowSettings({ window: { windowButtonPosition: { x: "1", y: 0 } } }),
+    Error,
+    "desktop.window.windowButtonPosition",
+  );
+  validateDenextConfig({ desktop: { window: { windowButtonPosition: { x: 1, y: 2 } } } });
+  assertThrows(
+    () =>
+      validateDenextConfig(
+        { desktop: { window: { windowButtonPosition: { x: 1 } } } } as unknown as DenextConfig,
+      ),
+    Error,
+    "desktop.window.windowButtonPosition",
+  );
+  assertEquals(
+    openWindowSettings({ url: "/", windowButtonPosition: { x: 3, y: 4 } }).windowButtonPosition,
+    { x: 3, y: 4 },
+  );
+  assertEquals(
+    openWindowSettings({ url: "/", windowButtonPosition: null }).windowButtonPosition,
+    null,
+  );
+  assertThrows(
+    () => openWindowSettings({ url: "/", windowButtonPosition: { x: -5, y: 0 } }),
+    Error,
+    "windowButtonPosition",
   );
 });

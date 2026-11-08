@@ -21,6 +21,12 @@ and this project adheres to
   Window, Reopen Closed Window, the restored session) gets the main window's title bar style; its
   own `titleBar` (`"default"`, `"hidden"`, `"hiddenInset"`) overrides it, and a frameless window
   is left alone.
+- **`desktop.window.windowButtonPosition`** places the macOS traffic lights at launch: `{ x, y }`,
+  the close button's top-left corner in points from the window's top-left (each from 0). The main
+  window and every window from `windows.open` / `openWindow` (New Window, Reopen Closed Window and
+  the restored session included) take it after their title bar style; a window's own
+  `windowButtonPosition` overrides it and `null` keeps the OS's place. A frameless window is left
+  alone, Windows and Linux ignore it, and a runtime without `setWindowButtonPosition` warns once.
 - **`defaultWidth` / `defaultHeight`** on `windows.open`, `openWindow` and `desktop.window`: the
   size a window opens with only when its key has no saved frame (the first open, no key, or
   `restoreBounds: false`). Precedence per axis: `width` / `height` > the saved frame > the
