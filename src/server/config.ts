@@ -1489,6 +1489,52 @@ export interface DesktopLinuxConfig {
    * pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.
    */
   requireSandbox?: boolean;
+  /**
+   * What every `.desktop` entry denext writes says about the app (the `.deb` / `.rpm` entry, the
+   * bundle's own entry the `.tar.gz` and AppImage carry). Default: `Categories=Utility;` and no
+   * other key.
+   */
+  desktopEntry?: DesktopLinuxDesktopEntryConfig;
+  /** The AppImage's AppStream metadata. */
+  appImage?: DesktopLinuxAppImageConfig;
+}
+
+/**
+ * {@link DesktopLinuxConfig.desktopEntry}: freedesktop Desktop Entry keys. Values are escaped per
+ * the Desktop Entry specification (`\\`, `\n`, `\;` in a list); a value with a control character is
+ * refused.
+ */
+export interface DesktopLinuxDesktopEntryConfig {
+  /**
+   * `Categories`: freedesktop menu categories, e.g. `["System", "TerminalEmulator"]` for a
+   * terminal. Each is letters, digits and `-` (`X-` for a vendor one). Default `["Utility"]`.
+   */
+  categories?: string[];
+  /** `Keywords`: extra search terms for the launcher (a `;` in one is escaped). */
+  keywords?: string[];
+  /** `GenericName`: what kind of app it is (`"Terminal"`, `"Text Editor"`). */
+  genericName?: string;
+  /**
+   * `StartupWMClass`: the window class the launcher matches the app's windows by. Default: the
+   * app id, which the window carries (`LAUFEY_APP_ID`); set it only for a window that reports
+   * another class.
+   */
+  startupWMClass?: string;
+  /**
+   * `MimeType`: the file types the app opens (`"text/plain"`), after the deep-link schemes'
+   * `x-scheme-handler/*`. With no deep link the launcher passes the opened files as `%F`.
+   */
+  mimeTypes?: string[];
+}
+
+/** {@link DesktopLinuxConfig.appImage}: the AppImage's host requirements. */
+export interface DesktopLinuxAppImageConfig {
+  /**
+   * Shared libraries (sonames, e.g. `"libvte-2.91.so.0"`) the app needs on the host beyond the
+   * backend's own (WebKitGTK 4.1 and GTK 3 for the webview backend), listed in the AppImage's
+   * AppStream metainfo. An AppImage bundles neither: the host must provide them.
+   */
+  requires?: string[];
 }
 
 /** {@link DesktopConfig.windows}: Windows launch settings of the packaged app. */
@@ -1584,9 +1630,15 @@ export interface DesktopInstallersConfig {
   windows?: Array<"msi" | "zip">;
   /**
    * Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer
-   * (`"Name <email>"` there) and the `.rpm` Vendor. Default: the app name.
+   * (with {@link email}: `"Name <email>"`) and the `.rpm` Vendor. Default: the app name.
    */
   publisher?: string;
+  /**
+   * The publisher's contact address: the `.deb` Maintainer becomes `"<publisher> <email>"` (what
+   * Debian policy asks for), and it is the `.rpm` Packager and the AppStream `update_contact`.
+   * Without it the Maintainer is the publisher alone.
+   */
+  email?: string;
   /** One line describing the app, for the package managers. Default `"<name> desktop application"`. */
   description?: string;
 }

@@ -51,6 +51,11 @@ import { runToExitText } from "./exited-output.ts";
 import { type DoctorPty, ptyDoctorCheck, ptyFactLine } from "./desktop-pty-doctor.ts";
 import type { PtyOs } from "../desktop/pty-config.ts";
 import { LINUX_WEBRTC_FIX } from "./desktop-media-capture.ts";
+import {
+  NATIVE_ADDON_LIBNODE_FIX,
+  nativeAddonMessage,
+  type NativeAddonScan,
+} from "./desktop-native-addons.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -242,6 +247,12 @@ export interface DesktopDoctorOptions {
    * the webview backend), or `null`; the `webrtc` check runs with the Linux checks when given.
    */
   readonly linuxWebRtc?: () => Promise<string | null>;
+  /**
+   * The project's Node-API addons checked for a distribution's `libnode` (`linuxNativeAddonProblems`
+   * over its `node_modules` and `.deno-desktop/`), or `null` off a desktop project; the
+   * `native-addons` check runs when given and it answers a scan.
+   */
+  readonly linuxNativeAddons?: () => Promise<NativeAddonScan | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -1322,13 +1333,11 @@ export async function runDesktopDoctor(
   const policy = await launchPolicyFindings(options);
   const pty = await ptyCheck(options, os, pinVersion);
   const webrtc = await webRtcFindings(options, linuxChecks);
-  const checks = checkNames(
-    policy.checks,
-    pty !== null,
-    linux ? runtime : null,
-    webrtc.checks,
-    cefSigning,
-  );
+  const addons = await nativeAddonFindings(options);
+  const checks = [
+    ...checkNames(policy.checks, pty !== null, linux ? runtime : null, webrtc.checks, cefSigning),
+    ...addons.checks,
+  ];
   return {
     os,
     runtime,
@@ -1341,6 +1350,7 @@ export async function runDesktopDoctor(
       ...(pty?.findings ?? []),
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...webrtc.findings,
+      ...addons.findings,
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
@@ -1410,6 +1420,27 @@ async function webRtcFindings(
     findings: problem === null
       ? []
       : [{ check: "webrtc", level: "warning", message: problem, fix: LINUX_WEBRTC_FIX }],
+  };
+}
+
+/**
+ * The `native-addons` check (none without `options.linuxNativeAddons` or off a desktop project):
+ * a warning per addon that links a distribution's `libnode`, which a packaged Linux app cannot
+ * load (the package script refuses it). Addons it could not check (no `readelf`) are no finding.
+ */
+async function nativeAddonFindings(
+  options: DesktopDoctorOptions,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  const scan = options.linuxNativeAddons ? await options.linuxNativeAddons() : null;
+  if (scan === null) return { checks: [], findings: [] };
+  return {
+    checks: ["native-addons"],
+    findings: scan.problems.map((p) => ({
+      check: "native-addons",
+      level: "warning",
+      message: `${nativeAddonMessage([p])} in a packaged Linux app`,
+      fix: NATIVE_ADDON_LIBNODE_FIX,
+    })),
   };
 }
 

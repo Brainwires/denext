@@ -783,6 +783,22 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Linux.
       </Callout>
       <Callout kind="note">
+        An AppImage bundles the app, never the toolkit: with the webview backend the host needs{" "}
+        <strong>WebKitGTK 4.1 and GTK 3</strong> (<code>libwebkit2gtk-4.1.so.0</code>,{" "}
+        <code>libgtk-3.so.0</code>; Debian/Ubuntu <code>libwebkit2gtk-4.1-0</code>, Fedora{" "}
+        <code>webkit2gtk4.1</code>), as on any machine without a <code>.deb</code>/
+        <code>.rpm</code>{" "}
+        to pull them in. A CEF build carries Chromium and needs only the usual desktop system
+        libraries (GTK 3, NSS, ALSA, X11 / Wayland). denext does not try to bundle GTK. The
+        AppImage&apos;s AppStream metainfo lists what the host must provide; declare more with{" "}
+        <code>desktop.linux.appImage.requires</code> (sonames, e.g.{" "}
+        <code>["libvte-2.91.so.0"]</code>). The AppImage runtime <code>appimagetool</code>{" "}
+        prepends is denext&apos;s pin, type2-runtime <code>20251108</code>{" "}
+        for x86_64 and aarch64: downloaded once into the toolchain cache, SHA-256-verified (a
+        mismatch fails the build) and passed as <code>--runtime-file</code>, never the moving{" "}
+        <code>continuous</code> release.
+      </Callout>
+      <Callout kind="note">
         A CEF app runs its web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.10). Where
         unprivileged user namespaces are restricted (Ubuntu 23.10+), that needs the{" "}
         <code>chrome-sandbox</code> helper installed root-owned and setuid: the <code>.deb</code>
@@ -793,6 +809,64 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         <code>nosuid</code>), so there the runtime turns the sandbox off with a warning when it has
         no user namespaces.
       </Callout>
+
+      <h3 id="desktop-linux-entry">The .desktop entry and AppStream metadata</h3>
+      <p>
+        Every <code>.desktop</code> entry denext writes — the one the <code>.deb</code> /{" "}
+        <code>.rpm</code> install, and the bundle&apos;s own that the <code>.tar.gz</code>{" "}
+        and the AppImage carry — takes its keys from{" "}
+        <code>desktop.linux.desktopEntry</code>. The default is <code>Categories=Utility;</code>
+        {" "}
+        and nothing else. The package script rewrites the bundle&apos;s own entry after{" "}
+        <code>deno desktop</code> writes it: <code>Name</code> is <code>desktop.app.name</code>{" "}
+        (not the bundle directory&apos;s <code>&lt;name&gt;-&lt;arch&gt;</code>), and{" "}
+        <code>Icon</code>{" "}
+        names the entry&apos;s app id, with the icon copied beside it under that name. Values are
+        escaped per the Desktop Entry specification, and the config refuses a category, MIME type or
+        window class that could add a line or a key. Because the scripts read the config when they
+        run, a change needs no edit to <code>scripts/package-linux.ts</code>.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts — a terminal app
+export default {
+  desktop: {
+    linux: {
+      desktopEntry: {
+        categories: ["System", "TerminalEmulator"], // default ["Utility"]
+        keywords: ["shell", "console", "prompt"],
+        genericName: "Terminal",
+        mimeTypes: ["application/x-shellscript"], // opened files arrive as %F
+        // startupWMClass: only for a window that reports a class other than the app id
+      },
+      appImage: { requires: ["libvte-2.91.so.0"] }, // listed in the AppImage's metainfo
+    },
+    installers: { publisher: "Acme Inc.", email: "apps@acme.example" },
+  },
+};`}
+      </Code>
+      <p>
+        The <code>.deb</code>, <code>.rpm</code> and AppImage also install AppStream metainfo,{" "}
+        <code>usr/share/metainfo/&lt;desktop.app.identifier&gt;.metainfo.xml</code>: the name, the
+        description as its summary, deno.json&apos;s{" "}
+        <code>license</code>, the publisher, the address in{" "}
+        <code>desktop.installers.email</code>, the <code>.desktop</code>{" "}
+        file it launches, an all-ages OARS content rating and the version as its release, so
+        software centres (GNOME Software, Discover) list the app.
+      </p>
+      <p>
+        A Node-API addon (<code>*.node</code>) built against a distribution&apos;s shared Node.js
+        (its dynamic section names <code>libnode.so.&lt;abi&gt;</code>, what <code>node-gyp</code>
+        {" "}
+        produces under Debian&apos;s or Fedora&apos;s <code>nodejs</code>{" "}
+        package) cannot load in the app&apos;s runtime. Linux packaging reads every ELF addon in the
+        bundle and in <code>.deno-desktop/sidecars/</code> with <code>readelf -d</code> (else{" "}
+        <code>objdump -p</code> or{" "}
+        <code>ldd</code>) and fails naming the addon: rebuild it against Node&apos;s own headers (a
+        Node.js from nodejs.org) or use the package&apos;s npm prebuilt. With none of those tools on
+        the host the check is skipped with a note. <code>denext desktop doctor</code>{" "}
+        runs the same check over the project&apos;s <code>node_modules</code> and{" "}
+        <code>.deno-desktop/</code> (<code>native-addons</code>).
+      </p>
 
       <h3 id="desktop-linux-session">What the session provides</h3>
       <p>
@@ -979,6 +1053,7 @@ export default {
       linux: ["tar.gz", "deb", "rpm"], // default ["tar.gz", "deb"]
       windows: ["msi", "zip"], // default ["msi"]
       publisher: "Acme Inc.", // MSI Manufacturer, .deb Maintainer, .rpm Vendor
+      email: "apps@acme.example", // .deb Maintainer "Acme Inc. <apps@acme.example>", .rpm Packager
       description: "Acme's desktop app",
     },
   },
@@ -1007,10 +1082,11 @@ denext desktop package --target-os windows --format msi,zip`}
           (written by denext itself, no tool, cross-builds anywhere), <code>rpm</code> (needs{" "}
           <code>rpmbuild</code>: Fedora/RHEL, <code>apt install rpm</code>,{" "}
           <code>brew install rpm</code>) and <code>appimage</code> (needs{" "}
-          <code>appimagetool</code>). The <code>.deb</code> and <code>.rpm</code> install the app to
+          <code>appimagetool</code>; its runtime is denext&apos;s pinned one, see{" "}
+          <a href="#desktop-linux-entry">above</a>). The <code>.deb</code> and <code>.rpm</code>
           {" "}
-          <code>/usr/lib/&lt;app&gt;</code> with a <code>/usr/bin/&lt;app&gt;</code> link, a{" "}
-          <code>.desktop</code> entry named after{" "}
+          install the app to <code>/usr/lib/&lt;app&gt;</code> with a{" "}
+          <code>/usr/bin/&lt;app&gt;</code> link, a <code>.desktop</code> entry named after{" "}
           <code>desktop.app.identifier</code>, the icon (pixmaps and the hicolor theme), and every
           {" "}
           <code>desktop.app.deepLinks</code> scheme as an <code>x-scheme-handler</code>.
@@ -1075,6 +1151,46 @@ denext desktop package --target-os windows --format msi,zip`}
         better served by the formats above today. Snap and a Mac App Store build are not made
         either: their sandboxes break the same per-app storage and deep-link registration.
       </Callout>
+
+      <h3 id="desktop-package-helpers">Package-script helpers</h3>
+      <p>
+        The scaffolded <code>scripts/package-*.ts</code> are thin: they import their steps from{" "}
+        <code>denext/desktop</code>, so a project that adds its own step (a validator, an extra
+        artifact) uses the same probes. A tool check never runs a shell:
+      </p>
+      <ul>
+        <li>
+          <code>desktopHasTool(cmd)</code> — whether <code>cmd</code> is on PATH (each{" "}
+          <code>PATH</code> directory checked for an executable file; on Windows{" "}
+          <code>where.exe</code>). A name with a path separator, whitespace or a shell character is
+          never found.
+        </li>
+        <li>
+          <code>desktopRequireTool(tool, format, explicit)</code>{" "}
+          — the same probe for an installer&apos;s tool: when it is missing, a default format is
+          skipped with a warning and an asked-for one fails, either way naming how to install it (
+          <code>rpmbuild</code>, <code>appimagetool</code>, <code>dpkg-deb</code>, <code>wix</code>,
+          {" "}
+          <code>signtool</code>, <code>zip</code>, <code>tar</code>).
+        </li>
+        <li>
+          <code>desktopToolGate(why, format, explicit)</code>{" "}
+          — that decision for any other reason a format can&apos;t be built.
+        </li>
+        <li>
+          <code>buildDesktopDeb</code> / <code>buildDesktopRpm</code> /{" "}
+          <code>buildDesktopTarball</code> / <code>buildDesktopAppImage</code>{" "}
+          — the Linux builders, given the package metadata (<code>desktopPackageMeta</code>, read
+          from the config when the script runs) and the finished bundle.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// scripts/package-linux.ts — an extra, optional step
+const { desktopHasTool } = await import("denext/desktop");
+if (await desktopHasTool("lintian")) {
+  await new Deno.Command("lintian", { args: ["dist/my-app-x64.deb"] }).output();
+}`}
+      </Code>
 
       <h2 id="desktop-sign-in">Sign-in on Deno Desktop</h2>
       <p>

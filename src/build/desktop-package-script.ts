@@ -145,10 +145,21 @@ export function desktopPackageArches(arch: string): Array<"x86_64" | "arm64"> {
 }
 
 /**
- * Whether a command is on PATH. No shell is involved: on Windows `where.exe` is run with the name
- * as one argument; elsewhere each `PATH` directory is checked for an executable file of that name.
- * A name that is not a plain command (a path separator, whitespace, a shell or wildcard character)
- * is never found.
+ * Whether a command is on PATH: the probe the package scripts (and {@linkcode desktopRequireTool})
+ * use before shelling out to an installer tool, so a missing one can be skipped or reported with
+ * its install hint instead of failing mid-build. No shell is involved: on Windows `where.exe` is
+ * run with the name as one argument; elsewhere each `PATH` directory is checked for an executable
+ * file of that name. A name that is not a plain command (a path separator, whitespace, a shell or
+ * wildcard character) is never found.
+ *
+ * @example Skip an optional step when its tool is missing
+ * ```ts
+ * import { desktopHasTool } from "denext/desktop";
+ *
+ * if (await desktopHasTool("appstreamcli")) {
+ *   // validate the AppStream metadata
+ * }
+ * ```
  *
  * @param cmd The command.
  * @returns Whether it resolves.
@@ -193,6 +204,8 @@ export function desktopToolGate(
 const TOOL_HINTS: Readonly<Record<string, string>> = {
   rpmbuild: "install rpm-build — Fedora/RHEL: sudo dnf install rpm-build; Debian/Ubuntu: " +
     "sudo apt install rpm; macOS: brew install rpm",
+  "dpkg-deb": "install dpkg — Debian/Ubuntu: sudo apt install dpkg; Fedora: sudo dnf install " +
+    "dpkg; macOS: brew install dpkg",
   appimagetool: "download it from https://github.com/AppImage/appimagetool/releases, " +
     "chmod +x it and put it on PATH",
   wix: "WiX 5: dotnet tool install --global wix --version 5.0.2 (needs the .NET SDK)",
@@ -654,7 +667,9 @@ export async function desktopWithAppVersion<T>(
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
  * existing icon, then
- * the webview backend's `laufey-launch.json` beside the executable, and on Windows the tree
+ * the webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own
+ * `.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`
+ * link, and on Windows the tree
  * manifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and
  * version; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it
  * signs the executable). The microphone or camera on a runtime that does not enforce the launch
@@ -687,10 +702,24 @@ export async function buildDesktopBundle(
     : undefined;
   if (meta) await desktopWindowsCefLayout(o.out, meta);
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
+  if (os === "linux") await finishLinuxBundle(entryUrl, o.out);
   // The last file written (after laufey-launch.json): see stampWindowsBundleTree. The current
   // package-windows.ts stamps after the VC++ runtime instead (stampDesktopWindowsBundle).
   if (meta) await stampWindowsBundleTreeUnlessDeferred(o, meta);
   return o.out;
+}
+
+/**
+ * The Linux bundle's last steps: its own `.desktop` entry rewritten from the config (the app name,
+ * an icon id, `desktop.linux.desktopEntry`; see `finishLinuxBundleEntry`), and the check that no
+ * Node-API addon it ships links a distribution's `libnode` (`assertLinuxNativeAddons`).
+ */
+async function finishLinuxBundle(entryUrl: string, out: string): Promise<void> {
+  const meta = await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl), "linux");
+  const { finishLinuxBundleEntry } = await import("./desktop-linux-entry.ts");
+  await finishLinuxBundleEntry(out, meta);
+  const { assertLinuxNativeAddons } = await import("./desktop-native-addons.ts");
+  await assertLinuxNativeAddons(projectRootOf(entryUrl), out);
 }
 
 /** {@linkcode stampWindowsBundleTree}, unless the script stamps it itself (`treeManifest: false`). */

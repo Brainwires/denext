@@ -21,6 +21,11 @@ import {
   stalePackageScripts,
 } from "../../build/desktop-launch-policy.ts";
 import { readStaticConfig } from "../../build/config-static.ts";
+import {
+  linuxNativeAddonProblems,
+  type NativeAddonScan,
+} from "../../build/desktop-native-addons.ts";
+import { join } from "@std/path";
 
 /**
  * The project's packaged launch-policy gaps (see `launchPolicyProblems`), from what its config
@@ -73,6 +78,15 @@ export async function projectLinuxWebRtc(dir: string): Promise<string | null> {
 }
 
 /**
+ * The project's Node-API addons (its `node_modules` and `.deno-desktop/`) checked for a
+ * distribution's `libnode`; `null` off a desktop project.
+ */
+async function projectNativeAddons(dir: string): Promise<NativeAddonScan | null> {
+  if (!await isDesktopProject(dir)) return null;
+  return await linuxNativeAddonProblems([join(dir, "node_modules"), join(dir, ".deno-desktop")]);
+}
+
+/**
  * `denext desktop doctor`.
  *
  * @param ctx The command context (`--linux`, `--json`).
@@ -99,6 +113,7 @@ export async function desktopDoctor(
     launchPolicy: () => projectLaunchPolicy(dir),
     desktopConfig: () => projectDesktopConfig(dir),
     linuxWebRtc: () => projectLinuxWebRtc(dir),
+    linuxNativeAddons: () => projectNativeAddons(dir),
     ...seams,
     os,
     ...(linux ? { linux } : {}),
