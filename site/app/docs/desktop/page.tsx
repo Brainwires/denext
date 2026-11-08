@@ -2385,8 +2385,40 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
         (or the stock one) keeps the <code>security</code> path. The capability bakes an unscoped
         {" "}
-        <code>--allow-sys</code> for the runtime&apos;s store, plus{" "}
-        <code>--allow-run=security</code>.
+        <code>--allow-sys</code>{" "}
+        for the runtime&apos;s store (until the runtime reads the capability list denext writes into
+        {" "}
+        <code>.deno-desktop/app.json</code>), plus <code>--allow-run=security</code> while{" "}
+        <code>desktop.secureStore.legacy</code>{" "}
+        is on. That is the default, so an app that shipped the <code>security</code>{" "}
+        path keeps moving its users&apos; items; set{" "}
+        <code>{"desktop: { secureStore: { legacy: false } }"}</code> once it no longer needs to, and
+        {" "}
+        <code>security</code>{" "}
+        is neither run nor baked (under a runtime without its own macOS store every call then
+        rejects <code>backend_unavailable</code>, naming the setting).{" "}
+        <code>denext desktop add secure-store</code> writes <code>legacy: false</code>{" "}
+        when it enables the capability for the first time: such an app never shipped that path.
+      </Callout>
+      <Callout kind="note">
+        <strong>The secure store per caller.</strong>{" "}
+        The runtime can&apos;t tell the app&apos;s pages from its extensions (all of it runs in the
+        app&apos;s own process), so denext keeps them apart in the service name, on every OS: the
+        pages&apos; <code>secureStore</code> stores under{" "}
+        <code>&lt;desktop.app.identifier&gt;/page</code>, and a <code>defineDesktopExtension</code>
+        {" "}
+        capability under <code>&lt;desktop.app.identifier&gt;/ext/&lt;name&gt;</code>{" "}
+        (its capability name) through <code>ctx.secureStore</code> in a handler or{" "}
+        <code>host.secureStore</code> in <code>setup</code> (<code>get(key)</code>,{" "}
+        <code>set(key, value)</code>,{" "}
+        <code>delete(key)</code>; the page API&apos;s key rules). No page can read an
+        extension&apos;s secrets, nor one extension another&apos;s. The extension store needs{" "}
+        <code>secure-store</code> enabled; without it every call rejects{" "}
+        <code>not_enabled</code>. Items an earlier denext stored for the pages under the bare
+        identifier move into the page namespace on their first read during the first launch with
+        namespaces (copied, then deleted, so a failure leaves them in place); a marker keeps later
+        launches from reading the bare identifier again, and a page <code>delete</code>{" "}
+        removes any copy left there.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
@@ -3900,6 +3932,27 @@ info: {
 // the page
 const doc = await pickDocument();
 if (doc?.handle) await tools.info({ handle: doc.handle });`}
+      </Code>
+
+      <h3 id="desktop-extension-secrets">An extension&apos;s own secrets</h3>
+      <p>
+        <code>ctx.secureStore</code> (and <code>host.secureStore</code> in{" "}
+        <code>setup</code>) keeps an extension&apos;s secrets in the OS credential store the
+        pages&apos; <code>secureStore</code> uses, under a namespace of its own (<code>
+          &lt;desktop.app.identifier&gt;/ext/&lt;name&gt;
+        </code>): a page can&apos;t read or overwrite them, and the extension can&apos;t reach the
+        pages&apos; items. It needs the <code>secure-store</code>{" "}
+        capability; without it every call rejects <code>not_enabled</code>.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/sync.ts
+connect: {
+  handler: async (_args, ctx) => {
+    const token = (await ctx.secureStore.get("refresh-token")) ?? await signIn();
+    await ctx.secureStore.set("refresh-token", token); // never sent to the page
+    return { ok: true };
+  },
+},`}
       </Code>
 
       <h3 id="desktop-validate-input">Validate what the page sends</h3>

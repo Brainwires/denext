@@ -33,6 +33,11 @@ function ctxOf(signal = new AbortController().signal) {
     emit: (event, data) => void emitted.push([event, data]),
     appSupportDir: "/tmp/app",
     runOnMainThread: () => Promise.reject(new Error("no UI thread")),
+    secureStore: {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    },
     pickedPath: () => {
       throw new Error("no picked paths in tests");
     },

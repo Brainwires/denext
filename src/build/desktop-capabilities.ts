@@ -26,10 +26,17 @@ import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import {
+  desktopBakedCapabilitiesRuntime,
   desktopDataTokenRuntime,
   desktopDataTokenRuntimeProblem,
   desktopSidecarIntegrityRuntime,
+  macSecureStoreRuntime,
 } from "./desktop-launch-policy.ts";
+import {
+  secureStoreLegacy,
+  type SecureStorePermissionContext,
+  secureStorePermissionSet,
+} from "../desktop/secure-store-config.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
@@ -106,14 +113,62 @@ export interface DesktopCapabilityEntry {
   readonly api: readonly string[];
   /** The permissions it needs on every OS. */
   readonly all?: DesktopPermissionSet;
-  /** The permissions it needs per OS, on top of {@linkcode DesktopCapabilityEntry.all}. */
+  /**
+   * The permissions it needs per OS, on top of {@linkcode DesktopCapabilityEntry.all}. For a
+   * capability with {@linkcode DesktopCapabilityEntry.permissionsFor}, what an older runtime and the
+   * default config need (the table's `--json` and `--list` show it).
+   */
   readonly os?: Partial<Readonly<Record<DesktopOs, DesktopPermissionSet>>>;
+  /**
+   * The per-OS permissions when they depend on the config and the runtime the app is packaged for
+   * (replacing {@linkcode DesktopCapabilityEntry.os} when a context is known).
+   */
+  readonly permissionsFor?: (os: DesktopOs, ctx: DesktopPermissionContext) => DesktopPermissionSet;
   /** The trust it adds (see {@linkcode DesktopTrust}). */
   readonly trust: DesktopTrust;
   /** A one-line note printed with the table and the plan. */
   readonly notes: string;
   /** Steps `denext desktop add` cannot do, printed after the run. */
   readonly manual?: readonly string[];
+}
+
+/**
+ * What the permissions of some capabilities depend on besides the OS: the config
+ * (`desktop.secureStore.legacy`) and the Deno Desktop runtime the app is packaged for (whether it
+ * gates its store on the baked capability list, whether it has its own macOS store).
+ */
+export type DesktopPermissionContext = SecureStorePermissionContext;
+
+/**
+ * The context an older runtime and the default config give: what the catalog's static
+ * {@linkcode DesktopCapabilityEntry.os} lists.
+ */
+const LEGACY_PERMISSION_CONTEXT: DesktopPermissionContext = {
+  legacy: true,
+  bakedCapabilities: false,
+  macRuntimeStore: false,
+};
+
+/**
+ * The permission context for `config` under the runtime this process packages for: its
+ * `desktop.secureStore.legacy`, and whether the pinned runtime reads the baked capability list and
+ * has its own macOS store (`desktopBakedCapabilitiesRuntime`, `macSecureStoreRuntime`; overridden
+ * by `options`).
+ *
+ * @param config The project config.
+ * @param options Overrides for the runtime facts (default: the pinned runtime's).
+ * @returns The context.
+ */
+export function desktopPermissionContext(
+  config: unknown,
+  options: { bakedCapabilities?: boolean; macSecureStore?: boolean } = {},
+): DesktopPermissionContext {
+  const desktop = (config as { desktop?: unknown } | null | undefined)?.desktop;
+  return {
+    legacy: secureStoreLegacy(desktop),
+    bakedCapabilities: options.bakedCapabilities ?? desktopBakedCapabilitiesRuntime(),
+    macRuntimeStore: options.macSecureStore ?? macSecureStoreRuntime(),
+  };
 }
 
 /** The app's folders the `fs` capability may use by default. */
@@ -169,15 +224,17 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     key: "secureStore",
     value: true,
     api: ["secureStore"],
+    // Linux and macOS: the runtime's own store (the Secret Service through libsecret; the
+    // Keychain, items only the app may read), which needs an unscoped --allow-sys until the runtime
+    // gates it on the capability list baked into app.json. macOS keeps `security` while
+    // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
+    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`.
     os: {
-      // Linux and macOS: the runtime's own store (the Secret Service through libsecret; the
-      // Keychain, items only the app may read), which needs an unscoped --allow-sys. macOS keeps
-      // `security` for runtimes without that store and to move older items over. Windows: WinRT
-      // PasswordVault via `powershell.exe` (argv/stdin, no shell).
-      darwin: { run: ["security"], sys: ["*"] },
-      linux: { sys: ["*"] },
-      windows: { run: ["powershell.exe"] },
+      darwin: secureStorePermissionSet("darwin", LEGACY_PERMISSION_CONTEXT),
+      linux: secureStorePermissionSet("linux", LEGACY_PERMISSION_CONTEXT),
+      windows: secureStorePermissionSet("windows", LEGACY_PERMISSION_CONTEXT),
     },
+    permissionsFor: (os, ctx) => secureStorePermissionSet(os, ctx),
     trust: "full",
     notes:
       "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
@@ -491,28 +548,50 @@ function canonicalName(name: string): string | undefined {
 /** The permission kinds, in flag order. */
 const PERMISSION_KINDS = ["read", "write", "net", "env", "sys", "run", "ffi"] as const;
 
+/** The permission sets capability `name` needs on `os` (none for an unknown name). */
+function capabilitySets(
+  name: string,
+  os: DesktopOs,
+  ctx: DesktopPermissionContext,
+): Array<DesktopPermissionSet | undefined> {
+  const cap = DESKTOP_CAPABILITIES[canonicalName(name) ?? ""];
+  if (!cap) return [];
+  return [cap.all, cap.permissionsFor ? cap.permissionsFor(os, ctx) : cap.os?.[os]];
+}
+
+/** Add `set`'s values to `union`, per permission kind. */
+function addPermissionSet(
+  union: Map<string, Set<string>>,
+  set: DesktopPermissionSet | undefined,
+): void {
+  for (const kind of PERMISSION_KINDS) {
+    for (const v of set?.[kind] ?? []) {
+      const values = union.get(kind) ?? new Set<string>();
+      values.add(v);
+      union.set(kind, values);
+    }
+  }
+}
+
 /**
  * The union of the permissions `names` need on `os`, as `--allow-*` flags (the capabilities'
  * share only; the runtime adds its baseline).
  *
  * @param names Table names (see {@linkcode DESKTOP_CAPABILITIES}).
  * @param os The target OS.
+ * @param ctx The config and runtime facts some capabilities depend on (see
+ *   {@linkcode desktopPermissionContext}); default: an older runtime's and the default config's
+ *   (the catalog's static lists).
  * @returns The flags, e.g. `["--allow-run=caffeinate,osascript"]`.
  */
-export function desktopPermissionFlags(names: readonly string[], os: DesktopOs): string[] {
+export function desktopPermissionFlags(
+  names: readonly string[],
+  os: DesktopOs,
+  ctx: DesktopPermissionContext = LEGACY_PERMISSION_CONTEXT,
+): string[] {
   const union = new Map<string, Set<string>>();
   for (const name of names) {
-    const cap = DESKTOP_CAPABILITIES[canonicalName(name) ?? ""];
-    if (!cap) continue;
-    for (const set of [cap.all, cap.os?.[os]]) {
-      for (const kind of PERMISSION_KINDS) {
-        for (const v of set?.[kind] ?? []) {
-          const values = union.get(kind) ?? new Set<string>();
-          values.add(v);
-          union.set(kind, values);
-        }
-      }
-    }
+    for (const set of capabilitySets(name, os, ctx)) addPermissionSet(union, set);
   }
   return PERMISSION_KINDS.filter((k) => union.has(k)).map((kind) => {
     const values = [...union.get(kind)!].sort();
@@ -561,9 +640,13 @@ export function desktopPtyRunPaths(config: unknown, os: DesktopOs): string[] {
  * The enabled capabilities' flags for `os`: the catalog's, with `pty`'s `--allow-run` taken from
  * its configured shells ({@linkcode desktopPtyRunPaths}) rather than the catalog's defaults.
  */
-function capabilityFlags(cfg: DesktopFlagConfig, os: DesktopOs): string[] {
+function capabilityFlags(
+  cfg: DesktopFlagConfig,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions,
+): string[] {
   const keys = enabledCapabilityKeys(cfg.desktop?.capabilities).filter((k) => k !== "pty");
-  const flags = desktopPermissionFlags(keys, os);
+  const flags = desktopPermissionFlags(keys, os, desktopPermissionContext(cfg, options));
   const pty = desktopPtyRunPaths(cfg, os);
   if (pty.length === 0) return flags;
   const run = flags.find((f) => kindOfFlag(f) === "--allow-run");
@@ -647,6 +730,18 @@ export interface DesktopBuildFlagOptions {
    * print a warning. Never set it for a build that ships.
    */
   readonly strictFallback?: boolean;
+  /**
+   * The runtime reads the capability list baked into `.deno-desktop/app.json` and serves the
+   * secure store without `--allow-sys` (see `desktopBakedCapabilitiesRuntime`). Default: the
+   * pinned runtime's.
+   */
+  readonly bakedCapabilities?: boolean;
+  /**
+   * The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the
+   * permission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,
+   * whatever this says. Default: the pinned runtime's.
+   */
+  readonly macSecureStore?: boolean;
 }
 
 /** The relevant slice of `denext.config.ts` for flag derivation. */
@@ -1305,7 +1400,7 @@ export function sidecarRunWriteWarnings(
       bake.appEntry,
     ),
   );
-  const capFlags = capabilityFlags(cfg, os);
+  const capFlags = capabilityFlags(cfg, os, options);
   // The write grant the build bakes: scoped to the app's folders where desktopBuildFlags scopes it.
   const [writeFlag] = writeFlags(capFlags, extra, cfg, folderScope(cfg, options));
   if (!writeFlag) return [];
@@ -1599,7 +1694,7 @@ export function desktopBuildFlags(
       bake.appEntry,
     ),
   );
-  const capFlags = capabilityFlags(cfg, os);
+  const capFlags = capabilityFlags(cfg, os, options);
 
   // net: baseline loopback + a non-loopback spa.proxy host + the update hosts (all outbound) +
   // extraPermissions' net (both ways), netConnect and netListen.
@@ -1942,15 +2037,25 @@ async function findConfig(dir: string): Promise<string | undefined> {
   return undefined;
 }
 
-/** The `desktop.capabilities` object in a config source, when it is a data literal. */
-async function presentCapabilities(source: string): Promise<Record<string, unknown>> {
+/** The `desktop` object in a config source, when it is a data literal (else `{}`). */
+async function presentDesktop(source: string): Promise<Record<string, unknown>> {
   const model = await readConfigModel(source);
   const desktop = model.keys.desktop;
-  const caps = desktop?.kind === "editable"
-    ? (desktop.value as { capabilities?: unknown } | null)?.capabilities
-    : undefined;
+  const value = desktop?.kind === "editable" ? desktop.value : undefined;
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+/** The `desktop.capabilities` object of a `desktop` value (else `{}`). */
+function capabilitiesOf(desktop: Record<string, unknown>): Record<string, unknown> {
+  const caps = desktop.capabilities;
   return typeof caps === "object" && caps !== null ? caps as Record<string, unknown> : {};
 }
+
+/**
+ * `desktop.secureStore` for an app that enables the secure store for the first time: it never
+ * shipped the `/usr/bin/security` path, so there is nothing to move and `security` is not baked.
+ */
+const NEW_SECURE_STORE = { legacy: false };
 
 /** The config a project without one gets. */
 const NEW_CONFIG = "// denext.config.ts\nexport default {};\n";
@@ -2061,15 +2166,28 @@ async function spliceCapabilities(
   configPath: string,
   rpIds: readonly string[],
 ): Promise<SpliceResult> {
-  const present = await presentCapabilities(before);
+  const desktop = await presentDesktop(before);
+  const present = capabilitiesOf(desktop);
   const result: SpliceResult = { source: before, added: [], kept: [] };
   for (const name of names) await spliceOne(result, name, present, rpIds, configPath);
+  if (result.added.includes("secure-store") && desktop.secureStore === undefined) {
+    result.source = await setSecureStoreDefaults(result.source, configPath);
+  }
   // Once a real `capabilities` block exists, drop the scaffold's commented placeholder hint so it
   // doesn't linger beside it (`// capabilities: { … },  // denext desktop add <cap>`).
   if (result.added.length > 0 || result.kept.length > 0) {
     result.source = removeCapabilitiesHint(result.source);
   }
   return result;
+}
+
+/** Write {@linkcode NEW_SECURE_STORE} as `desktop.secureStore`, or throw with the by-hand snippet. */
+async function setSecureStoreDefaults(source: string, configPath: string): Promise<string> {
+  const edit = await setConfigValue(source, ["desktop", "secureStore"], NEW_SECURE_STORE);
+  if (edit.ok) return edit.source;
+  throw new Error(
+    `cannot edit ${configPath}: ${edit.reason}\n  Add by hand: desktop: { secureStore: { legacy: false } }`,
+  );
 }
 
 /** Remove the scaffold's commented `// capabilities: … // denext desktop add <cap>` placeholder
@@ -2089,7 +2207,9 @@ function highestTrust(names: readonly string[]): DesktopTrust {
 
 /**
  * Enable `capabilities` in the project's `desktop.capabilities`. Idempotent: a key already
- * present is kept as written.
+ * present is kept as written. Enabling `secure-store` for the first time also writes
+ * `desktop.secureStore: { legacy: false }` (unless the config sets `desktop.secureStore`): the app
+ * never shipped the `/usr/bin/security` path, so macOS neither runs nor bakes `security`.
  *
  * @param opts The capabilities, the project directory, and `dryRun`.
  * @returns What changed (or would change), with the permissions the capabilities need.
@@ -2121,8 +2241,9 @@ export async function addDesktopCapabilities(
     await assertInsideProject(opts.dir, configPath);
     await Deno.writeTextFile(configPath, source);
   }
+  const ctx = desktopPermissionContext({ desktop: await presentDesktop(source) });
   const permissions = Object.fromEntries(
-    DESKTOP_OSES.map((os) => [os, desktopPermissionFlags(names, os)]),
+    DESKTOP_OSES.map((os) => [os, desktopPermissionFlags(names, os, ctx)]),
   ) as Record<DesktopOs, string[]>;
   const trust = highestTrust(names);
   return {

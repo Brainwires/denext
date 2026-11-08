@@ -110,6 +110,33 @@ export interface DesktopCapCtx {
    * @returns `fn`'s return value as an unsigned `bigint`.
    */
   runOnMainThread(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>;
+  /**
+   * This capability's own secrets in the OS credential store (see {@linkcode DesktopSecureStore}),
+   * apart from the pages' `secureStore` and from every other extension's.
+   */
+  readonly secureStore: DesktopSecureStore;
+}
+
+/**
+ * An extension's own secrets in the OS credential store: the store the pages reach as
+ * `secureStore` (the runtime's Keychain store on macOS, the Secret Service on Linux, the
+ * PasswordVault on Windows), under a namespace of the extension's own: `<app identifier>/ext/<name>`,
+ * `<name>` being the capability's name. A page can never read or write it, nor can another
+ * extension; the extension cannot reach the pages' items either. Keys and values are the page
+ * API's: a key must not start with `-` or hold a control character (a `validation`
+ * {@linkcode DesktopCapError}), a value is any string.
+ *
+ * It needs the `secureStore` capability enabled (`denext desktop add secure-store`): otherwise
+ * every call rejects with a {@linkcode DesktopCapError} (code `not_enabled`) saying so. The store's
+ * own failures are the page API's codes (`backend_unavailable`, `store_failed`).
+ */
+export interface DesktopSecureStore {
+  /** The value stored for `key`, or `null` for none. */
+  get(key: string): Promise<string | null>;
+  /** Store `value` for `key` (replacing any value). */
+  set(key: string, value: string): Promise<void>;
+  /** Remove `key` (a no-op when it is absent). */
+  delete(key: string): Promise<void>;
 }
 
 /** Where an event goes: {@linkcode DesktopCapCtx.emit}, {@linkcode DesktopExtensionHost.emit}. */
@@ -203,6 +230,8 @@ export interface DesktopExtensionHost {
   onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
+  /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */
+  readonly secureStore: DesktopSecureStore;
 }
 
 /**

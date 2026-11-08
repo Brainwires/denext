@@ -321,6 +321,7 @@ export {
   type DesktopPasskeysConfig,
   type DesktopPermissionsConfig,
   type DesktopPtyConfig,
+  type DesktopSecureStoreConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
   type DesktopSidecarLoginShellEnvConfig,

@@ -47,7 +47,11 @@ import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-co
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
-import type { DesktopCapability, DesktopEmitOptions } from "../desktop/extension.ts";
+import type {
+  DesktopCapability,
+  DesktopEmitOptions,
+  DesktopSecureStore,
+} from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
@@ -117,6 +121,7 @@ export {
   type DesktopMainThreadFn,
   type DesktopPermissions,
   type DesktopPickedPathOptions,
+  type DesktopSecureStore,
   type DesktopWindowClosedInfo,
   type DesktopWindowInfo,
 } from "../desktop/extension.ts";
@@ -608,6 +613,12 @@ export interface RunDesktopOptions {
    * resolveDesktopCapabilities}); files the OS opens with the app become read-only handles in it.
    */
   pickedPaths?: PickedPaths;
+  /**
+   * Each capability's own secure store, by capability name ({@link DesktopCapCtx.secureStore},
+   * {@link DesktopExtensionHost.secureStore}; from {@link resolveDesktopCapabilities} when the
+   * `secureStore` capability is enabled). Without it every such call rejects `not_enabled`.
+   */
+  extensionSecureStore?: (name: string) => DesktopSecureStore;
   /**
    * The initial-window settings from `desktop.window` / `desktop.titleBar` / `desktop.backdrop` /
    * `desktop.minSize` / `desktop.maxSize` (from {@link resolveDesktopCapabilities}), applied to the
@@ -1649,6 +1660,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
+      ...(options.extensionSecureStore ? { secureStore: options.extensionSecureStore } : {}),
     },
   );
   bridgeRef.bridge = bridge;

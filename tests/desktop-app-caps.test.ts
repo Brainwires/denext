@@ -36,6 +36,11 @@ function ctxOf(window?: unknown): DesktopCapCtx & { emitted: Array<[string, unkn
     emit: (event, data) => void emitted.push([event, data]),
     appSupportDir: "/tmp/app",
     runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    secureStore: {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    },
     pickedPath: () => {
       throw new Error("no picked paths in tests");
     },

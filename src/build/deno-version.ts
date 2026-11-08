@@ -192,6 +192,31 @@ export function supportsIdleTrimEnvOff(version: string): boolean {
 }
 
 /**
+ * The first Deno Desktop runtime that reads the baked capability list in `.deno-desktop/app.json`
+ * (`"capabilities": ["secureStore", "systemStats"]`) and gates those APIs on it instead of on
+ * `--allow-sys`: with `"secureStore"` listed, `Deno.desktop.secureStore` works without an unscoped
+ * `--allow-sys` (Brainwires/deno, the fork's baked desktop capabilities item,
+ * `feat/secure-store-capability`). An older runtime refuses an app.json with an unknown key, so the
+ * list is written only for a runtime at or above this one.
+ *
+ * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries it yet. Set this to the release
+ * that does when the desktop runtime pin moves to it.
+ */
+export const FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME: string = NEXT_RUNTIME;
+
+/**
+ * Whether the Deno Desktop runtime `version` reads app.json's `"capabilities"` and serves the
+ * listed APIs without `--allow-sys` (from {@linkcode FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME}).
+ * A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether to write the list (and drop the `--allow-sys` it replaces).
+ */
+export function supportsDesktopBakedCapabilities(version: string): boolean {
+  return compareDenoVersions(version, FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME) >= 0;
+}
+
+/**
  * The first release of denext's Deno with the process resource limits (Brainwires/deno DENEXT.md
  * item 92: `--max-memory`, `--max-cpu-time` and `--max-time` on `deno run` and `deno compile`).
  */
@@ -381,6 +406,24 @@ export const FIRST_PTY_RUNTIME = "3.0.0-denext.12";
  */
 export function supportsPty(version: string): boolean {
   return compareDenoVersions(version, FIRST_PTY_RUNTIME) >= 0;
+}
+
+/**
+ * The first Deno Desktop runtime whose `Deno.desktop.secureStore` serves macOS (the Keychain,
+ * written by the app's own process through Security.framework). Under an older or the stock
+ * runtime the macOS secure store is `/usr/bin/security`.
+ */
+export const FIRST_MAC_SECURE_STORE_RUNTIME = "3.0.0-denext.13";
+
+/**
+ * Whether the Deno Desktop runtime `version` has its own macOS secure store (from
+ * {@linkcode FIRST_MAC_SECURE_STORE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether macOS needs no `security` CLI for new items.
+ */
+export function supportsMacSecureStore(version: string): boolean {
+  return compareDenoVersions(version, FIRST_MAC_SECURE_STORE_RUNTIME) >= 0;
 }
 
 /**

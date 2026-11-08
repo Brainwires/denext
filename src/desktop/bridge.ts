@@ -55,6 +55,7 @@ import {
   type DesktopExtensionHost,
   type DesktopMainThreadFn,
   type DesktopPickedPathOptions,
+  type DesktopSecureStore,
   validateStandard,
 } from "./extension.ts";
 import type { PickedPaths } from "./picked-paths.ts";
@@ -119,7 +120,29 @@ export interface DesktopBridgeOptions {
    * child, a test) a subscription is kept by nobody and `windows()` is empty.
    */
   readonly lifecycle?: WindowLifecycleHost;
+  /**
+   * Each capability's own secure store, by capability name (what {@link DesktopCapCtx.secureStore}
+   * and {@link DesktopExtensionHost.secureStore} are). Without it (the `secureStore` capability is
+   * off) every call rejects `not_enabled`.
+   */
+  readonly secureStore?: (name: string) => DesktopSecureStore;
 }
+
+/**
+ * The store a capability gets while the `secureStore` capability is off: every call rejects with a
+ * {@linkcode DesktopCapError} that says how to enable it.
+ */
+const DISABLED_SECURE_STORE: DesktopSecureStore = (() => {
+  const refuse = () =>
+    Promise.reject(
+      new DesktopCapError(
+        "not_enabled",
+        "the secure store is not enabled: add the secureStore capability " +
+          "(`denext desktop add secure-store`, desktop.capabilities.secureStore)",
+      ),
+    );
+  return { get: refuse, set: refuse, delete: refuse };
+})();
 
 /** A lifecycle with no windows: subscriptions go nowhere (their unsubscribe is a no-op). */
 const NO_LIFECYCLE: WindowLifecycleHost = {
@@ -427,6 +450,17 @@ export function createDesktopBridge(
     return options.pickedPaths.path(handle, pathOptions?.write === true);
   };
   const os = Deno.build.os as "darwin" | "windows" | "linux";
+  /** `cap`'s own secure store (one per capability name, made on first use). */
+  const secureStores = new Map<string, DesktopSecureStore>();
+  const secureStoreOf = (cap: DesktopCapability): DesktopSecureStore => {
+    if (!options.secureStore) return DISABLED_SECURE_STORE;
+    let store = secureStores.get(cap.name);
+    if (!store) {
+      store = options.secureStore(cap.name);
+      secureStores.set(cap.name, store);
+    }
+    return store;
+  };
 
   /** The context a handler runs with; `signal` is the deadline's abort signal. */
   const makeCtx = (
@@ -442,6 +476,7 @@ export function createDesktopBridge(
     windowId,
     signal,
     runOnMainThread: runOnDesktopMainThread,
+    secureStore: secureStoreOf(cap),
   });
 
   // Each capability's process-level host, handed once to its `setup` before any page can call.
@@ -456,6 +491,7 @@ export function createDesktopBridge(
     onAppQuit: (fn) => lifecycle.onAppQuit(fn),
     onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn),
     windows: () => lifecycle.windows(),
+    secureStore: secureStoreOf(cap),
   }), dev);
 
   /** The calling window's id, or the 403 for a window token that names no open window. */

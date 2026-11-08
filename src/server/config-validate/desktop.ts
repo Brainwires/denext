@@ -24,6 +24,7 @@ import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
+import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
 /** The kinds `desktop.extraPermissions` takes. */
@@ -481,6 +482,8 @@ export function validateDesktop(
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   validateDesktopPermissions(desktop as Record<string, unknown>, fail);
   validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);
+  const secureStore = secureStoreConfigProblem((desktop as { secureStore?: unknown }).secureStore);
+  if (secureStore) fail(secureStore[0], secureStore[1]);
 }
 
 /** `desktop.capabilities`: an object of capability names to `true` or options. */

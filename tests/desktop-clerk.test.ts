@@ -863,6 +863,11 @@ Deno.test("clerk bridge: a keychain that never answers falls back to memory for 
     emit: () => {},
     appSupportDir: "",
     runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    secureStore: {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    },
     pickedPath: () => {
       throw new Error("no picked paths in tests");
     },
