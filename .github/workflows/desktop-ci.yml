@@ -246,11 +246,11 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     # Each matrix entry below runs on a self-hosted runner when its repository variable
     # names one (a label, or a JSON array):
-    #   windows-latest → RUNNER_WINDOWS_X64
+    #   windows-latest → RUNNER_WINDOWS_X64_CLI, else RUNNER_WINDOWS_X64 (the CLI runner: no window opens here)
     #   ubuntu-latest → RUNNER_LINUX_X64
     # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
     # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'windows-latest' && (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 20
     defaults:
       run:
@@ -339,11 +339,11 @@ jobs:
     # Each matrix entry below runs on a self-hosted runner when its repository variable
     # names one (a label, or a JSON array):
     #   macos-latest → RUNNER_MACOS_ARM
-    #   windows-latest → RUNNER_WINDOWS_X64
+    #   windows-latest → RUNNER_WINDOWS_X64_CLI, else RUNNER_WINDOWS_X64 (the CLI runner: no window opens here)
     #   ubuntu-latest → RUNNER_LINUX_X64
     # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
     # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 30
     env:
       DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
