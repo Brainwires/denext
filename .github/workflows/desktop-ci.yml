@@ -57,6 +57,7 @@ on:
       - "src/desktop/**"
       - "src/build/desktop*.ts"
       - "src/build/desktop-runtime-pin.json"
+      - "src/build/appimage-runtime-pin.json"
       - "src/build/app-update*.ts"
       - "src/build/ota-signing.ts"
       - "src/build/ota-manifest.ts"
