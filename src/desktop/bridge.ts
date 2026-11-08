@@ -59,6 +59,8 @@ import {
 } from "./extension.ts";
 import type { PickedPaths } from "./picked-paths.ts";
 import type { WindowLifecycleHost } from "./window-lifecycle.ts";
+import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
+import { desktopConfirm } from "./message-box.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -119,6 +121,11 @@ export interface DesktopBridgeOptions {
    * child, a test) a subscription is kept by nobody and `windows()` is empty.
    */
   readonly lifecycle?: WindowLifecycleHost;
+  /**
+   * Open a window as `desktop.ts`'s `windows.open` does: what {@link DesktopExtensionHost.openWindow}
+   * delegates to. Without it (no desktop runtime, a test) `openWindow` throws `unsupported`.
+   */
+  readonly openWindow?: (options: DesktopOpenWindowOptions) => DesktopWindowRef;
 }
 
 /** A lifecycle with no windows: subscriptions go nowhere (their unsubscribe is a no-op). */
@@ -456,6 +463,15 @@ export function createDesktopBridge(
     onAppQuit: (fn) => lifecycle.onAppQuit(fn),
     onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn),
     windows: () => lifecycle.windows(),
+    confirm: (confirmOptions) => desktopConfirm(confirmOptions),
+    openWindow: (windowOptions) => {
+      if (!options.openWindow) {
+        throw new DesktopCapError("unsupported", "openWindow needs the desktop runtime's windows", {
+          status: 501,
+        });
+      }
+      return options.openWindow(windowOptions);
+    },
   }), dev);
 
   /** The calling window's id, or the 403 for a window token that names no open window. */

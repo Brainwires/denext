@@ -14,6 +14,7 @@
  */
 
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
+import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
 
 export type { StandardSchemaV1 };
 
@@ -149,6 +150,27 @@ export interface DesktopWindowInfo {
 export type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean };
 
 /**
+ * The options of {@linkcode DesktopExtensionHost.confirm}: the OS's own message box with your
+ * button labels.
+ */
+export interface DesktopConfirmOptions {
+  /** The main line (required). */
+  readonly message: string;
+  /** Smaller text under it. */
+  readonly detail?: string;
+  /** The window title where the OS shows one (macOS alerts have none). */
+  readonly title?: string;
+  /** The labels, at most 16 (none: one "OK"). Each OS places them its own way (macOS: first rightmost). */
+  readonly buttons?: readonly string[];
+  /** The button Return presses (default: the first). */
+  readonly defaultId?: number;
+  /** The button Escape presses (and the close button on Windows and Linux). */
+  readonly cancelId?: number;
+  /** The icon (default `"info"`). */
+  readonly kind?: "info" | "warning" | "error";
+}
+
+/**
  * What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the
  * process-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)
  * starts on its own — a tray-started job, a file watcher — that streams to the page with no page
@@ -203,6 +225,23 @@ export interface DesktopExtensionHost {
   onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
+  /**
+   * Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):
+   * app-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}
+   * guard after the last window closed, a tray app. Resolves the pressed button's index; a box
+   * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
+   * resolves `cancelId`, or `null` without one. Rejects with a `validation`
+   * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
+   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.14).
+   */
+  confirm(options: DesktopConfirmOptions): Promise<number | null>;
+  /**
+   * Open a window on a page of the app, exactly as `desktop.ts`'s `windows.open` does (the same
+   * options, limits and key rules), and return it. Throws on bad options, past
+   * `desktop.app.maxWindows`, or with no desktop runtime (an `unsupported`
+   * {@linkcode DesktopCapError}).
+   */
+  openWindow(options: DesktopOpenWindowOptions): DesktopWindowRef;
 }
 
 /**

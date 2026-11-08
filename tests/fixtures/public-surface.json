@@ -1949,6 +1949,7 @@
     "DesktopCapError:class",
     "DesktopCapability:interface",
     "DesktopCapabilityMethod:interface",
+    "DesktopConfirmOptions:interface",
     "DesktopDevProxyDecision:typeAlias",
     "DesktopEmitOptions:interface",
     "DesktopEventLog:class",
