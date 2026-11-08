@@ -261,6 +261,55 @@ Deno.test("systemStats cap: the runtime's NotCapable is forbidden, naming the co
   assertEquals(systemStatsError(new RangeError("too fast")).code, "validation");
 });
 
+Deno.test("systemStats cap: a sampler or listener the runtime already closed, and an onStats that throws", async () => {
+  let throwOnStats = false;
+  const closed: number[] = [];
+  let made = 0;
+  const api: DenoSystemStatsApi = {
+    supported: true,
+    createSampler: () => {
+      const n = ++made;
+      return {
+        stats: () => Promise.resolve(sample(n, 1)),
+        onStats: () => {
+          if (throwOnStats) throw new Error("the runtime refused at /secret/path");
+          return () => {
+            throw new Error("listener already stopped");
+          };
+        },
+        close: () => {
+          closed.push(n);
+          throw new Error("sampler already closed");
+        },
+      };
+    },
+  };
+  const cap = systemStatsCapability({ api: { systemStats: api } as DesktopAppApi });
+  const sent: Sent[] = [];
+  await call(cap, "stats", {}, ctx("main", sent));
+  const { id } = await call(cap, "subscribe", { intervalMs: 1000 }, ctx("main", sent)) as {
+    id: string;
+  };
+  // unsubscribe: a throwing off() and close() are ignored, the sampler is still closed
+  assertEquals(await call(cap, "unsubscribe", { id }, ctx("main", sent)), null);
+  assertEquals(closed, [2]);
+  // an onStats the runtime refuses closes the new sampler and fails with a fixed message
+  throwOnStats = true;
+  const err = await rejectsCode(
+    () => call(cap, "subscribe", { intervalMs: 1000 }, ctx("main", sent)),
+    "failed",
+  );
+  assert(!err.message.includes("/secret"), err.message);
+  assertEquals(closed, [2, 3]);
+  // a window that holds nothing, and one already released, are no-ops
+  await cap.onWindowClosed!({ id: "never-opened", kind: "window", appQuitting: false });
+  await cap.onPageLoad!("main");
+  await cap.onPageLoad!("main");
+  assertEquals(closed, [2, 3, 1]);
+  await rejectsCode(() => call(cap, "unsubscribe", { id: 7 }, ctx("main", sent)), "validation");
+  await rejectsCode(() => call(cap, "stats", { perCore: "yes" }, ctx("main", sent)), "validation");
+});
+
 Deno.test("system (denext/desktop): stats shares one sampler, each onStats has its own", async () => {
   const { desktop, samplers } = fakeStats();
   const system = createSystemStats(() => desktop);
@@ -336,6 +385,58 @@ Deno.test("system (denext/desktop/client): stats and onStats over the bridge, fi
     rt.emit("systemStats", "stats", { id: "s1", stats: sample(2, 3) });
     await rt.settled();
     assertEquals(got, [2001, 2002]);
+  } finally {
+    resetDesktopBridgeForTesting();
+    restore();
+  }
+});
+
+Deno.test("system (denext/desktop/client): frames before the subscribe answer, and a stop before it", async () => {
+  let subs = 0;
+  const gates: PromiseWithResolvers<void>[] = [];
+  const rt = createFakeDesktopRuntime({
+    systemStats: {
+      subscribe: async () => {
+        const gate = Promise.withResolvers<void>();
+        gates.push(gate);
+        await gate.promise;
+        return { id: `s${++subs}` };
+      },
+      unsubscribe: () => null,
+    },
+  });
+  const restore = rt.install();
+  try {
+    // Frames that arrive before the id are kept, then only this subscription's are delivered.
+    const got: number[] = [];
+    const stop = pageSystem.onStats((s) => got.push(s.at), { intervalMs: 1000 });
+    await until(() => gates.length === 1 && rt.openStreams() === 1);
+    rt.emit("systemStats", "stats", { id: "s1", stats: sample(3, 1) });
+    rt.emit("systemStats", "stats", { id: "elsewhere", stats: sample(4, 1) });
+    rt.emit("systemStats", "stats", null);
+    // (not rt.settled(): the subscribe is held in flight on purpose)
+    await new Promise((r) => setTimeout(r, 50));
+    assertEquals(got, []);
+    gates[0].resolve();
+    await until(() => got.length === 1);
+    assertEquals(got, [3001]);
+    stop();
+    await until(() => rt.calls.filter((c) => c.method === "unsubscribe").length === 1);
+    await rt.settled();
+
+    // A stop before the answer: nothing is delivered, and the id that comes back is unsubscribed.
+    const late: number[] = [];
+    const stopEarly = pageSystem.onStats((s) => late.push(s.at), { intervalMs: 1000 });
+    await until(() => gates.length === 2);
+    stopEarly();
+    gates[1].resolve();
+    await until(() =>
+      rt.calls.some((c) => c.method === "unsubscribe" && (c.args as { id: string }).id === "s2")
+    );
+    await rt.settled();
+    rt.emit("systemStats", "stats", { id: "s2", stats: sample(5, 1) });
+    await rt.settled();
+    assertEquals(late, []);
   } finally {
     resetDesktopBridgeForTesting();
     restore();
