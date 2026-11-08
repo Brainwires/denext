@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`createOwnedResources()` replay reports what it lost.** `attach()` now also returns `dropped`
+  (whole chunks evicted or too large to keep since the resource started) and `truncated` (the
+  replay starts mid-chunk because one oversized chunk was cut). `replay.measure` and `replay.cut`
+  let a resource with structured chunks size them and keep a tail; without `cut` an oversized
+  structured chunk is dropped and counted.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

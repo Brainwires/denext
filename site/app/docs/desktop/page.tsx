@@ -3751,6 +3751,21 @@ onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPerc
         larger than the whole buffer keeps its last <code>maxBytes</code>{" "}
         bytes when it is a string or bytes, and is dropped otherwise.
       </p>
+      <p>
+        <code>attach</code> also says what the replay lost: <code>dropped</code>{" "}
+        is how many whole chunks were evicted, or were too large to keep, since the resource started
+        (it only grows), and <code>truncated</code> is <code>true</code>{" "}
+        when the oldest retained entry is one oversized chunk that was cut, so the replay starts
+        mid-chunk. A page can show a &quot;history truncated&quot; marker from them. A resource with
+        structured chunks (rows, objects) sets{" "}
+        <code>replay.measure(chunk)</code>, the chunk&apos;s size in the unit of{" "}
+        <code>maxBytes</code> (the byte length by default), and{" "}
+        <code>replay.cut(chunk, keepBytes)</code> to keep a tail of a chunk over the budget; without
+        {" "}
+        <code>cut</code>{" "}
+        an oversized structured chunk is dropped and counted, and a cut that is still over budget is
+        dropped too.
+      </p>
       <Code lang="ts">
         {`// desktop/extensions/terminal.ts: runs in the Deno process only
 import { createOwnedResources, defineDesktopExtension } from "denext/desktop";
