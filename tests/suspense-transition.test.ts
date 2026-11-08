@@ -389,9 +389,10 @@ Deno.test("Suspense: transition re-suspend preserves the revealed subtree's loca
   );
 
   await settleB(p);
-  await tick();
-  assertEquals(
-    container.innerHTML,
+  // The retried transition commits on a setTimeout(0) flush and a time-sliced render, so wait
+  // for that commit (expectHtml) rather than a fixed tick a loaded runner can outlast.
+  await expectHtml(
+    container,
     "<div><b>2</b><span>B</span></div>",
     "data updates to B while the counter keeps its preserved state",
   );

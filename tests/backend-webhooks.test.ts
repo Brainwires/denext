@@ -575,6 +575,42 @@ Deno.test("startWebhookDelivery: an idle LISTENing deliverer waits longer each p
   }
 });
 
+Deno.test("startWebhookDelivery: the default timers run the next pass, and stop clears them", async () => {
+  // The real (unref'd) timers, in this process: the pass at start arms one, it fires the next
+  // pass, and stop() clears the one armed after it. (The subprocess test below only shows the
+  // timer never holds the process open.)
+  let passes = 0;
+  const waiting: { n: number; wake: () => void }[] = [];
+  const reached = (n: number) =>
+    new Promise<void>((wake) => passes >= n ? wake() : waiting.push({ n, wake }));
+  const sql = scriptedSql((text) => {
+    if (text.includes("WITH due AS")) {
+      passes++;
+      for (const w of waiting.splice(0)) passes >= w.n ? w.wake() : waiting.push(w);
+    }
+    return [];
+  });
+  installPostgres({ sql, rls: { migrate: false } });
+  const config = resolveWebhooks({ pollIntervalMs: 10, migrate: false, retention: false });
+  installWebhooks(config);
+  // The deliverer's timers are unref'd, so something must hold the event loop while it runs.
+  const hold = setInterval(() => {}, 1000);
+  try {
+    const stop = startWebhookDelivery(config);
+    await reached(2);
+    await stop();
+    const after = passes;
+    // Longer than any wait the deliverer could have armed (it doubles from 10 ms only while
+    // LISTENing, and this client has no listen): a timer stop() missed would have fired.
+    await new Promise((r) => setTimeout(r, 100));
+    assertEquals(passes, after, "no pass after stop");
+  } finally {
+    clearInterval(hold);
+    installWebhooks(undefined);
+    installPostgres(undefined);
+  }
+});
+
 Deno.test("startWebhookDelivery: its timer never keeps the process alive", async () => {
   // A program that starts the deliverer and never stops it must still exit on its own.
   const script = `
