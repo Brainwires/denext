@@ -2822,9 +2822,26 @@ onCloseRequested(({ reason }) => {
         <a href="#desktop-backend-tray">backend tray</a>), and a page&apos;s{" "}
         <code>window.close()</code>{" "}
         then closes its own window instead of quitting. On macOS a click on the Dock icon with no
-        window showing shows the main window again (<code>onDockReopen</code> in{" "}
-        <code>denext/desktop/app</code> hears it).
+        window showing reopens the most recently closed{" "}
+        <a href="#desktop-window-keys">keyed window</a>, else shows the main window again (
+        <code>onDockReopen</code> in <code>denext/desktop/app</code> hears it).{" "}
+        <code>runDesktop({"{ onDockReopen: (ctx) => options }"})</code> decides instead: it gets
+        {" "}
+        <code>ctx.closed</code> (the keyed windows the user closed, most recent first, each{" "}
+        <code>{"{ key, url, title? }"}</code>) and answers the window to open, or{" "}
+        <code>undefined</code> for nothing. With a window showing the click only activates the app.
+        {" "}
+        <code>app.onDockReopen(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with hears every click, with{" "}
+        <code>hasVisibleWindows</code>, and returns the unsubscribe.
       </p>
+      <Code lang="ts">
+        {`// desktop.ts — bring back the last workspace, or open a fresh one
+const app = await runDesktop({
+  onDockReopen: ({ closed }) => closed[0] ?? { url: "/", key: "workspace-1" },
+});
+app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisibleWindows));`}
+      </Code>
       <h3 id="desktop-overlay-windows">Overlay windows</h3>
       <p>
         A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
@@ -2915,7 +2932,12 @@ onCloseRequested(({ reason }) => {
         capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
         <code>denext/desktop/window</code>{" "}
         calls act on itself. At most 8 are open at once besides the main window and the tray panel
-        (<code>desktop.app.maxWindows</code>, 1 to 64).
+        (<code>desktop.app.maxWindows</code>, 1 to 64). An opened window takes{" "}
+        <code>desktop.titleBar</code> as the main window does (macOS; <code>"hidden"</code> /{" "}
+        <code>"hiddenInset"</code> draw the page under the traffic lights); its own{" "}
+        <code>titleBar</code> overrides it, <code>"default"</code>{" "}
+        keeps the OS&apos;s title bar, and a frameless window has none to style. The traffic
+        lights&apos; position is per window (<code>setWindowButtonPosition</code> from its page).
       </p>
       <p>
         A <code>capabilities</code>{" "}
@@ -2977,6 +2999,20 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         <code>desktop.window.width</code> / <code>height</code> set one — and the key names it in
         {" "}
         <code>byKey</code>, the lifecycle hooks and <code>lastSession()</code>.
+      </p>
+      <p>
+        <code>defaultWidth</code> / <code>defaultHeight</code> (on <code>windows.open</code>,{" "}
+        <code>openWindow</code> and{" "}
+        <code>desktop.window</code>) size a window only when there is no saved frame to restore: the
+        key&apos;s first open, no key, or <code>restoreBounds: false</code>. The precedence is{" "}
+        <code>width</code> / <code>height</code> &gt; the saved frame &gt; <code>defaultWidth</code>
+        {" "}
+        / <code>defaultHeight</code> &gt; the runtime&apos;s own size, each axis on its own.{" "}
+        <code>windows.forget(key)</code>{" "}
+        drops a key from what comes back: off Reopen Closed Window and the Dock&apos;s reopen (the
+        Window menu follows) and out of <code>lastSession()</code>{" "}
+        as persisted, so the next launch does not restore it; its saved frame stays, and an open
+        window with the key is left alone.
       </p>
       <Code lang="ts">
         {`// desktop.ts — a "New Window" that remembers where each window was
@@ -3067,10 +3103,17 @@ export default defineDesktopExtension({
         (Reopen Closed Window, Cmd/Ctrl+Shift+T as in Chromium and Safari: the keyed windows the
         user closed, most recent first, opened again as pages with their keys and frames — a
         resource an extension disposed with the window does not come back — a quit&apos;s closes are
-        not remembered) and <code>list: true</code>{" "}
-        (the open windows by title, key or id, each showing and focusing its window). On macOS the
-        submenu starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s
-        Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
+        not remembered; <code>reopenClosed: "list"</code>{" "}
+        makes it a submenu of them instead, by title, most recent first, at most 10, each reopening
+        its own window, the first with Cmd/Ctrl+Shift+T) and <code>list: true</code>{" "}
+        (the open windows by title, key or id, each showing and focusing its window). A
+        window&apos;s title in these lists follows its page: its <code>document.title</code>{" "}
+        as it changes, or a <code>setWindowTitle</code>{" "}
+        call. The menu is set through the main window and its clicks come back through it, so it
+        answers while the main window is open or hidden (a kept-alive app with every other window
+        closed); once the main window has closed for good the runtime delivers the backend no menu
+        clicks. On macOS the submenu starts with Minimize and Zoom and ends with Bring All to Front,
+        as the OS&apos;s Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
         keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
         else the submenu is appended; the backend answers these items itself, so{" "}
         <code>onAppMenuItem</code> never sees them.

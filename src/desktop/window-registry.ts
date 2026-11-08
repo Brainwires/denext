@@ -27,7 +27,14 @@
  * Keys: a window opened with a `key` (app-chosen, unique among the open windows) is found again
  * with `byKey`, its frame is saved to the window store ({@link ./window-store.ts}) as it moves and
  * when it closes, and restored — clamped onto a connected display — the next time the key opens
- * without explicit bounds. The keyed windows open at exit are the next launch's `lastSession`.
+ * without explicit bounds (a call's `defaultWidth` / `defaultHeight` fill in only where no frame
+ * was saved). The keyed windows open at exit are the next launch's `lastSession`; the keyed
+ * windows the user closed are kept, most recent first, for Reopen Closed Window and the Dock's
+ * reopen click ({@linkcode WindowRegistry.recentlyClosed}).
+ *
+ * Titles: a window's label (the Window menu's lists) is its title as opened, then the last one its
+ * page reported (`document.title`, through the injected title reporter's `pageTitle`) or set
+ * (`setTitle`).
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -46,8 +53,11 @@ import { isAppPath } from "./tray-config.ts";
 import type { DesktopWindowLevel } from "../server/config.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
+  applyTitleBarStyle,
   applyWindowOverlaySettings,
+  type DesktopTitleBarStyle,
   type DesktopWindowSettings,
+  TITLE_BARS,
   WINDOW_LEVELS,
 } from "./window-config.ts";
 export { MAX_WINDOWS_LIMIT } from "./window-config.ts";
@@ -69,6 +79,10 @@ export const WINDOW_BINDING = "__denextWindow";
 export const MAX_OPEN_WINDOWS = 8;
 /** The most capability names a window's subset lists. */
 const MAX_SUBSET = 64;
+/** The most recently closed keyed windows the registry remembers. */
+const MAX_RECENTLY_CLOSED = 16;
+/** The longest window title kept. */
+const MAX_TITLE = 1024;
 
 /** What a window is. */
 export type WindowKind = "main" | "panel" | "window";
@@ -110,7 +124,20 @@ export interface RegisteredWindow {
   readonly key?: string;
   /** The app path it shows (as opened, or last navigated to through the windows API). */
   readonly url: string;
-  /** Its title, as opened or configured, if any (the Window menu's label). */
+  /**
+   * Its title: as opened or configured, then as its page last reported or set it, if any (the
+   * Window menu's label).
+   */
+  readonly title?: string;
+}
+
+/** A keyed window the user closed ({@linkcode WindowRegistry.recentlyClosed}). */
+export interface ClosedWindow {
+  /** Its key. */
+  readonly key: string;
+  /** The app path it showed when it closed. */
+  readonly url: string;
+  /** Its title when it closed, if it had one. */
   readonly title?: string;
 }
 
@@ -159,6 +186,10 @@ export interface WindowRegistryOptions {
   readonly exit?: (code: number) => void;
   /** A new per-window token (default a random UUID). */
   readonly newToken?: () => string;
+  /** The title bar style opened windows take unless their own `titleBar` says (`desktop.titleBar`). */
+  readonly titleBar?: DesktopTitleBarStyle;
+  /** A window's title changed (its page reported or set one): the menus' labels follow. */
+  readonly onTitleChanged?: (id: string, title: string) => void;
 }
 
 /** What {@linkcode createWindowRegistry} returns. */
@@ -205,6 +236,23 @@ export interface WindowRegistry {
   infos(): readonly DesktopWindowInfo[];
   /** The keyed windows open at the last exit (the window store's). */
   lastSession(): readonly SessionWindow[];
+  /** Whether `key` has a saved frame in the window store. */
+  hasSavedFrame(key: string): boolean;
+  /**
+   * The keyed windows the user closed (not a quit's), most recent first, each key once, at most
+   * 16; a key opened again leaves it.
+   */
+  recentlyClosed(): readonly ClosedWindow[];
+  /**
+   * Take a closed window off {@linkcode recentlyClosed}: `key`'s, or the most recent one.
+   * `undefined` when there is none.
+   */
+  takeRecentlyClosed(key?: string): ClosedWindow | undefined;
+  /**
+   * Forget `key`: off {@linkcode recentlyClosed} and out of the last session (the store's, as
+   * persisted). An open window with the key is not affected. Whether there was anything to forget.
+   */
+  forget(key: string): boolean;
   /** The window lifecycle (the extensions' hooks and quit guards). */
   readonly lifecycle: WindowLifecycle;
   /** The `window` capability: each call acts on the calling window. */
@@ -292,6 +340,12 @@ export interface OpenWindowSettings {
   readonly key?: string;
   /** Whether a saved frame fills in the bounds the call leaves out (default `true` with a key). */
   readonly restoreBounds?: boolean;
+  /** The width used when no saved frame gives one (and the call gives none). */
+  readonly defaultWidth?: number;
+  /** The height used when no saved frame gives one (and the call gives none). */
+  readonly defaultHeight?: number;
+  /** The title bar style (default the registry's, `desktop.titleBar`). */
+  readonly titleBar?: DesktopTitleBarStyle;
 }
 
 /** `alwaysOnTop`: a boolean or a level. */
@@ -325,8 +379,11 @@ function subsetOf(value: unknown): ReadonlySet<string> | null {
 export function openWindowSettings(args: unknown): OpenWindowSettings {
   const a = argsOf(args);
   if (!isAppPath(a.url)) throw invalid('url must be a path of the app, like "/settings"');
-  if (a.title !== undefined && (typeof a.title !== "string" || a.title.length > 1024)) {
-    throw invalid("title must be a string up to 1024 characters");
+  if (a.title !== undefined && (typeof a.title !== "string" || a.title.length > MAX_TITLE)) {
+    throw invalid(`title must be a string up to ${MAX_TITLE} characters`);
+  }
+  if (a.titleBar !== undefined && !TITLE_BARS.includes(a.titleBar as DesktopTitleBarStyle)) {
+    throw invalid(`titleBar must be one of ${TITLE_BARS.join(", ")}`);
   }
   const level = levelOf(a.alwaysOnTop);
   const opacity = optNum(a, "opacity", 0, 1);
@@ -344,6 +401,7 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
     capabilities: subsetOf(a.capabilities),
     ...(a.key !== undefined ? { key: a.key as string } : {}),
     ...(restoreBounds !== undefined ? { restoreBounds } : {}),
+    ...(a.titleBar !== undefined ? { titleBar: a.titleBar as DesktopTitleBarStyle } : {}),
   };
 }
 
@@ -372,7 +430,14 @@ function flagSettings(a: Record<string, unknown>): Record<string, boolean> {
 /** The size and position options that are set, checked and rounded. */
 function geometrySettings(a: Record<string, unknown>): Record<string, number> {
   const out: Record<string, number> = {};
-  const ranges = [["width", 1, 10000], ["height", 1, 10000], ["x", -1e5, 1e5], ["y", -1e5, 1e5]];
+  const ranges = [
+    ["width", 1, 10000],
+    ["height", 1, 10000],
+    ["x", -1e5, 1e5],
+    ["y", -1e5, 1e5],
+    ["defaultWidth", 1, 10000],
+    ["defaultHeight", 1, 10000],
+  ];
   for (const [key, min, max] of ranges as [string, number, number][]) {
     const v = optNum(a, key, min, max);
     if (v !== undefined) out[key] = Math.round(v);
@@ -425,6 +490,8 @@ interface RegistryState {
   readonly frames: Map<string, Frame>;
   /** The keyed windows of this session (open, or closed by the quit), by key: their app path. */
   readonly session: Map<string, string>;
+  /** The keyed windows the user closed, most recent first. */
+  readonly recent: ClosedWindow[];
   readonly store: WindowStore;
   readonly warn: (message: string) => void;
   lifecycle?: WindowLifecycle;
@@ -558,6 +625,7 @@ function closed(st: RegistryState, id: string): void {
     sessionChanged(st);
   }
   st.store.flush();
+  if (!quitting && !endsApp) rememberClosed(st, entry);
   st.options.onClosed?.(id, entry, quitting || endsApp);
   st.options.emit("windows", "closed", { id });
   const lifecycle = lifecycleOf(st);
@@ -565,6 +633,42 @@ function closed(st: RegistryState, id: string): void {
   // With quit hooks, a quit's last close is held by the lifecycle while they run, and the runtime
   // ends the process once the quit is issued again; without any, the exit is immediate, as ever.
   if (endsApp && (!quitting || !lifecycle.hasQuitWork())) lifecycle.endApp();
+}
+
+/** A keyed window the user closed: first in {@linkcode RegistryState.recent}, its key once. */
+function rememberClosed(st: RegistryState, entry: RegisteredWindow): void {
+  if (entry.key === undefined || entry.kind !== "window") return;
+  const key = entry.key;
+  const kept = st.recent.filter((c) => c.key !== key);
+  const closed: ClosedWindow = {
+    key,
+    url: entry.url,
+    ...(entry.title !== undefined ? { title: entry.title } : {}),
+  };
+  st.recent.splice(0, st.recent.length, closed, ...kept);
+  st.recent.length = Math.min(st.recent.length, MAX_RECENTLY_CLOSED);
+}
+
+/** Drop `key` from the recently closed windows; whether it was there. */
+function dropRecent(st: RegistryState, key: string): boolean {
+  const kept = st.recent.filter((c) => c.key !== key);
+  if (kept.length === st.recent.length) return false;
+  st.recent.splice(0, st.recent.length, ...kept);
+  return true;
+}
+
+/** Take `key`'s closed window (or the most recent one) off the list (an open key is never on it). */
+function takeRecent(st: RegistryState, key?: string): ClosedWindow | undefined {
+  const i = key === undefined ? 0 : st.recent.findIndex((c) => c.key === key);
+  return i < 0 ? undefined : st.recent.splice(i, 1)[0];
+}
+
+/** Set window `id`'s title (its label), when it changed; the menus follow. */
+function setTitle(st: RegistryState, id: string, title: unknown): void {
+  const entry = st.windows.get(id);
+  if (!entry || typeof title !== "string" || title === "" || entry.title === title) return;
+  (entry as { title?: string }).title = title.slice(0, MAX_TITLE);
+  st.options.onTitleChanged?.(id, entry.title!);
 }
 
 /** Window `id`'s `close` listener hook: its page's guard first, then the lifecycle's hold. */
@@ -627,6 +731,22 @@ function screensOf(st: RegistryState): readonly DesktopScreen[] {
  * display whenever a saved value was used.
  */
 function restoredGeometry(st: RegistryState, settings: OpenWindowSettings): OpenWindowSettings {
+  return defaultGeometry(savedGeometry(st, settings));
+}
+
+/** The call's `defaultWidth` / `defaultHeight` for a side neither the call nor a saved frame set. */
+function defaultGeometry(settings: OpenWindowSettings): OpenWindowSettings {
+  const width = settings.width ?? settings.defaultWidth;
+  const height = settings.height ?? settings.defaultHeight;
+  return {
+    ...settings,
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
+  };
+}
+
+/** The call's bounds with the ones it leaves out filled in from the key's saved frame. */
+function savedGeometry(st: RegistryState, settings: OpenWindowSettings): OpenWindowSettings {
   if (settings.key === undefined || settings.restoreBounds === false) return settings;
   const saved = st.store.bounds(settings.key);
   if (!saved) return settings;
@@ -715,6 +835,8 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
   const settings = restoredGeometry(st, checked);
   const window = new Ctor(creationOptions(settings));
   const id = `window-${st.nextId++}`;
+  // Open again: no longer one to bring back.
+  if (settings.key !== undefined) dropRecent(st, settings.key);
   // A window that closes by itself (the user) leaves the registry like a closed one.
   const entry = register(
     st,
@@ -732,6 +854,12 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     closed(st, id);
   });
   followFrame(st, entry, settings.url);
+  // `desktop.titleBar` (or the window's own), as the main window gets it; a frameless window has
+  // no title bar to style.
+  const titleBar = settings.titleBar ?? st.options.titleBar;
+  if (titleBar !== undefined && settings.frameless !== true) {
+    applyTitleBarStyle(window, titleBar, st.warn);
+  }
   applyWindowOverlaySettings(window, afterCreation(settings));
   if (!settings.show) window.hide?.();
   if (typeof window.navigate !== "function") {
@@ -857,10 +985,24 @@ function routerCapability(st: RegistryState, template: DesktopCapability): Deskt
         if (!entry) {
           throw unsupported("reach its window", "the window is closed");
         }
-        return entry.controller.capability.methods[name].handler(args, ctx);
+        const out = entry.controller.capability.methods[name].handler(args, ctx);
+        // The label follows a title the page sets (the method checked it).
+        if (name === "setTitle") setTitle(st, entry.id, argsOf(args).title);
+        return out;
       },
     };
   }
+  // The page's `document.title`, reported by the injected title reporter (the menus' labels).
+  methods.pageTitle = {
+    handler: (args, ctx) => {
+      const title = argsOf(args).title;
+      if (typeof title !== "string" || title.length > MAX_TITLE) {
+        throw invalid(`title must be a string up to ${MAX_TITLE} characters`);
+      }
+      setTitle(st, ctx?.windowId ?? "main", title);
+      return null;
+    },
+  };
   return {
     name: "window",
     events: WINDOW_EVENTS,
@@ -887,6 +1029,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     tokens: new Map(),
     frames: new Map(),
     session: new Map(),
+    recent: [],
     store: options.store ?? openWindowStore(options.appSupportDir, { warn }),
     warn,
     nextId: 1,
@@ -950,6 +1093,15 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     },
     infos: () => [...st.windows.values()].map(infoOf),
     lastSession: () => st.store.lastSession(),
+    hasSavedFrame: (key) => st.store.bounds(key) !== undefined,
+    recentlyClosed: () => [...st.recent],
+    takeRecentlyClosed: (key) => takeRecent(st, key),
+    forget: (key) => {
+      const recent = dropRecent(st, key);
+      const stored = st.store.forget(key);
+      st.store.flush();
+      return stored || recent;
+    },
     get lifecycle() {
       return lifecycleOf(st);
     },

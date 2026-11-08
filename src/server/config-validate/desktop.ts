@@ -255,15 +255,16 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
 }
 
 /**
- * `desktop.window`: optional width/height (≥ 1), title, and the flags (resizable, show, frameless,
+ * `desktop.window`: optional width/height and defaultWidth/defaultHeight (≥ 1), title, and the flags (resizable, show, frameless,
  * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
  */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
   if (!isPlainObject(win)) fail("desktop.window", "must be an object");
   const w = win as Record<string, unknown>;
-  if (w.width !== undefined) num(fail, "desktop.window.width", w.width, { min: 1 });
-  if (w.height !== undefined) num(fail, "desktop.window.height", w.height, { min: 1 });
+  for (const key of ["width", "height", "defaultWidth", "defaultHeight"]) {
+    if (w[key] !== undefined) num(fail, `desktop.window.${key}`, w[key], { min: 1 });
+  }
   if (w.title !== undefined && typeof w.title !== "string") {
     fail("desktop.window.title", "must be a string");
   }

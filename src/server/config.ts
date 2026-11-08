@@ -1259,7 +1259,8 @@ export interface DesktopConfig {
    * appended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,
    * opens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the
    * window instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the
-   * user closed, most recent first, opened again as pages with their keys and frames) and `list`
+   * user closed, most recent first, opened again as pages with their keys and frames; `"list"`: a
+   * submenu of them by title, each reopening its window) and `list`
    * (the open windows, each focusing its window). On macOS the submenu also carries the standard
    * Minimize / Zoom / Bring All to Front items.
    */
@@ -1730,8 +1731,12 @@ export interface DesktopMenuConfig {
   window?: {
     /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
     newWindow?: string | false;
-    /** Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed. */
-    reopenClosed?: boolean;
+    /**
+     * Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed; `"list"`:
+     * a "Reopen Closed Window" submenu of them by title, most recent first (at most 10), each
+     * reopening its window.
+     */
+    reopenClosed?: boolean | "list";
     /** The open windows, each focusing its window when chosen. */
     list?: boolean;
   };
@@ -1796,6 +1801,19 @@ export interface DesktopWindowConfig {
    * @minimum 1
    */
   height?: number;
+  /**
+   * The width the main window opens with when its `key` has no saved frame (the first launch, or
+   * no `key`): `width` > the saved frame > `defaultWidth` > the runtime's own size.
+   *
+   * @minimum 1
+   */
+  defaultWidth?: number;
+  /**
+   * The height the main window opens with when its `key` has no saved frame.
+   *
+   * @minimum 1
+   */
+  defaultHeight?: number;
   /** The window title (defaults to the page's `<title>`). */
   title?: string;
   /** Whether the user can resize the window (default `true`). */

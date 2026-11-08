@@ -71,6 +71,13 @@ export interface DesktopWindowSettings {
   readonly overlay?: boolean;
   /** The main window's key (`desktop.window.key`): its frame is saved and restored. */
   readonly key?: string;
+  /**
+   * The width used when the main window has no saved frame (`desktop.window.defaultWidth`):
+   * `width` beats the saved frame, which beats this, which beats the runtime's own size.
+   */
+  readonly defaultWidth?: number;
+  /** The height used when the main window has no saved frame (`desktop.window.defaultHeight`). */
+  readonly defaultHeight?: number;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
@@ -111,7 +118,10 @@ export interface DesktopInitialWindow {
 /** The macOS vibrancy material `desktop.backdrop: "vibrancy"` puts behind the page. */
 export const DEFAULT_VIBRANCY = "under-window";
 
-const TITLE_BARS = ["default", "hidden", "hiddenInset"] as const;
+/** The title bar styles (`desktop.titleBar`, a window's `titleBar`). */
+export const TITLE_BARS = ["default", "hidden", "hiddenInset"] as const;
+/** A title bar style. */
+export type DesktopTitleBarStyle = typeof TITLE_BARS[number];
 const POLICIES = ["regular", "accessory"] as const;
 /** The most `desktop.app.maxWindows` may be. */
 export const MAX_WINDOWS_LIMIT = 64;
@@ -223,11 +233,39 @@ function windowKeys(raw: unknown): Omit<
   };
 }
 
-/** `desktop.window`'s width / height, when set. */
-function windowSize(w: Record<string, unknown>): { width?: number; height?: number } {
-  const width = pixels(w.width, "window.width");
-  const height = pixels(w.height, "window.height");
+/** `desktop.window`'s width / height and default width / height, when set. */
+function windowSize(w: Record<string, unknown>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const key of ["width", "height", "defaultWidth", "defaultHeight"]) {
+    const v = pixels(w[key], `window.${key}`);
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
+/**
+ * The settings the main window opens with once its saved frame is known: without a saved frame
+ * (no `desktop.window.key`, or none saved for it yet) the default size fills in an axis
+ * `width` / `height` leaves out; with one the defaults are dropped (the saved frame is restored
+ * instead). Precedence: `width` / `height` > the saved frame > the default > the runtime's size.
+ *
+ * @param settings The resolved window settings.
+ * @param hasSavedFrame Whether the main window's key has a saved frame.
+ * @returns The settings to apply.
+ */
+export function withDefaultWindowSize(
+  settings: DesktopWindowSettings | undefined,
+  hasSavedFrame: boolean,
+): DesktopWindowSettings | undefined {
+  if (settings?.defaultWidth === undefined && settings?.defaultHeight === undefined) {
+    return settings;
+  }
+  const { defaultWidth, defaultHeight, ...rest } = settings;
+  if (hasSavedFrame) return rest;
+  const width = rest.width ?? defaultWidth;
+  const height = rest.height ?? defaultHeight;
   return {
+    ...rest,
     ...(width !== undefined ? { width } : {}),
     ...(height !== undefined ? { height } : {}),
   };
@@ -537,11 +575,27 @@ export function applyDesktopWindowSettings(
   if (settings.resizable !== undefined) {
     tryCall(win, "setResizable", "window.resizable", warn, settings.resizable);
   }
-  if (settings.titleBar !== undefined && settings.titleBar !== "default") {
-    tryCall(win, "setTitleBarStyle", "titleBar", warn, settings.titleBar);
-  }
+  if (settings.titleBar !== undefined) applyTitleBarStyle(win, settings.titleBar, warn);
   if (settings.backdrop !== undefined) applyBackdrop(win, settings.backdrop, warn);
   applyOverlaySettings(win, settings, warn);
+}
+
+/**
+ * Apply a title bar style to a window (the adopted one, or one `openWindow` made): `"default"` is
+ * the window's own and needs nothing. A runtime without `setTitleBarStyle` (the stock one) is a
+ * warning; nothing throws.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param style The style.
+ * @param warn Where warnings go.
+ */
+export function applyTitleBarStyle(
+  win: unknown,
+  style: DesktopTitleBarStyle,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null || style === "default") return;
+  tryCall(win as ConfigurableWindow, "setTitleBarStyle", "titleBar", warn, style);
 }
 
 /**
