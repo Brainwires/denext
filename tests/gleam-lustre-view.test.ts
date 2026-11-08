@@ -763,7 +763,9 @@ Deno.test("Lustre hub: mounts on one connection are queued, cancelled by an unmo
   gates.set(4, Promise.withResolvers<boolean>());
   gates.get(1)!.resolve(true);
   await Promise.all([running, waiting]);
-  await tick();
+  // The third mount takes the freed slot on its own schedule: wait for it to reach authorize
+  // (bounded), not a fixed tick that a loaded runner can outlast.
+  for (let i = 0; i < 2000 && !authorized.includes(4); i++) await tick(1);
   assertEquals(authorized, [1, 4], "the unmounted queued mount never ran");
   d.closed = true;
   hub.drop(d);
