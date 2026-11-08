@@ -31,6 +31,7 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "passkeys",
   "globalShortcuts",
   "launchAtLogin",
+  "systemStats",
   "updates",
   "pty",
   "microphone",

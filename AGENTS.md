@@ -628,7 +628,7 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `microphone`, `camera`; written to
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `system-stats`, `microphone`, `camera`; written to
 `desktop.capabilities`; `microphone` / `camera` work only in a packaged app on runtime 3.0.0-denext.10+
 (laufey API 53; test capture UI in a browser under `denext dev`), and Linux's webview backend has no
 WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus desktop-only
@@ -636,6 +636,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 `pty` (runtime 3.0.0-denext.12+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
+`system-stats` (runtime after 3.0.0-denext.13, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch

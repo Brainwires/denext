@@ -2041,6 +2041,10 @@
     "StoreCommandResult:interface",
     "StoreCommandRunner:typeAlias",
     "StoreCommandRunnerSync:typeAlias",
+    "SystemStats:interface",
+    "SystemStatsApi:interface",
+    "SystemStatsOptions:interface",
+    "SystemStatsSubscribeOptions:interface",
     "V8_ENTITLEMENTS:variable",
     "WindowsTrustDeps:interface",
     "buildDesktopBundle:function",
@@ -2110,6 +2114,7 @@
     "stopSidecars:function",
     "stripDesktopCredentials:function",
     "syncDesktopAppConfig:function",
+    "system:variable",
     "writeLaufeyLaunchConfig:function"
   ],
   "denext/desktop/updater": [
@@ -2171,6 +2176,11 @@
     "SidecarInfo:interface",
     "SidecarState:typeAlias",
     "SidecarStatus:interface",
+    "SystemStats:interface",
+    "SystemStatsClient:interface",
+    "SystemStatsOptions:interface",
+    "SystemStatsSubscribeOptions:interface",
+    "SystemStatsWatchOptions:interface",
     "attachPty:function",
     "claimDeepLinkScheme:function",
     "deepLinkSchemeOwner:function",
@@ -2191,6 +2201,7 @@
     "sidecarInfo:function",
     "sidecarStatus:function",
     "spawnPty:function",
+    "system:variable",
     "writePty:function"
   ],
   "denext/desktop/clerk": [

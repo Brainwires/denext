@@ -979,6 +979,13 @@ export interface DesktopCapabilitiesConfig {
    */
   launchAtLogin?: boolean;
   /**
+   * The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in
+   * `denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime after
+   * 3.0.0-denext.13 (`unsupported` before it). Percentages only, no per-process data; it bakes no
+   * Deno permission (the runtime serves it to an app whose launch config lists the capability).
+   */
+  systemStats?: boolean;
+  /**
    * The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from
    * `denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app
    * ({@link DesktopUpdateConfig.manifestUrl}, denext's pinned runtime), with download progress.

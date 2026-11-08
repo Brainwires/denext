@@ -449,7 +449,7 @@ See [Writing a plugin](/docs/plugins).
   capability allowlist (default deny): `secureStore`, `fs`
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
   (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
-  `globalShortcuts`, `launchAtLogin`, `keepAwake`, `clipboard`, `device`, `passkeys`,
+  `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
   `updates`, and `extensions` (module paths of your `defineDesktopExtension` modules).
   The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
