@@ -23,7 +23,8 @@ and this project adheres to
   `security` is never run and the packaged app no longer bakes `--allow-run=security`; under a
   runtime without its own macOS store every call then fails `backend_unavailable`, naming the
   setting. `denext desktop add secure-store` writes `legacy: false` when it enables the capability
-  for the first time, since such an app never shipped the `security` path.
+  for the first time, since such an app never shipped the `security` path. Its type is
+  `DesktopSecureStoreConfig` from `denext/server`.
 - **The Deno Desktop runtime-gated capabilities are listed in `.deno-desktop/app.json`.** On a
   runtime that reads it, the packager writes `"capabilities"` (the enabled ones among
   `secureStore` and `systemStats`), and the secure store is served without the unscoped

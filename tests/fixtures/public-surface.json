@@ -694,6 +694,7 @@
     "DesktopPasskeysConfig:interface",
     "DesktopPermissionsConfig:interface",
     "DesktopPtyConfig:interface",
+    "DesktopSecureStoreConfig:interface",
     "DesktopShellConfig:interface",
     "DesktopSidecarConfig:interface",
     "DesktopSidecarLoginShellEnvConfig:interface",

@@ -1940,6 +1940,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
 - `interface DesktopPtyConfig` — desktop.capabilities.pty options.
+- `interface DesktopSecureStoreConfig` — desktop.secureStore: the secureStore capability's options. Every caller's items are kept apart: the pages under <identifier>/page, an extension (ctx.secureStore / host.secureStore) under <identifier>/ext/<name>; items an earlier denext stored for the pages under the bare identifier move into the page namespace on their first read.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
 - `interface DesktopSidecarLoginShellEnvConfig` — DesktopSidecarConfig.loginShellEnv with options.

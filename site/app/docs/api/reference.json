@@ -17410,6 +17410,26 @@
           ]
         },
         {
+          "name": "DesktopSecureStoreConfig",
+          "slug": "DesktopSecureStoreConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSecureStoreConfig",
+          "doc": "desktop.secureStore: the secureStore capability's options. Every caller's items are kept apart: the pages under <identifier>/page, an extension (ctx.secureStore / host.secureStore) under <identifier>/ext/<name>; items an earlier denext stored for the pages under the bare identifier move into the page namespace on their first read.",
+          "docFull": "`desktop.secureStore`: the `secureStore` capability's options. Every caller's items are kept\napart: the pages under `<identifier>/page`, an extension (`ctx.secureStore` / `host.secureStore`)\nunder `<identifier>/ext/<name>`; items an earlier denext stored for the pages under the bare\nidentifier move into the page namespace on their first read.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "legacy",
+              "signature": "legacy?: boolean",
+              "doc": "macOS: move the items an earlier denext wrote through `/usr/bin/security` (which any program of\nthe user could read through it) into the runtime's own Keychain store on their first read, and\nuse `security` as the store under a runtime without its own. While on, the packaged app keeps\n`--allow-run=security`. Set `false` for an app that never shipped that path: `security` is then\nnever run nor baked, and a runtime without its own macOS store fails every call\n`backend_unavailable`. Default `true`; `denext desktop add secure-store` writes `false` when it\nenables the capability for the first time."
+            }
+          ]
+        },
+        {
           "name": "DesktopShellConfig",
           "slug": "DesktopShellConfig",
           "kind": "interface",
