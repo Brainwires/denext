@@ -114,6 +114,8 @@ Deno.test("owned resources: detach keeps it alive and ownerless; attach returns 
   assertEquals(fake.sent.length, 1);
   assertEquals(res.attach("a", "w2"), {
     replay: [{ event: "output", data: "one" }, { event: "output", data: "two" }],
+    dropped: 0,
+    truncated: false,
   });
   assertEquals(res.owner("a"), "w2");
   assertEquals(res.detached(), []);
@@ -130,7 +132,7 @@ Deno.test("owned resources: attach moves an owned resource; an unknown id is not
   const res = createOwnedResources<string>({ dispose: () => {} });
   res.connect(fake.host);
   res.add("a", "x", { owner: "w1" });
-  assertEquals(res.attach("a", "w2"), { replay: [] });
+  assertEquals(res.attach("a", "w2"), { replay: [], dropped: 0, truncated: false });
   res.emit("a", "e", 1);
   assertEquals(fake.sent, [{ event: "e", data: { id: "a", data: 1 }, window: "w2" }]);
   const err = assertThrows(() => res.attach("nope", "w1"), DesktopCapError);
@@ -388,4 +390,104 @@ Deno.test("owned resources: replay.events limits which events are kept, not whic
     { event: "data", data: "ls\n" },
     { event: "exit", data: { code: 0 } },
   ]);
+});
+
+Deno.test("owned resources: attach reports dropped (evicted whole chunks) and truncated", () => {
+  const res = createOwnedResources<string>({ dispose: () => {}, replay: { maxBytes: 4 } });
+  res.add("a", "x");
+  res.emit("a", "d", "ab");
+  res.emit("a", "d", "cd"); // 4 bytes: nothing evicted yet
+  assertEquals(res.attach("a", "main").dropped, 0);
+  assertEquals(res.attach("a", "main").truncated, false);
+  res.emit("a", "d", "ef"); // evicts "ab"
+  res.emit("a", "d", "gh"); // evicts "cd"
+  const att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), ["ef", "gh"]);
+  assertEquals(att.dropped, 2);
+  assertEquals(att.truncated, false);
+  assertEquals(res.attach("a", "main").dropped, 2); // cumulative, stable across attaches
+});
+
+Deno.test("owned resources: an oversized string or bytes chunk is cut and flagged truncated", () => {
+  const res = createOwnedResources<string>({ dispose: () => {}, replay: { maxBytes: 4 } });
+  res.add("a", "x");
+  res.emit("a", "d", "ab");
+  res.emit("a", "d", "0123456789"); // cut to "6789"; evicts "ab"
+  let att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), ["6789"]);
+  assertEquals(att.truncated, true);
+  assertEquals(att.dropped, 1);
+  res.emit("a", "d", "z"); // evicts the cut chunk: the replay no longer starts mid-chunk
+  att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), ["z"]);
+  assertEquals(att.truncated, false);
+  assertEquals(att.dropped, 2);
+});
+
+Deno.test("owned resources: an oversized structured chunk without cut is dropped and counted", () => {
+  const res = createOwnedResources<string>({ dispose: () => {}, replay: { maxBytes: 8 } });
+  res.add("a", "x");
+  res.emit("a", "d", "ab");
+  res.emit("a", "d", { big: "0123456789" });
+  const att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), ["ab"]);
+  assertEquals(att.dropped, 1);
+  assertEquals(att.truncated, false);
+});
+
+Deno.test("owned resources: replay.measure sizes object chunks and replay.cut keeps a tail", () => {
+  type Rows = { rows: string[] };
+  const res = createOwnedResources<string>({
+    dispose: () => {},
+    replay: {
+      maxBytes: 3,
+      measure: (chunk) => (chunk as Rows).rows.length,
+      cut: (chunk, keep) => ({ rows: (chunk as Rows).rows.slice(-keep) }),
+    },
+  });
+  res.add("a", "x");
+  res.emit("a", "d", { rows: ["1"] });
+  res.emit("a", "d", { rows: ["2", "3"] }); // 3 rows: fits
+  assertEquals(res.attach("a", "main").dropped, 0);
+  res.emit("a", "d", { rows: ["4", "5", "6", "7", "8"] }); // cut to its last 3; evicts both
+  const att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), [{ rows: ["6", "7", "8"] }]);
+  assertEquals(att.truncated, true);
+  assertEquals(att.dropped, 2);
+});
+
+Deno.test("owned resources: replay.measure without cut drops an over-budget chunk; a cut that stays over budget is dropped", () => {
+  const measure = (chunk: unknown) => (chunk as { n: number }).n;
+  const noCut = createOwnedResources<string>({
+    dispose: () => {},
+    replay: { maxBytes: 5, measure },
+  });
+  noCut.add("a", "x");
+  noCut.emit("a", "d", { n: 2 });
+  noCut.emit("a", "d", { n: 9 });
+  let att = noCut.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), [{ n: 2 }]);
+  assertEquals(att.dropped, 1);
+  const badCut = createOwnedResources<string>({
+    dispose: () => {},
+    replay: { maxBytes: 5, measure, cut: (chunk) => chunk }, // does not shrink it
+  });
+  badCut.add("a", "x");
+  badCut.emit("a", "d", { n: 9 });
+  att = badCut.attach("a", "main");
+  assertEquals(att.replay, []);
+  assertEquals(att.dropped, 1);
+  assertEquals(att.truncated, false);
+});
+
+Deno.test("owned resources: replay.measure applies to strings too, and cut overrides the default tail", () => {
+  const res = createOwnedResources<string>({
+    dispose: () => {},
+    replay: { maxBytes: 2, measure: (c) => String(c).length, cut: (c, k) => String(c).slice(0, k) },
+  });
+  res.add("a", "x");
+  res.emit("a", "d", "héllo"); // 5 units: cut keeps the HEAD "hé"
+  const att = res.attach("a", "main");
+  assertEquals(att.replay.map((e) => e.data), ["hé"]);
+  assertEquals(att.truncated, true);
 });
