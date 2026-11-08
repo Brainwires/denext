@@ -58,6 +58,12 @@ export interface WindowStore {
   lastSession(): readonly SessionWindow[];
   /** Set the keyed windows open now (written after a short delay; `flush` writes now). */
   setSession(session: readonly { readonly key: string; readonly url: string }[]): void;
+  /**
+   * Forget `key`'s place in the sessions: it leaves {@linkcode lastSession} and the session
+   * written for the next launch (written after a short delay; `flush` writes now). Its saved
+   * bounds are kept. Whether it was in either.
+   */
+  forget(key: string): boolean;
   /** Write what changed now (a no-op when nothing did). */
   flush(): void;
 }
@@ -210,6 +216,7 @@ export function openWindowStore(
     ? { bounds: new Map<string, DesktopRect>(), session: [] as SessionWindow[] }
     : load(path, read, options.warn);
   const bounds = loaded.bounds;
+  let last: readonly SessionWindow[] = loaded.session;
   let session: { key: string; url: string }[] = loaded.session.map(({ key, url }) => ({
     key,
     url,
@@ -264,10 +271,18 @@ export function openWindowStore(
       while (bounds.size > MAX_KEYS) bounds.delete(bounds.keys().next().value as string);
       schedule();
     },
-    lastSession: () => loaded.session,
+    lastSession: () => last,
     setSession: (list) => {
       session = list.map(({ key, url }) => ({ key, url }));
       schedule();
+    },
+    forget: (key) => {
+      const was = last.length + session.length;
+      last = last.filter((w) => w.key !== key);
+      session = session.filter((w) => w.key !== key);
+      if (last.length + session.length === was) return false;
+      schedule();
+      return true;
     },
     flush,
   };

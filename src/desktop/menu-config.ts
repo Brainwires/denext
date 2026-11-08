@@ -14,8 +14,11 @@ import { isAppPath } from "./tray-config.ts";
 export interface DesktopWindowMenuSettings {
   /** The app path New Window (Cmd/Ctrl+N) opens; `false` or unset: no item. */
   readonly newWindow?: string | false;
-  /** Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows. */
-  readonly reopenClosed?: boolean;
+  /**
+   * Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows; `"list"`: a
+   * submenu of them by title, most recent first, each reopening its window.
+   */
+  readonly reopenClosed?: boolean | "list";
   /** List the open windows, each focusing its window when chosen. */
   readonly list?: boolean;
 }
@@ -46,10 +49,14 @@ export function desktopMenuProblem(menu: unknown): [string, string] | null {
   if (o.newWindow !== undefined && o.newWindow !== false && !isAppPath(o.newWindow)) {
     return ["menu.window.newWindow", 'must be a path of the app, like "/", or false'];
   }
-  for (const key of ["reopenClosed", "list"]) {
-    if (o[key] !== undefined && typeof o[key] !== "boolean") {
-      return [`menu.window.${key}`, "must be a boolean"];
-    }
+  if (
+    o.reopenClosed !== undefined && typeof o.reopenClosed !== "boolean" &&
+    o.reopenClosed !== "list"
+  ) {
+    return ["menu.window.reopenClosed", 'must be a boolean or "list"'];
+  }
+  if (o.list !== undefined && typeof o.list !== "boolean") {
+    return ["menu.window.list", "must be a boolean"];
   }
   return null;
 }
@@ -71,7 +78,7 @@ export function resolveDesktopMenuSettings(desktop: unknown): DesktopMenuSetting
   return {
     window: {
       ...(w.newWindow !== undefined ? { newWindow: w.newWindow as string | false } : {}),
-      ...(w.reopenClosed !== undefined ? { reopenClosed: w.reopenClosed as boolean } : {}),
+      ...(w.reopenClosed !== undefined ? { reopenClosed: w.reopenClosed as boolean | "list" } : {}),
       ...(w.list !== undefined ? { list: w.list as boolean } : {}),
     },
   };

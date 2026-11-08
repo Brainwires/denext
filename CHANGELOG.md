@@ -8,6 +8,31 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The macOS Dock's reopen click brings back the last closed window.** With no window showing, a
+  click on the Dock icon now reopens the most recently closed keyed window (its key, path and
+  frame), and shows the main window as before only when none was closed.
+  `runDesktop({ onDockReopen: (ctx) => options | undefined })` decides instead, with `ctx.closed`
+  (the keyed windows the user closed, most recent first); `undefined` opens nothing. With a window
+  showing the click still only activates the app. `DesktopRuntime.onDockReopen(fn)` hears every
+  click (`{ hasVisibleWindows }`) and returns the unsubscribe; a no-op without a Dock.
+- **Opened windows take `desktop.titleBar`.** A window from `windows.open` / `openWindow` (and New
+  Window, Reopen Closed Window, the restored session) gets the main window's title bar style; its
+  own `titleBar` (`"default"`, `"hidden"`, `"hiddenInset"`) overrides it, and a frameless window
+  is left alone.
+- **`defaultWidth` / `defaultHeight`** on `windows.open`, `openWindow` and `desktop.window`: the
+  size a window opens with only when its key has no saved frame (the first open, no key, or
+  `restoreBounds: false`). Precedence per axis: `width` / `height` > the saved frame > the
+  default > the runtime's size.
+- **`desktop.menu.window.reopenClosed: "list"`**: a "Reopen Closed Window" submenu listing the
+  closed keyed windows by title, most recent first (at most 10), each reopening its own window;
+  the first keeps Cmd/Ctrl+Shift+T. A window's label in the Window menu's lists now follows its
+  page's `document.title` (reported by the injected page script) and `setWindowTitle`.
+- **`windows.forget(key)`** on `DesktopRuntime.windows`: the key leaves Reopen Closed Window, the
+  Dock's reopen and `windows.lastSession()` (persisted, so the next launch does not restore it);
+  the menu follows. Its saved frame is kept.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

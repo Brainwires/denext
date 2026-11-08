@@ -1217,6 +1217,18 @@ export interface OpenWindowOptions {
   readonly width?: number;
   /** Height in CSS pixels. */
   readonly height?: number;
+  /**
+   * The width when neither `width` nor the key's saved frame gives one: `width` > the saved
+   * frame > `defaultWidth` > the runtime's size.
+   */
+  readonly defaultWidth?: number;
+  /** The height when neither `height` nor the key's saved frame gives one. */
+  readonly defaultHeight?: number;
+  /**
+   * The title bar style (macOS): default `desktop.titleBar`, as the main window gets it;
+   * `"default"` keeps the OS's title bar.
+   */
+  readonly titleBar?: TitleBarStyle;
   /** Screen x of the top-left corner (see the module docs for the units). */
   readonly x?: number;
   /** Screen y. */

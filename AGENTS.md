@@ -669,6 +669,11 @@ searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.user
 windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
+`defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
+(`width` > saved > default), opened windows take `desktop.titleBar` (their own `titleBar` overrides), a Dock click with no window
+showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
+decides; `app.onDockReopen(fn)` hears every click), `windows.forget(key)` drops a key from reopening and
+`lastSession()`, `desktop.menu.window.reopenClosed: "list"` lists the closed windows by `document.title`,
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
 at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reopenClosed: true, list: true }` adds

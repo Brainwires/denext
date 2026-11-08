@@ -9,9 +9,11 @@
  *
  * New Window opens `newWindow`'s app path with a fresh key (`window-1`, `window-2`, …: the lowest
  * not open, so a reopened window gets its frame back), unless `desktop.ts` supplies the window
- * (`runDesktop({ newWindow })`). Reopen Closed Window keeps the keyed windows the user closed, most
- * recent first, and opens the last one again as a page with its key (its frame comes back from the
- * store; a resource an extension disposed with it does not). A window closed by a quit is not kept.
+ * (`runDesktop({ newWindow })`). Reopen Closed Window opens the last of the keyed windows the user
+ * closed (the registry keeps them, most recent first) again as a page with its key (its frame comes
+ * back from the store; a resource an extension disposed with it does not). A window closed by a
+ * quit is not kept. With `reopenClosed: "list"` it is a submenu of them instead, by title, at most
+ * {@linkcode MAX_REOPEN_LISTED}, each reopening its own key (the first keeps Cmd/Ctrl+Shift+T).
  *
  * Runtime-only (imported by `setUpDesktopWindows`, never a client bundle).
  *
@@ -20,14 +22,16 @@
 
 import type { DesktopMenuItem } from "./launch-events.ts";
 import type { DesktopWindowMenuSettings } from "./menu-config.ts";
-import type { RegisteredWindow, WindowRegistry } from "./window-registry.ts";
+import type { ClosedWindow, RegisteredWindow, WindowRegistry } from "./window-registry.ts";
 import type { DesktopOpenWindowOptions } from "./app-windows.ts";
 
-/** The most recently closed windows Reopen Closed Window remembers. */
-const MAX_REOPEN = 16;
+/** The most closed windows `reopenClosed: "list"` lists. */
+const MAX_REOPEN_LISTED = 10;
 /** The ids of the backend's items (never a page's). */
 const NEW_ID = "denext:window:new";
 const REOPEN_ID = "denext:window:reopen";
+const REOPEN_PREFIX = "denext:window:reopen:";
+const REOPEN_ACCELERATOR = "CommandOrControl+Shift+T";
 const FOCUS_PREFIX = "denext:window:focus:";
 
 /** What `runDesktop({ newWindow })` receives: the windows open now. */
@@ -78,28 +82,19 @@ export interface WindowMenuOptions {
 export interface WindowMenu {
   /** Build the submenu now and follow the windows (once the registry's lifecycle is live). */
   install(): void;
-  /** The recently closed keyed windows, most recent first (tests). */
-  closed(): readonly { readonly key: string; readonly url: string }[];
+  /** The recently closed keyed windows, most recent first (the registry's; tests). */
+  closed(): readonly ClosedWindow[];
   /** Do what the item `id` does (the menu click; tests). */
   choose(id: string): void;
-  /**
-   * A window closed (the registry's `onClosed`): a keyed window the user closed, not a quit's, is
-   * remembered for Reopen Closed Window, most recent first, each key once.
-   */
-  windowClosed(entry: RegisteredWindow, appQuitting: boolean): void;
-}
-
-/** A closed window Reopen Closed Window can bring back. */
-interface ClosedWindow {
-  readonly key: string;
-  readonly url: string;
+  /** Build the submenu again (a title changed, a key was forgotten). */
+  refresh(): void;
 }
 
 /** The menu's state. */
 interface MenuState {
   readonly options: WindowMenuOptions;
-  readonly closed: ClosedWindow[];
   readonly os: string;
+  installed: boolean;
 }
 
 /** The lowest `window-N` key no open window has. */
@@ -133,6 +128,24 @@ function labelOf(w: RegisteredWindow): string {
   return w.title ?? w.key ?? w.id;
 }
 
+/** Reopen Closed Window: one item, or with `"list"` a submenu of the closed windows. */
+function reopenItems(st: MenuState, ids: Set<string>): DesktopMenuItem {
+  const closed = st.options.registry.recentlyClosed();
+  ids.add(REOPEN_ID);
+  if (st.options.settings.reopenClosed !== "list" || closed.length === 0) {
+    return item(REOPEN_ID, "Reopen Closed Window", {
+      accelerator: REOPEN_ACCELERATOR,
+      enabled: closed.length > 0,
+    });
+  }
+  const items = closed.slice(0, MAX_REOPEN_LISTED).map((c, i) => {
+    const id = REOPEN_PREFIX + c.key;
+    ids.add(id);
+    return item(id, c.title ?? c.key, i === 0 ? { accelerator: REOPEN_ACCELERATOR } : {});
+  });
+  return { submenu: { label: "Reopen Closed Window", items } };
+}
+
 /** The submenu's items now. */
 function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
   const s = st.options.settings;
@@ -145,13 +158,7 @@ function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
     items.push(item(NEW_ID, "New Window", { accelerator: "CommandOrControl+N" }));
     ids.add(NEW_ID);
   }
-  if (s.reopenClosed === true) {
-    items.push(item(REOPEN_ID, "Reopen Closed Window", {
-      accelerator: "CommandOrControl+Shift+T",
-      enabled: st.closed.length > 0,
-    }));
-    ids.add(REOPEN_ID);
-  }
+  if (s.reopenClosed === true || s.reopenClosed === "list") items.push(reopenItems(st, ids));
   if (s.list === true) {
     const windows = st.options.registry.list().filter((w) => w.kind !== "panel");
     if (items.length > 0 && windows.length > 0 && items.at(-1) !== "separator") {
@@ -202,21 +209,21 @@ function newWindow(st: MenuState): void {
   if (options) openFor(st, "New Window", options);
 }
 
-/** Reopen Closed Window: the most recently closed keyed window not open again already. */
-function reopenClosed(st: MenuState): void {
-  while (st.closed.length > 0) {
-    const last = st.closed.shift()!;
-    if (st.options.registry.byKey(last.key)) continue;
-    openFor(st, "Reopen Closed Window", { url: last.url, key: last.key });
-    return;
-  }
-  apply(st);
+/**
+ * Reopen Closed Window: `key`'s closed window, or the most recently closed keyed window not open
+ * again already.
+ */
+function reopenClosed(st: MenuState, key?: string): void {
+  const last = st.options.registry.takeRecentlyClosed(key);
+  if (last) openFor(st, "Reopen Closed Window", { url: last.url, key: last.key });
+  else apply(st);
 }
 
 /** Do what the item `id` does. */
 function choose(st: MenuState, id: string): void {
   if (id === NEW_ID) return newWindow(st);
   if (id === REOPEN_ID) return reopenClosed(st);
+  if (id.startsWith(REOPEN_PREFIX)) return reopenClosed(st, id.slice(REOPEN_PREFIX.length));
   if (!id.startsWith(FOCUS_PREFIX)) return;
   const w = st.options.registry.get(id.slice(FOCUS_PREFIX.length));
   if (!w) return;
@@ -234,22 +241,19 @@ function choose(st: MenuState, id: string): void {
  * @returns The menu.
  */
 export function createWindowMenu(options: WindowMenuOptions): WindowMenu {
-  const st: MenuState = { options, closed: [], os: options.os ?? Deno.build.os };
+  const st: MenuState = { options, os: options.os ?? Deno.build.os, installed: false };
   return {
     install: () => {
       const lifecycle = options.registry.lifecycle;
       lifecycle.onWindowOpened(() => apply(st));
       lifecycle.onWindowClosed(() => apply(st));
+      st.installed = true;
       apply(st);
     },
-    closed: () => [...st.closed],
+    closed: () => options.registry.recentlyClosed(),
     choose: (id) => choose(st, id),
-    windowClosed: (entry, appQuitting) => {
-      if (appQuitting || entry.key === undefined || entry.kind !== "window") return;
-      const key = entry.key;
-      const kept = st.closed.filter((c) => c.key !== key);
-      st.closed.splice(0, st.closed.length, { key, url: entry.url }, ...kept);
-      st.closed.length = Math.min(st.closed.length, MAX_REOPEN);
+    refresh: () => {
+      if (st.installed) apply(st);
     },
   };
 }
