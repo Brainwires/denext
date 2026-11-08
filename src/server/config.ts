@@ -1839,6 +1839,22 @@ export interface DesktopTrayPanelConfig {
 /** How far above other windows an always-on-top window floats (Electron's level names). */
 export type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver";
 
+/** A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}). */
+export interface DesktopWindowButtonPosition {
+  /**
+   * Points from the window's left edge.
+   *
+   * @minimum 0
+   */
+  x: number;
+  /**
+   * Points from the window's top edge.
+   *
+   * @minimum 0
+   */
+  y: number;
+}
+
 /** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
 export interface DesktopWindowConfig {
   /**
@@ -1866,6 +1882,15 @@ export interface DesktopWindowConfig {
    * @minimum 1
    */
   defaultHeight?: number;
+  /**
+   * Where the macOS window buttons (the traffic lights) sit: the close button's top-left corner,
+   * in points from the window's top-left, for a page drawn under a hidden title bar
+   * (`desktop.titleBar: "hidden"` / `"hiddenInset"`). Windows opened with `windows.open` /
+   * `openWindow` take it too, unless their own `windowButtonPosition` says (`null` keeps the OS's
+   * place); a frameless window has none. Ignored on Windows and Linux. Needs denext's pinned
+   * runtime (ignored with a warning before).
+   */
+  windowButtonPosition?: DesktopWindowButtonPosition;
   /** The window title (defaults to the page's `<title>`). */
   title?: string;
   /** Whether the user can resize the window (default `true`). */

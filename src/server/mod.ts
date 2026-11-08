@@ -338,6 +338,7 @@ export {
   type DesktopTrayPanelConfig,
   type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
+  type DesktopWindowButtonPosition,
   type DesktopWindowConfig,
   type DesktopWindowLevel,
   type DesktopWindowsConfig,

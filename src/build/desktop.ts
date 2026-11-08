@@ -93,6 +93,8 @@ export type {
   DesktopWindowSettings,
   DesktopWindowSize,
 } from "../desktop/window-config.ts";
+/** Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`). */
+export type { DesktopWindowButtonPosition } from "../server/config.ts";
 export type {
   DesktopDockReopenContext,
   DesktopDockReopenEvent,

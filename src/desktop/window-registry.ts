@@ -50,15 +50,18 @@ import {
 import type { WindowController } from "./caps/window.ts";
 import { isAppQuitting, WINDOW_EVENTS } from "./caps/window.ts";
 import { isAppPath } from "./tray-config.ts";
-import type { DesktopWindowLevel } from "../server/config.ts";
+import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/config.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
   applyTitleBarStyle,
+  applyWindowButtonPosition,
   applyWindowOverlaySettings,
   type DesktopTitleBarStyle,
   type DesktopWindowSettings,
   TITLE_BARS,
   WINDOW_LEVELS,
+  windowButtonPositionOf,
+  windowButtonPositionProblem,
 } from "./window-config.ts";
 export { MAX_WINDOWS_LIMIT } from "./window-config.ts";
 import { createWindowLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
@@ -188,6 +191,11 @@ export interface WindowRegistryOptions {
   readonly newToken?: () => string;
   /** The title bar style opened windows take unless their own `titleBar` says (`desktop.titleBar`). */
   readonly titleBar?: DesktopTitleBarStyle;
+  /**
+   * Where opened windows' macOS traffic lights sit unless their own `windowButtonPosition` says
+   * (`desktop.window.windowButtonPosition`).
+   */
+  readonly windowButtonPosition?: DesktopWindowButtonPosition;
   /** A window's title changed (its page reported or set one): the menus' labels follow. */
   readonly onTitleChanged?: (id: string, title: string) => void;
 }
@@ -346,6 +354,8 @@ export interface OpenWindowSettings {
   readonly defaultHeight?: number;
   /** The title bar style (default the registry's, `desktop.titleBar`). */
   readonly titleBar?: DesktopTitleBarStyle;
+  /** The traffic lights' position (default the registry's); `null` keeps the OS's. */
+  readonly windowButtonPosition?: DesktopWindowButtonPosition | null;
 }
 
 /** `alwaysOnTop`: a boolean or a level. */
@@ -382,9 +392,7 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
   if (a.title !== undefined && (typeof a.title !== "string" || a.title.length > MAX_TITLE)) {
     throw invalid(`title must be a string up to ${MAX_TITLE} characters`);
   }
-  if (a.titleBar !== undefined && !TITLE_BARS.includes(a.titleBar as DesktopTitleBarStyle)) {
-    throw invalid(`titleBar must be one of ${TITLE_BARS.join(", ")}`);
-  }
+  const chrome = chromeSettings(a);
   const level = levelOf(a.alwaysOnTop);
   const opacity = optNum(a, "opacity", 0, 1);
   const keyProblem = a.key === undefined ? null : windowKeyProblem(a.key);
@@ -401,8 +409,30 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
     capabilities: subsetOf(a.capabilities),
     ...(a.key !== undefined ? { key: a.key as string } : {}),
     ...(restoreBounds !== undefined ? { restoreBounds } : {}),
-    ...(a.titleBar !== undefined ? { titleBar: a.titleBar as DesktopTitleBarStyle } : {}),
+    ...chrome,
   };
+}
+
+/** The title bar style and the traffic lights' position of a window to open, checked. */
+function chromeSettings(
+  a: Record<string, unknown>,
+): Pick<OpenWindowSettings, "titleBar" | "windowButtonPosition"> {
+  if (a.titleBar !== undefined && !TITLE_BARS.includes(a.titleBar as DesktopTitleBarStyle)) {
+    throw invalid(`titleBar must be one of ${TITLE_BARS.join(", ")}`);
+  }
+  const buttons = buttonPositionOf(a.windowButtonPosition);
+  return {
+    ...(a.titleBar !== undefined ? { titleBar: a.titleBar as DesktopTitleBarStyle } : {}),
+    ...(buttons !== undefined ? { windowButtonPosition: buttons } : {}),
+  };
+}
+
+/** `windowButtonPosition`: `{ x, y }`, or `null` for the OS's place. */
+function buttonPositionOf(value: unknown): DesktopWindowButtonPosition | null | undefined {
+  if (value === undefined || value === null) return value;
+  const problem = windowButtonPositionProblem(value);
+  if (problem !== null) throw invalid(`windowButtonPosition ${problem}`);
+  return windowButtonPositionOf(value);
 }
 
 /** The boolean options of a window to open. */
@@ -828,6 +858,21 @@ function afterCreation(settings: OpenWindowSettings): DesktopWindowSettings {
   };
 }
 
+/**
+ * Style an opened window's title bar as the main window's: `desktop.titleBar` (or the window's
+ * own), then `desktop.window.windowButtonPosition` (or the window's own; `null` opts out), after
+ * the style since a style change puts the buttons back. A frameless window has neither.
+ */
+function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWindowSettings) {
+  if (settings.frameless === true) return;
+  const titleBar = settings.titleBar ?? st.options.titleBar;
+  if (titleBar !== undefined) applyTitleBarStyle(window, titleBar, st.warn);
+  const buttons = settings.windowButtonPosition === undefined
+    ? st.options.windowButtonPosition
+    : settings.windowButtonPosition;
+  if (buttons) applyWindowButtonPosition(window, buttons, st.warn);
+}
+
 /** Open a window from checked settings. */
 function open(st: RegistryState, args: unknown): RegisteredWindow {
   const checked = openWindowSettings(args);
@@ -854,12 +899,7 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     closed(st, id);
   });
   followFrame(st, entry, settings.url);
-  // `desktop.titleBar` (or the window's own), as the main window gets it; a frameless window has
-  // no title bar to style.
-  const titleBar = settings.titleBar ?? st.options.titleBar;
-  if (titleBar !== undefined && settings.frameless !== true) {
-    applyTitleBarStyle(window, titleBar, st.warn);
-  }
+  applyChrome(st, window, settings);
   applyWindowOverlaySettings(window, afterCreation(settings));
   if (!settings.show) window.hide?.();
   if (typeof window.navigate !== "function") {

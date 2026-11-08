@@ -108,6 +108,12 @@ export interface DesktopOpenWindowOptions {
    * frameless window has none to style.
    */
   readonly titleBar?: "default" | "hidden" | "hiddenInset";
+  /**
+   * Where the macOS traffic lights sit (the close button's top-left corner, in points from the
+   * window's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;
+   * `null` keeps the OS's place. A frameless window has none.
+   */
+  readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
   /** Screen x of the top-left corner. */
   readonly x?: number;
   /** Screen y of the top-left corner. */
@@ -544,6 +550,18 @@ function subscribeDockReopen(
   return () => dock.removeEventListener("reopen", listener);
 }
 
+/** What opened windows take from the main window's settings: the title bar and its buttons. */
+function inheritedChrome(
+  w: DesktopWindowSettings | undefined,
+): Pick<DesktopWindowSettings, "titleBar" | "windowButtonPosition"> {
+  return {
+    ...(w?.titleBar !== undefined ? { titleBar: w.titleBar } : {}),
+    ...(w?.windowButtonPosition !== undefined
+      ? { windowButtonPosition: w.windowButtonPosition }
+      : {}),
+  };
+}
+
 /** The registry over the adopted window (its windows' controllers, the store, the lifecycle). */
 function createRegistry(st: SetupState): WindowRegistry {
   const o = st.options;
@@ -559,7 +577,7 @@ function createRegistry(st: SetupState): WindowRegistry {
     appUrl: (path) => st.appUrl(path),
     emit: o.emit,
     keepAlive: () => keepAliveOf(st),
-    ...(o.windowSettings?.titleBar !== undefined ? { titleBar: o.windowSettings.titleBar } : {}),
+    ...inheritedChrome(o.windowSettings),
     onTitleChanged: () => st.menu?.refresh(),
     onClosed: (id) => {
       st.app?.windowClosed(id);

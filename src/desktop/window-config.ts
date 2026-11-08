@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { DesktopWindowLevel } from "../server/config.ts";
+import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/config.ts";
 import { windowKeyProblem } from "./window-store.ts";
 
 /** A window size in CSS pixels. */
@@ -78,6 +78,8 @@ export interface DesktopWindowSettings {
   readonly defaultWidth?: number;
   /** The height used when the main window has no saved frame (`desktop.window.defaultHeight`). */
   readonly defaultHeight?: number;
+  /** Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`). */
+  readonly windowButtonPosition?: DesktopWindowButtonPosition;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
@@ -163,6 +165,42 @@ function oneOf<T extends string>(
   return value as T;
 }
 
+/** The largest window button offset, in points (the runtime's own bound). */
+const MAX_BUTTON_OFFSET = 1e7;
+
+/**
+ * Why `value` is not a window button position (`{ x, y }`, each a finite number of points from 0),
+ * or `null`. Shared by `desktop.window.windowButtonPosition` and a window's own option.
+ *
+ * @param value The configured value.
+ * @returns The problem, or `null`.
+ */
+export function windowButtonPositionProblem(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "must be { x, y }";
+  }
+  const v = value as { x?: unknown; y?: unknown };
+  for (const axis of ["x", "y"] as const) {
+    const n = v[axis];
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > MAX_BUTTON_OFFSET) {
+      return `${axis} must be a number of points from 0 to ${MAX_BUTTON_OFFSET}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * A checked window button position ({@linkcode windowButtonPositionProblem} found none), rounded to
+ * whole points.
+ *
+ * @param value The checked value.
+ * @returns The position.
+ */
+export function windowButtonPositionOf(value: unknown): DesktopWindowButtonPosition {
+  const v = value as { x: number; y: number };
+  return { x: Math.round(v.x), y: Math.round(v.y) };
+}
+
 /** The boolean keys of `desktop.window`. */
 const WINDOW_FLAGS = [
   "resizable",
@@ -200,6 +238,10 @@ export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, st
   }
   const key = w.key === undefined ? null : windowKeyProblem(w.key);
   if (key !== null) return ["window.key", key.replace(/^key /, "")];
+  const buttons = w.windowButtonPosition === undefined
+    ? null
+    : windowButtonPositionProblem(w.windowButtonPosition);
+  if (buttons !== null) return ["window.windowButtonPosition", buttons];
   return null;
 }
 
@@ -230,6 +272,9 @@ function windowKeys(raw: unknown): Omit<
     ...levelSetting(w.alwaysOnTop),
     ...(w.opacity !== undefined ? { opacity: w.opacity as number } : {}),
     ...(w.key !== undefined ? { key: w.key as string } : {}),
+    ...(w.windowButtonPosition !== undefined
+      ? { windowButtonPosition: windowButtonPositionOf(w.windowButtonPosition) }
+      : {}),
   };
 }
 
@@ -405,6 +450,7 @@ interface ConfigurableWindow {
   setMinimumSize?(width: number, height: number): void;
   setMaximumSize?(width: number, height: number): void;
   setTitleBarStyle?(style: string): boolean;
+  setWindowButtonPosition?(position: DesktopWindowButtonPosition | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
   setAlwaysOnTop?(flag: boolean, level?: string): void;
@@ -576,6 +622,9 @@ export function applyDesktopWindowSettings(
     tryCall(win, "setResizable", "window.resizable", warn, settings.resizable);
   }
   if (settings.titleBar !== undefined) applyTitleBarStyle(win, settings.titleBar, warn);
+  if (settings.windowButtonPosition !== undefined && settings.frameless !== true) {
+    applyWindowButtonPosition(win, settings.windowButtonPosition, warn);
+  }
   if (settings.backdrop !== undefined) applyBackdrop(win, settings.backdrop, warn);
   applyOverlaySettings(win, settings, warn);
 }
@@ -596,6 +645,26 @@ export function applyTitleBarStyle(
 ): void {
   if (typeof win !== "object" || win === null || style === "default") return;
   tryCall(win as ConfigurableWindow, "setTitleBarStyle", "titleBar", warn, style);
+}
+
+/**
+ * Move a window's macOS traffic lights (the adopted one, or one `openWindow` made), after its
+ * title bar style (a style change puts the buttons back). The runtime answers `false` where the
+ * OS has no such buttons (Windows, Linux), which is not an error; a runtime without
+ * `setWindowButtonPosition` (the stock one) is a warning. Nothing throws.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param position The close button's top-left corner, in points from the window's top-left.
+ * @param warn Where warnings go.
+ */
+export function applyWindowButtonPosition(
+  win: unknown,
+  position: DesktopWindowButtonPosition,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null) return;
+  const key = "window.windowButtonPosition";
+  tryCall(win as ConfigurableWindow, "setWindowButtonPosition", key, warn, position);
 }
 
 /**
