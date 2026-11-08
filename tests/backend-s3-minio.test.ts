@@ -389,14 +389,28 @@ Deno.test({
   }
 });
 
+/**
+ * A second name of the store's host for the publicEndpoint test: `localhost` and `127.0.0.1` are
+ * the same loopback MinIO; a store on another host (a CI pool's job services) has no second name
+ * this test can count on, so the test is skipped there.
+ */
+const SECOND_HOST_NAME = (() => {
+  if (!ENDPOINT) return undefined;
+  const host = new URL(ENDPOINT).hostname;
+  return host === "localhost" ? "127.0.0.1" : host === "127.0.0.1" ? "localhost" : undefined;
+})();
+
 Deno.test(
-  { name: "minio: publicEndpoint — browser URLs signed for another hostname of the store", ignore },
+  {
+    name: "minio: publicEndpoint — browser URLs signed for another hostname of the store",
+    ignore: ignore || SECOND_HOST_NAME === undefined,
+  },
   async () => {
     await ensureBucket();
-    // The same MinIO under a second name: `localhost` for the browser, the IP for the server.
+    // The same MinIO under a second name: one for the browser, the other for the server.
     const internal = new URL(ENDPOINT!);
     const publicUrl = new URL(ENDPOINT!);
-    publicUrl.hostname = internal.hostname === "localhost" ? "127.0.0.1" : "localhost";
+    publicUrl.hostname = SECOND_HOST_NAME!;
     const a = await backendApp({
       driver: s3({
         endpoint: internal.origin,
