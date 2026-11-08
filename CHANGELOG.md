@@ -42,26 +42,6 @@ and this project adheres to
   `--allow-sys` it needed so far: the package scripts and `denext desktop run` / `dev` stop baking
   it for the store. Inert until denext's pinned runtime ships the list (an older runtime refuses
   the key, so it is not written).
-
-### Security
-
-- **The Deno Desktop secure store keeps each caller's items apart.** The runtime can't tell the
-  app's pages from its extensions (they all run in the app's own process), so denext now stores
-  the pages' items under `<desktop.app.identifier>/page` and each extension's under
-  `<desktop.app.identifier>/ext/<name>`, on every backend (the runtime's Keychain and Secret
-  Service stores, `/usr/bin/security`, the Windows PasswordVault). A page can't read or overwrite
-  an extension's secrets, nor the other way round. Items an earlier denext stored for the pages
-  under the bare identifier move into the page namespace on their first read during the first
-  launch with this release: copied, then deleted, so a failure leaves them where they were. A
-  per-app marker keeps every later launch from reading the bare identifier again, so an item
-  another program plants there is never adopted, and a page delete also removes the un-namespaced
-  copy. Extensions get no move (nothing un-namespaced was theirs).
-
-### Changed
-
-- **The Linux secure-store probe looks up an account no caller can name**
-  (`-denext-secure-store-probe`): a page key can no longer coincide with it.
-
 - **The macOS Dock's reopen click brings back the last closed window.** With no window showing, a
   click on the Dock icon now reopens the most recently closed keyed window (its key, path and
   frame), and shows the main window as before only when none was closed.
@@ -126,6 +106,9 @@ and this project adheres to
 
 ### Changed
 
+- **The Linux secure-store probe looks up an account no caller can name**
+  (`-denext-secure-store-probe`): a page key can no longer coincide with it.
+
 - **The AppImage runtime is pinned.** `appimagetool` used to prepend whatever type2-runtime's
   moving `continuous` release held; the package script now downloads type2-runtime `20251108` for
   x86_64 or aarch64 once into the toolchain cache, verifies its SHA-256 (a mismatch fails the
@@ -142,6 +125,20 @@ and this project adheres to
   `ldd` on the host the check is skipped with a note.
 - **`desktopRequireTool("dpkg-deb", …)` says how to install `dpkg`** (apt, dnf, brew), as it does
   for the other tools, and `desktopHasTool` is documented with the package-script helpers.
+
+### Security
+
+- **The Deno Desktop secure store keeps each caller's items apart.** The runtime can't tell the
+  app's pages from its extensions (they all run in the app's own process), so denext now stores
+  the pages' items under `<desktop.app.identifier>/page` and each extension's under
+  `<desktop.app.identifier>/ext/<name>`, on every backend (the runtime's Keychain and Secret
+  Service stores, `/usr/bin/security`, the Windows PasswordVault). A page can't read or overwrite
+  an extension's secrets, nor the other way round. Items an earlier denext stored for the pages
+  under the bare identifier move into the page namespace on their first read during the first
+  launch with this release: copied, then deleted, so a failure leaves them where they were. A
+  per-app marker keeps every later launch from reading the bare identifier again, so an item
+  another program plants there is never adopted, and a page delete also removes the un-namespaced
+  copy. Extensions get no move (nothing un-namespaced was theirs).
 
 ## [4.14.0] - 2026-11-08
 

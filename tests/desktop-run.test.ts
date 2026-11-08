@@ -498,6 +498,40 @@ Deno.test("runDesktop (pinned runtime): an extension host opens windows through 
   }
 });
 
+Deno.test("runDesktop (pinned runtime): an extension host's openWindow takes desktop.titleBar and defaultWidth / defaultHeight", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  /** A window that records its title bar style too. */
+  class TitleBarWindow extends FakeMenuWindow {
+    setTitleBarStyle(style: string) {
+      this.calls.push(`titleBar:${style}`);
+    }
+  }
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = { name: "jobs", methods: {}, setup: (h) => void (host = h) };
+    await boot({ outDir, port: 1, capabilities: [ext], window: { titleBar: "hiddenInset" } }, {
+      deno: { BrowserWindow: TitleBarWindow, desktop, exit: () => {} },
+    });
+    assert(host);
+    host.openWindow({ url: "/jobs", key: "jobs", defaultWidth: 640, defaultHeight: 480 });
+    const opened = FakeMenuWindow.all.at(-1)!;
+    assertEquals(opened.calls.filter((c) => c.startsWith("titleBar")), ["titleBar:hiddenInset"]);
+    assertEquals([opened.options?.width, opened.options?.height], [640, 480]);
+    // The window's own titleBar wins, as with windows.open.
+    host.openWindow({ url: "/b", key: "b", titleBar: "hidden" });
+    assertEquals(
+      FakeMenuWindow.all.at(-1)!.calls.filter((c) => c.startsWith("titleBar")),
+      ["titleBar:hidden"],
+    );
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
 Deno.test("runDesktop: a close before the windows are set up goes through the close rules, not a bare exit", async () => {
   const outDir = await exportDir();
   const exits: number[] = [];

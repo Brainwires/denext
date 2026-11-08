@@ -179,8 +179,8 @@ Deno.test("idle trim: DENEXT_IDLE_TRIM=0 when a compiled binary runs holds a bak
 });
 
 Deno.test("idle trim: on a runtime that rereads DENO_UNSTABLE_IDLE_TRIM, the binary sets it to 0 and starts no timer", () => {
-  // Inert until the pin moves to the release with Brainwires/deno DENEXT.md item 269.
-  assert(!supportsIdleTrimEnvOff(toolchainPin.version), "the pinned runtime predates item 269");
+  // Inert until the pin moves to the release with Brainwires/deno DENEXT.md item 278.
+  assert(!supportsIdleTrimEnvOff(toolchainPin.version), "the pinned runtime predates item 278");
   assert(supportsIdleTrimEnvOff(FIRST_IDLE_TRIM_ENV_OFF_RUNTIME));
   const runtime = FIRST_IDLE_TRIM_ENV_OFF_RUNTIME;
   const timers: number[] = [];

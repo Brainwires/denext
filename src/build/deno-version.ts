@@ -170,11 +170,11 @@ const NEXT_RUNTIME = "99999.0.0";
 
 /**
  * The first release of denext's Deno whose idle trim a running program turns off with
- * `DENO_UNSTABLE_IDLE_TRIM=0` (Brainwires/deno DENEXT.md item 269, `fix/idle-trim-env-override`:
+ * `DENO_UNSTABLE_IDLE_TRIM=0` (Brainwires/deno DENEXT.md item 278, `fix/idle-trim-env-override`:
  * read again each time a trim is due, so `Deno.env.set` from the program's own code works, and
  * at start a `0` overrides a baked `--unstable-idle-trim`).
  *
- * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries item 269 yet. Set this to the
+ * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries item 278 yet. Set this to the
  * release that does when the toolchain pin moves to it.
  */
 export const FIRST_IDLE_TRIM_ENV_OFF_RUNTIME: string = NEXT_RUNTIME;

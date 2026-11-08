@@ -1955,6 +1955,7 @@
     "DesktopCapability:interface",
     "DesktopCapabilityMethod:interface",
     "DesktopClosedWindow:interface",
+    "DesktopConfirmOptions:interface",
     "DesktopDevProxyDecision:typeAlias",
     "DesktopDockReopenContext:interface",
     "DesktopDockReopenEvent:interface",
