@@ -602,8 +602,10 @@ Deno.test("secureStore (macOS): declared permissions follow legacy and the runti
   // The pinned runtime (its own Keychain store; no baked capability list yet).
   assertEquals(perms(true, "3.0.0-denext.13"), { run: ["security"], sys: ["*"] });
   assertEquals(perms(false, "3.0.0-denext.13"), { sys: ["*"] });
-  // A runtime without its own macOS store: `security` stays declared.
-  assertEquals(perms(false, "3.0.0-denext.12"), { run: ["security"], sys: ["*"] });
+  // Legacy off never declares `security`, even under a runtime without its own macOS store
+  // (every call then fails backend_unavailable).
+  assertEquals(perms(false, "3.0.0-denext.12"), { sys: ["*"] });
+  assertEquals(perms(true, "3.0.0-denext.12"), { run: ["security"], sys: ["*"] });
   // A runtime that gates the store on app.json's capability list: no --allow-sys.
   assertEquals(perms(false, "99999.0.0"), {});
   assertEquals(perms(true, "99999.0.0"), { run: ["security"] });

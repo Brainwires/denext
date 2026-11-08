@@ -26,7 +26,9 @@ export interface SecureStorePermissionContext {
   readonly bakedCapabilities: boolean;
   /**
    * The runtime has its own macOS secure store (`supportsMacSecureStore`); without it (an older or
-   * the stock runtime) macOS stores through `/usr/bin/security`.
+   * the stock runtime) macOS stores through `/usr/bin/security`, which the capability uses only
+   * while {@linkcode SecureStorePermissionContext.legacy} is on. Kept for reporting: it does not
+   * change the permissions (`security` is baked exactly while `legacy` is on).
    */
   readonly macRuntimeStore: boolean;
 }
@@ -75,8 +77,8 @@ export function secureStoreConfigProblem(value: unknown): [string, string] | nul
  *
  * - `sys: ["*"]` (Linux, macOS) only while the runtime does not gate its store on the baked
  *   capability list: an older runtime's `Deno.desktop.secureStore` needs an unscoped `--allow-sys`.
- * - macOS `run: ["security"]` only while the legacy move is on, or the runtime has no macOS store
- *   of its own (then `security` is the store).
+ * - macOS `run: ["security"]` only while the legacy move is on (whatever the runtime): with
+ *   `legacy: false` the capability never runs `security`, so it is never baked.
  * - Windows: `powershell.exe` (WinRT PasswordVault), unchanged.
  *
  * @param os The target OS.
@@ -90,6 +92,6 @@ export function secureStorePermissionSet(
   if (os === "windows") return { run: ["powershell.exe"] };
   const sys = ctx.bakedCapabilities ? {} : { sys: ["*"] };
   if (os === "linux") return sys;
-  const security = ctx.legacy || !ctx.macRuntimeStore ? { run: ["security"] } : {};
+  const security = ctx.legacy ? { run: ["security"] } : {};
   return { ...security, ...sys };
 }

@@ -26,7 +26,7 @@ import {
   formatDesktopCapabilityTable,
   passkeyRpId,
 } from "../src/build/desktop-capabilities.ts";
-import { desktopPasskeyRpIds, macSecureStoreRuntime } from "../src/build/desktop-launch-policy.ts";
+import { desktopPasskeyRpIds } from "../src/build/desktop-launch-policy.ts";
 import { readConfigModel } from "../src/build/config-edit.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
@@ -695,11 +695,9 @@ Deno.test("desktop add secure-store: a first enablement writes desktop.secureSto
   const model = await readConfigModel(text);
   const desktop = model.keys.desktop?.value as { secureStore?: unknown };
   assertEquals(desktop.secureStore, { legacy: false });
-  // The report's permissions are the config's: macOS bakes no `security` under a runtime with its
-  // own Keychain store (the pin's; not under DENEXT_DESKTOP_RUNTIME=stock).
-  assertEquals(
+  // The report's permissions are the config's: with legacy off macOS bakes no `security`.
+  assertFalse(
     report.permissions.darwin.includes("--allow-run=security"),
-    !macSecureStoreRuntime(),
     JSON.stringify(report.permissions),
   );
   assertEquals(report.permissions.windows, ["--allow-run=powershell.exe"]);
@@ -745,9 +743,14 @@ Deno.test("desktopBuildFlags: secure-store bakes --allow-sys and `security` only
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-sys",
   ]);
-  // A runtime without its own macOS store keeps `security`.
+  // Legacy off never bakes `security`, even for a runtime without its own macOS store (the cap
+  // then fails closed and never runs it); legacy on keeps it there as the store.
   assertEquals(
     desktopBuildFlags(legacy(false), "darwin", { bakedCapabilities: false, macSecureStore: false }),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys"],
+  );
+  assertEquals(
+    desktopBuildFlags(legacy(), "darwin", { bakedCapabilities: false, macSecureStore: false }),
     [...DESKTOP_BASELINE_FLAGS, "--allow-sys", "--allow-run=security"],
   );
   // A runtime that gates the store on app.json's capability list: no --allow-sys.

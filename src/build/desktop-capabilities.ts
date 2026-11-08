@@ -227,8 +227,8 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // Linux and macOS: the runtime's own store (the Secret Service through libsecret; the
     // Keychain, items only the app may read), which needs an unscoped --allow-sys until the runtime
     // gates it on the capability list baked into app.json. macOS keeps `security` while
-    // `desktop.secureStore.legacy` is on (moving older items over) or the runtime has no store of
-    // its own. Windows: WinRT PasswordVault via `powershell.exe` (argv/stdin, no shell).
+    // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
+    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`.
     os: {
       darwin: secureStorePermissionSet("darwin", LEGACY_PERMISSION_CONTEXT),
       linux: secureStorePermissionSet("linux", LEGACY_PERMISSION_CONTEXT),
@@ -724,8 +724,9 @@ export interface DesktopBuildFlagOptions {
    */
   readonly bakedCapabilities?: boolean;
   /**
-   * The runtime has its own macOS secure store (see `macSecureStoreRuntime`), so `security` is
-   * baked only while `desktop.secureStore.legacy` is on. Default: the pinned runtime's.
+   * The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the
+   * permission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,
+   * whatever this says. Default: the pinned runtime's.
    */
   readonly macSecureStore?: boolean;
 }

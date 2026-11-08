@@ -1150,8 +1150,8 @@ function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): Secur
 /**
  * The permission descriptor shared by all methods ({@linkcode secureStorePermissionSet}, the same
  * function the package scripts bake from): an unscoped `--allow-sys` for the runtime's store while
- * the runtime does not gate it on the baked capability list; on macOS `security` while the legacy
- * move is on or the runtime has no store of its own; Windows PowerShell.
+ * the runtime does not gate it on the baked capability list; on macOS `security` only while the
+ * legacy move is on; Windows PowerShell.
  */
 function secureStorePermissions(os: Os, deps: SecureStoreDeps): DesktopPermissions {
   const version = deps.runtimeVersion ?? Deno.version.deno;

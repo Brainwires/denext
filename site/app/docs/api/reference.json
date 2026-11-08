@@ -45537,7 +45537,7 @@
               "kind": "property",
               "name": "macSecureStore",
               "signature": "readonly macSecureStore?: boolean",
-              "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`), so `security` is\nbaked only while `desktop.secureStore.legacy` is on. Default: the pinned runtime's."
+              "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the\npermission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,\nwhatever this says. Default: the pinned runtime's."
             }
           ]
         },
