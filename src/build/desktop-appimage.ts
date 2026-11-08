@@ -15,13 +15,10 @@
 // ({@linkcode appImageRequires}).
 
 import { join } from "@std/path";
-import {
-  type CacheSlot,
-  type DenoToolchainArtifact,
-  denoToolchainCacheRoot,
-  DenoToolchainUnavailableError,
-  ensureCached,
-  type EnsureDenoToolchainOptions,
+import type {
+  CacheSlot,
+  DenoToolchainArtifact,
+  EnsureDenoToolchainOptions,
 } from "./deno-toolchain.ts";
 import {
   type BuildLinuxPackageOptions,
@@ -74,6 +71,10 @@ export async function ensureAppImageRuntime(
   arch: "x86_64" | "arm64",
   options: AppImageRuntimeOptions = {},
 ): Promise<string> {
+  // Loaded on use: only a package run building an AppImage needs the toolchain cache.
+  const { denoToolchainCacheRoot, DenoToolchainUnavailableError, ensureCached } = await import(
+    "./deno-toolchain.ts"
+  );
   const pin = options.pin ?? APPIMAGE_RUNTIME_PIN;
   const target = runtimeTarget(arch);
   const artifact = pin.targets[target];

@@ -17,6 +17,7 @@ const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const DYNAMIC_READS: Readonly<Record<string, number>> = {
   "src/build/code-signing.ts": 1,
   "src/build/deno-cache-dir.ts": 2,
+  "src/build/deno-toolchain.ts": 1,
   "src/build/desktop-launch-policy.ts": 1,
   "src/build/desktop-package-script.ts": 1,
   "src/build/desktop-runtime.ts": 1,
@@ -50,6 +51,7 @@ const WHOLE_ENV_READS: Readonly<Record<string, number>> = {
  * environment for a child rather than read one.
  */
 const FORWARDED: ReadonlySet<string> = new Set([
+  "src/build/deno-toolchain.ts env",
   "src/build/desktop-package-script.ts desktopExportEnv",
   "src/build/desktop-package-script.ts desktopRuntimeEnv",
   "src/build/desktop-runtime.ts localRuntimeEnv",
