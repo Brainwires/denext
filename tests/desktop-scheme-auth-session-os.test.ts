@@ -24,6 +24,11 @@ const ctx = {
   os: "darwin" as const,
   signal: new AbortController().signal,
   runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+  secureStore: {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    delete: () => Promise.resolve(),
+  },
   pickedPath: () => {
     throw new Error("no picked paths in tests");
   },

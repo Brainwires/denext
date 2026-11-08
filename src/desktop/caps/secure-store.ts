@@ -3,6 +3,14 @@
  * Deno Desktop (see `secureGet`/`secureSet`/`secureDelete` in `src/desktop/native.ts`). Keyed by an
  * app-specific service name + the caller's key.
  *
+ * Per caller: the runtime can't tell the app's pages from its extensions (all of it is the app's own
+ * Deno process), so denext namespaces the service name ({@linkcode secureStoreNamespace}): the pages
+ * (this capability, which only the app's own origin can call through the bridge) store under
+ * `<service>/page`, an extension (`ctx.secureStore` / `host.secureStore`) under
+ * `<service>/ext/<name>`. Neither can name the other's items. Items an earlier denext wrote for the
+ * pages under the bare `<service>` move into `<service>/page` on their first read during the first
+ * launch with namespaces ({@linkcode pageBackend}).
+ *
  * Linux: the runtime's own secure store (`Deno.desktop.secureStore` in denext's pinned runtime: the
  * Secret Service through libsecret, which the runtime loads at run time, `libsecret-1.so.0`). It
  * refuses with the reason (no provider: "install gnome-keyring" / "enable KWallet's Secret
@@ -18,11 +26,15 @@
  * list naming only the app. Another program of the same user gets macOS's prompt, never the secret.
  * Items an older denext wrote through `security` (which trust `/usr/bin/security`, so any program
  * of the user could read them through it) move over on their first read during the first launch
- * under that store (see `migratingBackend`), so a signed-in user keeps their tokens.
+ * under that store (see `migratingBackend`), so a signed-in user keeps their tokens, while
+ * `desktop.secureStore.legacy` is on (the default). With `legacy: false`, `security` is never run:
+ * no item is moved, and a runtime without its own macOS store fails every call
+ * `backend_unavailable`.
  *
  * Otherwise (macOS under an older or the stock runtime, and Windows) the backends are the OS
  * credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
- * - macOS: `security add/find/delete-generic-password` (the login Keychain). A write runs
+ * - macOS (only while `desktop.secureStore.legacy` is on): `security
+ *   add/find/delete-generic-password` (the login Keychain). A write runs
  *   `security -i` and sends the command line on STDIN, so the secret is never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
  *   travels on STDIN as JSON, never argv (PowerShell `-Command` joins trailing argv into the command
@@ -47,7 +59,17 @@
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { exitedOutput } from "../../build/exited-output.ts";
 import { withOwnModules } from "../../build/windows-powershell.ts";
-import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopPermissions,
+  type DesktopSecureStore,
+} from "../extension.ts";
+import { secureStorePermissionSet } from "../secure-store-config.ts";
+import {
+  supportsDesktopBakedCapabilities,
+  supportsMacSecureStore,
+} from "../../build/deno-version.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 import { platformFacts } from "./platform.ts";
 
@@ -253,9 +275,21 @@ export interface SecureStoreDeps {
   readonly api?: DesktopAppApi | null;
   /**
    * Where a warning goes (default `console.warn`): a legacy item that could not be put back after a
-   * failed move. Never given a value or a key.
+   * failed move, or a moved item whose old copy could not be removed. Never given a value or a key.
    */
   readonly warn?: (message: string) => void;
+  /**
+   * `desktop.secureStore.legacy` (default `true`): on macOS, move the items an older denext wrote
+   * through `/usr/bin/security`, and use `security` as the store under a runtime without its own.
+   * With `false`, `security` is never run: under a runtime without its own macOS store every call
+   * fails `backend_unavailable`.
+   */
+  readonly legacy?: boolean;
+  /**
+   * The Deno Desktop runtime's version (default `Deno.version.deno`): decides the declared method
+   * permissions ({@linkcode secureStorePermissionSet}), as the package scripts decide what to bake.
+   */
+  readonly runtimeVersion?: string;
 }
 
 /** The runtime's secure store (`Deno.desktop.secureStore`). */
@@ -288,8 +322,11 @@ const LINUX_ANSWER_TIMEOUT_MS = 20_000;
 /** The default {@linkcode SecureStoreDeps.probeTimeoutMs}. */
 const LINUX_PROBE_TIMEOUT_MS = 1_500;
 
-/** The account the probe looks up: never written, so the lookup matches nothing (no prompt). */
-const PROBE_ACCOUNT = "denext.secure-store.probe";
+/**
+ * The account the probe looks up: never written, so the lookup matches nothing (no prompt). No
+ * caller can write it: `safeKey` refuses a key that starts with `-`.
+ */
+const PROBE_ACCOUNT = "-denext-secure-store-probe";
 
 /** The probe's verdict: the error every call fails with (or `null`: use the store), and whether it holds for the session. */
 interface ProbeVerdict {
@@ -655,23 +692,38 @@ interface LegacyMove {
   moved: boolean;
 }
 
-/** Whether this is the moving launch (see {@linkcode LegacyMove.moving}). */
-function movingLaunch(st: LegacyMove, signal: AbortSignal): Promise<boolean> {
-  if (st.moving) return st.moving;
+/**
+ * Whether this is a one-time move's moving launch: `marker` was absent from `store` when first
+ * asked (this launch then writes it). Asked once per process (`holder.moving` keeps the answer); a
+ * failed read is asked again on the next call. `onFound` runs when the marker is there.
+ */
+function markerMovingLaunch(
+  holder: { moving: Promise<boolean> | undefined },
+  store: SecureBackend,
+  marker: string,
+  signal: AbortSignal,
+  onFound: () => void = () => {},
+): Promise<boolean> {
+  if (holder.moving) return holder.moving;
   const asked = (async () => {
-    if ((await st.runtime.get(LEGACY_MOVED_MARKER, signal)) !== null) {
-      st.moved = true;
+    if ((await store.get(marker, signal)) !== null) {
+      onFound();
       return false;
     }
     // A marker that can't be written is written by the next launch instead.
-    await st.runtime.set(LEGACY_MOVED_MARKER, LEGACY_MOVED_VALUE, signal).catch(() => {});
+    await store.set(marker, LEGACY_MOVED_VALUE, signal).catch(() => {});
     return true;
   })();
-  st.moving = asked;
+  holder.moving = asked;
   asked.catch(() => {
-    if (st.moving === asked) st.moving = undefined;
+    if (holder.moving === asked) holder.moving = undefined;
   });
   return asked;
+}
+
+/** Whether this is the moving launch (see {@linkcode LegacyMove.moving}). */
+function movingLaunch(st: LegacyMove, signal: AbortSignal): Promise<boolean> {
+  return markerMovingLaunch(st, st.runtime, LEGACY_MOVED_MARKER, signal, () => st.moved = true);
 }
 
 /**
@@ -824,32 +876,197 @@ async function migratingDelete(st: LegacyMove, key: string, signal: AbortSignal)
   st.settled.add(key);
 }
 
+// ---- per-caller namespaces ------------------------------------------------------------------
+
 /**
- * The permission descriptor shared by all methods. The runtime's store (Linux; macOS under a
- * runtime that has it) needs an unscoped --allow-sys (the user's keyring is shared by every app);
- * macOS keeps `security` for runtimes without it and for moving older items over.
+ * Who reaches the store: the app's pages (the `secureStore` capability, which only the app's own
+ * origin can call through the bridge), or one extension (by its capability name, through
+ * `ctx.secureStore` / `host.secureStore`).
  */
-function secureStorePermissions(os: Os): DesktopPermissions {
-  return os === "darwin"
-    ? { run: ["security"], sys: ["*"] }
-    : os === "linux"
-    ? { sys: ["*"] }
-    : { run: ["powershell.exe"] };
+export type SecureStoreCaller = "page" | { readonly extension: string };
+
+/**
+ * The service name a caller's items are stored under: `<service>/page` for the pages,
+ * `<service>/ext/<name>` for an extension. Every backend (the runtime's store, `security`, the
+ * Windows PasswordVault) takes it as its service / resource, so a page can never name an
+ * extension's item, nor one extension another's. Items an earlier denext wrote for the pages under
+ * the bare `<service>` move into `<service>/page` (see {@linkcode pageBackend}).
+ *
+ * @param service The app-specific service name (`desktop.app.identifier`).
+ * @param caller The pages, or an extension.
+ * @returns The namespaced service name.
+ */
+export function secureStoreNamespace(service: string, caller: SecureStoreCaller): string {
+  return caller === "page" ? `${service}/page` : `${service}/ext/${caller.extension}`;
 }
 
 /**
- * The backend for each call: Linux, the runtime's store (`backend_unavailable` when the runtime
- * has none); macOS, the runtime's store with the legacy items moved over, else `security`;
- * Windows, PowerShell + PasswordVault. Keeps the Linux probe and the macOS mover between calls.
+ * The key of the "page items moved into the page namespace" marker, one per service, kept in
+ * `<service>/page`. No caller can name it: `safeKey` refuses a key that starts with `-`.
  */
-function secureBackendResolver(
-  deps: SecureStoreDeps,
-  os: Os,
-  run: SecureRunner,
-): () => Promise<SecureBackend> {
+const PAGE_MOVED_MARKER = "-denext-page-namespace-items-moved";
+
+/** The state {@linkcode pageBackend} keeps, shared by its helpers. */
+interface PageMove {
+  /** `<service>/page` (on macOS with the legacy move on: with its own `security` leg). */
+  target: SecureBackend;
+  /** `<service>/page` as the plain store: where the marker lives (never through a legacy leg). */
+  markers: SecureBackend;
+  /** The bare `<service>`, where an earlier denext kept the pages' items (with its legacy leg). */
+  bare: SecureBackend;
+  /** Where a copy that could not be removed is reported. */
+  warn: (message: string) => void;
+  /** Keys with nothing left under the bare service, as far as this process knows. */
+  settled: Set<string>;
+  /** Runs each key's operations one at a time. */
+  serial: ReturnType<typeof keyQueue>;
+  /** Whether this launch may still move bare items (see {@linkcode pageMovingLaunch}). */
+  moving: Promise<boolean> | undefined;
+}
+
+/**
+ * The pages' store: `<service>/page`, with the items an earlier denext wrote for the pages under the
+ * bare `<service>` moved in. On a read miss the bare item is read (on macOS with the legacy move
+ * on, the bare store first moves a `security` item over, see {@linkcode migratingBackend}), copied
+ * into the page namespace, then deleted under the bare service. The copy comes first, so a failure
+ * at any step leaves the item where it was (the next read tries again); nothing has to be put back.
+ *
+ * The move is one-time, as the legacy one is: the first launch with namespaces writes a per-service
+ * marker ({@linkcode PAGE_MOVED_MARKER}) into the page namespace; that launch moves the keys its
+ * pages read, and every later launch finds the marker and never reads the bare service again (an
+ * item planted there afterwards is never adopted). A write during that launch removes the bare copy
+ * too; a delete always does (it is the app's own item: removing it adopts nothing), so a deleted
+ * secret does not linger un-namespaced. Each key's operations run one at a time
+ * ({@linkcode keyQueue}).
+ *
+ * @param target `<service>/page`.
+ * @param markers `<service>/page` as the plain store, for the marker.
+ * @param bare The bare `<service>`.
+ * @param warn Where a copy that could not be removed is reported.
+ * @returns The backend.
+ */
+function pageBackend(
+  target: SecureBackend,
+  markers: SecureBackend,
+  bare: SecureBackend,
+  warn: (message: string) => void,
+): SecureBackend {
+  const st: PageMove = {
+    target,
+    markers,
+    bare,
+    warn,
+    settled: new Set<string>(),
+    serial: keyQueue(),
+    moving: undefined,
+  };
+  return {
+    get: (key, signal) => st.serial(key, () => pageGet(st, key, signal)),
+    set: (key, b64, signal) => st.serial(key, () => pageSet(st, key, b64, signal)),
+    delete: (key, signal) => st.serial(key, () => pageDelete(st, key, signal)),
+  };
+}
+
+/** Whether this launch may still move bare items (see {@linkcode markerMovingLaunch}). */
+function pageMovingLaunch(st: PageMove, signal: AbortSignal): Promise<boolean> {
+  return markerMovingLaunch(st, st.markers, PAGE_MOVED_MARKER, signal);
+}
+
+/** Delete the bare copy of a moved item; a failure is reported (never with the key or value). */
+async function removeBare(st: PageMove, key: string, signal: AbortSignal): Promise<void> {
+  await st.bare.delete(key, signal).catch(() => {
+    st.warn(
+      "an item an earlier denext stored for the pages was copied into the page namespace, but " +
+        "the old copy could not be removed",
+    );
+  });
+}
+
+/** {@linkcode pageBackend}'s `get`. */
+async function pageGet(st: PageMove, key: string, signal: AbortSignal): Promise<string | null> {
+  const stored = await st.target.get(key, signal);
+  if (stored !== null || st.settled.has(key)) return stored;
+  if (!(await pageMovingLaunch(st, signal))) {
+    st.settled.add(key);
+    return null;
+  }
+  const old = await st.bare.get(key, signal);
+  // Not there, or not a value this cap wrote (not our base64): leave it alone.
+  if (old === null || decodeStored(old) === null) {
+    st.settled.add(key);
+    return null;
+  }
+  try {
+    await st.target.set(key, old, signal);
+  } catch {
+    // The item stays under the bare service; the next read tries the move again.
+    return old;
+  }
+  await removeBare(st, key, signal);
+  st.settled.add(key);
+  return old;
+}
+
+/** {@linkcode pageBackend}'s `set`. */
+async function pageSet(
+  st: PageMove,
+  key: string,
+  b64: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await st.target.set(key, b64, signal);
+  if (st.settled.has(key)) return;
+  const moving = await pageMovingLaunch(st, signal).catch(() => undefined);
+  if (moving === undefined) return;
+  if (moving) await removeBare(st, key, signal);
+  st.settled.add(key);
+}
+
+/** {@linkcode pageBackend}'s `delete`. */
+async function pageDelete(st: PageMove, key: string, signal: AbortSignal): Promise<void> {
+  await st.target.delete(key, signal);
+  if (!st.settled.has(key)) await st.bare.delete(key, signal);
+  st.settled.add(key);
+}
+
+// ---- the backends -----------------------------------------------------------------------------
+
+/**
+ * `backend_unavailable` on macOS when the runtime has no secure store of its own (an older or the
+ * stock runtime) and `desktop.secureStore.legacy` is `false`, so `/usr/bin/security` is not used.
+ */
+function noMacStoreError(): DesktopCapError {
+  return new DesktopCapError(
+    "backend_unavailable",
+    "the secure store on macOS is the Deno Desktop runtime's own Keychain store, which this " +
+      "runtime does not have, and desktop.secureStore.legacy is false, so /usr/bin/security is " +
+      "not used: run under denext's pinned runtime",
+    { status: 503 },
+  );
+}
+
+/** What {@linkcode secureBackends} returns: each caller's backend, resolved per call. */
+interface SecureBackends {
+  /** The pages' backend (`<service>/page`, with the earlier items moved in). */
+  page(): Promise<SecureBackend>;
+  /** One extension's backend (`<service>/ext/<name>`, no move). */
+  extension(name: string): Promise<SecureBackend>;
+}
+
+/**
+ * The backends for each call: Linux, the runtime's store (`backend_unavailable` when the runtime
+ * has none); macOS, the runtime's store (with the `security` items moved over while the legacy move
+ * is on), else `security` while the legacy move is on, else `backend_unavailable`; Windows,
+ * PowerShell + PasswordVault. Each caller's items live under its own namespace
+ * ({@linkcode secureStoreNamespace}). Keeps the Linux probe and the movers between calls.
+ */
+function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): SecureBackends {
   const service = deps.service;
+  const legacy = deps.legacy ?? true;
   const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
   const probeMs = deps.probeTimeoutMs ?? LINUX_PROBE_TIMEOUT_MS;
+  const warn = deps.warn ??
+    ((m: string) => console.warn(`denext desktop secureStore (${service}): ${m}`));
   /** The runtime's app API, or `undefined` (none, or reading it threw). */
   const appApi = (): DesktopAppApi | undefined => {
     try {
@@ -876,51 +1093,165 @@ function secureBackendResolver(
     if (!verdict.final && probe === pending) probe = undefined;
     if (verdict.error) throw verdict.error;
   };
-  let migrating: { store: RuntimeSecureStore; backend: SecureBackend } | undefined;
-  return async (): Promise<SecureBackend> => {
+  /** The store this call uses (Linux: probed first). */
+  const ready = async (): Promise<RuntimeSecureStore | undefined> => {
     const store = runtimeStore();
     if (os === "linux") {
       if (!store) throw noLinuxStoreError();
       await linuxReady(store);
-      return runtimeBackend(store, service, answerMs);
     }
-    const cli = cliBackend(os, service, run);
-    if (!store) return cli;
-    if (migrating?.store !== store) {
-      migrating = {
-        store,
-        backend: migratingBackend(
-          runtimeBackend(store, service, answerMs),
-          cli,
-          (key, signal) => legacyItemPresent(run, service, key, signal),
-          deps.warn ?? ((m) => console.warn(`denext desktop secureStore (${service}): ${m}`)),
-        ),
-      };
-    }
-    return migrating.backend;
+    return store;
+  };
+  /** One namespace as the plain store: no move of any kind. */
+  const plain = (ns: string, store: RuntimeSecureStore | undefined): SecureBackend => {
+    if (os === "windows") return cliBackend("windows", ns, run);
+    if (store) return runtimeBackend(store, ns, answerMs);
+    if (os === "darwin" && legacy) return cliBackend("darwin", ns, run);
+    throw os === "linux" ? noLinuxStoreError() : noMacStoreError();
+  };
+  /** One namespace with, on macOS under the runtime's store, the `security` items moved over. */
+  const current = (ns: string, store: RuntimeSecureStore | undefined): SecureBackend =>
+    os === "darwin" && store && legacy
+      ? migratingBackend(
+        runtimeBackend(store, ns, answerMs),
+        cliBackend("darwin", ns, run),
+        (key, signal) => legacyItemPresent(run, ns, key, signal),
+        warn,
+      )
+      : plain(ns, store);
+  let page: { store: RuntimeSecureStore | undefined; backend: SecureBackend } | undefined;
+  const extensions = new Map<
+    string,
+    { store: RuntimeSecureStore | undefined; backend: SecureBackend }
+  >();
+  return {
+    page: async () => {
+      const store = await ready();
+      if (!page || page.store !== store) {
+        const ns = secureStoreNamespace(service, "page");
+        page = {
+          store,
+          backend: pageBackend(current(ns, store), plain(ns, store), current(service, store), warn),
+        };
+      }
+      return page.backend;
+    },
+    extension: async (name) => {
+      const store = await ready();
+      const cached = extensions.get(name);
+      if (cached && cached.store === store) return cached.backend;
+      const backend = plain(secureStoreNamespace(service, { extension: name }), store);
+      extensions.set(name, { store, backend });
+      return backend;
+    },
   };
 }
 
 /**
- * Build the `secureStore` capability.
- *
- * @param deps The service name, and (for tests) the OS and runner.
- * @returns The `secureStore` {@link DesktopCapability}.
+ * The permission descriptor shared by all methods ({@linkcode secureStorePermissionSet}, the same
+ * function the package scripts bake from): an unscoped `--allow-sys` for the runtime's store while
+ * the runtime does not gate it on the baked capability list; on macOS `security` while the legacy
+ * move is on or the runtime has no store of its own; Windows PowerShell.
  */
-export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability {
-  const os = deps.os ?? (Deno.build.os as Os);
-  const permissions = secureStorePermissions(os);
-  const backend = secureBackendResolver(deps, os, deps.run ?? runSecureCli);
-  const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
+function secureStorePermissions(os: Os, deps: SecureStoreDeps): DesktopPermissions {
+  const version = deps.runtimeVersion ?? Deno.version.deno;
+  return secureStorePermissionSet(os, {
+    legacy: deps.legacy ?? true,
+    bakedCapabilities: supportsDesktopBakedCapabilities(version),
+    macRuntimeStore: supportsMacSecureStore(version),
+  });
+}
 
+/** base64 of the UTF-8 of `value`, as every backend stores it. */
+function encodeValue(value: string): string {
+  return bytesToBase64(new TextEncoder().encode(value));
+}
+
+/** How long an extension's store call may take (it has no bridge deadline of its own). */
+const EXTENSION_CALL_TIMEOUT_MS = 30_000;
+
+/**
+ * Whether `name` can be an extension's namespace: a non-empty string without a control character
+ * (`security -i` reads one command per line).
+ */
+function safeExtensionName(name: unknown): name is string {
+  // deno-lint-ignore no-control-regex
+  return typeof name === "string" && name !== "" && !/[\u0000-\u001f\u007f]/.test(name);
+}
+
+/** The store of an extension whose name can't be a namespace: every call rejects `validation`. */
+const INVALID_NAME_STORE: DesktopSecureStore = (() => {
+  const refuse = () =>
+    Promise.reject(
+      new DesktopCapError(
+        "validation",
+        "an extension's secure-store namespace is its capability name, which must be a " +
+          "non-empty string without control characters",
+      ),
+    );
+  return { get: refuse, set: refuse, delete: refuse };
+})();
+
+/**
+ * One extension's store over `backend`: the page capability's key validation and value encoding.
+ *
+ * @param backend The extension's backend, per call.
+ * @returns The store.
+ */
+function scopedStore(backend: () => Promise<SecureBackend>): DesktopSecureStore {
+  const signal = () => AbortSignal.timeout(EXTENSION_CALL_TIMEOUT_MS);
   return {
+    get: async (key) => {
+      const k = safeKey(str(key, "key"));
+      return decodeStored(await (await backend()).get(k, signal()));
+    },
+    set: async (key, value) => {
+      const k = safeKey(str(key, "key"));
+      const v = str(value, "value");
+      await (await backend()).set(k, encodeValue(v), signal());
+    },
+    delete: async (key) => {
+      const k = safeKey(str(key, "key"));
+      await (await backend()).delete(k, signal());
+    },
+  };
+}
+
+/** What {@linkcode secureStoreHost} returns: the page capability and the extensions' stores. */
+export interface SecureStoreHost {
+  /** The `secureStore` capability the pages call (the `<service>/page` namespace). */
+  readonly capability: DesktopCapability;
+  /**
+   * The store an extension reaches as `ctx.secureStore` / `host.secureStore`, scoped to its
+   * capability name (`<service>/ext/<name>`). Shares the Linux probe with the capability.
+   *
+   * @param name The extension's capability name.
+   * @returns The extension's store.
+   */
+  extension(name: string): DesktopSecureStore;
+}
+
+/**
+ * Build the `secureStore` capability and the extensions' scoped stores over one set of backends.
+ *
+ * @param deps The service name, `desktop.secureStore.legacy`, and (for tests) the OS and runner.
+ * @returns The capability and the per-extension store factory.
+ */
+export function secureStoreHost(deps: SecureStoreDeps): SecureStoreHost {
+  const os = deps.os ?? (Deno.build.os as Os);
+  const permissions = secureStorePermissions(os, deps);
+  const backends = secureBackends(deps, os, deps.run ?? runSecureCli);
+  const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
+  const stores = new Map<string, DesktopSecureStore>();
+
+  const capability: DesktopCapability = {
     name: "secureStore",
     methods: {
       get: {
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          return decodeStored(await (await backend()).get(key, ctx.signal));
+          return decodeStored(await (await backends.page()).get(key, ctx.signal));
         },
       },
       set: {
@@ -928,11 +1259,7 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         handler: async (args, ctx) => {
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
-          await (await backend()).set(
-            key,
-            bytesToBase64(new TextEncoder().encode(value)),
-            ctx.signal,
-          );
+          await (await backends.page()).set(key, encodeValue(value), ctx.signal);
           return { ok: true };
         },
       },
@@ -940,10 +1267,32 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
         permissions,
         handler: async (args, ctx) => {
           const key = keyArg(args);
-          await (await backend()).delete(key, ctx.signal);
+          await (await backends.page()).delete(key, ctx.signal);
           return { ok: true };
         },
       },
     },
   };
+  return {
+    capability,
+    extension: (name) => {
+      if (!safeExtensionName(name)) return INVALID_NAME_STORE;
+      let store = stores.get(name);
+      if (!store) {
+        store = scopedStore(() => backends.extension(name));
+        stores.set(name, store);
+      }
+      return store;
+    },
+  };
+}
+
+/**
+ * Build the `secureStore` capability (the pages' store, see {@linkcode secureStoreHost}).
+ *
+ * @param deps The service name, `desktop.secureStore.legacy`, and (for tests) the OS and runner.
+ * @returns The `secureStore` {@link DesktopCapability}.
+ */
+export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability {
+  return secureStoreHost(deps).capability;
 }

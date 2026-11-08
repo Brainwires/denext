@@ -3,8 +3,11 @@
 //
 //   .deno-desktop/app.json   `{ "origin", "identifier", "deepLinks", "singleInstance",
 //                            "allowedNavigationOrigins" }` from
-//                            `desktop.app` in denext.config.ts, and `"update": { "publicKey" }`
-//                            (full-app self-update's baked key) from `desktop.update`,
+//                            `desktop.app` in denext.config.ts, `"update": { "publicKey" }`
+//                            (full-app self-update's baked key) from `desktop.update`, and
+//                            `"capabilities"` (the enabled runtime-gated capabilities,
+//                            DESKTOP_BAKED_CAPABILITIES, on a runtime that reads the list:
+//                            listed, `secureStore` needs no `--allow-sys`),
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   .deno-desktop/config.json  the runtime slice of `denext.config.ts` the generated `desktop.ts`
@@ -44,6 +47,7 @@ import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/window-config.ts";
 import {
   activationPolicyRuntime,
+  desktopBakedCapabilitiesRuntime,
   desktopPasskeyRpIds,
   desktopRuntimeLabel,
   initialOverlayRuntime,
@@ -675,6 +679,31 @@ async function writeJsonEdit(
 }
 
 /**
+ * The capabilities the Deno Desktop runtime gates on the list baked into `.deno-desktop/app.json`
+ * (`"capabilities"`) instead of on `--allow-sys`, by their `desktop.capabilities` key (and the name
+ * the runtime reads). Written only for a runtime that reads the list
+ * (`supportsDesktopBakedCapabilities`).
+ */
+export const DESKTOP_BAKED_CAPABILITIES: readonly string[] = ["secureStore", "systemStats"];
+
+/**
+ * The enabled {@linkcode DESKTOP_BAKED_CAPABILITIES} (a `desktop.capabilities` value that is set
+ * and not `false`), in the list's order.
+ *
+ * @param config The project config.
+ * @returns The capability names app.json lists.
+ */
+export function desktopBakedCapabilities(config: unknown): string[] {
+  const caps = (config as { desktop?: { capabilities?: unknown } } | null | undefined)?.desktop
+    ?.capabilities;
+  if (typeof caps !== "object" || caps === null) return [];
+  const enabled = caps as Record<string, unknown>;
+  return DESKTOP_BAKED_CAPABILITIES.filter((key) =>
+    Object.hasOwn(enabled, key) && enabled[key] !== false && enabled[key] != null
+  );
+}
+
+/**
  * The body of `.deno-desktop/app.json`, or `null` when there is nothing for the runtime to read:
  * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
  * launch arguments, `openurl` and scheme registration), `singleInstance` (the intent; the lock
@@ -685,12 +714,15 @@ async function writeJsonEdit(
  * layer-shell overlay). The identifier rides along whenever it is valid, since the runtime needs
  * it to register schemes on Linux and next to `singleInstance`; `name` (`desktop.app.name`, the
  * title of an untitled window) rides along on a runtime that reads it (`3.0.0-denext.7`+), which
- * otherwise titles it with the bundle's file name (`MyApp-arm64`).
+ * otherwise titles it with the bundle's file name (`MyApp-arm64`). `capabilities` (the enabled
+ * {@linkcode DESKTOP_BAKED_CAPABILITIES}) only on a runtime that reads it: an older one refuses the
+ * key.
  */
 function appJsonBody(
   config: unknown,
   updatePublicKey?: string,
   overlayKnown: boolean = initialOverlayRuntime(),
+  bakedKnown: boolean = desktopBakedCapabilitiesRuntime(),
 ): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
@@ -710,6 +742,7 @@ function appJsonBody(
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
     initialWindow: desktopInitialWindow(settings, overlayKnown),
+    capabilities: bakedKnown ? nonEmpty(desktopBakedCapabilities(config)) : undefined,
   });
   if (Object.keys(wanted).length === 0) return null;
   const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
@@ -724,6 +757,7 @@ function appJsonBody(
     update: wanted.update,
     allowedNavigationOrigins: wanted.allowedNavigationOrigins,
     initialWindow: wanted.initialWindow,
+    capabilities: wanted.capabilities,
   });
 }
 
@@ -906,14 +940,23 @@ function configIdentity(config: unknown): Record<string, string> {
  * @param config The project config.
  * @param overlayKnown Whether the runtime reads app.json's `initialWindow.overlay` and `name`
  *   (default `initialOverlayRuntime()`: denext's pinned runtime from `3.0.0-denext.7`).
+ * @param bakedKnown Whether the runtime reads app.json's `capabilities` (default
+ *   `desktopBakedCapabilitiesRuntime()`: denext's pinned runtime from
+ *   `FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME`).
  * @returns What changed (`deepLinks` only when schemes are configured).
  */
 export async function syncDesktopAppConfigAt(
   root: string,
   config: unknown,
   overlayKnown: boolean = initialOverlayRuntime(),
+  bakedKnown: boolean = desktopBakedCapabilitiesRuntime(),
 ): Promise<DesktopAppSyncReport> {
-  const body = appJsonBody(config, await desktopUpdatePublicKey(config), overlayKnown);
+  const body = appJsonBody(
+    config,
+    await desktopUpdatePublicKey(config),
+    overlayKnown,
+    bakedKnown,
+  );
   const appJson = await syncAppJson(root, body);
   const runtimeConfig = await syncRuntimeConfig(root, config);
   const include = await syncInclude(root, body !== null);

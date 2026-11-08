@@ -1974,6 +1974,7 @@
     "DesktopRunOptions:interface",
     "DesktopRuntime:interface",
     "DesktopRuntimeConfig:interface",
+    "DesktopSecureStore:interface",
     "DesktopServeInfo:interface",
     "DesktopSessionWindow:interface",
     "DesktopSignWindowsDeps:interface",

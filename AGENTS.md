@@ -641,7 +641,12 @@ The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, 
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
 only; an unsigned build has no protection against another program's writes; Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
 on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
-or a locked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
+or a locked keyring rejects `backend_unavailable` with the reason; each caller has its own namespace:
+pages `<identifier>/page` (earlier page items move in on first read), an extension
+`<identifier>/ext/<name>` through `ctx.secureStore` / `host.secureStore` (`get` / `set` / `delete`;
+`not_enabled` without `secure-store`); `desktop.secureStore: { legacy: false }` (written by
+`desktop add secure-store` for a first enablement; default `true`) never runs or bakes macOS
+`security`) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`

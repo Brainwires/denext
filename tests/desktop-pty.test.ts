@@ -164,6 +164,11 @@ function ctx(windowId = "main"): DesktopCapCtx {
     emit: () => {},
     appSupportDir: "",
     runOnMainThread: () => Promise.reject(new Error("no UI thread")),
+    secureStore: {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    },
     pickedPath: () => {
       throw new Error("no picked paths");
     },

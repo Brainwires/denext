@@ -930,6 +930,25 @@ export interface DesktopFsConfig {
 }
 
 /**
+ * `desktop.secureStore`: the `secureStore` capability's options. Every caller's items are kept
+ * apart: the pages under `<identifier>/page`, an extension (`ctx.secureStore` / `host.secureStore`)
+ * under `<identifier>/ext/<name>`; items an earlier denext stored for the pages under the bare
+ * identifier move into the page namespace on their first read.
+ */
+export interface DesktopSecureStoreConfig {
+  /**
+   * macOS: move the items an earlier denext wrote through `/usr/bin/security` (which any program of
+   * the user could read through it) into the runtime's own Keychain store on their first read, and
+   * use `security` as the store under a runtime without its own. While on, the packaged app keeps
+   * `--allow-run=security`. Set `false` for an app that never shipped that path: `security` is then
+   * never run nor baked, and a runtime without its own macOS store fails every call
+   * `backend_unavailable`. Default `true`; `denext desktop add secure-store` writes `false` when it
+   * enables the capability for the first time.
+   */
+  legacy?: boolean;
+}
+
+/**
  * `desktop.capabilities`: which native capabilities the page may reach, keyed by the name
  * `denext desktop add <name>` writes. `true` enables a capability with its defaults; an object
  * scopes it. Anything absent is denied. An unknown key is allowed (a newer `desktop add`) and the
@@ -1240,6 +1259,8 @@ export interface DesktopConfig {
   menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
+  /** The `secureStore` capability's options (see {@link DesktopSecureStoreConfig}). */
+  secureStore?: DesktopSecureStoreConfig;
   /**
    * Backends the app runs and supervises next to its window, as an Electron app spawns its server:
    * `{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second

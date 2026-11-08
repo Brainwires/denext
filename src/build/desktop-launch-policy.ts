@@ -12,9 +12,11 @@ import {
   compareDenoVersions,
   currentDenoIdentity,
   type DenoIdentity,
+  supportsDesktopBakedCapabilities,
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
   supportsInitialOverlay,
+  supportsMacSecureStore,
   supportsMediaCapture,
   supportsOverlayTray,
   supportsSidecarIntegrity,
@@ -262,6 +264,43 @@ export function mediaCaptureRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsMediaCapture);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * reads the baked capability list in `.deno-desktop/app.json` (`"capabilities"`) and serves those
+ * APIs without `--allow-sys`: denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a
+ * local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) from
+ * `FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME`. An older runtime refuses an app.json with the key, so
+ * the list is written (and `--allow-sys` dropped for it) only then.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the list.
+ */
+export function desktopBakedCapabilitiesRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsDesktopBakedCapabilities);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime with
+ * its own macOS secure store (`Deno.desktop.secureStore` on macOS): denext's pinned runtime (not
+ * `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown
+ * version) from `FIRST_MAC_SECURE_STORE_RUNTIME` (`3.0.0-denext.13`). Otherwise macOS stores
+ * through `/usr/bin/security`.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether the runtime has the store.
+ */
+export function macSecureStoreRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsMacSecureStore);
 }
 
 /**

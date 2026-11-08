@@ -8,6 +8,48 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Deno Desktop extensions get their own secure store.** A `defineDesktopExtension` handler's
+  `ctx.secureStore` and its `setup` host's `host.secureStore` (`get(key)` / `set(key, value)` /
+  `delete(key)`, the page API's key rules and value encoding) keep the extension's secrets in the
+  OS credential store under `<desktop.app.identifier>/ext/<name>`, `<name>` being the capability's
+  name. No page and no other extension can read them. They need the `secureStore` capability;
+  without it every call rejects `not_enabled`, saying how to enable it. The type is
+  `DesktopSecureStore` from `denext/desktop`.
+- **`desktop.secureStore: { legacy?: boolean }`.** On macOS, `legacy` (default `true`) keeps moving
+  the items an older denext wrote through `/usr/bin/security` into the runtime's own Keychain
+  store, and keeps `security` as the store under a runtime without one. With `legacy: false`,
+  `security` is never run and the packaged app no longer bakes `--allow-run=security`; under a
+  runtime without its own macOS store every call then fails `backend_unavailable`, naming the
+  setting. `denext desktop add secure-store` writes `legacy: false` when it enables the capability
+  for the first time, since such an app never shipped the `security` path.
+- **The Deno Desktop runtime-gated capabilities are listed in `.deno-desktop/app.json`.** On a
+  runtime that reads it, the packager writes `"capabilities"` (the enabled ones among
+  `secureStore` and `systemStats`), and the secure store is served without the unscoped
+  `--allow-sys` it needed so far: the package scripts and `denext desktop run` / `dev` stop baking
+  it for the store. Inert until denext's pinned runtime ships the list (an older runtime refuses
+  the key, so it is not written).
+
+### Security
+
+- **The Deno Desktop secure store keeps each caller's items apart.** The runtime can't tell the
+  app's pages from its extensions (they all run in the app's own process), so denext now stores
+  the pages' items under `<desktop.app.identifier>/page` and each extension's under
+  `<desktop.app.identifier>/ext/<name>`, on every backend (the runtime's Keychain and Secret
+  Service stores, `/usr/bin/security`, the Windows PasswordVault). A page can't read or overwrite
+  an extension's secrets, nor the other way round. Items an earlier denext stored for the pages
+  under the bare identifier move into the page namespace on their first read during the first
+  launch with this release: copied, then deleted, so a failure leaves them where they were. A
+  per-app marker keeps every later launch from reading the bare identifier again, so an item
+  another program plants there is never adopted, and a page delete also removes the un-namespaced
+  copy. Extensions get no move (nothing un-namespaced was theirs).
+
+### Changed
+
+- **The Linux secure-store probe looks up an account no caller can name**
+  (`-denext-secure-store-probe`): a page key can no longer coincide with it.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

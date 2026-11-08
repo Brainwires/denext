@@ -16981,6 +16981,12 @@
             },
             {
               "kind": "property",
+              "name": "secureStore",
+              "signature": "secureStore?: DesktopSecureStoreConfig",
+              "doc": "The `secureStore` capability's options (see {@link DesktopSecureStoreConfig})."
+            },
+            {
+              "kind": "property",
               "name": "sidecars",
               "signature": "sidecars?: DesktopSidecarConfig[]",
               "doc": "Backends the app runs and supervises next to its window, as an Electron app spawns its server:\n`{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second\nbinary; a Node backend with `nodeModules` is bundled at packaging, its native addons copied),\n`{ name, run: { exec } }` spawns a program. Each gets a loopback port (`port: \"auto\"`), is\nstarted once the window's server is up, checked for readiness (`ready`), restarted with backoff\nafter a crash (`restart`), stopped with a grace period (`shutdown`) and ended with the app.\n`proxy: true` points `spa.proxy` at one. Functions (`ready.probe`, a computed `bootstrap` or\n`secrets`) go in `runDesktop({ sidecars })` instead. `denext desktop add sidecar` writes one."
@@ -45500,6 +45506,18 @@
               "name": "strictFallback",
               "signature": "readonly strictFallback?: boolean",
               "doc": "What `desktop.permissions: \"strict\"` does when it cannot be honoured (the runtime does not\nexpand the folder tokens, or `desktop.app.identifier` is unset; see\n{@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,\nnaming the reason and the fix; `true` bakes the default unscoped `--allow-read` /\n`--allow-env` instead, for `denext desktop run` / `dev`, which build a local test copy and\nprint a warning. Never set it for a build that ships."
+            },
+            {
+              "kind": "property",
+              "name": "bakedCapabilities",
+              "signature": "readonly bakedCapabilities?: boolean",
+              "doc": "The runtime reads the capability list baked into `.deno-desktop/app.json` and serves the\nsecure store without `--allow-sys` (see `desktopBakedCapabilitiesRuntime`). Default: the\npinned runtime's."
+            },
+            {
+              "kind": "property",
+              "name": "macSecureStore",
+              "signature": "readonly macSecureStore?: boolean",
+              "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`), so `security` is\nbaked only while `desktop.secureStore.legacy` is on. Default: the pinned runtime's."
             }
           ]
         },
@@ -45719,6 +45737,12 @@
               "name": "signal",
               "signature": "readonly signal: AbortSignal",
               "doc": "Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a\nmethod with `timeoutMs: false` it also aborts when the calling page's request goes away (that\npage reloaded, navigated or closed)."
+            },
+            {
+              "kind": "property",
+              "name": "secureStore",
+              "signature": "readonly secureStore: DesktopSecureStore",
+              "doc": "This capability's own secrets in the OS credential store (see {@linkcode DesktopSecureStore}),\napart from the pages' `secureStore` and from every other extension's."
             },
             {
               "kind": "method",
@@ -46003,6 +46027,12 @@
               "name": "os",
               "signature": "readonly os: \"darwin\" | \"windows\" | \"linux\"",
               "doc": "The running OS."
+            },
+            {
+              "kind": "property",
+              "name": "secureStore",
+              "signature": "readonly secureStore: DesktopSecureStore",
+              "doc": "The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets."
             },
             {
               "kind": "method",
@@ -47182,6 +47212,38 @@
           "returns": "The env vars to set on the deno desktop child.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopSecureStore",
+          "slug": "DesktopSecureStore",
+          "kind": "interface",
+          "signature": "interface DesktopSecureStore",
+          "doc": "An extension's own secrets in the OS credential store: the store the pages reach as secureStore (the runtime's Keychain store on macOS, the Secret Service on Linux, the PasswordVault on Windows), under a namespace of the extension's own: <app identifier>/ext/<name>, <name> being the capability's name. A page can never read or write it, nor can another extension; the extension cannot reach the pages' items either. Keys and values are the page API's: a key must not start with - or hold a control character (a validation DesktopCapError), a value is any string.",
+          "docFull": "An extension's own secrets in the OS credential store: the store the pages reach as\n`secureStore` (the runtime's Keychain store on macOS, the Secret Service on Linux, the\nPasswordVault on Windows), under a namespace of the extension's own: `<app identifier>/ext/<name>`,\n`<name>` being the capability's name. A page can never read or write it, nor can another\nextension; the extension cannot reach the pages' items either. Keys and values are the page\nAPI's: a key must not start with `-` or hold a control character (a `validation`\n{@linkcode DesktopCapError}), a value is any string.\n\nIt needs the `secureStore` capability enabled (`denext desktop add secure-store`): otherwise\nevery call rejects with a {@linkcode DesktopCapError} (code `not_enabled`) saying so. The store's\nown failures are the page API's codes (`backend_unavailable`, `store_failed`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "get",
+              "signature": "get(key: string): Promise<string | null>",
+              "doc": "The value stored for `key`, or `null` for none."
+            },
+            {
+              "kind": "method",
+              "name": "set",
+              "signature": "set(key: string, value: string): Promise<void>",
+              "doc": "Store `value` for `key` (replacing any value)."
+            },
+            {
+              "kind": "method",
+              "name": "delete",
+              "signature": "delete(key: string): Promise<void>",
+              "doc": "Remove `key` (a no-op when it is absent)."
+            }
+          ]
         },
         {
           "name": "DesktopServeInfo",
@@ -49388,6 +49450,12 @@
               "name": "configSidecars",
               "signature": "readonly configSidecars: SidecarDefinition[]",
               "doc": "`desktop.sidecars`: the backends `runDesktop` runs next to the window (its own `sidecars`\noption is laid over these by name)."
+            },
+            {
+              "kind": "property",
+              "name": "extensionSecureStore",
+              "signature": "readonly extensionSecureStore?: (name: string) => DesktopSecureStore",
+              "doc": "Each capability's own secure store by capability name (`ctx.secureStore` / `host.secureStore`,\n`<identifier>/ext/<name>`), when the `secureStore` capability is enabled; `runDesktop` hands it\nto the bridge."
             }
           ]
         },
@@ -49545,6 +49613,12 @@
               "name": "pickedPaths",
               "signature": "pickedPaths?: PickedPaths",
               "doc": "The per-launch picked-path set the `dialogs`/`fs`/`shell` capabilities share (from {@link\nresolveDesktopCapabilities}); files the OS opens with the app become read-only handles in it."
+            },
+            {
+              "kind": "property",
+              "name": "extensionSecureStore",
+              "signature": "extensionSecureStore?: (name: string) => DesktopSecureStore",
+              "doc": "Each capability's own secure store, by capability name ({@link DesktopCapCtx.secureStore},\n{@link DesktopExtensionHost.secureStore}; from {@link resolveDesktopCapabilities} when the\n`secureStore` capability is enabled). Without it every such call rejects `not_enabled`."
             },
             {
               "kind": "property",

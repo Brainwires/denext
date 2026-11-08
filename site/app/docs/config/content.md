@@ -456,6 +456,10 @@ See [Writing a plugin](/docs/plugins).
   flags from it. Written by `denext desktop add <capability>`. Distinct from
   `spa.desktop` (packaging settings such as the icon). See
   [Desktop apps › Native capabilities](/docs/desktop#desktop-capabilities).
+  `desktop.secureStore` (`{ legacy }`, default `true`) keeps macOS moving the items
+  an older denext wrote through `/usr/bin/security`; `legacy: false` (what
+  `denext desktop add secure-store` writes for a first enablement) never runs or
+  bakes `security`.
   `desktop.macos` (`{ provisioningProfile, entitlements }`) signs the macOS app with a
   provisioning profile and restricted entitlements such as associated domains; see
   [Desktop apps › Code signing](/docs/desktop#desktop-macos-profile).

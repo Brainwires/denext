@@ -26,7 +26,7 @@ import {
   formatDesktopCapabilityTable,
   passkeyRpId,
 } from "../src/build/desktop-capabilities.ts";
-import { desktopPasskeyRpIds } from "../src/build/desktop-launch-policy.ts";
+import { desktopPasskeyRpIds, macSecureStoreRuntime } from "../src/build/desktop-launch-policy.ts";
 import { readConfigModel } from "../src/build/config-edit.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
@@ -679,4 +679,108 @@ Deno.test("desktopNpmArgs: a package.json without node_modules resolves npm from
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- secure-store: least privilege by config and runtime ---------------------------------------
+
+Deno.test("desktop add secure-store: a first enablement writes desktop.secureStore { legacy: false }", async () => {
+  const dir = project(
+    'export default {\n  desktop: { app: { identifier: "com.example.app" } },\n};\n',
+  );
+  const report = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
+  assertEquals(report.added, ["secure-store"]);
+  const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  assertStringIncludes(text, "secureStore: true");
+  assertStringIncludes(text, "legacy: false");
+  const model = await readConfigModel(text);
+  const desktop = model.keys.desktop?.value as { secureStore?: unknown };
+  assertEquals(desktop.secureStore, { legacy: false });
+  // The report's permissions are the config's: macOS bakes no `security` under a runtime with its
+  // own Keychain store (the pin's; not under DENEXT_DESKTOP_RUNTIME=stock).
+  assertEquals(
+    report.permissions.darwin.includes("--allow-run=security"),
+    !macSecureStoreRuntime(),
+    JSON.stringify(report.permissions),
+  );
+  assertEquals(report.permissions.windows, ["--allow-run=powershell.exe"]);
+  // A second run leaves both as they are.
+  const again = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
+  assertEquals(again.kept, ["secure-store"]);
+  assertEquals(again.diff, "");
+});
+
+Deno.test("desktop add secure-store: an app that already had it, or set desktop.secureStore, keeps the legacy move", async () => {
+  // Already enabled (it may have shipped the `security` path): nothing is added.
+  const enabled = project(
+    "export default {\n  desktop: { capabilities: { secureStore: true } },\n};\n",
+  );
+  await addDesktopCapabilities({ capabilities: ["secure-store", "fs"], dir: enabled });
+  const kept = await Deno.readTextFile(join(enabled, "denext.config.ts"));
+  assertFalse(kept.includes("legacy"), kept);
+  // `desktop.secureStore` set by hand: left as written.
+  const chosen = project("export default {\n  desktop: { secureStore: { legacy: true } },\n};\n");
+  const report = await addDesktopCapabilities({ capabilities: ["secure-store"], dir: chosen });
+  const text = await Deno.readTextFile(join(chosen, "denext.config.ts"));
+  assertStringIncludes(text, "legacy: true");
+  assertFalse(text.includes("legacy: false"), text);
+  assert(report.permissions.darwin.includes("--allow-run=security"), JSON.stringify(report));
+});
+
+Deno.test("desktopBuildFlags: secure-store bakes --allow-sys and `security` only where the config and runtime need them", () => {
+  const legacy = (on?: boolean) => ({
+    desktop: {
+      capabilities: { secureStore: true },
+      ...(on === undefined ? {} : { secureStore: { legacy: on } }),
+    },
+  });
+  const pinned = { bakedCapabilities: false, macSecureStore: true };
+  // Legacy on (the default): `security` keeps moving older items.
+  assertEquals(desktopBuildFlags(legacy(), "darwin", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+    "--allow-run=security",
+  ]);
+  // Legacy off under a runtime with its own Keychain store: no `security`.
+  assertEquals(desktopBuildFlags(legacy(false), "darwin", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+  ]);
+  // A runtime without its own macOS store keeps `security`.
+  assertEquals(
+    desktopBuildFlags(legacy(false), "darwin", { bakedCapabilities: false, macSecureStore: false }),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys", "--allow-run=security"],
+  );
+  // A runtime that gates the store on app.json's capability list: no --allow-sys.
+  const baked = { bakedCapabilities: true, macSecureStore: true };
+  assertEquals(desktopBuildFlags(legacy(false), "darwin", baked), [...DESKTOP_BASELINE_FLAGS]);
+  assertEquals(desktopBuildFlags(legacy(), "darwin", baked), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=security",
+  ]);
+  assertEquals(desktopBuildFlags(legacy(), "linux", baked), [...DESKTOP_BASELINE_FLAGS]);
+  assertEquals(desktopBuildFlags(legacy(), "linux", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+  ]);
+  // Another capability's --allow-sys stays (the baked list replaces only the store's).
+  assertEquals(
+    desktopBuildFlags(
+      { desktop: { capabilities: { secureStore: true, device: true } } },
+      "linux",
+      baked,
+    ),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease"],
+  );
+  // Windows: PowerShell + PasswordVault whatever the runtime.
+  for (const options of [pinned, baked]) {
+    assertEquals(desktopBuildFlags(legacy(false), "windows", options), [
+      ...DESKTOP_BASELINE_FLAGS,
+      "--allow-run=powershell.exe",
+    ]);
+  }
+  // The catalog's static lists are an older runtime's and the default config's.
+  assertEquals(desktopPermissionFlags(["secure-store"], "darwin"), [
+    "--allow-sys",
+    "--allow-run=security",
+  ]);
 });

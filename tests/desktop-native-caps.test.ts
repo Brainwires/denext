@@ -20,6 +20,11 @@ const ctx = (window?: unknown): DesktopCapCtx => ({
   emit: () => {},
   appSupportDir: "",
   runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+  secureStore: {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    delete: () => Promise.resolve(),
+  },
   pickedPath: () => {
     throw new Error("no picked paths in tests");
   },
