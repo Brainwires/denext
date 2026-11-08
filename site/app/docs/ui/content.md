@@ -156,8 +156,8 @@ takes the default mode).
 ### Working offline
 
 `denext ui --offline` keeps the UI **and every process it starts** off the network. The UI's
-own JSR search is off, the denext-CLI children it starts are sandboxed, and an operation no
-flag can sandbox is refused:
+own JSR search is off, the denext-CLI children it starts run with the network denied, and an
+operation no flag can keep off the network is refused:
 
 | Operation                                        | Under `--offline`                                                                                                                                    |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -170,7 +170,13 @@ flag can sandbox is refused:
 | The Database section                             | Refused with a `503` — reaching a database, even one on this machine, is a network connection (Logs excepted: `docker compose logs` stays local)     |
 
 `--cached-only` is there because the net permission does not govern Deno's module loader: a
-child denied net would still download an uncached import. A refused control renders disabled
+child denied net would still download an uncached import. The deny flags bind the child, not a
+program it spawns: `-A` grants `--allow-run`, and a spawned process has the OS user's rights, not
+Deno's permissions. The children that only read the project (`commands --json`, `job --list
+--json`) add `--deny-run` for that reason; a verb run and Setup's doctor keep `--allow-run`, so a project that
+shells out from one can still reach the network. `--offline` is a guardrail against accidental
+network use, not a sandbox: see [Permission flags are guardrails](/docs/security#permission-flags-are-guardrails).
+A refused control renders disabled
 with a short note, and the `503` (`{ ok: false, reason }` from a JSON twin) is the real gate.
 What needs no network — the config editor, `generate`, Docker, Setup's file writes —
 works as usual. `--offline` combines with `--read-only`; a mutation under both is the
