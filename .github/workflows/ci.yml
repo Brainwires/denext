@@ -353,19 +353,21 @@ jobs:
   # against the same service containers as the `backend-integration` job, so the code only a real
   # Postgres / PostGIS / MinIO reaches counts toward the gate instead of being ignored.
   coverage:
-    # Linux: the self-hosted x64 runner RUNNER_LINUX_X64 names, else ubuntu-latest; always
-    # ubuntu-latest on a pull_request (as `check`). Our pool's job containers have no Docker, so
-    # there the `services:` below are skipped (an empty image) and the pool's launcher starts this
+    # Linux: the self-hosted x64 runner RUNNER_LINUX_X64_DOCKER names (the linux-x64-docker pool:
+    # the same image, plus the job's OWN rootless Docker daemon on DOCKER_HOST, so
+    # tests/integration/stack-ops-docker.test.ts runs instead of skipping), else RUNNER_LINUX_X64,
+    # else ubuntu-latest; always ubuntu-latest on a pull_request (as `check`). On our pools the
+    # `services:` below are skipped (an empty image) and the pool's launcher starts this
     # job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
     # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
     # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 90
     services:
       postgres:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'pgvector/pgvector:pg17' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -376,7 +378,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       postgis:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'postgis/postgis:17-3.5' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -387,7 +389,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       minio:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -395,7 +397,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'redis:7-alpine' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
