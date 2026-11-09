@@ -16,7 +16,7 @@ and this project adheres to
   the download hosts it fetches its prebuilt binary from, so `deno install --allow-scripts` no
   longer fails with `getaddrinfo EPERM github.com` in a project that never listed it under
   `supplyChain.jailScripts.packages`. Only those hosts are granted, never the whole network; a
-  project's own entry still wins. Takes effect with denext's Deno toolchain 3.0.0-denext.16, as do
+  project's own entry still wins. Takes effect with denext's Deno toolchain 3.0.0-denext.17, as do
   the Node.js items below.
 - **Node.js compatibility: `fetch()` follows Node's global proxy.** With `NODE_USE_ENV_PROXY=1`,
   `--use-env-proxy` or `http.setGlobalProxyFromEnv()` (and `NO_PROXY`), `fetch()` goes through the
