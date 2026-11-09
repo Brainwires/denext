@@ -46,11 +46,11 @@ denext 3.0.0-denext.13 (Brainwires)
 | Release channel            | `deno --version` says `stable`, the channel of the Deno release the build is made from (2.9.8). `npm` `engines.deno` ranges are checked against that release, not against the prerelease version. | `3.0.0-rc.1` |
 
 The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then `3.0.0-rc.1` …
-`3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, … (there is no `3.0.0-denext.4`, `3.0.0-denext.9` or `3.0.0-denext.11` release). That is semver's order with one
+`3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, … (there is no `3.0.0-denext.4`, `3.0.0-denext.9`, `3.0.0-denext.11`, `3.0.0-denext.14` or `3.0.0-denext.15` release). That is semver's order with one
 exception: denext ranks the `3.0.0-denext.N` releases above every `3.0.0-rc.N`, where plain semver
 would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS line, and
 denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.13`, so the rows marked "rc.6",
-"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7", "denext.8", "denext.10", "denext.12" and "denext.13" below apply to it (there is no `3.0.0-denext.9` or `3.0.0-denext.11` release). Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
+"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7", "denext.8", "denext.10", "denext.12" and "denext.13" below apply to it (there is no `3.0.0-denext.9`, `3.0.0-denext.11`, `3.0.0-denext.14` or `3.0.0-denext.15` release). Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
 escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From

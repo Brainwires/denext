@@ -261,7 +261,7 @@ export interface DesktopExtensionHost {
    * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
    * resolves `cancelId`, or `null` without one. Rejects with a `validation`
    * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
-   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.14).
+   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16).
    */
   confirm(options: DesktopConfirmOptions): Promise<number | null>;
   /**

@@ -2649,7 +2649,7 @@ desktop: {
         {" "}
         <code>pty</code>{" "}
         only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.13) has no terminals yet: opening one rejects with{" "}
+        (3.0.0-denext.16) has no terminals yet: opening one rejects with{" "}
         <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
         own VT sequences even for plain text.
       </Callout>
@@ -3197,7 +3197,7 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         without one. Bad options reject with{" "}
         <code>validation</code>; a runtime without native message boxes (<code>
           Deno.desktop.dialog.showMessageBox
-        </code>, Deno Desktop runtime 3.0.0-denext.14) rejects with <code>unsupported</code>.{" "}
+        </code>, Deno Desktop runtime 3.0.0-denext.16) rejects with <code>unsupported</code>.{" "}
         <code>host.openWindow(options)</code> opens a window exactly as <code>desktop.ts</code>
         &apos;s <code>windows.open</code>{" "}
         does (the same options, keys and window limit) and returns it, so an extension can show a

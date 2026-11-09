@@ -40,8 +40,8 @@ and this project adheres to
   runtime that reads it, the packager writes `"capabilities"` (the enabled ones among
   `secureStore` and `systemStats`), and the secure store is served without the unscoped
   `--allow-sys` it needed so far: the package scripts and `denext desktop run` / `dev` stop baking
-  it for the store. Inert until denext's pinned runtime ships the list (an older runtime refuses
-  the key, so it is not written).
+  it for the store. It takes effect from Deno Desktop runtime 3.0.0-denext.16 (an older runtime
+  refuses the key, so it is not written).
 - **The macOS Dock's reopen click brings back the last closed window.** With no window showing, a
   click on the Dock icon now reopens the most recently closed keyed window (its key, path and
   frame), and shows the main window as before only when none was closed.
@@ -81,7 +81,7 @@ and this project adheres to
   shows the OS's own message box with your button labels (`message`, `detail`, `title`, `buttons`,
   `defaultId`, `cancelId`, `kind`) and resolves the pressed button's index, or `cancelId` / `null`
   for a box dismissed without one. It is app-modal, so an `onBeforeQuit` guard can ask with no
-  window open. It needs Deno Desktop runtime 3.0.0-denext.14 (`Deno.desktop.dialog.showMessageBox`)
+  window open. It needs Deno Desktop runtime 3.0.0-denext.16 (`Deno.desktop.dialog.showMessageBox`)
   and rejects with `unsupported` before it. `openWindow` opens a window as `desktop.ts`'s
   `windows.open` does. See https://denext.dev/docs/desktop#desktop-host-confirm.
 
@@ -112,6 +112,10 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins runtime 3.0.0-denext.16** (denext.14 and denext.15 were never published). The
+  features this release gates on the next runtime (native message boxes for `host.confirm`,
+  app-wide application-menu clicks, the baked capability list and `DENO_UNSTABLE_IDLE_TRIM=0`
+  turning a compiled binary's idle trim off) take effect from 3.0.0-denext.16.
 - **The Linux secure-store probe looks up an account no caller can name**
   (`-denext-secure-store-probe`): a page key can no longer coincide with it.
 
