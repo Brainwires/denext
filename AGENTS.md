@@ -727,7 +727,7 @@ show / hide need the pinned runtime (`unsupported` elsewhere; ask `windowCapabil
 packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
 `desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
-leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
+leaves it to `confirmAppUpdate()`. Packaging bakes least-privilege guardrails: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
 `launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
 `--allow-sys`, which the pinned runtime requires for them), and
@@ -1240,6 +1240,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 
 ## What's different to keep in mind
 
+- **Permissions are least-privilege guardrails, not a sandbox.** `--allow-*` are checks inside
+  Deno's APIs: a subprocess (`--allow-run`), FFI and Node-API addons reach the OS directly, so
+  treat those grants as full trust. Write access to `deno.json`, `.npmrc`, shell rc files or git
+  hooks is code execution; `--allow-net` to localhost reaches local services and cloud metadata;
+  `--allow-env` exposes secrets; `--allow-read` of the home directory exposes credentials; an allow
+  scope follows symlinks that lead out of it. A grant to a proxy host is a grant to all it reaches.
+  Kernel enforcement is planned: https://denext.dev/docs/permissions
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`

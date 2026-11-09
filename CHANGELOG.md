@@ -10,6 +10,64 @@ and this project adheres to
 
 ### Added
 
+- **Node.js compatibility: native addons install in a plain `package.json` project.** An approved
+  install script for a well-known native package (`better-sqlite3`, `sqlite3`, `sharp`, `canvas`,
+  `keytar`, `node-pty`, `re2`, `electron`, `@prisma/engines`, `@sentry/cli` and others) now gets
+  the download hosts it fetches its prebuilt binary from, so `deno install --allow-scripts` no
+  longer fails with `getaddrinfo EPERM github.com` in a project that never listed it under
+  `supplyChain.jailScripts.packages`. Only those hosts are granted, never the whole network; a
+  project's own entry still wins. Takes effect with denext's Deno toolchain 3.0.0-denext.16, as do
+  the Node.js items below.
+- **Node.js compatibility: `fetch()` follows Node's global proxy.** With `NODE_USE_ENV_PROXY=1`,
+  `--use-env-proxy` or `http.setGlobalProxyFromEnv()` (and `NO_PROXY`), `fetch()` goes through the
+  same proxy as `node:http`, and decodes a `deflate` response body. `node:http` also gains Node
+  26's checks on a proxied request's Host and path, `server.maxHeadersCount`,
+  `--max-http-header-size` and `--insecure-http-parser` through `NODE_OPTIONS`, and fixes for a
+  kept-alive socket that never sent its next request and for a pipelined connection that stalled.
+- **Node.js compatibility: sockets on inherited descriptors.** `net.Socket({ fd })`,
+  `server.listen({ fd })` and `tty.ReadStream(fd)` open a descriptor the process already owns
+  (stdio, an inherited fd, a FIFO opened through `node:fs`), so socket activation from a service
+  manager works with only `--allow-net`. Long Unix socket paths work on macOS.
+- **Node.js compatibility: real TLS session resumption.** `node:tls` emits a real `'session'` for
+  every session ticket, `setSession()` / `options.session` resume it, `getTLSTicket()` exists, and
+  servers issue tickets under their `ticketKeys`. The `ciphers` option is honoured.
+- **Node.js compatibility: the legacy `node:crypto` ciphers and curves.** AES in CFB, CFB-8, CFB-1,
+  OFB, CCM, OCB and XTS, AES-192 CBC and GCM, camellia, sm4 and the remaining 3DES modes, plus the
+  brainpool curves, so libraries for SSH, PDF and smart cards stop failing with
+  `ERR_CRYPTO_UNKNOWN_CIPHER`.
+- **Node.js compatibility: `--cpu-prof` and `--heap-prof` write their profiles.** Under `node` (the
+  shim) and as Deno flags, with Node's file names, one profile per worker, and the
+  `--heapsnapshot-signal` / `--heapsnapshot-near-heap-limit` options; the `v8` and `Worker`
+  profiling APIs work too.
+- **Node.js compatibility: async context for monitoring agents.** `AsyncLocalStorage` keeps its
+  store across native socket reads, write callbacks and the request handler of a server that
+  listened inside `run()`, `AsyncLocalStorage.prototype.withScope()` exists, and the
+  `async_hooks` resource graph covers the HTTP request path, as APM agents expect.
+- **Node.js compatibility: smaller gaps.** `process.execve()`, `process.setgroups()` /
+  `initgroups()`, `process.finalization`, `performance.nodeTiming`, a fuller `process.versions` and
+  an inspectable `process.env`; `node:sea` reads the files a compiled program carries, and `node`'s
+  SEA and snapshot flags are refused with a pointer to `denext build --compile`; all of
+  `http2.constants`' status codes, `DatabaseSync#enableLoadExtension()`,
+  `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
+  and `dns.resolve("")`.
+
+### Documentation
+
+- **Permissions are described as least-privilege guardrails.** A new page,
+  [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
+  checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)
+  planned. It lists the permission footguns: `--allow-run` and `--allow-ffi` mean full trust,
+  write access to config files (`deno.json`, `.npmrc`, shell startup files, git hooks) is code
+  execution, `--allow-net` to localhost reaches local services and cloud metadata, `--allow-env`
+  exposes secrets, `--allow-read` of the home directory exposes credentials, and an allow scope
+  follows a symlink that leads out of it. It also covers how network permissions behave with
+  `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, for `fetch()`, `WebSocket`,
+  `node:http` and npm clients. The security, runtime reference, deployment targets, deploy,
+  desktop and getting-started pages, the README, AGENTS.md, POLICIES.md and MISSION.md now use the
+  same wording.
+
+### Added
+
 - **System stats for desktop apps.** `denext desktop add system-stats` enables `system.stats()` /
   `system.onStats(cb, { intervalMs })`, from `denext/desktop/client` for the page and from
   `denext/desktop` for the app's own process: the machine's aggregate CPU (total, and per core

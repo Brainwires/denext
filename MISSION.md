@@ -28,7 +28,8 @@ Four pillars, in order:
    Drizzle and Prisma; `use cache`; cron jobs; typed content collections; a plugin seam for the
    rest. They sit behind the conventions developers already know, and they are **secure by
    default**: a strict hash-based CSP, CSRF-defended Server Actions, signed `httpOnly` cookies,
-   SSRF-safe fetch and image optimization, and Deno's permission sandbox around the runtime.
+   SSRF-safe fetch and image optimization, and Deno's permissions as least-privilege
+   guardrails around the runtime (checks inside Deno's APIs, not an OS sandbox).
    [FEATURES.md](./FEATURES.md) lists every one, with the mechanism.
 
 3. **Surface compatible, so the existing ecosystem works.** denext reproduces the React, Next.js,

@@ -210,7 +210,7 @@ const PILLARS: Pillar[] = [
       {
         title: "Secure by default",
         body:
-          "A strict hash-based Content-Security-Policy, CSRF-defended Server Actions, signed httpOnly cookies, SSRF-safe image optimization and fetch, and Deno's permission sandbox.",
+          "A strict hash-based Content-Security-Policy, CSRF-defended Server Actions, signed httpOnly cookies, SSRF-safe image optimization and fetch, and Deno's permissions as least-privilege guardrails.",
       },
     ],
     link: { href: "/docs/features", label: "Every feature →" },
