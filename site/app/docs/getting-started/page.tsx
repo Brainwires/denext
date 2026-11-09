@@ -198,8 +198,10 @@ denext task dev`}
         {" "}
         and <code>denext build</code> run the same framework. <code>denext create</code>{" "}
         writes both. <code>start</code>{" "}
-        only serves, so it runs least-privilege: network, read, env, and a write grant for{" "}
-        <code>.denext</code> alone, where the default cache lives.
+        only serves, so it runs with least-privilege guardrails: network, read, env, and a write
+        grant for <code>.denext</code>{" "}
+        alone, where the default cache lives. They are checks inside Deno, not a sandbox: see{" "}
+        <a href="/docs/permissions">Permissions</a>.
       </p>
       <p>
         <code>denext upgrade</code> moves them together, with every first-party{" "}

@@ -198,8 +198,9 @@ styles, Mica, Acrylic and vibrancy, a cancelable close). Sign-in uses the system
 has no OS passkey API, signs in through the browser); `denext/desktop/clerk` runs Clerk's
 Electron bridge unchanged. Updates are **signed full-app self-updates** with downgrade protection, an
 atomic swap and automatic rollback. Node-API addons load on all three operating systems, and
-`defineDesktopExtension` exposes your own Deno code to the page. Packaging is least-privilege: the
-`--allow-*` flags are derived from the capabilities you enable. The same `denext/mobile` functions
+`defineDesktopExtension` exposes your own Deno code to the page. Packaging bakes least-privilege
+guardrails: the `--allow-*` flags are derived from the capabilities you enable (checks inside
+Deno, not an OS sandbox: [Permissions](https://denext.dev/docs/permissions)). The same `denext/mobile` functions
 answer here too: the keychain, files, SQLite, the shell, keep-awake. →
 [Desktop apps](https://denext.dev/docs/desktop)
 

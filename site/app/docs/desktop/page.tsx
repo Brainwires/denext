@@ -4650,7 +4650,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           window, and enable only what you use.
         </li>
         <li>
-          <strong>Permissions are honest about their reach.</strong> <code>fs</code> and{" "}
+          <strong>Permissions are honest about their reach.</strong>{" "}
+          The baked flags are least-privilege guardrails: checks inside Deno&apos;s APIs, not an OS
+          sandbox (see <a href="/docs/permissions">Permissions</a>). <code>fs</code> and{" "}
           <code>sqlite</code> stay inside the app's folders. <code>dialogs</code>{" "}
           needs unscoped read and write, because Deno bakes permissions at build time and the user
           picks paths at run time; the runtime narrows file calls to the paths picked this session.

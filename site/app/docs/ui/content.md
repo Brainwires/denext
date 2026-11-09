@@ -156,8 +156,8 @@ takes the default mode).
 ### Working offline
 
 `denext ui --offline` keeps the UI **and every process it starts** off the network. The UI's
-own JSR search is off, the denext-CLI children it starts are sandboxed, and an operation no
-flag can sandbox is refused:
+own JSR search is off, the denext-CLI children it starts run with `--deny-net`, and an operation
+no flag can keep off the network is refused:
 
 | Operation                                        | Under `--offline`                                                                                                                                    |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

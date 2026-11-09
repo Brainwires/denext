@@ -118,7 +118,7 @@ More: [/docs/desktop](/docs/desktop).
 
 **Why it happens.** Node.js has no permission model on by default, and the Electron main process is a Node.js process.
 
-**What denext does.** A packaged denext desktop app runs under Deno's permission model. The packaging scripts derive the `--allow-*` flags from the capabilities the app declares (`desktop.capabilities`) instead of granting everything; with no capabilities the app gets loopback network, read and env only.
+**What denext does.** A packaged denext desktop app runs under Deno's permissions, as least-privilege guardrails (checks inside Deno's APIs, not an OS sandbox: see [Permissions](/docs/permissions)). The packaging scripts derive the `--allow-*` flags from the capabilities the app declares (`desktop.capabilities`) instead of granting everything; with no capabilities the app gets loopback network, read and env only.
 
 **Evidence.**
 
@@ -612,7 +612,7 @@ More: [/docs/pages-router](/docs/pages-router).
 
 **Why it happens.** The wrapper stores the plugin functions in a closure that only its webpack loader reads.
 
-**What denext does.** `denext migrate` evaluates the config in a sandboxed subprocess (read access to the project only), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.
+**What denext does.** `denext migrate` evaluates the config in a permission-restricted subprocess (read access to the project only; no write, network or subprocesses), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.
 
 **Evidence.**
 

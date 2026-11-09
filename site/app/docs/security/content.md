@@ -77,9 +77,12 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    — the stable `cacheComponents` opt-in — but resumes dynamic holes by buffered
    server-side splice, not the streaming-resume mechanism the Cache-Components
    CVE targets.)
-5. **Deno permission model.** The process runs under explicit `--allow-*`
-   grants; an RCE or path-traversal that did land is still boxed by the sandbox
-   the user granted.
+5. **Deno's permissions as least-privilege guardrails.** The process runs
+   under explicit `--allow-*` grants, so an RCE or path traversal that did land
+   is limited to what those grants allow through Deno's own APIs. They are
+   checks inside Deno, not a sandbox: a subprocess, FFI or a native addon goes
+   around them, and kernel enforcement is planned, not shipped. See
+   [Permissions](/docs/permissions) for the grants that amount to full trust.
 
 The flip side: a few things are **our** responsibility precisely _because_ we
 reimplement them — see [Known Gaps](#known-gaps--residual-risk).
@@ -263,7 +266,7 @@ the package folder itself must resolve inside the project or its workspace root.
 An installed `denext` (the compiled binary, or
 `deno install -g`, whose launcher names its own config) reads a project's files as data until a
 verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
-(a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
+(a `next.config.*` is evaluated in a permission-restricted child), `routes`, `info`, `generate`, `codemod`,
 `audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
 `desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
 `denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the

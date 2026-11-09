@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Documentation
+
+- **Permissions are described as least-privilege guardrails.** A new page,
+  [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
+  checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)
+  planned. It lists the permission footguns: `--allow-run` and `--allow-ffi` mean full trust,
+  write access to config files (`deno.json`, `.npmrc`, shell startup files, git hooks) is code
+  execution, `--allow-net` to localhost reaches local services and cloud metadata, `--allow-env`
+  exposes secrets, `--allow-read` of the home directory exposes credentials, and an allow scope
+  follows a symlink that leads out of it. It also covers how network permissions behave with
+  `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, for `fetch()`, `WebSocket`,
+  `node:http` and npm clients. The security, runtime reference, deployment targets, deploy,
+  desktop and getting-started pages, the README, AGENTS.md, POLICIES.md and MISSION.md now use the
+  same wording.
+
 ## [4.14.0] - 2026-11-08
 
 ### Added

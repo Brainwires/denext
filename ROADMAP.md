@@ -167,6 +167,10 @@ seeded fallback. No Deno has the hook below yet.
 
 ## Runtime fork
 
+- **Kernel enforcement of permissions:** the `--allow-*` grants enforced by the OS too (Landlock on
+  Linux, Seatbelt on macOS), so a subprocess, FFI or a native addon is held to them; until then
+  they are least-privilege guardrails (https://denext.dev/docs/permissions). Allow scopes that
+  resolve symlinks are part of the same track. _Why 5.x: in design._
 - **A Windows console close, logoff or shutdown cuts the drain short** (the handler may block about
   5 s for CLOSE and longer for SHUTDOWN). _Why 5.x: fixable only in part._
 - **V8 cadence:** the next major (16.0, about 12-15) and patch bumps, once the Extended Stable line

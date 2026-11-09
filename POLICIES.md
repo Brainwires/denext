@@ -36,7 +36,9 @@
 
 _Secure by default_ is part of denext's second mission pillar — a strict hash-based CSP, an
 SSRF-safe image optimizer, same-origin CSRF-defended Server Actions, signed `httpOnly`
-cookies, and a least-privilege Deno sandbox ([MISSION.md](./MISSION.md),
+cookies, and Deno's permissions as least-privilege guardrails (checks inside Deno's APIs, not an
+OS sandbox; kernel enforcement is planned: [Permissions](https://denext.dev/docs/permissions))
+([MISSION.md](./MISSION.md),
 [the CVE-defense guide](https://denext.dev/docs/security)). If you find a way through any of that,
 we want to hear about it privately first.
 

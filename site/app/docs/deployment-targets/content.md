@@ -539,7 +539,9 @@ to the working directory:
   code) resolve against the working directory, not against the embedded
   project.
 
-**Permissions are least-privilege.** By default the binary bakes the Docker
+**Permissions are least-privilege guardrails.** They are checks inside Deno's
+APIs, not an OS sandbox ([Permissions](/docs/permissions) lists the grants that
+amount to full trust). By default the binary bakes the Docker
 image's flags: `--allow-net --allow-env --allow-read --allow-write=.denext`,
 with relative paths resolved against the working directory. Grant more in
 `denext.config.ts`; each kind is unioned with the baseline:
