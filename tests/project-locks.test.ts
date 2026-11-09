@@ -305,21 +305,35 @@ Deno.test(
     try {
       const script = await holderScript(dir);
       await Deno.writeTextFile(join(dir, "a.test.ts"), `Deno.test("a", () => {});\n`);
+      const cliArgs = [
+        "run",
+        "-A",
+        "--config",
+        DENO_JSON,
+        CLI,
+        "--cwd",
+        dir,
+        "test",
+        "--coverage=cov",
+        "a.test.ts",
+      ];
+      // The same command once with nothing holding the lock, to completion: the CLI's cold start
+      // (loading and compiling its module graph, the test run itself) scales with the machine's
+      // load and has this budget of its own. The timed wait below then measures only what this
+      // test is about: a warm CLI reaching the lock and printing the Blocking line.
+      const warm = new Deno.Command(Deno.execPath(), {
+        args: cliArgs,
+        stdout: "piped",
+        stderr: "piped",
+        signal: AbortSignal.timeout(300_000),
+      });
+      const warmed = await warm.output();
+      assertEquals(warmed.code, 0, new TextDecoder().decode(warmed.stderr));
+      await Deno.remove(join(dir, "cov"), { recursive: true }).catch(() => {});
       const holder = spawnHolder(script, { projectDir: dir, outputDirs: ["cov"] });
       await holder.waitFor("locked");
       const cli = new Deno.Command(Deno.execPath(), {
-        args: [
-          "run",
-          "-A",
-          "--config",
-          DENO_JSON,
-          CLI,
-          "--cwd",
-          dir,
-          "test",
-          "--coverage=cov",
-          "a.test.ts",
-        ],
+        args: cliArgs,
         stdout: "piped",
         stderr: "piped",
       }).spawn();
