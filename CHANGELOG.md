@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-11-10
+
 ### Added
 
 - **System stats for desktop apps.** `denext desktop add system-stats` enables `system.stats()` /
@@ -20,7 +22,6 @@ and this project adheres to
   no Deno permission. It needs denext's Deno Desktop runtime after 3.0.0-denext.13
   (`Deno.desktop.systemStats`); under an older one every call rejects `unsupported`, and a
   packaged app that does not list the capability gets `forbidden`.
-
 - **Deno Desktop extensions get their own secure store.** A `defineDesktopExtension` handler's
   `ctx.secureStore` and its `setup` host's `host.secureStore` (`get(key)` / `set(key, value)` /
   `delete(key)`, the page API's key rules and value encoding) keep the extension's secrets in the
@@ -70,13 +71,11 @@ and this project adheres to
 - **`windows.forget(key)`** on `DesktopRuntime.windows`: the key leaves Reopen Closed Window, the
   Dock's reopen and `windows.lastSession()` (persisted, so the next launch does not restore it);
   the menu follows. Its saved frame is kept.
-
 - **`createOwnedResources()` replay reports what it lost.** `attach()` now also returns `dropped`
   (whole chunks evicted or too large to keep since the resource started) and `truncated` (the
   replay starts mid-chunk because one oversized chunk was cut). `replay.measure` and `replay.cut`
   let a resource with structured chunks size them and keep a tail; without `cut` an oversized
   structured chunk is dropped and counted.
-
 - **`host.confirm(options)` and `host.openWindow(options)` for desktop extensions.** `confirm`
   shows the OS's own message box with your button labels (`message`, `detail`, `title`, `buttons`,
   `defaultId`, `cancelId`, `kind`) and resolves the pressed button's index, or `cancelId` / `null`
@@ -84,7 +83,6 @@ and this project adheres to
   window open. It needs Deno Desktop runtime 3.0.0-denext.16 (`Deno.desktop.dialog.showMessageBox`)
   and rejects with `unsupported` before it. `openWindow` opens a window as `desktop.ts`'s
   `windows.open` does. See https://denext.dev/docs/desktop#desktop-host-confirm.
-
 - **`desktop.linux.desktopEntry`: what the Linux `.desktop` entries say about the app.**
   `categories` (default `["Utility"]`; a terminal sets `["System", "TerminalEmulator"]`),
   `keywords`, `genericName`, `startupWMClass` and `mimeTypes` reach every entry denext writes: the
@@ -121,7 +119,6 @@ and this project adheres to
   still matches its pinned SHA-256; it no longer requires the build machine to be GitHub-hosted.
 - **The Linux secure-store probe looks up an account no caller can name**
   (`-denext-secure-store-probe`): a page key can no longer coincide with it.
-
 - **The AppImage runtime is pinned.** `appimagetool` used to prepend whatever type2-runtime's
   moving `continuous` release held; the package script now downloads type2-runtime `20251108` for
   x86_64 or aarch64 once into the toolchain cache, verifies its SHA-256 (a mismatch fails the
@@ -21675,7 +21672,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.14.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.15.0...development
+[4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
 [4.13.0]: https://jsr.io/@denext/denext@4.13.0

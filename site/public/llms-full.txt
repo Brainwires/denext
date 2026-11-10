@@ -1712,7 +1712,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.14.0"` — The denext framework version.
+- `VERSION: "4.15.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1973,6 +1973,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopTrayPanelConfig` — The tray panel (DesktopTrayConfig.panel).
 - `interface DesktopUiUpdateConfig` — DesktopUpdateConfig.ui: the signed UI overlay's feed.
 - `interface DesktopUpdateConfig` — DesktopConfig.update: full-app self-update.
+- `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
 - `type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver"` — How far above other windows an always-on-top window floats (Electron's level names).
 - `interface DesktopWindowsConfig` — DesktopConfig.windows: Windows launch settings of the packaged app.
@@ -2997,9 +2998,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopCapCtx` — The context a capability handler runs with: a scoped DesktopCapCtx.emit for its declared events, the OS app-support directory (which survives relaunch, unlike browser storage — see the desktop storage note), the running OS, the app window (Deno's BrowserWindow when the runtime exposes it), and an AbortSignal that fires when the handler's timeout elapses.
 - `class DesktopCapError extends Error` — Throw this from a capability handler to answer the page with a specific error code and a SAFE message. The bridge puts code, the message and any data into the { ok: false, error } envelope at status (default 400). Never encode an absolute path, environment value or stack into the message — it crosses to the page. The code "unavailable" is RESERVED (it means the capability/method is not enabled, which makes the page fall back to its web path); use another code for a real failure.
 - `desktopCheckCefSignature(exe: string, deps?: WindowsTrustDeps): Promise<boolean>` — After signing a CEF app on Windows: warn when the signed <App>.exe will not start here (cefSignatureProblem). Off Windows, or when the probe fails, nothing is said.
+- `interface DesktopClosedWindow` — A keyed window the user closed (WindowRegistry.recentlyClosed).
+- `interface DesktopConfirmOptions` — The options of DesktopExtensionHost.confirm: the OS's own message box with your button labels.
 - `desktopDenoFlagArgs(entryUrl: string): Promise<string[]>` — The project's desktop.denoFlags, checked, for a scaffolded packaging script: reads denext.config.ts next to entryUrl's folder (a script in scripts/ → ../), like desktopPackageFlags. A project without a config gets []; a refused flag throws.
 - `desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string, devBuild?: boolean): DesktopDevProxyDecision` — Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath), or devBuild (the mark only a denext desktop dev build compiles in) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case, and injectToken there requires the dev server's per-run session token on the URL (desktop dev --lan puts it there), so the window's page gets its bridge only from a dev server that gates its other peers. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.
 - `type DesktopDevProxyDecision = { readonly proxy: false; readonly refused?: string } | { readonly proxy: true; readonly target: string; readonly allowNonLoopback: boolean; readonly injectToken: boolean }` — The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.
+- `interface DesktopDockReopenContext` — What runDesktop({ onDockReopen }) receives: the keyed windows the user closed.
+- `interface DesktopDockReopenEvent` — A Dock icon click as DesktopWindowsSetup.onDockReopen reports it.
+- `type DesktopDockReopenHandler = (ctx: DesktopDockReopenContext) => DesktopOpenWindowOptions | undefined` — What the macOS Dock icon's click opens when no window is showing (runDesktop({ onDockReopen })): the open options, or undefined for nothing at all. Without it the click reopens the most recently closed keyed window, else shows the main window.
 - `interface DesktopEmitOptions` — Where an event goes: DesktopCapCtx.emit, DesktopExtensionHost.emit.
 - `class DesktopEventLog` — A bounded, replayable log of desktop bridge events. One instance per running app (created by the bridge); exported as a type so DesktopBridge["events"] is documentable.
 - `desktopExportEnv(os: DesktopOs): Record<string, string>` — The environment of a package run's deno task export: the TARGET OS's platform (windows when cross-packaging from a Mac), so the export resolves its .windows / .desktop files, not the host's.
@@ -3068,6 +3074,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: "msi" | "deb" | "rpm", version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
+- `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
 - `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
 - `interface DesktopWindowMenuSettings` — The standard window items (desktop.menu.window), resolved.
