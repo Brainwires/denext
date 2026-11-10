@@ -13,6 +13,8 @@ import type { RegistryWindow } from "../src/desktop/window-registry.ts";
 import { openWindowSettings } from "../src/desktop/window-registry.ts";
 import {
   type DesktopDockReopenHandler,
+  type DesktopSecondInstanceEvent,
+  type DesktopSecondInstanceHandler,
   noDesktopWindows,
   setUpDesktopWindows,
 } from "../src/desktop/app-windows.ts";
@@ -115,6 +117,7 @@ function setup(
     windowSettings?: DesktopWindowSettings;
     menu?: DesktopWindowMenuSettings;
     onDockReopen?: DesktopDockReopenHandler;
+    onSecondInstance?: DesktopSecondInstanceHandler;
     appSupportDir?: string;
     os?: string;
   } = {},
@@ -122,11 +125,12 @@ function setup(
   FakeWin.made = [];
   const main = new FakeWin();
   const dock = new Dock();
+  const desktop = api();
   const warnings: string[] = [];
   const s = setUpDesktopWindows({
     window: main,
     BrowserWindow: FakeWin,
-    api: api(),
+    api: desktop,
     dock: dock as never,
     emit: () => {},
     wantsTray: false,
@@ -140,6 +144,7 @@ function setup(
     ...(options.windowSettings ? { windowSettings: options.windowSettings } : {}),
     ...(options.menu ? { menuSettings: { window: options.menu } } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
+    ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
   });
   main.addEventListener("close", (e) => {
@@ -147,7 +152,14 @@ function setup(
     s.mainClosed();
   });
   s.install();
-  return { s, main, dock, warnings };
+  return { s, main, dock, desktop, warnings };
+}
+
+/** A later launch forwarded by the single-instance lock, as the pinned runtime dispatches it. */
+function secondLaunch(desktop: EventTarget, args: string[], cwd = "/home/u") {
+  desktop.dispatchEvent(
+    new CustomEvent("secondinstance", { detail: { args, cwd, urls: [], files: [] } }),
+  );
 }
 
 /** Hide every window (as a kept-alive app with no window showing). */
@@ -265,6 +277,120 @@ Deno.test("dock reopen: DesktopRuntime.onDockReopen hears every click until unsu
   plain.onDockReopen(() => {})();
   noDesktopWindows().onDockReopen(() => {})();
   assertEquals(noDesktopWindows().windows.forget("x"), undefined);
+});
+
+// ---------------------------------------------------------------------------------------------
+// A1b: a second launch (`desktop.app.singleInstance`)
+// ---------------------------------------------------------------------------------------------
+
+Deno.test("second instance: no handler and no window showing reopens as the Dock does", () => {
+  const { s, main, desktop } = setup();
+  s.windows.open({ url: "/a", key: "a" });
+  assert(FakeWin.made[1].userClose());
+  hideAll();
+  secondLaunch(desktop, ["--x"]);
+  assertEquals(s.windows.byKey("a")?.kind, "window", "the most recently closed keyed window");
+  assert(!main.calls.includes("show"));
+  // Nothing keyed left: the main window shows again.
+  hideAll();
+  secondLaunch(desktop, []);
+  assertEquals(main.calls.slice(-2), ["show", "focus"]);
+});
+
+Deno.test("second instance: no handler with a window showing opens nothing more", () => {
+  const { s, main, desktop } = setup();
+  s.windows.open({ url: "/a", key: "a" });
+  assert(FakeWin.made[1].userClose());
+  const before = FakeWin.made.length;
+  secondLaunch(desktop, ["--x"]);
+  assertEquals(FakeWin.made.length, before);
+  assertEquals(s.windows.byKey("a"), undefined);
+  assertEquals(main.calls.filter((c) => c === "show"), []);
+});
+
+Deno.test("second instance: runDesktop({ onSecondInstance }) gets args and cwd on every launch", () => {
+  const seen: DesktopSecondInstanceEvent[] = [];
+  let answer: { url: string; key: string } | undefined = undefined;
+  const { s, main, desktop, warnings } = setup({
+    onSecondInstance: (event) => {
+      seen.push(event);
+      return answer;
+    },
+  });
+  // A window showing: still called; `undefined` opens nothing.
+  secondLaunch(desktop, ["--open", "/tmp/a.txt"], "/work");
+  assertEquals(seen, [{ args: ["--open", "/tmp/a.txt"], cwd: "/work" }]);
+  // No window showing and `undefined`: nothing, not even the main window (the handler decided).
+  hideAll();
+  secondLaunch(desktop, []);
+  assertEquals(main.calls.filter((c) => c === "show"), []);
+  // Its options open a window.
+  answer = { url: "/doc", key: "doc" };
+  secondLaunch(desktop, ["doc"]);
+  assertEquals(s.windows.byKey("doc")?.kind, "window");
+  // A refused window (the key is open already) and a throwing handler are warnings.
+  secondLaunch(desktop, ["doc"]);
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "second launch");
+  const thrower = setup({
+    onSecondInstance: () => {
+      throw new Error("boom");
+    },
+  });
+  secondLaunch(thrower.desktop, []);
+  assertStringIncludes(thrower.warnings[0], "boom");
+  // A malformed detail is read as no arguments and no directory.
+  seen.length = 0;
+  answer = undefined;
+  desktop.dispatchEvent(new CustomEvent("secondinstance", { detail: { args: "x", cwd: 1 } }));
+  desktop.dispatchEvent(new CustomEvent("secondinstance", { detail: { args: [1, "y"] } }));
+  assertEquals(seen, [{ args: [], cwd: "" }, { args: ["y"], cwd: "" }]);
+});
+
+Deno.test("second instance: subscribers hear every launch until unsubscribed; a throw is a warning", async () => {
+  const { s, desktop, warnings } = setup();
+  const heard: DesktopSecondInstanceEvent[] = [];
+  const off = s.onSecondInstance((e) => void heard.push(e));
+  s.onSecondInstance(() => {
+    throw new Error("thrown");
+  });
+  s.onSecondInstance(() => Promise.reject(new Error("rejected")));
+  secondLaunch(desktop, ["--a"], "/one");
+  off();
+  secondLaunch(desktop, ["--b"], "/two");
+  assertEquals(heard, [{ args: ["--a"], cwd: "/one" }]);
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(warnings.filter((w) => w.includes("thrown")).length, 2);
+  assertEquals(warnings.filter((w) => w.includes("rejected")).length, 2);
+});
+
+Deno.test("second instance: without the pinned runtime's Deno.desktop it is a no-op", () => {
+  FakeWin.made = [];
+  const plain = setUpDesktopWindows({
+    window: new FakeWin(),
+    BrowserWindow: FakeWin,
+    emit: () => {},
+    wantsTray: false,
+    os: "linux",
+    exit: () => {},
+    onSecondInstance: () => {
+      throw new Error("never called");
+    },
+  });
+  plain.install();
+  plain.onSecondInstance(() => {})();
+  // An API without addEventListener (an older runtime): installs without a throw.
+  const old = setUpDesktopWindows({
+    window: new FakeWin(),
+    BrowserWindow: FakeWin,
+    api: {} as DesktopAppApi,
+    emit: () => {},
+    wantsTray: false,
+    os: "linux",
+    exit: () => {},
+  });
+  old.install();
+  old.onSecondInstance(() => {})();
 });
 
 // ---------------------------------------------------------------------------------------------

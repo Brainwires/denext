@@ -61,7 +61,11 @@ import {
 import type { PickedPaths } from "./picked-paths.ts";
 import type { WindowLifecycleHost } from "./window-lifecycle.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
-import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
+import type {
+  DesktopOpenWindowOptions,
+  DesktopSecondInstanceEvent,
+  DesktopWindowRef,
+} from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
@@ -140,6 +144,14 @@ export interface DesktopBridgeOptions {
    * a subscription is kept by nobody.
    */
   readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
+  /**
+   * Subscribe to the app's second launches (`desktop.app.singleInstance`): what
+   * {@link DesktopExtensionHost.onSecondInstance} delegates to. Without it (no desktop runtime, a
+   * test) a subscription is kept by nobody.
+   */
+  readonly onSecondInstance?: (
+    fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>,
+  ) => () => void;
 }
 
 /**
@@ -509,6 +521,7 @@ export function createDesktopBridge(
     onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn, cap.name),
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
+    onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
     // A box up while the quit guards are asked stops their deadline (not a session end's).

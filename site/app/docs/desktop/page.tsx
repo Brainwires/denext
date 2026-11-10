@@ -2956,7 +2956,9 @@ onCloseRequested(({ reason }) => {
         {" "}
         <code>app.onDockReopen(fn)</code> on what <code>runDesktop()</code>{" "}
         resolves with hears every click, with{" "}
-        <code>hasVisibleWindows</code>, and returns the unsubscribe.
+        <code>hasVisibleWindows</code>, and returns the unsubscribe. A{" "}
+        <a href="#desktop-second-instance">second launch</a>{" "}
+        with no window showing reopens the same way.
       </p>
       <Code lang="ts">
         {`// desktop.ts — bring back the last workspace, or open a fresh one
@@ -5038,6 +5040,28 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         otherwise) and at most once per scheme per launch (<code>claim_limit</code>); a Windows{" "}
         &quot;UserChoice&quot; cannot be overridden (<code>registered: false</code>).
       </p>
+      <p id="desktop-second-instance">
+        Every second launch also reaches the backend, links or not:{" "}
+        <code>runDesktop({"{ onSecondInstance: ({ args, cwd }) => options }"})</code>{" "}
+        is called with the launch&apos;s arguments (after the executable) and working directory,
+        whether a window is showing or not, and answers a window to open (the{" "}
+        <code>windows.open</code> options), or <code>undefined</code>{" "}
+        for nothing more. Without it a second launch with no window showing opens what the
+        Dock&apos;s reopen would (the most recently closed keyed window, else the main window shown
+        again); with a window showing the runtime has already brought it to the front. An extension
+        hears the same launches with a static <code>onSecondInstance(event)</code> hook or{" "}
+        <code>host.onSecondInstance(fn)</code>{" "}
+        (which returns the unsubscribe). The links and files the launch carried still go to{" "}
+        <code>onDeepLink</code> / <code>onOpenFile</code>{" "}
+        as above. Without denext&apos;s pinned runtime none of these is ever called.
+      </p>
+      <Code lang="ts">
+        {`// desktop.ts — "app --new-window" opens one more window; anything else is left as it is
+await runDesktop({
+  onSecondInstance: ({ args, cwd }) =>
+    args.includes("--new-window") ? { url: \`/?cwd=\${encodeURIComponent(cwd)}\` } : undefined,
+});`}
+      </Code>
 
       <h2 id="desktop-security">Security model</h2>
       <p>

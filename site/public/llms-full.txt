@@ -684,7 +684,8 @@ connected display; macOS Spaces are not restored; `desktop.window.key` does the 
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
 (`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
-decides; `app.onDockReopen(fn)` hears every click), `windows.forget(key)` drops a key from reopening and
+decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
+`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
 `lastSession()`, `desktop.menu.window.reopenClosed: "list"` lists the closed windows by `document.title`,
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,

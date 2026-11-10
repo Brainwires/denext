@@ -18,6 +18,11 @@ and this project adheres to
   (`{ id, key? }`, or `null` with no window open). Their ids carry a reserved prefix a page's menu
   may not use. With no window open the clicks arrive from runtime 3.0.0-denext.16; on an older
   runtime only while the main window is open.
+- **Desktop: a hook for the app's second launch.** With `desktop.app.singleInstance`,
+  `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })`, an extension's
+  `host.onSecondInstance(fn)` and a capability's static `onSecondInstance` hook hear every later
+  launch; without a handler, one with no window showing reopens as a Dock click does. Deep links
+  and opened files keep their routing.
 - **Desktop: a quit guard can wait for the user.** While a `host.confirm` box opened by an
   `onBeforeQuit` guard is on screen, the guards' 5-second deadline stops counting, and it goes on
   when the box closes. A session end (a logout, a shutdown) keeps its bound: its deadline never

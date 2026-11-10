@@ -62,6 +62,8 @@ import {
   type DesktopDockReopenEvent,
   type DesktopDockReopenHandler,
   type DesktopOpenWindowOptions,
+  type DesktopSecondInstanceEvent,
+  type DesktopSecondInstanceHandler,
   type DesktopWindowRef,
   type DesktopWindows,
   type DesktopWindowsSetup,
@@ -103,6 +105,8 @@ export type {
   DesktopDockReopenEvent,
   DesktopDockReopenHandler,
   DesktopOpenWindowOptions,
+  DesktopSecondInstanceEvent,
+  DesktopSecondInstanceHandler,
   DesktopTrayHandle,
   DesktopTrayIcon,
   DesktopTrayOptions,
@@ -683,6 +687,17 @@ export interface RunDesktopOptions {
    * window, else shows the main window. With a window showing the click only activates the app.
    */
   onDockReopen?: DesktopDockReopenHandler;
+  /**
+   * Called on every later launch of the app while it runs, forwarded by the single-instance lock
+   * (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`, a
+   * window showing or not: it answers the open options, or `undefined` to open nothing more. The
+   * deep links and files the launch carried still reach the pages' `onDeepLink` / `onOpenFile`,
+   * and the runtime has raised a showing window already. Without it a second launch with no window
+   * showing opens what the Dock's reopen would (the most recently closed keyed window, else the
+   * main window shown again). A throw, or a window that cannot open, is logged. Never called
+   * without denext's pinned runtime.
+   */
+  onSecondInstance?: DesktopSecondInstanceHandler;
   /**
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
@@ -1720,6 +1735,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
+    ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;
   if (windowsRef.closedEarly) windows.mainClosed();
@@ -1734,6 +1750,10 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // The capabilities' static window-lifecycle hooks (`onWindowOpened` is replayed for the main
   // window, open already); their `setup` hosts subscribe through the bridge below.
   windows.lifecycle?.addCapabilities(capabilities);
+  // Their static second-launch hooks (`DesktopCapability.onSecondInstance`).
+  for (const cap of capabilities) {
+    if (cap.onSecondInstance) windows.onSecondInstance(cap.onSecondInstance);
+  }
   const bridge = createDesktopBridge(
     capabilities,
     {
@@ -1750,6 +1770,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       // An extension host's openWindow is desktop.ts's windows.open.
       ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       onWindowMenuItem: (fn: DesktopWindowMenuItemHandler) => windows.onWindowMenuItem(fn),
+      onSecondInstance: (fn) => windows.onSecondInstance(fn),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),

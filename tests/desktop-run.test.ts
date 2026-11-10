@@ -630,3 +630,59 @@ Deno.test("runDesktop (pinned runtime): the app's own Window-menu items reach de
     await Deno.remove(outDir, { recursive: true });
   }
 });
+
+Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance, the extensions and still the deep links", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    const fromRunDesktop: unknown[] = [];
+    const fromHook: unknown[] = [];
+    const fromHost: unknown[] = [];
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = {
+      name: "ext",
+      methods: {},
+      onSecondInstance: (event) => void fromHook.push(event),
+      setup: (h) => {
+        host = h;
+      },
+    };
+    const { served } = await boot({
+      outDir,
+      port: 1,
+      deepLinks: ["myapp"],
+      onSecondInstance: (event) => void fromRunDesktop.push(event),
+      capabilities: [ext],
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const off = host!.onSecondInstance((event) => void fromHost.push(event));
+    const launch = (args: string[]) =>
+      desktop.dispatchEvent(
+        new CustomEvent("secondinstance", {
+          detail: { args, cwd: "/work", urls: ["myapp://open/1"], files: [] },
+        }),
+      );
+    launch(["myapp://open/1", "--flag"]);
+    const expected = [{ args: ["myapp://open/1", "--flag"], cwd: "/work" }];
+    await until(() => fromHook.length === 1);
+    assertEquals(fromRunDesktop, expected);
+    assertEquals(fromHook, expected);
+    assertEquals(fromHost, expected);
+    // The deep link is routed to the page as before.
+    const token = injectedGlobal(
+      await (await served.handler(get("http://127.0.0.1:1/"), {})).text(),
+    )!.token as string;
+    assertEquals((await pageRpc(served, token)("deepLinks", "take")).data, [
+      { url: "myapp://open/1", launch: false },
+    ]);
+    // Unsubscribed: the host hears no more; desktop.ts's handler and the static hook still do.
+    off();
+    launch([]);
+    await until(() => fromHook.length === 2);
+    assertEquals([fromRunDesktop.length, fromHost.length], [2, 1]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});

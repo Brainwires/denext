@@ -3,9 +3,10 @@
  * window (each window's `window` capability, the `windows` capability), the `app` capability, the
  * launch settings of `desktop.app` (`keepAlive`, `dock`) and `desktop.window` (always on top,
  * opacity, taskbar, workspaces), the macOS Dock's reopen click (the most recently closed keyed
- * window, `runDesktop({ onDockReopen })`'s window, else the main window), the backend tray and its
- * panel, and what `desktop.ts` gets to drive them (`DesktopRuntime.windows`, `.tray`,
- * `.setDockVisible`, `.onDockReopen`).
+ * window, `runDesktop({ onDockReopen })`'s window, else the main window), a second launch of a
+ * single-instance app (`runDesktop({ onSecondInstance })`, else the Dock's default with no window
+ * showing), the backend tray and its panel, and what `desktop.ts` gets to drive them
+ * (`DesktopRuntime.windows`, `.tray`, `.setDockVisible`, `.onDockReopen`).
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -217,6 +218,26 @@ export interface DesktopDockReopenEvent {
   readonly hasVisibleWindows: boolean;
 }
 
+/**
+ * A later launch of the app while it runs, forwarded by the single-instance lock
+ * (`desktop.app.singleInstance`; `Deno.desktop`'s `"secondinstance"`).
+ */
+export interface DesktopSecondInstanceEvent {
+  /** The second launch's command-line arguments, after the executable. */
+  readonly args: readonly string[];
+  /** The second launch's working directory. */
+  readonly cwd: string;
+}
+
+/**
+ * What a second launch of the app opens (`runDesktop({ onSecondInstance })`): called for every
+ * one, window showing or not, it answers the open options, or `undefined` for nothing more.
+ * Without it a second launch with no window showing opens what the Dock's reopen would.
+ */
+export type DesktopSecondInstanceHandler = (
+  event: DesktopSecondInstanceEvent,
+) => DesktopOpenWindowOptions | undefined;
+
 /** What {@linkcode setUpDesktopWindows} needs. */
 export interface DesktopWindowsOptions {
   /** The adopted main window (`undefined` outside the desktop runtime). */
@@ -249,6 +270,8 @@ export interface DesktopWindowsOptions {
   readonly onDockReopen?: DesktopDockReopenHandler;
   /** `desktop.ts`'s handler of the app's own Window-menu items (`runDesktop({ onWindowMenuItem })`). */
   readonly onWindowMenuItem?: DesktopWindowMenuItemHandler;
+  /** `desktop.ts`'s second launch (`runDesktop({ onSecondInstance })`). */
+  readonly onSecondInstance?: DesktopSecondInstanceHandler;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** The running OS (default `Deno.build.os`). */
@@ -326,7 +349,19 @@ export interface DesktopWindowsSetup {
    * extension host's `onWindowMenuItem`. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
+  /**
+   * Call `fn` on every second launch of the app (`Deno.desktop`'s `"secondinstance"`), after what
+   * `runDesktop({ onSecondInstance })` opens: an extension host's `onSecondInstance`, or a
+   * capability's static hook. A throw or a rejection is a warning. Returns the unsubscribe (a
+   * subscription nothing calls without the pinned runtime).
+   */
+  onSecondInstance(fn: DesktopSecondInstanceListener): () => void;
 }
+
+/** A subscriber to the app's second launches (an extension's). */
+export type DesktopSecondInstanceListener = (
+  event: DesktopSecondInstanceEvent,
+) => void | Promise<void>;
 
 /** The setup's state. */
 interface SetupState {
@@ -343,6 +378,8 @@ interface SetupState {
   readonly closedHandlers: Map<string, Set<() => void>>;
   /** The extensions' handlers of the app's own Window-menu items. */
   readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
+  /** The extensions' second-launch subscribers. */
+  readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -547,6 +584,14 @@ function dockReopenWindow(
 ): DesktopOpenWindowOptions | undefined {
   const handler = st.options.onDockReopen;
   if (handler) return handler({ closed: registry.recentlyClosed() });
+  return defaultReopenWindow(registry);
+}
+
+/**
+ * The reopen with no handler (the Dock's, a second launch's): the most recently closed keyed
+ * window's options, else the main window shown again and `undefined`.
+ */
+function defaultReopenWindow(registry: WindowRegistry): DesktopOpenWindowOptions | undefined {
   const last = registry.takeRecentlyClosed();
   if (last) return { url: last.url, key: last.key };
   const main = registry.get("main")?.window;
@@ -564,6 +609,78 @@ function subscribeDockReopen(
   const listener = (e: Event) => fn({ hasVisibleWindows: hadVisibleWindows(e) });
   dock.addEventListener("reopen", listener);
   return () => dock.removeEventListener("reopen", listener);
+}
+
+/** A `"secondinstance"` event's arguments and working directory (malformed parts read as none). */
+function secondInstanceOf(event: Event): DesktopSecondInstanceEvent {
+  const detail = (event as CustomEvent<{ args?: unknown; cwd?: unknown }>).detail;
+  const args = Array.isArray(detail?.args)
+    ? detail.args.filter((a): a is string => typeof a === "string")
+    : [];
+  return { args, cwd: typeof detail?.cwd === "string" ? detail.cwd : "" };
+}
+
+/** Whether one of the app's windows (not the tray panel) is showing. */
+function hasShowingWindow(registry: WindowRegistry): boolean {
+  return registry.list().some((entry) => {
+    if (entry.kind === "panel") return false;
+    try {
+      return entry.window.isVisible?.() ?? true;
+    } catch {
+      return false; // closing
+    }
+  });
+}
+
+/** `desktop.ts`'s window for a second launch, else the default reopen with no window showing. */
+function secondInstanceWindow(
+  st: SetupState,
+  registry: WindowRegistry,
+  event: DesktopSecondInstanceEvent,
+): DesktopOpenWindowOptions | undefined {
+  const handler = st.options.onSecondInstance;
+  if (handler) return handler(event);
+  return hasShowingWindow(registry) ? undefined : defaultReopenWindow(registry);
+}
+
+/** Call an extension's second-launch subscriber; a throw or a rejection is a warning. */
+function callSecondInstanceListener(
+  st: SetupState,
+  fn: DesktopSecondInstanceListener,
+  event: DesktopSecondInstanceEvent,
+): void {
+  const failed = (err: unknown) =>
+    st.warn(`a second-launch handler failed: ${err instanceof Error ? err.message : err}`);
+  try {
+    const out = fn(event);
+    if (out && typeof (out as Promise<void>).then === "function") {
+      (out as Promise<void>).then(undefined, failed);
+    }
+  } catch (err) {
+    failed(err);
+  }
+}
+
+/**
+ * The app was launched again (`desktop.app.singleInstance`): open `desktop.ts`'s window (or, with
+ * no handler and no window showing, the Dock's default), then tell the extensions. The runtime
+ * raised a showing window already, and the deep links and files the launch carried are the launch
+ * router's. A handler that throws or a window that cannot open is a warning.
+ */
+function onSecondInstance(st: SetupState, raw: Event): void {
+  const event = secondInstanceOf(raw);
+  const registry = st.registry;
+  if (registry) {
+    try {
+      const options = secondInstanceWindow(st, registry, event);
+      if (options) registry.open(options);
+    } catch (err) {
+      st.warn(
+        `a second launch could not open a window: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  for (const fn of [...st.secondInstanceHandlers]) callSecondInstanceListener(st, fn, event);
 }
 
 /** What opened windows take from the main window's settings: the title bar and its buttons. */
@@ -729,6 +846,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     hasTray: options.wantsTray,
     closedHandlers: new Map(),
     menuItemHandlers: new Set(),
+    secondInstanceHandlers: new Set(),
   };
   const win = typeof options.window === "object" && options.window !== null
     ? options.window as RegistryWindow
@@ -762,6 +880,10 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.registry?.lifecycle.install();
       st.menu?.install();
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
+      // `Deno.desktop` of the pinned runtime only (none outside it, or before launch events).
+      if (typeof options.api?.addEventListener === "function") {
+        options.api.addEventListener("secondinstance", (e) => onSecondInstance(st, e));
+      }
     },
     startTray: async (ctx) => {
       if (!st.app) return undefined;
@@ -798,6 +920,10 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     onWindowMenuItem: (fn) => {
       st.menuItemHandlers.add(fn);
       return () => void st.menuItemHandlers.delete(fn);
+    },
+    onSecondInstance: (fn) => {
+      st.secondInstanceHandlers.add(fn);
+      return () => void st.secondInstanceHandlers.delete(fn);
     },
   };
 }

@@ -171,6 +171,27 @@ Deno.test("setup: the host's confirm box goes through the lifecycle (the quit gu
   bare!.onWindowMenuItem(() => {})();
 });
 
+Deno.test("setup: the host's onSecondInstance is desktop.ts's subscription, a no-op without it", () => {
+  const subscribed: unknown[] = [];
+  let unsubscribed = 0;
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "single", methods: {}, setup: (h) => void (host = h) }], {
+    onSecondInstance: (fn) => {
+      subscribed.push(fn);
+      return () => void unsubscribed++;
+    },
+  });
+  const fn = () => {};
+  const off = host!.onSecondInstance(fn);
+  assertEquals(subscribed, [fn]);
+  off();
+  assertEquals(unsubscribed, 1);
+  // No desktop runtime: kept by nobody.
+  let bare: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "x", methods: {}, setup: (h) => void (bare = h) }]);
+  bare!.onSecondInstance(() => {})();
+});
+
 Deno.test("setup: the host's openWindow is desktop.ts's windows.open, unsupported without it", () => {
   const opened: unknown[] = [];
   const ref = { id: "window-1", kind: "window" } as unknown as DesktopWindowRef;

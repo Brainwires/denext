@@ -14,7 +14,11 @@
  */
 
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
-import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
+import type {
+  DesktopOpenWindowOptions,
+  DesktopSecondInstanceEvent,
+  DesktopWindowRef,
+} from "./app-windows.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
 
 export type { StandardSchemaV1 };
@@ -207,7 +211,8 @@ export interface DesktopConfirmOptions {
  * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
  * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
- * items, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
+ * items, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows
+ * now. Each subscription returns its unsubscribe.
  */
 export interface DesktopExtensionHost {
   /**
@@ -277,6 +282,14 @@ export interface DesktopExtensionHost {
    * or a rejection is logged. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
+  /**
+   * Call `fn` on every later launch of the app while it runs, forwarded by the single-instance
+   * lock (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`.
+   * It runs after `runDesktop({ onSecondInstance })` opened its window, if any; the deep links and
+   * files the launch carried still reach the pages' `onDeepLink` / `onOpenFile`. A throw or a
+   * rejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe.
+   */
+  onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
   /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */
@@ -388,6 +401,12 @@ export interface DesktopCapability {
    * process exits regardless. An error is logged, never surfaced.
    */
   readonly onAppQuit?: () => void | Promise<void>;
+  /**
+   * Called on every later launch of the app while it runs (`desktop.app.singleInstance`), with its
+   * `args` and `cwd`: the static form of {@linkcode DesktopExtensionHost.onSecondInstance}. An
+   * error is logged, never surfaced.
+   */
+  readonly onSecondInstance?: (event: DesktopSecondInstanceEvent) => void | Promise<void>;
   /**
    * Called once, when the app's bridge starts (before any page can call), with the
    * {@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its
