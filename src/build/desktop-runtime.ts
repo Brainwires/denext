@@ -563,6 +563,8 @@ const DESKTOP_RUNTIME_SIGNER_WORKFLOW = ".github/workflows/denext_runtime.yml";
  * The `gh attestation verify` arguments for a runtime archive: the repository, AND the exact
  * workflow that must have signed it, AND the release tag it must have been built from — so only
  * the pinned release's own build passes, not any artifact some workflow of the repository attested.
+ * The build may run on a GitHub-hosted runner or on one of the runtime repository's own
+ * self-hosted runners; the signing workflow and the tag bind the bytes to that build either way.
  *
  * @param archive The archive path.
  * @param repository The pin's repository (`https://github.com/<owner>/<repo>` or `<owner>/<repo>`).
@@ -581,7 +583,6 @@ export function runtimeAttestationArgs(archive: string, repository: string, tag:
     `${repo}/${DESKTOP_RUNTIME_SIGNER_WORKFLOW}`,
     "--source-ref",
     `refs/tags/${tag}`,
-    "--deny-self-hosted-runners",
   ];
 }
 

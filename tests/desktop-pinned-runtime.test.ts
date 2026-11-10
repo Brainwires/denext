@@ -495,7 +495,6 @@ Deno.test("ensureDesktopRuntime attest: runs gh on the archive; a cached unattes
       "Brainwires/deno/.github/workflows/denext_runtime.yml",
       "--source-ref",
       `refs/tags/${f.pin.tag}`,
-      "--deny-self-hosted-runners",
     ]);
     assertEquals((await ensure(f, { attest: true, fetch: offline })).cached, true);
     // Cached AND attested: no download and no gh run (a failing gh would throw).
@@ -1799,7 +1798,6 @@ Deno.test("desktop:pin-runtime: every archive is hashed and attested to the rele
       "Brainwires/deno/.github/workflows/denext_runtime.yml",
       "--source-ref",
       `refs/tags/${TAG}`,
-      "--deny-self-hosted-runners",
     ]);
     // Downloaded: the same checks on the fetched bytes.
     await attestPin(pin, { fetch: () => Promise.resolve(new Response(bytes)), run: ok });

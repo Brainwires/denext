@@ -405,8 +405,19 @@ Deno.test("secureStore (macOS, runtime store): a refusal is backend_unavailable 
 });
 
 Deno.test("secureStore (macOS): permissions cover the runtime's store and `security`", () => {
-  const cap = capOn(fakeMac("login"));
-  assertEquals(cap.methods.get.permissions, { run: ["security"], sys: ["*"] });
+  const mac = fakeMac("login");
+  const on = (runtimeVersion: string) =>
+    secureStoreCapability({
+      service: SVC,
+      os: "darwin",
+      api: mac.api,
+      run: mac.run,
+      runtimeVersion,
+    })
+      .methods.get.permissions;
+  assertEquals(on("3.0.0-denext.13"), { run: ["security"], sys: ["*"] });
+  // A runtime that gates its store on the baked capability list needs no --allow-sys.
+  assertEquals(on("3.0.0-denext.16"), { run: ["security"] });
 });
 
 Deno.test("secureStore (macOS): fail first, the `security` path is what a runtime without a store keeps", async () => {

@@ -134,6 +134,9 @@ function setup(
     exit: () => {},
     warn: (m) => void warnings.push(m),
     appSettings: { keepAlive: true },
+    // The fake window delivers the menu's clicks: a runtime before `Deno.desktop`'s app-level
+    // "menuclick", whatever runtime runs the test.
+    runtimeVersion: "3.0.0-denext.13",
     ...(options.windowSettings ? { windowSettings: options.windowSettings } : {}),
     ...(options.menu ? { menuSettings: { window: options.menu } } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),

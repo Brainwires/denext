@@ -673,9 +673,9 @@ Deno.test("sync: app.json lists the baked capabilities only for a runtime that r
     // None enabled: no key.
     await syncDesktopAppConfigAt(dir, T3, true, true);
     assertEquals("capabilities" in (await read(dir)), false);
-    // The default gate is the pinned runtime's (inert until the pin moves).
+    // The default gate is the pinned runtime's, which reads the list.
     await syncDesktopAppConfigAt(dir, withStore);
-    assertEquals("capabilities" in (await read(dir)), false);
+    assertEquals((await read(dir)).capabilities, ["secureStore", "systemStats"]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

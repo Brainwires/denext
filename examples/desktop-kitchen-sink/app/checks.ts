@@ -1741,7 +1741,21 @@ const appChecks: Check[] = [
           );
         }
         await waitFor(() => shown.length > 0, "the web Notification to be posted");
-        eq(shown.join(","), "show", "the events of a posted notification");
+        if (shown.join(",") !== "show") {
+          // The shim's error event carries no reason: ask the capability the same thing directly.
+          const reason = await raw("notifications").webShow({
+            key: "kitchen-web-diag",
+            title: "Kitchen sink",
+            body: "a web Notification",
+          }).then(
+            () => "a direct webShow succeeded",
+            (err: { code?: unknown; message?: unknown }) =>
+              `webShow rejected: ${String(err?.code ?? "")} ${String(err?.message ?? err)}`,
+          );
+          throw new Error(
+            `the events of a posted notification: got "${shown.join(",")}" (${reason})`,
+          );
+        }
         await sleep(300); // the shim's event stream connects on the first notification
         // The OS reporting a click on it (synthetic: the event the runtime dispatches).
         const key = (note as { __key: string }).__key;

@@ -8,7 +8,6 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { desktopConfirm } from "../src/desktop/message-box.ts";
 import { DesktopCapError } from "../src/desktop/extension.ts";
 import { FIRST_MESSAGE_DIALOG_RUNTIME, supportsMessageDialog } from "../src/build/deno-version.ts";
-import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 
 /** A runtime whose message box answers `result`, recording what it was asked. */
 function fakeDesktop(result: { response: number; cancelled: boolean } | Error) {
@@ -85,8 +84,9 @@ Deno.test("confirm: a box dismissed without a button resolves cancelId, or null 
 });
 
 Deno.test("confirm: unsupported without native message boxes (no runtime, no showMessageBox, an older runtime)", async () => {
-  // Inert until the pin moves to the runtime with Deno.desktop.dialog.showMessageBox.
-  assert(!supportsMessageDialog(toolchainPin.version), "the pinned runtime predates message boxes");
+  // Deno.desktop.dialog.showMessageBox ships in 3.0.0-denext.16 (denext.14 and .15 were never published).
+  assertEquals(FIRST_MESSAGE_DIALOG_RUNTIME, "3.0.0-denext.16");
+  assert(!supportsMessageDialog("3.0.0-denext.13"), "3.0.0-denext.13 predates message boxes");
   assert(supportsMessageDialog(FIRST_MESSAGE_DIALOG_RUNTIME));
   assert(!supportsMessageDialog("not a version"));
   const err = await refused(
@@ -101,7 +101,7 @@ Deno.test("confirm: unsupported without native message boxes (no runtime, no sho
   // showMessageBox present, but the runtime predates the release that ships it.
   const { desktop, asked } = fakeDesktop({ response: 0, cancelled: false });
   await refused(
-    desktopConfirm({ message: "m" }, { desktop, runtimeVersion: toolchainPin.version }),
+    desktopConfirm({ message: "m" }, { desktop, runtimeVersion: "3.0.0-denext.13" }),
     "unsupported",
   );
   assertEquals(asked, [], "never asked");

@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.14.0\"",
+          "signature": "VERSION: \"4.15.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16977,7 +16977,7 @@
               "kind": "property",
               "name": "menu",
               "signature": "menu?: DesktopMenuConfig",
-              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
             },
             {
               "kind": "property",
@@ -17414,7 +17414,7 @@
             {
               "kind": "property",
               "name": "window",
-              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean; list?: boolean }",
+              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean }",
               "doc": "The \"Window\" submenu's items."
             }
           ]
@@ -18134,6 +18134,32 @@
           ]
         },
         {
+          "name": "DesktopWindowButtonPosition",
+          "slug": "DesktopWindowButtonPosition",
+          "kind": "interface",
+          "signature": "interface DesktopWindowButtonPosition",
+          "doc": "A macOS window button position (DesktopWindowConfig.windowButtonPosition).",
+          "docFull": "A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "Points from the window's left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "Points from the window's top edge."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowConfig",
           "slug": "DesktopWindowConfig",
           "kind": "interface",
@@ -18156,6 +18182,24 @@
               "name": "height",
               "signature": "height?: number",
               "doc": "Initial height in CSS pixels."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "defaultWidth?: number",
+              "doc": "The width the main window opens with when its `key` has no saved frame (the first launch, or\nno `key`): `width` > the saved frame > `defaultWidth` > the runtime's own size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "defaultHeight?: number",
+              "doc": "The height the main window opens with when its `key` has no saved frame."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "windowButtonPosition?: DesktopWindowButtonPosition",
+              "doc": "Where the macOS window buttons (the traffic lights) sit: the close button's top-left corner,\nin points from the window's top-left, for a page drawn under a hidden title bar\n(`desktop.titleBar: \"hidden\"` / `\"hiddenInset\"`). Windows opened with `windows.open` /\n`openWindow` take it too, unless their own `windowButtonPosition` says (`null` keeps the OS's\nplace); a frameless window has none. Ignored on Windows and Linux. Needs denext's pinned\nruntime (ignored with a warning before)."
             },
             {
               "kind": "property",
@@ -46041,6 +46085,94 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopClosedWindow",
+          "slug": "DesktopClosedWindow",
+          "kind": "interface",
+          "signature": "interface DesktopClosedWindow",
+          "doc": "A keyed window the user closed (WindowRegistry.recentlyClosed).",
+          "docFull": "A keyed window the user closed ({@linkcode WindowRegistry.recentlyClosed}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key: string",
+              "doc": "Its key."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "The app path it showed when it closed."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "Its title when it closed, if it had one."
+            }
+          ]
+        },
+        {
+          "name": "DesktopConfirmOptions",
+          "slug": "DesktopConfirmOptions",
+          "kind": "interface",
+          "signature": "interface DesktopConfirmOptions",
+          "doc": "The options of DesktopExtensionHost.confirm: the OS's own message box with your button labels.",
+          "docFull": "The options of {@linkcode DesktopExtensionHost.confirm}: the OS's own message box with your\nbutton labels.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "message",
+              "signature": "readonly message: string",
+              "doc": "The main line (required)."
+            },
+            {
+              "kind": "property",
+              "name": "detail",
+              "signature": "readonly detail?: string",
+              "doc": "Smaller text under it."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "The window title where the OS shows one (macOS alerts have none)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons?: readonly string[]",
+              "doc": "The labels, at most 16 (none: one \"OK\"). Each OS places them its own way (macOS: first rightmost)."
+            },
+            {
+              "kind": "property",
+              "name": "defaultId",
+              "signature": "readonly defaultId?: number",
+              "doc": "The button Return presses (default: the first)."
+            },
+            {
+              "kind": "property",
+              "name": "cancelId",
+              "signature": "readonly cancelId?: number",
+              "doc": "The button Escape presses (and the close button on Windows and Linux)."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind?: \"info\" | \"warning\" | \"error\"",
+              "doc": "The icon (default `\"info\"`)."
+            }
+          ]
+        },
+        {
           "name": "desktopDenoFlagArgs",
           "slug": "desktopDenoFlagArgs",
           "kind": "function",
@@ -46076,6 +46208,58 @@
           "signature": "type DesktopDevProxyDecision = { readonly proxy: false; readonly refused?: string } | { readonly proxy: true; readonly target: string; readonly allowNonLoopback: boolean; readonly injectToken: boolean }",
           "doc": "The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.",
           "docFull": "The live-reload proxy decision from the env + the running binary — see {@linkcode desktopDevProxyDecision}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopDockReopenContext",
+          "slug": "DesktopDockReopenContext",
+          "kind": "interface",
+          "signature": "interface DesktopDockReopenContext",
+          "doc": "What runDesktop({ onDockReopen }) receives: the keyed windows the user closed.",
+          "docFull": "What `runDesktop({ onDockReopen })` receives: the keyed windows the user closed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "closed",
+              "signature": "readonly closed: readonly ClosedWindow[]",
+              "doc": "The keyed windows the user closed (not a quit's), most recent first, each key once."
+            }
+          ]
+        },
+        {
+          "name": "DesktopDockReopenEvent",
+          "slug": "DesktopDockReopenEvent",
+          "kind": "interface",
+          "signature": "interface DesktopDockReopenEvent",
+          "doc": "A Dock icon click as DesktopWindowsSetup.onDockReopen reports it.",
+          "docFull": "A Dock icon click as {@linkcode DesktopWindowsSetup.onDockReopen} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "hasVisibleWindows",
+              "signature": "readonly hasVisibleWindows: boolean",
+              "doc": "Whether a window of the app was showing (the click then only activates the app)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopDockReopenHandler",
+          "slug": "DesktopDockReopenHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopDockReopenHandler = (ctx: DesktopDockReopenContext) => DesktopOpenWindowOptions | undefined",
+          "doc": "What the macOS Dock icon's click opens when no window is showing (runDesktop({ onDockReopen })): the open options, or undefined for nothing at all. Without it the click reopens the most recently closed keyed window, else shows the main window.",
+          "docFull": "What the macOS Dock icon's click opens when no window is showing (`runDesktop({ onDockReopen\n})`): the open options, or `undefined` for nothing at all. Without it the click reopens the\nmost recently closed keyed window, else shows the main window.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46256,6 +46440,18 @@
               "name": "windows",
               "signature": "windows(): readonly DesktopWindowInfo[]",
               "doc": "The open windows now (the main window, the tray panel and the opened ones)."
+            },
+            {
+              "kind": "method",
+              "name": "confirm",
+              "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16)."
+            },
+            {
+              "kind": "method",
+              "name": "openWindow",
+              "signature": "openWindow(options: DesktopOpenWindowOptions): DesktopWindowRef",
+              "doc": "Open a window on a page of the app, exactly as `desktop.ts`'s `windows.open` does (the same\noptions, limits and key rules), and return it. Throws on bad options, past\n`desktop.app.maxWindows`, or with no desktop runtime (an `unsupported`\n{@linkcode DesktopCapError})."
             }
           ]
         },
@@ -46666,13 +46862,37 @@
               "kind": "property",
               "name": "width",
               "signature": "readonly width?: number",
-              "doc": "Width in CSS pixels."
+              "doc": "Width in CSS pixels (over a saved frame and {@linkcode defaultWidth})."
             },
             {
               "kind": "property",
               "name": "height",
               "signature": "readonly height?: number",
-              "doc": "Height in CSS pixels."
+              "doc": "Height in CSS pixels (over a saved frame and {@linkcode defaultHeight})."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width when neither `width` nor the key's saved frame gives one (a first open, no `key`,\nor `restoreBounds: false`): `width` > the saved frame > `defaultWidth` > the runtime's size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height when neither `height` nor the key's saved frame gives one."
+            },
+            {
+              "kind": "property",
+              "name": "titleBar",
+              "signature": "readonly titleBar?: \"default\" | \"hidden\" | \"hiddenInset\"",
+              "doc": "The title bar style (macOS; elsewhere the runtime answers it has none): default\n`desktop.titleBar`, as the main window gets it. `\"default\"` keeps the OS's title bar; a\nframeless window has none to style."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null",
+              "doc": "Where the macOS traffic lights sit (the close button's top-left corner, in points from the\nwindow's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;\n`null` keeps the OS's place. A frameless window has none."
             },
             {
               "kind": "property",
@@ -47321,6 +47541,12 @@
               "name": "getActivationPolicy",
               "signature": "getActivationPolicy(): \"regular\" | \"accessory\" | \"prohibited\" | null",
               "doc": "The macOS activation policy, or `null` where there is none (Windows, Linux, older runtimes)."
+            },
+            {
+              "kind": "method",
+              "name": "onDockReopen",
+              "signature": "onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void",
+              "doc": "Call `fn` on every click on the macOS Dock icon (`Deno.dock`'s `\"reopen\"`), with\n`hasVisibleWindows`; what the click opens ({@linkcode RunDesktopOptions.onDockReopen}) still\nhappens. Returns the unsubscribe; a no-op where there is no Dock (Windows, Linux)."
             },
             {
               "kind": "method",
@@ -48259,6 +48485,32 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWindowButtonPosition",
+          "slug": "DesktopWindowButtonPosition",
+          "kind": "interface",
+          "signature": "interface DesktopWindowButtonPosition",
+          "doc": "A macOS window button position (DesktopWindowConfig.windowButtonPosition).",
+          "docFull": "A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "Points from the window's left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "Points from the window's top edge."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowClosedInfo",
           "slug": "DesktopWindowClosedInfo",
           "kind": "typeAlias",
@@ -48323,8 +48575,8 @@
             {
               "kind": "property",
               "name": "reopenClosed",
-              "signature": "readonly reopenClosed?: boolean",
-              "doc": "Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows."
+              "signature": "readonly reopenClosed?: boolean | \"list\"",
+              "doc": "Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows; `\"list\"`: a\nsubmenu of them by title, most recent first, each reopening its window."
             },
             {
               "kind": "property",
@@ -48461,6 +48713,12 @@
               "name": "lastSession",
               "signature": "lastSession(): readonly SessionWindow[]",
               "doc": "The keyed windows open when the app last quit (each with its key, app path and saved bounds),\nfrom the window store in the app support folder; `desktop.app.restoreWindows: true` reopens\nthem at launch. Empty on the first launch, or when the store could not be read."
+            },
+            {
+              "kind": "method",
+              "name": "forget",
+              "signature": "forget(key: string): void",
+              "doc": "Forget the keyed window `key`: it leaves the windows Reopen Closed Window and the Dock's\nreopen click bring back (the Window menu follows) and {@linkcode lastSession}, as persisted in\nthe window store, so the next launch does not restore it either. Its saved frame is kept, and\nan open window with the key is not affected (it is in the next session if open at the quit)."
             }
           ]
         },
@@ -48595,6 +48853,24 @@
               "name": "key",
               "signature": "readonly key?: string",
               "doc": "The main window's key (`desktop.window.key`): its frame is saved and restored."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width used when the main window has no saved frame (`desktop.window.defaultWidth`):\n`width` beats the saved frame, which beats this, which beats the runtime's own size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height used when the main window has no saved frame (`desktop.window.defaultHeight`)."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: DesktopWindowButtonPosition",
+              "doc": "Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`)."
             }
           ]
         },
@@ -48966,6 +49242,18 @@
               "name": "replay",
               "signature": "readonly replay: readonly OwnedResourceReplayEntry[]",
               "doc": "The resource's retained events, oldest first (empty with no `replay`)."
+            },
+            {
+              "kind": "property",
+              "name": "dropped",
+              "signature": "readonly dropped: number",
+              "doc": "How many whole chunks the replay has lost since the resource started: evicted to make room, or\ntoo large to keep. `0` means nothing was lost to eviction. It only grows, so a page that\nattaches twice can tell whether more was lost in between."
+            },
+            {
+              "kind": "property",
+              "name": "truncated",
+              "signature": "readonly truncated: boolean",
+              "doc": "`true` when the oldest retained entry is a single chunk larger than `maxBytes` that was cut,\nso the replay starts in the middle of it. It turns `false` again once newer output evicts\nthat chunk (which is then counted in `dropped`)."
             }
           ]
         },
@@ -49068,7 +49356,7 @@
               "kind": "method",
               "name": "emit",
               "signature": "emit(id: string, event: string, data: unknown): boolean",
-              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append\n`{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is\ndetached (then it is only appended). `event` must be one the extension declared, as for\n`host.emit`.\n\nOnly `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
+              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append\n`{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is\ndetached (then it is only appended). `event` must be one the extension declared, as for\n`host.emit`.\n\nOnly `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. `replay.measure` replaces the\nmeasuring and `replay.cut` the cutting (for structured chunks). {@linkcode OwnedResources.attach}\nreports the loss as `dropped` and `truncated`. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
               "params": [
                 {
                   "name": "id",
@@ -49261,6 +49549,18 @@
               "name": "events",
               "signature": "readonly events?: readonly string[]",
               "doc": "The event names to keep (say `[\"data\", \"exit\"]`, leaving out a high-rate `\"progress\"`); every\nevent when omitted. An event not listed is still sent to the owner, just not kept."
+            },
+            {
+              "kind": "property",
+              "name": "measure",
+              "signature": "readonly measure?: (chunk: unknown) => number",
+              "doc": "The size of one chunk of event `data`, in the same unit as `maxBytes` (rows, entries, bytes).\nDefaults to the byte length described at {@linkcode OwnedResources.emit}. Set it, with\n{@linkcode OwnedResourcesReplayOptions.cut}, for a resource whose chunks are structured\nobjects. It must be a non-negative number and must not throw."
+            },
+            {
+              "kind": "property",
+              "name": "cut",
+              "signature": "readonly cut?: (chunk: unknown, keepBytes: number) => unknown",
+              "doc": "Shrink a chunk larger than `maxBytes` to at most `keepBytes` (in `measure`'s unit), keeping\nwhatever tail the resource finds useful. Replaces the default cut of an oversized string or\nbytes; without it an oversized structured chunk is dropped and counted in\n{@linkcode OwnedResourceAttachment.dropped}. A result still over the budget is dropped too."
             }
           ]
         },
@@ -49850,6 +50150,12 @@
               "name": "newWindow",
               "signature": "newWindow?: DesktopNewWindowHandler",
               "doc": "What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),\nor `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a\nfresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`."
+            },
+            {
+              "kind": "property",
+              "name": "onDockReopen",
+              "signature": "onDockReopen?: DesktopDockReopenHandler",
+              "doc": "What a click on the macOS Dock icon opens when no window is showing: called with the keyed\nwindows the user closed (`ctx.closed`, most recent first), it answers the open options, or\n`undefined` to open nothing. Without it the click reopens the most recently closed keyed\nwindow, else shows the main window. With a window showing the click only activates the app."
             },
             {
               "kind": "property",
@@ -53792,6 +54098,30 @@
               "name": "height",
               "signature": "readonly height?: number",
               "doc": "Height in CSS pixels."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width when neither `width` nor the key's saved frame gives one: `width` > the saved\nframe > `defaultWidth` > the runtime's size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height when neither `height` nor the key's saved frame gives one."
+            },
+            {
+              "kind": "property",
+              "name": "titleBar",
+              "signature": "readonly titleBar?: TitleBarStyle",
+              "doc": "The title bar style (macOS): default `desktop.titleBar`, as the main window gets it;\n`\"default\"` keeps the OS's title bar."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null",
+              "doc": "Where the macOS traffic lights sit (the close button's top-left corner, in points from the\nwindow's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;\n`null` keeps the OS's place. Elsewhere the runtime has no such buttons and ignores it."
             },
             {
               "kind": "property",

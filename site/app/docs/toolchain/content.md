@@ -1104,7 +1104,8 @@ OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-wi
 `3.0.0-denext.8` moves the CLI and the runtime to V8 15.6 (Chrome Extended Stable 156) and CEF to 156.0.15 (Chromium 156.0.8078.80); the CLI embeds the expected `denort` SHA-256s, adds `Deno.disarmResourceLimits(import.meta)` and keeps the type check's npm copy under `DENO_DIR`, and the runtime adds OS quits to the close handlers, `backgroundThrottling`, the `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` permission tokens and stricter full-app update checks. The
 `3.0.0-denext.10` moves V8 to 15.6.75.38 and adds Node's `node --test` runner, the CommonJS compile cache and `NODE_OPTIONS` preloads.
 `3.0.0-denext.12` (there is no `3.0.0-denext.11` release) adds `Deno.openPty` and `Deno.Command`'s `pty` option (not on Windows yet), `node:crypto`'s `argon2()`, `node:stream/iter`, `node:zlib/iter` and `node:vfs`, and makes `--seed` pin the time zone and locale.
-`3.0.0-denext.13` (the build denext pins today) loads a native Node addon a package ships, such as node-pty's, in packaged apps instead of the built-in shim. The
+`3.0.0-denext.13` loads a native Node addon a package ships, such as node-pty's, in packaged apps instead of the built-in shim.
+`3.0.0-denext.16` (the build denext pins today; there is no `3.0.0-denext.14` or `3.0.0-denext.15` release) adds `--clean-run-env`, native message boxes, app-wide application-menu clicks, `Deno.desktop.systemStats` and SQLite 3.54.1. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

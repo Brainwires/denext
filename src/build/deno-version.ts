@@ -161,23 +161,14 @@ export function supportsIdleTrim(version: string): boolean {
 }
 
 /**
- * PLACEHOLDER for "the next runtime": a version above every release of denext's Deno, for a
- * `FIRST_*_RUNTIME` whose runtime change is merged in Brainwires/deno but not yet in a pinned
- * release. A feature gated on it is inert; when the pin moves to the release that ships the
- * change, set that constant to the release's version (and drop this one once nothing uses it).
- */
-const NEXT_RUNTIME = "99999.0.0";
-
-/**
  * The first release of denext's Deno whose idle trim a running program turns off with
  * `DENO_UNSTABLE_IDLE_TRIM=0` (Brainwires/deno DENEXT.md item 278, `fix/idle-trim-env-override`:
  * read again each time a trim is due, so `Deno.env.set` from the program's own code works, and
  * at start a `0` overrides a baked `--unstable-idle-trim`).
  *
- * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries item 278 yet. Set this to the
- * release that does when the toolchain pin moves to it.
+ * `3.0.0-denext.16` (there is no `3.0.0-denext.14` or `3.0.0-denext.15` release).
  */
-export const FIRST_IDLE_TRIM_ENV_OFF_RUNTIME: string = NEXT_RUNTIME;
+export const FIRST_IDLE_TRIM_ENV_OFF_RUNTIME = "3.0.0-denext.16";
 
 /**
  * Whether denext's Deno of `version` lets a running program turn its idle trim off with
@@ -199,10 +190,10 @@ export function supportsIdleTrimEnvOff(version: string): boolean {
  * `feat/secure-store-capability`). An older runtime refuses an app.json with an unknown key, so the
  * list is written only for a runtime at or above this one.
  *
- * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries it yet. Set this to the release
- * that does when the desktop runtime pin moves to it.
+ * `3.0.0-denext.16` (DENEXT.md item 275; there is no `3.0.0-denext.14` or `3.0.0-denext.15`
+ * release).
  */
-export const FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME: string = NEXT_RUNTIME;
+export const FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME = "3.0.0-denext.16";
 
 /**
  * Whether the Deno Desktop runtime `version` reads app.json's `"capabilities"` and serves the
@@ -222,10 +213,10 @@ export function supportsDesktopBakedCapabilities(version: string): boolean {
  * NSAlert, TaskDialogIndirect, GtkMessageDialog, app-modal with no window open), which an
  * extension host's `confirm` uses.
  *
- * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries it yet. Set this to the release
- * that does (3.0.0-denext.14) when the toolchain pin moves to it.
+ * `3.0.0-denext.16` (DENEXT.md item 277; there is no `3.0.0-denext.14` or `3.0.0-denext.15`
+ * release).
  */
-export const FIRST_MESSAGE_DIALOG_RUNTIME: string = NEXT_RUNTIME;
+export const FIRST_MESSAGE_DIALOG_RUNTIME = "3.0.0-denext.16";
 
 /**
  * Whether the Deno Desktop runtime `version` has `Deno.desktop.dialog.showMessageBox` (from
@@ -527,10 +518,10 @@ export function supportsSidecarIntegrity(version: string): boolean {
  * after the main window closed (Brainwires/deno `feat/app-menu-event`, laufey API 55). Before it
  * the clicks arrive on the main window only.
  *
- * PLACEHOLDER ({@linkcode NEXT_RUNTIME}): no pinned release carries the event yet. Set this to the
- * release that does when the runtime pin moves to it.
+ * `3.0.0-denext.16` (DENEXT.md item 282; there is no `3.0.0-denext.14` or `3.0.0-denext.15`
+ * release).
  */
-export const FIRST_APP_MENU_EVENT_RUNTIME: string = NEXT_RUNTIME;
+export const FIRST_APP_MENU_EVENT_RUNTIME = "3.0.0-denext.16";
 
 /**
  * Whether the Deno Desktop runtime `version` delivers application-menu clicks on `Deno.desktop`
