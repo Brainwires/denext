@@ -642,7 +642,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 `pty` (runtime 3.0.0-denext.12+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
-`system-stats` (runtime after 3.0.0-denext.13, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
+`system-stats` (runtime from 3.0.0-denext.16, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
@@ -3154,7 +3154,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type StoreCommandRunnerSync = (cmd: readonly string[]) => void` — Runs cmd to its exit, synchronously (a signal handler's cleanup; tests pass a fake).
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop. With desktop.update.ui set it first requires the export to carry a sequenced OTA manifest (desktopUiUpdateFloorProblem), so no app ships its UI updater without a downgrade floor.
-- `system: SystemStatsApi` — The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime after 3.0.0-denext.13.
+- `system: SystemStatsApi` — The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime from 3.0.0-denext.16.
 - `interface SystemStats` — One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).
 - `interface SystemStatsApi` — What system is: the aggregate machine load.
 - `interface SystemStatsOptions` — Options for system.stats().
@@ -3244,7 +3244,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
 - `spawnPty(options: PtySpawnOptions): Promise<PtySpawned>` — Start a terminal running an allowed shell.
-- `system: SystemStatsClient` — The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime after 3.0.0-denext.13).
+- `system: SystemStatsClient` — The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime from 3.0.0-denext.16).
 - `interface SystemStats` — One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).
 - `interface SystemStatsClient` — What system is.
 - `interface SystemStatsOptions` — Options for system.stats().
@@ -3331,7 +3331,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/desktop/app`
 
 - `type ActivationPolicy = "regular" | "accessory" | "prohibited"` — The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all.
-- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads "unknown".
+- `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads "unknown".
 - `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
 - `interface AppMenuAction` — A clickable menu item.
 - `type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | "separator"` — One entry of an application, tray or Dock menu.
@@ -3354,7 +3354,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
 - `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.
 - `onAppMenuItem(handler: (id: string) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator).
-- `onDockReopen(handler: (event: { readonly hasVisibleWindows: boolean }) => void): () => void` — Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the main window is shown again first; hasVisibleWindows says whether one was.
+- `onDockReopen(handler: (event: { readonly hasVisibleWindows: boolean }) => void): () => void` — Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the click first reopens the most recently closed keyed window (its key, path and frame), else shows the main window, unless runDesktop({ onDockReopen }) in desktop.ts decides what opens; hasVisibleWindows says whether a window was showing.
 - `onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void` — Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.
 - `type PlatformUnknown = "unknown"` — A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).
 - `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
@@ -4028,6 +4028,57 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `tryAsync<T, E>(fn: () => T | PromiseLike<T>, mapError?: (thrown: unknown) => E): Promise<Result<Awaited<T>, E>>` — Run a throwing (or rejecting) async call and capture the outcome as a Result.
 - `trySync<T, E>(fn: () => T, mapError?: (thrown: unknown) => E): Result<T, E>` — Run a throwing synchronous call and capture the outcome as a Result.
 - `unwrapOr<T, E, U>(result: Result<T, E>, fallback: U): T | U` — The success value, or fallback for a failure.
+
+### `denext/markdown`
+
+- `Markdown(props: MarkdownProps): VNode` — Render Markdown as denext elements, with any element swapped for an app's own component.
+- `interface MarkdownCodeProps extends MarkdownElementProps` — What a code override receives on top of MarkdownElementProps: whether it is a fenced or indented block (inside pre) or an inline code span, and a fence's info string.
+- `type MarkdownComponents = { readonly [tag: string]: Component<any> | string | undefined }` — Element overrides for Markdown, keyed by the lower-case tag the HTML renderer would write (h1…h6, p, a, img, code, pre, ul, ol, li, blockquote, aside (callouts), table, th, td, em, strong, sup, section, …). A component renders that element in place of the built-in one; a tag name renames it ({ h1: "h2" }).
+- `interface MarkdownElementProps` — The props a Markdown element override receives: the element's attributes in React spelling (className, htmlFor, href, id, src, alt, …) and its rendered children.
+- `type MarkdownHtmlMode = "escape" | "sanitize"` — How renderMarkdown treats raw HTML in the source: escape it (the default) or sanitize it.
+- `interface MarkdownOptions` — Options for renderMarkdown.
+- `interface MarkdownProps extends MarkdownOptions` — Props of Markdown: the source, the element overrides, and the render options.
+- `type MarkdownUrlKind = "link" | "image"` — What a URL in the source is for: a link's href or an image's src.
+- `renderMarkdown(body: string, options?: MarkdownOptions): string` — Render a Markdown body (frontmatter already stripped) to an HTML string.
+- `sanitizeHtml(html: string, options?: SanitizeOptions): string` — Sanitize an HTML fragment against the allowlist: parse it into a tree and re-serialize it, so only allowed elements and attributes, checked URLs and escaped text come out, every element is closed, and comments, processing instructions, CDATA and doctypes are gone. Idempotent.
+- `interface SanitizeOptions` — Extensions to the sanitizer's built-in allowlist. They can only ADD to it: the hard-denied elements (script, style, iframe, form, svg, math, … and any namespaced or custom element) and attributes (on*, style, srcdoc, formaction, xlink:*, any namespaced name) are refused whatever is listed here.
+
+### `denext/deploy`
+
+- `defineDeployAdapter(adapter: DeployAdapter): DeployAdapter` — Declare a deploy adapter (an identity function that type-checks the object).
+- `denoDeploy(options?: DenoDeployPresetOptions): DeployAdapter` — The Deno Deploy preset: an entrypoint that maps the schedules onto Deno.cron and the cache onto Deno KV, plus the app settings.
+- `interface DenoDeployPresetOptions` — Options for denoDeploy.
+- `DEPLOY_MANIFEST_FILE: "deploy-manifest.json"` — The manifest's file name, under the build directory (.denext/deploy-manifest.json).
+- `DEPLOY_MANIFEST_VERSION: 1` — The manifest format version DeployManifest.version carries.
+- `interface DeployAdapter` — A deploy adapter: prepare writes a target's files from the manifest, and the optional deploy pushes them with the target's own CLI. Declare one in denext.config.ts as deploy: { adapter: fly({ app: "my-app" }) }, or contribute one from a plugin with addDeployAdapter.
+- `interface DeployAssetGroup` — One directory of files the server serves as they are, with the Cache-Control it sends.
+- `interface DeployCache` — The data / page (ISR) cache store the config chooses.
+- `interface DeployCompile` — What denext build --compile produced.
+- `interface DeployConfig` — The deploy key of denext.config.ts.
+- `interface DeployContext` — What an adapter's prepare and deploy receive.
+- `interface DeployEnvVar` — An environment variable the app reads.
+- `interface DeployImages` — The built-in image optimizer.
+- `interface DeployJob` — A job under jobs/.
+- `interface DeployManifest` — The deploy manifest denext build writes to .denext/deploy-manifest.json.
+- `interface DeployNetPermissions` — DeployPermissions.net: the outbound hosts and the listen addresses.
+- `interface DeployPermissions` — The Deno permissions the production server runs with.
+- `interface DeployRoute` — One route of the app, classified for a host.
+- `type DeployRouteKind = "static" | "isr" | "dynamic" | "route-handler" | "middleware"` — How a route is served, as a host needs to know it: - "static" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - "isr" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - "dynamic" — rendered per request (dynamic = "force-dynamic", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - "route-handler" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - "middleware" — the root middleware.ts / proxy.ts: runs before every matched request.
+- `interface DeployRunOptions` — Options for DeployContext.run.
+- `interface DeploySchedule` — One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.
+- `interface DeployServer` — How the production server is started.
+- `interface DeployServerTls` — DeployServer.tls: the certificates the server serves HTTPS with.
+- `interface DeployService` — A supervised service under services/, started with the server.
+- `interface DeployTlsCertificate` — One certificate of DeployServerTls.
+- `interface DeployWriteOptions` — Where DeployContext.writeFile writes.
+- `docker(options?: DockerPresetOptions): DeployAdapter` — The Docker preset: the production image denext generate docker writes (and its compose stack, with stack: true).
+- `interface DockerPresetOptions` — Options for docker.
+- `fly(options?: FlyPresetOptions): DeployAdapter` — The Fly.io preset: the Docker image and a fly.toml.
+- `interface FlyPresetOptions` — Options for fly.
+- `genericHost(options?: GenericHostPresetOptions): DeployAdapter` — The generic-host preset: a systemd unit, nginx and Caddy snippets and an env example.
+- `interface GenericHostPresetOptions` — Options for genericHost.
+- `staticHost(options?: StaticPresetOptions): DeployAdapter` — The static-host preset: refuse an app that needs a server, else export it with cache headers.
+- `interface StaticPresetOptions` — Options for staticHost.
 
 ### `denext/signals`
 

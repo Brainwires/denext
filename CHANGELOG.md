@@ -65,6 +65,11 @@ and this project adheres to
   `node:http` and npm clients. The security, runtime reference, deployment targets, deploy,
   desktop and getting-started pages, the README, AGENTS.md, POLICIES.md and MISSION.md now use the
   same wording.
+- **The docs match 4.15's runtime.** The runtime reference gives every version in full
+  (`2.9.7-denext.15`, `3.0.0-denext.16`) and, with the desktop runtime page, covers what
+  `3.0.0-denext.16` adds; `denext/markdown` and `denext/deploy` are in the API reference; and the
+  config, deployment, backend, desktop, toolchain and auth pages are corrected where they had
+  drifted from the code.
 
 ## [4.15.0] - 2026-11-10
 

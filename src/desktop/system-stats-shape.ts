@@ -69,7 +69,7 @@ export interface DenoSystemStatsSampler {
 }
 
 /**
- * `Deno.desktop.systemStats` (denext's Deno Desktop runtime after 3.0.0-denext.13). Its calls
+ * `Deno.desktop.systemStats` (denext's Deno Desktop runtime from 3.0.0-denext.16). Its calls
  * reject with an error named `"NotCapable"` unless the packaged app bakes the `systemStats`
  * capability (`desktop.capabilities.systemStats`).
  */

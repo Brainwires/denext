@@ -430,6 +430,13 @@ Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with a
 TLS and autoscaling; still set a per-instance `maxConcurrency` (§1) and your
 secrets (`SESSION_SECRET`, etc.) as environment variables.
 
+The `denoDeploy()` preset ([deploy adapters](#deploy-adapters)) writes that entrypoint for you:
+`denext.deploy.ts` registers the build's schedules with `Deno.cron` at its top level, puts the cache
+on Deno KV (`denoKvCacheStore()`) when `cache.store` is unset, and starts the server;
+`.denext/deploy/deno-deploy/app.json` holds the build settings and the one-time
+`deno deploy create` command, and `denext deploy` runs `deno deploy --prod` with
+`DENO_DEPLOY_TOKEN` from the environment.
+
 denext's cache defaults to Deno's built-in `node:sqlite` (a local SQLite file),
 but Deno Deploy has no persistent local filesystem, so the cache falls back to a
 per-instance **in-memory** store there. For a cache that is durable and shared

@@ -36,7 +36,9 @@ denext generate docker --stack && cp .env.example .env && docker compose up -d -
 
 The generated image builds in the image, runs as the unprivileged `deno` user,
 starts with the least-privilege flags
-(`--allow-net --allow-read --allow-env --allow-write=.denext`) and declares a
+(`--allow-net --allow-read --allow-env --allow-write=.denext`, the network grant split into
+`--allow-net-connect --allow-net-listen=:<port>,[::]:<port>` on denext's Deno toolchain) and
+declares a
 `HEALTHCHECK` on `/_denext/health`.
 
 **Persistent state goes on a data volume, never on `/app/.denext`.** `/app/.denext` holds the
@@ -59,7 +61,13 @@ database, an object store and a migrations step:
 ## Deno Deploy
 
 Point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with `start .` (or run
-`deno task build` in a build step). What the platform changes:
+`deno task build` in a build step), or let the `denoDeploy()` preset write the entrypoint:
+`deploy: { adapter: denoDeploy({ org, app }) }` in `denext.config.ts` makes every build write
+`denext.deploy.ts`, which registers the build's schedules with `Deno.cron` at its top level (where
+Deno Deploy records an app's crons), puts the cache on Deno KV when `cache.store` is unset (attach
+a KV database), then starts the server, plus `.denext/deploy/deno-deploy/app.json` with the build
+settings; `denext deploy` pushes with `DENO_DEPLOY_TOKEN`
+([Deployment › Deploy adapters](/docs/deploy#deploy-adapters)). What the platform changes:
 
 - **No persistent disk**: the cache is per-isolate memory (`/_denext/health`
   reports `"cacheStore": "memory"`), job history is a fragment that resets when
@@ -86,7 +94,8 @@ Recipe: [Deployment › Deno Deploy](/docs/deploy#deno-deploy).
 A unit that runs
 `deno run --allow-net --allow-read --allow-env --allow-write=.denext
 jsr:@denext/denext@^4.0.0/cli start .`
-with `Restart=always`, `Environment=PORT=3000` and the secrets;
+(`genericHost()` writes the network grant as `--allow-net-connect` plus an `--allow-net-listen`
+for its loopback port on denext's toolchain) with `Restart=always`, `Environment=PORT=3000` and the secrets;
 `denext task build` (or `deno task build`) in the deploy step, then `systemctl restart my-app`. Front it
 with nginx or Caddy for TLS and the connection ceiling. For a zero-downtime
 restart run two units on two ports and switch the upstream, or accept the drain
@@ -279,9 +288,11 @@ value is read as evaluated: `denext start` and `generate docker` take what the l
 recorded in `.denext/deploy-manifest.json` (so `idleTrim: isProd ? false : true` works), and only
 before a first build read the file's text, comments ignored. A `build --compile` binary has the
 trim baked in, and a flag baked into a binary can't be removed when it runs, so
-`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead: the binary wakes its
-event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is never idle
-long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
+`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead. Under the pinned
+runtime (from `3.0.0-denext.16`, which reads `DENO_UNSTABLE_IDLE_TRIM` again each time a trim is
+due) the binary sets `DENO_UNSTABLE_IDLE_TRIM=0` for itself. On an older runtime it falls back to
+waking its event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is
+never idle long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
 ## Resource limits
 
@@ -715,8 +726,9 @@ That is the skew rule in `src/cli/self-exec.ts`:
 
 That child runs on denext's own Deno toolchain, downloaded and SHA-256-verified
 on first need, so no Deno install is required. Offline on first use, with no
-toolchain cached, it needs a `deno` on PATH
-([Known limitations](/docs/limitations)).
+toolchain cached, the command stops and prints the fix (`denext toolchain
+install` once online, or an explicit `DENEXT_DENO=stock | <path>` opt-out); it
+never runs another Deno on its own ([Known limitations](/docs/limitations)).
 
 See also: [Production checklist](/docs/production-checklist),
 [Deployment](/docs/deploy), [Multi-instance](/docs/multi-instance),

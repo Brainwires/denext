@@ -314,8 +314,8 @@ at all.
 - `DENEXT_REVOCATION_CHECK=0` turns the check off. A pin file override
   (`DENEXT_TOOLCHAIN_PIN_FILE`) and `DENEXT_DENO=stock | <path>` are never checked.
 
-Until the maintainers' signing key is compiled into a denext release, the check does nothing: no
-list is read and nothing is fetched.
+The maintainers' two public keys (an active one and an offline backup, so a key rotates with no
+gap) are compiled into denext from 4.11.8; a list signed by neither is refused.
 
 ## esbuild
 

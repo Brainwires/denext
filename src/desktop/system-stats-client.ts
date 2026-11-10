@@ -134,7 +134,7 @@ function onStats(
 
 /**
  * The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add
- * system-stats`, denext's Deno Desktop runtime after 3.0.0-denext.13).
+ * system-stats`, denext's Deno Desktop runtime from 3.0.0-denext.16).
  */
 export const system: SystemStatsClient = {
   stats: async (options) =>

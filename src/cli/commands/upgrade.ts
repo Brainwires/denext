@@ -452,7 +452,7 @@ function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
   console.log(
     `\n${editor.written ? "Added" : "Would add"} "deno.unstable": ["tsgo-lsp"] to ` +
       `${relative(dir, editor.path)}: the editor's Deno language server runs TypeScript 7 ` +
-      `(DENEXT_TSGO_LSP=0 leaves it out; "deno.unstable": [] keeps TypeScript 6).`,
+      `(DENEXT_TSGO_LSP=0 leaves it out; DENO_UNSTABLE_TSGO_LSP=0 keeps TypeScript 6).`,
   );
 }
 

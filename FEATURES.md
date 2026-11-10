@@ -741,6 +741,42 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
   resolves to `{ window, trust, emit }` for pushing OS events to the page. —
   `src/desktop/extension.ts`, `src/build/desktop.ts`.
+- **Terminals in a desktop app** — the `pty` capability (runtime 3.0.0-denext.12+,
+  `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `attachPty` /
+  `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
+  to its window (`onWindowClose: "kill" | "detach"`, `replayBytes` replayed on attach), and
+  only the absolute `shells` listed in the config can start (baked as the app's
+  `--allow-run`). Windows has no terminals yet (`unsupported`). — `src/desktop/caps/pty.ts`.
+- **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
+  origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
+  origin and screen capture are refused, the OS's consent still applies (macOS asks with
+  `usageDescription`), and with Windows' privacy switch off the window refuses the device
+  (`checkPermission` reads `blocked`). — `src/build/desktop-media-capture.ts`,
+  `src/build/desktop-capabilities.ts`.
+- **System stats** — the `systemStats` capability (runtime 3.0.0-denext.16):
+  `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` give the machine's
+  aggregate CPU, GPU and memory load in percent, sampled natively with no Deno permission
+  and no per-process data. — `src/desktop/caps/system-stats.ts`,
+  `src/desktop/system-stats-client.ts`.
+- **Windows that come back** — a keyed window (`windows.open({ key })`, `openWindow({ key })`)
+  keeps its frame in `windows.json` and reopens there, clamped onto a connected display;
+  `desktop.app.restoreWindows: true` reopens the last session's windows at launch, the
+  `desktop.menu.window` items add New Window and Reopen Closed Window, and a Dock click with no
+  window showing reopens the last closed one. — `src/desktop/app-windows.ts`,
+  `src/desktop/window-store.ts`.
+- **Native message boxes for extensions** — `host.confirm({ message, detail, buttons,
+  defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
+  TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window
+  open (runtime 3.0.0-denext.16). — `src/desktop/extension.ts`.
+- **Traffic lights where the page wants them** — `desktop.window.windowButtonPosition` (and a
+  window's own option) places the macOS window buttons under a hidden title bar; ignored on
+  Windows and Linux. — `src/desktop/window-config.ts`.
+- **Linux desktop entry and AppStream metadata** — `desktop.linux.desktopEntry` (categories,
+  keywords, `GenericName`, `StartupWMClass`, `MimeType`) goes into every `.desktop` file the
+  packages carry, the bundle's own entry is rewritten with the app's name and icon, and the
+  `.deb` / `.rpm` and AppImage ship an AppStream metainfo file for software centres
+  (`desktop.linux.appImage.requires` lists the host libraries an AppImage needs). —
+  `src/build/desktop-linux-entry.ts`.
 - **Desktop kitchen sink, window-tested** — `examples/desktop-kitchen-sink`
   turns on every capability, packages the app on the pinned runtime and asserts
   each from the page (deep links, a second instance, a real update installed and
@@ -1031,7 +1067,7 @@ cache uses Deno's built-in `node:sqlite`.)
 ## Build, tooling & CLI
 
 - **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
-  themselves on a pinned `2.9.7-denext.N` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  themselves on a pinned `3.0.0-denext.16` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
   compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and

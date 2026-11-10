@@ -195,7 +195,8 @@ and images), file drag and drop in both directions, global shortcuts, launch at 
 API (`denext/desktop/window`: fullscreen, maximize, minimum and maximum size, screens, title-bar
 styles, Mica, Acrylic and vibrancy, a cancelable close). Sign-in uses the system browser or
 `ASWebAuthenticationSession`; native passkeys work in the window on macOS and Windows (Linux, which
-has no OS passkey API, signs in through the browser); `denext/desktop/clerk` runs Clerk's
+has no OS passkey API, takes USB security keys natively from runtime 3.0.0-rc.1 and signs in
+through the browser otherwise); `denext/desktop/clerk` runs Clerk's
 Electron bridge unchanged. Updates are **signed full-app self-updates** with downgrade protection, an
 atomic swap and automatic rollback. Node-API addons load on all three operating systems, and
 `defineDesktopExtension` exposes your own Deno code to the page. Packaging bakes least-privilege

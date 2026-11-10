@@ -424,7 +424,7 @@ Deno.test("appCapabilities: the session facts pass a whitelist; anything else re
     wire = { windowBlur: "<b>", passkeys: true };
     caps = await appCapabilities();
     assertEquals([caps.windowBlur, caps.passkeys], ["unknown", "unknown"]);
-    // Windows' microphone and camera privacy switches (the runtime after 3.0.0-denext.13), with the reason.
+    // Windows' microphone and camera privacy switches (the runtime from 3.0.0-denext.16), with the reason.
     assertEquals(
       [
         caps.microphoneAccess,

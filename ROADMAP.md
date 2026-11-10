@@ -155,8 +155,6 @@ seeded fallback. No Deno has the hook below yet.
 
 ## Server and CLI features
 
-- **A compiled binary disarms baked limits for `job` / `db`** (depends on `compile.limits`). _Why
-  5.x: follows `compile.limits`._
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
   11-24); 5.0 only if it ships after that._
 - **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by

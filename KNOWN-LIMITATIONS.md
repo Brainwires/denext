@@ -711,7 +711,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   packaged build. The OS then has its own say. macOS asks once per app (TCC), and an unsigned or
   ad-hoc signed build may be refused without asking. On Windows the privacy switches (Settings ›
   Privacy & security › Microphone / Camera, including "Let desktop apps access…") refuse the
-  device. From the runtime after 3.0.0-denext.13 the window refuses up front (`NotAllowedError`),
+  device. From runtime 3.0.0-denext.16 the window refuses up front (`NotAllowedError`),
   `checkPermission` reads `"blocked"` and `appCapabilities()` reports
   `microphoneAccess` / `cameraAccess: "denied"` with the switch. Before it, the engine fails to
   open the device with its own error and nothing reports why. Linux has no OS consent for the

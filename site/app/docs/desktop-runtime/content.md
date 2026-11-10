@@ -119,9 +119,12 @@ ours is open yet.
 | [Drag and drop](#drag-and-drop)                                                              | laufey, Deno, denext | planned                                                                      |
 | [Title bar preferences](#title-bar-preferences)                                              | laufey, Deno, denext | planned                                                                      |
 | [Native file dialogs](#native-file-dialogs)                                                  | laufey, Deno, denext | planned                                                                      |
+| [Native message boxes](#native-message-boxes)                                                | laufey, Deno runtime | planned                                                                      |
 | [Page downloads](#page-downloads)                                                            | laufey, Deno runtime | planned                                                                      |
 | [The secure store on Linux](#the-secure-store-on-linux)                                      | laufey, Deno, denext | planned                                                                      |
 | [The secure store on macOS](#the-secure-store-on-macos)                                      | laufey, Deno, denext | planned                                                                      |
+| [Baked capabilities](#baked-capabilities)                                                    | Deno runtime, denext | planned                                                                      |
+| [System stats](#system-stats)                                                                | Deno runtime, denext | planned                                                                      |
 | [The rich clipboard](#the-rich-clipboard)                                                    | laufey, Deno, denext | planned                                                                      |
 | [Global shortcuts](#global-shortcuts)                                                        | laufey, Deno, denext | planned                                                                      |
 | [Launch at login](#launch-at-login)                                                          | laufey, Deno, denext | planned                                                                      |
@@ -138,6 +141,8 @@ ours is open yet.
 | [Signed full-app self-updates](#signed-full-app-self-updates)                                | Deno runtime, denext | builds on deno#36421; ours planned                                           |
 | [Reliability fixes](#reliability-fixes)                                                      | laufey               | planned                                                                      |
 | [Build fixes](#build-fixes)                                                                  | laufey               | [laufey#85](https://github.com/littledivy/laufey/pull/85)                    |
+| [A minimal environment for spawned programs](#a-minimal-environment-for-spawned-programs)    | Deno runtime         | planned                                                                      |
+| [Turning a baked idle trim off](#turning-a-baked-idle-trim-off)                              | Deno runtime         | planned                                                                      |
 | [Cargo-style concurrency locks](#cargo-style-concurrency-locks)                              | Deno CLI             | in progress for upstream                                                     |
 
 The [Desktop apps](/docs/desktop) guide covers each of these from the page's side.
@@ -444,6 +449,21 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
+### Native message boxes
+
+- **What:** `Deno.desktop.dialog.showMessageBox([window,] options)` (from `3.0.0-denext.16`, laufey
+  API 54): the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog) with the app's
+  button labels and Electron's options (`message`, `detail`, `title`, `type`, `buttons`,
+  `defaultId`, `cancelId`, `window`). It resolves `{ response, cancelled }`: the pressed button's
+  index, or `cancelId` (else -1) with `cancelled: true` when the box was dismissed without a
+  button. Without a window it is app-modal and needs no window open. It never blocks the runtime,
+  and several may be open at once. `windowCapabilities().messageDialogs` says whether it works; the
+  Winit backend, or no display, rejects with an `Error`.
+- **Why:** stock Deno Desktop had only the page's `alert` / `confirm`, which need a window, so a
+  quit guard or a tray app with every window closed couldn't ask the user anything.
+- **Layer:** laufey, Deno runtime.
+- **Upstream:** planned.
+
 ### Page downloads
 
 - **What:** a page's `<a download>`, a `Content-Disposition: attachment` response or a blob export
@@ -537,6 +557,39 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
+### Baked capabilities
+
+- **What:** the embedded `.deno-desktop/app.json` takes `"capabilities": string[]` (from
+  `3.0.0-denext.16`): the desktop capabilities the app's packaging baked in. The runtime knows
+  `"secureStore"` and `"systemStats"`, and ignores a name it doesn't know, so a newer packager can
+  bake one an older runtime has no API for. `Deno.desktop.secureStore` and
+  `Deno.desktop.systemStats` answer when their capability is baked **or** an unscoped
+  `--allow-sys` is granted; with neither they reject `NotCapable`, naming both fixes. denext writes
+  the list from `desktop.capabilities` on a runtime that reads it, and then bakes no
+  `--allow-sys` for the secure store.
+- **Why:** the store is shared by every app of the user, so it was gated on the whole `sys` grant:
+  an app that wanted a keychain had to grant every other `sys` read too.
+- **Layer:** Deno runtime, denext.
+- **Upstream:** planned.
+
+### System stats
+
+- **What:** `Deno.desktop.systemStats.createSampler()` (from `3.0.0-denext.16`) returns a sampler
+  whose `stats({ perCore })` resolves to `{ at, cpu: { total, cores? }, gpu: { utilization,
+  devices? }, memory: { pressure, usedBytes?, totalBytes? } }` (percent figures 0-100 with one
+  decimal, `null` when unknown) and whose `onStats(cb, { intervalMs, perCore })` calls back every
+  `intervalMs` (at least 1000) until unsubscribed; `close()` stops it. Each sampler keeps its own
+  previous CPU snapshot, so its CPU figure is the share since its previous sample. It samples only
+  on a call or a tick, with no background thread, and skips a tick while the app has windows and
+  every one is hidden. macOS reads Mach and IOKit, Linux `/proc` plus amdgpu and NVIDIA's NVML,
+  Windows the system-time, memory and PDH GPU counters. Aggregate figures only: no per-process
+  data, host names or device serials. It needs the baked `systemStats` capability or an unscoped
+  `--allow-sys`, and no other permission.
+- **Why:** a desktop app that shows the machine's load had to read `/proc` under `--allow-read`,
+  run `ioreg` or `nvidia-smi` under `--allow-run`, or reach Mach and IOKit through `--allow-ffi`.
+- **Layer:** Deno runtime, denext (`system.stats` / `system.onStats`).
+- **Upstream:** planned.
+
 ### The rich clipboard
 
 - **What:** `Deno.desktop.clipboard` reads and writes text, HTML and PNG images, lists
@@ -581,8 +634,13 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 - **What:** menu `accelerator`s work on every backend (`menuCapabilities()` says what each
   supports), `showContextMenu` resolves with the chosen item (`null` when dismissed) and fires
   `contextmenuclose`, and the Dock badge clears with `setBadge(null)`.
+  From `3.0.0-denext.16` (laufey API 55) every application-menu click also reaches the app as
+  `Deno.desktop`'s `"menuclick"` (`{ id, windowId }`), after the window's own `"menuclick"`, with
+  the window that set the menu open or not.
 - **Why:** accelerators were bound on macOS only, a context menu gave no answer when dismissed,
-  and `setBadge(null)` showed the text "null" because the op coerced its argument to a string.
+  and `setBadge(null)` showed the text "null" because the op coerced its argument to a string. The
+  menu's clicks came only through the window that set it, so on macOS an app kept running with its
+  windows closed had a menu bar whose items did nothing.
 - **Layer:** laufey, Deno runtime, denext (`denext/desktop/app`).
 - **Upstream:** planned.
 
@@ -846,6 +904,32 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   the CLI and the desktop runtime). [`postgresClient()`](/docs/database#postgres) runs on it.
 - **Why:** a Postgres client with no npm dependency.
 - **Layer:** a Deno extension (`ext/sql`), in the CLI and `libdenort`.
+- **Upstream:** planned.
+
+### A minimal environment for spawned programs
+
+- **What:** `--clean-run-env[=<VARIABLE_NAME>...]` (from `3.0.0-denext.16`, opt-in) makes a program
+  the app spawns (`Deno.Command`, `Deno.run`, `Deno.openPty`, `node:child_process`) inherit only
+  `PATH`, `HOME`, `LANG`, `LC_*`, `TERM`, `TMPDIR` / `TEMP` / `TMP`, `USER` / `USERNAME` and, on
+  Windows, its system variables, plus the names listed (`NAME` or `PREFIX*`). What a caller passes
+  in `env` is still set, and `clearEnv: true` still means exactly the caller's environment. A
+  worker spawns under its parent's rule, and `deno compile` (so a desktop app too) carries the
+  flag. The `run` prompt and the `--allow-run` help now say that run access is effectively full
+  trust.
+- **Why:** only `LD_*` / `DYLD_*` were kept from a spawned program, but many programs run code
+  named by other variables (`BASH_ENV`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `GIT_*`, …).
+- **Layer:** Deno runtime (permissions, `ext/process`, `ext/node`).
+- **Upstream:** planned.
+
+### Turning a baked idle trim off
+
+- **What:** `DENO_UNSTABLE_IDLE_TRIM=0` turns the idle trim off (from `3.0.0-denext.16`): at start
+  it wins over a compiled program's baked `--unstable-idle-trim`, and the variable is read again
+  each time a trim is due, so `Deno.env.set("DENO_UNSTABLE_IDLE_TRIM", "0")` turns it off from the
+  program's own code.
+- **Why:** the environment could only turn a baked trim on, so a deployment that wanted it off had
+  to recompile, and denext's compiled server could hold it off only with a timer of its own.
+- **Layer:** Deno runtime.
 - **Upstream:** planned.
 
 ### Cargo-style concurrency locks
