@@ -116,6 +116,9 @@ and this project adheres to
   features this release gates on the next runtime (native message boxes for `host.confirm`,
   app-wide application-menu clicks, the baked capability list and `DENO_UNSTABLE_IDLE_TRIM=0`
   turning a compiled binary's idle trim off) take effect from 3.0.0-denext.16.
+- **The runtime provenance check accepts builds from the runtime repository's own runners.**
+  `gh attestation verify` still requires the release workflow and the pinned tag, and every archive
+  still matches its pinned SHA-256; it no longer requires the build machine to be GitHub-hosted.
 - **The Linux secure-store probe looks up an account no caller can name**
   (`-denext-secure-store-probe`): a page key can no longer coincide with it.
 

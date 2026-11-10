@@ -1028,7 +1028,8 @@ machine, and whether `deno` is the version it needs.
 | `DENEXT_DESKTOP_RUNTIME_ATTEST=0`  | Never run it (unset: run it when `gh` is signed in, else say so).                |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
-(`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
+(`.github/workflows/denext_runtime.yml`) built from the pinned tag. The build may run on a
+GitHub-hosted runner or on one of the runtime repository's own self-hosted runners.
 
 A new runtime release is pinned in the denext repository with
 `deno task desktop:pin-runtime <tag>` (for example `denext-runtime-v2.9.7-denext.6`). It reads the

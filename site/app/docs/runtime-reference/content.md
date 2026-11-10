@@ -23,7 +23,7 @@ number (there is no upstream Deno 3.0; denext checks the marker too):
 
 ```ts
 if (Deno.build.denext) {
-  console.log(`denext's Deno ${Deno.build.denext}`); // "3.0.0-denext.13"
+  console.log(`denext's Deno ${Deno.build.denext}`); // "3.0.0-denext.16"
 } else {
   console.log("stock Deno: Deno.SQL and the other additions are not here");
 }
@@ -31,17 +31,17 @@ if (Deno.build.denext) {
 
 ```text
 $ deno --version
-deno 3.0.0-denext.13 (stable, release, aarch64-apple-darwin)
+deno 3.0.0-denext.16 (stable, release, aarch64-apple-darwin)
 v8 15.6.75.38-rusty
 typescript 6.0.3
-denext 3.0.0-denext.13 (Brainwires)
+denext 3.0.0-denext.16 (Brainwires)
 ```
 
 | What                       | Detail                                                                                                                                                                                            | Since        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | `Deno.build.denext`        | The runtime's version, a string, in the main thread and in workers. `undefined` on stock Deno.                                                                                                    | `3.0.0-rc.3` |
 | `deno --version` last line | `denext <version> (Brainwires)`; `deno -V` stays one line.                                                                                                                                        | `3.0.0-rc.3` |
-| `Deno.version.deno`        | The fork's own version (`3.0.0-denext.13`), also in the user agent (`Deno/3.0.0-denext.13`). Before `3.0.0-rc.1` it was `2.9.7-denext.N`.                                                         | `3.0.0-rc.1` |
+| `Deno.version.deno`        | The fork's own version (`3.0.0-denext.16`), also in the user agent (`Deno/3.0.0-denext.16`). Before `3.0.0-rc.1` it was `2.9.7-denext.N`.                                                         | `3.0.0-rc.1` |
 | `deno upgrade`             | Refuses to run in a release build, and the background update check is off: upstream's channels would replace the fork with stock Deno. Use `denext upgrade` or `denext toolchain install`.        | `3.0.0-rc.1` |
 | Release channel            | `deno --version` says `stable`, the channel of the Deno release the build is made from (2.9.8). `npm` `engines.deno` ranges are checked against that release, not against the prerelease version. | `3.0.0-rc.1` |
 
@@ -49,8 +49,8 @@ The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then
 `3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, … (there is no `3.0.0-denext.4`, `3.0.0-denext.9`, `3.0.0-denext.11`, `3.0.0-denext.14` or `3.0.0-denext.15` release). That is semver's order with one
 exception: denext ranks the `3.0.0-denext.N` releases above every `3.0.0-rc.N`, where plain semver
 would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS line, and
-denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.13`, so the rows marked "rc.6",
-"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7", "denext.8", "denext.10", "denext.12" and "denext.13" below apply to it (there is no `3.0.0-denext.9`, `3.0.0-denext.11`, `3.0.0-denext.14` or `3.0.0-denext.15` release). Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
+denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.16`, so the rows marked "rc.6",
+"denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7", "denext.8", "denext.10", "denext.12", "denext.13" and "denext.16" below apply to it (there is no `3.0.0-denext.9`, `3.0.0-denext.11`, `3.0.0-denext.14` or `3.0.0-denext.15` release). Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
 escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From
@@ -198,7 +198,7 @@ A `vitest.config.*`, a `vite.config.*` of a Vitest project, a `jest.config.*` or
 `moduleNameMapper`, `testEnvironment`, `fakeTimers` and the rest. Module mocking (`vi.mock`,
 `vi.hoisted`, `vi.importActual`, `vi.spyOn(namespace, "export")`, `jest.mock`), snapshots and fake
 timers work as in Vitest and Jest. Each test is a `Deno.test`, so `--filter`, the reporters and
-the summary see one test per Vitest test. Since `denext.14`. `denext test` runs your
+the summary see one test per Vitest test. Since `denext.16`. `denext test` runs your
 `*.vitest.ts` files this way ([Toolchain](/docs/toolchain#denext-task-deno-task-and-tests)).
 
 | Behavior                              | What                                                                                                                                                                                                                               | Since        |
