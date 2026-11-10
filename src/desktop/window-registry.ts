@@ -238,6 +238,11 @@ export interface WindowRegistry {
   interceptClose(id: string, event: Event): boolean;
   /** The open window opened with `key`. */
   byKey(key: string): RegisteredWindow | undefined;
+  /**
+   * The key window: the open app window (not the tray panel) that had the focus last, else the
+   * one opened last; `undefined` with no app window open.
+   */
+  keyWindow(): RegisteredWindow | undefined;
   /** Load another app path in window `id` (a keyed window's session follows); unknown id: nothing. */
   navigate(id: string, path: string): void;
   /** The open windows as the lifecycle hooks see them. */
@@ -527,6 +532,8 @@ interface RegistryState {
   lifecycle?: WindowLifecycle;
   nextId: number;
   anyBound: boolean;
+  /** The ids of the windows that had the focus, most recent first (each once). */
+  focusOrder: string[];
 }
 
 /** One window as the lifecycle hooks see it. */
@@ -598,7 +605,10 @@ function register(
   st.windows.set(id, entry);
   st.tokens.set(token, id);
   controller.install();
-  window.addEventListener("focus", () => st.options.emit("windows", "focus", { id }));
+  window.addEventListener("focus", () => {
+    st.focusOrder = [id, ...st.focusOrder.filter((f) => f !== id)];
+    st.options.emit("windows", "focus", { id });
+  });
   window.addEventListener("blur", () => st.options.emit("windows", "blur", { id }));
   st.options.emit("windows", "opened", infoOf(entry));
   lifecycleOf(st).windowOpened(infoOf(entry));
@@ -644,6 +654,7 @@ function closed(st: RegistryState, id: string): void {
   if (!entry) return;
   st.windows.delete(id);
   st.tokens.delete(entry.token);
+  st.focusOrder = st.focusOrder.filter((f) => f !== id);
   const quitting = isAppQuitting(st.options.api);
   const endsApp = appWindows(st) === 0 && !st.options.keepAlive();
   saveFrame(st, id, boundsOf(entry.window));
@@ -663,6 +674,15 @@ function closed(st: RegistryState, id: string): void {
   // With quit hooks, a quit's last close is held by the lifecycle while they run, and the runtime
   // ends the process once the quit is issued again; without any, the exit is immediate, as ever.
   if (endsApp && (!quitting || !lifecycle.hasQuitWork())) lifecycle.endApp();
+}
+
+/** The key window ({@linkcode WindowRegistry.keyWindow}). */
+function keyWindow(st: RegistryState): RegisteredWindow | undefined {
+  for (const id of st.focusOrder) {
+    const w = st.windows.get(id);
+    if (w && w.kind !== "panel") return w;
+  }
+  return [...st.windows.values()].filter((w) => w.kind !== "panel").at(-1);
 }
 
 /** A keyed window the user closed: first in {@linkcode RegistryState.recent}, its key once. */
@@ -1074,6 +1094,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     warn,
     nextId: 1,
     anyBound: false,
+    focusOrder: [],
   };
   let router: DesktopCapability | undefined;
   const capability: DesktopCapability = {
@@ -1127,6 +1148,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     closed: (id) => closed(st, id),
     interceptClose: (id, event) => interceptClose(st, id, event),
     byKey: (key) => byKey(st, key),
+    keyWindow: () => keyWindow(st),
     navigate: (id, path) => {
       const entry = st.windows.get(id);
       if (entry) navigateWindow(st, entry, path);

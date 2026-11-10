@@ -7,11 +7,12 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import type {
-  DesktopCapability,
-  DesktopExtensionHost,
-  DesktopWindowClosedInfo,
-  DesktopWindowInfo,
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopExtensionHost,
+  type DesktopWindowClosedInfo,
+  type DesktopWindowInfo,
 } from "../src/desktop/extension.ts";
 import type { DesktopAppApi } from "../src/desktop/launch-events.ts";
 import { createWindowController } from "../src/desktop/caps/window.ts";
@@ -455,6 +456,178 @@ Deno.test("guards: the setup host and DesktopRuntime-shaped subscriptions reach 
   off();
   assertEquals(api.quit!(), true, "no guard, no quit hook: the quit goes straight through");
   assertEquals(exits, [0], "the last close's exit, as before");
+});
+
+// --- a guard that waits for the user, and a quit asked for again --------------------------------
+
+/** The OS's session end as the runtime starts it: a cancelable `beforequit` with that reason. */
+function sessionEnd(api: EventTarget): boolean {
+  const event = new Event("beforequit", { cancelable: true });
+  Object.defineProperty(event, "reason", { value: "session-end" });
+  api.dispatchEvent(event);
+  return !event.defaultPrevented;
+}
+
+/** Wait `ms`. */
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+Deno.test("guards: the deadline stops while a guard's message box is up and goes on when it closes", async () => {
+  // The guards' deadline is 100 ms here; the user takes longer than that to answer.
+  const { reg, api, quits, cancels, warnings } = registry();
+  let box = Promise.withResolvers<number>();
+  let opened = 0;
+  reg.lifecycle.onBeforeQuit(async () => {
+    opened++;
+    return (await reg.lifecycle.whileGuardAsks(box.promise)) === 0;
+  });
+  assertEquals(api.quit!(), false, "held for the guard");
+  await until(() => opened === 1);
+  await wait(250);
+  assertEquals([quits.length, cancels.length], [0, 0], "never quit under an unanswered box");
+  assert(!warnings.some((w) => w.includes("gave no answer")));
+  box.resolve(1); // "Cancel"
+  await until(() => cancels.length === 1);
+  assertEquals(quits.length, 0);
+  box = Promise.withResolvers<number>();
+  api.quit!();
+  await until(() => opened === 2);
+  await wait(250);
+  box.resolve(0); // "Quit Anyway"
+  await until(() => quits.length === 1);
+});
+
+Deno.test("guards: once the box closes the rest of the deadline runs; a box outside the guards' turn changes nothing", async () => {
+  const { reg, api, quits, warnings } = registry();
+  // Not asking: passed through untouched.
+  assertEquals(await reg.lifecycle.whileGuardAsks(Promise.resolve(7)), 7);
+  reg.lifecycle.onBeforeQuit(async () => {
+    await reg.lifecycle.whileGuardAsks(wait(150));
+    return new Promise<boolean>(() => {}); // then never answers
+  });
+  const at = Date.now();
+  api.quit!();
+  await until(() => quits.length === 1);
+  assert(Date.now() - at >= 230, "the box's time did not count, the rest of the deadline did");
+  assert(warnings.some((w) => w.includes("gave no answer")));
+});
+
+Deno.test("guards: a session end keeps its bound: a box never pauses its deadline", async () => {
+  const { reg, api, quits, warnings } = registry();
+  reg.lifecycle.onBeforeQuit(async () => {
+    await reg.lifecycle.whileGuardAsks(new Promise<never>(() => {})); // nobody answers
+    return true;
+  });
+  const at = Date.now();
+  assertEquals(sessionEnd(api), false, "held for the guard");
+  await until(() => quits.length === 1);
+  assert(Date.now() - at < 1_000, "the 100 ms deadline ran with the box up");
+  assert(warnings.some((w) => w.includes("gave no answer")));
+});
+
+Deno.test("guards: a session end during a plain quit's paused deadline makes it count again", async () => {
+  const { reg, api, quits } = registry();
+  let opened = false;
+  reg.lifecycle.onBeforeQuit(async () => {
+    opened = true;
+    await reg.lifecycle.whileGuardAsks(new Promise<never>(() => {}));
+    return true;
+  });
+  api.quit!();
+  await until(() => opened);
+  await wait(200);
+  assertEquals(quits.length, 0, "paused for the box");
+  const at = Date.now();
+  assertEquals(sessionEnd(api), false, "held: the guards are deciding");
+  await until(() => quits.length === 1);
+  assert(Date.now() - at < 1_000, "bounded once the session end arrived");
+});
+
+/** Two extensions over the registry's lifecycle, each with the host its `setup` got. */
+function twoExtensions(reg: WindowRegistry) {
+  const hosts: Record<string, DesktopExtensionHost> = {};
+  createDesktopBridge(
+    ["a", "b"].map((name) => ({ name, methods: {}, setup: (h) => void (hosts[name] = h) })),
+    { lifecycle: reg.lifecycle },
+  );
+  return hosts;
+}
+
+Deno.test("host.quit: a guard that cancelled and asked quits again; its own guard is not asked twice", async () => {
+  const { reg, api, quits, cancels } = registry();
+  const { a } = twoExtensions(reg);
+  const asked: string[] = [];
+  a.onBeforeQuit(() => (asked.push("a"), false)); // cancel at once, ask, then quit
+  reg.lifecycle.onBeforeQuit(() => (asked.push("other"), true));
+  api.quit!();
+  await until(() => cancels.length === 1);
+  assertEquals(await a.quit(), true);
+  assertEquals(asked, ["a", "other", "other"], "a is skipped, the other guard is asked again");
+  assertEquals(quits.length, 1);
+});
+
+Deno.test("host.quit: two guards that each cancel, ask and quit again end in one quit, not a loop", async () => {
+  const { reg, api, quits } = registry();
+  const { a, b } = twoExtensions(reg);
+  const asked: string[] = [];
+  // Each cancels at once and, the first time, asks its user (who says quit), then quits again.
+  const guard = (name: string, host: DesktopExtensionHost) => () => {
+    asked.push(name);
+    if (asked.filter((x) => x === name).length === 1) setTimeout(() => void host.quit(), 0);
+    return false;
+  };
+  a.onBeforeQuit(guard("a", a));
+  b.onBeforeQuit(guard("b", b));
+  api.quit!();
+  await until(() => quits.length === 1);
+  await wait(50);
+  // The first quit asks both; a's quit asks only b (which refuses again); b's quit asks nobody.
+  assertEquals([asked, quits.length], [["a", "b", "b"], 1]);
+});
+
+Deno.test("host.quit: a quit from anywhere else asks every guard again; another guard's refusal is false", async () => {
+  const { reg, api, cancels, quits } = registry();
+  const { a, b } = twoExtensions(reg);
+  let aAsked = 0;
+  let bAnswer = false;
+  a.onBeforeQuit(() => (aAsked++, false));
+  b.onBeforeQuit(() => bAnswer);
+  api.quit!();
+  await until(() => cancels.length === 1);
+  assertEquals(await a.quit(), false, "b refused");
+  assertEquals(aAsked, 1);
+  // The user quits again: a's approval is gone, so a is asked.
+  bAnswer = true;
+  api.quit!();
+  await until(() => cancels.length === 3);
+  assertEquals([aAsked, quits.length], [2, 0]);
+});
+
+Deno.test("host.quit: from inside its own guard it is refused; while the guards are asked it waits for them", async () => {
+  const { reg, api, quits } = registry();
+  const { a, b } = twoExtensions(reg);
+  let inside: unknown;
+  a.onBeforeQuit(async () => {
+    inside = await a.quit().then(() => "resolved", (err) => err);
+    return true;
+  });
+  const slow = Promise.withResolvers<boolean>();
+  b.onBeforeQuit(() => slow.promise);
+  api.quit!();
+  await until(() => inside !== undefined);
+  assert(inside instanceof DesktopCapError && inside.code === "conflict");
+  // Another quit asked for meanwhile waits for the guards' answer, which lets the quit go.
+  let waited: boolean | undefined;
+  void reg.lifecycle.requestQuit().then((v) => (waited = v));
+  await wait(20);
+  assertEquals([waited, quits.length], [undefined, 0]);
+  slow.resolve(true);
+  await until(() => waited !== undefined);
+  assertEquals([waited, quits.length], [true, 1]);
+});
+
+Deno.test("host.quit: false with no runtime to quit", async () => {
+  const { reg } = registry({ api: false });
+  assertEquals(await twoExtensions(reg).a.quit(), false);
 });
 
 Deno.test("updater: an install held for the quit hooks is issued again as the install, not a plain quit", async () => {

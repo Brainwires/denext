@@ -1260,9 +1260,10 @@ export interface DesktopConfig {
    * opens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the
    * window instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the
    * user closed, most recent first, opened again as pages with their keys and frames; `"list"`: a
-   * submenu of them by title, each reopening its window) and `list`
-   * (the open windows, each focusing its window). On macOS the submenu also carries the standard
-   * Minimize / Zoom / Bring All to Front items.
+   * submenu of them by title, each reopening its window), `list`
+   * (the open windows, each focusing its window) and `items` (the app's own items, whose clicks
+   * reach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the
+   * submenu also carries the standard Minimize / Zoom / Bring All to Front items.
    */
   menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
@@ -1791,7 +1792,26 @@ export interface DesktopMenuConfig {
     reopenClosed?: boolean | "list";
     /** The open windows, each focusing its window when chosen. */
     list?: boolean;
+    /**
+     * The app's own items, after denext's (at most 32): `id` (unique, at most 128 characters, no
+     * control characters), `label` and an optional `accelerator` (`"CommandOrControl+Shift+W"`).
+     * A click goes to the backend once, never to the pages: `runDesktop({ onWindowMenuItem })` and
+     * an extension's `host.onWindowMenuItem` get the item's `id` and the key window (`null` with no
+     * window open). With no window open the clicks arrive from runtime 3.0.0-denext.16; on an
+     * older runtime only while the main window is open.
+     */
+    items?: readonly DesktopWindowMenuItemConfig[];
   };
+}
+
+/** One of the app's own items in the backend's "Window" submenu ({@link DesktopMenuConfig.window}). */
+export interface DesktopWindowMenuItemConfig {
+  /** What the click reports (unique among the items, at most 128 characters). */
+  id: string;
+  /** The label. */
+  label: string;
+  /** The keyboard shortcut (`"CommandOrControl+Shift+W"`). */
+  accelerator?: string;
 }
 
 /** The backend-owned tray icon ({@link DesktopConfig.tray}). */

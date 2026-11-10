@@ -3182,10 +3182,34 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         resolves with), is asked before any page&apos;s <code>onBeforeQuit</code> /{" "}
         <code>onCloseRequested</code>: returning (or resolving) <code>false</code>{" "}
         cancels the quit. The guards get 5 seconds together, the deadline a page&apos;s guards get;
-        one that throws or runs past it does not cancel, so a quit is never held for good. The OS
-        session-end rules are the pages&apos;: a refusal asks the OS to stop the logout, which macOS
-        ignores for an accessory app, and macOS takes no input for the app while a session end is
-        pending.
+        one that throws or runs past it does not cancel, so a quit is never held for good. While a
+        {" "}
+        <code>host.confirm</code>{" "}
+        box an extension opened during the guards&apos; turn is on screen, the 5 seconds stop
+        counting, so a guard can simply await the user&apos;s answer; they go on when the box
+        closes. The OS session-end rules are the pages&apos;: a refusal asks the OS to stop the
+        logout, which macOS ignores for an accessory app, and macOS takes no input for the app while
+        a session end is pending. A session end (a logout, a shutdown) never pauses the deadline:
+        its 5 seconds always run, box or not, and one that arrives while a plain quit is paused on a
+        box makes the deadline count again, so a session end is never held longer than today (and
+        the OS&apos;s own deadline, 10 seconds on macOS and 4 on Windows, still applies). Answer it
+        without asking.
+      </p>
+      <p id="desktop-host-quit">
+        <code>host.quit()</code> (and <code>app.quit()</code> on what <code>runDesktop()</code>{" "}
+        resolves with) quits the app again, typed: the whole sequence <code>quitApp()</code>{" "}
+        runs, the other guards, the pages&apos; <code>onBeforeQuit</code> /{" "}
+        <code>onCloseRequested</code> and the <code>onAppQuit</code>{" "}
+        hooks included, except that the caller&apos;s own guards are not asked again: it has
+        decided. That suits a guard that cancels at once, asks, then quits. The approval lasts until
+        the quit goes through or a new quit starts from anywhere else (the user, the OS,{" "}
+        <code>quitApp()</code>), so two guards that each cancel, ask and quit again never ask each
+        other round in a loop. Called while the guards are being asked, it waits for their answer
+        first; called from inside the caller&apos;s own guard it rejects with <code>conflict</code>
+        {" "}
+        (return <code>true</code> instead). It resolves <code>true</code>{" "}
+        when the app is quitting, and <code>false</code>{" "}
+        when another guard or a page refused or holds the quit, or with no desktop runtime.
       </p>
       <p id="desktop-host-confirm">
         <code>host.confirm(options)</code>{" "}
@@ -3230,6 +3254,17 @@ export default defineDesktopExtension({
       return choice === 0;
     });
   },
+});`}
+      </Code>
+      <Code lang="ts">
+        {`// desktop/extensions/shells.ts — cancel at once, ask, then quit for real
+host.onBeforeQuit(() => {
+  if (!shells.busy()) return true;
+  void (async () => {
+    const choice = await host.confirm({ message: "End the running shells?", buttons: ["Quit", "Cancel"], cancelId: 1 });
+    if (choice === 0) await host.quit(); // this guard is not asked again
+  })();
+  return false;
 });`}
       </Code>
       <Code lang="ts">
@@ -3294,6 +3329,23 @@ export default defineDesktopExtension({
         else the submenu is appended; the backend answers these items itself, so{" "}
         <code>onAppMenuItem</code> never sees them.
       </p>
+      <p id="desktop-window-menu-items">
+        <code>items: [{"{ id, label, accelerator? }"}]</code>{" "}
+        adds the app&apos;s own items to the same submenu, after denext&apos;s and before the window
+        list (at most 32; ids unique, at most 128 characters). Their clicks go to the backend, not
+        the pages: <code>runDesktop({"{ onWindowMenuItem: (id, { keyWindow }) => … }"})</code>{" "}
+        and an extension&apos;s <code>host.onWindowMenuItem(fn)</code>{" "}
+        are each called once per click, with the item&apos;s <code>id</code> and the key window as
+        {" "}
+        <code>{"{ id, key? }"}</code>{" "}
+        (the app window focused last, with its app key when it was opened with one), or{" "}
+        <code>null</code>{" "}
+        when no window is open. In the native menu the ids carry a reserved prefix, so they never
+        collide with a page&apos;s items (a page&apos;s <code>setAppMenu</code>{" "}
+        may not use it), and no page&apos;s queue sees these clicks. With no window open the clicks
+        still arrive from runtime 3.0.0-denext.16; on an older runtime the items work only while the
+        main window is open.
+      </p>
       <Code lang="ts">
         {`// denext.config.ts
 export default { desktop: { menu: { window: { newWindow: "/", reopenClosed: true, list: true } } } };
@@ -3301,6 +3353,15 @@ export default { desktop: { menu: { window: { newWindow: "/", reopenClosed: true
 // desktop.ts — give New Window its own key and page
 const app = await runDesktop({
   newWindow: ({ suggestedKey }) => ({ url: "/workspace", key: suggestedKey, title: "Workspace" }),
+});
+
+// The app's own item: denext.config.ts
+// desktop: { menu: { window: { items: [{ id: "end", label: "Close Window and End Its Jobs", accelerator: "CommandOrControl+Shift+W" }] } } }
+// desktop.ts — one call per click, with the key window (null with none open)
+await runDesktop({
+  onWindowMenuItem: (id, { keyWindow }) => {
+    if (id === "end" && keyWindow) endJobsAndClose(keyWindow.id);
+  },
 });`}
       </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>

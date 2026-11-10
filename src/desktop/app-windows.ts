@@ -44,7 +44,12 @@ import {
   type WindowRegistry,
 } from "./window-registry.ts";
 import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
-import { createWindowMenu, type DesktopNewWindowHandler, type WindowMenu } from "./window-menu.ts";
+import {
+  createWindowMenu,
+  type DesktopNewWindowHandler,
+  type DesktopWindowMenuItemHandler,
+  type WindowMenu,
+} from "./window-menu.ts";
 import type { DesktopMenuSettings } from "./menu-config.ts";
 import type { SessionWindow } from "./window-store.ts";
 import {
@@ -242,6 +247,8 @@ export interface DesktopWindowsOptions {
   readonly newWindow?: DesktopNewWindowHandler;
   /** `desktop.ts`'s Dock reopen (`runDesktop({ onDockReopen })`). */
   readonly onDockReopen?: DesktopDockReopenHandler;
+  /** `desktop.ts`'s handler of the app's own Window-menu items (`runDesktop({ onWindowMenuItem })`). */
+  readonly onWindowMenuItem?: DesktopWindowMenuItemHandler;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** The running OS (default `Deno.build.os`). */
@@ -313,6 +320,12 @@ export interface DesktopWindowsSetup {
    * is known; how many were reopened (a window that cannot be reopened is a warning).
    */
   restoreSession(): number;
+  /**
+   * Call `fn` once per click on one of the app's own Window-menu items
+   * (`desktop.menu.window.items`), after `runDesktop({ onWindowMenuItem })`'s handler: an
+   * extension host's `onWindowMenuItem`. Returns the unsubscribe.
+   */
+  onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
 }
 
 /** The setup's state. */
@@ -328,6 +341,8 @@ interface SetupState {
   hasTray: boolean;
   /** `desktop.ts`'s `onClosed` handlers, by window id. */
   readonly closedHandlers: Map<string, Set<() => void>>;
+  /** The extensions' handlers of the app's own Window-menu items. */
+  readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -613,6 +628,47 @@ function adoptMain(st: SetupState, registry: WindowRegistry, win: RegistryWindow
   });
 }
 
+/** Call `fn` for a Window-menu item; a throw or a rejection is a warning. */
+function callMenuItemHandler(
+  st: SetupState,
+  fn: DesktopWindowMenuItemHandler,
+  id: string,
+  ctx: Parameters<DesktopWindowMenuItemHandler>[1],
+): void {
+  const failed = (err: unknown) =>
+    st.warn(`the Window menu item "${id}" failed: ${err instanceof Error ? err.message : err}`);
+  try {
+    const out = fn(id, ctx);
+    if (out && typeof (out as Promise<void>).then === "function") {
+      (out as Promise<void>).then(undefined, failed);
+    }
+  } catch (err) {
+    failed(err);
+  }
+}
+
+/**
+ * One of the app's own Window-menu items was chosen: hand it, once, to `desktop.ts`'s handler and
+ * to every extension's, with the key window (`null` with no app window open).
+ */
+function windowMenuItemChosen(st: SetupState, registry: WindowRegistry, id: string): void {
+  const key = registry.keyWindow();
+  const ctx = {
+    keyWindow: key ? { id: key.id, ...(key.key !== undefined ? { key: key.key } : {}) } : null,
+  };
+  const handlers = [
+    ...(st.options.onWindowMenuItem ? [st.options.onWindowMenuItem] : []),
+    ...st.menuItemHandlers,
+  ];
+  if (handlers.length === 0) {
+    st.warn(
+      `the Window menu item "${id}" was chosen, but nothing handles it ` +
+        "(runDesktop({ onWindowMenuItem }) or an extension's host.onWindowMenuItem)",
+    );
+  }
+  for (const fn of handlers) callMenuItemHandler(st, fn, id, ctx);
+}
+
 /** The window menu (`desktop.menu.window`, `runDesktop({ newWindow })`), when either is set. */
 function createMenu(
   st: SetupState,
@@ -627,6 +683,7 @@ function createMenu(
     registry,
     setBackendMenu: (menu) => app.setBackendMenu(menu),
     ...(o.newWindow ? { newWindow: o.newWindow } : {}),
+    onItem: (id) => windowMenuItemChosen(st, registry, id),
     os: st.os,
     warn: st.warn,
   });
@@ -671,6 +728,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     appUrl: (path) => path,
     hasTray: options.wantsTray,
     closedHandlers: new Map(),
+    menuItemHandlers: new Set(),
   };
   const win = typeof options.window === "object" && options.window !== null
     ? options.window as RegistryWindow
@@ -737,6 +795,10 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     ...(st.registry ? { lifecycle: st.registry.lifecycle } : {}),
     ...(st.menu ? { menu: st.menu } : {}),
     restoreSession: () => restoreSession(st),
+    onWindowMenuItem: (fn) => {
+      st.menuItemHandlers.add(fn);
+      return () => void st.menuItemHandlers.delete(fn);
+    },
   };
 }
 

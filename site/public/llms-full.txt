@@ -690,11 +690,17 @@ decides; `app.onDockReopen(fn)` hears every click), `windows.forget(key)` drops 
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
 at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reopenClosed: true, list: true }` adds
 New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s window), Reopen Closed Window
-(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`; its `items: [{ id, label,
+accelerator? }]` add the app's own, whose clicks reach the backend once, never a page: `runDesktop({ onWindowMenuItem:
+(id, { keyWindow }) => … })` / `host.onWindowMenuItem(fn)`, `keyWindow` `{ id, key? }` or `null` with no window open (from
+runtime 3.0.0-denext.16; older: only while the main window is open). An extension follows the windows with `onWindowOpened` / `onWindowClosed`
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
 as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
 `onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
-guards; the OS session-end rules are the pages'); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
+guards, paused while a `host.confirm` box opened then is up, never for a session end, whose 5 s always run; the OS
+session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s result) quits again, typed, guards and pages
+included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
+other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
 is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
 3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`

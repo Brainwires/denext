@@ -15,6 +15,7 @@
 
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
 import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
+import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
 
 export type { StandardSchemaV1 };
 
@@ -205,8 +206,8 @@ export interface DesktopConfirmOptions {
  *
  * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
- * can refuse a quit, and `windows()` lists the open windows now. Each subscription returns its
- * unsubscribe.
+ * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
+ * items, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
  */
 export interface DesktopExtensionHost {
   /**
@@ -246,10 +247,36 @@ export interface DesktopExtensionHost {
    * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when
    * it returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a
    * page's guards get); one that throws or runs past it is logged and does not cancel, so a quit
-   * is never held for good. A refused OS session end asks the OS to stop it, which it may not
-   * honour (macOS ignores an accessory app's refusal). Returns the unsubscribe.
+   * is never held for good. While a {@linkcode DesktopExtensionHost.confirm} box opened during the
+   * guards' turn is on screen the 5 seconds stop counting, so a guard can await the user's answer;
+   * they go on when the box closes. Not for the OS's session end (a logout, a shutdown): its 5
+   * seconds always run (and the OS's own deadline, 10 s on macOS and 4 s on Windows), so answer it
+   * without asking. A refused OS session end asks the OS to stop it, which it may not honour
+   * (macOS ignores an accessory app's refusal). Returns the unsubscribe.
    */
   onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
+  /**
+   * Quit the app, typed: the whole quit again, as `quitApp()` runs it (the other `onBeforeQuit`
+   * guards, the pages' `onBeforeQuit` / `onCloseRequested`, the `onAppQuit` hooks), except that
+   * this extension's own guards are not asked again: it decided already. For a guard that cancels
+   * at once, asks the user, then quits. The approval lasts until the quit goes through or another
+   * quit starts (the user, the OS, `quitApp()`), so guards that each ask and quit again never ask
+   * one another round in a loop. Called while the guards are being asked, it waits for their
+   * answer first. Resolves `true` when the app is quitting, `false` when another guard or a page
+   * refused or holds the quit (a page asking its user lets it go itself), or with no desktop
+   * runtime. Rejects with a {@linkcode DesktopCapError} (`conflict`) when called from inside this
+   * extension's own guard: return `true` from the guard instead.
+   */
+  quit(): Promise<boolean>;
+  /**
+   * Call `fn` on every click on one of the app's own Window-menu items
+   * (`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or
+   * `null` with no window open). Each click is delivered once to each subscriber (and to
+   * `runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive
+   * from runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw
+   * or a rejection is logged. Returns the unsubscribe.
+   */
+  onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
   /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */
@@ -261,7 +288,9 @@ export interface DesktopExtensionHost {
    * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
    * resolves `cancelId`, or `null` without one. Rejects with a `validation`
    * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
-   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16).
+   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While
+   * the box is up during the quit guards' turn their deadline does not count (see
+   * {@linkcode DesktopExtensionHost.onBeforeQuit}).
    */
   confirm(options: DesktopConfirmOptions): Promise<number | null>;
   /**

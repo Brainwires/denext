@@ -10,6 +10,21 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
+  label, accelerator? }]` adds items to the "Window" submenu next to New Window, Reopen Closed
+  Window and the window list, merged into a page's `setAppMenu` menu the same way. A click goes to
+  the backend once, never to a page's queue: `runDesktop({ onWindowMenuItem: (id, { keyWindow })
+  => … })` and an extension's `host.onWindowMenuItem(fn)` get the item's id and the key window
+  (`{ id, key? }`, or `null` with no window open). Their ids carry a reserved prefix a page's menu
+  may not use. With no window open the clicks arrive from runtime 3.0.0-denext.16; on an older
+  runtime only while the main window is open.
+- **Desktop: a quit guard can wait for the user.** While a `host.confirm` box opened by an
+  `onBeforeQuit` guard is on screen, the guards' 5-second deadline stops counting, and it goes on
+  when the box closes. A session end (a logout, a shutdown) keeps its bound: its deadline never
+  pauses. `host.quit()` (and `quit()` on `runDesktop`'s result) is a typed quit that runs the
+  whole sequence again, guards and pages included, except the caller's own guards, so a guard can
+  cancel, ask, then quit without the untyped `Deno.desktop.quit()`. The approval lasts until the
+  quit goes through or another quit starts, so guards that each ask and quit again never loop.
 - **Node.js compatibility: native addons install in a plain `package.json` project.** An approved
   install script for a well-known native package (`better-sqlite3`, `sqlite3`, `sharp`, `canvas`,
   `keytar`, `node-pty`, `re2`, `electron`, `@prisma/engines`, `@sentry/cli` and others) now gets
