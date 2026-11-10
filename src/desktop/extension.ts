@@ -14,6 +14,7 @@
  */
 
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
+import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
 
 export type { StandardSchemaV1 };
 
@@ -110,6 +111,33 @@ export interface DesktopCapCtx {
    * @returns `fn`'s return value as an unsigned `bigint`.
    */
   runOnMainThread(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>;
+  /**
+   * This capability's own secrets in the OS credential store (see {@linkcode DesktopSecureStore}),
+   * apart from the pages' `secureStore` and from every other extension's.
+   */
+  readonly secureStore: DesktopSecureStore;
+}
+
+/**
+ * An extension's own secrets in the OS credential store: the store the pages reach as
+ * `secureStore` (the runtime's Keychain store on macOS, the Secret Service on Linux, the
+ * PasswordVault on Windows), under a namespace of the extension's own: `<app identifier>/ext/<name>`,
+ * `<name>` being the capability's name. A page can never read or write it, nor can another
+ * extension; the extension cannot reach the pages' items either. Keys and values are the page
+ * API's: a key must not start with `-` or hold a control character (a `validation`
+ * {@linkcode DesktopCapError}), a value is any string.
+ *
+ * It needs the `secureStore` capability enabled (`denext desktop add secure-store`): otherwise
+ * every call rejects with a {@linkcode DesktopCapError} (code `not_enabled`) saying so. The store's
+ * own failures are the page API's codes (`backend_unavailable`, `store_failed`).
+ */
+export interface DesktopSecureStore {
+  /** The value stored for `key`, or `null` for none. */
+  get(key: string): Promise<string | null>;
+  /** Store `value` for `key` (replacing any value). */
+  set(key: string, value: string): Promise<void>;
+  /** Remove `key` (a no-op when it is absent). */
+  delete(key: string): Promise<void>;
 }
 
 /** Where an event goes: {@linkcode DesktopCapCtx.emit}, {@linkcode DesktopExtensionHost.emit}. */
@@ -147,6 +175,27 @@ export interface DesktopWindowInfo {
  * resource shared by every window can be let go with the last one.
  */
 export type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean };
+
+/**
+ * The options of {@linkcode DesktopExtensionHost.confirm}: the OS's own message box with your
+ * button labels.
+ */
+export interface DesktopConfirmOptions {
+  /** The main line (required). */
+  readonly message: string;
+  /** Smaller text under it. */
+  readonly detail?: string;
+  /** The window title where the OS shows one (macOS alerts have none). */
+  readonly title?: string;
+  /** The labels, at most 16 (none: one "OK"). Each OS places them its own way (macOS: first rightmost). */
+  readonly buttons?: readonly string[];
+  /** The button Return presses (default: the first). */
+  readonly defaultId?: number;
+  /** The button Escape presses (and the close button on Windows and Linux). */
+  readonly cancelId?: number;
+  /** The icon (default `"info"`). */
+  readonly kind?: "info" | "warning" | "error";
+}
 
 /**
  * What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the
@@ -203,6 +252,25 @@ export interface DesktopExtensionHost {
   onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
+  /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */
+  readonly secureStore: DesktopSecureStore;
+  /**
+   * Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):
+   * app-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}
+   * guard after the last window closed, a tray app. Resolves the pressed button's index; a box
+   * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
+   * resolves `cancelId`, or `null` without one. Rejects with a `validation`
+   * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
+   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16).
+   */
+  confirm(options: DesktopConfirmOptions): Promise<number | null>;
+  /**
+   * Open a window on a page of the app, exactly as `desktop.ts`'s `windows.open` does (the same
+   * options, limits and key rules), and return it. Throws on bad options, past
+   * `desktop.app.maxWindows`, or with no desktop runtime (an `unsupported`
+   * {@linkcode DesktopCapError}).
+   */
+  openWindow(options: DesktopOpenWindowOptions): DesktopWindowRef;
 }
 
 /**

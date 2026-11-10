@@ -38,12 +38,17 @@
  * icon, `capabilities` folds in `Deno.Tray.capabilities()`, and `setActivationPolicy` /
  * `getActivationPolicy` drive the macOS activation policy (`Deno.dock`). Each is feature-detected.
  *
+ * The application menu's clicks (the page's items and the backend's "Window" submenu) come from
+ * `Deno.desktop`'s `"menuclick"` from runtime `FIRST_APP_MENU_EVENT_RUNTIME` (whichever
+ * window is key, and after the main window closed), else from the main window's.
+ *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
  * @module
  */
 
 import { base64ToBytes } from "../../mobile/base64.ts";
+import { supportsAppMenuEvent } from "../../build/deno-version.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
 import type { BackendMenu } from "../window-menu.ts";
@@ -159,13 +164,19 @@ export interface AppControllerOptions {
   readonly os?: string;
   /** The open windows' ids (every window gets the app-wide clicks); default only `"main"`. */
   readonly windows?: () => readonly string[];
+  /**
+   * The Deno Desktop runtime's version (default `Deno.version.deno`): from
+   * `FIRST_APP_MENU_EVENT_RUNTIME` the application menu's clicks are `Deno.desktop`'s
+   * (`api`), not the main window's.
+   */
+  readonly runtimeVersion?: string;
 }
 
 /** What {@linkcode createAppController} returns. */
 export interface AppController {
   /** The `app` bridge capability. */
   readonly capability: DesktopCapability;
-  /** Listen for the window's and the dock's menu clicks (once). */
+  /** Listen for the application menu's and the dock's clicks (once). */
   install(): void;
   /**
    * Make the backend tray (`"app"`): never removed by a page load, clicks to every window. `null`
@@ -796,17 +807,34 @@ function trayMethods(s: AppState): DesktopCapability["methods"] {
   };
 }
 
-/** Listen for the window's and the dock's menu clicks, and the session probe's changes (once). */
+/** An application-menu click: the backend's submenu handles its own items, the pages the rest. */
+function onAppMenuClick(s: AppState, e: Event): void {
+  const id = clickedId(e);
+  if (id === undefined) return;
+  if (s.backendMenu?.ids.has(id)) return s.backendMenu.onClick(id);
+  if (s.appMenuIds.has(id)) pushAction(s, { source: "menu", id });
+}
+
+/**
+ * Where the application menu's clicks arrive: `Deno.desktop` on a runtime that delivers them
+ * app-wide (from `FIRST_APP_MENU_EVENT_RUNTIME`, with a listener API), else the main
+ * window. Only one of them, so a click is never handled twice.
+ */
+function appMenuClickTarget(s: AppState): Pick<EventTarget, "addEventListener"> | undefined {
+  const api = s.options.api;
+  const version = s.options.runtimeVersion ?? Deno.version.deno;
+  if (typeof api?.addEventListener === "function" && supportsAppMenuEvent(version)) {
+    return api as Pick<EventTarget, "addEventListener">;
+  }
+  return s.win;
+}
+
+/** Listen for the application menu's and the dock's clicks, and the session probe's changes (once). */
 function installAppEvents(s: AppState): void {
   if (s.installed) return;
   s.installed = true;
   s.activity.install();
-  s.win?.addEventListener("menuclick", (e) => {
-    const id = clickedId(e);
-    if (id === undefined) return;
-    if (s.backendMenu?.ids.has(id)) return s.backendMenu.onClick(id);
-    if (s.appMenuIds.has(id)) pushAction(s, { source: "menu", id });
-  });
+  appMenuClickTarget(s)?.addEventListener("menuclick", (e) => onAppMenuClick(s, e));
   s.dock?.addEventListener("menuclick", (e) => {
     const id = clickedId(e);
     if (id !== undefined && s.dockMenuIds.has(id)) pushAction(s, { source: "dock", id });

@@ -17,6 +17,11 @@ const ctx = {
   emit: () => {},
   appSupportDir: "",
   runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+  secureStore: {
+    get: () => Promise.resolve(null),
+    set: () => Promise.resolve(),
+    delete: () => Promise.resolve(),
+  },
   pickedPath: () => {
     throw new Error("no picked paths in tests");
   },
@@ -70,6 +75,9 @@ Deno.test("secureStore (Linux): a missing CLI keeps the generic backend_unavaila
 
 type StoreMode = "ok" | "unavailable" | "invalid";
 
+/** The fake store's key for (`service`, `account`): an item carries both attributes. */
+const item = (service: string, account: string) => `${service}\u0000${account}`;
+
 /** A fake `Deno.desktop.secureStore` over an in-memory map (what libsecret would hold). */
 function fakeRuntimeStore(mode: () => StoreMode, supported = true) {
   const items = new Map<string, string>();
@@ -89,18 +97,18 @@ function fakeRuntimeStore(mode: () => StoreMode, supported = true) {
     get(service: string, account: string, options?: unknown) {
       calls.push({ op: "get", service, account, options });
       fail();
-      return Promise.resolve(items.get(account) ?? null);
+      return Promise.resolve(items.get(item(service, account)) ?? null);
     },
     set(service: string, account: string, value: string, options?: unknown) {
       calls.push({ op: "set", service, account, options });
       fail();
-      items.set(account, value);
+      items.set(item(service, account), value);
       return Promise.resolve();
     },
     delete(service: string, account: string, options?: unknown) {
       calls.push({ op: "delete", service, account, options });
       fail();
-      items.delete(account);
+      items.delete(item(service, account));
       return Promise.resolve();
     },
   };
@@ -121,8 +129,9 @@ Deno.test("secureStore (Linux, runtime store): a round-trip through the runtime;
   assertEquals(await call(cap, "set", { key: "tok", value: "héllo\n" }), { ok: true });
   assertEquals(await call(cap, "get", { key: "tok" }), "héllo\n");
   // Stored base64 of UTF-8 (as secret-tool wrote them), so earlier items stay readable.
+  // Under the pages' namespace.
   assertEquals(
-    runtime.items.get("tok"),
+    runtime.items.get(item("com.example.app/page", "tok")),
     btoa(String.fromCharCode(...new TextEncoder().encode("héllo\n"))),
   );
   assertEquals(await call(cap, "delete", { key: "tok" }), { ok: true });
@@ -132,20 +141,31 @@ Deno.test("secureStore (Linux, runtime store): a round-trip through the runtime;
   assertEquals(runtime.calls[0], {
     op: "get",
     service: "com.example.app",
-    account: "denext.secure-store.probe",
+    account: "-denext-secure-store-probe",
     options: { timeout: 1500 },
   });
-  assertEquals(runtime.calls.filter((c) => c.account === "denext.secure-store.probe").length, 1);
-  // The app's service, the page's key, the label, and the answer timeout.
-  assertEquals(runtime.calls[2], {
+  assertEquals(runtime.calls.filter((c) => c.account === "-denext-secure-store-probe").length, 1);
+  // The pages' namespace of the app's service, the page's key, the label, and the answer timeout.
+  assertEquals(runtime.calls.find((c) => c.op === "set" && c.account === "tok"), {
     op: "set",
-    service: "com.example.app",
+    service: "com.example.app/page",
     account: "tok",
-    options: { label: "com.example.app", timeout: 7000 },
+    options: { label: "com.example.app/page", timeout: 7000 },
   });
   assertEquals(runtime.calls[1].options, { timeout: 7000 });
-  // The runtime store needs an unscoped --allow-sys, and nothing to run.
-  assertEquals(cap.methods.get.permissions, { sys: ["*"] });
+  // The runtime store needs an unscoped --allow-sys, and nothing to run, until the runtime gates it
+  // on the baked capability list (from FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME): then nothing.
+  const on = (runtimeVersion: string) =>
+    secureStoreCapability({
+      service: "com.example.app",
+      os: "linux",
+      run: tool.run,
+      api: runtime.api,
+      runtimeVersion,
+    })
+      .methods.get.permissions;
+  assertEquals(on("3.0.0-denext.13"), { sys: ["*"] });
+  assertEquals(on("3.0.0-denext.16"), {});
 });
 
 Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailable with the reason, never null", async () => {
@@ -207,7 +227,7 @@ Deno.test("secureStore (Linux): a runtime without its own store is backend_unava
     },
   });
   assertEquals(await call(win, "get", { key: "tok" }), null);
-  assertEquals(ran, ["powershell.exe"]);
+  assert(ran.length > 0 && ran.every((cmd) => cmd === "powershell.exe"), JSON.stringify(ran));
   assertEquals(runtime.calls, []);
 });
 
@@ -268,7 +288,7 @@ Deno.test("secureStore (Linux): a Secret Service that never answers fails within
     clearTimeout(timer);
     assertEquals(first, "at once", `${method} fails at once`);
   }
-  assertEquals(runtime.calls, ["get denext.secure-store.probe"]);
+  assertEquals(runtime.calls, ["get -denext-secure-store-probe"]);
 });
 
 Deno.test("secureStore (Linux): the default probe bound is 1.5 s", async () => {
@@ -298,7 +318,7 @@ Deno.test("secureStore (Linux): no session bus or no provider is backend_unavail
     await unavailable(call(cap, "get", { key: "tok" }), reason);
     await unavailable(call(cap, "set", { key: "tok", value: "v" }), reason);
     assert(performance.now() - started < 1_000, state);
-    assertEquals(runtime.calls, ["get denext.secure-store.probe"], state);
+    assertEquals(runtime.calls, ["get -denext-secure-store-probe"], state);
   }
 });
 
@@ -316,6 +336,6 @@ Deno.test("secureStore (Linux): a working store is probed once; a refusal is not
   assertEquals(await call(cap, "set", { key: "k", value: "v" }), { ok: true });
   assertEquals(await call(cap, "get", { key: "k" }), "v");
   assertEquals(await call(cap, "delete", { key: "k" }), { ok: true });
-  const probes = runtime.calls.filter((c) => c.account === "denext.secure-store.probe");
+  const probes = runtime.calls.filter((c) => c.account === "-denext-secure-store-probe");
   assertEquals(probes.length, 2, "asked again after the refusal, then never");
 });

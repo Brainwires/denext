@@ -24,6 +24,7 @@ import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
+import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
 /** The kinds `desktop.extraPermissions` takes. */
@@ -254,15 +255,16 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
 }
 
 /**
- * `desktop.window`: optional width/height (≥ 1), title, and the flags (resizable, show, frameless,
+ * `desktop.window`: optional width/height and defaultWidth/defaultHeight (≥ 1), title, and the flags (resizable, show, frameless,
  * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
  */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
   if (!isPlainObject(win)) fail("desktop.window", "must be an object");
   const w = win as Record<string, unknown>;
-  if (w.width !== undefined) num(fail, "desktop.window.width", w.width, { min: 1 });
-  if (w.height !== undefined) num(fail, "desktop.window.height", w.height, { min: 1 });
+  for (const key of ["width", "height", "defaultWidth", "defaultHeight"]) {
+    if (w[key] !== undefined) num(fail, `desktop.window.${key}`, w[key], { min: 1 });
+  }
   if (w.title !== undefined && typeof w.title !== "string") {
     fail("desktop.window.title", "must be a string");
   }
@@ -377,6 +379,15 @@ function validateDesktopInstallers(installers: unknown, fail: Fail): void {
       fail(`desktop.installers.${key}`, "must be a non-empty string");
     }
   }
+  if (i.email !== undefined && !isInstallerEmail(i.email)) {
+    fail("desktop.installers.email", 'must be an email address ("apps@example.com")');
+  }
+}
+
+/** Whether `v` is one plain `local@domain.tld` address (what a `.deb` Maintainer can carry). */
+function isInstallerEmail(v: unknown): boolean {
+  return typeof v === "string" && v.length <= 254 &&
+    /^[^\s@<>(),;:"\[\]]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v);
 }
 
 /** Whether `v` is one entitlement value: a string, a finite number, a boolean or a string array. */
@@ -444,13 +455,78 @@ function validateDesktopWindows(windows: unknown, fail: Fail): void {
   }
 }
 
-/** `desktop.linux`: `{ requireSandbox?: boolean }`. */
+/** `desktop.linux`: `{ requireSandbox?: boolean, desktopEntry?, appImage? }`. */
 function validateDesktopLinux(linux: unknown, fail: Fail): void {
   if (linux === undefined) return;
-  if (!isPlainObject(linux)) fail("desktop.linux", "must be { requireSandbox? }");
-  const require = (linux as Record<string, unknown>).requireSandbox;
-  if (require !== undefined && typeof require !== "boolean") {
+  if (!isPlainObject(linux)) {
+    fail("desktop.linux", "must be { requireSandbox?, desktopEntry?, appImage? }");
+  }
+  const l = linux as Record<string, unknown>;
+  if (l.requireSandbox !== undefined && typeof l.requireSandbox !== "boolean") {
     fail("desktop.linux.requireSandbox", "must be a boolean");
+  }
+  validateDesktopEntry(l.desktopEntry, fail);
+  validateLinuxAppImage(l.appImage, fail);
+}
+
+/** A string with no control character (a Desktop Entry value is one line). */
+function isOneLine(v: unknown): v is string {
+  // deno-lint-ignore no-control-regex
+  return typeof v === "string" && v.trim() !== "" && !/[\x00-\x1f\x7f]/.test(v);
+}
+
+/** The keys `desktop.linux.desktopEntry` takes. */
+const DESKTOP_ENTRY_KEYS = ["categories", "keywords", "genericName", "startupWMClass", "mimeTypes"];
+
+/** `desktop.linux.desktopEntry`: freedesktop Desktop Entry keys. */
+function validateDesktopEntry(entry: unknown, fail: Fail): void {
+  if (entry === undefined) return;
+  const field = "desktop.linux.desktopEntry";
+  if (!isPlainObject(entry)) fail(field, `must be { ${DESKTOP_ENTRY_KEYS.join("?, ")}? }`);
+  const e = entry as Record<string, unknown>;
+  const unknown = Object.keys(e).find((k) => !DESKTOP_ENTRY_KEYS.includes(k));
+  if (unknown) {
+    fail(`${field}.${unknown}`, `is not a key (expected ${DESKTOP_ENTRY_KEYS.join(", ")})`);
+  }
+  const list = (key: string, ok: (s: string) => boolean, what: string) => {
+    const v = e[key];
+    if (v !== undefined && (!Array.isArray(v) || !v.every((s) => isOneLine(s) && ok(s)))) {
+      fail(`${field}.${key}`, `must be an array of ${what}`);
+    }
+  };
+  list("categories", (s) => /^[A-Za-z0-9-]+$/.test(s), 'categories ("System", "X-Vendor")');
+  list("keywords", () => true, "one-line strings");
+  list(
+    "mimeTypes",
+    (s) => /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(s),
+    'MIME types ("text/plain")',
+  );
+  if (e.genericName !== undefined && !isOneLine(e.genericName)) {
+    fail(`${field}.genericName`, "must be a non-empty one-line string");
+  }
+  const wmClass = e.startupWMClass;
+  if (
+    wmClass !== undefined && !(typeof wmClass === "string" && /^[A-Za-z0-9._-]+$/.test(wmClass))
+  ) {
+    fail(`${field}.startupWMClass`, "must be a window class (letters, digits, '.', '_', '-')");
+  }
+}
+
+/** `desktop.linux.appImage`: `{ requires?: string[] }` (sonames). */
+function validateLinuxAppImage(appImage: unknown, fail: Fail): void {
+  if (appImage === undefined) return;
+  if (!isPlainObject(appImage) || Object.keys(appImage).some((k) => k !== "requires")) {
+    fail("desktop.linux.appImage", "must be { requires? }");
+  }
+  const req = (appImage as Record<string, unknown>).requires;
+  if (
+    req !== undefined &&
+    !(Array.isArray(req) && req.every((s) => typeof s === "string" && /^[A-Za-z0-9._+-]+$/.test(s)))
+  ) {
+    fail(
+      "desktop.linux.appImage.requires",
+      'must be an array of library sonames ("libvte-2.91.so.0")',
+    );
   }
 }
 
@@ -481,6 +557,8 @@ export function validateDesktop(
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   validateDesktopPermissions(desktop as Record<string, unknown>, fail);
   validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);
+  const secureStore = secureStoreConfigProblem((desktop as { secureStore?: unknown }).secureStore);
+  if (secureStore) fail(secureStore[0], secureStore[1]);
 }
 
 /** `desktop.capabilities`: an object of capability names to `true` or options. */

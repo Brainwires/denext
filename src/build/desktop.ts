@@ -47,13 +47,20 @@ import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-co
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
-import type { DesktopCapability, DesktopEmitOptions } from "../desktop/extension.ts";
+import type {
+  DesktopCapability,
+  DesktopEmitOptions,
+  DesktopSecureStore,
+} from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
 import type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 import type { DesktopAppSettings, DesktopWindowSettings } from "../desktop/window-config.ts";
 import {
+  type DesktopDockReopenContext,
+  type DesktopDockReopenEvent,
+  type DesktopDockReopenHandler,
   type DesktopOpenWindowOptions,
   type DesktopWindowRef,
   type DesktopWindows,
@@ -86,7 +93,12 @@ export type {
   DesktopWindowSettings,
   DesktopWindowSize,
 } from "../desktop/window-config.ts";
+/** Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`). */
+export type { DesktopWindowButtonPosition } from "../server/config.ts";
 export type {
+  DesktopDockReopenContext,
+  DesktopDockReopenEvent,
+  DesktopDockReopenHandler,
   DesktopOpenWindowOptions,
   DesktopTrayHandle,
   DesktopTrayIcon,
@@ -112,11 +124,13 @@ export {
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopConfirmOptions,
   type DesktopEmitOptions,
   type DesktopExtensionHost,
   type DesktopMainThreadFn,
   type DesktopPermissions,
   type DesktopPickedPathOptions,
+  type DesktopSecureStore,
   type DesktopWindowClosedInfo,
   type DesktopWindowInfo,
 } from "../desktop/extension.ts";
@@ -125,6 +139,16 @@ export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-st
 /** `desktop.menu` resolved, and `runDesktop({ newWindow })`'s handler and its context. */
 export type { DesktopMenuSettings, DesktopWindowMenuSettings } from "../desktop/menu-config.ts";
 export type { DesktopNewWindowContext, DesktopNewWindowHandler } from "../desktop/window-menu.ts";
+/** A keyed window the user closed (`runDesktop({ onDockReopen })`'s context). */
+export type { ClosedWindow as DesktopClosedWindow } from "../desktop/window-registry.ts";
+// The machine's aggregate CPU, GPU and memory load, straight from the runtime (no bridge).
+export {
+  system,
+  type SystemStats,
+  type SystemStatsApi,
+  type SystemStatsOptions,
+  type SystemStatsSubscribeOptions,
+} from "../desktop/system-stats.ts";
 // Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
 export {
   createOwnedResources,
@@ -213,6 +237,14 @@ export { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 // `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` env the scaffolded package scripts set on `deno desktop`,
 // and the flags a build on it gets (`--unstable-no-legacy-abort` before runtime 3.0.0-rc.5).
 export { desktopRuntimeDenoFlags, desktopRuntimeEnv } from "./desktop-runtime.ts";
+
+// scripts/package-linux.ts's AppImage: the AppDir (entry, icon, AppStream metainfo, AppRun) wrapped
+// by appimagetool around denext's pinned, SHA-256-verified type2 runtime.
+export {
+  type AppImageToolRunner,
+  buildDesktopAppImage,
+  type BuildDesktopAppImageOptions,
+} from "./desktop-appimage.ts";
 
 // The installers the scaffolded package scripts build from a finished bundle (`desktop.installers`,
 // `--format`): the per-OS format plan, the package metadata, and the .msi / .deb / .rpm / .tar.gz builders.
@@ -601,6 +633,12 @@ export interface RunDesktopOptions {
    */
   pickedPaths?: PickedPaths;
   /**
+   * Each capability's own secure store, by capability name ({@link DesktopCapCtx.secureStore},
+   * {@link DesktopExtensionHost.secureStore}; from {@link resolveDesktopCapabilities} when the
+   * `secureStore` capability is enabled). Without it every such call rejects `not_enabled`.
+   */
+  extensionSecureStore?: (name: string) => DesktopSecureStore;
+  /**
    * The initial-window settings from `desktop.window` / `desktop.titleBar` / `desktop.backdrop` /
    * `desktop.minSize` / `desktop.maxSize` (from {@link resolveDesktopCapabilities}), applied to the
    * adopted window at launch. The size limits, title bar style and backdrop need denext's pinned
@@ -625,6 +663,13 @@ export interface RunDesktopOptions {
    * fresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`.
    */
   newWindow?: DesktopNewWindowHandler;
+  /**
+   * What a click on the macOS Dock icon opens when no window is showing: called with the keyed
+   * windows the user closed (`ctx.closed`, most recent first), it answers the open options, or
+   * `undefined` to open nothing. Without it the click reopens the most recently closed keyed
+   * window, else shows the main window. With a window showing the click only activates the app.
+   */
+  onDockReopen?: DesktopDockReopenHandler;
   /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
@@ -693,6 +738,12 @@ export interface DesktopRuntime {
   setActivationPolicy(policy: "regular" | "accessory" | "prohibited"): boolean;
   /** The macOS activation policy, or `null` where there is none (Windows, Linux, older runtimes). */
   getActivationPolicy(): "regular" | "accessory" | "prohibited" | null;
+  /**
+   * Call `fn` on every click on the macOS Dock icon (`Deno.dock`'s `"reopen"`), with
+   * `hasVisibleWindows`; what the click opens ({@linkcode RunDesktopOptions.onDockReopen}) still
+   * happens. Returns the unsubscribe; a no-op where there is no Dock (Windows, Linux).
+   */
+  onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -805,6 +856,25 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
   "}catch(e){}try{return c.call(window)}catch(e){}}})()";
 
 /**
+ * Reports the page's `document.title` to its window (`window.pageTitle`), for the Window menu's
+ * lists: at load and whenever the `<title>` changes, debounced, the same title once. Only with the
+ * token and the window binding (`__denextWindow`), whose token names the window.
+ */
+const TITLE_REPORT_JS =
+  ";(function(){try{var g=globalThis,b=g.bindings&&g.bindings.__denextWindow;" +
+  'if(!b)return;var last=null,t=0;function send(){t=0;var s=String(document.title||"");' +
+  "if(!s||s===last)return;last=s;s=s.slice(0,1024);" +
+  'Promise.resolve(b())["catch"](function(){return null}).then(function(w){' +
+  'if(typeof w!=="string"||!w)return;return fetch("/_denext/desktop/rpc",{method:"POST",' +
+  'headers:{"content-type":"application/json","x-denext-desktop-token":g.__denext.token,' +
+  '"x-denext-desktop-window":w},body:JSON.stringify({cap:"window",method:"pageTitle",' +
+  'args:{title:s}})})})["catch"](function(){})}function q(){if(!t)t=setTimeout(send,250)}' +
+  "function watch(){q();try{new MutationObserver(q).observe(document.head||" +
+  "document.documentElement,{subtree:true,childList:true,characterData:true})}catch(e){}}" +
+  'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",watch);' +
+  "else watch()}catch(e){}})()";
+
+/**
  * What the injected `globalThis.__denext` carries besides the desktop marker and the token (see
  * {@linkcode injectDesktopGlobal}).
  */
@@ -899,6 +969,14 @@ async function injectDesktopScripts(
   return { html: addScriptHashToCspMeta(out, hashes), hashes };
 }
 
+/** What the global script carries only with the token: the overrides, shims and the beacon. */
+function tokenScripts(beacon: boolean, page: DesktopPageGlobals): string {
+  return QUIT_OVERRIDE_JS +
+    (page.windows === true ? TITLE_REPORT_JS : "") +
+    (page.notifications === true ? NOTIFICATION_SHIM_INLINE : "") +
+    (beacon ? BOOT_BEACON_JS : "");
+}
+
 /** The inline scripts {@linkcode injectDesktopScripts} injects, in order. */
 function desktopInlineScripts(
   token: string | null,
@@ -912,9 +990,7 @@ function desktopInlineScripts(
   // "desktop", but the token-gated endpoints stay unreachable, and the boot beacon (which needs
   // the token) is not injected.
   const body = `globalThis.__denext=${JSON.stringify(desktopGlobals(token, page))}` +
-    (token !== null ? QUIT_OVERRIDE_JS : "") +
-    (token !== null && page.notifications === true ? NOTIFICATION_SHIM_INLINE : "") +
-    (token !== null && beacon ? BOOT_BEACON_JS : "");
+    (token !== null ? tokenScripts(beacon, page) : "");
   const withPreload = token !== null && preload !== undefined;
   if (!withPreload) return [body];
   if (preloadKey === undefined) return [body, preload];
@@ -1611,6 +1687,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
     ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
+    ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
   });
   windowsRef.setup = windows;
   if (windowsRef.closedEarly) windows.mainClosed();
@@ -1638,9 +1715,12 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
         }
         : {}),
       ...(windows.lifecycle ? { lifecycle: windows.lifecycle } : {}),
+      // An extension host's openWindow is desktop.ts's windows.open.
+      ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
+      ...(options.extensionSecureStore ? { secureStore: options.extensionSecureStore } : {}),
     },
   );
   bridgeRef.bridge = bridge;
@@ -1701,6 +1781,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     setDockVisible: (visible) => windows.setDockVisible(visible),
     setActivationPolicy: (policy) => windows.setActivationPolicy(policy),
     getActivationPolicy: () => windows.getActivationPolicy(),
+    onDockReopen: (fn) => windows.onDockReopen(fn),
     trust,
     emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {

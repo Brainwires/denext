@@ -1036,7 +1036,8 @@ A few things the framework deliberately cannot decide for you:
 **Run production with least privilege.** The `dev`/`build` tasks use `-A`
 because they bundle; `denext start` serves prebuilt output and never needs
 `--allow-run`. The `start` task `denext create` writes is the least-privilege
-set, and it is what the Docker image runs:
+set, and it is what the Docker image runs. It limits what a bug or a bad dependency can reach; it
+is not a sandbox for hostile code ([Permission flags are guardrails](/docs/security#permission-flags-are-guardrails)):
 
 ```sh
 deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext/cli start .

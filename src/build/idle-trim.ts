@@ -11,7 +11,7 @@
 // environment of the command that starts the server (or writes the file that does) — for a
 // `build --compile` executable, which has the trim baked in, `DENEXT_IDLE_TRIM=0` when the binary
 // runs too: on a runtime that reads `DENO_UNSTABLE_IDLE_TRIM` again when a trim is due
-// (Brainwires/deno DENEXT.md item 269) the binary sets it to `0`; on an older one it keeps its event
+// (Brainwires/deno DENEXT.md item 278) the binary sets it to `0`; on an older one it keeps its event
 // loop from ever going idle long enough to trim. A `DENO_UNSTABLE_IDLE_TRIM` the user set
 // themselves is left alone where denext starts the server.
 //
@@ -184,7 +184,7 @@ export interface HoldOffSeams {
  * Keep a `build --compile` executable that has the idle trim baked in from trimming, when
  * `DENEXT_IDLE_TRIM=0` is set as it runs. A runtime from
  * `FIRST_IDLE_TRIM_ENV_OFF_RUNTIME` (src/build/deno-version.ts) reads `DENO_UNSTABLE_IDLE_TRIM` again each time a
- * trim is due, so the binary sets it to `0` (Brainwires/deno DENEXT.md item 269). An older runtime
+ * trim is due, so the binary sets it to `0` (Brainwires/deno DENEXT.md item 278). An older runtime
  * read it only at start, but it trims only after its event loop has gone `DENO_IDLE_TRIM_DELAY_MS`
  * (default 1 s) without a wake-up, so there an unref'd timer firing at half that delay keeps it
  * from ever being idle that long (one empty callback per half-delay; it never keeps the process

@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.14.0\"",
+          "signature": "VERSION: \"4.15.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16883,6 +16883,12 @@
             },
             {
               "kind": "property",
+              "name": "systemStats",
+              "signature": "systemStats?: boolean",
+              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime after\n3.0.0-denext.13 (`unsupported` before it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
+            },
+            {
+              "kind": "property",
               "name": "updates",
               "signature": "updates?: boolean",
               "doc": "The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from\n`denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app\n({@link DesktopUpdateConfig.manifestUrl}, denext's pinned runtime), with download progress."
@@ -16971,13 +16977,19 @@
               "kind": "property",
               "name": "menu",
               "signature": "menu?: DesktopMenuConfig",
-              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
             },
             {
               "kind": "property",
               "name": "capabilities",
               "signature": "capabilities?: DesktopCapabilitiesConfig",
               "doc": "The capability allowlist (default deny)."
+            },
+            {
+              "kind": "property",
+              "name": "secureStore",
+              "signature": "secureStore?: DesktopSecureStoreConfig",
+              "doc": "The `secureStore` capability's options (see {@link DesktopSecureStoreConfig})."
             },
             {
               "kind": "property",
@@ -17223,13 +17235,39 @@
               "kind": "property",
               "name": "publisher",
               "signature": "publisher?: string",
-              "doc": "Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer\n(`\"Name <email>\"` there) and the `.rpm` Vendor. Default: the app name."
+              "doc": "Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer\n(with {@link email}: `\"Name <email>\"`) and the `.rpm` Vendor. Default: the app name."
+            },
+            {
+              "kind": "property",
+              "name": "email",
+              "signature": "email?: string",
+              "doc": "The publisher's contact address: the `.deb` Maintainer becomes `\"<publisher> <email>\"` (what\nDebian policy asks for), and it is the `.rpm` Packager and the AppStream `update_contact`.\nWithout it the Maintainer is the publisher alone."
             },
             {
               "kind": "property",
               "name": "description",
               "signature": "description?: string",
               "doc": "One line describing the app, for the package managers. Default `\"<name> desktop application\"`."
+            }
+          ]
+        },
+        {
+          "name": "DesktopLinuxAppImageConfig",
+          "slug": "DesktopLinuxAppImageConfig",
+          "kind": "interface",
+          "signature": "interface DesktopLinuxAppImageConfig",
+          "doc": "DesktopLinuxConfig.appImage: the AppImage's host requirements.",
+          "docFull": "{@link DesktopLinuxConfig.appImage}: the AppImage's host requirements.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "requires",
+              "signature": "requires?: string[]",
+              "doc": "Shared libraries (sonames, e.g. `\"libvte-2.91.so.0\"`) the app needs on the host beyond the\nbackend's own (WebKitGTK 4.1 and GTK 3 for the webview backend), listed in the AppImage's\nAppStream metainfo. An AppImage bundles neither: the host must provide them."
             }
           ]
         },
@@ -17250,6 +17288,62 @@
               "name": "requireSandbox",
               "signature": "requireSandbox?: boolean",
               "doc": "Refuse to start where the CEF backend would run web content without Chromium's sandbox: no\nunprivileged user namespaces and no usable `chrome-sandbox` helper, as for a tarball or an\nAppImage on Ubuntu 23.10 and later (the `.deb` / `.rpm` install the helper setuid root). The\napp then prints one line (`laufey: this app requires the Chromium sandbox (requireSandbox),\n…`) and exits with status 78 before the runtime loads. Default `false`: the app starts\nunsandboxed there and `appCapabilities().sandbox` reads `\"off\"`. The package scripts write it\nto the Linux bundle's `laufey-launch.json` (`\"requireSandbox\": true`), where\n`LAUFEY_REQUIRE_SANDBOX=0` cannot turn it off. The WebView backend ignores it. Needs denext's\npinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows."
+            },
+            {
+              "kind": "property",
+              "name": "desktopEntry",
+              "signature": "desktopEntry?: DesktopLinuxDesktopEntryConfig",
+              "doc": "What every `.desktop` entry denext writes says about the app (the `.deb` / `.rpm` entry, the\nbundle's own entry the `.tar.gz` and AppImage carry). Default: `Categories=Utility;` and no\nother key."
+            },
+            {
+              "kind": "property",
+              "name": "appImage",
+              "signature": "appImage?: DesktopLinuxAppImageConfig",
+              "doc": "The AppImage's AppStream metadata."
+            }
+          ]
+        },
+        {
+          "name": "DesktopLinuxDesktopEntryConfig",
+          "slug": "DesktopLinuxDesktopEntryConfig",
+          "kind": "interface",
+          "signature": "interface DesktopLinuxDesktopEntryConfig",
+          "doc": "DesktopLinuxConfig.desktopEntry: freedesktop Desktop Entry keys. Values are escaped per the Desktop Entry specification (\\\\, \\n, \\; in a list); a value with a control character is refused.",
+          "docFull": "{@link DesktopLinuxConfig.desktopEntry}: freedesktop Desktop Entry keys. Values are escaped per\nthe Desktop Entry specification (`\\\\`, `\\n`, `\\;` in a list); a value with a control character is\nrefused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "categories",
+              "signature": "categories?: string[]",
+              "doc": "`Categories`: freedesktop menu categories, e.g. `[\"System\", \"TerminalEmulator\"]` for a\nterminal. Each is letters, digits and `-` (`X-` for a vendor one). Default `[\"Utility\"]`."
+            },
+            {
+              "kind": "property",
+              "name": "keywords",
+              "signature": "keywords?: string[]",
+              "doc": "`Keywords`: extra search terms for the launcher (a `;` in one is escaped)."
+            },
+            {
+              "kind": "property",
+              "name": "genericName",
+              "signature": "genericName?: string",
+              "doc": "`GenericName`: what kind of app it is (`\"Terminal\"`, `\"Text Editor\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "startupWMClass",
+              "signature": "startupWMClass?: string",
+              "doc": "`StartupWMClass`: the window class the launcher matches the app's windows by. Default: the\napp id, which the window carries (`LAUFEY_APP_ID`); set it only for a window that reports\nanother class."
+            },
+            {
+              "kind": "property",
+              "name": "mimeTypes",
+              "signature": "mimeTypes?: string[]",
+              "doc": "`MimeType`: the file types the app opens (`\"text/plain\"`), after the deep-link schemes'\n`x-scheme-handler/*`. With no deep link the launcher passes the opened files as `%F`."
             }
           ]
         },
@@ -17320,7 +17414,7 @@
             {
               "kind": "property",
               "name": "window",
-              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean; list?: boolean }",
+              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean }",
               "doc": "The \"Window\" submenu's items."
             }
           ]
@@ -17400,6 +17494,26 @@
               "name": "shells",
               "signature": "shells?: string[]",
               "doc": "The programs a page may start, as absolute paths (`/bin/zsh`,\n`C:\\Windows\\System32\\cmd.exe`); an entry for another OS is ignored on this one. The\npackaged app bakes `--allow-run` for exactly these paths. Default: the OS's login shells and\n`/bin/sh` on macOS and Linux, Windows PowerShell and `cmd.exe` on Windows. With no `shell`, a\nterminal starts the user's `$SHELL` when it is on the list, else the first entry."
+            }
+          ]
+        },
+        {
+          "name": "DesktopSecureStoreConfig",
+          "slug": "DesktopSecureStoreConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSecureStoreConfig",
+          "doc": "desktop.secureStore: the secureStore capability's options. Every caller's items are kept apart: the pages under <identifier>/page, an extension (ctx.secureStore / host.secureStore) under <identifier>/ext/<name>; items an earlier denext stored for the pages under the bare identifier move into the page namespace on their first read.",
+          "docFull": "`desktop.secureStore`: the `secureStore` capability's options. Every caller's items are kept\napart: the pages under `<identifier>/page`, an extension (`ctx.secureStore` / `host.secureStore`)\nunder `<identifier>/ext/<name>`; items an earlier denext stored for the pages under the bare\nidentifier move into the page namespace on their first read.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "legacy",
+              "signature": "legacy?: boolean",
+              "doc": "macOS: move the items an earlier denext wrote through `/usr/bin/security` (which any program of\nthe user could read through it) into the runtime's own Keychain store on their first read, and\nuse `security` as the store under a runtime without its own. While on, the packaged app keeps\n`--allow-run=security`. Set `false` for an app that never shipped that path: `security` is then\nnever run nor baked, and a runtime without its own macOS store fails every call\n`backend_unavailable`. Default `true`; `denext desktop add secure-store` writes `false` when it\nenables the capability for the first time."
             }
           ]
         },
@@ -18020,6 +18134,32 @@
           ]
         },
         {
+          "name": "DesktopWindowButtonPosition",
+          "slug": "DesktopWindowButtonPosition",
+          "kind": "interface",
+          "signature": "interface DesktopWindowButtonPosition",
+          "doc": "A macOS window button position (DesktopWindowConfig.windowButtonPosition).",
+          "docFull": "A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "Points from the window's left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "Points from the window's top edge."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowConfig",
           "slug": "DesktopWindowConfig",
           "kind": "interface",
@@ -18042,6 +18182,24 @@
               "name": "height",
               "signature": "height?: number",
               "doc": "Initial height in CSS pixels."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "defaultWidth?: number",
+              "doc": "The width the main window opens with when its `key` has no saved frame (the first launch, or\nno `key`): `width` > the saved frame > `defaultWidth` > the runtime's own size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "defaultHeight?: number",
+              "doc": "The height the main window opens with when its `key` has no saved frame."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "windowButtonPosition?: DesktopWindowButtonPosition",
+              "doc": "Where the macOS window buttons (the traffic lights) sit: the close button's top-left corner,\nin points from the window's top-left, for a page drawn under a hidden title bar\n(`desktop.titleBar: \"hidden\"` / `\"hiddenInset\"`). Windows opened with `windows.open` /\n`openWindow` take it too, unless their own `windowButtonPosition` says (`null` keeps the OS's\nplace); a frameless window has none. Ignored on Windows and Linux. Needs denext's pinned\nruntime (ignored with a warning before)."
             },
             {
               "kind": "property",
@@ -44758,12 +44916,85 @@
       "module": "denext/desktop",
       "symbols": [
         {
+          "name": "AppImageToolRunner",
+          "slug": "AppImageToolRunner",
+          "kind": "typeAlias",
+          "signature": "type AppImageToolRunner = (cmd: string, args: string[], env: Record<string, string>) => Promise<void>",
+          "doc": "Runs a tool; throws on a non-zero exit.",
+          "docFull": "Runs a tool; throws on a non-zero exit.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildDesktopAppImage",
+          "slug": "buildDesktopAppImage",
+          "kind": "function",
+          "signature": "buildDesktopAppImage(o: BuildDesktopAppImageOptions): Promise<string>",
+          "doc": "Build an AppImage from a finished Linux bundle (its .desktop entry already rewritten by buildDesktopBundle): the AppDir holds the bundle, the entry at the root and as usr/share/applications/<id>.desktop, the icon as <id>.png / .svg and .DirIcon, the AppStream metainfo usr/share/metainfo/<id>.metainfo.xml (with the host libraries, appImageRequires) and an AppRun that execs the launcher with LAUFEY_APP_ID; appimagetool --runtime-file wraps it around the pinned runtime (ensureAppImageRuntime), with ARCH set for the target.",
+          "docFull": "Build an AppImage from a finished Linux bundle (its `.desktop` entry already rewritten by\n`buildDesktopBundle`): the AppDir holds the bundle, the entry at the root and as\n`usr/share/applications/<id>.desktop`, the icon as `<id>.png` / `.svg` and `.DirIcon`, the\nAppStream metainfo `usr/share/metainfo/<id>.metainfo.xml` (with the host libraries,\n{@linkcode appImageRequires}) and an `AppRun` that execs the launcher with `LAUFEY_APP_ID`;\n`appimagetool --runtime-file` wraps it around the pinned runtime ({@linkcode ensureAppImageRuntime}),\nwith `ARCH` set for the target.",
+          "params": [
+            {
+              "name": "o",
+              "doc": "The bundle, metadata and output."
+            }
+          ],
+          "returns": "The AppImage's path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildDesktopAppImageOptions",
+          "slug": "BuildDesktopAppImageOptions",
+          "kind": "interface",
+          "signature": "interface BuildDesktopAppImageOptions extends BuildLinuxPackageOptions",
+          "doc": "What buildDesktopAppImage builds.",
+          "docFull": "What {@linkcode buildDesktopAppImage} builds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "runtimeFile",
+              "signature": "readonly runtimeFile?: string",
+              "doc": "The runtime to prepend (default: the pinned one, {@linkcode ensureAppImageRuntime})."
+            },
+            {
+              "kind": "property",
+              "name": "appimagetool",
+              "signature": "readonly appimagetool?: string",
+              "doc": "The `appimagetool` to run (default `appimagetool` on PATH)."
+            },
+            {
+              "kind": "property",
+              "name": "date",
+              "signature": "readonly date?: string",
+              "doc": "The metainfo's release date (default: `SOURCE_DATE_EPOCH`'s, else today's)."
+            },
+            {
+              "kind": "property",
+              "name": "run",
+              "signature": "readonly run?: AppImageToolRunner",
+              "doc": "Runs `appimagetool` (test seam; default `Deno.Command` with inherited stdio)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "BuildLinuxPackageOptions",
+              "ref": "denext-desktop/BuildLinuxPackageOptions"
+            }
+          ]
+        },
+        {
           "name": "buildDesktopBundle",
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
           "params": [
             {
               "name": "entryUrl",
@@ -45500,6 +45731,18 @@
               "name": "strictFallback",
               "signature": "readonly strictFallback?: boolean",
               "doc": "What `desktop.permissions: \"strict\"` does when it cannot be honoured (the runtime does not\nexpand the folder tokens, or `desktop.app.identifier` is unset; see\n{@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,\nnaming the reason and the fix; `true` bakes the default unscoped `--allow-read` /\n`--allow-env` instead, for `denext desktop run` / `dev`, which build a local test copy and\nprint a warning. Never set it for a build that ships."
+            },
+            {
+              "kind": "property",
+              "name": "bakedCapabilities",
+              "signature": "readonly bakedCapabilities?: boolean",
+              "doc": "The runtime reads the capability list baked into `.deno-desktop/app.json` and serves the\nsecure store without `--allow-sys` (see `desktopBakedCapabilitiesRuntime`). Default: the\npinned runtime's."
+            },
+            {
+              "kind": "property",
+              "name": "macSecureStore",
+              "signature": "readonly macSecureStore?: boolean",
+              "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the\npermission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,\nwhatever this says. Default: the pinned runtime's."
             }
           ]
         },
@@ -45721,6 +45964,12 @@
               "doc": "Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a\nmethod with `timeoutMs: false` it also aborts when the calling page's request goes away (that\npage reloaded, navigated or closed)."
             },
             {
+              "kind": "property",
+              "name": "secureStore",
+              "signature": "readonly secureStore: DesktopSecureStore",
+              "doc": "This capability's own secrets in the OS credential store (see {@linkcode DesktopSecureStore}),\napart from the pages' `secureStore` and from every other extension's."
+            },
+            {
               "kind": "method",
               "name": "emit",
               "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
@@ -45836,6 +46085,94 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopClosedWindow",
+          "slug": "DesktopClosedWindow",
+          "kind": "interface",
+          "signature": "interface DesktopClosedWindow",
+          "doc": "A keyed window the user closed (WindowRegistry.recentlyClosed).",
+          "docFull": "A keyed window the user closed ({@linkcode WindowRegistry.recentlyClosed}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key: string",
+              "doc": "Its key."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "The app path it showed when it closed."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "Its title when it closed, if it had one."
+            }
+          ]
+        },
+        {
+          "name": "DesktopConfirmOptions",
+          "slug": "DesktopConfirmOptions",
+          "kind": "interface",
+          "signature": "interface DesktopConfirmOptions",
+          "doc": "The options of DesktopExtensionHost.confirm: the OS's own message box with your button labels.",
+          "docFull": "The options of {@linkcode DesktopExtensionHost.confirm}: the OS's own message box with your\nbutton labels.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "message",
+              "signature": "readonly message: string",
+              "doc": "The main line (required)."
+            },
+            {
+              "kind": "property",
+              "name": "detail",
+              "signature": "readonly detail?: string",
+              "doc": "Smaller text under it."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "The window title where the OS shows one (macOS alerts have none)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons?: readonly string[]",
+              "doc": "The labels, at most 16 (none: one \"OK\"). Each OS places them its own way (macOS: first rightmost)."
+            },
+            {
+              "kind": "property",
+              "name": "defaultId",
+              "signature": "readonly defaultId?: number",
+              "doc": "The button Return presses (default: the first)."
+            },
+            {
+              "kind": "property",
+              "name": "cancelId",
+              "signature": "readonly cancelId?: number",
+              "doc": "The button Escape presses (and the close button on Windows and Linux)."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind?: \"info\" | \"warning\" | \"error\"",
+              "doc": "The icon (default `\"info\"`)."
+            }
+          ]
+        },
+        {
           "name": "desktopDenoFlagArgs",
           "slug": "desktopDenoFlagArgs",
           "kind": "function",
@@ -45871,6 +46208,58 @@
           "signature": "type DesktopDevProxyDecision = { readonly proxy: false; readonly refused?: string } | { readonly proxy: true; readonly target: string; readonly allowNonLoopback: boolean; readonly injectToken: boolean }",
           "doc": "The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.",
           "docFull": "The live-reload proxy decision from the env + the running binary — see {@linkcode desktopDevProxyDecision}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopDockReopenContext",
+          "slug": "DesktopDockReopenContext",
+          "kind": "interface",
+          "signature": "interface DesktopDockReopenContext",
+          "doc": "What runDesktop({ onDockReopen }) receives: the keyed windows the user closed.",
+          "docFull": "What `runDesktop({ onDockReopen })` receives: the keyed windows the user closed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "closed",
+              "signature": "readonly closed: readonly ClosedWindow[]",
+              "doc": "The keyed windows the user closed (not a quit's), most recent first, each key once."
+            }
+          ]
+        },
+        {
+          "name": "DesktopDockReopenEvent",
+          "slug": "DesktopDockReopenEvent",
+          "kind": "interface",
+          "signature": "interface DesktopDockReopenEvent",
+          "doc": "A Dock icon click as DesktopWindowsSetup.onDockReopen reports it.",
+          "docFull": "A Dock icon click as {@linkcode DesktopWindowsSetup.onDockReopen} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "hasVisibleWindows",
+              "signature": "readonly hasVisibleWindows: boolean",
+              "doc": "Whether a window of the app was showing (the click then only activates the app)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopDockReopenHandler",
+          "slug": "DesktopDockReopenHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopDockReopenHandler = (ctx: DesktopDockReopenContext) => DesktopOpenWindowOptions | undefined",
+          "doc": "What the macOS Dock icon's click opens when no window is showing (runDesktop({ onDockReopen })): the open options, or undefined for nothing at all. Without it the click reopens the most recently closed keyed window, else shows the main window.",
+          "docFull": "What the macOS Dock icon's click opens when no window is showing (`runDesktop({ onDockReopen\n})`): the open options, or `undefined` for nothing at all. Without it the click reopens the\nmost recently closed keyed window, else shows the main window.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46005,6 +46394,12 @@
               "doc": "The running OS."
             },
             {
+              "kind": "property",
+              "name": "secureStore",
+              "signature": "readonly secureStore: DesktopSecureStore",
+              "doc": "The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets."
+            },
+            {
               "kind": "method",
               "name": "emit",
               "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
@@ -46045,6 +46440,18 @@
               "name": "windows",
               "signature": "windows(): readonly DesktopWindowInfo[]",
               "doc": "The open windows now (the main window, the tray panel and the opened ones)."
+            },
+            {
+              "kind": "method",
+              "name": "confirm",
+              "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16)."
+            },
+            {
+              "kind": "method",
+              "name": "openWindow",
+              "signature": "openWindow(options: DesktopOpenWindowOptions): DesktopWindowRef",
+              "doc": "Open a window on a page of the app, exactly as `desktop.ts`'s `windows.open` does (the same\noptions, limits and key rules), and return it. Throws on bad options, past\n`desktop.app.maxWindows`, or with no desktop runtime (an `unsupported`\n{@linkcode DesktopCapError})."
             }
           ]
         },
@@ -46053,8 +46460,8 @@
           "slug": "desktopHasTool",
           "kind": "function",
           "signature": "desktopHasTool(cmd: string): Promise<boolean>",
-          "doc": "Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.",
-          "docFull": "Whether a command is on PATH. No shell is involved: on Windows `where.exe` is run with the name\nas one argument; elsewhere each `PATH` directory is checked for an executable file of that name.\nA name that is not a plain command (a path separator, whitespace, a shell or wildcard character)\nis never found.",
+          "doc": "Whether a command is on PATH: the probe the package scripts (and desktopRequireTool) use before shelling out to an installer tool, so a missing one can be skipped or reported with its install hint instead of failing mid-build. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.",
+          "docFull": "Whether a command is on PATH: the probe the package scripts (and {@linkcode desktopRequireTool})\nuse before shelling out to an installer tool, so a missing one can be skipped or reported with\nits install hint instead of failing mid-build. No shell is involved: on Windows `where.exe` is\nrun with the name as one argument; elsewhere each `PATH` directory is checked for an executable\nfile of that name. A name that is not a plain command (a path separator, whitespace, a shell or\nwildcard character) is never found.",
           "params": [
             {
               "name": "cmd",
@@ -46062,7 +46469,9 @@
             }
           ],
           "returns": "Whether it resolves.",
-          "examples": [],
+          "examples": [
+            "Skip an optional step when its tool is missing\n```ts\nimport { desktopHasTool } from \"denext/desktop\";\n\nif (await desktopHasTool(\"appstreamcli\")) {\n  // validate the AppStream metadata\n}\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -46453,13 +46862,37 @@
               "kind": "property",
               "name": "width",
               "signature": "readonly width?: number",
-              "doc": "Width in CSS pixels."
+              "doc": "Width in CSS pixels (over a saved frame and {@linkcode defaultWidth})."
             },
             {
               "kind": "property",
               "name": "height",
               "signature": "readonly height?: number",
-              "doc": "Height in CSS pixels."
+              "doc": "Height in CSS pixels (over a saved frame and {@linkcode defaultHeight})."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width when neither `width` nor the key's saved frame gives one (a first open, no `key`,\nor `restoreBounds: false`): `width` > the saved frame > `defaultWidth` > the runtime's size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height when neither `height` nor the key's saved frame gives one."
+            },
+            {
+              "kind": "property",
+              "name": "titleBar",
+              "signature": "readonly titleBar?: \"default\" | \"hidden\" | \"hiddenInset\"",
+              "doc": "The title bar style (macOS; elsewhere the runtime answers it has none): default\n`desktop.titleBar`, as the main window gets it. `\"default\"` keeps the OS's title bar; a\nframeless window has none to style."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null",
+              "doc": "Where the macOS traffic lights sit (the close button's top-left corner, in points from the\nwindow's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;\n`null` keeps the OS's place. A frameless window has none."
             },
             {
               "kind": "property",
@@ -46768,6 +47201,24 @@
               "name": "description",
               "signature": "readonly description: string",
               "doc": "One line describing the app (`desktop.installers.description`)."
+            },
+            {
+              "kind": "property",
+              "name": "email",
+              "signature": "readonly email?: string",
+              "doc": "The publisher's address (`desktop.installers.email`): the `.deb` Maintainer's `<email>`, the\n`.rpm` Packager, the AppStream update contact."
+            },
+            {
+              "kind": "property",
+              "name": "desktopEntry",
+              "signature": "readonly desktopEntry?: DesktopLinuxDesktopEntryConfig",
+              "doc": "The Linux `.desktop` keys (`desktop.linux.desktopEntry`)."
+            },
+            {
+              "kind": "property",
+              "name": "appImageRequires",
+              "signature": "readonly appImageRequires?: readonly string[]",
+              "doc": "Extra host libraries the AppImage needs (`desktop.linux.appImage.requires`)."
             },
             {
               "kind": "property",
@@ -47093,6 +47544,12 @@
             },
             {
               "kind": "method",
+              "name": "onDockReopen",
+              "signature": "onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void",
+              "doc": "Call `fn` on every click on the macOS Dock icon (`Deno.dock`'s `\"reopen\"`), with\n`hasVisibleWindows`; what the click opens ({@linkcode RunDesktopOptions.onDockReopen}) still\nhappens. Returns the unsubscribe; a no-op where there is no Dock (Windows, Linux)."
+            },
+            {
+              "kind": "method",
               "name": "emit",
               "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
               "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
@@ -47182,6 +47639,38 @@
           "returns": "The env vars to set on the deno desktop child.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopSecureStore",
+          "slug": "DesktopSecureStore",
+          "kind": "interface",
+          "signature": "interface DesktopSecureStore",
+          "doc": "An extension's own secrets in the OS credential store: the store the pages reach as secureStore (the runtime's Keychain store on macOS, the Secret Service on Linux, the PasswordVault on Windows), under a namespace of the extension's own: <app identifier>/ext/<name>, <name> being the capability's name. A page can never read or write it, nor can another extension; the extension cannot reach the pages' items either. Keys and values are the page API's: a key must not start with - or hold a control character (a validation DesktopCapError), a value is any string.",
+          "docFull": "An extension's own secrets in the OS credential store: the store the pages reach as\n`secureStore` (the runtime's Keychain store on macOS, the Secret Service on Linux, the\nPasswordVault on Windows), under a namespace of the extension's own: `<app identifier>/ext/<name>`,\n`<name>` being the capability's name. A page can never read or write it, nor can another\nextension; the extension cannot reach the pages' items either. Keys and values are the page\nAPI's: a key must not start with `-` or hold a control character (a `validation`\n{@linkcode DesktopCapError}), a value is any string.\n\nIt needs the `secureStore` capability enabled (`denext desktop add secure-store`): otherwise\nevery call rejects with a {@linkcode DesktopCapError} (code `not_enabled`) saying so. The store's\nown failures are the page API's codes (`backend_unavailable`, `store_failed`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "get",
+              "signature": "get(key: string): Promise<string | null>",
+              "doc": "The value stored for `key`, or `null` for none."
+            },
+            {
+              "kind": "method",
+              "name": "set",
+              "signature": "set(key: string, value: string): Promise<void>",
+              "doc": "Store `value` for `key` (replacing any value)."
+            },
+            {
+              "kind": "method",
+              "name": "delete",
+              "signature": "delete(key: string): Promise<void>",
+              "doc": "Remove `key` (a no-op when it is absent)."
+            }
+          ]
         },
         {
           "name": "DesktopServeInfo",
@@ -47996,6 +48485,32 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWindowButtonPosition",
+          "slug": "DesktopWindowButtonPosition",
+          "kind": "interface",
+          "signature": "interface DesktopWindowButtonPosition",
+          "doc": "A macOS window button position (DesktopWindowConfig.windowButtonPosition).",
+          "docFull": "A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "Points from the window's left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "Points from the window's top edge."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowClosedInfo",
           "slug": "DesktopWindowClosedInfo",
           "kind": "typeAlias",
@@ -48060,8 +48575,8 @@
             {
               "kind": "property",
               "name": "reopenClosed",
-              "signature": "readonly reopenClosed?: boolean",
-              "doc": "Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows."
+              "signature": "readonly reopenClosed?: boolean | \"list\"",
+              "doc": "Reopen Closed Window (Cmd/Ctrl+Shift+T) over the recently closed keyed windows; `\"list\"`: a\nsubmenu of them by title, most recent first, each reopening its window."
             },
             {
               "kind": "property",
@@ -48198,6 +48713,12 @@
               "name": "lastSession",
               "signature": "lastSession(): readonly SessionWindow[]",
               "doc": "The keyed windows open when the app last quit (each with its key, app path and saved bounds),\nfrom the window store in the app support folder; `desktop.app.restoreWindows: true` reopens\nthem at launch. Empty on the first launch, or when the store could not be read."
+            },
+            {
+              "kind": "method",
+              "name": "forget",
+              "signature": "forget(key: string): void",
+              "doc": "Forget the keyed window `key`: it leaves the windows Reopen Closed Window and the Dock's\nreopen click bring back (the Window menu follows) and {@linkcode lastSession}, as persisted in\nthe window store, so the next launch does not restore it either. Its saved frame is kept, and\nan open window with the key is not affected (it is in the next session if open at the quit)."
             }
           ]
         },
@@ -48332,6 +48853,24 @@
               "name": "key",
               "signature": "readonly key?: string",
               "doc": "The main window's key (`desktop.window.key`): its frame is saved and restored."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width used when the main window has no saved frame (`desktop.window.defaultWidth`):\n`width` beats the saved frame, which beats this, which beats the runtime's own size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height used when the main window has no saved frame (`desktop.window.defaultHeight`)."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: DesktopWindowButtonPosition",
+              "doc": "Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`)."
             }
           ]
         },
@@ -48703,6 +49242,18 @@
               "name": "replay",
               "signature": "readonly replay: readonly OwnedResourceReplayEntry[]",
               "doc": "The resource's retained events, oldest first (empty with no `replay`)."
+            },
+            {
+              "kind": "property",
+              "name": "dropped",
+              "signature": "readonly dropped: number",
+              "doc": "How many whole chunks the replay has lost since the resource started: evicted to make room, or\ntoo large to keep. `0` means nothing was lost to eviction. It only grows, so a page that\nattaches twice can tell whether more was lost in between."
+            },
+            {
+              "kind": "property",
+              "name": "truncated",
+              "signature": "readonly truncated: boolean",
+              "doc": "`true` when the oldest retained entry is a single chunk larger than `maxBytes` that was cut,\nso the replay starts in the middle of it. It turns `false` again once newer output evicts\nthat chunk (which is then counted in `dropped`)."
             }
           ]
         },
@@ -48805,7 +49356,7 @@
               "kind": "method",
               "name": "emit",
               "signature": "emit(id: string, event: string, data: unknown): boolean",
-              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append\n`{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is\ndetached (then it is only appended). `event` must be one the extension declared, as for\n`host.emit`.\n\nOnly `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
+              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append\n`{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is\ndetached (then it is only appended). `event` must be one the extension declared, as for\n`host.emit`.\n\nOnly `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. `replay.measure` replaces the\nmeasuring and `replay.cut` the cutting (for structured chunks). {@linkcode OwnedResources.attach}\nreports the loss as `dropped` and `truncated`. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
               "params": [
                 {
                   "name": "id",
@@ -48998,6 +49549,18 @@
               "name": "events",
               "signature": "readonly events?: readonly string[]",
               "doc": "The event names to keep (say `[\"data\", \"exit\"]`, leaving out a high-rate `\"progress\"`); every\nevent when omitted. An event not listed is still sent to the owner, just not kept."
+            },
+            {
+              "kind": "property",
+              "name": "measure",
+              "signature": "readonly measure?: (chunk: unknown) => number",
+              "doc": "The size of one chunk of event `data`, in the same unit as `maxBytes` (rows, entries, bytes).\nDefaults to the byte length described at {@linkcode OwnedResources.emit}. Set it, with\n{@linkcode OwnedResourcesReplayOptions.cut}, for a resource whose chunks are structured\nobjects. It must be a non-negative number and must not throw."
+            },
+            {
+              "kind": "property",
+              "name": "cut",
+              "signature": "readonly cut?: (chunk: unknown, keepBytes: number) => unknown",
+              "doc": "Shrink a chunk larger than `maxBytes` to at most `keepBytes` (in `measure`'s unit), keeping\nwhatever tail the resource finds useful. Replaces the default cut of an oversized string or\nbytes; without it an oversized structured chunk is dropped and counted in\n{@linkcode OwnedResourceAttachment.dropped}. A result still over the budget is dropped too."
             }
           ]
         },
@@ -49388,6 +49951,12 @@
               "name": "configSidecars",
               "signature": "readonly configSidecars: SidecarDefinition[]",
               "doc": "`desktop.sidecars`: the backends `runDesktop` runs next to the window (its own `sidecars`\noption is laid over these by name)."
+            },
+            {
+              "kind": "property",
+              "name": "extensionSecureStore",
+              "signature": "readonly extensionSecureStore?: (name: string) => DesktopSecureStore",
+              "doc": "Each capability's own secure store by capability name (`ctx.secureStore` / `host.secureStore`,\n`<identifier>/ext/<name>`), when the `secureStore` capability is enabled; `runDesktop` hands it\nto the bridge."
             }
           ]
         },
@@ -49397,7 +49966,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "runtimeConfig",
@@ -49548,6 +50117,12 @@
             },
             {
               "kind": "property",
+              "name": "extensionSecureStore",
+              "signature": "extensionSecureStore?: (name: string) => DesktopSecureStore",
+              "doc": "Each capability's own secure store, by capability name ({@link DesktopCapCtx.secureStore},\n{@link DesktopExtensionHost.secureStore}; from {@link resolveDesktopCapabilities} when the\n`secureStore` capability is enabled). Without it every such call rejects `not_enabled`."
+            },
+            {
+              "kind": "property",
               "name": "window",
               "signature": "window?: DesktopWindowSettings",
               "doc": "The initial-window settings from `desktop.window` / `desktop.titleBar` / `desktop.backdrop` /\n`desktop.minSize` / `desktop.maxSize` (from {@link resolveDesktopCapabilities}), applied to the\nadopted window at launch. The size limits, title bar style and backdrop need denext's pinned\nruntime; the stock runtime skips them with a warning."
@@ -49575,6 +50150,12 @@
               "name": "newWindow",
               "signature": "newWindow?: DesktopNewWindowHandler",
               "doc": "What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),\nor `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a\nfresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`."
+            },
+            {
+              "kind": "property",
+              "name": "onDockReopen",
+              "signature": "onDockReopen?: DesktopDockReopenHandler",
+              "doc": "What a click on the macOS Dock icon opens when no window is showing: called with the keyed\nwindows the user closed (`ctx.closed`, most recent first), it answers the open options, or\n`undefined` to open nothing. Without it the click reopens the most recently closed keyed\nwindow, else shows the main window. With a window showing the click only activates the app."
             },
             {
               "kind": "property",
@@ -50380,6 +50961,148 @@
           "returns": "What changed.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "system",
+          "slug": "system",
+          "kind": "variable",
+          "signature": "system: SystemStatsApi",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { system } from \"denext/desktop\";\n\nconst { cpu, memory } = await system.stats();\nconst stop = system.onStats((s) => console.log(s.cpu.total), { intervalMs: 2000 });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SystemStats",
+          "slug": "SystemStats",
+          "kind": "interface",
+          "signature": "interface SystemStats",
+          "doc": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).",
+          "docFull": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not\nreport here is `null` (an optional field is left out).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "at",
+              "signature": "readonly at: number",
+              "doc": "When the sample was taken, in ms since the epoch."
+            },
+            {
+              "kind": "property",
+              "name": "cpu",
+              "signature": "readonly cpu: { readonly total: number | null; readonly cores?: readonly number[] }",
+              "doc": "The CPUs: `total` is the share of time every core was busy since this caller's previous\nsample (`null` when no figure is available), `cores` the same per core (with `perCore`)."
+            },
+            {
+              "kind": "property",
+              "name": "gpu",
+              "signature": "readonly gpu: { readonly utilization: number | null; readonly devices?: readonly { readonly name: string; readonly utilization: number | null }[] }",
+              "doc": "The GPUs: `utilization` is the busiest figure the OS reports (`null` when it reports none),\n`devices` each GPU by name."
+            },
+            {
+              "kind": "property",
+              "name": "memory",
+              "signature": "readonly memory: { readonly pressure: number | null; readonly usedBytes?: number; readonly totalBytes?: number }",
+              "doc": "Memory: `pressure` is how close the machine is to running out (`null` when the OS gives no\nfigure), with the bytes in use and in all where the OS reports them."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsApi",
+          "slug": "SystemStatsApi",
+          "kind": "interface",
+          "signature": "interface SystemStatsApi",
+          "doc": "What system is: the aggregate machine load.",
+          "docFull": "What `system` is: the aggregate machine load.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "stats",
+              "signature": "stats(options?: SystemStatsOptions): Promise<SystemStats>",
+              "doc": "One sample. Its CPU figure is the load since this caller's previous `stats()` (the first call\nprimes the sampler, ~100 ms).",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "perCore adds each core's figure."
+                }
+              ],
+              "returns": "The sample. Rejects unsupported under a runtime without system stats, forbidden when the app does not enable desktop.capabilities.systemStats."
+            },
+            {
+              "kind": "method",
+              "name": "onStats",
+              "signature": "onStats(callback: (stats: SystemStats) => void, options: SystemStatsSubscribeOptions): () => void",
+              "doc": "Sample every `intervalMs` (at least 1000) until the returned function is called; the runtime\nskips ticks while every app window is hidden.",
+              "params": [
+                {
+                  "name": "callback",
+                  "doc": "Called with each sample."
+                },
+                {
+                  "name": "options",
+                  "doc": "intervalMs and perCore."
+                }
+              ],
+              "returns": "The unsubscribe. Throws a RangeError for an intervalMs under 1000, and the unsupported / forbidden errors SystemStatsApi.stats rejects with."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsOptions",
+          "slug": "SystemStatsOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsOptions",
+          "doc": "Options for system.stats().",
+          "docFull": "Options for `system.stats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "perCore",
+              "signature": "readonly perCore?: boolean",
+              "doc": "Also report each core's figure (`cpu.cores`)."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsSubscribeOptions",
+          "slug": "SystemStatsSubscribeOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsSubscribeOptions extends SystemStatsOptions",
+          "doc": "Options for system.onStats().",
+          "docFull": "Options for `system.onStats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "intervalMs",
+              "signature": "readonly intervalMs: number",
+              "doc": "How often to sample, in ms: a finite number of at least {@linkcode MIN_STATS_INTERVAL_MS}."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsOptions",
+              "ref": "denext-desktop/SystemStatsOptions"
+            }
+          ]
         },
         {
           "name": "V8_ENTITLEMENTS",
@@ -52435,6 +53158,172 @@
           "denextOnly": true
         },
         {
+          "name": "system",
+          "slug": "system",
+          "kind": "variable",
+          "signature": "system: SystemStatsClient",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime after 3.0.0-denext.13).",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, denext's Deno Desktop runtime after 3.0.0-denext.13).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SystemStats",
+          "slug": "SystemStats",
+          "kind": "interface",
+          "signature": "interface SystemStats",
+          "doc": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not report here is null (an optional field is left out).",
+          "docFull": "One aggregate sample of the machine's load. Every percentage is 0–100; a figure the OS does not\nreport here is `null` (an optional field is left out).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "at",
+              "signature": "readonly at: number",
+              "doc": "When the sample was taken, in ms since the epoch."
+            },
+            {
+              "kind": "property",
+              "name": "cpu",
+              "signature": "readonly cpu: { readonly total: number | null; readonly cores?: readonly number[] }",
+              "doc": "The CPUs: `total` is the share of time every core was busy since this caller's previous\nsample (`null` when no figure is available), `cores` the same per core (with `perCore`)."
+            },
+            {
+              "kind": "property",
+              "name": "gpu",
+              "signature": "readonly gpu: { readonly utilization: number | null; readonly devices?: readonly { readonly name: string; readonly utilization: number | null }[] }",
+              "doc": "The GPUs: `utilization` is the busiest figure the OS reports (`null` when it reports none),\n`devices` each GPU by name."
+            },
+            {
+              "kind": "property",
+              "name": "memory",
+              "signature": "readonly memory: { readonly pressure: number | null; readonly usedBytes?: number; readonly totalBytes?: number }",
+              "doc": "Memory: `pressure` is how close the machine is to running out (`null` when the OS gives no\nfigure), with the bytes in use and in all where the OS reports them."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsClient",
+          "slug": "SystemStatsClient",
+          "kind": "interface",
+          "signature": "interface SystemStatsClient",
+          "doc": "What system is.",
+          "docFull": "What {@linkcode system} is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "stats",
+              "signature": "stats(options?: SystemStatsOptions): Promise<SystemStats>",
+              "doc": "One sample. Its CPU figure is the load since this window's previous `stats()` (the first call\nprimes the sampler, ~100 ms).",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "perCore adds each core's figure."
+                }
+              ],
+              "returns": "The sample."
+            },
+            {
+              "kind": "method",
+              "name": "onStats",
+              "signature": "onStats(callback: (stats: SystemStats) => void, options: SystemStatsWatchOptions): () => void",
+              "doc": "Sample every `intervalMs` (at least 1000) until the returned function is called.",
+              "params": [
+                {
+                  "name": "callback",
+                  "doc": "Called with each sample."
+                },
+                {
+                  "name": "options",
+                  "doc": "intervalMs, perCore and onError."
+                }
+              ],
+              "returns": "The unsubscribe. Throws a RangeError for an intervalMs under 1000."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsOptions",
+          "slug": "SystemStatsOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsOptions",
+          "doc": "Options for system.stats().",
+          "docFull": "Options for `system.stats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "perCore",
+              "signature": "readonly perCore?: boolean",
+              "doc": "Also report each core's figure (`cpu.cores`)."
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsSubscribeOptions",
+          "slug": "SystemStatsSubscribeOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsSubscribeOptions extends SystemStatsOptions",
+          "doc": "Options for system.onStats().",
+          "docFull": "Options for `system.onStats()`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "intervalMs",
+              "signature": "readonly intervalMs: number",
+              "doc": "How often to sample, in ms: a finite number of at least {@linkcode MIN_STATS_INTERVAL_MS}."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsOptions",
+              "ref": "denext-desktop-client/SystemStatsOptions"
+            }
+          ]
+        },
+        {
+          "name": "SystemStatsWatchOptions",
+          "slug": "SystemStatsWatchOptions",
+          "kind": "interface",
+          "signature": "interface SystemStatsWatchOptions extends SystemStatsSubscribeOptions",
+          "doc": "Options for SystemStatsClient.onStats.",
+          "docFull": "Options for {@linkcode SystemStatsClient.onStats}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "onError",
+              "signature": "readonly onError?: (error: unknown) => void",
+              "doc": "Called when the subscription could not start (`unavailable` off desktop, `unsupported`,\n`forbidden`, …) with the `DesktopBridgeError`; no sample follows."
+            }
+          ],
+          "extends": [
+            {
+              "type": "SystemStatsSubscribeOptions",
+              "ref": "denext-desktop-client/SystemStatsSubscribeOptions"
+            }
+          ]
+        },
+        {
           "name": "writePty",
           "slug": "writePty",
           "kind": "function",
@@ -53209,6 +54098,30 @@
               "name": "height",
               "signature": "readonly height?: number",
               "doc": "Height in CSS pixels."
+            },
+            {
+              "kind": "property",
+              "name": "defaultWidth",
+              "signature": "readonly defaultWidth?: number",
+              "doc": "The width when neither `width` nor the key's saved frame gives one: `width` > the saved\nframe > `defaultWidth` > the runtime's size."
+            },
+            {
+              "kind": "property",
+              "name": "defaultHeight",
+              "signature": "readonly defaultHeight?: number",
+              "doc": "The height when neither `height` nor the key's saved frame gives one."
+            },
+            {
+              "kind": "property",
+              "name": "titleBar",
+              "signature": "readonly titleBar?: TitleBarStyle",
+              "doc": "The title bar style (macOS): default `desktop.titleBar`, as the main window gets it;\n`\"default\"` keeps the OS's title bar."
+            },
+            {
+              "kind": "property",
+              "name": "windowButtonPosition",
+              "signature": "readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null",
+              "doc": "Where the macOS traffic lights sit (the close button's top-left corner, in points from the\nwindow's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;\n`null` keeps the OS's place. Elsewhere the runtime has no such buttons and ignores it."
             },
             {
               "kind": "property",

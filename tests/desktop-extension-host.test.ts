@@ -4,7 +4,7 @@
 // target one window; `pickedPath` resolves only a handle a dialog produced in this launch, never a
 // string the page made up. Driven through `bridge.handle` with constructed Requests.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { createDesktopBridge } from "../src/desktop/bridge.ts";
 import {
   type DesktopCapability,
@@ -13,6 +13,7 @@ import {
 } from "../src/desktop/extension.ts";
 import { dialogsCapability } from "../src/desktop/caps/dialogs.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
+import type { DesktopWindowRef } from "../src/desktop/app-windows.ts";
 
 const ORIGIN = "http://127.0.0.1:8000";
 const TOKEN = "test-token-1234";
@@ -127,6 +128,37 @@ Deno.test("setup: an event for one window reaches only that window's stream", as
     "panel only",
     "everyone",
   ]);
+});
+
+Deno.test("setup: the host's confirm is refused as unsupported on a runtime without message boxes", async () => {
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "guard", methods: {}, setup: (h) => void (host = h) }]);
+  assert(host);
+  // This process has no Deno.desktop (and the pinned runtime predates showMessageBox).
+  const err = await assertRejects(
+    () => host!.confirm({ message: "Quit anyway?", buttons: ["Quit", "Cancel"], cancelId: 1 }),
+    DesktopCapError,
+  );
+  assertEquals([err.code, err.status], ["unsupported", 501]);
+});
+
+Deno.test("setup: the host's openWindow is desktop.ts's windows.open, unsupported without it", () => {
+  const opened: unknown[] = [];
+  const ref = { id: "window-1", kind: "window" } as unknown as DesktopWindowRef;
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "jobs", methods: {}, setup: (h) => void (host = h) }], {
+    openWindow: (options) => {
+      opened.push(options);
+      return ref;
+    },
+  });
+  assertEquals(host!.openWindow({ url: "/jobs", key: "jobs", width: 400 }), ref);
+  assertEquals(opened, [{ url: "/jobs", key: "jobs", width: 400 }]);
+  // No desktop runtime's windows: refused, not a silent no-op.
+  let bare: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "jobs", methods: {}, setup: (h) => void (bare = h) }]);
+  const err = assertThrows(() => bare!.openWindow({ url: "/jobs" }), DesktopCapError);
+  assertEquals(err.code, "unsupported");
 });
 
 Deno.test("setup: a throwing setup is logged and the bridge still serves", async () => {

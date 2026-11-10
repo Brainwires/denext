@@ -687,6 +687,16 @@ export default defineDesktopExtension({
           : undefined;
         if (!target) throw new TypeError(`no ${kind} event target in this runtime`);
         target.dispatchEvent(event);
+        // A real application-menu click is the window's "menuclick", then (from laufey API 55)
+        // `Deno.desktop`'s for the app, which denext listens to on a runtime that sends it. Send
+        // both, as the runtime does; an older runtime's `Deno.desktop` has no listener for it.
+        if (kind === "window" && type === "menuclick") {
+          const app = desktop() as EventTarget | undefined;
+          if (typeof app?.dispatchEvent === "function") {
+            const detail = field(args, "detail") as Record<string, unknown> | undefined;
+            app.dispatchEvent(new CustomEvent(type, { detail: { ...detail, windowId: 0 } }));
+          }
+        }
         return { dispatched: true };
       },
     },

@@ -90,6 +90,20 @@ export interface OwnedResourcesReplayOptions {
    * event when omitted. An event not listed is still sent to the owner, just not kept.
    */
   readonly events?: readonly string[];
+  /**
+   * The size of one chunk of event `data`, in the same unit as `maxBytes` (rows, entries, bytes).
+   * Defaults to the byte length described at {@linkcode OwnedResources.emit}. Set it, with
+   * {@linkcode OwnedResourcesReplayOptions.cut}, for a resource whose chunks are structured
+   * objects. It must be a non-negative number and must not throw.
+   */
+  readonly measure?: (chunk: unknown) => number;
+  /**
+   * Shrink a chunk larger than `maxBytes` to at most `keepBytes` (in `measure`'s unit), keeping
+   * whatever tail the resource finds useful. Replaces the default cut of an oversized string or
+   * bytes; without it an oversized structured chunk is dropped and counted in
+   * {@linkcode OwnedResourceAttachment.dropped}. A result still over the budget is dropped too.
+   */
+  readonly cut?: (chunk: unknown, keepBytes: number) => unknown;
 }
 
 /** One retained event: what {@linkcode OwnedResources.attach} replays. */
@@ -110,6 +124,18 @@ export interface OwnedResourceAddOptions {
 export interface OwnedResourceAttachment {
   /** The resource's retained events, oldest first (empty with no `replay`). */
   readonly replay: readonly OwnedResourceReplayEntry[];
+  /**
+   * How many whole chunks the replay has lost since the resource started: evicted to make room, or
+   * too large to keep. `0` means nothing was lost to eviction. It only grows, so a page that
+   * attaches twice can tell whether more was lost in between.
+   */
+  readonly dropped: number;
+  /**
+   * `true` when the oldest retained entry is a single chunk larger than `maxBytes` that was cut,
+   * so the replay starts in the middle of it. It turns `false` again once newer output evicts
+   * that chunk (which is then counted in `dropped`).
+   */
+  readonly truncated: boolean;
 }
 
 /** One registered resource. */
@@ -118,8 +144,10 @@ interface Entry<T> {
   owner: string | undefined;
   /** The key of the window that last owned it, kept while it is detached. */
   lastKey: string | undefined;
-  chunks: { event: string; data: unknown; bytes: number }[];
+  chunks: { event: string; data: unknown; bytes: number; cut: boolean }[];
   bytes: number;
+  /** Whole chunks evicted or too large to keep, since the resource started. */
+  dropped: number;
 }
 
 const DEFAULT_DISPOSE_TIMEOUT_MS = 5000;
@@ -138,6 +166,8 @@ export class OwnedResources<T> {
   readonly #policy: "detach" | "dispose";
   readonly #dispose: (resource: T, id: string) => void | Promise<void>;
   readonly #maxBytes: number | undefined;
+  readonly #measure: ((chunk: unknown) => number) | undefined;
+  readonly #cut: ((chunk: unknown, keepBytes: number) => unknown) | undefined;
   readonly #replayEvents: ReadonlySet<string> | undefined;
   readonly #timeoutMs: number;
   #host: OwnedResourcesHost | undefined;
@@ -149,15 +179,14 @@ export class OwnedResources<T> {
    * @throws {RangeError} when `replay.maxBytes` is not a positive integer.
    */
   constructor(options: OwnedResourcesOptions<T>) {
-    const maxBytes = options.replay?.maxBytes;
-    if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
-      throw new RangeError(`replay.maxBytes must be a positive integer, got ${maxBytes}`);
-    }
+    const replay = options.replay;
+    checkMaxBytes(replay?.maxBytes);
     this.#policy = options.onOwnerClosed ?? "dispose";
     this.#dispose = options.dispose;
-    this.#maxBytes = maxBytes;
-    const events = options.replay?.events;
-    this.#replayEvents = events === undefined ? undefined : new Set(events);
+    this.#maxBytes = replay?.maxBytes;
+    this.#measure = replay?.measure;
+    this.#cut = replay?.cut;
+    this.#replayEvents = replay?.events && new Set(replay.events);
     this.#timeoutMs = options.disposeTimeoutMs ?? DEFAULT_DISPOSE_TIMEOUT_MS;
   }
 
@@ -199,6 +228,7 @@ export class OwnedResources<T> {
       lastKey: undefined,
       chunks: [],
       bytes: 0,
+      dropped: 0,
     });
   }
 
@@ -223,7 +253,9 @@ export class OwnedResources<T> {
    * `ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past
    * `maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its
    * last `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a
-   * `Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an
+   * `Uint8Array`); any other oversized chunk is not retained. `replay.measure` replaces the
+   * measuring and `replay.cut` the cutting (for structured chunks). {@linkcode OwnedResources.attach}
+   * reports the loss as `dropped` and `truncated`. Bytes are copied when retained (an
    * `ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its
    * buffer.
    *
@@ -264,7 +296,11 @@ export class OwnedResources<T> {
     }
     entry.owner = windowId;
     entry.lastKey = undefined;
-    return { replay: entry.chunks.map(({ event, data }) => ({ event, data })) };
+    return {
+      replay: entry.chunks.map(({ event, data }) => ({ event, data })),
+      dropped: entry.dropped,
+      truncated: entry.chunks[0]?.cut === true,
+    };
   }
 
   /**
@@ -354,11 +390,17 @@ export class OwnedResources<T> {
   }
 
   #retain(entry: Entry<T>, event: string, data: unknown, maxBytes: number): void {
-    const chunk = boundedChunk(data, maxBytes);
-    if (chunk === undefined) return;
+    const chunk = boundedChunk(data, maxBytes, this.#measure, this.#cut);
+    if (chunk === undefined) {
+      entry.dropped++;
+      return;
+    }
     entry.chunks.push({ event, ...chunk });
     entry.bytes += chunk.bytes;
-    while (entry.bytes > maxBytes) entry.bytes -= entry.chunks.shift()!.bytes;
+    while (entry.bytes > maxBytes) {
+      entry.bytes -= entry.chunks.shift()!.bytes;
+      entry.dropped++;
+    }
   }
 }
 
@@ -404,20 +446,51 @@ export function createOwnedResources<T>(options: OwnedResourcesOptions<T>): Owne
   return new OwnedResources(options);
 }
 
-/** A chunk ready to retain (bytes copied, an oversized string or bytes cut to its tail). */
+/** Refuse a `replay.maxBytes` that is set and not a positive integer. */
+function checkMaxBytes(maxBytes: number | undefined): void {
+  if (maxBytes !== undefined && (!Number.isInteger(maxBytes) || maxBytes < 1)) {
+    throw new RangeError(`replay.maxBytes must be a positive integer, got ${maxBytes}`);
+  }
+}
+
+/** A chunk ready to retain (bytes copied, an oversized chunk cut), or `undefined` to drop it. */
 function boundedChunk(
   data: unknown,
   maxBytes: number,
-): { data: unknown; bytes: number } | undefined {
-  if (typeof data === "string") return boundedString(data, maxBytes);
+  measure: ((chunk: unknown) => number) | undefined,
+  cut: ((chunk: unknown, keepBytes: number) => unknown) | undefined,
+): { data: unknown; bytes: number; cut: boolean } | undefined {
+  const sizeOf = (chunk: unknown): number => measure ? measure(chunk) : defaultSize(chunk);
+  const size = sizeOf(data);
+  if (size <= maxBytes) return { data: copyBytes(data), bytes: size, cut: false };
+  const shrunk = cut ? cut(data, maxBytes) : cutTail(data, maxBytes);
+  if (shrunk === undefined) return undefined;
+  const bytes = sizeOf(shrunk);
+  return bytes > maxBytes ? undefined : { data: shrunk, bytes, cut: true };
+}
+
+/** The default measure: UTF-8 length of a string, `byteLength` of bytes, else of the JSON. */
+function defaultSize(data: unknown): number {
+  if (typeof data === "string") return encoder.encode(data).byteLength;
   const bytes = asBytes(data);
-  if (bytes !== undefined) {
-    const kept = bytes.byteLength > maxBytes ? bytes.subarray(bytes.byteLength - maxBytes) : bytes;
-    const copy = data instanceof ArrayBuffer ? kept.slice().buffer : kept.slice();
-    return { data: copy, bytes: kept.byteLength };
-  }
-  const size = encoder.encode(JSON.stringify(data) ?? "").byteLength;
-  return size > maxBytes ? undefined : { data, bytes: size };
+  if (bytes !== undefined) return bytes.byteLength;
+  return encoder.encode(JSON.stringify(data) ?? "").byteLength;
+}
+
+/** A copy of bytes (so a reader may reuse its buffer); anything else as it is. */
+function copyBytes(data: unknown): unknown {
+  const bytes = asBytes(data);
+  if (bytes === undefined) return data;
+  return data instanceof ArrayBuffer ? bytes.slice().buffer : bytes.slice();
+}
+
+/** The default cut: the last `maxBytes` of a string or bytes; `undefined` for any other chunk. */
+function cutTail(data: unknown, maxBytes: number): unknown {
+  if (typeof data === "string") return boundedString(data, maxBytes).data;
+  const bytes = asBytes(data);
+  if (bytes === undefined) return undefined;
+  const kept = bytes.subarray(bytes.byteLength - maxBytes);
+  return data instanceof ArrayBuffer ? kept.slice().buffer : kept.slice();
 }
 
 /** A string chunk, cut to its last `maxBytes` UTF-8 bytes on a character boundary. */

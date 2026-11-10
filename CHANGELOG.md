@@ -8,6 +8,157 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-11-10
+
+### Added
+
+- **System stats for desktop apps.** `denext desktop add system-stats` enables `system.stats()` /
+  `system.onStats(cb, { intervalMs })`, from `denext/desktop/client` for the page and from
+  `denext/desktop` for the app's own process: the machine's aggregate CPU (total, and per core
+  with `perCore`), GPU and memory load in percent, as a `SystemStats` sample. The CPU figure is the
+  load since the caller's previous sample (each window, and each subscription, has its own
+  sampler); the runtime samples only while a subscription runs and skips ticks while every window
+  is hidden; a window's subscriptions end with it. Aggregate figures only, so the capability bakes
+  no Deno permission. It needs denext's Deno Desktop runtime after 3.0.0-denext.13
+  (`Deno.desktop.systemStats`); under an older one every call rejects `unsupported`, and a
+  packaged app that does not list the capability gets `forbidden`.
+- **Deno Desktop extensions get their own secure store.** A `defineDesktopExtension` handler's
+  `ctx.secureStore` and its `setup` host's `host.secureStore` (`get(key)` / `set(key, value)` /
+  `delete(key)`, the page API's key rules and value encoding) keep the extension's secrets in the
+  OS credential store under `<desktop.app.identifier>/ext/<name>`, `<name>` being the capability's
+  name. No page and no other extension can read them. They need the `secureStore` capability;
+  without it every call rejects `not_enabled`, saying how to enable it. The type is
+  `DesktopSecureStore` from `denext/desktop`.
+- **`desktop.secureStore: { legacy?: boolean }`.** On macOS, `legacy` (default `true`) keeps moving
+  the items an older denext wrote through `/usr/bin/security` into the runtime's own Keychain
+  store, and keeps `security` as the store under a runtime without one. With `legacy: false`,
+  `security` is never run and the packaged app no longer bakes `--allow-run=security`; under a
+  runtime without its own macOS store every call then fails `backend_unavailable`, naming the
+  setting. `denext desktop add secure-store` writes `legacy: false` when it enables the capability
+  for the first time, since such an app never shipped the `security` path. Its type is
+  `DesktopSecureStoreConfig` from `denext/server`.
+- **The Deno Desktop runtime-gated capabilities are listed in `.deno-desktop/app.json`.** On a
+  runtime that reads it, the packager writes `"capabilities"` (the enabled ones among
+  `secureStore` and `systemStats`), and the secure store is served without the unscoped
+  `--allow-sys` it needed so far: the package scripts and `denext desktop run` / `dev` stop baking
+  it for the store. It takes effect from Deno Desktop runtime 3.0.0-denext.16 (an older runtime
+  refuses the key, so it is not written).
+- **The macOS Dock's reopen click brings back the last closed window.** With no window showing, a
+  click on the Dock icon now reopens the most recently closed keyed window (its key, path and
+  frame), and shows the main window as before only when none was closed.
+  `runDesktop({ onDockReopen: (ctx) => options | undefined })` decides instead, with `ctx.closed`
+  (the keyed windows the user closed, most recent first); `undefined` opens nothing. With a window
+  showing the click still only activates the app. `DesktopRuntime.onDockReopen(fn)` hears every
+  click (`{ hasVisibleWindows }`) and returns the unsubscribe; a no-op without a Dock.
+- **Opened windows take `desktop.titleBar`.** A window from `windows.open` / `openWindow` (and New
+  Window, Reopen Closed Window, the restored session) gets the main window's title bar style; its
+  own `titleBar` (`"default"`, `"hidden"`, `"hiddenInset"`) overrides it, and a frameless window
+  is left alone.
+- **`desktop.window.windowButtonPosition`** places the macOS traffic lights at launch: `{ x, y }`,
+  the close button's top-left corner in points from the window's top-left (each from 0). The main
+  window and every window from `windows.open` / `openWindow` (New Window, Reopen Closed Window and
+  the restored session included) take it after their title bar style; a window's own
+  `windowButtonPosition` overrides it and `null` keeps the OS's place. A frameless window is left
+  alone, Windows and Linux ignore it, and a runtime without `setWindowButtonPosition` warns once.
+- **`defaultWidth` / `defaultHeight`** on `windows.open`, `openWindow` and `desktop.window`: the
+  size a window opens with only when its key has no saved frame (the first open, no key, or
+  `restoreBounds: false`). Precedence per axis: `width` / `height` > the saved frame > the
+  default > the runtime's size.
+- **`desktop.menu.window.reopenClosed: "list"`**: a "Reopen Closed Window" submenu listing the
+  closed keyed windows by title, most recent first (at most 10), each reopening its own window;
+  the first keeps Cmd/Ctrl+Shift+T. A window's label in the Window menu's lists now follows its
+  page's `document.title` (reported by the injected page script) and `setWindowTitle`.
+- **`windows.forget(key)`** on `DesktopRuntime.windows`: the key leaves Reopen Closed Window, the
+  Dock's reopen and `windows.lastSession()` (persisted, so the next launch does not restore it);
+  the menu follows. Its saved frame is kept.
+- **`createOwnedResources()` replay reports what it lost.** `attach()` now also returns `dropped`
+  (whole chunks evicted or too large to keep since the resource started) and `truncated` (the
+  replay starts mid-chunk because one oversized chunk was cut). `replay.measure` and `replay.cut`
+  let a resource with structured chunks size them and keep a tail; without `cut` an oversized
+  structured chunk is dropped and counted.
+- **`host.confirm(options)` and `host.openWindow(options)` for desktop extensions.** `confirm`
+  shows the OS's own message box with your button labels (`message`, `detail`, `title`, `buttons`,
+  `defaultId`, `cancelId`, `kind`) and resolves the pressed button's index, or `cancelId` / `null`
+  for a box dismissed without one. It is app-modal, so an `onBeforeQuit` guard can ask with no
+  window open. It needs Deno Desktop runtime 3.0.0-denext.16 (`Deno.desktop.dialog.showMessageBox`)
+  and rejects with `unsupported` before it. `openWindow` opens a window as `desktop.ts`'s
+  `windows.open` does. See https://denext.dev/docs/desktop#desktop-host-confirm.
+- **`desktop.linux.desktopEntry`: what the Linux `.desktop` entries say about the app.**
+  `categories` (default `["Utility"]`; a terminal sets `["System", "TerminalEmulator"]`),
+  `keywords`, `genericName`, `startupWMClass` and `mimeTypes` reach every entry denext writes: the
+  `.deb` / `.rpm` launcher and the bundle's own entry the `.tar.gz` and AppImage carry. Values are
+  escaped per the Desktop Entry specification, and the config refuses a category, MIME type or
+  window class that could add a line or a key. File types with no deep link launch with `%F`. See
+  https://denext.dev/docs/desktop#desktop-linux-entry.
+- **AppStream metainfo in the Linux packages.** The `.deb`, `.rpm` and AppImage install
+  `usr/share/metainfo/<desktop.app.identifier>.metainfo.xml` (name, summary, license, developer,
+  the `.desktop` file it launches, an OARS content rating and the version as its release), so
+  software centres list the app. The AppImage's also lists the libraries the host must provide:
+  the backend's (WebKitGTK 4.1 and GTK 3 for the webview backend) plus
+  `desktop.linux.appImage.requires`.
+- **`desktop.installers.email`.** The `.deb` Maintainer becomes `Publisher <email>` (what Debian
+  policy asks for), and the address is the `.rpm` Packager and the metainfo's update contact.
+  Without it the Maintainer stays the publisher alone.
+- **`buildDesktopAppImage` in `denext/desktop`**, which `scripts/package-linux.ts` now calls: the
+  AppDir carries the entry at its root and under `usr/share/applications/`, the icon under the
+  entry's id and as `.DirIcon`, the metainfo, and an `AppRun` that launches with the app id the
+  entry's `StartupWMClass` matches. Regenerate the script with
+  `denext desktop package --regenerate-scripts`.
+- **`denext desktop doctor`'s `native-addons` check**: a Node-API addon (`*.node`) in the project's
+  `node_modules` or `.deno-desktop/` built against a distribution's shared Node.js (a `NEEDED
+  libnode.so.*` entry) is reported, with the fix.
+
+### Changed
+
+- **denext pins runtime 3.0.0-denext.16** (denext.14 and denext.15 were never published). The
+  features this release gates on the next runtime (native message boxes for `host.confirm`,
+  app-wide application-menu clicks, the baked capability list and `DENO_UNSTABLE_IDLE_TRIM=0`
+  turning a compiled binary's idle trim off) take effect from 3.0.0-denext.16.
+- **The runtime provenance check accepts builds from the runtime repository's own runners.**
+  `gh attestation verify` still requires the release workflow and the pinned tag, and every archive
+  still matches its pinned SHA-256; it no longer requires the build machine to be GitHub-hosted.
+- **The Linux secure-store probe looks up an account no caller can name**
+  (`-denext-secure-store-probe`): a page key can no longer coincide with it.
+- **The AppImage runtime is pinned.** `appimagetool` used to prepend whatever type2-runtime's
+  moving `continuous` release held; the package script now downloads type2-runtime `20251108` for
+  x86_64 or aarch64 once into the toolchain cache, verifies its SHA-256 (a mismatch fails the
+  build) and passes it as `--runtime-file`.
+- **The Linux bundle's own `.desktop` entry is rewritten after `deno desktop` writes it**: `Name`
+  is `desktop.app.name` instead of the bundle directory's `<name>-<arch>`, `Icon` names the entry's
+  id with the icon copied beside it (it was `AppIcon`, which no icon theme resolves), and the
+  `desktop.linux.desktopEntry` keys apply. Every Linux package script gets this from
+  `buildDesktopBundle`, with no regeneration.
+- **A Linux package refuses a Node-API addon that links `libnode`.** One built against a
+  distribution's `nodejs` package cannot load in the app's runtime; the package script now fails
+  naming the addon and the fix (rebuild it against Node's own headers, or use the npm prebuilt)
+  instead of shipping an app whose first `require()` of it fails. With no `readelf`, `objdump` or
+  `ldd` on the host the check is skipped with a note.
+- **`desktopRequireTool("dpkg-deb", …)` says how to install `dpkg`** (apt, dnf, brew), as it does
+  for the other tools, and `desktopHasTool` is documented with the package-script helpers.
+
+### Fixed
+
+- **Application menu clicks no longer depend on the main window (Deno Desktop).** On a runtime
+  that delivers menu clicks app-wide (a `"menuclick"` event on `Deno.desktop`), the application
+  menu's items, the page's and the `desktop.menu.window` ones alike, are taken from that event:
+  New Window, Reopen Closed Window and the window list keep working after the main window closes
+  while the app stays up (`desktop.app.keepAlive`, a tray), and a click is no longer lost while
+  another window is key. Older runtimes keep taking the clicks from the main window.
+
+### Security
+
+- **The Deno Desktop secure store keeps each caller's items apart.** The runtime can't tell the
+  app's pages from its extensions (they all run in the app's own process), so denext now stores
+  the pages' items under `<desktop.app.identifier>/page` and each extension's under
+  `<desktop.app.identifier>/ext/<name>`, on every backend (the runtime's Keychain and Secret
+  Service stores, `/usr/bin/security`, the Windows PasswordVault). A page can't read or overwrite
+  an extension's secrets, nor the other way round. Items an earlier denext stored for the pages
+  under the bare identifier move into the page namespace on their first read during the first
+  launch with this release: copied, then deleted, so a failure leaves them where they were. A
+  per-app marker keeps every later launch from reading the bare identifier again, so an item
+  another program plants there is never adopted, and a page delete also removes the un-namespaced
+  copy. Extensions get no move (nothing un-namespaced was theirs).
+
 ## [4.14.0] - 2026-11-08
 
 ### Added
@@ -21521,7 +21672,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.14.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.15.0...development
+[4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
 [4.13.0]: https://jsr.io/@denext/denext@4.13.0

@@ -20,7 +20,7 @@ import type {
   DesktopShellConfig,
   SpaProxyConfig,
 } from "../../server/config.ts";
-import type { DesktopCapability } from "../extension.ts";
+import type { DesktopCapability, DesktopSecureStore } from "../extension.ts";
 import { type SidecarDefinition, sidecarListError } from "../sidecar.ts";
 import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
 import { echoCapability } from "./echo.ts";
@@ -29,7 +29,8 @@ import { fsCapability } from "./fs.ts";
 import { sqliteCapability } from "./sqlite.ts";
 import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
-import { secureStoreCapability } from "./secure-store.ts";
+import { type SecureStoreHost, secureStoreHost } from "./secure-store.ts";
+import { secureStoreLegacy } from "../secure-store-config.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import {
   type DesktopAppSettings,
@@ -48,6 +49,7 @@ import { shortcutsCapability } from "./shortcuts.ts";
 import { launchAtLoginCapability } from "./launch-at-login.ts";
 import { updatesCapability } from "./updates.ts";
 import { ptyCapability } from "./pty.ts";
+import { systemStatsCapability } from "./system-stats.ts";
 import { type PtyOs, resolvePtyConfig } from "../pty-config.ts";
 import type { DesktopUpdaterConfig } from "../updater.ts";
 import {
@@ -124,6 +126,12 @@ export interface ResolvedDesktop {
    * option is laid over these by name).
    */
   readonly configSidecars: SidecarDefinition[];
+  /**
+   * Each capability's own secure store by capability name (`ctx.secureStore` / `host.secureStore`,
+   * `<identifier>/ext/<name>`), when the `secureStore` capability is enabled; `runDesktop` hands it
+   * to the bridge.
+   */
+  readonly extensionSecureStore?: (name: string) => DesktopSecureStore;
 }
 
 /**
@@ -201,7 +209,7 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
  * `secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,
- * `globalShortcuts`, `launchAtLogin`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module
+ * `globalShortcuts`, `launchAtLogin`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module
  * paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
  * `authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers
  * `unavailable` per call (the page uses its web path), never an error. A bad extension path IS an
@@ -233,7 +241,11 @@ export async function resolveDesktopCapabilities(
 
   if (!caps) return { capabilities: [], ...base };
   assertAppIdentity(Boolean(explicitId), caps);
+  const secureStore = caps.secureStore
+    ? secureStoreHost({ service: appId, legacy: secureStoreLegacy(desktop) })
+    : undefined;
   const capabilities = await buildBuiltinCaps(caps, {
+    secureStore,
     dirs,
     appId,
     base: options.base,
@@ -242,7 +254,11 @@ export async function resolveDesktopCapabilities(
     manifestUrl: (desktop as { update?: { manifestUrl?: unknown } } | undefined)?.update
       ?.manifestUrl,
   });
-  return { capabilities, ...base };
+  return {
+    capabilities,
+    ...base,
+    ...(secureStore ? { extensionSecureStore: (name: string) => secureStore.extension(name) } : {}),
+  };
 }
 
 /**
@@ -387,6 +403,8 @@ interface BuiltinCtx {
   readonly updater: DesktopUpdaterConfig | undefined;
   /** `desktop.update.manifestUrl` as written. */
   readonly manifestUrl: unknown;
+  /** The secure store (the page capability and the extensions' stores), when it is enabled. */
+  readonly secureStore: SecureStoreHost | undefined;
 }
 
 /** The enabled built-ins that keep data on disk or in the keychain (`fs`, `sqlite`, `secureStore`). */
@@ -397,13 +415,13 @@ function dataCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapa
     out.push(fsCapability({ dirs: ctx.dirs, read, write, picked: ctx.picked }));
   }
   if (caps.sqlite) out.push(sqliteCapability(ctx.dirs.data));
-  if (caps.secureStore) out.push(secureStoreCapability({ service: ctx.appId }));
+  if (ctx.secureStore) out.push(ctx.secureStore.capability);
   return out;
 }
 
 /**
  * The enabled built-ins over the pinned runtime's app APIs (notifications, menus, shortcuts, login,
- * terminals).
+ * system stats, terminals).
  */
 function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
   return [
@@ -411,6 +429,7 @@ function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
     ...(caps.contextMenu ? [contextMenuCapability()] : []),
     ...(caps.globalShortcuts ? [shortcutsCapability()] : []),
     ...(caps.launchAtLogin ? [launchAtLoginCapability()] : []),
+    ...(caps.systemStats ? [systemStatsCapability()] : []),
     ...(caps.pty
       ? [ptyCapability({ config: resolvePtyConfig(caps.pty, Deno.build.os as PtyOs) })]
       : []),

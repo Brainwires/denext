@@ -310,11 +310,12 @@ Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env
 
 Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay the baseline", () => {
   // Scoped caps add only their exact run + sys; no write, no per-token read/write leaks.
-  // secure-store on macOS: the runtime's Keychain store (unscoped --allow-sys, which subsumes
-  // device's osRelease) and `security` (older runtimes, moving older items over).
+  // secure-store on macOS under the pinned runtime: the Keychain store is gated on the baked
+  // capability list (no --allow-sys of its own, so device's osRelease stays scoped), and
+  // `security` while the legacy move is on.
   assertEquals(desktopBuildFlags(caps({ secureStore: true, device: true }), "darwin"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-sys",
+    "--allow-sys=osRelease",
     "--allow-run=security",
   ]);
   assertEquals(desktopBuildFlags(caps({ device: true }), "darwin"), [
@@ -679,4 +680,111 @@ Deno.test("desktopNpmArgs: a package.json without node_modules resolves npm from
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- secure-store: least privilege by config and runtime ---------------------------------------
+
+Deno.test("desktop add secure-store: a first enablement writes desktop.secureStore { legacy: false }", async () => {
+  const dir = project(
+    'export default {\n  desktop: { app: { identifier: "com.example.app" } },\n};\n',
+  );
+  const report = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
+  assertEquals(report.added, ["secure-store"]);
+  const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  assertStringIncludes(text, "secureStore: true");
+  assertStringIncludes(text, "legacy: false");
+  const model = await readConfigModel(text);
+  const desktop = model.keys.desktop?.value as { secureStore?: unknown };
+  assertEquals(desktop.secureStore, { legacy: false });
+  // The report's permissions are the config's: with legacy off macOS bakes no `security`.
+  assertFalse(
+    report.permissions.darwin.includes("--allow-run=security"),
+    JSON.stringify(report.permissions),
+  );
+  assertEquals(report.permissions.windows, ["--allow-run=powershell.exe"]);
+  // A second run leaves both as they are.
+  const again = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
+  assertEquals(again.kept, ["secure-store"]);
+  assertEquals(again.diff, "");
+});
+
+Deno.test("desktop add secure-store: an app that already had it, or set desktop.secureStore, keeps the legacy move", async () => {
+  // Already enabled (it may have shipped the `security` path): nothing is added.
+  const enabled = project(
+    "export default {\n  desktop: { capabilities: { secureStore: true } },\n};\n",
+  );
+  await addDesktopCapabilities({ capabilities: ["secure-store", "fs"], dir: enabled });
+  const kept = await Deno.readTextFile(join(enabled, "denext.config.ts"));
+  assertFalse(kept.includes("legacy"), kept);
+  // `desktop.secureStore` set by hand: left as written.
+  const chosen = project("export default {\n  desktop: { secureStore: { legacy: true } },\n};\n");
+  const report = await addDesktopCapabilities({ capabilities: ["secure-store"], dir: chosen });
+  const text = await Deno.readTextFile(join(chosen, "denext.config.ts"));
+  assertStringIncludes(text, "legacy: true");
+  assertFalse(text.includes("legacy: false"), text);
+  assert(report.permissions.darwin.includes("--allow-run=security"), JSON.stringify(report));
+});
+
+Deno.test("desktopBuildFlags: secure-store bakes --allow-sys and `security` only where the config and runtime need them", () => {
+  const legacy = (on?: boolean) => ({
+    desktop: {
+      capabilities: { secureStore: true },
+      ...(on === undefined ? {} : { secureStore: { legacy: on } }),
+    },
+  });
+  const pinned = { bakedCapabilities: false, macSecureStore: true };
+  // Legacy on (the default): `security` keeps moving older items.
+  assertEquals(desktopBuildFlags(legacy(), "darwin", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+    "--allow-run=security",
+  ]);
+  // Legacy off under a runtime with its own Keychain store: no `security`.
+  assertEquals(desktopBuildFlags(legacy(false), "darwin", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+  ]);
+  // Legacy off never bakes `security`, even for a runtime without its own macOS store (the cap
+  // then fails closed and never runs it); legacy on keeps it there as the store.
+  assertEquals(
+    desktopBuildFlags(legacy(false), "darwin", { bakedCapabilities: false, macSecureStore: false }),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys"],
+  );
+  assertEquals(
+    desktopBuildFlags(legacy(), "darwin", { bakedCapabilities: false, macSecureStore: false }),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys", "--allow-run=security"],
+  );
+  // A runtime that gates the store on app.json's capability list: no --allow-sys.
+  const baked = { bakedCapabilities: true, macSecureStore: true };
+  assertEquals(desktopBuildFlags(legacy(false), "darwin", baked), [...DESKTOP_BASELINE_FLAGS]);
+  assertEquals(desktopBuildFlags(legacy(), "darwin", baked), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=security",
+  ]);
+  assertEquals(desktopBuildFlags(legacy(), "linux", baked), [...DESKTOP_BASELINE_FLAGS]);
+  assertEquals(desktopBuildFlags(legacy(), "linux", pinned), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys",
+  ]);
+  // Another capability's --allow-sys stays (the baked list replaces only the store's).
+  assertEquals(
+    desktopBuildFlags(
+      { desktop: { capabilities: { secureStore: true, device: true } } },
+      "linux",
+      baked,
+    ),
+    [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease"],
+  );
+  // Windows: PowerShell + PasswordVault whatever the runtime.
+  for (const options of [pinned, baked]) {
+    assertEquals(desktopBuildFlags(legacy(false), "windows", options), [
+      ...DESKTOP_BASELINE_FLAGS,
+      "--allow-run=powershell.exe",
+    ]);
+  }
+  // The catalog's static lists are an older runtime's and the default config's.
+  assertEquals(desktopPermissionFlags(["secure-store"], "darwin"), [
+    "--allow-sys",
+    "--allow-run=security",
+  ]);
 });

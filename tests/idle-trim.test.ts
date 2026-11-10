@@ -152,7 +152,7 @@ Deno.test("idle trim: DENEXT_IDLE_TRIM=0 when a compiled binary runs holds a bak
   const every = (_fn: () => void, ms: number) => void timers.push(ms);
   const env = (vars: Record<string, string>) => (n: string) => vars[n];
   // A runtime that reads DENO_UNSTABLE_IDLE_TRIM only at start: the timer holds the trim off.
-  const old = { every, runtime: toolchainPin.version };
+  const old = { every, runtime: "3.0.0-denext.13" };
   assertEquals(holdOffBakedIdleTrim(true, env({ DENEXT_IDLE_TRIM: "0" }), old), "timer");
   assertEquals(timers, [500], "woken twice per default 1 s idle delay");
   assertEquals(
@@ -179,8 +179,9 @@ Deno.test("idle trim: DENEXT_IDLE_TRIM=0 when a compiled binary runs holds a bak
 });
 
 Deno.test("idle trim: on a runtime that rereads DENO_UNSTABLE_IDLE_TRIM, the binary sets it to 0 and starts no timer", () => {
-  // Inert until the pin moves to the release with Brainwires/deno DENEXT.md item 269.
-  assert(!supportsIdleTrimEnvOff(toolchainPin.version), "the pinned runtime predates item 269");
+  // Brainwires/deno DENEXT.md item 278 ships in 3.0.0-denext.16 (denext.14 and .15 were never published).
+  assertEquals(FIRST_IDLE_TRIM_ENV_OFF_RUNTIME, "3.0.0-denext.16");
+  assert(!supportsIdleTrimEnvOff("3.0.0-denext.13"), "3.0.0-denext.13 predates item 278");
   assert(supportsIdleTrimEnvOff(FIRST_IDLE_TRIM_ENV_OFF_RUNTIME));
   const runtime = FIRST_IDLE_TRIM_ENV_OFF_RUNTIME;
   const timers: number[] = [];

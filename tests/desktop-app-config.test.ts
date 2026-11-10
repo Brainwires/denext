@@ -13,7 +13,9 @@ import {
 import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_APP_CONFIG_FILE,
+  DESKTOP_BAKED_CAPABILITIES,
   desktopAppIdentity,
+  desktopBakedCapabilities,
   desktopBridgeOrigins,
   desktopInspectable,
   desktopLaunchConfig,
@@ -632,4 +634,85 @@ Deno.test("package: desktop.update.ui requires a sequenced OTA manifest in the e
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- app.json `capabilities`: the runtime-gated capabilities, on a runtime that reads them ----
+
+Deno.test("desktopBakedCapabilities: the enabled runtime-gated capabilities, in the list's order", () => {
+  assertEquals(DESKTOP_BAKED_CAPABILITIES, ["secureStore", "systemStats"]);
+  assertEquals(desktopBakedCapabilities(undefined), []);
+  assertEquals(desktopBakedCapabilities({ desktop: { capabilities: { fs: true } } }), []);
+  assertEquals(
+    desktopBakedCapabilities({
+      desktop: { capabilities: { systemStats: { cpu: true }, secureStore: true, fs: true } },
+    }),
+    ["secureStore", "systemStats"],
+  );
+  assertEquals(
+    desktopBakedCapabilities({
+      desktop: { capabilities: { secureStore: false, systemStats: null } },
+    }),
+    [],
+  );
+});
+
+Deno.test("sync: app.json lists the baked capabilities only for a runtime that reads them", async () => {
+  const withStore = {
+    desktop: { ...T3.desktop, capabilities: { secureStore: true, systemStats: true, fs: true } },
+  };
+  const read = async (dir: string) =>
+    JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE)));
+  const dir = await project("{}\n");
+  try {
+    // A runtime that reads the list (and the overlay keys).
+    await syncDesktopAppConfigAt(dir, withStore, true, true);
+    assertEquals((await read(dir)).capabilities, ["secureStore", "systemStats"]);
+    // An older runtime refuses an unknown key: never written.
+    await syncDesktopAppConfigAt(dir, withStore, true, false);
+    assertEquals("capabilities" in (await read(dir)), false);
+    // None enabled: no key.
+    await syncDesktopAppConfigAt(dir, T3, true, true);
+    assertEquals("capabilities" in (await read(dir)), false);
+    // The default gate is the pinned runtime's, which reads the list.
+    await syncDesktopAppConfigAt(dir, withStore);
+    assertEquals((await read(dir)).capabilities, ["secureStore", "systemStats"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  // The list alone makes an app.json (the runtime must see it to serve the store without
+  // --allow-sys), embedded through compile.include.
+  const bare = await project("{}\n");
+  try {
+    const report = await syncDesktopAppConfigAt(
+      bare,
+      { desktop: { app: { identifier: "com.example.app" }, capabilities: { secureStore: true } } },
+      true,
+      true,
+    );
+    assertEquals(report.appJson, "written");
+    assertEquals(report.include, "updated");
+    assertEquals(await read(bare), {
+      identifier: "com.example.app",
+      capabilities: ["secureStore"],
+    });
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+  }
+});
+
+Deno.test("config: desktop.secureStore is { legacy?: boolean }", () => {
+  const problems = (secureStore: unknown) => {
+    try {
+      validateDenextConfig({ desktop: { secureStore } } as unknown as DenextConfig);
+      return "";
+    } catch (err) {
+      return String(err);
+    }
+  };
+  assertEquals(problems(undefined), "");
+  assertEquals(problems({}), "");
+  assertEquals(problems({ legacy: false }), "");
+  assertStringIncludes(problems({ legacy: "no" }), "desktop.secureStore.legacy");
+  assertStringIncludes(problems(true), "desktop.secureStore");
+  assertStringIncludes(problems({ migrate: true }), "desktop.secureStore.migrate");
 });

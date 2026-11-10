@@ -449,13 +449,17 @@ See [Writing a plugin](/docs/plugins).
   capability allowlist (default deny): `secureStore`, `fs`
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
   (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
-  `globalShortcuts`, `launchAtLogin`, `keepAwake`, `clipboard`, `device`, `passkeys`,
+  `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
   `updates`, and `extensions` (module paths of your `defineDesktopExtension` modules).
   The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
   flags from it. Written by `denext desktop add <capability>`. Distinct from
   `spa.desktop` (packaging settings such as the icon). See
   [Desktop apps › Native capabilities](/docs/desktop#desktop-capabilities).
+  `desktop.secureStore` (`{ legacy }`, default `true`) keeps macOS moving the items
+  an older denext wrote through `/usr/bin/security`; `legacy: false` (what
+  `denext desktop add secure-store` writes for a first enablement) never runs or
+  bakes `security`.
   `desktop.macos` (`{ provisioningProfile, entitlements }`) signs the macOS app with a
   provisioning profile and restricted entitlements such as associated domains; see
   [Desktop apps › Code signing](/docs/desktop#desktop-macos-profile).

@@ -2,8 +2,10 @@
  * How `runDesktop` sets up the app's windows and chrome: the window registry over the adopted main
  * window (each window's `window` capability, the `windows` capability), the `app` capability, the
  * launch settings of `desktop.app` (`keepAlive`, `dock`) and `desktop.window` (always on top,
- * opacity, taskbar, workspaces), the macOS Dock's reopen click, the backend tray and its panel, and
- * what `desktop.ts` gets to drive them (`DesktopRuntime.windows`, `.tray`, `.setDockVisible`).
+ * opacity, taskbar, workspaces), the macOS Dock's reopen click (the most recently closed keyed
+ * window, `runDesktop({ onDockReopen })`'s window, else the main window), the backend tray and its
+ * panel, and what `desktop.ts` gets to drive them (`DesktopRuntime.windows`, `.tray`,
+ * `.setDockVisible`, `.onDockReopen`).
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -34,6 +36,7 @@ import {
 import { platformFacts } from "./caps/platform.ts";
 import { supportsInitialOverlay } from "../build/deno-version.ts";
 import {
+  type ClosedWindow,
   createWindowRegistry,
   type RegisteredWindow,
   type RegistryWindow,
@@ -48,6 +51,7 @@ import {
   applyDesktopWindowSettings,
   type DesktopAppSettings,
   type DesktopWindowSettings,
+  withDefaultWindowSize,
 } from "./window-config.ts";
 
 /** One of the app's windows, as `desktop.ts` drives it (`DesktopRuntime.windows`). */
@@ -87,10 +91,29 @@ export interface DesktopOpenWindowOptions {
   readonly url: string;
   /** The title. */
   readonly title?: string;
-  /** Width in CSS pixels. */
+  /** Width in CSS pixels (over a saved frame and {@linkcode defaultWidth}). */
   readonly width?: number;
-  /** Height in CSS pixels. */
+  /** Height in CSS pixels (over a saved frame and {@linkcode defaultHeight}). */
   readonly height?: number;
+  /**
+   * The width when neither `width` nor the key's saved frame gives one (a first open, no `key`,
+   * or `restoreBounds: false`): `width` > the saved frame > `defaultWidth` > the runtime's size.
+   */
+  readonly defaultWidth?: number;
+  /** The height when neither `height` nor the key's saved frame gives one. */
+  readonly defaultHeight?: number;
+  /**
+   * The title bar style (macOS; elsewhere the runtime answers it has none): default
+   * `desktop.titleBar`, as the main window gets it. `"default"` keeps the OS's title bar; a
+   * frameless window has none to style.
+   */
+  readonly titleBar?: "default" | "hidden" | "hiddenInset";
+  /**
+   * Where the macOS traffic lights sit (the close button's top-left corner, in points from the
+   * window's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;
+   * `null` keeps the OS's place. A frameless window has none.
+   */
+  readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
   /** Screen x of the top-left corner. */
   readonly x?: number;
   /** Screen y of the top-left corner. */
@@ -159,6 +182,34 @@ export interface DesktopWindows {
    * them at launch. Empty on the first launch, or when the store could not be read.
    */
   lastSession(): readonly SessionWindow[];
+  /**
+   * Forget the keyed window `key`: it leaves the windows Reopen Closed Window and the Dock's
+   * reopen click bring back (the Window menu follows) and {@linkcode lastSession}, as persisted in
+   * the window store, so the next launch does not restore it either. Its saved frame is kept, and
+   * an open window with the key is not affected (it is in the next session if open at the quit).
+   */
+  forget(key: string): void;
+}
+
+/** What `runDesktop({ onDockReopen })` receives: the keyed windows the user closed. */
+export interface DesktopDockReopenContext {
+  /** The keyed windows the user closed (not a quit's), most recent first, each key once. */
+  readonly closed: readonly ClosedWindow[];
+}
+
+/**
+ * What the macOS Dock icon's click opens when no window is showing (`runDesktop({ onDockReopen
+ * })`): the open options, or `undefined` for nothing at all. Without it the click reopens the
+ * most recently closed keyed window, else shows the main window.
+ */
+export type DesktopDockReopenHandler = (
+  ctx: DesktopDockReopenContext,
+) => DesktopOpenWindowOptions | undefined;
+
+/** A Dock icon click as {@linkcode DesktopWindowsSetup.onDockReopen} reports it. */
+export interface DesktopDockReopenEvent {
+  /** Whether a window of the app was showing (the click then only activates the app). */
+  readonly hasVisibleWindows: boolean;
 }
 
 /** What {@linkcode setUpDesktopWindows} needs. */
@@ -189,6 +240,8 @@ export interface DesktopWindowsOptions {
   readonly menuSettings?: DesktopMenuSettings;
   /** `desktop.ts`'s New Window (`runDesktop({ newWindow })`). */
   readonly newWindow?: DesktopNewWindowHandler;
+  /** `desktop.ts`'s Dock reopen (`runDesktop({ onDockReopen })`). */
+  readonly onDockReopen?: DesktopDockReopenHandler;
   /** End the process (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /** The running OS (default `Deno.build.os`). */
@@ -198,7 +251,8 @@ export interface DesktopWindowsOptions {
   /**
    * The Deno Desktop runtime's version (default `Deno.version.deno`): from `3.0.0-denext.7` the
    * main window with `desktop.window.overlay` and the tray panel are layer-shell overlays where
-   * the compositor has layer-shell, so they report `setPosition` on Wayland.
+   * the compositor has layer-shell, so they report `setPosition` on Wayland; from
+   * `FIRST_APP_MENU_EVENT_RUNTIME` the application menu's clicks come from `Deno.desktop`.
    */
   readonly runtimeVersion?: string;
 }
@@ -242,6 +296,12 @@ export interface DesktopWindowsSetup {
   setActivationPolicy(policy: ActivationPolicy): boolean;
   /** The macOS activation policy, or `null` where there is none. */
   getActivationPolicy(): ActivationPolicy | null;
+  /**
+   * Call `fn` on every click on the macOS Dock icon (the runtime's `Deno.dock` `"reopen"`), with
+   * whether a window was showing; the built-in reopen still runs. Returns the unsubscribe (a no-op
+   * where there is no Dock).
+   */
+  onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
   /** Set the URL resolver new windows load with (known once the server listens). */
   setAppUrl(appUrl: (path: string) => string): void;
   /** The window lifecycle (the extensions' hooks and quit guards; `undefined` outside the runtime). */
@@ -412,6 +472,9 @@ function windowsApi(st: SetupState): DesktopWindows {
     },
     list: () => st.registry?.list().map((e) => ref(st, e)) ?? [],
     lastSession: () => st.registry?.lastSession() ?? [],
+    forget: (key) => {
+      if (st.registry?.forget(key)) st.menu?.refresh();
+    },
   };
 }
 
@@ -435,14 +498,69 @@ function restoreSession(st: SetupState): number {
   return n;
 }
 
-/** The macOS Dock icon was clicked with no window showing: show the main window again. */
+/** Whether a Dock `"reopen"` event says a window was showing. */
+function hadVisibleWindows(event: Event): boolean {
+  return (event as CustomEvent<{ hasVisibleWindows?: unknown }>).detail?.hasVisibleWindows === true;
+}
+
+/**
+ * The macOS Dock icon was clicked with no window showing: `desktop.ts`'s window
+ * (`runDesktop({ onDockReopen })`, `undefined` for none), else the most recently closed keyed
+ * window, else the main window shown again. A window that cannot open is a warning.
+ */
 function onDockReopen(st: SetupState, event: Event): void {
-  const visible = (event as CustomEvent<{ hasVisibleWindows?: unknown }>).detail
-    ?.hasVisibleWindows;
-  if (visible === true) return;
-  const main = st.registry?.get("main")?.window;
+  const registry = st.registry;
+  if (hadVisibleWindows(event) || !registry) return;
+  const options = dockReopenWindow(st, registry);
+  if (!options) return;
+  try {
+    registry.open(options);
+  } catch (err) {
+    st.warn(
+      `the Dock's reopen could not open a window: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+/**
+ * The window the Dock's reopen opens: `desktop.ts`'s, else the most recently closed keyed one;
+ * with neither, the main window is shown again and nothing opens.
+ */
+function dockReopenWindow(
+  st: SetupState,
+  registry: WindowRegistry,
+): DesktopOpenWindowOptions | undefined {
+  const handler = st.options.onDockReopen;
+  if (handler) return handler({ closed: registry.recentlyClosed() });
+  const last = registry.takeRecentlyClosed();
+  if (last) return { url: last.url, key: last.key };
+  const main = registry.get("main")?.window;
   main?.show?.();
   main?.focus?.();
+  return undefined;
+}
+
+/** Subscribe `fn` to the Dock's `"reopen"` clicks; the unsubscribe. */
+function subscribeDockReopen(
+  dock: DockLike | undefined,
+  fn: (event: DesktopDockReopenEvent) => void,
+): () => void {
+  if (!dock) return () => {};
+  const listener = (e: Event) => fn({ hasVisibleWindows: hadVisibleWindows(e) });
+  dock.addEventListener("reopen", listener);
+  return () => dock.removeEventListener("reopen", listener);
+}
+
+/** What opened windows take from the main window's settings: the title bar and its buttons. */
+function inheritedChrome(
+  w: DesktopWindowSettings | undefined,
+): Pick<DesktopWindowSettings, "titleBar" | "windowButtonPosition"> {
+  return {
+    ...(w?.titleBar !== undefined ? { titleBar: w.titleBar } : {}),
+    ...(w?.windowButtonPosition !== undefined
+      ? { windowButtonPosition: w.windowButtonPosition }
+      : {}),
+  };
 }
 
 /** The registry over the adopted window (its windows' controllers, the store, the lifecycle). */
@@ -460,9 +578,10 @@ function createRegistry(st: SetupState): WindowRegistry {
     appUrl: (path) => st.appUrl(path),
     emit: o.emit,
     keepAlive: () => keepAliveOf(st),
-    onClosed: (id, entry, appQuitting) => {
+    ...inheritedChrome(o.windowSettings),
+    onTitleChanged: () => st.menu?.refresh(),
+    onClosed: (id) => {
       st.app?.windowClosed(id);
-      st.menu?.windowClosed(entry, appQuitting);
       runClosedHandlers(st, id);
     },
     ...(o.exit ? { exit: o.exit } : {}),
@@ -516,7 +635,7 @@ function createMenu(
 /** Make the registry, the `window` / `windows` / `app` capabilities over the adopted window. */
 function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapability[] {
   const o = st.options;
-  const registry = createRegistry(st);
+  const registry = st.registry ?? createRegistry(st);
   st.registry = registry;
   adoptMain(st, registry, win);
   // The full-app updater's install quits through the lifecycle (its guards and hooks run first).
@@ -528,6 +647,7 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     ...(st.dock ? { dock: st.dock } : {}),
     os: st.os,
     windows: () => st.registry?.list().map((w) => w.id) ?? ["main"],
+    ...(o.runtimeVersion !== undefined ? { runtimeVersion: o.runtimeVersion } : {}),
   });
   st.app = app;
   st.menu = createMenu(st, registry, app);
@@ -555,7 +675,12 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
   const win = typeof options.window === "object" && options.window !== null
     ? options.window as RegistryWindow
     : undefined;
-  applyDesktopWindowSettings(win, options.windowSettings, st.warn);
+  // The registry (and its window store) first: the main window's default size applies only when
+  // its key has no saved frame.
+  if (win) st.registry = createRegistry(st);
+  const key = options.windowSettings?.key;
+  const saved = key !== undefined && st.registry?.hasSavedFrame(key) === true;
+  applyDesktopWindowSettings(win, withDefaultWindowSize(options.windowSettings, saved), st.warn);
   const capabilities = win ? buildControllers(st, win) : [];
   applyKeepAlive(st);
   if (startsAccessory(st) && win) setDock(st, false);
@@ -605,6 +730,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     setDockVisible: (visible) => setDock(st, visible),
     setActivationPolicy: (policy) => setPolicy(st, policy),
     getActivationPolicy: () => getPolicy(st),
+    onDockReopen: (fn) => subscribeDockReopen(st.dock, fn),
     setAppUrl: (appUrl) => {
       st.appUrl = appUrl;
     },
@@ -657,6 +783,7 @@ export function noDesktopWindows(): {
   setDockVisible(visible: boolean): boolean;
   setActivationPolicy(policy: ActivationPolicy): boolean;
   getActivationPolicy(): ActivationPolicy | null;
+  onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
 } {
   return {
     windows: {
@@ -667,9 +794,11 @@ export function noDesktopWindows(): {
       byKey: () => undefined,
       list: () => [],
       lastSession: () => [],
+      forget: () => {},
     },
     setDockVisible: () => false,
     setActivationPolicy: () => false,
     getActivationPolicy: () => null,
+    onDockReopen: () => () => {},
   };
 }

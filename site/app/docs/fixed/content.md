@@ -612,7 +612,7 @@ More: [/docs/pages-router](/docs/pages-router).
 
 **Why it happens.** The wrapper stores the plugin functions in a closure that only its webpack loader reads.
 
-**What denext does.** `denext migrate` evaluates the config in a sandboxed subprocess (read access to the project only), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.
+**What denext does.** `denext migrate` evaluates the config in a subprocess with read access to the project only (no write, run or network grant), keeps the honored keys even when a wrapper crashes after returning the config, and the generated config recovers the MDX plugins at build time.
 
 **Evidence.**
 

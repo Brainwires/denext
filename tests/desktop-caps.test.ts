@@ -55,6 +55,7 @@ import { notificationsCapability } from "../src/desktop/caps/notifications.ts";
 import { contextMenuCapability } from "../src/desktop/caps/context-menu.ts";
 import { shortcutsCapability } from "../src/desktop/caps/shortcuts.ts";
 import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts";
+import { systemStatsCapability } from "../src/desktop/caps/system-stats.ts";
 import { updatesCapability } from "../src/desktop/caps/updates.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import { isReservedDataName, refuseReservedDataPath } from "../src/desktop/path-scope.ts";
@@ -74,6 +75,11 @@ function ctx(overrides: Partial<DesktopCapCtx> = {}): DesktopCapCtx {
     emit: () => {},
     appSupportDir: "",
     runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    secureStore: {
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    },
     pickedPath: () => {
       throw new Error("no picked paths in tests");
     },
@@ -1156,7 +1162,8 @@ function darwinKeychain(
   const run: SecureRunner = (_cmd, argv, stdin) => {
     const args = argv[0] === "-i" ? securityWords(stdin ?? "") : argv;
     const op = args[0];
-    const key = after(args, "-a");
+    // One item per (service, account).
+    const key = `${after(args, "-s")}\u0000${after(args, "-a")}`;
     if (op === "add-generic-password") {
       if (!failWrites) store.set(key, after(args, "-w"));
       return Promise.resolve({ code: 0, stdout: "" });
@@ -1796,6 +1803,7 @@ const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   "context-menu": () => contextMenuCapability({ api: {} }),
   "global-shortcuts": () => shortcutsCapability({ api: {} }),
   "launch-at-login": () => launchAtLoginCapability({ api: {} }),
+  "system-stats": () => systemStatsCapability({ api: {} }),
   updates: () => updatesCapability(),
   fs: () => {
     const all = DESKTOP_CAPABILITIES.fs.all!;
@@ -1810,11 +1818,13 @@ const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
       spawn: () => Promise.resolve(),
     }),
   "keep-awake": (os) => keepAwakeCapability({ os }),
+  // The catalog's static per-OS lists are the pre-baked-capabilities runtime's: compare with that.
   "secure-store": (os) =>
     secureStoreCapability({
       service: "svc",
       os,
       run: () => Promise.resolve({ code: 0, stdout: "" }),
+      runtimeVersion: "3.0.0-denext.13",
     }),
   dialogs: (os) =>
     dialogsCapability({
@@ -2161,7 +2171,10 @@ Deno.test("secureStore (Windows): a refused write is tried once more; a second r
   const cap = secureStoreCapability({
     service: "svc",
     os: "windows",
-    run: () => {
+    run: (_cmd, _args, stdin) => {
+      // The pages' first calls also look for their namespace's marker (absent: code 1).
+      if (JSON.parse(stdin ?? "{}").op !== "set") return Promise.resolve({ code: 1, stdout: "" });
+      if (JSON.parse(stdin ?? "{}").key !== "k") return Promise.resolve({ code: 0, stdout: "" });
       sets++; // a Windows write runs the script once per try, with no read-back
       const code = codes.shift() ?? 1;
       return Promise.resolve({ code, stdout: "", stderr: code ? stderr : "" });

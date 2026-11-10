@@ -4,9 +4,19 @@
 // per-launch token is injected, the live-reload proxy decision, and — under a fake pinned runtime —
 // the adopted window, its guarded close and the capabilities registered with it.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join } from "@std/path";
-import type { DesktopCapability } from "../src/desktop/extension.ts";
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopExtensionHost,
+} from "../src/desktop/extension.ts";
 import { injectedGlobal } from "./helpers/desktop-bridge-server.ts";
 import {
   boot,
@@ -402,8 +412,13 @@ Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, th
     // The Window menu (desktop.menu.window) is on the main window; New Window opens desktop.ts's window.
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
     assertEquals(menu.map((e) => e.submenu.label), ["Window"]);
-    main.dispatchEvent(new CustomEvent("menuclick", { detail: { id: "denext:window:new" } }));
+    // A real click: the window's "menuclick", then (from laufey API 55) Deno.desktop's. Which one
+    // denext hears depends on the runtime running the test; exactly one New Window either way.
+    const click = { detail: { id: "denext:window:new" } };
+    main.dispatchEvent(new CustomEvent("menuclick", click));
+    desktop.dispatchEvent(new CustomEvent("menuclick", click));
     assertEquals(runtime.windows.byKey("window-1")?.key, "window-1");
+    assertEquals(runtime.windows.byKey("window-2"), undefined, "one click, one window");
     assertEquals(
       FakeMenuWindow.all.at(-1)!.calls.map((c) => c.replace(/https?:\/\/[^/]+/, "")),
       ["navigate:/fresh"],
@@ -451,6 +466,74 @@ Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, th
     FakeMenuWindow.all = [];
     await Deno.remove(outDir, { recursive: true });
     await Deno.remove(support, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): an extension host opens windows through desktop.ts's windows.open", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = {
+      name: "jobs",
+      methods: {},
+      setup: (h) => void (host = h),
+    };
+    const { runtime } = await boot({ outDir, port: 1, capabilities: [ext] }, {
+      deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} },
+    });
+    assert(host);
+    const ref = host.openWindow({ url: "/jobs", key: "jobs", title: "Jobs" });
+    assertEquals(runtime.windows.byKey("jobs")?.id, ref.id);
+    assertEquals(host.windows().map((w) => w.key ?? w.id), ["main", "jobs"]);
+    assertEquals(
+      FakeMenuWindow.all.at(-1)!.calls.map((c) => c.replace(/https?:\/\/[^/]+/, "")),
+      ["navigate:/jobs"],
+    );
+    // The same key rules as windows.open: a duplicate is refused.
+    assertThrows(() => host!.openWindow({ url: "/jobs", key: "jobs" }));
+    // A runtime without message boxes (this fake has no Deno.desktop.dialog): unsupported.
+    const err = await assertRejects(() => host!.confirm({ message: "Quit?" }), DesktopCapError);
+    assertEquals(err.code, "unsupported");
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): an extension host's openWindow takes desktop.titleBar and defaultWidth / defaultHeight", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  /** A window that records its title bar style too. */
+  class TitleBarWindow extends FakeMenuWindow {
+    setTitleBarStyle(style: string) {
+      this.calls.push(`titleBar:${style}`);
+    }
+  }
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = { name: "jobs", methods: {}, setup: (h) => void (host = h) };
+    await boot({ outDir, port: 1, capabilities: [ext], window: { titleBar: "hiddenInset" } }, {
+      deno: { BrowserWindow: TitleBarWindow, desktop, exit: () => {} },
+    });
+    assert(host);
+    host.openWindow({ url: "/jobs", key: "jobs", defaultWidth: 640, defaultHeight: 480 });
+    const opened = FakeMenuWindow.all.at(-1)!;
+    assertEquals(opened.calls.filter((c) => c.startsWith("titleBar")), ["titleBar:hiddenInset"]);
+    assertEquals([opened.options?.width, opened.options?.height], [640, 480]);
+    // The window's own titleBar wins, as with windows.open.
+    host.openWindow({ url: "/b", key: "b", titleBar: "hidden" });
+    assertEquals(
+      FakeMenuWindow.all.at(-1)!.calls.filter((c) => c.startsWith("titleBar")),
+      ["titleBar:hidden"],
+    );
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
   }
 });
 

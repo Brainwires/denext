@@ -67,6 +67,15 @@ export {
   spawnPty,
   writePty,
 } from "./pty-client.ts";
+// The machine's aggregate CPU, GPU and memory load: the `systemStats` capability.
+export {
+  system,
+  type SystemStats,
+  type SystemStatsClient,
+  type SystemStatsOptions,
+  type SystemStatsSubscribeOptions,
+  type SystemStatsWatchOptions,
+} from "./system-stats-client.ts";
 import type { SidecarInfo, SidecarStatus } from "./sidecar.ts";
 export type { SidecarInfo, SidecarState, SidecarStatus } from "./sidecar.ts";
 

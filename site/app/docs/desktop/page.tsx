@@ -783,6 +783,22 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Linux.
       </Callout>
       <Callout kind="note">
+        An AppImage bundles the app, never the toolkit: with the webview backend the host needs{" "}
+        <strong>WebKitGTK 4.1 and GTK 3</strong> (<code>libwebkit2gtk-4.1.so.0</code>,{" "}
+        <code>libgtk-3.so.0</code>; Debian/Ubuntu <code>libwebkit2gtk-4.1-0</code>, Fedora{" "}
+        <code>webkit2gtk4.1</code>), as on any machine without a <code>.deb</code>/
+        <code>.rpm</code>{" "}
+        to pull them in. A CEF build carries Chromium and needs only the usual desktop system
+        libraries (GTK 3, NSS, ALSA, X11 / Wayland). denext does not try to bundle GTK. The
+        AppImage&apos;s AppStream metainfo lists what the host must provide; declare more with{" "}
+        <code>desktop.linux.appImage.requires</code> (sonames, e.g.{" "}
+        <code>["libvte-2.91.so.0"]</code>). The AppImage runtime <code>appimagetool</code>{" "}
+        prepends is denext&apos;s pin, type2-runtime <code>20251108</code>{" "}
+        for x86_64 and aarch64: downloaded once into the toolchain cache, SHA-256-verified (a
+        mismatch fails the build) and passed as <code>--runtime-file</code>, never the moving{" "}
+        <code>continuous</code> release.
+      </Callout>
+      <Callout kind="note">
         A CEF app runs its web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.10). Where
         unprivileged user namespaces are restricted (Ubuntu 23.10+), that needs the{" "}
         <code>chrome-sandbox</code> helper installed root-owned and setuid: the <code>.deb</code>
@@ -793,6 +809,64 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         <code>nosuid</code>), so there the runtime turns the sandbox off with a warning when it has
         no user namespaces.
       </Callout>
+
+      <h3 id="desktop-linux-entry">The .desktop entry and AppStream metadata</h3>
+      <p>
+        Every <code>.desktop</code> entry denext writes — the one the <code>.deb</code> /{" "}
+        <code>.rpm</code> install, and the bundle&apos;s own that the <code>.tar.gz</code>{" "}
+        and the AppImage carry — takes its keys from{" "}
+        <code>desktop.linux.desktopEntry</code>. The default is <code>Categories=Utility;</code>
+        {" "}
+        and nothing else. The package script rewrites the bundle&apos;s own entry after{" "}
+        <code>deno desktop</code> writes it: <code>Name</code> is <code>desktop.app.name</code>{" "}
+        (not the bundle directory&apos;s <code>&lt;name&gt;-&lt;arch&gt;</code>), and{" "}
+        <code>Icon</code>{" "}
+        names the entry&apos;s app id, with the icon copied beside it under that name. Values are
+        escaped per the Desktop Entry specification, and the config refuses a category, MIME type or
+        window class that could add a line or a key. Because the scripts read the config when they
+        run, a change needs no edit to <code>scripts/package-linux.ts</code>.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts — a terminal app
+export default {
+  desktop: {
+    linux: {
+      desktopEntry: {
+        categories: ["System", "TerminalEmulator"], // default ["Utility"]
+        keywords: ["shell", "console", "prompt"],
+        genericName: "Terminal",
+        mimeTypes: ["application/x-shellscript"], // opened files arrive as %F
+        // startupWMClass: only for a window that reports a class other than the app id
+      },
+      appImage: { requires: ["libvte-2.91.so.0"] }, // listed in the AppImage's metainfo
+    },
+    installers: { publisher: "Acme Inc.", email: "apps@acme.example" },
+  },
+};`}
+      </Code>
+      <p>
+        The <code>.deb</code>, <code>.rpm</code> and AppImage also install AppStream metainfo,{" "}
+        <code>usr/share/metainfo/&lt;desktop.app.identifier&gt;.metainfo.xml</code>: the name, the
+        description as its summary, deno.json&apos;s{" "}
+        <code>license</code>, the publisher, the address in{" "}
+        <code>desktop.installers.email</code>, the <code>.desktop</code>{" "}
+        file it launches, an all-ages OARS content rating and the version as its release, so
+        software centres (GNOME Software, Discover) list the app.
+      </p>
+      <p>
+        A Node-API addon (<code>*.node</code>) built against a distribution&apos;s shared Node.js
+        (its dynamic section names <code>libnode.so.&lt;abi&gt;</code>, what <code>node-gyp</code>
+        {" "}
+        produces under Debian&apos;s or Fedora&apos;s <code>nodejs</code>{" "}
+        package) cannot load in the app&apos;s runtime. Linux packaging reads every ELF addon in the
+        bundle and in <code>.deno-desktop/sidecars/</code> with <code>readelf -d</code> (else{" "}
+        <code>objdump -p</code> or{" "}
+        <code>ldd</code>) and fails naming the addon: rebuild it against Node&apos;s own headers (a
+        Node.js from nodejs.org) or use the package&apos;s npm prebuilt. With none of those tools on
+        the host the check is skipped with a note. <code>denext desktop doctor</code>{" "}
+        runs the same check over the project&apos;s <code>node_modules</code> and{" "}
+        <code>.deno-desktop/</code> (<code>native-addons</code>).
+      </p>
 
       <h3 id="desktop-linux-session">What the session provides</h3>
       <p>
@@ -979,6 +1053,7 @@ export default {
       linux: ["tar.gz", "deb", "rpm"], // default ["tar.gz", "deb"]
       windows: ["msi", "zip"], // default ["msi"]
       publisher: "Acme Inc.", // MSI Manufacturer, .deb Maintainer, .rpm Vendor
+      email: "apps@acme.example", // .deb Maintainer "Acme Inc. <apps@acme.example>", .rpm Packager
       description: "Acme's desktop app",
     },
   },
@@ -1007,10 +1082,11 @@ denext desktop package --target-os windows --format msi,zip`}
           (written by denext itself, no tool, cross-builds anywhere), <code>rpm</code> (needs{" "}
           <code>rpmbuild</code>: Fedora/RHEL, <code>apt install rpm</code>,{" "}
           <code>brew install rpm</code>) and <code>appimage</code> (needs{" "}
-          <code>appimagetool</code>). The <code>.deb</code> and <code>.rpm</code> install the app to
+          <code>appimagetool</code>; its runtime is denext&apos;s pinned one, see{" "}
+          <a href="#desktop-linux-entry">above</a>). The <code>.deb</code> and <code>.rpm</code>
           {" "}
-          <code>/usr/lib/&lt;app&gt;</code> with a <code>/usr/bin/&lt;app&gt;</code> link, a{" "}
-          <code>.desktop</code> entry named after{" "}
+          install the app to <code>/usr/lib/&lt;app&gt;</code> with a{" "}
+          <code>/usr/bin/&lt;app&gt;</code> link, a <code>.desktop</code> entry named after{" "}
           <code>desktop.app.identifier</code>, the icon (pixmaps and the hicolor theme), and every
           {" "}
           <code>desktop.app.deepLinks</code> scheme as an <code>x-scheme-handler</code>.
@@ -1075,6 +1151,46 @@ denext desktop package --target-os windows --format msi,zip`}
         better served by the formats above today. Snap and a Mac App Store build are not made
         either: their sandboxes break the same per-app storage and deep-link registration.
       </Callout>
+
+      <h3 id="desktop-package-helpers">Package-script helpers</h3>
+      <p>
+        The scaffolded <code>scripts/package-*.ts</code> are thin: they import their steps from{" "}
+        <code>denext/desktop</code>, so a project that adds its own step (a validator, an extra
+        artifact) uses the same probes. A tool check never runs a shell:
+      </p>
+      <ul>
+        <li>
+          <code>desktopHasTool(cmd)</code> — whether <code>cmd</code> is on PATH (each{" "}
+          <code>PATH</code> directory checked for an executable file; on Windows{" "}
+          <code>where.exe</code>). A name with a path separator, whitespace or a shell character is
+          never found.
+        </li>
+        <li>
+          <code>desktopRequireTool(tool, format, explicit)</code>{" "}
+          — the same probe for an installer&apos;s tool: when it is missing, a default format is
+          skipped with a warning and an asked-for one fails, either way naming how to install it (
+          <code>rpmbuild</code>, <code>appimagetool</code>, <code>dpkg-deb</code>, <code>wix</code>,
+          {" "}
+          <code>signtool</code>, <code>zip</code>, <code>tar</code>).
+        </li>
+        <li>
+          <code>desktopToolGate(why, format, explicit)</code>{" "}
+          — that decision for any other reason a format can&apos;t be built.
+        </li>
+        <li>
+          <code>buildDesktopDeb</code> / <code>buildDesktopRpm</code> /{" "}
+          <code>buildDesktopTarball</code> / <code>buildDesktopAppImage</code>{" "}
+          — the Linux builders, given the package metadata (<code>desktopPackageMeta</code>, read
+          from the config when the script runs) and the finished bundle.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// scripts/package-linux.ts — an extra, optional step
+const { desktopHasTool } = await import("denext/desktop");
+if (await desktopHasTool("lintian")) {
+  await new Deno.Command("lintian", { args: ["dist/my-app-x64.deb"] }).output();
+}`}
+      </Code>
 
       <h2 id="desktop-sign-in">Sign-in on Deno Desktop</h2>
       <p>
@@ -2151,6 +2267,21 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
           </tr>
           <tr>
             <td>
+              <code>system-stats</code>
+            </td>
+            <td>
+              <a href="#desktop-system-stats">
+                <code>system.stats</code>, <code>system.onStats</code>
+              </a>{" "}
+              (<code>denext/desktop/client</code> and{" "}
+              <code>denext/desktop</code>: aggregate CPU, GPU and memory load; pinned runtime after
+              3.0.0-denext.13)
+            </td>
+            <td>none</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
               <code>updates</code>
             </td>
             <td>
@@ -2370,8 +2501,40 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
         (or the stock one) keeps the <code>security</code> path. The capability bakes an unscoped
         {" "}
-        <code>--allow-sys</code> for the runtime&apos;s store, plus{" "}
-        <code>--allow-run=security</code>.
+        <code>--allow-sys</code>{" "}
+        for the runtime&apos;s store (until the runtime reads the capability list denext writes into
+        {" "}
+        <code>.deno-desktop/app.json</code>), plus <code>--allow-run=security</code> while{" "}
+        <code>desktop.secureStore.legacy</code>{" "}
+        is on. That is the default, so an app that shipped the <code>security</code>{" "}
+        path keeps moving its users&apos; items; set{" "}
+        <code>{"desktop: { secureStore: { legacy: false } }"}</code> once it no longer needs to, and
+        {" "}
+        <code>security</code>{" "}
+        is neither run nor baked (under a runtime without its own macOS store every call then
+        rejects <code>backend_unavailable</code>, naming the setting).{" "}
+        <code>denext desktop add secure-store</code> writes <code>legacy: false</code>{" "}
+        when it enables the capability for the first time: such an app never shipped that path.
+      </Callout>
+      <Callout kind="note">
+        <strong>The secure store per caller.</strong>{" "}
+        The runtime can&apos;t tell the app&apos;s pages from its extensions (all of it runs in the
+        app&apos;s own process), so denext keeps them apart in the service name, on every OS: the
+        pages&apos; <code>secureStore</code> stores under{" "}
+        <code>&lt;desktop.app.identifier&gt;/page</code>, and a <code>defineDesktopExtension</code>
+        {" "}
+        capability under <code>&lt;desktop.app.identifier&gt;/ext/&lt;name&gt;</code>{" "}
+        (its capability name) through <code>ctx.secureStore</code> in a handler or{" "}
+        <code>host.secureStore</code> in <code>setup</code> (<code>get(key)</code>,{" "}
+        <code>set(key, value)</code>,{" "}
+        <code>delete(key)</code>; the page API&apos;s key rules). No page can read an
+        extension&apos;s secrets, nor one extension another&apos;s. The extension store needs{" "}
+        <code>secure-store</code> enabled; without it every call rejects{" "}
+        <code>not_enabled</code>. Items an earlier denext stored for the pages under the bare
+        identifier move into the page namespace on their first read during the first launch with
+        namespaces (copied, then deleted, so a failure leaves them in place); a marker keeps later
+        launches from reading the bare identifier again, and a page <code>delete</code>{" "}
+        removes any copy left there.
       </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
@@ -2486,10 +2649,78 @@ desktop: {
         {" "}
         <code>pty</code>{" "}
         only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.13) has no terminals yet: opening one rejects with{" "}
+        (3.0.0-denext.16) has no terminals yet: opening one rejects with{" "}
         <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
         own VT sequences even for plain text.
       </Callout>
+
+      <h3 id="desktop-system-stats">System stats</h3>
+      <p>
+        <code>denext desktop add system-stats</code>{" "}
+        lets the app show how busy the machine is: the CPU, GPU and memory load, in percent, from
+        {" "}
+        <code>system.stats()</code> and <code>system.onStats()</code>. The page imports{" "}
+        <code>system</code> from{" "}
+        <code>denext/desktop/client</code>; code in the app&apos;s own process (an extension,{" "}
+        <code>desktop.ts</code>) imports the same shape from{" "}
+        <code>denext/desktop</code>, which reads the runtime directly. It is built on the
+        runtime&apos;s{" "}
+        <code>Deno.desktop.systemStats</code>, so it needs denext&apos;s Deno Desktop runtime after
+        {" "}
+        <code>3.0.0-denext.13</code>; under an older one every call is <code>unsupported</code>.
+      </p>
+      <Code lang="ts">
+        {`import { system, type SystemStats } from "denext/desktop/client";
+
+const now: SystemStats = await system.stats(); // { perCore: true } adds cpu.cores
+// {
+//   at: 1767225600000,                       // ms since the epoch
+//   cpu: { total: 23.5, cores?: [41, 6, …] },
+//   gpu: { utilization: 12, devices?: [{ name: "Apple M3", utilization: 12 }] },
+//   memory: { pressure: 38, usedBytes?: 12884901888, totalBytes?: 34359738368 },
+// }
+
+const stop = system.onStats((s) => render(s), {
+  intervalMs: 2000, // at least 1000, else a RangeError
+  onError: (err) => showUnavailable(err), // unavailable, unsupported, forbidden
+});
+stop(); // ends the subscription and its sampler`}
+      </Code>
+      <p>
+        Every figure is a percentage from 0 to 100, and one the OS does not report is{" "}
+        <code>null</code>{" "}
+        (an optional field is left out). The CPU figure is the share of time the cores were busy
+        since this caller&apos;s previous sample: each window has its own sampler for{" "}
+        <code>stats()</code>{" "}
+        (the first call primes it, about 100 ms) and each subscription one of its own, so two
+        callers never take each other&apos;s deltas. The runtime samples only while a subscription
+        runs, and skips its ticks while every app window is hidden. Samples go to the subscribing
+        window only, and a window&apos;s subscriptions end when it closes or its page reloads.
+      </p>
+      <p>
+        The figures are aggregate only: no process list, no names beyond the GPU&apos;s. So the
+        capability bakes no Deno permission; the runtime serves it to an app whose packaged launch
+        config lists <code>systemStats</code>, and answers <code>forbidden</code>{" "}
+        (the runtime&apos;s <code>NotCapable</code>) otherwise. Where the numbers come from:
+      </p>
+      <ul>
+        <li>
+          macOS: <code>host_processor_info</code> (CPU), IOKit&apos;s <code>IOAccelerator</code>
+          {" "}
+          <code>PerformanceStatistics</code> (GPU) and the <code>memorystatus</code>{" "}
+          level (memory pressure).
+        </li>
+        <li>
+          Linux: <code>/proc/stat</code> (CPU), <code>/proc/meminfo</code> (memory), amdgpu&apos;s
+          {" "}
+          <code>gpu_busy_percent</code> and NVML where the NVIDIA driver provides it (GPU;{" "}
+          <code>null</code> otherwise).
+        </li>
+        <li>
+          Windows: <code>GetSystemTimes</code> (CPU), the PDH <code>GPU Engine</code>{" "}
+          counters (GPU) and <code>GlobalMemoryStatusEx</code> (memory).
+        </li>
+      </ul>
 
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
       <p>
@@ -2612,7 +2843,8 @@ onCloseRequested(({ reason }) => {
         <li>
           <strong>Chrome</strong>: <code>setTitleBarStyle</code> (<code>"hidden"</code> /{" "}
           <code>"hiddenInset"</code>, macOS), <code>setWindowButtonPosition</code>{" "}
-          (the traffic lights), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
+          (the traffic lights; <code>desktop.window.windowButtonPosition</code>{" "}
+          sets them at launch), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
           <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
           on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
           <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>,
@@ -2707,9 +2939,26 @@ onCloseRequested(({ reason }) => {
         <a href="#desktop-backend-tray">backend tray</a>), and a page&apos;s{" "}
         <code>window.close()</code>{" "}
         then closes its own window instead of quitting. On macOS a click on the Dock icon with no
-        window showing shows the main window again (<code>onDockReopen</code> in{" "}
-        <code>denext/desktop/app</code> hears it).
+        window showing reopens the most recently closed{" "}
+        <a href="#desktop-window-keys">keyed window</a>, else shows the main window again (
+        <code>onDockReopen</code> in <code>denext/desktop/app</code> hears it).{" "}
+        <code>runDesktop({"{ onDockReopen: (ctx) => options }"})</code> decides instead: it gets
+        {" "}
+        <code>ctx.closed</code> (the keyed windows the user closed, most recent first, each{" "}
+        <code>{"{ key, url, title? }"}</code>) and answers the window to open, or{" "}
+        <code>undefined</code> for nothing. With a window showing the click only activates the app.
+        {" "}
+        <code>app.onDockReopen(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with hears every click, with{" "}
+        <code>hasVisibleWindows</code>, and returns the unsubscribe.
       </p>
+      <Code lang="ts">
+        {`// desktop.ts — bring back the last workspace, or open a fresh one
+const app = await runDesktop({
+  onDockReopen: ({ closed }) => closed[0] ?? { url: "/", key: "workspace-1" },
+});
+app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisibleWindows));`}
+      </Code>
       <h3 id="desktop-overlay-windows">Overlay windows</h3>
       <p>
         A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
@@ -2800,7 +3049,19 @@ onCloseRequested(({ reason }) => {
         capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
         <code>denext/desktop/window</code>{" "}
         calls act on itself. At most 8 are open at once besides the main window and the tray panel
-        (<code>desktop.app.maxWindows</code>, 1 to 64).
+        (<code>desktop.app.maxWindows</code>, 1 to 64). An opened window takes{" "}
+        <code>desktop.titleBar</code> as the main window does (macOS; <code>"hidden"</code> /{" "}
+        <code>"hiddenInset"</code> draw the page under the traffic lights); its own{" "}
+        <code>titleBar</code> overrides it, <code>"default"</code>{" "}
+        keeps the OS&apos;s title bar, and a frameless window has none to style. The traffic
+        lights&apos; position follows the same rule:{" "}
+        <code>desktop.window.windowButtonPosition</code>{" "}
+        (<code>{"{ x, y }"}</code>, the close button&apos;s top-left corner in points from the
+        window&apos;s top-left) places them on the main window and every opened window, a
+        window&apos;s own <code>windowButtonPosition</code> overrides it (<code>null</code>{" "}
+        keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
+        moves them later from a page. It is applied after the title bar style, needs denext&apos;s
+        pinned runtime, and is ignored on Windows and Linux.
       </p>
       <p>
         A <code>capabilities</code>{" "}
@@ -2863,6 +3124,20 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         {" "}
         <code>byKey</code>, the lifecycle hooks and <code>lastSession()</code>.
       </p>
+      <p>
+        <code>defaultWidth</code> / <code>defaultHeight</code> (on <code>windows.open</code>,{" "}
+        <code>openWindow</code> and{" "}
+        <code>desktop.window</code>) size a window only when there is no saved frame to restore: the
+        key&apos;s first open, no key, or <code>restoreBounds: false</code>. The precedence is{" "}
+        <code>width</code> / <code>height</code> &gt; the saved frame &gt; <code>defaultWidth</code>
+        {" "}
+        / <code>defaultHeight</code> &gt; the runtime&apos;s own size, each axis on its own.{" "}
+        <code>windows.forget(key)</code>{" "}
+        drops a key from what comes back: off Reopen Closed Window and the Dock&apos;s reopen (the
+        Window menu follows) and out of <code>lastSession()</code>{" "}
+        as persisted, so the next launch does not restore it; its saved frame stays, and an open
+        window with the key is left alone.
+      </p>
       <Code lang="ts">
         {`// desktop.ts — a "New Window" that remembers where each window was
 const app = await runDesktop({ ... });
@@ -2907,6 +3182,51 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         ignores for an accessory app, and macOS takes no input for the app while a session end is
         pending.
       </p>
+      <p id="desktop-host-confirm">
+        <code>host.confirm(options)</code>{" "}
+        asks the user with the OS&apos;s own message box (NSAlert, TaskDialogIndirect,
+        GtkMessageDialog) and your button labels: <code>message</code>, <code>detail</code>,{" "}
+        <code>title</code>, <code>buttons</code> (at most 16; none is one "OK"),{" "}
+        <code>defaultId</code> (Return), <code>cancelId</code> (Escape) and <code>kind</code>{" "}
+        (<code>"info"</code>, <code>"warning"</code>,{" "}
+        <code>"error"</code>). The box is app-modal, so it works with no window open, from an{" "}
+        <code>onBeforeQuit</code>{" "}
+        guard after the last window closed or in a tray app. It resolves the pressed button&apos;s
+        index; a box dismissed without a button resolves <code>cancelId</code>, or <code>null</code>
+        {" "}
+        without one. Bad options reject with{" "}
+        <code>validation</code>; a runtime without native message boxes (<code>
+          Deno.desktop.dialog.showMessageBox
+        </code>, Deno Desktop runtime 3.0.0-denext.16) rejects with <code>unsupported</code>.{" "}
+        <code>host.openWindow(options)</code> opens a window exactly as <code>desktop.ts</code>
+        &apos;s <code>windows.open</code>{" "}
+        does (the same options, keys and window limit) and returns it, so an extension can show a
+        window from a tray item or a timer.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/jobs.ts — ask before quitting with a job running, even with no window open
+import { defineDesktopExtension } from "denext/desktop";
+
+export default defineDesktopExtension({
+  name: "jobs",
+  methods: { /* … */ },
+  setup: (host) => {
+    host.onBeforeQuit(async () => {
+      if (!jobs.running()) return true;
+      const choice = await host.confirm({
+        message: "A job is still running. Quit anyway?",
+        detail: "The job stops and its progress is lost.",
+        buttons: ["Quit", "Show Job", "Cancel"],
+        defaultId: 2,
+        cancelId: 2,
+        kind: "warning",
+      }).catch(() => 0); // no message boxes on this runtime: quit
+      if (choice === 1) host.openWindow({ url: "/jobs", key: "jobs" });
+      return choice === 0;
+    });
+  },
+});`}
+      </Code>
       <Code lang="ts">
         {`// desktop/extensions/sessions.ts — one resource per window, let go with the window
 import { defineDesktopExtension } from "denext/desktop";
@@ -2952,10 +3272,17 @@ export default defineDesktopExtension({
         (Reopen Closed Window, Cmd/Ctrl+Shift+T as in Chromium and Safari: the keyed windows the
         user closed, most recent first, opened again as pages with their keys and frames — a
         resource an extension disposed with the window does not come back — a quit&apos;s closes are
-        not remembered) and <code>list: true</code>{" "}
-        (the open windows by title, key or id, each showing and focusing its window). On macOS the
-        submenu starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s
-        Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
+        not remembered; <code>reopenClosed: "list"</code>{" "}
+        makes it a submenu of them instead, by title, most recent first, at most 10, each reopening
+        its own window, the first with Cmd/Ctrl+Shift+T) and <code>list: true</code>{" "}
+        (the open windows by title, key or id, each showing and focusing its window). A
+        window&apos;s title in these lists follows its page: its <code>document.title</code>{" "}
+        as it changes, or a <code>setWindowTitle</code>{" "}
+        call. The menu is set through the main window and its clicks come back through it, so it
+        answers while the main window is open or hidden (a kept-alive app with every other window
+        closed); once the main window has closed for good the runtime delivers the backend no menu
+        clicks. On macOS the submenu starts with Minimize and Zoom and ends with Bring All to Front,
+        as the OS&apos;s Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
         keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
         else the submenu is appended; the backend answers these items itself, so{" "}
         <code>onAppMenuItem</code> never sees them.
@@ -3751,6 +4078,21 @@ onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPerc
         larger than the whole buffer keeps its last <code>maxBytes</code>{" "}
         bytes when it is a string or bytes, and is dropped otherwise.
       </p>
+      <p>
+        <code>attach</code> also says what the replay lost: <code>dropped</code>{" "}
+        is how many whole chunks were evicted, or were too large to keep, since the resource started
+        (it only grows), and <code>truncated</code> is <code>true</code>{" "}
+        when the oldest retained entry is one oversized chunk that was cut, so the replay starts
+        mid-chunk. A page can show a &quot;history truncated&quot; marker from them. A resource with
+        structured chunks (rows, objects) sets{" "}
+        <code>replay.measure(chunk)</code>, the chunk&apos;s size in the unit of{" "}
+        <code>maxBytes</code> (the byte length by default), and{" "}
+        <code>replay.cut(chunk, keepBytes)</code> to keep a tail of a chunk over the budget; without
+        {" "}
+        <code>cut</code>{" "}
+        an oversized structured chunk is dropped and counted, and a cut that is still over budget is
+        dropped too.
+      </p>
       <Code lang="ts">
         {`// desktop/extensions/terminal.ts: runs in the Deno process only
 import { createOwnedResources, defineDesktopExtension } from "denext/desktop";
@@ -3817,6 +4159,27 @@ info: {
 // the page
 const doc = await pickDocument();
 if (doc?.handle) await tools.info({ handle: doc.handle });`}
+      </Code>
+
+      <h3 id="desktop-extension-secrets">An extension&apos;s own secrets</h3>
+      <p>
+        <code>ctx.secureStore</code> (and <code>host.secureStore</code> in{" "}
+        <code>setup</code>) keeps an extension&apos;s secrets in the OS credential store the
+        pages&apos; <code>secureStore</code> uses, under a namespace of its own (<code>
+          &lt;desktop.app.identifier&gt;/ext/&lt;name&gt;
+        </code>): a page can&apos;t read or overwrite them, and the extension can&apos;t reach the
+        pages&apos; items. It needs the <code>secure-store</code>{" "}
+        capability; without it every call rejects <code>not_enabled</code>.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/sync.ts
+connect: {
+  handler: async (_args, ctx) => {
+    const token = (await ctx.secureStore.get("refresh-token")) ?? await signIn();
+    await ctx.secureStore.set("refresh-token", token); // never sent to the page
+    return { ok: true };
+  },
+},`}
       </Code>
 
       <h3 id="desktop-validate-input">Validate what the page sends</h3>

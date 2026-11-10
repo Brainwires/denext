@@ -930,6 +930,25 @@ export interface DesktopFsConfig {
 }
 
 /**
+ * `desktop.secureStore`: the `secureStore` capability's options. Every caller's items are kept
+ * apart: the pages under `<identifier>/page`, an extension (`ctx.secureStore` / `host.secureStore`)
+ * under `<identifier>/ext/<name>`; items an earlier denext stored for the pages under the bare
+ * identifier move into the page namespace on their first read.
+ */
+export interface DesktopSecureStoreConfig {
+  /**
+   * macOS: move the items an earlier denext wrote through `/usr/bin/security` (which any program of
+   * the user could read through it) into the runtime's own Keychain store on their first read, and
+   * use `security` as the store under a runtime without its own. While on, the packaged app keeps
+   * `--allow-run=security`. Set `false` for an app that never shipped that path: `security` is then
+   * never run nor baked, and a runtime without its own macOS store fails every call
+   * `backend_unavailable`. Default `true`; `denext desktop add secure-store` writes `false` when it
+   * enables the capability for the first time.
+   */
+  legacy?: boolean;
+}
+
+/**
  * `desktop.capabilities`: which native capabilities the page may reach, keyed by the name
  * `denext desktop add <name>` writes. `true` enables a capability with its defaults; an object
  * scopes it. Anything absent is denied. An unknown key is allowed (a newer `desktop add`) and the
@@ -978,6 +997,13 @@ export interface DesktopCapabilitiesConfig {
    * autostart entry, named after `desktop.app.identifier`.
    */
   launchAtLogin?: boolean;
+  /**
+   * The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in
+   * `denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime after
+   * 3.0.0-denext.13 (`unsupported` before it). Percentages only, no per-process data; it bakes no
+   * Deno permission (the runtime serves it to an app whose launch config lists the capability).
+   */
+  systemStats?: boolean;
   /**
    * The page drives the app's own updates (`checkForUpdates` / `applyUpdates` from
    * `denext/updates`): the signed UI overlay ({@link DesktopUpdateConfig.ui}) and the whole app
@@ -1233,13 +1259,16 @@ export interface DesktopConfig {
    * appended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,
    * opens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the
    * window instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the
-   * user closed, most recent first, opened again as pages with their keys and frames) and `list`
+   * user closed, most recent first, opened again as pages with their keys and frames; `"list"`: a
+   * submenu of them by title, each reopening its window) and `list`
    * (the open windows, each focusing its window). On macOS the submenu also carries the standard
    * Minimize / Zoom / Bring All to Front items.
    */
   menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
+  /** The `secureStore` capability's options (see {@link DesktopSecureStoreConfig}). */
+  secureStore?: DesktopSecureStoreConfig;
   /**
    * Backends the app runs and supervises next to its window, as an Electron app spawns its server:
    * `{ name, run: { module } }` runs a module in a worker of the app's own Deno runtime (no second
@@ -1489,6 +1518,52 @@ export interface DesktopLinuxConfig {
    * pinned runtime. `denext desktop doctor --linux` says which sandbox this machine allows.
    */
   requireSandbox?: boolean;
+  /**
+   * What every `.desktop` entry denext writes says about the app (the `.deb` / `.rpm` entry, the
+   * bundle's own entry the `.tar.gz` and AppImage carry). Default: `Categories=Utility;` and no
+   * other key.
+   */
+  desktopEntry?: DesktopLinuxDesktopEntryConfig;
+  /** The AppImage's AppStream metadata. */
+  appImage?: DesktopLinuxAppImageConfig;
+}
+
+/**
+ * {@link DesktopLinuxConfig.desktopEntry}: freedesktop Desktop Entry keys. Values are escaped per
+ * the Desktop Entry specification (`\\`, `\n`, `\;` in a list); a value with a control character is
+ * refused.
+ */
+export interface DesktopLinuxDesktopEntryConfig {
+  /**
+   * `Categories`: freedesktop menu categories, e.g. `["System", "TerminalEmulator"]` for a
+   * terminal. Each is letters, digits and `-` (`X-` for a vendor one). Default `["Utility"]`.
+   */
+  categories?: string[];
+  /** `Keywords`: extra search terms for the launcher (a `;` in one is escaped). */
+  keywords?: string[];
+  /** `GenericName`: what kind of app it is (`"Terminal"`, `"Text Editor"`). */
+  genericName?: string;
+  /**
+   * `StartupWMClass`: the window class the launcher matches the app's windows by. Default: the
+   * app id, which the window carries (`LAUFEY_APP_ID`); set it only for a window that reports
+   * another class.
+   */
+  startupWMClass?: string;
+  /**
+   * `MimeType`: the file types the app opens (`"text/plain"`), after the deep-link schemes'
+   * `x-scheme-handler/*`. With no deep link the launcher passes the opened files as `%F`.
+   */
+  mimeTypes?: string[];
+}
+
+/** {@link DesktopLinuxConfig.appImage}: the AppImage's host requirements. */
+export interface DesktopLinuxAppImageConfig {
+  /**
+   * Shared libraries (sonames, e.g. `"libvte-2.91.so.0"`) the app needs on the host beyond the
+   * backend's own (WebKitGTK 4.1 and GTK 3 for the webview backend), listed in the AppImage's
+   * AppStream metainfo. An AppImage bundles neither: the host must provide them.
+   */
+  requires?: string[];
 }
 
 /** {@link DesktopConfig.windows}: Windows launch settings of the packaged app. */
@@ -1584,9 +1659,15 @@ export interface DesktopInstallersConfig {
   windows?: Array<"msi" | "zip">;
   /**
    * Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer
-   * (`"Name <email>"` there) and the `.rpm` Vendor. Default: the app name.
+   * (with {@link email}: `"Name <email>"`) and the `.rpm` Vendor. Default: the app name.
    */
   publisher?: string;
+  /**
+   * The publisher's contact address: the `.deb` Maintainer becomes `"<publisher> <email>"` (what
+   * Debian policy asks for), and it is the `.rpm` Packager and the AppStream `update_contact`.
+   * Without it the Maintainer is the publisher alone.
+   */
+  email?: string;
   /** One line describing the app, for the package managers. Default `"<name> desktop application"`. */
   description?: string;
 }
@@ -1702,8 +1783,12 @@ export interface DesktopMenuConfig {
   window?: {
     /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
     newWindow?: string | false;
-    /** Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed. */
-    reopenClosed?: boolean;
+    /**
+     * Reopen Closed Window (Cmd/Ctrl+Shift+T) over the keyed windows the user closed; `"list"`:
+     * a "Reopen Closed Window" submenu of them by title, most recent first (at most 10), each
+     * reopening its window.
+     */
+    reopenClosed?: boolean | "list";
     /** The open windows, each focusing its window when chosen. */
     list?: boolean;
   };
@@ -1754,6 +1839,22 @@ export interface DesktopTrayPanelConfig {
 /** How far above other windows an always-on-top window floats (Electron's level names). */
 export type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver";
 
+/** A macOS window button position ({@link DesktopWindowConfig.windowButtonPosition}). */
+export interface DesktopWindowButtonPosition {
+  /**
+   * Points from the window's left edge.
+   *
+   * @minimum 0
+   */
+  x: number;
+  /**
+   * Points from the window's top edge.
+   *
+   * @minimum 0
+   */
+  y: number;
+}
+
 /** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
 export interface DesktopWindowConfig {
   /**
@@ -1768,6 +1869,28 @@ export interface DesktopWindowConfig {
    * @minimum 1
    */
   height?: number;
+  /**
+   * The width the main window opens with when its `key` has no saved frame (the first launch, or
+   * no `key`): `width` > the saved frame > `defaultWidth` > the runtime's own size.
+   *
+   * @minimum 1
+   */
+  defaultWidth?: number;
+  /**
+   * The height the main window opens with when its `key` has no saved frame.
+   *
+   * @minimum 1
+   */
+  defaultHeight?: number;
+  /**
+   * Where the macOS window buttons (the traffic lights) sit: the close button's top-left corner,
+   * in points from the window's top-left, for a page drawn under a hidden title bar
+   * (`desktop.titleBar: "hidden"` / `"hiddenInset"`). Windows opened with `windows.open` /
+   * `openWindow` take it too, unless their own `windowButtonPosition` says (`null` keeps the OS's
+   * place); a frameless window has none. Ignored on Windows and Linux. Needs denext's pinned
+   * runtime (ignored with a warning before).
+   */
+  windowButtonPosition?: DesktopWindowButtonPosition;
   /** The window title (defaults to the page's `<title>`). */
   title?: string;
   /** Whether the user can resize the window (default `true`). */

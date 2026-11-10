@@ -54,7 +54,9 @@ function runner(root: string, url: string) {
     await table[positionals[0]]({
       ctx: {
         positionals,
-        flags: { "db-url": url, ...flags },
+        // --yes: the test database may be on another host (a CI pool's job services), where
+        // the destructive verbs ask first; the confirmation itself is unit-tested.
+        flags: { "db-url": url, yes: true, ...flags },
         global: { cwd: root, json, verbose: false, quiet: false },
         rest: [],
       },
@@ -153,7 +155,8 @@ Deno.test({
 
       // Supabase's `migration down`: reset, re-apply up to the version before the last one, seed.
       await assertRejects(
-        () => run(DB_ACTIONS, ["rollback"], { "force-reset": true }),
+        // yes: false overrides the runner's default --yes: the refusal is what is under test
+        () => run(DB_ACTIONS, ["rollback"], { "force-reset": true, yes: false }),
         Error,
         "--yes",
       );

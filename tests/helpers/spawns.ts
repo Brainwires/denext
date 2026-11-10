@@ -34,7 +34,12 @@ export async function spawnsOf(fn: () => Promise<unknown>): Promise<Deno.ChildPr
  */
 export async function exited(children: readonly Deno.ChildProcess[]): Promise<void> {
   for (const child of children) {
-    child.ref();
+    // A child that already exited has no resource left to ref (BadResource): its status is settled.
+    try {
+      child.ref();
+    } catch (err) {
+      if (!(err instanceof Deno.errors.BadResource)) throw err;
+    }
     await child.status;
   }
 }
