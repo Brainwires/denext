@@ -2504,8 +2504,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         could have planted it). A write over one the runtime&apos;s store finds in its way reads its
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
         (or the stock one) keeps the <code>security</code>{" "}
-        path. Under the pinned runtime (3.0.0-denext.16, which reads the capability list denext
-        writes into <code>.deno-desktop/app.json</code>) the capability bakes no{" "}
+        path. Under the pinned runtime (3.0.0-denext.17; from 3.0.0-denext.16 the runtime reads the
+        capability list denext writes into{" "}
+        <code>.deno-desktop/app.json</code>) the capability bakes no{" "}
         <code>--allow-sys</code>; an older runtime needs an unscoped one for its store. It bakes
         {" "}
         <code>--allow-run=security</code> only while <code>desktop.secureStore.legacy</code>{" "}
@@ -2652,7 +2653,7 @@ desktop: {
         {" "}
         <code>pty</code>{" "}
         only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.16) has no terminals yet: opening one rejects with <code>unsupported</code>
+        (3.0.0-denext.17) has no terminals yet: opening one rejects with <code>unsupported</code>
         {" "}
         (<code>error.data.reason</code>{" "}
         says why). Once it does, the terminal is a ConPTY, whose output carries its own VT sequences
@@ -3318,8 +3319,9 @@ export default defineDesktopExtension({
         (the open windows by title, key or id, each showing and focusing its window). A
         window&apos;s title in these lists follows its page: its <code>document.title</code>{" "}
         as it changes, or a <code>setWindowTitle</code>{" "}
-        call. From runtime 3.0.0-denext.16 (the pinned one) the menu&apos;s clicks arrive app-wide
-        (<code>Deno.desktop</code>&apos;s{" "}
+        call. From runtime 3.0.0-denext.16 the menu&apos;s clicks arrive app-wide (<code>
+          Deno.desktop
+        </code>&apos;s{" "}
         <code>"menuclick"</code>), whichever window is key and after the main window has closed. An
         older runtime delivers them through the main window only, so there the menu answers while
         the main window is open or hidden, and not once it has closed for good. On macOS the submenu

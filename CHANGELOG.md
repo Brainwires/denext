@@ -66,6 +66,15 @@ and this project adheres to
   `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
   and `dns.resolve("")`.
 
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.17.** It carries the Node.js
+  compatibility work above, `Deno.permissions.names`, and `--allow-read` / `--allow-write` scopes
+  checked against the path a symlink leads to (a link inside an allowed folder that points outside
+  it now needs its target granted too; a scope still covers its own resolved location, such as
+  macOS's `/tmp`). In app windows, a chunk the app writes in one piece reaches the page as one
+  write. The [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
+
 ### Fixed
 
 - **An error boundary whose own fallback throws no longer freezes the page.** An `error.tsx` (or

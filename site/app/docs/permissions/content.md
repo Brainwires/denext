@@ -98,21 +98,30 @@ a broad read is unavoidable.
 
 ### Symlinks and allow scopes
 
-As of the runtime denext pins (`3.0.0-denext.13`):
+As of the runtime denext pins (`3.0.0-denext.17`):
 
-- **Allow scopes are matched against the path as written.** A symlink inside an allowed folder
-  that points outside it is followed: with `--allow-read=./data`, reading `./data/link` reads the
-  link's target wherever it is, and the same holds for writes and for links to directories.
+- **Allow scopes hold on the path an access reaches.** With `--allow-read=./data`, reading
+  `./data/link` where the link points outside `./data` needs the target allowed as well (by its own
+  scope, or at a prompt that names the resolved path). The same holds for writes: a dangling link or
+  a linked directory inside a write scope can't create files outside it. Following accesses resolve
+  every link; no-follow ones (remove, rename, `lstat`) resolve the parent, as the kernel does.
+  `Deno.watchFs` and `node:fs` take the same checks. Before `3.0.0-denext.17` allow scopes were
+  matched against the path as written, so code that relied on reading through such a link now needs
+  the target granted.
+- **A scope covers its own resolved location.** A scope under a system link (macOS's `/tmp` ->
+  `/private/tmp`, a temp folder under `/var`) or behind a project-folder link keeps working. A scope
+  that is itself a link names the link: its target is covered only when the link is owned by root, so
+  a link the user owns (`node_modules/x -> /elsewhere`) does not widen the scope.
 - **Deny rules hold through links.** `--deny-read` / `--deny-write` are checked against the path
   a link resolves to, including a dangling link and a link in a parent directory, so a denied file
   stays denied however it is reached.
 - **Creating a link needs unscoped grants.** `Deno.symlink()` and `node:fs`'s `symlink` need full
-  read and write permission, so code under scoped grants can't plant a new link. A link that is
-  already there, or one a subprocess, an unpacked archive or a git checkout creates, is followed.
+  read and write permission, so code under scoped grants can't plant a new link.
 
-So an allow scope over a folder that other people or programs can write to is only as narrow as
-the links in it. Pair a broad allow with `--deny-*` rules for what must stay out of reach. Making
-allow scopes resolve links too is in progress for a later runtime; this page will change with it.
+Not covered: the check resolves the path and the operation then opens it by name, so a link
+swapped between the two (a time-of-check to time-of-use race) is followed without a new check. In a
+folder other people or programs can write to, pair the allow with `--deny-*` rules for what must
+stay out of reach.
 
 ## Network permissions and proxies
 
@@ -141,7 +150,9 @@ through the environment.
 **`node:http` and `node:https`.** These follow Node's rules: a proxy is used only with
 `NODE_USE_ENV_PROXY=1` (or `--use-env-proxy`), `http.setGlobalProxyFromEnv()`, or an agent's
 `proxyEnv` option, and `agent: false` never uses one. The variables are read when first needed,
-without `--allow-env`. The request's target and the proxy host both need `--allow-net`.
+without `--allow-env`. The request's target and the proxy host both need `--allow-net`. From
+`3.0.0-denext.17`, once `node:http` has loaded, `fetch()` follows the same Node proxy configuration,
+through a proxy client whose proxy host needs `--allow-net` too.
 
 **`Deno.connect()`, `Deno.connectTls()`, `node:net`, `node:tls`.** No proxy support: they connect
 directly, and the destination is checked as usual.

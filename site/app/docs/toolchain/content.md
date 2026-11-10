@@ -1105,7 +1105,8 @@ OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-wi
 `3.0.0-denext.10` moves V8 to 15.6.75.38 and adds Node's `node --test` runner, the CommonJS compile cache and `NODE_OPTIONS` preloads.
 `3.0.0-denext.12` (there is no `3.0.0-denext.11` release) adds `Deno.openPty` and `Deno.Command`'s `pty` option (not on Windows yet), `node:crypto`'s `argon2()`, `node:stream/iter`, `node:zlib/iter` and `node:vfs`, and makes `--seed` pin the time zone and locale.
 `3.0.0-denext.13` loads a native Node addon a package ships, such as node-pty's, in packaged apps instead of the built-in shim.
-`3.0.0-denext.16` (the build denext pins today; there is no `3.0.0-denext.14` or `3.0.0-denext.15` release) adds `--clean-run-env`, native message boxes, app-wide application-menu clicks, `Deno.desktop.systemStats` and SQLite 3.54.1. The
+`3.0.0-denext.16` (there is no `3.0.0-denext.14` or `3.0.0-denext.15` release) adds `--clean-run-env`, native message boxes, app-wide application-menu clicks, `Deno.desktop.systemStats` and SQLite 3.54.1.
+`3.0.0-denext.17` (the build denext pins today) checks `--allow-read` / `--allow-write` scopes against the path a symlink leads to, adds `Deno.permissions.names`, and fills Node.js gaps: `fetch()` through Node's global proxy, `node:http` keep-alive and pipelining fixes, real `node:tls` session resumption, the legacy `node:crypto` ciphers, Node-named `--cpu-prof` / `--heap-prof` profiles, `net.Socket({ fd })` socket activation, `process.execve()`, `node:sea` in compiled programs, and native addons that install in a plain package.json project. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

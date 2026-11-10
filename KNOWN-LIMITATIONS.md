@@ -655,7 +655,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
 - **Terminals (`pty`) need runtime 3.0.0-denext.12 or later** (`Deno.openPty`); under an older runtime
-  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.16) has no terminals on Windows
+  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.17) has no terminals on Windows
   yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
   with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
@@ -728,7 +728,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.16). Chrome's
+- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.17). Chrome's
   fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see

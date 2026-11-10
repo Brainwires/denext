@@ -1067,7 +1067,7 @@ cache uses Deno's built-in `node:sqlite`.)
 ## Build, tooling & CLI
 
 - **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
-  themselves on a pinned `3.0.0-denext.16` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  themselves on a pinned `3.0.0-denext.17` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
   compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
