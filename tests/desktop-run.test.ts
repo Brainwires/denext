@@ -412,8 +412,13 @@ Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, th
     // The Window menu (desktop.menu.window) is on the main window; New Window opens desktop.ts's window.
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
     assertEquals(menu.map((e) => e.submenu.label), ["Window"]);
-    main.dispatchEvent(new CustomEvent("menuclick", { detail: { id: "denext:window:new" } }));
+    // A real click: the window's "menuclick", then (from laufey API 55) Deno.desktop's. Which one
+    // denext hears depends on the runtime running the test; exactly one New Window either way.
+    const click = { detail: { id: "denext:window:new" } };
+    main.dispatchEvent(new CustomEvent("menuclick", click));
+    desktop.dispatchEvent(new CustomEvent("menuclick", click));
     assertEquals(runtime.windows.byKey("window-1")?.key, "window-1");
+    assertEquals(runtime.windows.byKey("window-2"), undefined, "one click, one window");
     assertEquals(
       FakeMenuWindow.all.at(-1)!.calls.map((c) => c.replace(/https?:\/\/[^/]+/, "")),
       ["navigate:/fresh"],
