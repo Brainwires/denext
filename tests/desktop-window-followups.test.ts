@@ -391,6 +391,8 @@ Deno.test("second instance: without the pinned runtime's Deno.desktop it is a no
   });
   old.install();
   old.onSecondInstance(() => {})();
+  // A sidecar's child (no windows): a no-op unsubscribe, as DesktopRuntime.onSecondInstance there.
+  noDesktopWindows().onSecondInstance(() => {})();
 });
 
 // ---------------------------------------------------------------------------------------------

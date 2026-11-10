@@ -781,6 +781,13 @@ export interface DesktopRuntime {
    * happens. Returns the unsubscribe; a no-op where there is no Dock (Windows, Linux).
    */
   onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
+  /**
+   * Call `fn` on every later launch of the app while it runs (`desktop.app.singleInstance`), with
+   * the launch's `args` and `cwd`, after what {@linkcode RunDesktopOptions.onSecondInstance} opens.
+   * A throw or a rejection is logged. Returns the unsubscribe; never called without denext's
+   * pinned runtime (or in a sidecar's child).
+   */
+  onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -1836,6 +1843,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     setActivationPolicy: (policy) => windows.setActivationPolicy(policy),
     getActivationPolicy: () => windows.getActivationPolicy(),
     onDockReopen: (fn) => windows.onDockReopen(fn),
+    onSecondInstance: (fn) => windows.onSecondInstance(fn),
     trust,
     emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {

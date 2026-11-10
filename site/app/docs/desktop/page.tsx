@@ -5050,9 +5050,10 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         Dock&apos;s reopen would (the most recently closed keyed window, else the main window shown
         again); with a window showing the runtime has already brought it to the front. An extension
         hears the same launches with a static <code>onSecondInstance(event)</code> hook or{" "}
-        <code>host.onSecondInstance(fn)</code>{" "}
-        (which returns the unsubscribe). The links and files the launch carried still go to{" "}
-        <code>onDeepLink</code> / <code>onOpenFile</code>{" "}
+        <code>host.onSecondInstance(fn)</code>, and <code>desktop.ts</code> with{" "}
+        <code>app.onSecondInstance(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with (each returns the unsubscribe). The links and files the launch carried still
+        go to <code>onDeepLink</code> / <code>onOpenFile</code>{" "}
         as above. Without denext&apos;s pinned runtime none of these is ever called.
       </p>
       <Code lang="ts">

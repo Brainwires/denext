@@ -639,6 +639,7 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
     const fromRunDesktop: unknown[] = [];
     const fromHook: unknown[] = [];
     const fromHost: unknown[] = [];
+    const fromRuntime: unknown[] = [];
     let host: DesktopExtensionHost | undefined;
     const ext: DesktopCapability = {
       name: "ext",
@@ -648,7 +649,7 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
         host = h;
       },
     };
-    const { served } = await boot({
+    const { runtime, served } = await boot({
       outDir,
       port: 1,
       deepLinks: ["myapp"],
@@ -656,6 +657,7 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
       capabilities: [ext],
     }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
     const off = host!.onSecondInstance((event) => void fromHost.push(event));
+    const offRuntime = runtime.onSecondInstance((event) => void fromRuntime.push(event));
     const launch = (args: string[]) =>
       desktop.dispatchEvent(
         new CustomEvent("secondinstance", {
@@ -668,6 +670,7 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
     assertEquals(fromRunDesktop, expected);
     assertEquals(fromHook, expected);
     assertEquals(fromHost, expected);
+    assertEquals(fromRuntime, expected, "DesktopRuntime.onSecondInstance");
     // The deep link is routed to the page as before.
     const token = injectedGlobal(
       await (await served.handler(get("http://127.0.0.1:1/"), {})).text(),
@@ -677,9 +680,10 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
     ]);
     // Unsubscribed: the host hears no more; desktop.ts's handler and the static hook still do.
     off();
+    offRuntime();
     launch([]);
     await until(() => fromHook.length === 2);
-    assertEquals([fromRunDesktop.length, fromHost.length], [2, 1]);
+    assertEquals([fromRunDesktop.length, fromHost.length, fromRuntime.length], [2, 1, 1]);
   } finally {
     FakeBrowserWindow.last = undefined;
     FakeMenuWindow.all = [];

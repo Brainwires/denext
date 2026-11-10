@@ -972,6 +972,7 @@ export function noDesktopWindows(): {
   setActivationPolicy(policy: ActivationPolicy): boolean;
   getActivationPolicy(): ActivationPolicy | null;
   onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
+  onSecondInstance(fn: DesktopSecondInstanceListener): () => void;
 } {
   return {
     windows: {
@@ -988,5 +989,6 @@ export function noDesktopWindows(): {
     setActivationPolicy: () => false,
     getActivationPolicy: () => null,
     onDockReopen: () => () => {},
+    onSecondInstance: () => () => {},
   };
 }
