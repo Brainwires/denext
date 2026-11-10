@@ -51,6 +51,21 @@ and this project adheres to
   `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
   and `dns.resolve("")`.
 
+### Fixed
+
+- **An error boundary whose own fallback throws no longer freezes the page.** An `error.tsx` (or
+  any `<ErrorBoundary>` or class error boundary) whose error UI threw while rendering, for example
+  by calling a hook that needs a provider it doesn't have, caught its own error again and
+  re-rendered forever with the main thread at 100 %. As in React, the error now goes to the next
+  boundary up, or to the root's uncaught-error handling when there is none. Server rendering and
+  streaming already did this.
+- **A build that fails partway no longer leaves `.denext/css-shims` entries in `deno.json`.** The
+  css→shim redirects a build adds to an app's own `deno.json` (an app with `npm:` imports or a
+  manual `node_modules`) are now removed when the build throws, not only when it finishes or is
+  stopped by a signal, and the restore still works on a full disk, where rewriting the file
+  fails, by moving the saved original back over it. The next build still cleans entries an older
+  denext left behind.
+
 ### Documentation
 
 - **Permissions are described as least-privilege guardrails.** A new page,

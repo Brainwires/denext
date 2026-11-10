@@ -12,7 +12,8 @@ import {
   leakedCssShimKeysIn,
   signalExitCode,
 } from "../src/build/css-config-guard.ts";
-import { buildAppCss } from "../src/build/css.ts";
+import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "../src/build/css.ts";
+import { restoreCommittedAppConfig } from "../src/cli/run-verb.ts";
 import { cssShimLeakCheck } from "../src/cli/commands/doctor.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 
@@ -274,5 +275,104 @@ Deno.test("only a manual node_modules or an npm: import gets the app config patc
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
+  }
+});
+
+/** A child that injects the redirects the way the build does, then throws partway (#104). */
+function throwingChildSource(): string {
+  const runVerb = toFileUrl(join(ROOT, "src/cli/run-verb.ts")).href;
+  return `
+import { withCssRedirects } from "${runVerb}";
+const [configPath, outDir] = Deno.args;
+await withCssRedirects(configPath, outDir, {
+  "file:///elsewhere/x.css": "file:///elsewhere/.denext/css-shims/css_0.js",
+}, async () => {
+  if (!(await Deno.readTextFile(configPath)).includes("css-shims")) Deno.exit(3);
+  throw new Error("ENOSPC: no space left on device (simulated)");
+});
+`;
+}
+
+Deno.test("a build that throws mid-patch leaves the committed deno.json byte-for-byte", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_throwpatch_" });
+  const configPath = join(dir, "deno.json");
+  // Odd spacing: the injection's JSON rewrite does not reproduce these bytes.
+  const original = `{\n    "nodeModulesDir": "manual",\n  "imports": {  "~/": "./src/" }\n}\n`;
+  try {
+    await Deno.writeTextFile(configPath, original);
+    const script = join(dir, "child.ts");
+    await Deno.writeTextFile(script, throwingChildSource());
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--config",
+        join(ROOT, "deno.json"),
+        script,
+        configPath,
+        join(dir, ".denext"),
+      ],
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(out.stderr);
+    assertEquals(out.code, 1, stderr); // the uncaught throw, after the config was patched
+    assertStringIncludes(stderr, "simulated");
+    assertEquals(await Deno.readTextFile(configPath), original);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "the restore moves the backup over the config when writing it fails (a full disk)",
+  // Renaming over a read-only file is refused on Windows.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_restorefull_" });
+    const configPath = join(dir, "deno.json");
+    const outDir = join(dir, ".denext");
+    const original = `{ "nodeModulesDir": "manual", "imports": {} }\n`;
+    try {
+      await Deno.writeTextFile(configPath, original);
+      await injectAppConfigRedirects(configPath, outDir, {
+        "file:///elsewhere/x.css": "file:///elsewhere/.denext/css-shims/css_0.js",
+      });
+      assertStringIncludes(await Deno.readTextFile(configPath), "css-shims");
+      // A config that refuses the write, as a full disk does.
+      await Deno.chmod(configPath, 0o444);
+      await restoreAppConfig(configPath, outDir);
+      assertEquals(await Deno.readTextFile(configPath), original);
+      let bak = true;
+      await Deno.stat(join(outDir, "app-config.pre-css.json")).catch(() => (bak = false));
+      assert(!bak, "the backup became the config");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("the next build cleans a deno.json an older denext left dirty", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_olddirty_" });
+  const configPath = join(dir, "deno.json");
+  const outDir = join(dir, ".denext");
+  try {
+    // An older run left its entries with no backup (or `.denext` was deleted since).
+    const { clean, leaked } = leakedConfig(dir);
+    await Deno.writeTextFile(configPath, leaked);
+    await restoreCommittedAppConfig(configPath, outDir, true);
+    assertEquals(await Deno.readTextFile(configPath), clean);
+    // An older run killed mid-build left a backup that itself held stale entries.
+    await Deno.mkdir(outDir, { recursive: true });
+    await Deno.writeTextFile(join(outDir, "app-config.pre-css.json"), leaked);
+    await Deno.writeTextFile(configPath, leaked.replace("trailing comment", "mutated"));
+    await restoreCommittedAppConfig(configPath, outDir, true);
+    assertEquals(await Deno.readTextFile(configPath), clean);
+    // `doctor` (heal off) leaves a leftover in place to report it.
+    await Deno.writeTextFile(configPath, leaked);
+    await restoreCommittedAppConfig(configPath, outDir, false);
+    assertEquals(await Deno.readTextFile(configPath), leaked);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

@@ -28,7 +28,12 @@ import {
 import { beginWork } from "./begin-work.ts";
 import { updateDepthError } from "./fiber-utils.ts";
 import { completeWork } from "./complete-work.ts";
-import { handleThrow, SUSPENDED_ROOT, SUSPENDED_TRANSITION } from "./unwind.ts";
+import {
+  handleThrow,
+  resetCapturedBoundaries,
+  SUSPENDED_ROOT,
+  SUSPENDED_TRANSITION,
+} from "./unwind.ts";
 import { commitRoot, flushPassiveEffects } from "./commit.ts";
 import {
   createWorkInProgress,
@@ -96,6 +101,7 @@ export function beginConcurrentRender(): void {
   flushPassiveEffects();
   handle.pendingLanes &= ~TransitionLane;
   setRenderLanes(TransitionLane);
+  resetCapturedBoundaries();
   const wipRoot = createWorkInProgress(handle.current, null);
   fiberToRoot.set(wipRoot, handle);
   fiberExt(wipRoot).pendingElement = handle.pendingElement;
@@ -257,6 +263,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     handle.reveal = false;
     handle.pendingLanes &= ~lanes; // clear the lanes we're about to process
     setRenderLanes(lanes);
+    resetCapturedBoundaries();
     const wipRoot = createWorkInProgress(handle.current, null);
     fiberToRoot.set(wipRoot, handle);
     fiberExt(wipRoot).pendingElement = handle.pendingElement;
