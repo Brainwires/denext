@@ -78,6 +78,9 @@ function quittingApi(windows: () => readonly EventTarget[]) {
   return api;
 }
 
+/** The last runtime before `Deno.desktop`'s app-level "menuclick": clicks come from the window. */
+const WINDOW_CLICK_RUNTIME = "3.0.0-denext.13";
+
 /** A desktop setup with the window menu on, the main window wired as runDesktop wires it. */
 function setup(
   options: {
@@ -112,7 +115,8 @@ function setup(
       window: options.menu ?? { newWindow: "/", reopenClosed: true, list: true },
     },
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
-    ...(options.runtimeVersion !== undefined ? { runtimeVersion: options.runtimeVersion } : {}),
+    // A runtime whose clicks reach the main window, unless a test names one (whatever runs it).
+    runtimeVersion: options.runtimeVersion ?? WINDOW_CLICK_RUNTIME,
     ...(options.keepAlive !== undefined ? { appSettings: { keepAlive: options.keepAlive } } : {}),
   });
   main.addEventListener("close", (e) => {

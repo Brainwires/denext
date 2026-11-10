@@ -153,8 +153,19 @@ Deno.test("secureStore (Linux, runtime store): a round-trip through the runtime;
     options: { label: "com.example.app/page", timeout: 7000 },
   });
   assertEquals(runtime.calls[1].options, { timeout: 7000 });
-  // The runtime store needs an unscoped --allow-sys, and nothing to run.
-  assertEquals(cap.methods.get.permissions, { sys: ["*"] });
+  // The runtime store needs an unscoped --allow-sys, and nothing to run, until the runtime gates it
+  // on the baked capability list (from FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME): then nothing.
+  const on = (runtimeVersion: string) =>
+    secureStoreCapability({
+      service: "com.example.app",
+      os: "linux",
+      run: tool.run,
+      api: runtime.api,
+      runtimeVersion,
+    })
+      .methods.get.permissions;
+  assertEquals(on("3.0.0-denext.13"), { sys: ["*"] });
+  assertEquals(on("3.0.0-denext.16"), {});
 });
 
 Deno.test("secureStore (Linux, runtime store): unavailable is backend_unavailable with the reason, never null", async () => {

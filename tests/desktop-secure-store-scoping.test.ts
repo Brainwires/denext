@@ -432,7 +432,7 @@ Deno.test("desktopPermissionContext: the config's legacy flag and the runtime's 
     }),
     { legacy: false, bakedCapabilities: true, macRuntimeStore: false },
   );
-  // Inert until the pin moves: the pinned runtime reads no baked list yet.
-  assertEquals(desktopPermissionContext(undefined).bakedCapabilities, false);
+  // The pinned runtime reads the baked list.
+  assertEquals(desktopPermissionContext(undefined).bakedCapabilities, true);
   assertEquals(desktopPermissionContext(undefined).legacy, true);
 });

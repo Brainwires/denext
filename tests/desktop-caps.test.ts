@@ -1818,11 +1818,13 @@ const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
       spawn: () => Promise.resolve(),
     }),
   "keep-awake": (os) => keepAwakeCapability({ os }),
+  // The catalog's static per-OS lists are the pre-baked-capabilities runtime's: compare with that.
   "secure-store": (os) =>
     secureStoreCapability({
       service: "svc",
       os,
       run: () => Promise.resolve({ code: 0, stdout: "" }),
+      runtimeVersion: "3.0.0-denext.13",
     }),
   dialogs: (os) =>
     dialogsCapability({

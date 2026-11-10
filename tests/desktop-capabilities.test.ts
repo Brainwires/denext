@@ -310,11 +310,12 @@ Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env
 
 Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay the baseline", () => {
   // Scoped caps add only their exact run + sys; no write, no per-token read/write leaks.
-  // secure-store on macOS: the runtime's Keychain store (unscoped --allow-sys, which subsumes
-  // device's osRelease) and `security` (older runtimes, moving older items over).
+  // secure-store on macOS under the pinned runtime: the Keychain store is gated on the baked
+  // capability list (no --allow-sys of its own, so device's osRelease stays scoped), and
+  // `security` while the legacy move is on.
   assertEquals(desktopBuildFlags(caps({ secureStore: true, device: true }), "darwin"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-sys",
+    "--allow-sys=osRelease",
     "--allow-run=security",
   ]);
   assertEquals(desktopBuildFlags(caps({ device: true }), "darwin"), [
