@@ -75,6 +75,38 @@ function fetchDecodedEncoding(contentEncoding: string | null): boolean {
   return enc === "gzip" || enc === "br";
 }
 
+/**
+ * The hop-by-hop request headers (RFC 9110 section 7.6.1, plus the de-facto `Proxy-Connection`
+ * and this proxy's own `Proxy-Authorization`): they describe the client's connection to THIS
+ * proxy, so they are never forwarded upstream. Forwarding them would let a client ask the
+ * backend (or an intermediary in front of it) for a protocol upgrade it did not intend to allow,
+ * or make an intermediary drop headers the backend relies on.
+ */
+const HOP_BY_HOP_REQUEST_HEADERS: ReadonlySet<string> = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+/**
+ * Remove the hop-by-hop headers from `headers`, and every header the incoming `Connection`
+ * header names (also hop-by-hop, per RFC 9110 section 7.6.1).
+ */
+export function stripHopByHopHeaders(headers: Headers): void {
+  const named = (headers.get("connection") ?? "").split(",");
+  for (const token of named) {
+    const name = token.trim().toLowerCase();
+    if (name !== "") headers.delete(name);
+  }
+  for (const name of HOP_BY_HOP_REQUEST_HEADERS) headers.delete(name);
+}
+
 async function proxyHttp(
   req: Request,
   url: URL,
@@ -83,6 +115,7 @@ async function proxyHttp(
 ): Promise<Response> {
   const target = new URL(url.pathname + url.search, backend);
   const headers = new Headers(req.headers);
+  stripHopByHopHeaders(headers);
   headers.set("host", backend.host);
   for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
   // Let `fetch` negotiate the upstream encoding with ITS defaults rather than the browser's

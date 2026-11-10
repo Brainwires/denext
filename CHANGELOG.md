@@ -115,6 +115,10 @@ and this project adheres to
   config, deployment, backend, desktop, toolchain and auth pages are corrected where they had
   drifted from the code.
 
+### Security
+
+- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
+
 ## [4.15.0] - 2026-11-10
 
 ### Added

@@ -185,3 +185,89 @@ Deno.test({
     await backend.close();
   }
 });
+
+/** A raw TCP backend that records the exact request head it receives, then answers 200. */
+function startRawBackend() {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const heads: string[] = [];
+  const done = (async () => {
+    for await (const conn of listener) {
+      (async () => {
+        const buf = new Uint8Array(65536);
+        let text = "";
+        while (!text.includes("\r\n\r\n")) {
+          const n = await conn.read(buf);
+          if (n === null) break;
+          text += new TextDecoder().decode(buf.subarray(0, n));
+        }
+        heads.push(text.split("\r\n\r\n")[0].toLowerCase());
+        await conn.write(
+          new TextEncoder().encode(
+            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+          ),
+        ).catch(() => {});
+        try {
+          conn.close();
+        } catch { /* already closed */ }
+      })();
+    }
+  })();
+  return {
+    port: (listener.addr as Deno.NetAddr).port,
+    heads,
+    close: async () => {
+      listener.close();
+      await done.catch(() => {});
+    },
+  };
+}
+
+Deno.test("proxyToBackend: a client's hop-by-hop headers never reach the backend", async () => {
+  const backend = startRawBackend();
+  const cfg = { prefixes: ["/api"], target: `http://127.0.0.1:${backend.port}` };
+  const url = new URL("http://127.0.0.1:3000/api/thing");
+  try {
+    const res = await proxyToBackend(
+      new Request(url, {
+        headers: {
+          // Hop-by-hop, and a header the client marks hop-by-hop through `Connection`.
+          "connection": "keep-alive, x-session-token",
+          "x-session-token": "secret-meant-for-the-proxy-hop",
+          "upgrade": "h2c",
+          "te": "trailers",
+          "keep-alive": "timeout=5",
+          "proxy-connection": "keep-alive",
+          "proxy-authorization": "Basic cHJveHk6cGFzcw==",
+          // End-to-end headers the backend must still get.
+          "cookie": "sid=1",
+          "authorization": "Bearer t",
+          "x-request": "kept",
+        },
+      }),
+      url,
+      cfg,
+    );
+    assertEquals(res.status, 200);
+    await res.text();
+    const head = backend.heads.at(-1) ?? "";
+    for (
+      const gone of [
+        "upgrade:",
+        "te:",
+        "keep-alive:",
+        "proxy-connection:",
+        "proxy-authorization:",
+        "x-session-token:",
+        "h2c",
+      ]
+    ) {
+      assert(!head.includes(gone), `forwarded ${gone}\n${head}`);
+    }
+    assert(!/connection: [^\r\n]*x-session-token/.test(head), head);
+    for (const kept of ["cookie: sid=1", "authorization: bearer t", "x-request: kept"]) {
+      assert(head.includes(kept), `dropped ${kept}\n${head}`);
+    }
+  } finally {
+    await backend.close();
+  }
+});
