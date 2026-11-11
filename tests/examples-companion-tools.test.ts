@@ -5,7 +5,14 @@
 // the bubble's sources and question, the settings' tools and memories). Nothing here calls OpenAI
 // or needs an API key. The rest of Loopy is tests/examples-companion.test.ts.
 
-import { assert, assertEquals, assertExists, assertMatch, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertMatch,
+  assertThrows,
+} from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -47,6 +54,9 @@ import {
   MAX_TYPED,
   pendingQuestion,
   RETRY_NOTE,
+  sameElement,
+  SENT_NOTE,
+  WAITING_NOTE,
 } from "../examples/companion/voice/browser-tools.ts";
 import {
   MAX_QUERY,
@@ -91,10 +101,14 @@ import { VoiceError } from "../examples/companion/voice/realtime.ts";
 import { voiceCapabilities } from "../examples/companion/voice/extension.ts";
 import { createVoiceRoute } from "../examples/companion/voice/dev-route.ts";
 import {
+  bounded,
   CHROME_PATHS,
   chromeArgs,
   devtoolsEndpoint,
   findChrome,
+  type Held,
+  holdItem,
+  MAX_HELD,
   PAGE_SCRIPT,
   pageCall,
   targetIdOf,
@@ -663,7 +677,148 @@ Deno.test("loopy browser tools: data a page sends after Loopy's call returned is
   fake.send({ method: "POST", url: "https://shop.example/late3" });
   const before = (await run("browser_read")).confirm!;
   const read = await confirmations.answer(before.id, true);
-  assertMatch((read.output as { page: string }).page, /Home/, "Yes runs the call it held up");
+  // The Yes was for the held request, not for the step after it: that one is for the model to
+  // ask again.
+  assertEquals(read.output, { ok: true, sent: true, note: SENT_NOTE });
+  assertEquals(fake.log.at(-1), "release true 1");
+});
+
+Deno.test("loopy browser tools: nothing runs while a question waits; held requests stay held", async () => {
+  const fake = fakeBrowser(
+    page([el({ ref: 1, tag: "button", type: "submit", text: "Buy", inForm: true })]),
+  );
+  const { run, confirmations } = toolsOver(fake.driver);
+  const asked = await run("browser_click", { ref: 1 });
+  assertExists(asked.confirm);
+  fake.send({ method: "POST", url: "https://shop.example/late" });
+  // Another call while the user hasn't answered: refused, and the question (and what the page
+  // holds) left as they are.
+  assertEquals((await run("browser_read")).output, { ok: false, error: WAITING_NOTE });
+  assertEquals(confirmations.current()?.id, asked.confirm.id);
+  assertEquals(fake.driver.heldRequests().length, 1);
+  assert(!fake.log.some((l) => l.startsWith("release")), "nothing failed or sent");
+});
+
+Deno.test("loopy browser tools: a confirmed click lands on the element the user was asked about", async () => {
+  const buy = el({ ref: 1, tag: "button", type: "submit", text: "Buy", inForm: true });
+  const pay = el({ ref: 1, tag: "button", type: "submit", text: "Pay $500", inForm: true });
+  let current = buy;
+  const fake = fakeBrowser(page([buy]));
+  const driver = { ...fake.driver, element: () => Promise.resolve(current) };
+  const { run, confirmations } = toolsOver(driver);
+  const asked = await run("browser_click", { ref: 1 });
+  assertExists(asked.confirm);
+  assertMatch(asked.confirm.prompt, /“Buy”/);
+  current = pay; // the page swapped what ref 1 points at while the question waited
+  assertEquals((await confirmations.answer(asked.confirm.id, true)).output, {
+    ok: false,
+    error: "The page changed before the click; read it again.",
+  });
+  assert(!fake.log.includes("click 1"), "nothing clicked");
+  // Unchanged, the Yes clicks it.
+  current = buy;
+  const again = await run("browser_click", { ref: 1 });
+  await confirmations.answer(again.confirm!.id, true);
+  assertEquals(fake.log.slice(-2), ["approved", "click 1"]);
+  assert(sameElement(buy, { ...buy, ref: 7 }), "the number alone doesn't matter");
+  assert(!sameElement(buy, pay));
+});
+
+Deno.test("loopy post gate: a yes ends when an action the user didn't approve starts", () => {
+  let now = 0;
+  const gate = createPostGate(() => now);
+  const post = { method: "POST", url: "https://a.example/x" };
+  gate.begin();
+  gate.approve();
+  assertEquals(gate.decide(post), "continue");
+  gate.revoke();
+  assertEquals(gate.approvedNow(), false);
+  assertEquals(gate.decide(post), "hold");
+  now += 1;
+  assertEquals(gate.decide(post), "hold");
+});
+
+Deno.test("loopy browser: held items are capped, a connection held once", () => {
+  const held: Held = { list: [] };
+  const failed: HeldItem[] = [];
+  const conn: HeldItem = {
+    kind: "connection",
+    sessionId: "P",
+    method: "WebSocket",
+    url: "wss://x",
+  };
+  holdItem(held, conn, (i) => failed.push(i));
+  holdItem(held, { ...conn }, (i) => failed.push(i));
+  assertEquals(held.list.length, 1, "the same connection is asked about once");
+  for (let i = 0; i < MAX_HELD + 5; i++) {
+    holdItem(held, {
+      kind: "request",
+      sessionId: "P",
+      requestId: `r${i}`,
+      method: "POST",
+      url: "https://a.example/",
+    }, (item) => failed.push(item));
+  }
+  assertEquals(held.list.length, MAX_HELD);
+  assertEquals(failed.length, 6, "past the cap each one is failed");
+  assertEquals(failed.at(-1)?.requestId, `r${MAX_HELD + 4}`);
+});
+
+Deno.test("loopy browser: a page script that never answers times out", async () => {
+  const never = new Promise<string>(() => {});
+  const err = await bounded(never, 10, "The page didn't respond.").catch((e) => e);
+  assertInstanceOf(err, BrowserError);
+  assertEquals(err.message, "The page didn't respond.");
+  assertEquals(await bounded(Promise.resolve("ok"), 1_000, "late"), "ok");
+  // A failure after the timeout is no unhandled rejection.
+  let fail!: (e: Error) => void;
+  const late = new Promise<string>((_, reject) => (fail = reject));
+  await bounded(late, 5, "late").catch(() => {});
+  fail(new Error("later"));
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+Deno.test("loopy guard: a page's own call of the report binding is ignored", async () => {
+  const f = fakeCdp();
+  const gate = createPostGate();
+  const held: HeldItem[] = [];
+  const guard = createTargetGuard({ cdp: f.cdp, gate, token: "t", onHold: (i) => held.push(i) });
+  await guard.attachPage("P", "tP");
+  const report = (kind: string) =>
+    f.emit("Runtime.bindingCalled", {
+      name: "__loopyAttempt",
+      payload: JSON.stringify({ kind, url: "https://bank.example/" }),
+    }, "P");
+  report("WebSocket"); // Loopy isn't acting: no connection is refused, so this is the page's own
+  assertEquals(held, []);
+  gate.begin();
+  report("PAY $500 to");
+  report("WebTransport");
+  assertEquals(held.map((h) => h.method), ["connection", "WebTransport"], "only the guard's kinds");
+});
+
+Deno.test("loopy guard: Loopy's own page, attached on the root session, is guarded once", async () => {
+  const f = fakeCdp();
+  const guard = createTargetGuard({
+    cdp: f.cdp,
+    gate: createPostGate(),
+    token: "t",
+    onHold: () => {},
+  });
+  // Chrome reports the explicit attach as an event on the root session too.
+  f.emit("Target.attachedToTarget", {
+    sessionId: "P",
+    targetInfo: { type: "page", targetId: "tP" },
+  });
+  await guard.attachPage("P", "tP");
+  f.emit("Target.attachedToTarget", {
+    sessionId: "P",
+    targetInfo: { type: "page", targetId: "tP" },
+  }, "P");
+  await ticks();
+  assertEquals(f.of("P").filter((m) => m === "Fetch.enable").length, 1);
+  assert(!f.of("P").includes("Runtime.runIfWaitingForDebugger"));
+  assert(!f.calls.some((c) => c.method === "Target.closeTarget"));
 });
 
 Deno.test("loopy browser tools: a browser failure is an output the model can read", async () => {

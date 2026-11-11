@@ -164,18 +164,32 @@ export function pendingQuestion(
     .confirm ?? null;
 }
 
+/** What the model hears when it acts while a question waits for the user. */
+export const WAITING_NOTE = "Loopy is waiting for the user's answer to its question; don't use " +
+  "the browser until they answer.";
+
+/** What the model hears after the user let requests held from before go. */
+export const SENT_NOTE = "The user allowed what the page was holding and it was sent. Your " +
+  "last step did not run: repeat it if it is still needed.";
+
 /**
- * Run `step` against the browser, turning a failure into an output the model can read. Requests
- * still held from before are asked about first: nothing else happens until the user answers.
+ * Run `step` against the browser, turning a failure into an output the model can read. Nothing
+ * runs while a question waits for the user. Requests still held from before are asked about
+ * instead of running `step`: the user's Yes lets those go, never the step after them.
  */
 async function guarded(
   options: BrowserToolsOptions,
   step: (d: BrowserDriver) => Promise<ToolResult>,
 ): Promise<ToolResult> {
   try {
+    if (options.confirmations.current()) return refused(WAITING_NOTE);
     const d = await options.driver();
     if (d.heldRequests().length > 0) {
-      return askHeld(d, options.confirmations, () => step(d));
+      return askHeld(
+        d,
+        options.confirmations,
+        () => Promise.resolve({ output: { ok: true, sent: true, note: SENT_NOTE } }),
+      );
     }
     return await step(d);
   } catch (err) {
@@ -192,6 +206,15 @@ async function target(
   if (ref === null) return { error: "ref must be a number from the page's list" };
   const el = await d.element(ref);
   return el ? { el } : { error: `There is no [${ref}] on the page now; read it again.` };
+}
+
+/** What the model hears when the element it asked about changed before the click. */
+const CHANGED = "The page changed before the click; read it again.";
+
+/** Whether `a` is still the element `b` described (its ref may point elsewhere after a change). */
+export function sameElement(a: PageElement, b: PageElement): boolean {
+  return a.tag === b.tag && a.type === b.type && a.text === b.text && a.href === b.href &&
+    a.name === b.name && a.id === b.id && a.label === b.label && a.formMethod === b.formMethod;
 }
 
 /** A tool's declaration. */
@@ -266,12 +289,19 @@ function clickTool(o: BrowserToolsOptions): VoiceTool {
         if (submitLike(t.el)) {
           const label = clip(tidy(t.el.text || t.el.label) || "that button", 60);
           const page = await d.snapshot();
+          // The element the user is asked about is the one clicked: the page (or a read meanwhile)
+          // may have renumbered or replaced it by the time they say yes.
+          const now = await d.element(t.el.ref);
+          if (!now || !sameElement(now, t.el)) return refused(CHANGED);
           return o.confirmations.ask(`Click “${label}” on ${hostOf(page.url)}?`, {
-            run: () =>
-              d.approved(async () => {
+            run: async () => {
+              const then = await d.element(t.el.ref);
+              if (!then || !sameElement(then, t.el)) return refused(CHANGED);
+              return await d.approved(async () => {
                 await d.click(t.el.ref);
                 return await pageResult(d, { clicked: t.el.ref });
-              }),
+              });
+            },
           });
         }
         await d.click(t.el.ref);

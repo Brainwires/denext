@@ -218,6 +218,25 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** How long a page may take to load. */
 const LOAD_TIMEOUT_MS = 15_000;
 
+/** How long a script Loopy runs in the page may take (a busy page must not hang a tool call). */
+const EVAL_TIMEOUT_MS = 5_000;
+
+/** The most requests and connections held at once; past it, more are failed, never asked about. */
+export const MAX_HELD = 20;
+
+/**
+ * `promise`, or a {@linkcode BrowserError} with `message` once `ms` pass (the promise is left to
+ * settle on its own).
+ */
+export function bounded<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new BrowserError(message)), ms);
+  });
+  promise.catch(() => {}); // a late failure after the timeout is no unhandled rejection
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** A running Chrome: its process and the DevTools connection. */
 interface Running {
   readonly child: Deno.ChildProcess;
@@ -250,8 +269,30 @@ async function readEndpoint(child: Deno.ChildProcess): Promise<string> {
   throw new BrowserError("Chrome didn't start.");
 }
 
-/** Start Chrome visible on a fresh profile and connect to it. */
-async function launch(chromePath: string, profileDir: string, held: Held): Promise<Running> {
+/**
+ * Keep `item` in `held`, or fail it: a connection already held is not held twice, and past
+ * {@linkcode MAX_HELD} a request is failed and a connection dropped (both stay refused).
+ */
+export function holdItem(held: Held, item: HeldItem, fail: (item: HeldItem) => void): void {
+  const known = item.kind === "connection" &&
+    held.list.some((h) =>
+      h.kind === "connection" && h.method === item.method && h.url === item.url
+    );
+  if (known) return;
+  if (held.list.length >= MAX_HELD) return fail(item);
+  held.list.push(item);
+}
+
+/**
+ * Start Chrome visible on a fresh profile and connect to it. `onSpawn` gets the process as soon as
+ * it starts, so a quit while Chrome is still starting can kill it.
+ */
+async function launch(
+  chromePath: string,
+  profileDir: string,
+  held: Held,
+  onSpawn: (child: Deno.ChildProcess) => void,
+): Promise<Running> {
   await Deno.remove(profileDir, { recursive: true }).catch(() => {});
   await Deno.mkdir(profileDir, { recursive: true });
   const child = new Deno.Command(chromePath, {
@@ -260,6 +301,7 @@ async function launch(chromePath: string, profileDir: string, held: Held): Promi
     stdout: "null",
     stderr: "piped",
   }).spawn();
+  onSpawn(child);
   try {
     const endpoint = await readEndpoint(child);
     // Chrome keeps logging to stderr; drain it so the pipe never fills.
@@ -272,11 +314,11 @@ async function launch(chromePath: string, profileDir: string, held: Held): Promi
       socket.addEventListener("error", reject, { once: true });
     });
     const cdp = cdpClient(socket);
-    const guard = createTargetGuard({
+    const guard: TargetGuard = createTargetGuard({
       cdp,
       gate: GATE,
       token: crypto.randomUUID(),
-      onHold: (item) => void held.list.push(item),
+      onHold: (item) => holdItem(held, item, (i) => void guard.release(i, false)),
     });
     return { child, browser, cdp, guard, page: null };
   } catch (err) {
@@ -295,7 +337,8 @@ async function settle(page: Page): Promise<void> {
   await sleep(500);
   const until = Date.now() + LOAD_TIMEOUT_MS;
   while (Date.now() < until) {
-    const state = await page.evaluate("document.readyState").catch(() => "loading");
+    const state = await bounded(page.evaluate("document.readyState"), EVAL_TIMEOUT_MS, "busy")
+      .catch(() => "loading");
     if (state === "complete") return;
     await sleep(250);
   }
@@ -322,8 +365,13 @@ export interface ChromeBrowser {
 }
 
 /** The requests and connections held now. */
-interface Held {
+export interface Held {
   list: HeldItem[];
+  /**
+   * The user allowed refused connections: the next action may open them (the model was told to
+   * repeat it), and only that one.
+   */
+  retry?: boolean;
 }
 
 /** The post gate for the browser's page (one browser per process). */
@@ -375,7 +423,7 @@ function guardOffLater(guard: TargetGuard): void {
 function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
   const run = async (mode: string, arg: unknown): Promise<unknown> => {
     try {
-      return await page.evaluate(pageCall(mode, arg));
+      return await bounded(page.evaluate(pageCall(mode, arg)), EVAL_TIMEOUT_MS, "busy");
     } catch {
       throw new BrowserError("The page didn't respond.");
     }
@@ -385,7 +433,10 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
     held.list = [];
     if (list.length === 0) return;
     if (allow) {
+      // What the released requests lead to (a redirect, the page it loads) may write while the
+      // page settles; the next action Loopy starts takes this yes back (`act`).
       GATE.approve();
+      held.retry = list.some((item) => item.kind === "connection");
       await guard.setActing(false);
     }
     await Promise.all(list.map((item) => guard.release(item, allow)));
@@ -393,7 +444,13 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
   };
   // An action holds writes and refuses connections while it runs and through its grace, then
   // returns: whatever it made the page send is in `held` by then, for the tools to ask about.
-  const act = async <T>(action: () => Promise<T>): Promise<T> => {
+  //
+  // A yes covers one action: the one the user confirmed (`approved`), or after allowing refused
+  // connections the one the model repeats. Any other action starts by taking the yes back, so a
+  // yes never lets a later step write unasked.
+  const act = async <T>(action: () => Promise<T>, approvedByUser = false): Promise<T> => {
+    if (!approvedByUser && !held.retry) GATE.revoke();
+    held.retry = false;
     GATE.begin();
     await guard.setActing(!GATE.approvedNow());
     try {
@@ -408,7 +465,7 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
   return {
     open: (url) =>
       act(async () => {
-        await page.goto(url, { waitUntil: "load" }).catch(() => {
+        await bounded(page.goto(url, { waitUntil: "load" }), LOAD_TIMEOUT_MS, "late").catch(() => {
           throw new BrowserError("The page didn't load.");
         });
       }),
@@ -432,7 +489,7 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
       }),
     back: () =>
       act(async () => {
-        await page.goBack({ waitUntil: "load" }).catch(() => {
+        await bounded(page.goBack({ waitUntil: "load" }), LOAD_TIMEOUT_MS, "late").catch(() => {
           throw new BrowserError("There's no page to go back to.");
         });
       }),
@@ -440,7 +497,7 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
     releaseHeld: release,
     approved: async (action) => {
       GATE.approve();
-      return await act(action);
+      return await act(action, true);
     },
   };
 }
@@ -449,13 +506,16 @@ function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
 export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
   let running: Running | null = null;
   let starting: Promise<Running> | null = null;
+  /** Chrome's process while it starts (before `running` has it). */
+  let spawned: Deno.ChildProcess | null = null;
   const held: Held = { list: [] };
   const kill = () => {
-    const r = running;
+    const child = running?.child ?? spawned;
     running = null;
+    spawned = null;
     held.list = [];
     try {
-      r?.child.kill("SIGTERM");
+      child?.kill("SIGTERM");
     } catch { /* already gone */ }
   };
   globalThis.addEventListener("unload", kill);
@@ -465,7 +525,11 @@ export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
     running = null;
     const path = (options.find ?? findChrome)();
     if (!path) throw new BrowserError("Loopy's browser needs Google Chrome or Chromium installed.");
-    starting ??= launch(path, options.profileDir, held).finally(() => (starting = null));
+    starting ??= launch(path, options.profileDir, held, (child) => (spawned = child))
+      .finally(() => {
+        starting = null;
+        spawned = null;
+      });
     return running = await starting;
   };
 
@@ -485,7 +549,8 @@ export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
         : null;
     },
     async close() {
-      const r = running;
+      // A Chrome still starting is closed once it is up (switching the browser off meanwhile).
+      const r = running ?? (starting ? await starting.catch(() => null) : null);
       running = null;
       held.list = [];
       if (!r) return;

@@ -2,7 +2,8 @@
 // — a form submit, a script's `fetch` / XHR POST, a beacon, of any resource type — is held while one
 // of Loopy's actions runs and for a moment after, until the user says yes; a GET, HEAD or CORS
 // preflight goes through, and so does everything the page does while Loopy isn't acting (the user's
-// own clicks in the window). A confirmed action runs with writes allowed. Pure apart from the
+// own clicks in the window). A confirmed action runs with writes allowed; the yes ends when an
+// action the user didn't approve starts. Pure apart from the
 // clock, so it is unit-tested; voice/chrome.ts feeds it Chrome's paused requests (CDP
 // `Fetch.requestPaused`) and the tools ask the user about what it holds (voice/browser-tools.ts).
 
@@ -29,6 +30,8 @@ export interface PostGate {
   end(): void;
   /** Allow writes for {@linkcode APPROVED_MS} (the user said yes). */
   approve(): void;
+  /** Take a yes back (an action the user didn't approve starts). */
+  revoke(): void;
   /** Whether writes are being held now (an action runs, or its grace hasn't passed). */
   guarding(): boolean;
   /** Whether the user's yes still lets writes through. */
@@ -59,6 +62,9 @@ export function createPostGate(now: () => number = Date.now): PostGate {
     },
     approve() {
       approvedUntil = now() + APPROVED_MS;
+    },
+    revoke() {
+      approvedUntil = 0;
     },
     guarding,
     approvedNow: () => now() < approvedUntil,

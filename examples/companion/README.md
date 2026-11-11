@@ -228,10 +228,15 @@ back by number. The rules are enforced in code (`voice/browser-safety.ts`, `voic
   of every request), and so is every WebSocket, WebTransport, RTCPeerConnection and RTCDataChannel
   the page tries to open then (a script run before the target's own code refuses them; outside
   Loopy's windows they work as usual). Held items are asked about in one question naming each
-  method, origin and path; No fails them all (a refused connection can only be retried: Yes allows
-  it for a few seconds). One the page sends after Loopy's tool call returned is asked about too: the
-  page polls the backend (`pending`) while a session is open, and the next browser tool call asks
-  first. What you do in the window yourself between Loopy's actions is never held;
+  method, origin and path (at most 20 at once; past that they are failed); No fails them all. A Yes
+  covers that one action: the clicked button, or the held requests and what they lead to; a refused
+  connection can only be retried, so Yes lets the one action the model repeats open it. Any other
+  action takes the Yes back, and the confirmed button is checked to be the same element before it is
+  clicked. One the page sends after Loopy's tool call returned is asked about too: the page polls
+  the backend (`pending`) while a session is open, and the next browser tool call asks first
+  (sending them on Yes, not running that call). No browser tool runs while a question waits, and a
+  page that doesn't answer Loopy's scripts in 5 s (or load in 15 s) fails the call instead of
+  hanging it. What you do in the window yourself between Loopy's actions is never held;
 - no downloads (`Browser.setDownloadBehavior: deny`), no file uploads (file inputs are refused and
   file choosers never answered), no pop-ups (`--block-new-web-contents`), and JavaScript dialogs are
   dismissed.

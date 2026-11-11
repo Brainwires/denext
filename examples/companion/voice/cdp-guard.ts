@@ -108,6 +108,15 @@ export function guardSwitch(token: string, on: boolean): string {
   return `globalThis.${GUARD_GLOBAL}?.(${JSON.stringify(token)}, ${on})`;
 }
 
+/** The connection kinds the guard script reports (anything else is reported as `connection`). */
+const CONNECTION_KINDS = new Set([
+  "WebSocket",
+  "WebTransport",
+  "RTCPeerConnection",
+  "webkitRTCPeerConnection",
+  "RTCDataChannel",
+]);
+
 /** The kinds of target attached. */
 type TargetKind = "page" | "worker" | "other";
 
@@ -153,13 +162,13 @@ export interface TargetGuard {
   sessions(): readonly { id: string; kind: string; intercepted: boolean }[];
 }
 
-/** A string field of a protocol object. */
 /** A created execution context's id when it is its document's main world, else `null`. */
 function defaultContextId(params: Record<string, unknown>): number | null {
   const ctx = params.context as { id?: unknown; auxData?: { isDefault?: unknown } } | undefined;
   return typeof ctx?.id === "number" && ctx.auxData?.isDefault === true ? ctx.id : null;
 }
 
+/** A string field of a protocol object. */
 const str = (o: unknown, k: string) => {
   const v = (o as Record<string, unknown> | null)?.[k];
   return typeof v === "string" ? v : "";
@@ -214,11 +223,19 @@ export function createTargetGuard(options: TargetGuardOptions): TargetGuard {
     await cdp.send("Target.closeTarget", { targetId: s.targetId }).catch(() => {});
   };
 
+  /**
+   * Whether an attach needs no guarding here: a page on the root session is Loopy's own, attached
+   * explicitly (`attachPage` guards it), and a session already known is never guarded twice.
+   */
+  const alreadyGuarded = (id: string, kind: TargetKind, parent: string | undefined) =>
+    (parent === undefined && kind === "page") || sessions.has(id);
+
   /** Guard a child attached paused, then resume it; close it when guarding fails. */
   const attachChild = async (params: Record<string, unknown>, parent?: string) => {
     const info = params.targetInfo as Record<string, unknown> | undefined;
     const id = str(params, "sessionId");
     const kind = kindOf(info?.type);
+    if (alreadyGuarded(id, kind, parent)) return;
     const s: Session = {
       id,
       targetId: str(info, "targetId"),
@@ -281,7 +298,9 @@ export function createTargetGuard(options: TargetGuardOptions): TargetGuard {
 
   /** A refused connection the guard script reported. */
   const attempted = (params: Record<string, unknown>, sessionId: string) => {
-    if (params.name !== ATTEMPT_BINDING) return;
+    // The binding is a global any script can call: only a report while Loopy acts (when the guard
+    // refuses connections) is one, and its kind is one the guard script names.
+    if (params.name !== ATTEMPT_BINDING || !gate.guarding()) return;
     let report: { kind?: unknown; url?: unknown } = {};
     try {
       report = JSON.parse(str(params, "payload"));
@@ -289,7 +308,7 @@ export function createTargetGuard(options: TargetGuardOptions): TargetGuard {
     options.onHold({
       kind: "connection",
       sessionId,
-      method: typeof report.kind === "string" ? report.kind.slice(0, 40) : "connection",
+      method: CONNECTION_KINDS.has(report.kind as string) ? report.kind as string : "connection",
       url: typeof report.url === "string" ? report.url.slice(0, 500) : "",
     });
   };
