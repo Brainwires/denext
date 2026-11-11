@@ -100,6 +100,8 @@ on:
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
+      - "src/build/swc-ast.ts"
+      - "src/build/swc-parse.ts" # desktop-launch.ts reads the entry's runDesktop outDir with it
       - "src/build/config-files.ts"
       - "src/build/config-static.ts"
       - "src/build/workspace-imports.ts"
