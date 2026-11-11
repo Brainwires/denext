@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **Fresh partial navigation: view transitions, head merging and back / forward.** Under an
+  element with `f-view-transition`, a partial swap runs inside `document.startViewTransition` where
+  the browser has it; an answer's `<meta>` elements (by `name`, `property`, `http-equiv` or
+  `itemprop`) are updated or added and its new stylesheets loaded before the regions swap; and
+  browser back / forward between partial-navigation entries restores each region as the entry
+  left it (an `append` / `prepend` history included) instead of re-rendering the whole page.
+  `denext migrate` no longer lists `f-view-transition` for review.
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
   result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
   window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it

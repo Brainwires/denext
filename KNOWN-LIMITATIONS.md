@@ -393,11 +393,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** partial navigation swaps the `<Partial>` regions without Fresh's View Transitions
-  wrapper (`f-view-transition`) and takes only the answer's `<title>` from its head; browser
-  back / forward re-renders the whole page (a region's `append` / `prepend` history is not
-  replayed). `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not
-  run; `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** partial navigation merges only the `<title>`, `<meta>` and stylesheet `<link>`
+  elements of an answer's head (no `<script>` or `<style>`, and nothing the page has is
+  removed). Browser back / forward to an entry partial navigation made before a reload fetches
+  it and replaces its regions, and back past a whole-page navigation re-renders that page, so an
+  `append` / `prepend` history is replayed only between entries of the same page load and page.
+  `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not run;
+  `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in

@@ -11,3 +11,6 @@ export const CLIENT_NAV_ATTR = "f-client-nav";
 
 /** The attribute naming the URL a link, button or form fetches its partials from. */
 export const PARTIAL_ATTR = "f-partial";
+
+/** The attribute that runs a subtree's partial swaps inside a view transition. */
+export const VIEW_TRANSITION_ATTR = "f-view-transition";

@@ -778,12 +778,6 @@ interface SourceRule {
 const SOURCE_RULES: SourceRule[] = [
   ...PREACT_SOURCE_RULES,
   {
-    re: /\bf-view-transition\b/,
-    item: "f-view-transition",
-    reason: "partial navigation runs on denext without the View Transitions wrapper; the swapped " +
-      "regions update in place",
-  },
-  {
     re: /<script\b[^>]*dangerouslySetInnerHTML/,
     item: "inline <script>",
     reason: "denext's default Content-Security-Policy runs no inline script (script-src " +
