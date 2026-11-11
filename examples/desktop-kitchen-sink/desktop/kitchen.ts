@@ -694,7 +694,10 @@ export default defineDesktopExtension({
           const app = desktop() as EventTarget | undefined;
           if (typeof app?.dispatchEvent === "function") {
             const detail = field(args, "detail") as Record<string, unknown> | undefined;
-            app.dispatchEvent(new CustomEvent(type, { detail: { ...detail, windowId: 0 } }));
+            // The runtime names the key window; the adopted one is 0.
+            const own = (ctx.window as { id?: unknown } | undefined)?.id;
+            const windowId = typeof own === "number" ? own : 0;
+            app.dispatchEvent(new CustomEvent(type, { detail: { ...detail, windowId } }));
           }
         }
         return { dispatched: true };
