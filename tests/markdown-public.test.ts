@@ -294,3 +294,21 @@ Deno.test("<Markdown> mounts in the client renderer too", async () => {
   assertEquals(screen.getByTestId("link").getAttribute("href"), "/go");
   await screen.unmount();
 });
+
+Deno.test("renderMarkdown: a link URL keeps its balanced parentheses (CommonMark)", async () => {
+  const cases: [string, string][] = [
+    ["[x](https://e.com/a_(b))", `href="https://e.com/a_(b)"`],
+    ["[x](https://e.com/a_(b)_(c)) after", `href="https://e.com/a_(b)_(c)"`],
+    ["[x](/w/((nested)))", `href="/w/((nested))"`],
+    ["[x](/a\\)b)", `href="/a)b"`],
+    ["![pic](/img_(1).png)", `src="/img_(1).png"`],
+    ['![pic](/img_(1).png "T")', `src="/img_(1).png"`],
+  ];
+  for (const [src, want] of cases) {
+    assertStringIncludes(renderMarkdown(src), want, src);
+    assertStringIncludes(await md(src), want, src);
+  }
+  // The text after the link stays text, and an unbalanced `(` is no link.
+  assertStringIncludes(renderMarkdown("[x](/a_(b)) tail)"), "</a> tail)");
+  assert(!renderMarkdown("[x](/a(b c)").includes("<a "));
+});

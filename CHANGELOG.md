@@ -98,6 +98,9 @@ and this project adheres to
   stopped by a signal, and the restore still works on a full disk, where rewriting the file
   fails, by moving the saved original back over it. The next build still cleans entries an older
   denext left behind.
+- **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
+  linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
+  collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
 
 ### Documentation
 
