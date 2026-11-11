@@ -46,6 +46,8 @@ import {
   strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
+import { parseModuleForPath } from "./swc-parse.ts";
+import { type Node, walkAst } from "./swc-ast.ts";
 import { readJson } from "./json-edit.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
 import {
@@ -288,13 +290,11 @@ export async function writeDesktopDevEntry(
   return relative(projectDir, file);
 }
 
-/** A literal `outDir: "<path>"` in an entry's source (the first one). */
-const ENTRY_OUT_DIR = /\boutDir\s*:\s*(["'`])([^"'`$\n]+)\1/;
-
 /**
  * Where `denext desktop run` / `build` export the UI for an entry, relative to the project and
  * `/`-separated: the folder the app serves it from (`runDesktop`'s `resolveOutDir`: `out`, or the
- * entry's literal `outDir: "<path>"`, resolved against the entry's `import.meta.url`). `out` for a
+ * literal `outDir: "<path>"` the entry passes `runDesktop`, resolved against the entry's
+ * `import.meta.url`). `out` for a
  * root `desktop.ts` that passes no `outDir`, as always; `app/out` for `--entry app/desktop.ts`;
  * `ui` for a root entry with `outDir: "ui"`.
  *
@@ -309,10 +309,76 @@ export async function desktopEntryOutDir(projectDir: string, entry: string): Pro
   return posixNormalize(posixJoin(entryDir, outDir.replaceAll("\\", "/"))).replace(/(.)\/+$/, "$1");
 }
 
-/** The entry's literal `outDir: "<path>"` (the first one), else `undefined`. */
+/**
+ * The literal `outDir` the entry passes `runDesktop`, else `undefined`: read from the module's
+ * syntax tree, so a comment, a string or another object's `outDir` is never taken for it. The
+ * options are the call's first argument, an object literal or a top-level `const` bound to one;
+ * `outDir` must be a string (or a template without expressions). A spread, a computed value or
+ * an unparsable entry gives `undefined` (`out`), as `runDesktop` serves without one.
+ */
 async function entryOutDirLiteral(projectDir: string, entry: string): Promise<string | undefined> {
   const source = await Deno.readTextFile(join(projectDir, entry)).catch(() => "");
-  return ENTRY_OUT_DIR.exec(source)?.[2];
+  if (!source.includes("runDesktop")) return undefined;
+  const parsed = await parseModuleForPath(entry, source);
+  return parsed ? runDesktopOutDir(parsed.body) : undefined;
+}
+
+/** The `outDir` string literal of the first `runDesktop(…)` call in `body`, if any. */
+function runDesktopOutDir(body: Node[]): string | undefined {
+  const objects = new Map<string, Node>();
+  const calls: Node[] = [];
+  walkAst({ body }, (n) => {
+    if (n.type === "VariableDeclarator" && n.id?.type === "Identifier") {
+      if (n.init?.type === "ObjectExpression") objects.set(n.id.value, n.init);
+    } else if (n.type === "CallExpression" && isRunDesktopCallee(n.callee)) {
+      calls.push(n);
+    }
+  });
+  for (const call of calls) {
+    const arg = call.arguments?.[0];
+    if (!arg || arg.spread) continue;
+    const options = arg.expression?.type === "Identifier"
+      ? objects.get(arg.expression.value)
+      : arg.expression;
+    if (options?.type === "ObjectExpression") return outDirProperty(options);
+  }
+  return undefined;
+}
+
+/** Whether a callee is `runDesktop` or `<anything>.runDesktop`. */
+function isRunDesktopCallee(callee: Node): boolean {
+  if (callee?.type === "Identifier") return callee.value === "runDesktop";
+  return callee?.type === "MemberExpression" && callee.property?.type === "Identifier" &&
+    callee.property.value === "runDesktop";
+}
+
+/** An options object's own `outDir: "<path>"` (the last one wins, as in JavaScript). */
+function outDirProperty(options: Node): string | undefined {
+  const props: Node[] = (options.properties ?? []).filter((p: Node) =>
+    propertyName(p) === "outDir"
+  );
+  const found = props.length > 0 ? stringValue(props[props.length - 1].value) : undefined;
+  return found || undefined;
+}
+
+/** A `key: value` property's literal key (`outDir` or `"outDir"`), else `undefined`. */
+function propertyName(prop: Node): string | undefined {
+  if (prop.type !== "KeyValueProperty") return undefined;
+  const key = prop.key;
+  return key?.type === "Identifier" || key?.type === "StringLiteral" ? key.value : undefined;
+}
+
+/** A string literal's value, or a template's without expressions; else `undefined`. */
+function stringValue(value: Node): string | undefined {
+  if (value?.type === "StringLiteral") return value.value;
+  const plainTemplate = value?.type === "TemplateLiteral" && !value.expressions?.length;
+  return plainTemplate ? quasiText(value.quasis?.[0]) : undefined;
+}
+
+/** A template element's text (swc gives `cooked` / `raw` as a string, or `{ value }`). */
+function quasiText(quasi: Node): string | undefined {
+  const text = quasi?.cooked ?? quasi?.raw;
+  return typeof text === "string" ? text : text?.value;
 }
 
 /**

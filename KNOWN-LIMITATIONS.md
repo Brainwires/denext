@@ -626,6 +626,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 Under denext's pinned runtime; what the stock runtime lacks is in
 [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime).
 
+- **Packaging embeds what a path names, even outside the project.** A sidecar's `run.exec` or
+  `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
+  embedded like one inside it. The config that names it is code the build already runs, so it is
+  not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS

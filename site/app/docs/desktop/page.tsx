@@ -4016,7 +4016,10 @@ const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
         </code>) is resolved from the folder of the entry that calls{" "}
         <code>resolveDesktopCapabilities</code> (the project root for{" "}
         <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
-        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded. A
+        path that leaves the project (<code>"../shared/scanner.ts"</code>) is embedded as well:
+        packaging takes the file the path names, wherever it is, so keep what the app should carry
+        inside the project:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -4400,8 +4403,11 @@ export default defineDesktopExtension({
           <code>desktop.ts</code>, which packaging compiles;{" "}
           <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
           <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
-          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
-          <code>--allow-run</code> and a broad{" "}
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). A path that leaves the project (
+          <code>"../tools/server"</code>, and likewise a{" "}
+          <code>run.module</code>) embeds that file too, wherever it is: packaging does not confine
+          it to the project. Such a program is baked an unscoped <code>--allow-run</code>{" "}
+          and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
           machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
           <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,

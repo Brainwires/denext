@@ -87,6 +87,10 @@ and this project adheres to
 
 ### Fixed
 
+- **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
+  `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
+  tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
+  exported; the options may also be a top-level `const`.
 - **`spa.proxy` relays a `deflate` response correctly on runtime 3.0.0-denext.17.** That runtime's
   `fetch` decodes `deflate` as it does `gzip` and `br`, so the proxy now drops the stale
   `Content-Encoding` and `Content-Length` for it too. On stock Deno a `deflate` body is still relayed
@@ -106,6 +110,8 @@ and this project adheres to
 
 ### Documentation
 
+- **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
+  and the known limitations say that packaging embeds the file a `../` path names.
 - **Permissions are described as least-privilege guardrails.** A new page,
   [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
   checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)
