@@ -5,7 +5,7 @@
 // child); what is unit-tested here is the logic that would be expensive to reach that way — a
 // sparse schedule's horizon, and the noise a child writes around its document.
 
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertFalse, assertMatch, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
@@ -17,6 +17,7 @@ import {
   setCronDiscoveryBudget,
   setCronHistoryBudget,
 } from "../src/ui/features/config-cron.ts";
+import { setCronSchedulerChild } from "../src/ui/features/config-cron-scheduler.ts";
 import { jobHistoryRecorder, readJobHistory } from "../src/server/job-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
@@ -33,6 +34,26 @@ watchTests();
 setCronDiscoveryBudget(300_000);
 // The same for the `denext job --history` child an app-owned store is read through.
 setCronHistoryBudget(300_000);
+
+/** Every `denext job install` child the OS scheduler section started, by argv. */
+const schedulerCalls: string[][] = [];
+
+/** What the stub child prints for an argv (the CLI's `--json` documents). */
+let schedulerAnswer: (argv: readonly string[]) => string[] = (argv) =>
+  argv.includes("--status")
+    ? json({ backend: "launchd", scope: "user", os: "darwin", installed: [], warnings: [] })
+    : json({ backend: "launchd", installed: [], removed: [], warnings: [] });
+
+/** A document as the CLI pretty-prints it, one line per element. */
+function json(doc: unknown): string[] {
+  return JSON.stringify(doc, null, 2).split("\n");
+}
+
+// No test touches this machine's scheduler: the section's `denext job install` child is a stub.
+setCronSchedulerChild((argv) => {
+  schedulerCalls.push([...argv]);
+  return Promise.resolve(schedulerAnswer(argv));
+});
 
 /**
  * The import map a project pinning this checkout has: `denext` and every `denext/<subpath>` the
@@ -92,6 +113,7 @@ async function call(
     readOnly?: boolean;
     query?: string;
     json?: boolean;
+    offline?: boolean;
   } = {},
 ): Promise<Response> {
   const path = init.json === true ? "/api/config/cron" : "/config/cron";
@@ -109,6 +131,7 @@ async function call(
     url,
     method: posting ? "POST" : "GET",
     readOnly: init.readOnly === true,
+    ...(init.offline === true ? { offline: true } : {}),
     csrf: "csrf-token",
     json: init.json === true,
     fragment: false,
@@ -1072,6 +1095,175 @@ export default { jobs: { history: { store: {
     const reads = (await Deno.readTextFile(join(dir, "calls.log"))).trim().split("\n")
       .map((line) => JSON.parse(line).readOnly === true);
     assertEquals(reads, [true, false]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ── the OS scheduler (`denext job install`) ──────────────────────────────────
+
+/** The first `<form>` whose markup (fields included) contains `needle`. */
+function formWith(markup: string, needle: string): string {
+  const form = [...markup.matchAll(/<form\b[^>]*>[\s\S]*?<\/form>/g)].find((m) =>
+    m[0].includes(needle)
+  );
+  assert(form, `no <form> contains ${needle}`);
+  return form[0];
+}
+
+/** The `denext job install` calls made for `dir`, each as its flags (`--status`, `--dry-run`, …). */
+function installCalls(dir: string): string[][] {
+  return schedulerCalls.filter((argv) => argv.at(-1) === dir).map((argv) => {
+    const at = argv.indexOf("install");
+    return argv.slice(at + 1, argv.indexOf("--json"));
+  });
+}
+
+Deno.test("the OS scheduler section shows each job installed, not installed, or stale", async () => {
+  const dir = await project(
+    `export default { scheduledJobs: { "0 3 * * *": "cleanup", "0 4 * * *": "digest" } };\n`,
+    { cleanup: job(), digest: job() },
+  );
+  const previous = schedulerAnswer;
+  schedulerAnswer = (argv) =>
+    json({
+      backend: "systemd",
+      scope: "user",
+      os: "linux",
+      installed: [
+        { backend: "systemd", slug: "cleanup", job: "cleanup" },
+        { backend: "systemd", slug: "gone" },
+      ],
+      warnings: argv.includes("--status") ? [] : [],
+    });
+  try {
+    const body = await (await call(dir)).text();
+    assertStringIncludes(body, "OS scheduler");
+    assertMatch(body, /cleanup<\/code><\/td><td>systemd<\/td><td><span class="badge ok">installed/);
+    assertMatch(body, /digest<\/code><\/td><td>—<\/td><td><span class="badge todo">not installed/);
+    assertMatch(body, /gone<\/code><\/td><td>systemd<\/td><td><span class="badge warn">stale/);
+    assertStringIncludes(body, 'name="intent" value="os-install"');
+    assertStringIncludes(body, 'name="intent" value="os-uninstall"');
+    // Read by a child that runs the scheduler's programs: it is never given --deny-run.
+    const status = schedulerCalls.find((argv) => argv.at(-1) === dir && argv.includes("--status"));
+    assert(status, "the status child ran");
+    assertFalse(status.includes("--deny-run"));
+    assertEquals(installCalls(dir), [["--status"]]);
+    const api = await (await call(dir, { json: true })).json();
+    assertEquals(api.osScheduler.backend, "systemd");
+    assertEquals(api.osScheduler.installed.length, 2);
+  } finally {
+    schedulerAnswer = previous;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A dry run's install report, with its steps. */
+const DRY_INSTALL = {
+  backend: "launchd",
+  installed: [{ job: "cleanup", slug: "cleanup", crons: ["0 3 * * *"], guarded: true }],
+  removed: [],
+  warnings: [],
+  warning: "no installed denext binary at /home/u/.denext/bin/denext",
+  steps: [
+    { kind: "mkdir", path: "/proj/.denext/logs/jobs" },
+    {
+      kind: "write",
+      path: "/Users/u/Library/LaunchAgents/dev.denext.job.x.cleanup.plist",
+      content: "<plist>&</plist>",
+    },
+    { kind: "run", tool: "launchctl", args: ["bootstrap", "gui/501", "/Users/u/x.plist"] },
+  ],
+};
+
+Deno.test("install previews the dry run's files and commands, then applies only on confirm", async () => {
+  const dir = await project(CONFIG, { cleanup: job() });
+  const previous = schedulerAnswer;
+  schedulerAnswer = (argv) =>
+    argv.includes("--status")
+      ? previous(argv)
+      : argv.includes("--dry-run")
+      ? json(DRY_INSTALL)
+      : json({ ...DRY_INSTALL, steps: undefined });
+  try {
+    const preview = await call(dir, { form: { intent: "os-install" } });
+    assertEquals(preview.status, 200);
+    const markup = await preview.text();
+    assertStringIncludes(markup, "would install cleanup: 0 3 * * * UTC (launchd)");
+    assertStringIncludes(markup, "dev.denext.job.x.cleanup.plist");
+    assertStringIncludes(markup, "&lt;plist&gt;&amp;&lt;/plist&gt;");
+    assertStringIncludes(markup, "mkdir -p /proj/.denext/logs/jobs");
+    assertStringIncludes(markup, "launchctl bootstrap gui/501 /Users/u/x.plist");
+    assertStringIncludes(markup, "no installed denext binary");
+    // The apply button is a plain form carrying the intent and the confirm.
+    const apply = formWith(markup, 'name="confirm" value="1"');
+    assertStringIncludes(apply, 'name="intent" value="os-install"');
+    assertStringIncludes(apply, ">Install</button>");
+    assertEquals(installCalls(dir).filter((f) => !f.includes("--status")), [["--dry-run"]]);
+
+    const done = await call(dir, { form: { intent: "os-install", confirm: "1" } });
+    assertEquals(done.status, 303);
+    assertEquals(done.headers.get("location"), "/config/cron?scheduler=installed");
+    assertEquals(installCalls(dir).filter((f) => !f.includes("--status")), [["--dry-run"], []]);
+    const landed = await (await call(dir, { query: "?scheduler=installed" })).text();
+    assertStringIncludes(landed, "Installed in the OS scheduler.");
+
+    // The JSON twin: the same envelope as the other writes, the CLI's report spread into it.
+    const twin = await (await call(dir, { json: true, form: { intent: "os-install" } })).json();
+    assertEquals(twin.ok, true);
+    assertEquals(twin.applied, false);
+    assertEquals(twin.steps.length, 3);
+  } finally {
+    schedulerAnswer = previous;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("uninstall previews with --uninstall --dry-run, and a failed child's reason is shown", async () => {
+  const dir = await project(CONFIG, { cleanup: job() });
+  const previous = schedulerAnswer;
+  schedulerAnswer = (argv) =>
+    argv.includes("--status") ? previous(argv) : [
+      "Download https://jsr.io/x",
+      "denext job install: nothing changed.",
+      '  job "cleanup" (launchd): 1000 calendar entries at most',
+    ];
+  try {
+    const refused = await call(dir, { form: { intent: "os-uninstall" } });
+    assertEquals(refused.status, 422);
+    assertStringIncludes(
+      await refused.text(),
+      "denext job install: nothing changed. job &quot;cleanup&quot; (launchd): 1000 calendar",
+    );
+    assertEquals(installCalls(dir).filter((f) => !f.includes("--status")), [[
+      "--uninstall",
+      "--dry-run",
+    ]]);
+  } finally {
+    schedulerAnswer = previous;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--read-only and --offline never change the OS scheduler", async () => {
+  const dir = await project(CONFIG, { cleanup: job() });
+  try {
+    const page = await (await call(dir, { readOnly: true })).text();
+    assertMatch(formWith(page, 'value="os-install"'), /<button type="submit" disabled/);
+    const ro = await call(dir, { readOnly: true, form: { intent: "os-install", confirm: "1" } });
+    assertEquals(ro.status, 403);
+    assertStringIncludes(await ro.text(), "read-only — the OS scheduler is not changed");
+    const offline = await call(dir, {
+      offline: true,
+      form: { intent: "os-install", confirm: "1" },
+    });
+    assertEquals(offline.status, 403);
+    assertStringIncludes(
+      await offline.text(),
+      "--offline does not read or change the OS scheduler",
+    );
+    // Only status reads ran (none at all under --offline); nothing else reached the child.
+    assert(installCalls(dir).every((flags) => flags.join(" ") === "--status"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

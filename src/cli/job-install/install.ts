@@ -192,6 +192,56 @@ function planEntries(
   return entries;
 }
 
+/** The schedulers usable here in `ctx`'s scope, the one an install writes to first. */
+async function availableBackends(host: SchedulerHost, ctx: BackendContext): Promise<Backend[]> {
+  const backends: Backend[] = [];
+  for (const b of candidates(host.os, ctx.scope)) {
+    if (await b.available(host, ctx)) backends.push(b);
+  }
+  return backends;
+}
+
+/** What `denext job install --status` reports. */
+export interface StatusReport {
+  /** The scheduler an install would write to here (`null` when this scope has none). */
+  readonly backend: BackendName | null;
+  readonly scope: InstallScope;
+  /** The scheduler host's OS (`darwin`, `linux`, `windows`). */
+  readonly os: string;
+  /** This project's entries each available scheduler holds; `job` when a known job has the slug. */
+  readonly installed: readonly {
+    readonly backend: BackendName;
+    readonly slug: string;
+    readonly job?: string;
+  }[];
+  /** Notes worth printing (the jobs could not be listed, so no entry names its job). */
+  readonly warnings: readonly string[];
+}
+
+/**
+ * The project's entries the OS schedulers hold, read without changing anything.
+ *
+ * @param req The project, the scope, and the jobs it defines (to name each entry's job).
+ * @param host The machine.
+ * @returns The entries, per scheduler.
+ */
+export async function jobInstallStatus(
+  req: Pick<InstallRequest, "project" | "scope" | "knownJobs">,
+  host: SchedulerHost,
+): Promise<Omit<StatusReport, "warnings">> {
+  const ctx: BackendContext = { project: req.project, scope: req.scope };
+  const backends = await availableBackends(host, ctx);
+  const jobOf = new Map(req.knownJobs.map((job) => [jobSlug(job), job]));
+  const installed: StatusReport["installed"][number][] = [];
+  for (const backend of backends) {
+    for (const slug of await backend.list(host, ctx)) {
+      const job = jobOf.get(slug);
+      installed.push({ backend: backend.name, slug, ...(job === undefined ? {} : { job }) });
+    }
+  }
+  return { backend: backends[0]?.name ?? null, scope: req.scope, os: host.os, installed };
+}
+
 /**
  * Install (or remove) the project's scheduled jobs on `host`'s scheduler.
  *
@@ -208,10 +258,7 @@ export async function runJobInstall(
     scope: req.scope,
     runAs: runAsFor(host, req.scope),
   };
-  const backends: Backend[] = [];
-  for (const b of candidates(host.os, req.scope)) {
-    if (await b.available(host, ctx)) backends.push(b);
-  }
+  const backends = await availableBackends(host, ctx);
   if (backends.length === 0) {
     throw new Error(
       `denext job install: no ${req.scope} scheduler here (${host.os}): launchd on macOS, a ` +

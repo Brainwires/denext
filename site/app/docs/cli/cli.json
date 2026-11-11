@@ -1281,7 +1281,7 @@
       "name": "job",
       "summary": "Run a background job by name, list them (--list), or install them in the OS scheduler",
       "usage": "denext job [name] [options]",
-      "description": "denext job <name> [--payload '<json>']\ndenext job --list [--json]\ndenext job --history [--read-only] [--json]\ndenext job --clear-history [--json]\ndenext job install [<name>...] [--dry-run] [--uninstall] [--user | --system] [--json]\n  Installs the scheduled jobs (each job's `schedule` + config scheduledJobs) as OS\n  scheduler entries that run `denext job <name>` in this directory: launchd on macOS,\n  systemd timers on Linux (crontab without a systemd user manager), Task Scheduler on\n  Windows. Schedules stay UTC; a re-install replaces this project's entries.",
+      "description": "denext job <name> [--payload '<json>']\ndenext job --list [--json]\ndenext job --history [--read-only] [--json]\ndenext job --clear-history [--json]\ndenext job install [<name>...] [--dry-run] [--uninstall] [--user | --system] [--json]\ndenext job install --status [--user | --system] [--json]\n  Installs the scheduled jobs (each job's `schedule` + config scheduledJobs) as OS\n  scheduler entries that run `denext job <name>` in this directory: launchd on macOS,\n  systemd timers on Linux (crontab without a systemd user manager), Task Scheduler on\n  Windows. Schedules stay UTC; a re-install replaces this project's entries.",
       "flags": [
         {
           "name": "list",
@@ -1325,6 +1325,11 @@
           "name": "uninstall",
           "type": "boolean",
           "description": "install: remove this project's entries (all, or the named jobs')"
+        },
+        {
+          "name": "status",
+          "type": "boolean",
+          "description": "install: list this project's entries the OS scheduler holds; change nothing"
         },
         {
           "name": "user",

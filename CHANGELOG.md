@@ -26,6 +26,15 @@ and this project adheres to
   `jsxEscape`, with Preact's serialization (and its `options.attr` hook), so a project with
   `"jsx": "precompile"` and `jsxImportSource: "preact"` runs on denext. A template is parsed once
   into elements, so it renders on the server and mounts in the browser.
+- **`denext ui`'s Cron page manages the OS-scheduler entries.** A new "OS scheduler" section shows
+  which scheduled jobs `denext job install` has handed to launchd, a systemd timer, the crontab or
+  Task Scheduler (and any stale entry), with Install / Uninstall buttons that first preview every
+  file and command the dry run would write and run; plain forms, refused under `--read-only` and
+  not read under `--offline`. The `/api/config/cron` twin adds `osScheduler` and takes the same
+  `os-install` / `os-uninstall` intents. `denext job install --status [--json]` lists this
+  project's installed entries without changing anything, and `--json` now carries the warning an
+  install prints when its entries run the fallback command.
+
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
   result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
   window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it

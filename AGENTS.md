@@ -473,7 +473,8 @@ holder exits).
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
-next fires, an editor with a shape builder, and run history when `jobs.history` is on),
+next fires, an editor with a shape builder, run history when `jobs.history` is on, and the
+OS-scheduler entries of `denext job install` with a previewed Install / Uninstall),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files (with the self-hosted stack's toggles) plus in-place `docker-compose.yml`
 editing, a Desktop panel that composes the
