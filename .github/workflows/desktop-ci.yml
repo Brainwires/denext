@@ -151,6 +151,7 @@ on:
       - "scripts/ci/desktop-linux-launch-smoke.sh" # installers-linux: the .rpm / .deb app launches
       - "scripts/ci/linux-needed-check.ts" # installers-linux: the packages' NEEDED check
       - "scripts/ci/pick-windows-runner.ts" # the windows-runner job: our Windows runner or the overflow
+      - "scripts/ci/apt-install.sh" # the Linux jobs' package installs (retries, a fallback mirror)
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
       - "tests/integration/scaffold.test.ts"
@@ -484,9 +485,10 @@ jobs:
           path: ${{ runner.temp }}/cross
       - name: Linux — a display, a D-Bus session and the WebKitGTK runtime
         if: runner.os == 'Linux'
+        # Retries, timeouts and a fallback mirror; nothing fetched where the image has them
+        # (scripts/ci/apt-install.sh).
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          bash scripts/ci/apt-install.sh \
             xvfb xauth dbus dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0
       # tar keeps the archive's modes: a launcher packed without its executable bit fails here.
       # Windows: the system bsdtar reads a .zip (Git Bash's GNU tar, first on PATH, does not).
@@ -551,9 +553,10 @@ jobs:
           key: desktop-runtime-run-${{ matrix.os }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
       - name: Linux — a display, a D-Bus session and the WebKitGTK runtime
         if: runner.os == 'Linux'
+        # Retries, timeouts and a fallback mirror; nothing fetched where the image has them
+        # (scripts/ci/apt-install.sh).
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          bash scripts/ci/apt-install.sh \
             xvfb xauth dbus dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0
       - name: Install examples/native's npm packages
         working-directory: examples/native
@@ -622,8 +625,8 @@ jobs:
           done
           ldconfig -p | grep 'libwebkit2gtk-4\.1\.so\.0' >/dev/null || missing+=(libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0)
           if [ "${#missing[@]}" -gt 0 ]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends dbus-x11 "${missing[@]}"
+            # Retries, timeouts and a fallback mirror (scripts/ci/apt-install.sh).
+            bash scripts/ci/apt-install.sh dbus-x11 "${missing[@]}"
           fi
       - name: appimagetool (pinned, SHA-256-checked)
         run: bash scripts/ci/desktop-appimage-smoke.sh appimagetool
@@ -693,7 +696,9 @@ jobs:
         with:
           deno-version: "2.9.8"
       - name: rpmbuild
-        run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
+        # Retries, timeouts and a fallback mirror (scripts/ci/apt-install.sh): this job stays on
+        # GitHub's clean image, so it downloads.
+        run: bash ../../scripts/ci/apt-install.sh --with-recommends rpm desktop-file-utils
       # A deep link, and secure-store (the packages then depend on libsecret, which the runtime
       # loads: libsecret-1-0 / libsecret, not the secret-tool CLI).
       - name: A deep link and secure-store
@@ -723,7 +728,7 @@ jobs:
           dpkg-deb --info dist/denext-native-x64.deb
           dpkg-deb -f dist/denext-native-x64.deb Depends | grep -q 'libsecret-1-0'
           test -z "$(dpkg-deb -f dist/denext-native-x64.deb Depends | grep libsecret-tools || true)"
-          sudo apt-get install -y ./dist/denext-native-x64.deb
+          bash ../../scripts/ci/apt-install.sh --with-recommends ./dist/denext-native-x64.deb
           dpkg -s libsecret-1-0 | grep -q 'Status: install ok installed'
           test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
           desktop-file-validate /usr/share/applications/$id.desktop
@@ -753,7 +758,8 @@ jobs:
           docker run --rm -v "$PWD/dist:/dist" fedora:latest bash -euxc '
             id=com.example.denext-native
             rpm -qpR /dist/denext-native-x64.rpm | grep -Eq "^libsecret[[:space:]]*$"
-            dnf install -y /dist/denext-native-x64.rpm
+            dnf install -y --setopt=retries=10 --setopt=timeout=60 /dist/denext-native-x64.rpm ||
+              { sleep 30; dnf install -y --setopt=retries=10 --setopt=timeout=60 /dist/denext-native-x64.rpm; }
             rpm -q libsecret
             test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
             grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/$id.desktop
@@ -772,14 +778,16 @@ jobs:
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/../../scripts/ci:/ci:ro" \
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 fedora:latest bash -euxc '
-            dnf install -y /dist/denext-native-x64.rpm /usr/bin/xvfb-run /usr/bin/xauth /usr/bin/dbus-run-session /usr/bin/weston
+            pkgs="/dist/denext-native-x64.rpm /usr/bin/xvfb-run /usr/bin/xauth /usr/bin/dbus-run-session /usr/bin/weston"
+            dnf install -y --setopt=retries=10 --setopt=timeout=60 $pkgs ||
+              { sleep 30; dnf install -y --setopt=retries=10 --setopt=timeout=60 $pkgs; }
             bash /ci/desktop-linux-launch-smoke.sh x11 /usr/bin/denext-native
             bash /ci/desktop-linux-launch-smoke.sh wayland /usr/bin/denext-native'
       # The same .deb's app on this Ubuntu runner under Weston's headless backend: Wayland only.
       - name: .deb — the app launches under headless Wayland (Weston)
         run: |
           set -eux
-          sudo apt-get install -y ./dist/denext-native-x64.deb weston dbus
+          bash ../../scripts/ci/apt-install.sh --with-recommends ./dist/denext-native-x64.deb weston dbus
           bash ../../scripts/ci/desktop-linux-launch-smoke.sh wayland /usr/bin/denext-native
           sudo apt-get remove -y denext-native
       # The CEF backend's .deb: its setuid sandbox helper installs root-owned with mode 4755, and
@@ -793,7 +801,7 @@ jobs:
           sed -i 's|capabilities: { secureStore: true }|capabilities: { secureStore: true }, linux: { requireSandbox: true }|' denext.config.ts
           grep -q 'requireSandbox: true' denext.config.ts
           deno run -A scripts/package-linux.ts --no-export --format deb
-          sudo apt-get install -y ./dist/denext-native-x64.deb
+          bash ../../scripts/ci/apt-install.sh --with-recommends ./dist/denext-native-x64.deb
           test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
           test "$(stat -c '%a %U %G' /usr/lib/denext-native/chrome-sandbox)" = "4755 root root"
           grep -q '"requireSandbox": true' /usr/lib/denext-native/laufey-launch.json

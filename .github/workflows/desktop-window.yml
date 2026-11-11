@@ -68,6 +68,7 @@ on:
       - "examples/desktop-kitchen-sink/**"
       - "scripts/ci/desktop-window-summary.ts"
       - "scripts/ci/pick-windows-runner.ts" # the windows-runner job: our Windows runner or the overflow
+      - "scripts/ci/apt-install.sh" # the Linux jobs' package installs (retries, a fallback mirror)
       - ".github/workflows/desktop-window.yml"
 
 permissions:
@@ -170,9 +171,10 @@ jobs:
       - name: Linux desktop session
         if: runner.os == 'Linux'
         working-directory: .
+        # Retries, timeouts and a fallback mirror; nothing fetched where the image has them
+        # (scripts/ci/apt-install.sh).
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          bash scripts/ci/apt-install.sh \
             xvfb xauth x11-utils xfwm4 dbus dbus-x11 gnome-keyring libsecret-1-0 dunst \
             xdg-utils desktop-file-utils xdotool \
             libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
