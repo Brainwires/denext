@@ -83,6 +83,10 @@ and this project adheres to
   it now needs its target granted too; a scope still covers its own resolved location, such as
   macOS's `/tmp`). In app windows, a chunk the app writes in one piece reaches the page as one
   write. The [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
+- **`@denext/graphql`: a schema object it can't trace reloads in `denext dev`.** One built in
+  `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
+  the config on an edit under the directory of any project module the config reaches, instead of
+  needing a dev-server restart.
 
 ### Fixed
 
@@ -105,6 +109,11 @@ and this project adheres to
 - **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
   linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
   collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
+- **An install log explains `Requires ffi access`.** A dependency's lifecycle script stopped by the
+  jail while loading a native addon (typically an install check that loads the package's own
+  prebuilt addon) now reports it and says to leave the package unapproved (out of
+  `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
+  OS can't confine the script, a jailed script can't load it.
 
 ### Documentation
 

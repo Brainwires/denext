@@ -173,3 +173,29 @@ Deno.test("jail failures: an unreviewed package's advice names the hosts its log
   // On Windows a resolver failure is not the jail's: only the clamp's hosts count.
   assertEquals(jailFailures(log, "windows")[0].hosts, ["evil.example.com"]);
 });
+
+Deno.test("jail failures: 'Requires ffi access' says to leave the package unapproved", () => {
+  const log = "error: script 'install' in 'addon-pkg@2.1.0' failed with exit code 1\n" +
+    'NotCapable: Requires ffi access to "/p/node_modules/addon-pkg/build/Release/addon.node"\n';
+  const [f] = jailFailures(log, "linux");
+  assertEquals(f.signs, ["ffi"]);
+  const text = explainJailFailures([f], RC6).join("\n");
+  assertStringIncludes(text, "(stopped: loading a native addon)");
+  assertStringIncludes(text, `runtime ${RC6} (before 3.0.0-denext.1)`);
+  assertStringIncludes(text, 'leave "addon-pkg" unapproved (out of "allowScripts" in deno.json)');
+  assertFalse(text.includes("fix:"), "no exception grants a native addon");
+  assertFalse(text.includes("is not in denext's reviewed list"));
+  // Newer runtime (or none known): the OS-confinement case, in package.json's "deno" home.
+  const later = explainJailFailures([f], "3.0.0-denext.17", {}, "package.json").join("\n");
+  assertStringIncludes(later, "where the OS can't confine the script");
+  assertStringIncludes(later, 'out of "allowScripts" in package.json "deno"');
+  // With a net failure too, both are explained (Deno's clamp counts on Windows as well).
+  const both = jailFailures(
+    log + 'NotCapable: Requires net access to "x.example.com:443"\n',
+    "windows",
+  );
+  assertEquals(both[0].signs, ["net", "ffi"]);
+  const bothText = explainJailFailures(both, RC6).join("\n");
+  assertStringIncludes(bothText, "unapproved");
+  assertStringIncludes(bothText, "the log shows it reaching x.example.com");
+});

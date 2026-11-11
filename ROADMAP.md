@@ -78,10 +78,6 @@ Not blocking 5.0; each item says why.
   `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
   cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
   _Why 5.x: Low, and only legacy package versions hit it (`bcrypt` 5 already has advice)._
-- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
-  (and where the OS can't confine) a jailed install check can't load the package's own native
-  addon; say to leave the package unapproved. _Why 5.x: diagnostics only, and narrower once 5.0
-  drops runtimes older than denext.1._
 
 ## Deno Desktop
 
