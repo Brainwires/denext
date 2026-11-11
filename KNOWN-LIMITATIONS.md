@@ -225,9 +225,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
-  pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
-  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server). Planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
@@ -629,6 +626,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 Under denext's pinned runtime; what the stock runtime lacks is in
 [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime).
 
+- **Packaging embeds what a path names, even outside the project.** A sidecar's `run.exec` or
+  `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
+  embedded like one inside it. The config that names it is code the build already runs, so it is
+  not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
@@ -791,8 +792,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own code cannot. An unscoped write grant could change a binary that is not signed, and with
   unscoped read and write the app could symlink a folder above the program's before the runtime
   first writes it and race a spawn the same way. Under
-  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
-  the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
+  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets the
+  permissions the app holds unscoped, `desktop.denoFlags` and the unstable features with an API of
+  their own (`kv`, `cron`, `net`, `broadcast-channel`, `webgpu`), but no scoped grants, `--config`
+  or other `--unstable-*` flags given on the command line.
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
   writes through `/usr/bin/security`, which any program of the same user can read back) an app
   without a provisioning profile that grants a keychain access group keeps its items in the login

@@ -631,6 +631,67 @@ Deno.test("runDesktop (pinned runtime): the app's own Window-menu items reach de
   }
 });
 
+Deno.test("runDesktop (pinned runtime): onWillNavigate, the extensions' and the runtime's hooks see every window's navigations", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    Object.assign(desktop, { navigationEvents: true });
+    const seen: string[] = [];
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = { name: "ext", methods: {}, setup: (h) => void (host = h) };
+    const { runtime } = await boot({
+      outDir,
+      port: 1,
+      capabilities: [ext],
+      onWillNavigate: (e) => {
+        seen.push(`desktop.ts ${e.window} ${e.url}`);
+        if (e.url.startsWith("https://evil.test")) e.preventDefault();
+      },
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const offHost = host!.onWillNavigate((e) => {
+      seen.push(`host ${e.window} ${e.url}`);
+      if (e.url.startsWith("https://idp.test")) e.allow();
+    });
+    const offRuntime = runtime.onWillNavigate((e) => void seen.push(`runtime ${e.window}`));
+    const go = (win: EventTarget, url: string) => {
+      const allowed: string[] = [];
+      const event = new CustomEvent("willnavigate", {
+        cancelable: true,
+        detail: { url, kind: "link", allow: () => void allowed.push(url) },
+      });
+      win.dispatchEvent(event);
+      return { prevented: event.defaultPrevented, allowed };
+    };
+    const main = FakeMenuWindow.all[0];
+    assertEquals(go(main, "https://evil.test/"), { prevented: true, allowed: [] });
+    assertEquals(go(main, "https://idp.test/a"), {
+      prevented: false,
+      allowed: ["https://idp.test/a"],
+    });
+    // A window opened later is listened to as well, under its own id.
+    const opened = runtime.windows.open({ url: "/" });
+    const second = FakeMenuWindow.all.at(-1)!;
+    assert(second !== main);
+    assertEquals(go(second, "https://evil.test/2").prevented, true);
+    assertEquals(seen.slice(0, 3), [
+      "desktop.ts main https://evil.test/",
+      "host main https://evil.test/",
+      "runtime main",
+    ]);
+    assert(seen.includes(`desktop.ts ${opened.id} https://evil.test/2`), seen.join("\n"));
+    offHost();
+    offRuntime();
+    seen.length = 0;
+    go(main, "myapp://app/");
+    assertEquals(seen, ["desktop.ts main myapp://app/"]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
 Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance, the extensions and still the deep links", async () => {
   const outDir = await exportDir();
   FakeMenuWindow.all = [];

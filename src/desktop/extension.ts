@@ -13,6 +13,7 @@
  * @module
  */
 
+import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
 import type {
   DesktopOpenWindowOptions,
@@ -89,6 +90,13 @@ export interface DesktopCapCtx {
    */
   readonly windowId?: string;
   /**
+   * Who called: the window's origin, the calling frame (main or sub, with its own origin) and the
+   * window id, so a privileged handler can check the sender as well as the gate does. The bridge
+   * always sets it; absent (a context built by hand, in a test) means nothing is known. See
+   * {@linkcode DesktopCaller}.
+   */
+  readonly caller?: DesktopCaller;
+  /**
    * Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a
    * method with `timeoutMs: false` it also aborts when the calling page's request goes away (that
    * page reloaded, navigated or closed).
@@ -121,6 +129,36 @@ export interface DesktopCapCtx {
    * apart from the pages' `secureStore` and from every other extension's.
    */
   readonly secureStore: DesktopSecureStore;
+}
+
+/**
+ * The sender of a bridge call ({@linkcode DesktopCapCtx.caller}).
+ *
+ * The bridge answers only the app's own pages (the per-launch token, and under denext's pinned
+ * runtime the memory transport with an `Origin` equal to the app origin), so `origin` is that
+ * origin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made
+ * the call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop
+ * runtime that publishes `Deno.desktop.marksFrames`), else as the calling page reported it
+ * (`verified: false`: a subframe that holds the token can claim to be the main frame), and
+ * `"unknown"` when neither said.
+ */
+export interface DesktopCaller {
+  /** The origin of the calling window's page (the app origin, or the loopback origin). */
+  readonly origin: string;
+  /** The frame that made the call. */
+  readonly frame: DesktopCallerFrame;
+  /** The calling window's id ({@linkcode DesktopCapCtx.windowId}). */
+  readonly window: string;
+}
+
+/** The frame a bridge call came from ({@linkcode DesktopCaller.frame}). */
+export interface DesktopCallerFrame {
+  /** `"main"` (the top-level page), `"sub"` (a frame inside it) or `"unknown"`. */
+  readonly kind: "main" | "sub" | "unknown";
+  /** The frame's own origin (the request's `Origin`, else the window's origin). */
+  readonly origin: string;
+  /** Whether the runtime told `kind`, rather than the calling page. */
+  readonly verified: boolean;
 }
 
 /**
@@ -211,8 +249,8 @@ export interface DesktopConfirmOptions {
  * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
  * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
- * items, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows
- * now. Each subscription returns its unsubscribe.
+ * items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
+ * every top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
  */
 export interface DesktopExtensionHost {
   /**
@@ -290,6 +328,16 @@ export interface DesktopExtensionHost {
    * rejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe.
    */
   onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` before every top-level navigation of every window, ahead of the navigation guard
+   * (`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`
+   * (`"link"`, `"script"`, `"redirect"`, `"window-open"`, `"other"`) and the `initiator` when the
+   * engine says: `event.preventDefault()` refuses it, `event.allow()` loads it in place although
+   * the guard would send it to the browser (a refusal wins). Decide synchronously; a throw is
+   * logged and decides nothing. Never called on a runtime without the hook (one that publishes no
+   * `Deno.desktop.navigationEvents`). Returns the unsubscribe.
+   */
+  onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
   /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */

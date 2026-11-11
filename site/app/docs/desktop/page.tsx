@@ -4016,7 +4016,10 @@ const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
         </code>) is resolved from the folder of the entry that calls{" "}
         <code>resolveDesktopCapabilities</code> (the project root for{" "}
         <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
-        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded. A
+        path that leaves the project (<code>"../shared/scanner.ts"</code>) is embedded as well:
+        packaging takes the file the path names, wherever it is, so keep what the app should carry
+        inside the project:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -4074,6 +4077,34 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
 desktop: {
   capabilities: { extensions: ["./desktop/extensions/scanner.ts"] },
   extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
+},`}
+      </Code>
+
+      <h3 id="desktop-extension-caller">Who called: ctx.caller</h3>
+      <p>
+        Every handler gets <code>ctx.caller</code>: <code>origin</code>{" "}
+        (the calling window&apos;s origin: the app origin, or the loopback origin under the stock
+        runtime), <code>frame</code> (<code>kind</code> <code>"main"</code> for the top-level page,
+        {" "}
+        <code>"sub"</code> for a frame inside it, or <code>"unknown"</code>; <code>origin</code>
+        {" "}
+        the frame&apos;s own; <code>verified</code>) and <code>window</code> (the window id, as{" "}
+        <code>ctx.windowId</code>). A privileged method can refuse anything but the main frame. The
+        frame is <code>verified</code>{" "}
+        when the runtime marks each request with it (a runtime that publishes{" "}
+        <code>Deno.desktop.marksFrames</code>); otherwise it is what the page reported, which a
+        same-origin frame holding the token could misstate, so check <code>verified</code>{" "}
+        before relying on it:
+      </p>
+      <Code lang="ts">
+        {`wipe: {
+  handler: (_args, ctx) => {
+    const frame = ctx.caller?.frame;
+    if (frame?.kind !== "main" || !frame.verified) {
+      throw new DesktopCapError("forbidden", "only the app's own page may wipe", { status: 403 });
+    }
+    return wipeEverything();
+  },
 },`}
       </Code>
 
@@ -4400,8 +4431,11 @@ export default defineDesktopExtension({
           <code>desktop.ts</code>, which packaging compiles;{" "}
           <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
           <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
-          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
-          <code>--allow-run</code> and a broad{" "}
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). A path that leaves the project (
+          <code>"../tools/server"</code>, and likewise a{" "}
+          <code>run.module</code>) embeds that file too, wherever it is: packaging does not confine
+          it to the project. Such a program is baked an unscoped <code>--allow-run</code>{" "}
+          and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
           machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
           <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,
@@ -4572,8 +4606,12 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           the child is <code>deno run</code>{" "}
           with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
           <code>--unstable-*</code>,{" "}
-          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
-          the app holds unscoped on an older one. An unmodified{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or on an older one
+          the permissions the app holds unscoped and the unstable features it can be seen to run
+          with (<code>--unstable-kv</code>, <code>-cron</code>, <code>-net</code>,{" "}
+          <code>-broadcast-channel</code>, <code>-webgpu</code>); either way followed by the{" "}
+          <code>desktop.denoFlags</code> that <code>deno run</code> takes (all but{" "}
+          <code>--exclude-unused-npm</code>) and the run did not give already. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.
@@ -4871,6 +4909,35 @@ export default {
           <code>desktop.app.allowedNavigationOrigins</code> (exact origins, written to{" "}
           <code>app.json</code>). On Linux (WebKitGTK) the refused request has already been sent
           when the window stops it; nothing it returns is shown or run.
+        </li>
+        <li>
+          To decide in code, pass <code>runDesktop({"{ onWillNavigate }"})</code>{" "}
+          (or subscribe later with <code>onWillNavigate(fn)</code> on its result, or{" "}
+          <code>host.onWillNavigate(fn)</code>{" "}
+          in an extension). It sees every top-level navigation of every window before the static
+          policy: <code>event.url</code>, <code>event.window</code>, <code>event.kind</code>{" "}
+          (<code>"link"</code>, <code>"script"</code>, <code>"redirect"</code>,{" "}
+          <code>"window-open"</code>, <code>"other"</code>) and <code>event.initiator</code>{" "}
+          when the engine says. <code>event.preventDefault()</code>{" "}
+          refuses it (nothing loads, nothing opens in the browser); <code>event.allow()</code>{" "}
+          loads it in the window although the policy would send it to the browser. A refusal wins;
+          decide synchronously (a returned promise is not waited for), and a throw is logged and
+          decides nothing. The hook needs a Deno Desktop runtime that dispatches the event (one that
+          publishes <code>Deno.desktop.navigationEvents</code>;{" "}
+          <code>
+            runtimeHasNavigationEvents()
+          </code>{" "}
+          from <code>denext/desktop</code>{" "}
+          tells); on any other the static policy decides alone and the hook is never called.
+          <Code lang="ts">
+            {`await runDesktop({
+  importMetaUrl: import.meta.url,
+  onWillNavigate: (event) => {
+    if (event.kind === "window-open" && !event.url.startsWith("https://")) event.preventDefault();
+    if (new URL(event.url).origin === "https://login.example.com") event.allow();
+  },
+});`}
+          </Code>
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}

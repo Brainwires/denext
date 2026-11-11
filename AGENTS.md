@@ -395,7 +395,8 @@ emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, fro
 default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
 `passkeysSupported()`) sign in usernameless or complete a pending second factor; a native app
-(with `native`) uses `/auth/native/passkey/*`, and `passkeys.androidApps: [{ packageName,
+(with `native`) uses `/auth/native/passkey/*` (`{ mfa_token }` there finishes a pending native sign-in;
+`GET` / `DELETE /auth/native/passkeys[/:id]` list and remove the bearer's), and `passkeys.androidApps: [{ packageName,
 sha256CertFingerprints }]` accepts its `android:apk-key-hash:` origin (serve the same object as
 `appLinks.android` for the `get_login_creds` assetlinks statement). An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
@@ -699,7 +700,10 @@ session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s res
 included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
 other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
 is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
-3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. With no tray host (stock GNOME)
+3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
+`ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
+subframe from a privileged method, and trust `kind` only when `verified` (a runtime that publishes
+`Deno.desktop.marksFrames`; else it is the page's own report). With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
@@ -761,7 +765,11 @@ packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS
 origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origin: a top-level
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
-(exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
+(exact origins, such as an identity provider that signs in inside the window). To decide in code,
+`runDesktop({ onWillNavigate: (e) => … })` (also `onWillNavigate(fn)` on its result and `host.onWillNavigate(fn)`)
+sees every window's top-level navigation first (`e.url`, `e.window`, `e.kind`, `e.initiator`):
+`e.preventDefault()` refuses it, `e.allow()` loads it in place (a refusal wins; decide synchronously); it fires
+only on a runtime that publishes `Deno.desktop.navigationEvents` (`runtimeHasNavigationEvents()`). It takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.17 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps

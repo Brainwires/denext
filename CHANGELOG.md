@@ -10,6 +10,22 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
+  result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
+  window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it
+  (`preventDefault()`) or load it in place (`allow()`). It fires on a Deno Desktop runtime that
+  dispatches the event (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`); elsewhere
+  the static policy decides alone.
+- **Desktop: every bridge handler knows who called.** A capability or extension handler gets
+  `ctx.caller`: the window's `origin`, the calling `frame` (`kind` `"main"` / `"sub"` /
+  `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a
+  privileged method can refuse a subframe. The frame is verified on a Deno Desktop runtime that
+  marks each request with it (`Deno.desktop.marksFrames`); elsewhere it is the page's own report.
+- **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
+  finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
+  `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
+  tokens (a sign-in whose first factor was a passkey still takes a code). `GET /native/passkeys`
+  and `DELETE /native/passkeys/:id` list and remove the bearer's passkeys.
 - **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
   label, accelerator? }]` adds items to the "Window" submenu next to New Window, Reopen Closed
   Window and the window list, merged into a page's `setAppMenu` menu the same way. A click goes to
@@ -85,6 +101,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
+  `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
+  `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
+  also get the unstable features the app runs with (`--unstable-kv`, `-cron`, `-net`,
+  `-broadcast-channel`, `-webgpu`).
+- **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
+  `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
+  tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
+  exported; the options may also be a top-level `const`.
 - **`spa.proxy` relays a `deflate` response correctly on runtime 3.0.0-denext.17.** That runtime's
   `fetch` decodes `deflate` as it does `gzip` and `br`, so the proxy now drops the stale
   `Content-Encoding` and `Content-Length` for it too. On stock Deno a `deflate` body is still relayed
@@ -104,6 +129,8 @@ and this project adheres to
 
 ### Documentation
 
+- **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
+  and the known limitations say that packaging embeds the file a `../` path names.
 - **Permissions are described as least-privilege guardrails.** A new page,
   [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
   checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)

@@ -42,12 +42,16 @@ import { timingSafeEqual } from "./auth-session-runtime.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { DesktopEventLog } from "./bridge-events.ts";
 import {
+  DESKTOP_FRAME_HEADER,
   type DesktopServeInfo,
   type DesktopTrust,
   LOOPBACK_TRUST,
   memoryGate,
+  runtimeMarksFrames,
 } from "./transport.ts";
 import {
+  type DesktopCaller,
+  type DesktopCallerFrame,
   type DesktopCapability,
   type DesktopCapCtx,
   DesktopCapError,
@@ -67,6 +71,7 @@ import type {
   DesktopWindowRef,
 } from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
+import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -79,6 +84,8 @@ const TOKEN_HEADER = "x-denext-desktop-token";
 const WINDOW_HEADER = "x-denext-desktop-window";
 /** The header naming the calling document (a random id per page load). */
 const PAGE_HEADER = "x-denext-desktop-page";
+/** The header the calling page reports its frame in (`main` / `sub`; unverified). */
+const FRAME_HEADER = "x-denext-desktop-frame";
 /** How many retired page ids are remembered per window (late requests from a page gone). */
 const RETIRED_PAGES = 16;
 /** The largest RPC body accepted, in bytes (matches the client's cap). */
@@ -144,6 +151,17 @@ export interface DesktopBridgeOptions {
    * a subscription is kept by nobody.
    */
   readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
+  /**
+   * Subscribe to every window's top-level navigations: what
+   * {@link DesktopExtensionHost.onWillNavigate} delegates to. Without it (no desktop runtime, a
+   * test) a subscription is kept by nobody.
+   */
+  readonly onWillNavigate?: (fn: DesktopWillNavigateHandler) => () => void;
+  /**
+   * Whether the runtime marks each request with its frame ({@linkcode runtimeMarksFrames}, the
+   * default): only then is {@link DesktopCaller.frame} `verified`.
+   */
+  readonly marksFrames?: boolean;
   /**
    * Subscribe to the app's second launches (`desktop.app.singleInstance`): what
    * {@link DesktopExtensionHost.onSecondInstance} delegates to. Without it (no desktop runtime, a
@@ -313,6 +331,34 @@ function gateEvents(
   return null;
 }
 
+/** A `main` / `sub` frame header's kind, else `undefined`. */
+function frameKind(value: string | null): "main" | "sub" | undefined {
+  const v = value?.trim().toLowerCase();
+  return v === "main" || v === "sub" ? v : undefined;
+}
+
+/**
+ * Who sent an RPC that passed the gate ({@link DesktopCaller}): the window's origin (the app
+ * origin in the memory world, the validated loopback origin otherwise), the frame (the runtime's
+ * mark when it marks frames, else the page's own report, unverified) and the window.
+ */
+function callerOf(
+  request: Request,
+  trust: DesktopTrust,
+  windowId: string,
+  marksFrames: boolean,
+): DesktopCaller {
+  const origin = trust.kind === "memory" ? trust.origin : new URL(request.url).origin;
+  const marked = marksFrames ? frameKind(request.headers.get(DESKTOP_FRAME_HEADER)) : undefined;
+  const reported = frameKind(request.headers.get(FRAME_HEADER));
+  const frame: DesktopCallerFrame = {
+    kind: marked ?? reported ?? "unknown",
+    origin: request.headers.get("origin") ?? origin,
+    verified: marked !== undefined,
+  };
+  return Object.freeze({ origin, frame: Object.freeze(frame), window: windowId });
+}
+
 /** The refusal for a body {@link readCapped} did not return: over the cap (413) or too slow (408). */
 function unreadBody(raw: null | typeof BODY_TIMED_OUT): Response {
   return raw === BODY_TIMED_OUT
@@ -455,6 +501,7 @@ export function createDesktopBridge(
   const events = new DesktopEventLog(options.eventBuffer);
   const dev = options.dev ?? false;
   const trust = options.trust ?? LOOPBACK_TRUST;
+  const marksFrames = options.marksFrames ?? runtimeMarksFrames();
 
   const pages = createPageTracker((windowId) => pageLoaded(windowId));
 
@@ -495,6 +542,7 @@ export function createDesktopBridge(
     cap: DesktopCapability,
     signal: AbortSignal,
     windowId: string,
+    caller: DesktopCaller,
   ): DesktopCapCtx => ({
     emit: capEmit(cap),
     pickedPath,
@@ -502,6 +550,7 @@ export function createDesktopBridge(
     os,
     window: options.getWindow?.(windowId),
     windowId,
+    caller,
     signal,
     runOnMainThread: runOnDesktopMainThread,
     secureStore: secureStoreOf(cap),
@@ -522,6 +571,7 @@ export function createDesktopBridge(
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
+    onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
     // A box up while the quit guards are asked stops their deadline (not a session end's).
@@ -570,7 +620,8 @@ export function createDesktopBridge(
       method.timeoutMs === false ? AbortSignal.any([deadline, request.signal]) : deadline;
     const ran = await runHandlerWithDeadline(
       method,
-      (signal) => makeCtx(cap, lifeline(signal), windowId),
+      (signal) =>
+        makeCtx(cap, lifeline(signal), windowId, callerOf(request, trust, windowId, marksFrames)),
       inp.input,
       dev,
     );

@@ -126,40 +126,40 @@ function UserMenu() {
 
 Every path is relative to `basePath` (default `/auth`).
 
-| Endpoint                   | Method      | What it does                                                                                                                                                                  |
-| -------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/session`                 | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                            |
-| `/providers`               | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                   |
-| `/signin/:provider`        | GET         | Starts the OAuth flow (`state`, plus PKCE and an OIDC `nonce` unless the provider's `checks` leave them out). Rate-limited per client IP.                                     |
-| `/callback/:provider`      | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`. |
-| `/anonymous`               | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                 |
-| `/signout`                 | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                   |
-| `/tokens`                  | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                           |
-| `/tokens/:id`              | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                           |
-| `/verify`                  | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                            |
-| `/reset`                   | POST        | Request a password-reset link. One answer for every address.                                                                                                                  |
-| `/reset/confirm`           | POST        | `{ email, token, password }`: set the new password.                                                                                                                           |
-| `/mfa`                     | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                                     |
-| `/mfa/challenge`           | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                         |
-| `/mfa/enroll`              | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                      |
-| `/mfa/confirm`             | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                      |
-| `/mfa/disable`             | POST        | Remove the user's TOTP factors (and the backup codes, unless another verified factor remains), given a fresh second factor.                                                   |
-| `/passkey/*`               | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).           |
-| `/passkeys`                | GET         | The signed-in user's passkeys (no key material).                                                                                                                              |
-| `/passkeys/:id`            | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                          |
-| `/native/authorize`        | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                                     |
-| `/native/complete`         | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                                 |
-| `/native/token`            | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                               |
-| `/native/revoke`           | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
-| `/native/nonce`            | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
-| `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
-| `/native/passkey/*`        | POST        | Passkeys for an app (needs `native` and `passkeys`): `authenticate/options` + `authenticate` answer the native tokens; `register/options` + `register` under a recent bearer. |
-| `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
-| `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
-| `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                            |
-| `/native/mfa-confirm`      | POST        | `{ mfa_token, code }`: confirm that factor and finish the sign-in — the native tokens plus `backup_codes`.                                                                    |
-| `/saml/:provider/metadata` | GET         | A [`saml()`](#saml-providers) provider's SP metadata, to give its identity provider.                                                                                          |
-| `/account/delete`          | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                   |
+| Endpoint                   | Method      | What it does                                                                                                                                                                                                                 |
+| -------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/session`                 | GET         | `{ user, expires }` (or nulls). `no-store`. The sliding-expiry path. Rate-limited.                                                                                                                                           |
+| `/providers`               | GET         | The configured providers' `id` + `type` (and an email or phone provider's `name`) — never client ids, secrets or endpoints.                                                                                                  |
+| `/signin/:provider`        | GET         | Starts the OAuth flow (`state`, plus PKCE and an OIDC `nonce` unless the provider's `checks` leave them out). Rate-limited per client IP.                                                                                    |
+| `/callback/:provider`      | GET or POST | By provider type: GET is the OAuth callback and the magic-link click; POST is the Credentials sign-in and the email or phone send / redeem. A verb the type lacks is a `405`.                                                |
+| `/anonymous`               | POST        | With `anonymous: true`: create an anonymous user and sign it in. See [Anonymous sign-in](#anonymous-sign-in).                                                                                                                |
+| `/signout`                 | POST        | Clears the cookie (and the store record). Same-origin only.                                                                                                                                                                  |
+| `/tokens`                  | POST, GET   | Mint / list bearer API tokens. Cookie session only; minting needs a recent sign-in.                                                                                                                                          |
+| `/tokens/:id`              | DELETE      | Revoke one of your own tokens. Cookie session only.                                                                                                                                                                          |
+| `/verify`                  | GET, POST   | Redeem an email-verification token — the emailed link (GET) or a form / JSON body.                                                                                                                                           |
+| `/reset`                   | POST        | Request a password-reset link. One answer for every address.                                                                                                                                                                 |
+| `/reset/confirm`           | POST        | `{ email, token, password }`: set the new password.                                                                                                                                                                          |
+| `/mfa`                     | POST        | Finish a pending sign-in with a TOTP, SMS or backup code.                                                                                                                                                                    |
+| `/mfa/challenge`           | POST        | `{ factorId }`: text a code to a verified phone factor for the pending sign-in; answers `{ challengeId, expiresAt }`.                                                                                                        |
+| `/mfa/enroll`              | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                                                                                     |
+| `/mfa/confirm`             | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                                                                                     |
+| `/mfa/disable`             | POST        | Remove the user's TOTP factors (and the backup codes, unless another verified factor remains), given a fresh second factor.                                                                                                  |
+| `/passkey/*`               | POST        | Passkeys: `register/options` + `register` from a recent session, `authenticate/options` + `authenticate` to sign in or step up. See [Passkeys](#passkeys-webauthn).                                                          |
+| `/passkeys`                | GET         | The signed-in user's passkeys (no key material).                                                                                                                                                                             |
+| `/passkeys/:id`            | DELETE      | Remove one of your passkeys. Needs a recent sign-in.                                                                                                                                                                         |
+| `/native/authorize`        | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                                                                                    |
+| `/native/complete`         | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                                                                                |
+| `/native/token`            | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                                                                              |
+| `/native/revoke`           | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                                                                        |
+| `/native/nonce`            | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                                                                      |
+| `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                                                                         |
+| `/native/passkey/*`        | POST        | Passkeys for an app (needs `native` and `passkeys`): `authenticate/options` + `authenticate` answer the native tokens (or finish a pending sign-in with `mfa_token`); `register/options` + `register` under a recent bearer. |
+| `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                                                                              |
+| `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                                                                          |
+| `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                                                                           |
+| `/native/mfa-confirm`      | POST        | `{ mfa_token, code }`: confirm that factor and finish the sign-in — the native tokens plus `backup_codes`.                                                                                                                   |
+| `/saml/:provider/metadata` | GET         | A [`saml()`](#saml-providers) provider's SP metadata, to give its identity provider.                                                                                                                                         |
+| `/account/delete`          | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.                                                                  |
 
 A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall through to
 your app — that is where a reset link and `pages.mfa` can land. The account rows exist only when the
@@ -1692,6 +1692,8 @@ no web origin and no cookie, so it uses the `/native/passkey/*` rows, which need
 | `POST {basePath}/native/passkey/authenticate`         | `{ credential, ceremonyId }`                     | The native tokens (`/native/token`'s shape), or `{ mfa_required, mfa_token, … }` (see below). |
 | `POST {basePath}/native/passkey/register/options`     | `{}` + `Authorization: Bearer nat_…`             | `PublicKeyCredentialCreationOptionsJSON` + `ceremonyId`.                                      |
 | `POST {basePath}/native/passkey/register`             | `{ credential, ceremonyId, name? }` + the bearer | `{ ok: true, passkey }`.                                                                      |
+| `GET {basePath}/native/passkeys`                      | the bearer                                       | `{ passkeys }`: the bearer's passkeys, no key material.                                       |
+| `DELETE {basePath}/native/passkeys/:id`               | a bearer from a recent sign-in                   | `{ ok: true }`; another user's id is a `404`, an older bearer `403 reauth_required`.          |
 
 They check what the cookie rows check, with the bearer in place of the cookie: registration needs
 an access token from a recent sign-in (`403 reauth_required`), a verified address
@@ -1699,8 +1701,17 @@ an access token from a recent sign-in (`403 reauth_required`), a verified addres
 `401 { error: "invalid passkey" }`. A ceremony started on these rows completes only on them, and
 one started on a cookie row never completes here. With user verification the passkey is two
 factors; a presence-only assertion (`userVerification: "preferred"`) of a user with a second factor
-answers `{ mfa_required: true, mfa_token, … }`, finished with a code at `/native/mfa`. The rows
-take no ambient credential, so a native HTTP client sends no `Origin`; a request that carries one
+answers `{ mfa_required: true, mfa_token, … }`, finished with a code at `/native/mfa`.
+
+A passkey also finishes a pending native sign-in (an id_token sign-in answered `{ mfa_required,
+mfa_token }`): send `{ mfa_token }` to `authenticate/options`, which offers that user's passkeys and
+hands back a fresh `mfa_token` (the one sent is spent), then `{ credential, ceremonyId, mfa_token }`
+to `authenticate`, which answers the native tokens (`amr` the first factor's, then `hwk` and
+`mfa`). It spends the `/native/mfa` code budget; a refused assertion answers
+`401 { error: "invalid passkey", mfa_token, attempts_left }`. A sign-in whose first factor was a
+passkey (one key is one factor) or that must enroll a factor answers
+`403 { error: "code_required", mfa_token }`: finish it at `/native/mfa` or `/native/mfa-enroll`.
+The rows take no ambient credential, so a native HTTP client sends no `Origin`; a request that carries one
 must come from this app or an origin the app's `cors` allows.
 
 **Android.** Inside an app, Credential Manager reports `clientDataJSON.origin` as

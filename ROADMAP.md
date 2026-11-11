@@ -86,9 +86,6 @@ Not blocking 5.0; each item says why.
 ## Deno Desktop
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
-    parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
-    command line. _Why 5.x: Low, the CLI-dev path only._
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path. _Why 5.x: needs a runtime launch-time path grant._
@@ -97,8 +94,6 @@ Not blocking 5.0; each item says why.
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
   plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
 - **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
-- **Native passkey rows:** a step-up of a pending native sign-in, and list / delete. _Why 5.x: a
-  fixable gap on a new surface._
 - **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
   `NEEDED` check). _Why 5.x: coverage work, no known failure._
 - **The AppImage non-exchange swap fallback window** (a documented risk). _Why 5.x: Low._

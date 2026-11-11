@@ -335,3 +335,30 @@ export function memoryGate(
   if (origin === null) return requireOrigin || relayed ? "origin" : null;
   return origin === trust.origin ? null : "origin";
 }
+
+/**
+ * The request header denext's pinned runtime's scheme bridge sets (after dropping every copy a
+ * client sent) to the kind of frame that made the request: `main` (the window's top-level page)
+ * or `sub` (a frame inside it). Read only when the runtime says it marks frames
+ * ({@linkcode runtimeMarksFrames}): on a runtime that does not, a page could send it itself.
+ */
+export const DESKTOP_FRAME_HEADER = "x-deno-desktop-frame";
+
+/**
+ * Whether the running desktop runtime marks each request with its frame
+ * ({@linkcode DESKTOP_FRAME_HEADER}): `Deno.desktop.marksFrames === true`, which a runtime that
+ * marks them publishes. Feature-detected, never version-sniffed; the stock runtime, a denext
+ * runtime without the marking and the Deno CLI answer `false`.
+ *
+ * @param desktop `Deno.desktop` (default: the running runtime's).
+ * @returns Whether frames are marked.
+ */
+export function runtimeMarksFrames(
+  desktop: unknown = (Deno as unknown as { desktop?: unknown }).desktop,
+): boolean {
+  try {
+    return (desktop as { marksFrames?: unknown } | null | undefined)?.marksFrames === true;
+  } catch {
+    return false;
+  }
+}
