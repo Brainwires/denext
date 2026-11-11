@@ -104,6 +104,10 @@ and this project adheres to
 - **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
   cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
   of `start.limits`; `compile: { limits: false }` bakes none.
+- **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
+  sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
+  (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
+  `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
 
 ### Changed
 

@@ -609,6 +609,11 @@ try {
 }
 ```
 
+Requests carry `User-Agent: denext` unless `headers` sets one; `userAgent: "my-app/1"` replaces
+that default and `userAgent: false` sends none (some servers refuse a request without one). These
+are the values of `Deno.createHttpClient({ userAgent })` on runtime `3.0.0-denext.19` and later,
+but `safeFetch` writes its own request, so the option works on every runtime.
+
 For fixed, trusted URLs plain `fetch` is fine. Keep using `fetch`/`cachedFetch`
 for your **own** backends (internal services, `localhost`) — those are exactly
 the addresses `safeFetch` deliberately blocks.

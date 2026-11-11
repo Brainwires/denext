@@ -358,6 +358,25 @@ function dechunk(input: Uint8Array): Uint8Array {
 /** Redirect status codes followed (and re-validated) by {@linkcode safeFetch}. */
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
+/** The `User-Agent` a request that sets none is sent with. */
+const DEFAULT_USER_AGENT = "denext";
+
+/**
+ * Check a `userAgent` option: `false` (or `null`) sends none, a string replaces the default, and
+ * anything else, or a string a header value can't hold, is a `TypeError` (the runtime's
+ * `Deno.createHttpClient({ userAgent })` rules).
+ */
+function checkUserAgent(value: unknown): string | false | undefined {
+  if (value === undefined) return undefined;
+  if (value === false || value === null) return false;
+  if (typeof value !== "string") throw new TypeError("userAgent must be a string or false");
+  if (/[\0\r\n]/.test(value)) {
+    throw new TypeError("Illegal characters in User-Agent");
+  }
+  new Headers({ "user-agent": value }); // the header-value rules
+  return value;
+}
+
 // Headers we always control; a caller cannot override framing/host/encoding.
 const MANAGED_HEADERS = new Set([
   "host",
@@ -370,7 +389,7 @@ const MANAGED_HEADERS = new Set([
 /** Build a minimal HTTP/1.1 request (method + headers + optional buffered body). */
 function buildRequest(
   url: URL,
-  spec: { method: string; headers?: HeadersInit; body?: Uint8Array },
+  spec: { method: string; headers?: HeadersInit; body?: Uint8Array; userAgent?: string | false },
 ): Uint8Array {
   const path = (url.pathname || "/") + (url.search || "");
   const lines = [
@@ -388,7 +407,8 @@ function buildRequest(
     if (lk === "accept") hasAccept = true;
     lines.push(`${k}: ${v}`);
   }
-  if (!hasUA) lines.push("User-Agent: denext");
+  const defaultUA = spec.userAgent ?? DEFAULT_USER_AGENT;
+  if (!hasUA && defaultUA !== false) lines.push(`User-Agent: ${defaultUA}`);
   if (!hasAccept) lines.push("Accept: */*");
   if (spec.body) lines.push(`Content-Length: ${spec.body.byteLength}`);
   const head = new TextEncoder().encode(lines.join("\r\n") + "\r\n\r\n");
@@ -445,6 +465,11 @@ export interface PinnedFetchConfig {
    * image optimizer's `dangerouslyAllowLocalIP`). Defaults to false.
    */
   allowLocalIP?: boolean;
+  /**
+   * The `User-Agent` of a request that sets no `user-agent` header: a string replaces the default
+   * (`denext`), `false` sends none. A header set on the request still wins.
+   */
+  userAgent?: string | false;
 }
 
 /**
@@ -465,6 +490,7 @@ export function makePinnedFetch(
   const transport = cfg.transport ?? defaultTransport;
   const maxBytes = cfg.maxBytes ?? 25 * 1024 * 1024;
   const allowLocalIP = cfg.allowLocalIP === true;
+  const userAgent = checkUserAgent(cfg.userAgent);
 
   return async (url, init) => {
     assertHttpUrl(url);
@@ -479,7 +505,12 @@ export function makePinnedFetch(
         port,
         tls,
         hostname: url.hostname,
-        request: buildRequest(url, { method, headers: init.headers, body: bodyBytes(init.body) }),
+        request: buildRequest(url, {
+          method,
+          headers: init.headers,
+          body: bodyBytes(init.body),
+          userAgent,
+        }),
         maxBytes,
         signal: init.signal,
       });
@@ -581,6 +612,14 @@ export interface SafeFetchOptions {
   timeoutMs?: number;
   /** Caller abort signal, combined with the timeout. */
   signal?: AbortSignal;
+  /**
+   * The `User-Agent` sent when `headers` sets none: a string replaces the default (`denext`),
+   * `false` (or `null`) sends none. A `User-Agent` in `headers` still wins. The same values as
+   * runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })`; `safeFetch` writes its
+   * own request, so the option works on every runtime. A string with a character a header value
+   * can't hold, or any other value, is a `TypeError` and nothing is sent.
+   */
+  userAgent?: string | false | null;
 }
 
 /**
@@ -633,6 +672,7 @@ export function makeSafeFetch(
       resolver: cfg.resolver,
       transport: cfg.transport,
       maxBytes: opts.maxBytes ?? cfg.maxBytes ?? 10 * 1024 * 1024,
+      userAgent: checkUserAgent(opts.userAgent === undefined ? cfg.userAgent : opts.userAgent),
     });
     const hop: RedirectHop = {
       url: typeof url === "string" ? new URL(url) : new URL(url.href),
