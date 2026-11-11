@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **examples/companion: Loopy is a voice assistant.** Loopy is redrawn (two crossed wire clips with a
+  bead head and 13 moods) and talks back over a Realtime speech API on WebRTC: hold Space, click
+  Loopy, or press a global shortcut to talk; the transcripts show in its bubble, its mouth follows
+  its voice and the model picks its mood. It can search the web, drive a visible browser (asking
+  before any write, form post or connection) and remember past conversations. The API key lives in
+  the OS keychain behind the voice backend, never readable by the page.
+- **examples/companion: the packaged Loopy hears you.** It turns on `desktop.capabilities.microphone`
+  (with its own macOS usage text) and builds with CEF on Linux (`desktop.backend: { linux: "cef" }`),
+  whose system WebView has no WebRTC. A refused microphone names the fix: the OS's privacy settings
+  (on Windows, the switch `appCapabilities().microphoneAccessReason` reports) or the packaged app.
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
   result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
   window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it

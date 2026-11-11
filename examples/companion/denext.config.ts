@@ -44,6 +44,10 @@ export default {
       overlay: true,
     },
     backdrop: "none",
+    // Loopy's voice is WebRTC, which Linux's system WebView (WebKitGTK) doesn't have: Chromium
+    // (CEF) there, the system WebView on macOS and Windows. CEF paints the window opaque, so on
+    // Linux Loopy stands in a small square of its own.
+    backend: { linux: "cef" },
     tray: {
       icon: "/tray.png",
       tooltip: "Loopy",
@@ -80,11 +84,17 @@ export default {
     // The OpenAI key lives in the OS keychain (desktop.ts hands the secure store to the voice
     // backend only, never to the page); the push-to-talk shortcut works from any app; a web
     // search's source links open in the system browser (http and https only, nothing else the
-    // shell capability can do).
+    // shell capability can do). The microphone is granted to the window's own origin only, in the
+    // packaged app (`denext task desktop:package`; a `desktop run` window has none); macOS asks
+    // the user once, with this text.
     capabilities: {
       secureStore: true,
       globalShortcuts: true,
       shell: { openExternal: ["https:", "http:"] },
+      microphone: {
+        usageDescription: "Loopy listens to you only while you talk to it: hold Space, click " +
+          "Loopy or press its shortcut.",
+      },
     },
   },
 } satisfies DenextConfig;

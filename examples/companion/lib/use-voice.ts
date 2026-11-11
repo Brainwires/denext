@@ -7,13 +7,13 @@
 // and opens again on the next turn.
 "use client";
 import { useEffect, useReducer, useRef, useState } from "denext";
+import { appCapabilities } from "denext/desktop/app";
 import type { LoopyMood } from "./loopy-machine.ts";
 import { levelStep, rmsLevel, smoothLevel } from "./lip-sync.ts";
 import {
   connectRealtime,
-  micErrorMessage,
-  MicUnavailableError,
   openMicrophone,
+  openProblem,
   type RealtimeConnection,
 } from "./realtime-client.ts";
 import { answerLateQuestion, relayToolCalls } from "./tool-relay.ts";
@@ -174,10 +174,10 @@ async function openSession(
   });
 }
 
-/** Why a session could not open, worded for the user. */
-function openProblem(err: unknown, desktop: boolean): string {
-  if (err instanceof MicUnavailableError) return micErrorMessage(err.problem, desktop);
-  return (err as Error)?.message || "I couldn't start listening.";
+/** Windows: the privacy switch that keeps the app from the microphone, or `null`. */
+async function micBlockedReason(): Promise<string | null> {
+  const caps = await appCapabilities();
+  return caps.microphoneAccess === "denied" ? caps.microphoneAccessReason : null;
 }
 
 /**
@@ -274,7 +274,11 @@ export function useVoice(
       if (s.wantListen) startListening();
     } catch (err) {
       teardown(s);
-      dispatch({ type: "failed", message: openProblem(err, desktop), closed: true });
+      dispatch({
+        type: "failed",
+        message: await openProblem(err, desktop, micBlockedReason),
+        closed: true,
+      });
     }
   };
 

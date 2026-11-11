@@ -251,20 +251,39 @@ embeddings; the browser's DevTools socket is loopback, in the baseline), `run` i
 Chromium's install path on each OS and nothing else, and `write` is the app's data folder (the inbox
 file, the memory database, the browser profile).
 
-**Not yet in the desktop app.** The desktop window can't capture audio yet (the Deno Desktop runtime
-has no microphone permission handling), so in the app Loopy says it can't hear you and points at the
-browser; everything else (the key, the settings, the size) works there. The window also never takes
-the keyboard focus, so in the app use the click or the global shortcut rather than Space.
+**The microphone in the desktop app.** Only the packaged app has it:
+`desktop.capabilities.microphone` grants `getUserMedia` to the window's own origin in the packaged
+app's launch file, which needs Deno Desktop runtime 3.0.0-denext.10 or later (denext's pin is newer;
+`denext desktop package` refuses an older one). A `denext task desktop` window is refused every
+request, so Loopy says so and points at the packaged app or the browser. Package it with:
+
+```sh
+denext task desktop:package    # dist/: the app bundle for this OS (no installers for an example)
+```
+
+- **macOS** asks once, with the `usageDescription` from `denext.config.ts` (Info.plist
+  `NSMicrophoneUsageDescription`). A signed build gets the `com.apple.security.device.audio-input`
+  entitlement on the app's own executable; the CEF helpers need none (macOS checks the app that
+  launched them). If you said no, allow Loopy in System Settings › Privacy & Security › Microphone.
+- **Windows** doesn't ask. With a privacy switch off (Settings › Privacy & security › Microphone,
+  "Let desktop apps access your microphone") the window is refused, and Loopy names the switch
+  (`appCapabilities().microphoneAccessReason`).
+- **Linux** asks nobody, but its system WebView (WebKitGTK) has no WebRTC, so Loopy builds with
+  Chromium there (`desktop.backend: { linux: "cef" }`), which paints the window opaque.
+
+The window never takes the keyboard focus, so in the app use the click or the global shortcut rather
+than Space.
 
 ## Where it works
 
-On denext's pinned Deno Desktop runtime (3.0.0-denext.7 and later): the transparent, frameless overlay on
-macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); clicks passing through
-everywhere but Loopy, its bubble and its buttons (`setHitRegion`); no Dock icon on macOS from the
-first frame; the tray; every animation; reading aloud; the inbox and `--wait` replies; the Claude
-Code hooks. On macOS, Windows and Linux X11 it also never takes the focus, stays on top (at the
-`"status"` level and on every Space, over full-screen apps too, on macOS; Windows and Linux have one
-floating level), stays off the taskbar (Windows, Linux) and sits in the bottom-right corner.
+On denext's pinned Deno Desktop runtime (3.0.0-denext.7 and later): the transparent, frameless
+overlay on macOS and Windows' WebView2 (the CEF backend, which Loopy uses on Linux for WebRTC,
+paints it opaque); clicks passing through everywhere but Loopy, its bubble and its buttons
+(`setHitRegion`); no Dock icon on macOS from the first frame; the tray; every animation; reading
+aloud; the inbox and `--wait` replies; the Claude Code hooks. On macOS, Windows and Linux X11 it
+also never takes the focus, stays on top (at the `"status"` level and on every Space, over
+full-screen apps too, on macOS; Windows and Linux have one floating level), stays off the taskbar
+(Windows, Linux) and sits in the bottom-right corner.
 
 Linux on Wayland is narrower, because a Wayland window can't ask to be placed, kept on top, shown on
 every workspace, left off the taskbar or kept from taking the focus:

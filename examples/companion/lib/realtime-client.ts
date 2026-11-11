@@ -49,20 +49,64 @@ export async function openMicrophone(devices: MediaDevicesLike): Promise<MediaSt
 }
 
 /**
- * What to tell the user when the microphone could not be opened. In the desktop app the window
- * can't capture audio yet (the runtime has no microphone permission handling), so every failure
- * there says so and points at the browser.
+ * What to tell the user when the microphone could not be opened.
+ *
+ * In the desktop app only the packaged app has the microphone (`desktop.capabilities.microphone`,
+ * granted to the window's own origin); a `denext desktop run` / `dev` window is refused every
+ * request, as is an app the OS keeps from the microphone (macOS's Privacy & Security, Windows'
+ * privacy switches).
+ *
+ * @param problem Why the microphone didn't open.
+ * @param desktop Running in the desktop app.
+ * @param reason Windows: which privacy switch refuses (`appCapabilities().microphoneAccessReason`).
  */
-export function micErrorMessage(problem: MicProblem, desktop: boolean): string {
-  if (desktop) {
-    return "I can't hear you in the desktop app yet: its window has no microphone access. " +
-      "Try voice in a browser with `denext task dev`.";
-  }
+export function micErrorMessage(
+  problem: MicProblem,
+  desktop: boolean,
+  reason?: string | null,
+): string {
+  if (desktop) return desktopMicMessage(problem, reason ?? null);
   switch (problem) {
     case "no_api":
       return "This page has no microphone access (it needs https or localhost).";
     case "denied":
       return "Microphone permission was denied. Allow it in the browser's site settings.";
+    case "no_device":
+      return "I can't find a microphone.";
+    case "failed":
+      return "The microphone didn't start.";
+  }
+}
+
+/**
+ * Why a session could not open, worded for the user. A microphone the desktop app is refused asks
+ * `blockedReason` which Windows privacy switch is off, if one is (`null` elsewhere).
+ */
+export async function openProblem(
+  err: unknown,
+  desktop: boolean,
+  blockedReason: () => Promise<string | null>,
+): Promise<string> {
+  if (!(err instanceof MicUnavailableError)) {
+    return (err as Error)?.message || "I couldn't start listening.";
+  }
+  const reason = desktop && err.problem === "denied"
+    ? await blockedReason().catch(() => null)
+    : null;
+  return micErrorMessage(err.problem, desktop, reason);
+}
+
+/** {@linkcode micErrorMessage} in the desktop app. */
+function desktopMicMessage(problem: MicProblem, reason: string | null): string {
+  switch (problem) {
+    case "no_api":
+      return "This window has no microphone. The packaged app has one " +
+        "(`denext task desktop:package`); or talk to me in a browser with `denext task dev`.";
+    case "denied":
+      if (reason) return `I can't hear you: ${reason}.`;
+      return "I can't hear you: the microphone is blocked. Allow Loopy under Microphone in your " +
+        "system's privacy settings. A `denext task desktop` window never has the microphone; " +
+        "the packaged app (`denext task desktop:package`) does.";
     case "no_device":
       return "I can't find a microphone.";
     case "failed":

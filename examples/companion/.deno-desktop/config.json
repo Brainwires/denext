@@ -24,6 +24,9 @@
       "overlay": true
     },
     "backdrop": "none",
+    "backend": {
+      "linux": "cef"
+    },
     "tray": {
       "icon": "/tray.png",
       "tooltip": "Loopy",
@@ -77,6 +80,9 @@
           "https:",
           "http:"
         ]
+      },
+      "microphone": {
+        "usageDescription": "Loopy listens to you only while you talk to it: hold Space, click Loopy or press its shortcut."
       }
     }
   }

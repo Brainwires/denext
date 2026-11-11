@@ -145,8 +145,9 @@ import {
   connectRealtime,
   EVENTS_CHANNEL,
   micErrorMessage,
-  type MicUnavailableError,
+  MicUnavailableError,
   openMicrophone,
+  openProblem,
 } from "../examples/companion/lib/realtime-client.ts";
 import { VoiceBubble, voiceBubbleShown } from "../examples/companion/components/VoiceBubble.tsx";
 import { VoiceSettings } from "../examples/companion/components/VoiceSettings.tsx";
@@ -1774,9 +1775,61 @@ Deno.test("loopy microphone: getUserMedia's failures are named, and the desktop 
   const { stream } = fakeMic();
   assertEquals(await problem({ getUserMedia: () => Promise.resolve(stream) }), "opened");
   for (const p of ["no_api", "denied", "no_device", "failed"] as const) {
-    assertMatch(micErrorMessage(p, true), /desktop app yet.*browser/);
     assert(!micErrorMessage(p, false).includes("desktop"));
+    assert(!micErrorMessage(p, true).includes("yet"), "the packaged app has the microphone");
   }
+  // In the desktop app a refusal points at the OS's privacy settings and the packaged app.
+  assertMatch(micErrorMessage("denied", true), /privacy settings.*desktop:package/s);
+  assertMatch(micErrorMessage("no_api", true), /packaged app.*desktop:package/s);
+  assertEquals(micErrorMessage("no_device", true), micErrorMessage("no_device", false));
+  // Windows names the privacy switch that refuses it.
+  const reason = "Windows keeps the microphone from desktop apps (Settings > Privacy & security)";
+  assertEquals(micErrorMessage("denied", true, reason), `I can't hear you: ${reason}.`);
+});
+
+Deno.test("loopy microphone: a refusal in the desktop app asks which privacy switch is off", async () => {
+  const reasons: string[] = [];
+  const lookup = (answer: string | null | Error) => () => {
+    reasons.push("asked");
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
+  };
+  const denied = new MicUnavailableError("denied");
+  const reason = "Windows keeps the microphone from desktop apps";
+  assertEquals(await openProblem(denied, true, lookup(reason)), `I can't hear you: ${reason}.`);
+  assertEquals(await openProblem(denied, true, lookup(null)), micErrorMessage("denied", true));
+  assertEquals(
+    await openProblem(denied, true, lookup(new Error("no bridge"))),
+    micErrorMessage("denied", true),
+    "a failed lookup still answers",
+  );
+  assertEquals(reasons.length, 3);
+  // Nothing to ask in the browser, or about any other problem.
+  assertEquals(await openProblem(denied, false, lookup(reason)), micErrorMessage("denied", false));
+  const missing = new MicUnavailableError("no_device");
+  assertEquals(await openProblem(missing, true, lookup(reason)), "I can't find a microphone.");
+  assertEquals(reasons.length, 3);
+  // Anything else is the error's own message.
+  assertEquals(await openProblem(new Error("no key"), true, lookup(reason)), "no key");
+  assertEquals(await openProblem(null, false, lookup(null)), "I couldn't start listening.");
+});
+
+Deno.test("loopy desktop app: the packaged app has the microphone, and Chromium on Linux", async () => {
+  const desktop = companionConfig.desktop as {
+    backend?: unknown;
+    capabilities?: { microphone?: { usageDescription?: string } };
+  };
+  // WebRTC: Linux's system WebView has none, so CEF there and the system WebView elsewhere.
+  assertEquals(desktop.backend, { linux: "cef" });
+  const usage = desktop.capabilities?.microphone?.usageDescription ?? "";
+  assertMatch(usage, /^Loopy listens/, "macOS's prompt names Loopy and says when it listens");
+  // The desktop entry reads the runtime slice of the config; it must match (`denext desktop`
+  // rewrites it, and a stale copy would package without the microphone).
+  const runtime = JSON.parse(
+    await Deno.readTextFile(
+      new URL("../examples/companion/.deno-desktop/config.json", import.meta.url),
+    ),
+  );
+  assertEquals(runtime, JSON.parse(JSON.stringify({ desktop: companionConfig.desktop })));
 });
 
 Deno.test("loopy realtime client: the SDP offer goes to OpenAI with the secret; events flow both ways", async () => {
