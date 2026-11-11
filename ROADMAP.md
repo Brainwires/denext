@@ -157,7 +157,6 @@ seeded fallback. No Deno has the hook below yet.
 
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
   11-24); 5.0 only if it ships after that._
-- **spa-dev-self-write's 700 ms settles** (a test). _Why 5.x: test flake._
 - **expo-app's zod / decode-uri-component highs** (example only; fixed by Expo SDK 58). _Why 5.x:
   upstream._
 

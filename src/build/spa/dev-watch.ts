@@ -151,8 +151,12 @@ async function flushBatch(
  * crawl's transient `deno.json` rewrite — see `self-writes.ts`): the file still holds what
  * denext wrote, so it is dropped too. Changed paths accumulate across a 60 ms debounce
  * window so the flush can decide Fast Refresh vs a full reload for the whole batch.
+ *
+ * @param st The dev session.
+ * @param observe Called with each batch before it is flushed (tests wait on it instead of a
+ *   guessed settle time).
  */
-export function watch(st: SpaDevState): void {
+export function watch(st: SpaDevState, observe?: (batch: string[]) => void): void {
   const { paths } = st;
   watchPlatformFiles(st);
   const framework = linkedFrameworkDir();
@@ -167,7 +171,10 @@ export function watch(st: SpaDevState): void {
   const ignored = (p: string): boolean =>
     p.startsWith(paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
-  watchBatches(watcher, ignored, (batch) => void flushBatch(st, batch, framework));
+  watchBatches(watcher, ignored, (batch) => {
+    observe?.(batch);
+    void flushBatch(st, batch, framework);
+  });
 }
 
 /**
