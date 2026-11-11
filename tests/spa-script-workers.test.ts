@@ -8,7 +8,8 @@
 import { assert, assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startSpaProdServer } from "../src/build/spa.ts";
-import { stampWorkerNonce } from "../src/build/spa/script-workers.ts";
+import { stampWorkerNonce, stampWorkerNonceBody } from "../src/build/spa/script-workers.ts";
+import { spaShellHtml } from "../src/build/spa/shared.ts";
 
 const LIB = "/_denext/~partytown/";
 
@@ -27,7 +28,7 @@ Deno.test("stampWorkerNonce: the boot tag, the shell's scripts and the CSP carry
   assertStringIncludes(out, `<script nonce="n0nce">window.boot = 1</script>`);
   assertStringIncludes(
     out,
-    `<script nonce="n0nce" type="module" src="/_denext/client/index.js"></script>`,
+    `<script type="module" src="/_denext/client/index.js" nonce="n0nce"></script>`,
   );
   // The boot is the last thing in <head>: after the policy, before every body script.
   const boot = `<script src="${LIB}boot.js" nonce="n0nce"></script>`;
@@ -56,11 +57,108 @@ Deno.test("stampWorkerNonce: markup inside a script, a style or a comment is tex
   );
   assertStringIncludes(out, `<style>a::after { content: "<script>" }</style>`);
   assertStringIncludes(out, `<!-- <script src="/old.js"></script> -->`);
-  assertStringIncludes(out, `<script nonce="n0nce" data-note="a > b" src="/a.js"></script>`);
+  assertStringIncludes(out, `<script data-note="a > b" src="/a.js" nonce="n0nce"></script>`);
   // The boot goes before the real `</head>`, not the one in the script's string.
   const boot = `<script src="${LIB}boot.js" nonce="n0nce"></script>`;
   assertEquals(out.indexOf(boot), out.indexOf("-->") + 3);
   assertEquals(out.split("nonce=").length - 1, 3);
+});
+
+Deno.test("stampWorkerNonce: a stamped tag is written as HTMLRewriter writes it", () => {
+  // `<script/>` is not self-closing in HTML: its text runs to the end, so it goes last.
+  const shell = `<html><head><script src='/a.js'  data-x=1\n   async ></script>` +
+    `<meta content='script-src &#39;self&#39; "q"' http-equiv="Content-Security-Policy">` +
+    `<meta http-equiv="Content-Security-Policy" content="default-src x"></head>` +
+    `<body><SCRIPT type = "module"/>`;
+  assertEquals(
+    stampWorkerNonce(shell, LIB, "n"),
+    `<html><head><script src='/a.js' data-x=1 async nonce="n"></script>` +
+      `<meta content="script-src 'nonce-n' &#39;self&#39; &quot;q&quot;" ` +
+      `http-equiv="Content-Security-Policy">` +
+      // No `script-src` to list the nonce in: the tag stays as written.
+      `<meta http-equiv="Content-Security-Policy" content="default-src x">` +
+      `<script src="${LIB}boot.js" nonce="n"></script>\n  </head>` +
+      `<body><SCRIPT type = "module" nonce="n" />`,
+  );
+});
+
+Deno.test("stampWorkerNonceBody: without the runtime's HTMLRewriter, the string path's string", () => {
+  const before = Deno.env.get("DENEXT_HTML_REWRITER");
+  Deno.env.set("DENEXT_HTML_REWRITER", "0");
+  try {
+    assertEquals(stampWorkerNonceBody(CSP_SHELL, LIB, "n"), stampWorkerNonce(CSP_SHELL, LIB, "n"));
+  } finally {
+    if (before === undefined) Deno.env.delete("DENEXT_HTML_REWRITER");
+    else Deno.env.set("DENEXT_HTML_REWRITER", before);
+  }
+});
+
+/** Shells the byte-equality check stamps on both paths: built ones and hand-written edge cases. */
+async function stampCorpus(): Promise<string[]> {
+  const built = (spa: Record<string, unknown>, devScriptSrc?: string) =>
+    spaShellHtml({
+      spa: { entry: "./main.tsx", ...spa },
+      scriptSrc: "/_denext/client/index.js",
+      styleHref: "/_denext/client/index.css",
+      devScriptSrc,
+      preload: ["/_denext/client/chunk-a.js"],
+    });
+  return [
+    CSP_SHELL,
+    await built({ csp: "strict" }),
+    await built({ csp: "strict", title: "A & B" }, "/_denext/dev/reload.js"),
+    await built({
+      head: `<script>window.a = "<script></script>"</script>` +
+        `<script type=module src=/m.js></script><script async\nsrc='/x.js' ></script>` +
+        `<script nonce="own"></script><!-- <script src="/old.js"></script> -->` +
+        `<style>a::after { content: "<script>" }</style><title>t <script></title>`,
+      loading: `<p>Loading…</p><script>document.title = "<b>"</script>`,
+    }),
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta content='script-src &#39;self&#39; "q"' http-equiv="Content-Security-Policy">` +
+    `<script src='/a.js'  data-x=1\n   async ></script></head>` +
+    `<body><textarea><script></textarea><script>1</script></body></html><SCRIPT type = "module"/>`,
+    // No `</head>`, or two: the boot has one place to go only on the string path.
+    `<html><body><script src="/a.js"></script></body></html>`,
+    `<head></head><head></head><body><script></script></body>`,
+  ];
+}
+
+Deno.test({
+  name: "stampWorkerNonceBody: streamed through the runtime's HTMLRewriter, byte-identical",
+  // The rewriter is denext's Deno's (runtime 3.0.0-denext.3+), behind a flag: stamped in a child.
+  ignore: !(Deno.build as { denext?: string }).denext,
+  async fn() {
+    const shells = await stampCorpus();
+    const child = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--unstable-html-rewriter",
+        new URL("./fixtures/html-rewriter/stamp.ts", import.meta.url).pathname,
+      ],
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+      env: { DENEXT_HTML_REWRITER: "1" },
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(JSON.stringify(shells)));
+    await writer.close();
+    const out = await child.output();
+    assert(out.success, new TextDecoder().decode(out.stderr));
+    const { rewriter, pairs } = JSON.parse(new TextDecoder().decode(out.stdout)) as {
+      rewriter: string;
+      pairs: [string, string, boolean][];
+    };
+    assertEquals(rewriter, "function");
+    assertEquals(pairs.length, shells.length);
+    for (const [i, [string, streamed, viaRewriter]] of pairs.entries()) {
+      assertEquals(streamed, string, `shell ${i}`);
+      // The two hand-written shells without exactly one head take the string path.
+      assertEquals(viaRewriter, i < shells.length - 2, `shell ${i} streamed`);
+    }
+  },
 });
 
 /** A built SPA (shell, bundle, and the Partytown directory the build publishes). */
@@ -110,7 +208,7 @@ Deno.test("SPA start: each shell response mints its own worker-script nonce", as
     assert(a && b, "both responses carry a boot tag with a nonce");
     assertNotEquals(a, b, "a nonce is never reused across responses");
     assertStringIncludes(first, `script-src 'nonce-${a}'`);
-    assertStringIncludes(first, `<script nonce="${a}" type="module"`);
+    assertStringIncludes(first, `src="/_denext/client/index.js" nonce="${a}"></script>`);
     const boot = await fetch(origin + `${LIB}boot.js`);
     assertEquals(boot.status, 200);
     assertEquals(await boot.text(), "/* boot */\n");
