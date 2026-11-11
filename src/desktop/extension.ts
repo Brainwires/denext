@@ -13,6 +13,7 @@
  * @module
  */
 
+import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import type { StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
 import type {
   DesktopOpenWindowOptions,
@@ -248,8 +249,8 @@ export interface DesktopConfirmOptions {
  * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
  * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
- * items, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows
- * now. Each subscription returns its unsubscribe.
+ * items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
+ * every top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
  */
 export interface DesktopExtensionHost {
   /**
@@ -327,6 +328,16 @@ export interface DesktopExtensionHost {
    * rejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe.
    */
   onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` before every top-level navigation of every window, ahead of the navigation guard
+   * (`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`
+   * (`"link"`, `"script"`, `"redirect"`, `"window-open"`, `"other"`) and the `initiator` when the
+   * engine says: `event.preventDefault()` refuses it, `event.allow()` loads it in place although
+   * the guard would send it to the browser (a refusal wins). Decide synchronously; a throw is
+   * logged and decides nothing. Never called on a runtime without the hook (one that publishes no
+   * `Deno.desktop.navigationEvents`). Returns the unsubscribe.
+   */
+  onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
   /** The open windows now (the main window, the tray panel and the opened ones). */
   windows(): readonly DesktopWindowInfo[];
   /** The same store as {@linkcode DesktopCapCtx.secureStore}: this capability's own secrets. */

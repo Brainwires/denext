@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
+  result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
+  window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it
+  (`preventDefault()`) or load it in place (`allow()`). It fires on a Deno Desktop runtime that
+  dispatches the event (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`); elsewhere
+  the static policy decides alone.
 - **Desktop: every bridge handler knows who called.** A capability or extension handler gets
   `ctx.caller`: the window's `origin`, the calling `frame` (`kind` `"main"` / `"sub"` /
   `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a

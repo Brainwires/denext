@@ -4911,6 +4911,35 @@ export default {
           when the window stops it; nothing it returns is shown or run.
         </li>
         <li>
+          To decide in code, pass <code>runDesktop({"{ onWillNavigate }"})</code>{" "}
+          (or subscribe later with <code>onWillNavigate(fn)</code> on its result, or{" "}
+          <code>host.onWillNavigate(fn)</code>{" "}
+          in an extension). It sees every top-level navigation of every window before the static
+          policy: <code>event.url</code>, <code>event.window</code>, <code>event.kind</code>{" "}
+          (<code>"link"</code>, <code>"script"</code>, <code>"redirect"</code>,{" "}
+          <code>"window-open"</code>, <code>"other"</code>) and <code>event.initiator</code>{" "}
+          when the engine says. <code>event.preventDefault()</code>{" "}
+          refuses it (nothing loads, nothing opens in the browser); <code>event.allow()</code>{" "}
+          loads it in the window although the policy would send it to the browser. A refusal wins;
+          decide synchronously (a returned promise is not waited for), and a throw is logged and
+          decides nothing. The hook needs a Deno Desktop runtime that dispatches the event (one that
+          publishes <code>Deno.desktop.navigationEvents</code>;{" "}
+          <code>
+            runtimeHasNavigationEvents()
+          </code>{" "}
+          from <code>denext/desktop</code>{" "}
+          tells); on any other the static policy decides alone and the hook is never called.
+          <Code lang="ts">
+            {`await runDesktop({
+  importMetaUrl: import.meta.url,
+  onWillNavigate: (event) => {
+    if (event.kind === "window-open" && !event.url.startsWith("https://")) event.preventDefault();
+    if (new URL(event.url).origin === "https://login.example.com") event.allow();
+  },
+});`}
+          </Code>
+        </li>
+        <li>
           In the window, the app's server code reads the origin from{" "}
           <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme, so the page
           dials the loopback relay at <code>DENO_DESKTOP_WS_URL</code>{" "}

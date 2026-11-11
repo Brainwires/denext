@@ -13,6 +13,7 @@
  * @module
  */
 
+import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import {
   type ActivationPolicy,
   type AppController,
@@ -973,6 +974,7 @@ export function noDesktopWindows(): {
   getActivationPolicy(): ActivationPolicy | null;
   onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
   onSecondInstance(fn: DesktopSecondInstanceListener): () => void;
+  onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
 } {
   return {
     windows: {
@@ -990,5 +992,6 @@ export function noDesktopWindows(): {
     getActivationPolicy: () => null,
     onDockReopen: () => () => {},
     onSecondInstance: () => () => {},
+    onWillNavigate: () => () => {},
   };
 }

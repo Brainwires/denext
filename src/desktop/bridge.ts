@@ -71,6 +71,7 @@ import type {
   DesktopWindowRef,
 } from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
+import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -150,6 +151,12 @@ export interface DesktopBridgeOptions {
    * a subscription is kept by nobody.
    */
   readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
+  /**
+   * Subscribe to every window's top-level navigations: what
+   * {@link DesktopExtensionHost.onWillNavigate} delegates to. Without it (no desktop runtime, a
+   * test) a subscription is kept by nobody.
+   */
+  readonly onWillNavigate?: (fn: DesktopWillNavigateHandler) => () => void;
   /**
    * Whether the runtime marks each request with its frame ({@linkcode runtimeMarksFrames}, the
    * default): only then is {@link DesktopCaller.frame} `verified`.
@@ -564,6 +571,7 @@ export function createDesktopBridge(
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
+    onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
     // A box up while the quit guards are asked stops their deadline (not a session end's).
