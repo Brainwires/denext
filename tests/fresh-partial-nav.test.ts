@@ -22,7 +22,9 @@ Deno.test("partial navigation: buttons, links and forms fetch and swap their reg
     { url: "/search?q=lemon&fresh-partial=true", method: "get", body: null, nav: "1" },
     { url: "/save?fresh-partial=true", method: "post", body: "n,1", nav: "1" },
     { url: "/moved?fresh-partial=true", method: "post", body: "", nav: "1" },
+    { url: "/hop?fresh-partial=true", method: "get", body: null, nav: "1" },
   ]);
+  assertEquals(r.html[6], "foundsaved+one+two", "an answer from another origin is never applied");
   assertEquals(r.html.slice(0, 5), [
     "Lemonadeone", // the button replaced "recipe"
     "Lemonadeone", // the link click alone (before denext's navigation asks)
@@ -34,7 +36,11 @@ Deno.test("partial navigation: buttons, links and forms fetch and swap their reg
   assertEquals(r.pushed, ["http://app.test/?page=2"]);
   // The first swap marks the entry it shows (same URL), so back / forward can find it again.
   assertEquals(r.replaced, ["http://app.test/", "http://app.test/search", "http://app.test/"]);
-  assertEquals(r.assigned, ["http://app.test/landed"], "the redirect is followed in full");
+  assertEquals(
+    r.assigned,
+    ["http://app.test/landed", "https://other.example/landed"],
+    "a redirect is followed in full, and one to another origin too",
+  );
   assertEquals(r.title, "Answered");
   assertEquals(r.ignored, 0, "nothing else was fetched");
   assertEquals(r.foreign, [], "a cross-origin f-partial is never fetched");

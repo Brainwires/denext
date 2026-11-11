@@ -377,12 +377,28 @@ async function fetchPartials(req: PartialRequest): Promise<void> {
   const partial = new URL(req.partial);
   partial.searchParams.set(PARTIAL_SEARCH_PARAM, "true");
   const res = await fetch(partial, { ...req.init, headers: { "x-denext-nav": "1" } });
+  if (loadedElsewhere(res)) return;
   const url = landedUrl(req.url, res);
   const answer = await readAnswer(res);
   if (answer && answer.found.length > 0) return commitAnswer(req, url, answer);
   if (res.redirected) location.href = url.href;
   else if (req.navigate && req.init?.method !== "post") await navigate(url.href);
   else throw new Error(`denext/fresh: no <Partial> in the answer from ${partial.pathname}`);
+}
+
+/**
+ * A redirect that landed on another origin is not a page of this app: its answer is never
+ * applied (its partials and head tags would run as this origin). The browser loads that URL
+ * instead, as a full navigation would. Returns whether it did.
+ */
+function loadedElsewhere(res: Response): boolean {
+  if (!res.redirected || !res.url) return false;
+  const landed = new URL(res.url);
+  if (landed.origin === location.origin) return false;
+  void res.body?.cancel();
+  landed.searchParams.delete(PARTIAL_SEARCH_PARAM);
+  location.href = landed.href;
+  return true;
 }
 
 /** The URL the page shows after `res`: the same-origin URL a redirect landed on, else `url`. */

@@ -138,6 +138,7 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
     "/parts/more": h("div", null, h(Partial, { name: "list", mode: "append", key: "two" }, "+two")),
     "/search": h(Partial, { name: "recipe" }, "found"),
     "/save": h(Partial, { name: "list", mode: "prepend" }, "saved+"),
+    "/hop": h(Partial, { name: "recipe" }, "injected"),
   };
   setFlightParser((flight) => trees[flight as string]);
   g.fetch = (input: URL, init: RequestInit = {}) => {
@@ -160,6 +161,13 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
     if (url.pathname === "/moved") {
       Object.defineProperty(res, "redirected", { value: true });
       Object.defineProperty(res, "url", { value: ORIGIN + "/landed?fresh-partial=true" });
+    }
+    if (url.pathname === "/hop") {
+      // A same-origin URL that redirects to another origin, whose answer carries partials.
+      Object.defineProperty(res, "redirected", { value: true });
+      Object.defineProperty(res, "url", {
+        value: "https://other.example/landed?fresh-partial=true",
+      });
     }
     return Promise.resolve(res);
   };
@@ -205,6 +213,8 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
     target: new FormEl({ method: "post", action: "/moved" }, [], nav),
     submitter: null,
   });
+  // A redirect that landed on another origin: its answer is never applied; the browser loads it.
+  await fire("click", { target: new El("button", { type: "button", "f-partial": "/hop" }, nav) });
 
   // What partial navigation leaves alone.
   const before = report.fetched.length;
