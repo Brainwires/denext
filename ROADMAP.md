@@ -157,8 +157,6 @@ seeded fallback. No Deno has the hook below yet.
 
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
   11-24); 5.0 only if it ships after that._
-- **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by
-  design or document it. _Why 5.x: no user impact._
 - **spa-dev-self-write's 700 ms settles** (a test). _Why 5.x: test flake._
 - **expo-app's zod / decode-uri-component highs** (example only; fixed by Expo SDK 58). _Why 5.x:
   upstream._

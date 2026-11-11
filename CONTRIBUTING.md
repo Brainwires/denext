@@ -152,6 +152,24 @@ mobile-build.yml and desktop-ci.yml likewise). A newer push to the same branch c
 before it (`tests/workflow-concurrency.test.ts` holds every workflow to this); runs on `main`,
 pull requests, tags and dispatches are never cancelled, and no workflow runs on a schedule.
 
+### CI's stock Deno is a bootstrap
+
+The workflows install stock Deno with `denoland/setup-deno`, and that is by design. Deno 2.9.6 runs
+only what must be stock: `deno fmt --check`, `deno lint` and `doc-lint` (reproducible formatting;
+JSR scores what stock `deno publish` uploads), `deno publish`, and scripts that run no project
+code. Everything else runs on denext's toolchain: a job's next step after setup-deno is
+`scripts/ci/toolchain-on-path.ts`, which puts the pinned toolchain first on `PATH`, or
+`scripts/test-run.ts`, which runs every pass on it (ci.yml's header lists what runs on what). The
+desktop jobs install the toolchain pin's own base Deno (`deno` in
+`src/build/deno-toolchain-pin.json`, 2.9.8) instead, which `deno desktop` and the pinned Deno
+Desktop runtime need.
+
+Moving the bootstrap into the toolchain would mean a hand-rolled download-and-verify step in front
+of every job, in a few dozen places, including the ones that only lint; a stock bootstrap is
+smaller, already SHA-pinned through the action, and fails loudly when the toolchain can't be had.
+`tests/workflow-bootstrap-deno.test.ts` keeps it that way: setup-deno may install only those two
+versions. Bump 2.9.6 deliberately, then re-run `deno fmt`.
+
 ### The Fallow gate
 
 Every commit is gated by [`fallow`](https://github.com/fallow-rs/fallow), a
