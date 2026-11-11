@@ -2107,6 +2107,15 @@ export interface CompileConfig {
    * where `--sign` fails.
    */
   sign?: boolean | CompileSignConfig;
+  /**
+   * The resource limits baked into the executable, in place of {@link StartConfig.limits}
+   * (`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno from runtime 3.0.0-rc.2).
+   * Omitted, the binary takes `start.limits`; `false` bakes none, so a binary built from an app
+   * with `start.limits` (for `denext start` and the Docker image) runs unlimited. The binary
+   * enforces them on `./app` and `./app start`, and lifts them for `job` and `db` as it does
+   * `start.limits` (runtime 3.0.0-denext.8). Same shape and checks as `start.limits`.
+   */
+  limits?: StartLimits | false;
 }
 
 /** Options for {@link CompileConfig.sign}. */

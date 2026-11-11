@@ -478,3 +478,52 @@ Deno.test("retry: defineJob validates the policy up front", () => {
   }
   defineJob({ retry: { attempts: 0 }, handler: () => {} });
 });
+
+Deno.test("timeoutMs: an attempt past it fails, and the handler's signal aborts with the error", async () => {
+  reset();
+  let aborted: unknown;
+  registerJob(
+    "slow",
+    defineJob({
+      timeoutMs: 20,
+      handler: ({ signal }) =>
+        new Promise((resolve) => {
+          signal.addEventListener("abort", () => {
+            aborted = signal.reason;
+            resolve("stopped");
+          });
+        }),
+    }),
+  );
+  const err = await assertRejects(() => runJob("slow"), Error, 'job "slow" timed out after 20 ms');
+  assertEquals(err.name, "JobTimeoutError");
+  assertStrictEquals(aborted, err);
+  // A run that finishes in time is untouched.
+  registerJob("quick", defineJob({ timeoutMs: 1000, handler: () => "ok" }));
+  assertEquals(await runJob("quick"), "ok");
+});
+
+Deno.test("timeoutMs: each attempt has its own limit, and a timed-out attempt is retried", async () => {
+  reset();
+  const seen: number[] = [];
+  registerJob(
+    "hangs-once",
+    defineJob({
+      timeoutMs: 20,
+      retry: { attempts: 1, backoff: 0 },
+      handler: ({ attempt, signal }) => {
+        seen.push(attempt);
+        if (attempt > 1) return "second";
+        return new Promise((resolve) => signal.addEventListener("abort", () => resolve(null)));
+      },
+    }),
+  );
+  assertEquals(await runJob("hangs-once"), "second");
+  assertEquals(seen, [1, 2]);
+});
+
+Deno.test("timeoutMs: validated up front", () => {
+  for (const timeoutMs of [0, -1, 1.5, 2 ** 31]) {
+    assertThrows(() => defineJob({ handler: () => 1, timeoutMs }), Error, "timeoutMs");
+  }
+});

@@ -138,8 +138,13 @@ export default async function Blog() {
         callouts, GFM tables, inline and reference-style links and images, footnotes, emphasis; raw
         HTML is escaped and script-scheme links and image sources dropped); a <code>.mdx</code>{" "}
         entry is compiled to a component module at build, so nothing MDX-related runs per request.
-        Pass <code>components</code> to map elements or MDX components to your own. The{" "}
-        <code>.md</code> renderer is denext's own, public as{" "}
+        Pass <code>components</code>{" "}
+        to map elements or MDX components to your own: an MDX document gets them as its{" "}
+        <code>components</code> prop, and a <code>.md</code>{" "}
+        entry renders as elements with each named one replaced, as{" "}
+        <code>&lt;Markdown components&gt;</code> does (<code>
+          &lt;Content entry={"{post}"} components={"{{ a: SiteLink, code: Code }}"} /&gt;
+        </code>). The <code>.md</code> renderer is denext's own, public as{" "}
         <a href="/docs/markdown">
           <code>denext/markdown</code>
         </a>{" "}

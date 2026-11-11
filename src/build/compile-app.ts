@@ -54,7 +54,7 @@ import {
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
 import { tlsCompileFlags } from "./start-tls-deploy.ts";
-import { compileLimitFlags } from "./resource-limits.ts";
+import { compiledLimits, compileLimitFlags } from "./resource-limits.ts";
 import {
   carryNpmrc,
   type CompileLock,
@@ -825,10 +825,10 @@ export async function compileApp(
     configOff: paths.config?.start?.idleTrim === false,
     env: readEnv,
   });
-  // `start.limits`, baked in (src/build/resource-limits.ts): denort enforces them on every run of
-  // the binary, `job` and `db` included, and takes no flag or variable to lift them.
+  // `compile.limits` (else `start.limits`), baked in (src/build/resource-limits.ts): denort
+  // enforces them on every run of the binary; the entry lifts them for `job` and `db`.
   const limitFlags = compileLimitFlags(
-    paths.config?.start?.limits,
+    compiledLimits(paths.config),
     options.deno ? undefined : toolchainVersion(),
     options.warn,
   );

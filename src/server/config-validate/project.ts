@@ -214,21 +214,28 @@ function validateCompileSign(sign: unknown, fail: Fail): void {
 
 /**
  * `compile`: `include` a list of project-relative paths (no `..`, none absolute), `permissions`
- * `"all"` or an object of permission kinds to string arrays, `sign` a boolean or its options.
+ * `"all"` or an object of permission kinds to string arrays, `sign` a boolean or its options,
+ * `limits` `false` or limits the runtime accepts (as `start.limits`).
  */
 export function validateCompile(compile: unknown, fail: Fail): void {
   if (compile === undefined) return;
   if (typeof compile !== "object" || compile === null || Array.isArray(compile)) {
     return fail("compile", "must be an object");
   }
-  const { include, permissions, sign } = compile as {
+  const { include, permissions, sign, limits } = compile as {
     include?: unknown;
     permissions?: unknown;
     sign?: unknown;
+    limits?: unknown;
   };
   validateCompileInclude(include, fail);
   validateCompilePermissions(permissions, fail);
   validateCompileSign(sign, fail);
+  if (limits !== false) {
+    for (const [key, message] of resourceLimitProblems(limits, "compile.limits")) {
+      fail(key, message);
+    }
+  }
 }
 
 /**

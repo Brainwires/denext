@@ -69,6 +69,15 @@ export interface JobDefinition<R = unknown> {
    * error, when the run's signal aborts (shutdown).
    */
   retry?: JobRetry;
+  /**
+   * The longest one attempt may run, in milliseconds (a whole number, at most 2^31-1). Past it
+   * the attempt fails with a `JobTimeoutError` (`job "<name>" timed out after <n> ms`) and the
+   * handler's `signal` aborts with that error, so an `await` on a `fetch` or a query that takes
+   * the signal stops; with `retry`, the next attempt follows as after any failure. The handler
+   * itself is not preempted: synchronous work runs on until it returns, so check
+   * `signal.aborted` in a long loop. Default: no limit.
+   */
+  timeoutMs?: number;
 }
 
 /** A job descriptor. Returned by {@linkcode defineJob}; the shape a `jobs/` file default-exports. */
@@ -93,7 +102,39 @@ export function defineJob<R>(def: JobDefinition<R>): Job<R> {
     if (err) throw new Error(`defineJob: ${err}`);
   }
   if (def.retry !== undefined) retryPolicy(def.retry); // validate up front
+  if (def.timeoutMs !== undefined) checkTimeout(def.timeoutMs);
   return { ...def, __denextJob: true };
+}
+
+/** Throw unless `ms` is a valid {@linkcode JobDefinition.timeoutMs}. */
+function checkTimeout(ms: unknown): void {
+  if (!Number.isInteger(ms) || (ms as number) < 1 || (ms as number) > MAX_TIMER_DELAY) {
+    throw new Error(`defineJob: timeoutMs must be a whole number of ms, 1..${MAX_TIMER_DELAY}`);
+  }
+}
+
+/**
+ * Run one attempt under its `timeoutMs`: the handler gets a signal that also aborts at the
+ * timeout, and the attempt rejects then with a `JobTimeoutError` whether or not the handler
+ * stops.
+ */
+function withTimeout(
+  name: string,
+  ms: number,
+  signal: AbortSignal,
+  start: (signal: AbortSignal) => Promise<unknown>,
+): Promise<unknown> {
+  const timer = new AbortController();
+  const id = setTimeout(() => {
+    const error = new Error(`job "${name}" timed out after ${ms} ms`);
+    error.name = "JobTimeoutError";
+    timer.abort(error);
+  }, ms);
+  const timedOut = new Promise<never>((_, reject) => {
+    timer.signal.addEventListener("abort", () => reject(timer.signal.reason), { once: true });
+  });
+  return Promise.race([start(AbortSignal.any([signal, timer.signal])), timedOut])
+    .finally(() => clearTimeout(id));
 }
 
 /** The most retries a job may ask for. */
@@ -291,13 +332,25 @@ export function runJob(
   // `.catch(onScheduledError)` never saw it, and it escaped into the timer tick. It also meant a
   // whole class of failure could never be recorded. Converting it to a rejection here makes the
   // function honour its own type.
-  const run = (attempt = 1): Promise<unknown> => {
+  const invoke = (attempt: number, signal: AbortSignal): Promise<unknown> => {
     try {
       return Promise.resolve(job.handler({ name, payload, trigger, signal, attempt }));
     } catch (err) {
       return Promise.reject(err);
     }
   };
+  if (job.timeoutMs !== undefined) {
+    try {
+      checkTimeout(job.timeoutMs); // a job registered without `defineJob` is checked here
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+  const timeoutMs = job.timeoutMs;
+  const run = (attempt = 1): Promise<unknown> =>
+    timeoutMs === undefined
+      ? invoke(attempt, signal)
+      : withTimeout(name, timeoutMs, signal, (s) => invoke(attempt, s));
   // No recorder and no retry — the default: the handler runs and its promise is returned.
   if (!recorder && !job.retry) return run();
   if (!job.retry) return recordAttempt(name, trigger, run, undefined);

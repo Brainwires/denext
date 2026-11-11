@@ -3,7 +3,8 @@
  * ({@link "./runtime.ts" | `renderContent`}). It is denext's own `denext/markdown` renderer,
  * re-exported here: raw HTML escaped by default, `html: "sanitize"` keeps what a first-party
  * allowlist sanitizer allows, and `javascript:` / `vbscript:` / `data:` link and image URLs are
- * dropped. For element overrides (`<Markdown components={…} />`), import `denext/markdown`.
+ * dropped. {@linkcode markdownElements} renders the same document as denext elements with element
+ * overrides — what `<Content components={…} />` uses for a `.md` entry.
  *
  * @module
  */
@@ -75,3 +76,28 @@ export const renderMarkdown: (body: string, options?: MarkdownOptions) => string
  * @returns The sanitized HTML.
  */
 export const sanitizeHtml: (html: string, options?: SanitizeOptions) => string = core.sanitizeHtml;
+
+/**
+ * Element overrides for {@linkcode markdownElements}, keyed by the lower-case tag the HTML
+ * renderer writes (`h1`, `a`, `code`, …): a component, or a tag name to rename the element.
+ */
+export type MarkdownComponents = Readonly<Record<string, unknown>>;
+
+/**
+ * Render a Markdown body as denext elements with `components` standing in for the elements they
+ * name — `denext/markdown`'s `<Markdown source components {...options} />`, the same document and
+ * escaping as {@linkcode renderMarkdown}. A `code` override also gets `inline` and a fence's `lang`.
+ *
+ * @param body The Markdown source, without frontmatter.
+ * @param components The element overrides.
+ * @param options How raw HTML is treated (escaped by default).
+ * @returns The rendered element (a fragment of the document's blocks).
+ */
+export function markdownElements(
+  body: string,
+  components: MarkdownComponents,
+  options: MarkdownOptions = {},
+): unknown {
+  // The overrides are checked by `<Markdown>` at render time (a component or a tag name).
+  return core.Markdown({ ...options, source: body, components: components as never });
+}

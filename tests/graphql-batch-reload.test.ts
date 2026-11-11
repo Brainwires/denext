@@ -14,7 +14,7 @@ import {
   runMatchingPrepareSteps,
 } from "../src/plugin/mod.ts";
 import { createSchema, graphql } from "../packages/graphql/mod.ts";
-import { traceExport } from "../packages/graphql/trace.ts";
+import { configGraphWatch, traceExport } from "../packages/graphql/trace.ts";
 
 // graphql-yoga's parse / validate caches (lru-cache) memoize their clock for 1 ms behind a timer:
 // let it fire inside each test rather than after it.
@@ -243,6 +243,88 @@ Deno.test("graphql dev: a reload names the edited file, and a failed one reaches
   } finally {
     console.info = info;
     console.error = error;
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+/**
+ * A temp project whose config reaches its schema through an import-map alias (`#gql/`), which the
+ * relative-import trace can't follow.
+ */
+async function aliasedProject(): Promise<{ root: string; config: string }> {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_gql_alias_" }));
+  await Deno.mkdir(join(root, "graphql"), { recursive: true });
+  await Deno.mkdir(join(root, "app"), { recursive: true });
+  await Deno.writeTextFile(join(root, "deno.json"), `{ "imports": { "#gql/": "./graphql/" } }\n`);
+  await Deno.writeTextFile(join(root, "graphql", "schema.ts"), `export const schema = {};\n`);
+  await Deno.writeTextFile(join(root, "app", "page.tsx"), `export default () => null;\n`);
+  const config = join(root, "denext.config.ts");
+  await Deno.writeTextFile(
+    config,
+    `import { schema } from "#gql/schema.ts";\nexport default { plugins: [], x: schema };\n`,
+  );
+  return { root, config };
+}
+
+Deno.test("configGraphWatch: the directories of the project modules the config reaches, aliases too", async () => {
+  const { root, config } = await aliasedProject();
+  try {
+    assertEquals(await configGraphWatch(config, root), [
+      join("graphql", "**", "*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}"),
+    ]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("graphql dev: a schema object it can't trace reloads by re-importing the config", async () => {
+  const { root, config } = await aliasedProject();
+  const schemaFor = (hello: string) =>
+    createSchema({
+      typeDefs: "type Query { hello: String! }",
+      resolvers: { Query: { hello: () => hello } },
+    });
+  const loads: string[] = [];
+  let next = "reloaded";
+  const load = ((path: string) => {
+    loads.push(path);
+    // The re-imported config: another graphql() plugin elsewhere, and this one at /graphql.
+    return Promise.resolve({
+      default: () => ({
+        plugins: [
+          { name: "other" },
+          graphql({ schema: schemaFor("wrong path"), path: "/other" }),
+          graphql({ schema: schemaFor(next) }),
+        ],
+      }),
+    });
+  }) as unknown as ModuleLoader;
+  const prepare = {
+    projectRoot: root,
+    appDir: join(root, "app"),
+    outDir: join(root, ".denext"),
+    config: {},
+  };
+  const warned: string[] = [];
+  const { warn } = console;
+  console.warn = (...a: unknown[]) => warned.push(a.map(String).join(" "));
+  try {
+    const handle = await setup({ schema: schemaFor("world") }, "dev", root, load);
+    const hello = async () =>
+      (await (await handle(postJson({ query: "{ hello }" })))!.json()).data.hello as string;
+    assertEquals(await hello(), "world");
+    assertEquals(warned, [], "no restart notice");
+    assertEquals(await runMatchingPrepareSteps(prepare, [join(root, "app", "page.tsx")]), false);
+    // An edit under a directory the config's graph reaches re-reads the schema from the config.
+    assert(await runMatchingPrepareSteps(prepare, [join(root, "graphql", "resolvers.ts")]));
+    assertEquals(await hello(), "reloaded");
+    next = "again";
+    assert(await runMatchingPrepareSteps(prepare, [join(root, "graphql", "schema.ts")]));
+    assertEquals(await hello(), "again");
+    assertEquals(loads, [config, config]);
+  } finally {
+    console.warn = warn;
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }

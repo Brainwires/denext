@@ -176,9 +176,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
   `documentsErrors`.
-- **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
-  `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
-  dev-server restart after an edit (a module-path `schema` always reloads). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 
 ### Gleam and Lustre (`denext/gleam`)
 

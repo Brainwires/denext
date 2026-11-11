@@ -86,6 +86,24 @@ and this project adheres to
   `http2.constants`' status codes, `DatabaseSync#enableLoadExtension()`,
   `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
   and `dns.resolve("")`.
+- **Content collections: element overrides for `.md` entries.** `<Content entry={post} components={{
+  a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
+  as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
+  entries.
+- **`@denext/backend`: `requireUploadSize` per bucket.** A bucket with `requireUploadSize: true`
+  refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
+  upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
+  `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
+- **`@denext/backend`: a heap cap for Edge Functions.** `functions: { memoryMb }` (or a function's
+  own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
+  it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
+  `"unstable": ["worker-options"]` in `deno.json`.
+- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
+  `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
+  limit and a timed-out one is retried. Synchronous work is not preempted.
+- **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
+  cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
+  of `start.limits`; `compile: { limits: false }` bakes none.
 
 ### Changed
 
@@ -98,6 +116,10 @@ and this project adheres to
   it now needs its target granted too; a scope still covers its own resolved location, such as
   macOS's `/tmp`). In app windows, a chunk the app writes in one piece reaches the page as one
   write. The [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
+- **`@denext/graphql`: a schema object it can't trace reloads in `denext dev`.** One built in
+  `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
+  the config on an edit under the directory of any project module the config reaches, instead of
+  needing a dev-server restart.
 
 ### Fixed
 
@@ -126,6 +148,14 @@ and this project adheres to
   stopped by a signal, and the restore still works on a full disk, where rewriting the file
   fails, by moving the saved original back over it. The next build still cleans entries an older
   denext left behind.
+- **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
+  linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
+  collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
+- **An install log explains `Requires ffi access`.** A dependency's lifecycle script stopped by the
+  jail while loading a native addon (typically an install check that loads the package's own
+  prebuilt addon) now reports it and says to leave the package unapproved (out of
+  `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
+  OS can't confine the script, a jailed script can't load it.
 
 ### Documentation
 

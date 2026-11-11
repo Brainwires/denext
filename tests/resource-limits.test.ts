@@ -15,6 +15,7 @@ import {
 } from "../src/build/deno-version.ts";
 import {
   bakedLimitsNotice,
+  compiledLimits,
   compileLimitFlags,
   configTextLimits,
   configuredLimitFlags,
@@ -149,6 +150,17 @@ Deno.test("resource limits: inserted after `run` of a `deno run` command only", 
   assertEquals(withLimitFlags(["deno", "serve", "main.ts"], ["--max-time=5"]), null);
   assertEquals(withLimitFlags(["deno", "task", "start"], ["--max-time=5"]), null);
   assertEquals(withLimitFlags(["node", "run", "x"], ["--max-time=5"]), null);
+});
+
+Deno.test("compiledLimits: compile.limits in place of start.limits; false bakes none", () => {
+  const start = { limits: { memory: "512m" } };
+  assertEquals(compiledLimits({ start }), { memory: "512m" });
+  assertEquals(compiledLimits({ start, compile: { limits: { cpuSeconds: 60 } } }), {
+    cpuSeconds: 60,
+  });
+  assertEquals(compiledLimits({ start, compile: { limits: false } }), undefined);
+  assertEquals(compiledLimits({ compile: {} }), undefined);
+  assertEquals(compiledLimits(undefined), undefined);
 });
 
 Deno.test("resource limits: a compiled executable gets them baked in, off the toolchain a warning", () => {

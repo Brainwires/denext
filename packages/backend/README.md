@@ -162,6 +162,8 @@ Guides: [Backend](https://denext.dev/docs/backend) ·
   (`storage.bucket(name, { service: true })`) or a public bucket's download works.
 - **Size, type and content**: `maxBytes` and the `mime` allow-list are checked when an upload is
   signed and again on the bytes; a declared image must start with that format's magic bytes.
+  `requireUploadSize: true` on a bucket refuses a `createSignedUploadUrl` without `size`, so each
+  signed URL pins the exact length (size-less signed uploads stay allowed by default).
 - **Keys** cannot leave their bucket: no `..`, empty segments, control characters or backslashes.
 - **Signed URLs** are HMAC-SHA256 over every parameter (method, bucket, key, expiry, type, size,
   transform), verified in constant time; S3 URLs are SigV4-presigned and pin type and size.

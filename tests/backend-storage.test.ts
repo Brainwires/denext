@@ -971,6 +971,37 @@ Deno.test("fs storage: server API — upload kinds, sniffed types, list paging, 
   }
 });
 
+Deno.test("requireUploadSize: a bucket that opts in refuses a size-less signed upload; others keep allowing it", async () => {
+  const app = await backendApp({
+    buckets: { strict: { ...docs, requireUploadSize: true }, loose: docs },
+  });
+  try {
+    const strict = storage.bucket("strict", { service: true });
+    const err = await assertRejects(
+      () => strict.createSignedUploadUrl("a.txt", { contentType: "text/plain" }),
+      StorageError,
+      "requires the upload's size (requireUploadSize)",
+    );
+    assertEquals([err.code, err.status], ["bad_request", 400]);
+    // With the size it signs, and the URL pins it.
+    const sized = await strict.createSignedUploadUrl("a.txt", {
+      contentType: "text/plain",
+      size: 3,
+    });
+    assertStringIncludes(sized.url, "n=3");
+    // The plugin's own sign route always carries the size, so it works unchanged.
+    const { put } = await uploadVia(app, "strict", "b.txt", "hey", "text/plain", 3);
+    assertEquals(put.status, 200);
+    await put.body?.cancel();
+    // The default: a size-less signed upload is still allowed.
+    const loose = await storage.bucket("loose", { service: true })
+      .createSignedUploadUrl("c.txt", { contentType: "text/plain" });
+    assert(!loose.url.includes("n="));
+  } finally {
+    await app.close();
+  }
+});
+
 Deno.test("backend(): setup validates options; no storage → only the admin endpoint; basePath and the dev secret", async () => {
   assertThrows(() => backend({ storage: { buckets: { a: {} } } as never }), TypeError, "driver");
   // No declared bucket is fine: buckets can be created at runtime.

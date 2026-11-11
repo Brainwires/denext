@@ -152,6 +152,27 @@ export default defineJob({
         one whose wait was cut short by shutdown is recorded as the last attempt.
       </p>
 
+      <h2 id="timeouts">Timeouts</h2>
+      <p>
+        <code>timeoutMs</code> bounds one attempt: past it the attempt fails with a{" "}
+        <code>JobTimeoutError</code>{" "}
+        (<code>job "sync" timed out after 60000 ms</code>) and the handler's <code>signal</code>
+        {" "}
+        aborts with that error, so a <code>fetch</code> or query that takes the signal stops. With
+        {" "}
+        <code>retry</code>{" "}
+        each attempt has its own limit and a timed-out one is retried like any failure. The handler
+        is not preempted: synchronous work runs on until it returns, so check{" "}
+        <code>signal.aborted</code>{" "}
+        in a long loop, and a scheduled run counts as finished once its attempt has timed out.
+      </p>
+      <Code lang="ts">
+        {`export default defineJob({
+  timeoutMs: 60_000,
+  handler: async ({ signal }) => await fetch(REPORT_URL, { signal }),
+});`}
+      </Code>
+
       <h2 id="run-history">Run history</h2>
       <p>
         Off by default: denext records nothing and writes no file until you ask. With{" "}
