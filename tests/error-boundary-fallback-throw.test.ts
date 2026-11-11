@@ -19,6 +19,8 @@ const LOAD_TIMEOUT_MS = 120_000;
 interface WorkerLimits {
   loadMs: number;
   renderMs: number;
+  /** The Worker's `name` (slow-load.ts reads its load delay from it). */
+  name?: string;
 }
 
 /** Start `url` in a Worker, wait (under `loadMs`) for its `ready` message, then post `message`
@@ -29,7 +31,7 @@ function runInWorker(
   label: string,
   limits: WorkerLimits = { loadMs: LOAD_TIMEOUT_MS, renderMs: TIMEOUT_MS },
 ): Promise<Record<string, unknown>> {
-  const worker = new Worker(url, { type: "module" });
+  const worker = new Worker(url, { type: "module", name: limits.name });
   let timer: ReturnType<typeof setTimeout> | undefined;
   return new Promise<Record<string, unknown>>((resolve, reject) => {
     timer = setTimeout(
@@ -70,8 +72,14 @@ function probe(
 const slowLoad = new URL("./fixtures/error-boundary-loop/slow-load.ts", import.meta.url);
 
 Deno.test("harness: the render limit starts once the Worker has loaded", async () => {
-  // The Worker takes 500 ms to load; a 200 ms render limit counted from creation would fail.
-  const r = await runInWorker(slowLoad, "ok", "slow load", { loadMs: 30_000, renderMs: 200 });
+  // The Worker takes 3 s to load; a 2 s render limit counted from creation would fail before it
+  // is ready. Counted from the post, 2 s is ample for the answer even under coverage
+  // instrumentation, where a 200 ms one was not.
+  const r = await runInWorker(slowLoad, "ok", "slow load", {
+    loadMs: 60_000,
+    renderMs: 2_000,
+    name: "delay:3000",
+  });
   assertEquals(r, { answered: "ok" });
 });
 

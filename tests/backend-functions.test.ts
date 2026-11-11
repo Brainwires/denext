@@ -127,8 +127,16 @@ Deno.test({
     await response.body?.cancel();
     assertStringIncludes(JSON.stringify(seen[0]), `"deno":{"memoryMb":24}`);
     host.stop();
-    // For real, on the toolchain (the cap needs --unstable-worker-options in the process).
+    // For real, on the toolchain (the cap needs --unstable-worker-options in the process). The
+    // child runs without the coverage run's collection: with it, the runtime's memory-limit
+    // termination of a worker busy in a request reaches the parent as no error event, so the
+    // request would end only at its wall-clock limit (504) and prove nothing about the cap.
+    const env = Deno.env.toObject();
+    delete env.DENO_COVERAGE_DIR;
+    delete env.DENEXT_CHILD_COVERAGE;
     const out = await new Deno.Command(Deno.execPath(), {
+      clearEnv: true,
+      env,
       args: [
         "run",
         "-A",
