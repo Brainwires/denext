@@ -409,13 +409,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
-  its `signal` / `computed` / `effect` (and hook forms) take no options argument.
-  `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
-  `unmountComponentAtNode`, and its `render` / `hydrate` / `flushSync` take no callback;
-  `denext/preact/jsx-runtime` lacks Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`,
-  `jsxEscape`), so `"jsx": "precompile"` needs `react-jsx`. (The parity gate lists each in
-  `tests/fixtures/react-parity-known-gaps.json`.) Of Preact's `options` hooks denext calls
-  `vnode`, `event` and `useDebugValue` (for elements the Preact entry points create); `diffed`,
+  its `signal` / `computed` / `effect` (and hook forms) take no options argument (the parity
+  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Under `"jsx": "precompile"`,
+  an element Deno precompiles into a template drops its event handlers and `key` (Preact's
+  `jsxAttr` serializes only attributes), so an interactive component compiled that way needs
+  `react-jsx`. Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
+  `attr` (for elements the Preact entry points create); `diffed`,
   `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
   so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
   a server render, and a production build compiles its boundary support in only when the app's

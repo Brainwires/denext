@@ -17,6 +17,15 @@ and this project adheres to
   browser back / forward between partial-navigation entries restores each region as the entry
   left it (an `append` / `prepend` history included) instead of re-rendering the whole page.
   `denext migrate` no longer lists `f-view-transition` for review.
+- **`denext/preact/compat`: Preact's remaining `react-dom` helpers.** `createFactory`,
+  `findDOMNode` (a mounted class instance's first DOM node), `isFragment`, `isMemo` and
+  `unmountComponentAtNode`; `render(vnode, parent, callback)` / `hydrate(vnode, parent, callback)`
+  call `callback` once the DOM is updated and keep one root per container (a second `render`
+  re-renders it), and `flushSync(fn, arg)` passes `arg` to `fn`.
+- **`denext/preact/jsx-runtime`: Deno's precompiled JSX.** `jsxTemplate`, `jsxAttr` and
+  `jsxEscape`, with Preact's serialization (and its `options.attr` hook), so a project with
+  `"jsx": "precompile"` and `jsxImportSource: "preact"` runs on denext. A template is parsed once
+  into elements, so it renders on the server and mounts in the browser.
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
   result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
   window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it
