@@ -532,11 +532,18 @@ async function handleDelete(ctx: AuthRouteContext): Promise<Response | null> {
   if (!pk) return null;
   const caller = await recentSession(pk);
   if (caller instanceof Response) return caller;
-  const { session } = caller;
-  const record = await pk.adapter.getPasskey(ctx.params.id);
-  if (!record || record.userId !== session.user.id) return json({ error: "not found" }, 404);
+  return await deleteOwnPasskey(pk, caller.session.user.id);
+}
+
+/**
+ * Delete the passkey `ctx.params.id` names when `userId` owns it (and forget it as a factor):
+ * `{ ok: true }`, else a `404`. Shared with the native row (`DELETE /native/passkeys/:id`).
+ */
+export async function deleteOwnPasskey(pk: PasskeyContext, userId: string): Promise<Response> {
+  const record = await pk.adapter.getPasskey(pk.ctx.params.id);
+  if (!record || record.userId !== userId) return json({ error: "not found" }, 404);
   await pk.adapter.deletePasskey(record.id);
-  await forgetPasskeyFactor(ctx.config, record.userId, record.id);
+  await forgetPasskeyFactor(pk.ctx.config, record.userId, record.id);
   return json({ ok: true });
 }
 

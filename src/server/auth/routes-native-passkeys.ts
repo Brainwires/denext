@@ -38,7 +38,7 @@
  */
 
 import { emitAuthEvent } from "./events.ts";
-import { forgetPasskeyFactor, hasVerifiedFactor } from "./factors.ts";
+import { hasVerifiedFactor } from "./factors.ts";
 import { mfaPendingFor, pendingSessionLive, recentlyAuthenticated } from "./mfa.ts";
 import { consumeNativeMfaToken, issueNativeMfaToken, type NativeMfaPending } from "./native-mfa.ts";
 import { finishNativeSignIn } from "./routes-native-mfa.ts";
@@ -61,6 +61,7 @@ import {
 } from "./passkey-ceremony.ts";
 import {
   beginCeremony,
+  deleteOwnPasskey,
   finishRegistration,
   type PasskeyContext,
   passkeyContext,
@@ -248,6 +249,17 @@ async function codeRequired(native: ResolvedNative, pending: NativeMfaPending): 
   );
 }
 
+/** The pending sign-in a step-up's `mfa_token` names, when a passkey may finish it; else the answer. */
+async function stepUpPending(
+  ctx: AuthRouteContext,
+  native: ResolvedNative,
+  body: Record<string, unknown>,
+): Promise<NativeMfaPending | Response> {
+  const pending = await pendingOf(ctx, native, body.mfa_token);
+  if (!pending) return invalidGrant();
+  return passkeyCanFinish(pending) ? pending : await codeRequired(native, pending);
+}
+
 /** `POST /native/passkey/authenticate/options` with `{ mfa_token }`: the step-up's options. */
 async function stepUpOptions(
   ctx: AuthRouteContext,
@@ -255,9 +267,8 @@ async function stepUpOptions(
   body: Record<string, unknown>,
 ): Promise<Response> {
   const { pk, native } = caller;
-  const pending = await pendingOf(ctx, native, body.mfa_token);
-  if (!pending) return invalidGrant();
-  if (!passkeyCanFinish(pending)) return await codeRequired(native, pending);
+  const pending = await stepUpPending(ctx, native, body);
+  if (pending instanceof Response) return pending;
   const allow = await pk.adapter.listPasskeys(pending.user.id);
   const { challenge, ceremonyId } = await beginCeremony(pk, "mfa", null, pending.user.id, true);
   return json(
@@ -296,9 +307,8 @@ async function stepUp(
   body: Record<string, unknown>,
 ): Promise<Response> {
   const { pk, native } = caller;
-  const pending = await pendingOf(ctx, native, body.mfa_token);
-  if (!pending) return invalidGrant();
-  if (!passkeyCanFinish(pending)) return await codeRequired(native, pending);
+  const pending = await stepUpPending(ctx, native, body);
+  if (pending instanceof Response) return pending;
   // The same per-user budget a code at `/native/mfa` spends.
   const keys = subjectBucketKeys("mfa", pending.user.id, ctx.request, ctx.config);
   const retryAfter = await consumeHitBudget(mfaLimiter(ctx.config), keys);
@@ -333,6 +343,17 @@ async function stepUp(
 
 // ---- registration -------------------------------------------------------------------
 
+/** The bearer's live session (and the feature), or the answer to send. */
+async function bearerCaller(
+  ctx: AuthRouteContext,
+): Promise<{ pk: PasskeyContext; session: AuthSession } | Response | null> {
+  const caller = nativePasskeys(ctx);
+  if (!caller || caller instanceof Response) return caller;
+  const bearer = nativeBearerToken(ctx.request);
+  const session = bearer === undefined ? null : await verifyNativeAccessToken(ctx.config, bearer);
+  return session ? { pk: caller.pk, session } : json({ error: "unauthorized" }, 401);
+}
+
 /**
  * The bearer's session, when it may register a passkey: a live access token from a recent
  * sign-in, for a stored, non-SSO user with a verified address (when it has one).
@@ -340,13 +361,20 @@ async function stepUp(
 async function registrationCaller(
   ctx: AuthRouteContext,
 ): Promise<{ pk: PasskeyContext; session: AuthSession } | Response | null> {
-  const caller = nativePasskeys(ctx);
+  const caller = await recentBearer(ctx);
   if (!caller || caller instanceof Response) return caller;
-  const bearer = nativeBearerToken(ctx.request);
-  const session = bearer === undefined ? null : await verifyNativeAccessToken(ctx.config, bearer);
-  if (!session) return json({ error: "unauthorized" }, 401);
-  if (!recentlyAuthenticated(ctx.options, session)) return json({ error: "reauth_required" }, 403);
-  return await registrationRefusal(caller.pk, session) ?? { pk: caller.pk, session };
+  return await registrationRefusal(caller.pk, caller.session) ?? caller;
+}
+
+/** {@link bearerCaller}, from a recent sign-in (`403 reauth_required` otherwise). */
+async function recentBearer(
+  ctx: AuthRouteContext,
+): Promise<{ pk: PasskeyContext; session: AuthSession } | Response | null> {
+  const caller = await bearerCaller(ctx);
+  if (!caller || caller instanceof Response) return caller;
+  return recentlyAuthenticated(ctx.options, caller.session)
+    ? caller
+    : json({ error: "reauth_required" }, 403);
 }
 
 /** `POST /native/passkey/register/options`. */
@@ -380,17 +408,6 @@ async function handleRegister(ctx: AuthRouteContext): Promise<Response | null> {
 
 // ---- management -----------------------------------------------------------------------
 
-/** The bearer's live session (and the feature), or the answer to send. */
-async function bearerCaller(
-  ctx: AuthRouteContext,
-): Promise<{ pk: PasskeyContext; session: AuthSession } | Response | null> {
-  const caller = nativePasskeys(ctx);
-  if (!caller || caller instanceof Response) return caller;
-  const bearer = nativeBearerToken(ctx.request);
-  const session = bearer === undefined ? null : await verifyNativeAccessToken(ctx.config, bearer);
-  return session ? { pk: caller.pk, session } : json({ error: "unauthorized" }, 401);
-}
-
 /** `GET /native/passkeys`. */
 async function handleList(ctx: AuthRouteContext): Promise<Response | null> {
   const caller = await bearerCaller(ctx);
@@ -401,15 +418,9 @@ async function handleList(ctx: AuthRouteContext): Promise<Response | null> {
 
 /** `DELETE /native/passkeys/:id`. */
 async function handleDelete(ctx: AuthRouteContext): Promise<Response | null> {
-  const caller = await bearerCaller(ctx);
+  const caller = await recentBearer(ctx);
   if (!caller || caller instanceof Response) return caller;
-  const { pk, session } = caller;
-  if (!recentlyAuthenticated(ctx.options, session)) return json({ error: "reauth_required" }, 403);
-  const record = await pk.adapter.getPasskey(ctx.params.id);
-  if (!record || record.userId !== session.user.id) return json({ error: "not found" }, 404);
-  await pk.adapter.deletePasskey(record.id);
-  await forgetPasskeyFactor(ctx.config, record.userId, record.id);
-  return json({ ok: true });
+  return await deleteOwnPasskey(caller.pk, caller.session.user.id);
 }
 
 /** `OPTIONS` on a native passkey path: a preflight under the app's `cors` policy. */
