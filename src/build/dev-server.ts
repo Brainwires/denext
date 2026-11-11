@@ -66,15 +66,18 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
   };
   options.signal?.addEventListener("abort", cleanup, { once: true });
   // The supervised services stop first (reverse start order), then the plugin teardowns.
-  server.finished.then(() => stopServices()).then(() => {
+  const tornDown = server.finished.then(() => stopServices()).then(() => {
     runPluginTeardown();
     releaseDefaultCacheStore();
     cleanup();
   });
-  // A stopped server is finished once its background runs (a `deno check` child the stop
-  // signal ended) have exited too.
+  // A stopped server is finished once its services have stopped, its teardowns ran and its
+  // background runs (a `deno check` child the stop signal ended) have exited too: a caller that
+  // removes the project after `finished` races nothing still writing to it.
   return Object.assign(server, {
-    finished: server.finished.then(() => backgroundSettled(st)),
+    finished: Promise.all([tornDown, server.finished.then(() => backgroundSettled(st))]).then(
+      () => {},
+    ),
   });
 }
 

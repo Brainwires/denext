@@ -12,8 +12,43 @@ import { createSpaDevState, getUnbundledCss } from "../src/build/spa/dev-state.t
 import { watch } from "../src/build/spa/dev-watch.ts";
 import { isSelfWrite, recordSelfWrite, writeManagedFile } from "../src/build/self-writes.ts";
 
-/** Wait past the watcher's 60 ms debounce and the FS event latency. */
-const settle = () => new Promise((r) => setTimeout(r, 700));
+/** The watcher's batches, and a wait for one holding a path (the watcher's ack, not a guess). */
+class Batches {
+  readonly seen: string[][] = [];
+  #waiters: Array<{ path: string; resolve: () => void }> = [];
+
+  /** The `watch` observer. */
+  readonly push = (batch: string[]): void => {
+    this.seen.push(batch);
+    const due = this.#waiters.filter((w) => batch.includes(w.path));
+    this.#waiters = this.#waiters.filter((w) => !due.includes(w));
+    for (const w of due) w.resolve();
+  };
+
+  /** Resolves once a batch holding `path` arrives (call it before the write). */
+  next(path: string): Promise<void> {
+    return new Promise((resolve) => this.#waiters.push({ path, resolve }));
+  }
+}
+
+/**
+ * Write `path` until the watcher reports it: the watcher has attached, and every event before
+ * the write (the fixture's own) has been delivered ahead of it. A write made before a macOS
+ * FSEvents stream starts is never reported, hence the rewrite until one is.
+ */
+async function attached(watched: Batches, path: string): Promise<void> {
+  const seen = watched.next(path);
+  for (let i = 0;; i++) {
+    await Deno.writeTextFile(path, `attach ${i}\n`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reported = await Promise.race([
+      seen.then(() => true),
+      new Promise<false>((r) => timer = setTimeout(() => r(false), 250)),
+    ]);
+    clearTimeout(timer);
+    if (reported) return;
+  }
+}
 
 /** A root-entry SPA whose deno.json carries the css→shim redirects the CLI injects. */
 async function rootEntrySpa(): Promise<{ dir: string; config: string; original: string }> {
@@ -47,21 +82,36 @@ Deno.test({
     try {
       const paths = await resolveProject(dir);
       const st = createSpaDevState({ paths, signal: controller.signal, unbundled: false });
-      watch(st);
-      await settle(); // let the watcher attach before the first build writes
+      const watched = new Batches();
+      watch(st, watched.push);
+      const attach = join(dir, "attach.txt");
+      await attached(watched, attach);
+      watched.seen.length = 0;
 
       // Two builds, each crawling the CSS graph (strip + restore of deno.json).
       await getUnbundledCss(st);
       st.unbundledCssGen = -1;
       await getUnbundledCss(st);
-      await settle();
-      assertEquals(st.generation, 0, "the build's own writes were taken for edits");
+      // A marker edit after the builds: once its batch is in, every event the builds caused
+      // has been through the watcher (events arrive in order).
+      const marker = join(dir, "marker.txt");
+      const markerSeen = watched.next(marker);
+      await Deno.writeTextFile(marker, "after the builds\n");
+      await markerSeen;
+      assertEquals(
+        // An attach rewrite made before the watcher reported the first may still land.
+        watched.seen.flat().filter((p) => p !== marker && p !== attach),
+        [],
+        "the build's own writes were taken for edits",
+      );
       assertEquals(await Deno.readTextFile(config), original, "deno.json is restored verbatim");
 
       // A developer's edit to the same file is still an edit.
+      const edited = st.generation;
+      const configSeen = watched.next(config);
       await Deno.writeTextFile(config, original.replace("{", '{\n  "lock": false,'));
-      await settle();
-      assertEquals(st.generation > 0, true, "a real deno.json edit must still rebuild");
+      await configSeen;
+      assertEquals(st.generation > edited, true, "a real deno.json edit must still rebuild");
     } finally {
       controller.abort();
       await Deno.remove(dir, { recursive: true }).catch(() => {});

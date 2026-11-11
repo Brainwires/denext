@@ -35,16 +35,6 @@ const reason = !URL_
   : undefined;
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
 
-/** Poll `fn` until it returns `want` (the NOTIFY arrives asynchronously), up to 3 s. */
-async function eventually<T>(fn: () => Promise<T>, want: T): Promise<T> {
-  let last = await fn();
-  for (let i = 0; i < 30 && last !== want; i++) {
-    await new Promise((r) => setTimeout(r, 100));
-    last = await fn();
-  }
-  return last;
-}
-
 /**
  * Watch the plugin's `pgrst` listener on `sql` (the client handed to `backend({ postgres })`):
  * `listening` settles once it is subscribed, and `drained()` sends a payload the plugin ignores
@@ -52,7 +42,8 @@ async function eventually<T>(fn: () => Promise<T>, want: T): Promise<T> {
  * listener its notifications in commit order, so by then every reload signal sent before it —
  * the backend's own boot migration sends one, as does `migratePostgres` — has been handled. A
  * signal still in flight would otherwise drop the cache after the test's next DDL, and the
- * "cached catalog" read would see the new column.
+ * "cached catalog" read would see the new column; and a read right after a reload signal needs
+ * no polling (the plugin drops its cache as the notification arrives).
  */
 function watchReloads(sql: SqlClient): { listening: Promise<void>; drained(): Promise<void> } {
   const listen = sql.listen!.bind(sql);
@@ -132,7 +123,9 @@ Deno.test({
       await db.service().unsafe("alter table later add column extra text");
       assertEquals(await status("/rest/v1/later?select=extra"), 400, "cached catalog");
       await db.service()`select pg_notify('pgrst', 'reload schema')`;
-      assertEquals(await eventually(() => status("/rest/v1/later?select=extra"), 200), 200);
+      // Acknowledged, not polled for: once the barrier behind it arrives, the reload was handled.
+      await reloads.drained();
+      assertEquals(await status("/rest/v1/later?select=extra"), 200, "re-read after the signal");
     } finally {
       await runPluginTeardown();
       resetPlugins();

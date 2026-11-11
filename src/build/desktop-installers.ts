@@ -853,8 +853,11 @@ async function runTool(cmd: string, args: string[], cwd?: string): Promise<void>
 // Linux: the installed tree, .deb (built here) and .rpm (rpmbuild)
 // ---------------------------------------------------------------------------------------------
 
-/** The shared libraries the launcher links, per backend, as (soname, Debian package). */
-const LINUX_RUNTIME_DEPS: Record<string, ReadonlyArray<readonly [string, string]>> = {
+/**
+ * The shared libraries the launcher links, per backend, as (soname, Debian package). Also read by
+ * the packages' NEEDED check (scripts/ci/linux-needed-check.ts).
+ */
+export const LINUX_RUNTIME_DEPS: Record<string, ReadonlyArray<readonly [string, string]>> = {
   webview: [
     ["libwebkit2gtk-4.1.so.0", "libwebkit2gtk-4.1-0"],
     ["libgtk-3.so.0", "libgtk-3-0"],

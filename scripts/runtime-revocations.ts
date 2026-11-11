@@ -8,9 +8,18 @@
 //   deno task revocations init [--no-publish]           the first list (nothing revoked)
 //   deno task revocations add --component cli|desktop --version <v> --reason <text>
 //       [--targets <triple,…>] [--advisory <https url>] [--fixed-in <text>] [--no-publish]
-//   deno task revocations sign <payload.json> [--no-publish]   sign a hand-edited list's entries
+//   deno task revocations sign <entries.json> [--no-publish] [--force]
+//       sign a whole list from an entries file (security/runtime-revocations.json is the one in
+//       the repository): the entries are put in canonical form first, what they do to the
+//       checked-out pins is printed, and a published entry the file leaves out is refused (it
+//       would be un-revoked) unless --force
+//   deno task revocations canonical <entries.json> [--check]
+//       rewrite an entries file in canonical form (fields in a fixed order, targets sorted,
+//       entries by component then newest version first); --check only refuses one that isn't
 //   deno task revocations resign [--if-due] [--no-publish]     fresh expiry + sequence, same entries
 //   deno task revocations verify [<file>]               a file, or the published copies
+//   deno task revocations expiry                        warn when the published list expires
+//       within 10 days, has expired or can't be read (`deno task release` step 0b runs the same)
 //   deno task revocations publish <file>                upload a signed list
 //   deno task revocations floor [--file <keys module>]  raise the compiled-in minimum sequence
 //       (RUNTIME_REVOCATION_MIN_SEQUENCE in src/build/runtime-revocation-keys.ts) to the published
@@ -32,7 +41,9 @@
 
 import { join } from "@std/path";
 import {
+  checkRevocationList,
   freshRevocationList,
+  REVOCATION_RESIGN_DAYS,
   REVOCATION_URLS,
   type RevocationEnvelope,
   revocationKeys,
@@ -45,6 +56,9 @@ import {
   verifyRevocationDocument,
 } from "../src/build/runtime-revocations.ts";
 import { fromBase64, toBase64 } from "../src/build/ota-signing.ts";
+import { compareDenoVersions } from "../src/build/deno-version.ts";
+import toolchainPinJson from "../src/build/deno-toolchain-pin.json" with { type: "json" };
+import runtimePinJson from "../src/build/desktop-runtime-pin.json" with { type: "json" };
 
 /** The keychain item's service. */
 export const KEYCHAIN_SERVICE = "denext-runtime-revocations";
@@ -77,6 +91,8 @@ export interface RevocationsDeps {
   readonly now: () => Date;
   readonly env: (name: string) => string | undefined;
   readonly log: (line: string) => void;
+  /** The pins `sign` reports on (default: the checkout's, {@linkcode checkedOutPins}). */
+  readonly pins?: readonly PinnedRuntime[];
 }
 
 /** A refusal: printed as one line, exit 1. */
@@ -98,7 +114,11 @@ async function realRun(cmd: string, args: string[], stdin?: string): Promise<Run
     stderr: "inherit",
   }).spawn();
   // Fed as a stream, so a secret on stdin never touches a command line.
-  if (piped) await ReadableStream.from([new TextEncoder().encode(stdin)]).pipeTo(child.stdin);
+  if (piped) {
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(stdin));
+    await writer.close();
+  }
   const { code, stdout } = await child.output();
   return { code, stdout: new TextDecoder().decode(stdout) };
 }
@@ -235,6 +255,47 @@ async function publishedList(deps: RevocationsDeps): Promise<RuntimeRevocationLi
   return text === null ? null : await readSignedList(text, deps.keys, deps.now());
 }
 
+/**
+ * The release gate's warning about the published list's expiry (`deno task release` step 0b, and
+ * `deno task revocations expiry`): `null` while more than `days` days remain (or no key is
+ * compiled in, so there is nothing to keep fresh); otherwise one line saying when it lapses — or
+ * that it has, or that it could not be read — and what re-signs it. Never throws: the list is
+ * advisory and the gate only warns.
+ *
+ * @param deps The process seams.
+ * @param days The margin (default {@linkcode REVOCATION_RESIGN_DAYS}, when step 7 re-signs it).
+ * @returns The warning, or `null`.
+ */
+export async function publishedExpiryWarning(
+  deps: RevocationsDeps,
+  days: number = REVOCATION_RESIGN_DAYS,
+): Promise<string | null> {
+  if (deps.keys.length === 0) return null;
+  let list: RuntimeRevocationList | null;
+  try {
+    list = await publishedList(deps);
+  } catch (err) {
+    return `the published revoked-runtimes list could not be verified (${
+      err instanceof Error ? err.message : err
+    }); check it with \`deno task revocations verify\``;
+  }
+  if (!list) {
+    return "no published revoked-runtimes list could be read (offline?), so its expiry is unchecked";
+  }
+  const now = deps.now().getTime();
+  const left = Date.parse(list.expiresAt) - now;
+  const resign = "`deno task revocations resign` on the machine that holds the key";
+  if (!(left > 0)) {
+    return `the published revoked-runtimes list #${list.sequence} EXPIRED at ${list.expiresAt}: ` +
+      `denext ignores it until it is re-signed — run ${resign} now`;
+  }
+  if (!revocationResignDue(list, now, days)) return null;
+  const inDays = Math.ceil(left / 86_400_000);
+  return `the published revoked-runtimes list #${list.sequence} expires ${list.expiresAt} ` +
+    `(in ${inDays} day${inDays === 1 ? "" : "s"}): this release's step 7 re-signs it when run ` +
+    `on the machine that holds the key; otherwise run ${resign} before then`;
+}
+
 /** Sign `revoked` above `previous`, then verify it against the compiled-in keys. */
 export async function signFresh(
   deps: RevocationsDeps,
@@ -275,6 +336,131 @@ export function entryFromFlags(flags: Record<string, string | boolean>): Runtime
     ...(str("advisory") ? { advisory: str("advisory") } : {}),
     ...(str("fixed-in") ? { fixedIn: str("fixed-in") } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Entries files: canonical form, and what a list does to the pins.
+
+/** An entry, its fields in the canonical order (absent optional fields left out). */
+function canonicalEntry(e: RuntimeRevocation): RuntimeRevocation {
+  const targets = e.targets ? [...new Set(e.targets)].sort() : undefined;
+  return {
+    component: e.component,
+    version: e.version,
+    ...(targets ? { targets } : {}),
+    reason: e.reason,
+    ...(e.advisory !== undefined ? { advisory: e.advisory } : {}),
+    ...(e.fixedIn !== undefined ? { fixedIn: e.fixedIn } : {}),
+  };
+}
+
+/** Canonical entry order: `cli` before `desktop`, then the newest version first. */
+function entryOrder(a: RuntimeRevocation, b: RuntimeRevocation): number {
+  if (a.component !== b.component) return a.component < b.component ? -1 : 1;
+  return compareDenoVersions(b.version, a.version);
+}
+
+/**
+ * The entries an entries file holds (a list, or `{ revoked: [...] }`), checked as the verifier
+ * reads them and put in canonical form: fields in a fixed order, unknown fields dropped, targets
+ * sorted, entries by component then newest version first. Refused: a malformed entry, a component
+ * this denext does not know (the verifier would drop it) and two entries for one release.
+ *
+ * @param raw The parsed file.
+ * @param source The file's name, for messages.
+ * @returns The canonical entries.
+ */
+export function canonicalEntries(raw: unknown, source = "the entries"): RuntimeRevocation[] {
+  const entries = Array.isArray(raw) ? raw : (raw as { revoked?: unknown } | null)?.revoked;
+  if (!Array.isArray(entries)) fail(`${source}: expected a list of entries or { revoked: [...] }`);
+  let checked: RuntimeRevocation[];
+  try {
+    const epoch = new Date(0).toISOString();
+    checked = [
+      ...checkRevocationList({
+        schema: 1,
+        issuedAt: epoch,
+        expiresAt: epoch,
+        sequence: 0,
+        revoked: entries,
+      }).revoked,
+    ];
+  } catch (err) {
+    return fail(`${source}: ${(err as Error).message}`);
+  }
+  if (checked.length !== (entries as unknown[]).length) {
+    fail(`${source}: every entry's component must be cli or desktop`);
+  }
+  const seen = new Set<string>();
+  for (const e of checked) {
+    const id = `${e.component} ${e.version}`;
+    if (seen.has(id)) fail(`${source}: ${id} is listed twice`);
+    seen.add(id);
+  }
+  return checked.map(canonicalEntry).sort(entryOrder);
+}
+
+/**
+ * An entries file's canonical text: `{ "revoked": [...] }`, two-space indented, one trailing
+ * newline — the same bytes for the same entries, whatever order they were written in.
+ *
+ * @param entries The entries.
+ * @returns The text.
+ */
+export function canonicalEntriesText(entries: readonly RuntimeRevocation[]): string {
+  return JSON.stringify({ revoked: canonicalEntries([...entries]) }, null, 2) + "\n";
+}
+
+/** A pinned runtime and the rollback its pin names. */
+export interface PinnedRuntime {
+  readonly component: RuntimeComponent;
+  readonly version: string;
+  readonly rollback: string | null;
+}
+
+/** The checkout's pins (`deno-toolchain-pin.json`, `desktop-runtime-pin.json`). */
+export function checkedOutPins(): PinnedRuntime[] {
+  const of = (component: RuntimeComponent, pin: unknown): PinnedRuntime => {
+    const p = pin as { version: string; rollback?: { version?: string } };
+    return { component, version: p.version, rollback: p.rollback?.version ?? null };
+  };
+  return [of("cli", toolchainPinJson), of("desktop", runtimePinJson)];
+}
+
+/**
+ * What `entries` do to `pins`, one line each, and whether any pin loses its footing: a revoked
+ * pin rolls back to its rollback, or — when that is revoked or absent — keeps running with a
+ * warning (and `build --compile` / `desktop package` refuse it). Target-limited entries count as
+ * revoking the release.
+ *
+ * @param entries The entries.
+ * @param pins The pins.
+ * @returns The lines, and whether every pin still runs a release the list leaves alone.
+ */
+export function pinImpact(
+  entries: readonly RuntimeRevocation[],
+  pins: readonly PinnedRuntime[],
+): { lines: string[]; ok: boolean } {
+  const revoked = (c: RuntimeComponent, v: string | null) =>
+    v !== null && entries.some((e) => e.component === c && e.version === v);
+  const lines: string[] = [];
+  let ok = true;
+  for (const p of pins) {
+    const rb = p.rollback ?? "none";
+    if (!revoked(p.component, p.version)) {
+      const note = revoked(p.component, p.rollback) ? ` (its rollback ${rb} is revoked)` : "";
+      lines.push(`  ${p.component} pin ${p.version}: not revoked${note}`);
+      continue;
+    }
+    ok = false;
+    lines.push(
+      revoked(p.component, p.rollback) || p.rollback === null
+        ? `  WARNING: ${p.component} pin ${p.version} is revoked and so is its rollback (${rb}): ` +
+          "no safe fallback, it keeps running with a warning"
+        : `  WARNING: ${p.component} pin ${p.version} is revoked: denext runs its rollback ${rb}`,
+    );
+  }
+  return { lines, ok };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -437,13 +623,50 @@ async function resign(deps: RevocationsDeps, flags: Record<string, string | bool
   await writeAndPublish(deps, await signFresh(deps, current.revoked, current), flags);
 }
 
-/** `sign <payload.json>`: a hand-edited list's entries, signed above the published one. */
+/** A published entry `entries` leave out, refused unless `force` (signing it would un-revoke it). */
+function refuseDropped(
+  current: RuntimeRevocationList | null,
+  entries: readonly RuntimeRevocation[],
+  force: boolean,
+): void {
+  const kept = new Set(entries.map((e) => `${e.component} ${e.version}`));
+  const dropped = (current?.revoked ?? []).filter((e) => !kept.has(`${e.component} ${e.version}`));
+  if (dropped.length === 0 || force) return;
+  fail(
+    `the published list #${current!.sequence} revokes ${
+      dropped.map((e) => `${e.component} ${e.version}`).join(", ")
+    }, which the entries file leaves out (signing it would un-revoke them); --force signs anyway`,
+  );
+}
+
+/**
+ * `sign <entries.json>`: a whole list from an entries file, in canonical form, signed above the
+ * published one; prints what it does to the checked-out pins first.
+ */
 async function sign(deps: RevocationsDeps, file: string, flags: Record<string, string | boolean>) {
-  const raw = JSON.parse(await Deno.readTextFile(file));
-  const entries = Array.isArray(raw) ? raw : raw?.revoked;
-  if (!Array.isArray(entries)) fail(`${file}: expected a list of entries or { revoked: [...] }`);
+  const entries = canonicalEntries(JSON.parse(await Deno.readTextFile(file)), file);
+  const impact = pinImpact(entries, deps.pins ?? checkedOutPins());
+  deps.log(`${file}: ${entries.length} revoked; the checked-out pins:`);
+  for (const line of impact.lines) deps.log(line);
   const current = await publishedList(deps).catch(() => null);
+  refuseDropped(current, entries, flags.force === true);
   await writeAndPublish(deps, await signFresh(deps, entries, current), flags);
+}
+
+/** `canonical <entries.json> [--check]`: rewrite the file in canonical form, or refuse one not in it. */
+async function canonical(
+  deps: RevocationsDeps,
+  file: string,
+  flags: Record<string, string | boolean>,
+) {
+  const text = await Deno.readTextFile(file);
+  const want = canonicalEntriesText(canonicalEntries(JSON.parse(text), file));
+  if (text === want) return deps.log(`${file} is in canonical form`);
+  if (flags.check === true) {
+    fail(`${file} is not in canonical form: run \`deno task revocations canonical ${file}\``);
+  }
+  await Deno.writeTextFile(file, want);
+  deps.log(`rewrote ${file} in canonical form`);
 }
 
 /** `verify [<file>]`: a file, or the published copy, against the compiled-in keys. */
@@ -499,8 +722,8 @@ async function floor(deps: RevocationsDeps, flags: Record<string, string | boole
   deps.log(`raised the compiled-in floor #${was} → #${current.sequence} (${file})`);
 }
 
-const USAGE = "usage: deno task revocations <keygen | init | add | sign | resign | verify | " +
-  "publish | floor> (see the header of scripts/runtime-revocations.ts)";
+const USAGE = "usage: deno task revocations <keygen | init | add | sign | canonical | resign | " +
+  "verify | expiry | publish | floor> (see the header of scripts/runtime-revocations.ts)";
 
 /**
  * The CLI.
@@ -528,8 +751,14 @@ export async function main(args: string[], deps: RevocationsDeps = realDeps()): 
       return await resign(deps, flags);
     case "sign":
       return await sign(deps, arg ?? fail(USAGE), flags);
+    case "canonical":
+      return await canonical(deps, arg ?? fail(USAGE), flags);
     case "verify":
       return await verify(deps, arg);
+    case "expiry": {
+      const warning = await publishedExpiryWarning(deps);
+      return deps.log(warning ? `warning — ${warning}` : "the published list is not near expiry");
+    }
     case "publish":
       return await publish(deps, await Deno.readTextFile(arg ?? fail(USAGE)));
     case "floor":

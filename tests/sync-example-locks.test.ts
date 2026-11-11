@@ -6,6 +6,7 @@ import { assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
   linkedLockFiles,
+  printLock,
   syncExampleLocks,
   workspaceLinks,
   workspaceMembers,
@@ -110,11 +111,73 @@ Deno.test("syncExampleLocks rewrites only the links, as Deno writes them, and is
   }
 });
 
+/** A lock as Deno prints it: `os` / `cpu` lists on one line, everything else as JSON.stringify. */
+const DENO_PRINTED = `{
+  "version": "5",
+  "npm": {
+    "@esbuild/darwin-arm64@0.25.5": {
+      "integrity": "sha512-x",
+      "os": ["darwin"],
+      "cpu": ["arm64"]
+    },
+    "fsevents@2.3.3": {
+      "integrity": "sha512-y",
+      "os": ["darwin", "ios"],
+      "cpu": []
+    }
+  },
+  "workspace": {
+    "links": {
+      "jsr:@x/bare@1.1.0": {},
+      "jsr:@x/core@2.0.0": {
+        "dependencies": [
+          "jsr:@std/path@1",
+          "npm:ws@8"
+        ]
+      },
+      "jsr:@x/plug@0.3.0": {
+        "dependencies": [
+          "jsr:@x/core@^2.0.0"
+        ]
+      }
+    }
+  }
+}
+`;
+
+Deno.test("syncExampleLocks keeps Deno's one-line os / cpu lists (no rewrite for Deno to undo)", async () => {
+  const dir = await fixture();
+  try {
+    const lock = join(dir, "examples/app/deno.lock");
+    await Deno.writeTextFile(lock, DENO_PRINTED);
+    syncExampleLocks(dir);
+    assertEquals(
+      await Deno.readTextFile(lock),
+      DENO_PRINTED,
+      "a current lock is left as Deno wrote it",
+    );
+    // A stale one is rewritten in the same format.
+    await Deno.writeTextFile(lock, DENO_PRINTED.replace('"jsr:@x/bare@1.1.0": {},\n', ""));
+    syncExampleLocks(dir);
+    assertEquals(await Deno.readTextFile(lock), DENO_PRINTED);
+  } finally {
+    await removeTempDir(dir);
+  }
+});
+
 Deno.test("the repo's example locks link the current workspace (deno task sync:example-locks)", () => {
   const root = fromFileUrl(new URL("../", import.meta.url));
   const links = json(workspaceLinks(workspaceMembers(root)));
   for (const rel of linkedLockFiles(root)) {
     const lock = JSON.parse(Deno.readTextFileSync(join(root, rel)));
     assertEquals(json(lock.workspace.links), links, `${rel} is stale: run deno task regen`);
+  }
+});
+
+Deno.test("the repo's example locks are printed as Deno prints them (a Deno run leaves them as they are)", () => {
+  const root = fromFileUrl(new URL("../", import.meta.url));
+  for (const rel of linkedLockFiles(root)) {
+    const text = Deno.readTextFileSync(join(root, rel));
+    assertEquals(printLock(JSON.parse(text)), text, `${rel}: run deno task regen`);
   }
 });

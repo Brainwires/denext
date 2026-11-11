@@ -423,7 +423,13 @@ Deno.test("release CI gate: every required job is a job of ci.yml", async () => 
 
 Deno.test("e2e + desktop window gates: every required job is named in its workflow", async () => {
   const e2e = await Deno.readTextFile(new URL("../.github/workflows/e2e.yml", import.meta.url));
-  for (const job of E2E_JOBS) assertStringIncludes(e2e, `\n  ${job}:\n`, job);
+  // A matrix job's legs are named `<job id> (<label>)`: the id is a job, each label a leg.
+  for (const job of E2E_JOBS) {
+    const leg = /^(.+) \((.+)\)$/.exec(job);
+    assertStringIncludes(e2e, `\n  ${leg ? leg[1] : job}:\n`, job);
+    if (leg) assertStringIncludes(e2e, `label: ${leg[2]},`, job);
+  }
+  assertStringIncludes(e2e, "name: job-install (${{ matrix.label }})");
   const win = await Deno.readTextFile(
     new URL("../.github/workflows/desktop-window.yml", import.meta.url),
   );

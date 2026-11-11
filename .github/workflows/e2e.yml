@@ -15,7 +15,7 @@ on:
         description: "Run one job only (`gh workflow run e2e.yml -f job=migration-beds`), or all"
         type: choice
         default: all
-        options: [all, e2e, migration-beds, timer-stress, no-deno]
+        options: [all, e2e, migration-beds, timer-stress, no-deno, job-install]
 
 permissions:
   contents: read
@@ -209,3 +209,60 @@ jobs:
           docker run --rm -v "$PWD/dist/no-deno:/art:ro" debian:bookworm-slim sh -c '
             apt-get update -qq && apt-get install -y -qq curl ca-certificates procps >/dev/null &&
             sh /art/no-deno-e2e.sh'
+
+  # `denext job install` for real (tests/integration/job-install-roundtrip.test.ts): a throwaway
+  # app's every-minute job installed into the OS scheduler — launchd, a systemd user timer (else the
+  # crontab), Task Scheduler — started through the scheduler's own run-now, its marker file checked,
+  # then uninstalled and checked gone. The test is opt-in (DENEXT_JOB_INSTALL_E2E=1) and removes the
+  # entry on failure too. macOS and Windows must use their scheduler (DENEXT_JOB_INSTALL_E2E_BACKEND);
+  # a Linux container with no systemd user manager falls back to the crontab, and with neither (or
+  # no cron daemon to fire it) the test says what it skipped in a notice.
+  job-install:
+    name: job-install (${{ matrix.label }})
+    if: inputs.job == 'all' || inputs.job == 'job-install'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, label: linux, backend: "" }
+          - { os: macos-latest, label: macos, backend: launchd }
+          - { os: windows-latest, label: windows, backend: schtasks }
+    # Each entry runs on the self-hosted runner its repository variable names (RUNNER_LINUX_X64,
+    # RUNNER_MACOS_ARM, RUNNER_WINDOWS_X64: a label, or a JSON array), else its GitHub image.
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # match ci.yml
+
+      - name: Linux — a systemd user manager where the runner can start one
+        # A VM image (sudo, systemd as PID 1): lingering starts the runner user's manager, and
+        # systemctl --user reaches it through XDG_RUNTIME_DIR. A container without either keeps
+        # what it has (the crontab, or nothing; the test reports which).
+        if: runner.os == 'Linux'
+        run: |
+          if [ -d /run/systemd/system ] && command -v loginctl >/dev/null && sudo -n true 2>/dev/null; then
+            sudo loginctl enable-linger "$USER"
+            dir="/run/user/$(id -u)"
+            for _ in $(seq 1 30); do [ -S "$dir/bus" ] && break; sleep 1; done
+            echo "XDG_RUNTIME_DIR=$dir" >> "$GITHUB_ENV"
+            echo "DBUS_SESSION_BUS_ADDRESS=unix:path=$dir/bus" >> "$GITHUB_ENV"
+            XDG_RUNTIME_DIR="$dir" systemctl --user show-environment >/dev/null && echo "systemd user manager: up"
+          else
+            echo "::notice::no systemd (or no sudo) here: denext job install uses the crontab if there is one"
+          fi
+
+      - name: Install, fire, uninstall a real scheduler entry
+        env:
+          DENEXT_JOB_INSTALL_E2E: "1"
+          DENEXT_JOB_INSTALL_E2E_BACKEND: ${{ matrix.backend }}
+        run: deno run -A scripts/test-run.ts tests/integration/job-install-roundtrip.test.ts

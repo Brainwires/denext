@@ -73,6 +73,9 @@ and this project adheres to
 
 ### Changed
 
+- **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
+  remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
+  until it is re-signed, so a revocation would stop reaching anyone.
 - **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.17.** It carries the Node.js
   compatibility work above, `Deno.permissions.names`, and `--allow-read` / `--allow-write` scopes
   checked against the path a symlink leads to (a link inside an allowed folder that points outside
