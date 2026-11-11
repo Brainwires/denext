@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.15.0\"",
+          "signature": "VERSION: \"4.16.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16977,7 +16977,7 @@
               "kind": "property",
               "name": "menu",
               "signature": "menu?: DesktopMenuConfig",
-              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window), `list`\n(the open windows, each focusing its window) and `items` (the app's own items, whose clicks\nreach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the\nsubmenu also carries the standard Minimize / Zoom / Bring All to Front items."
             },
             {
               "kind": "property",
@@ -17414,7 +17414,7 @@
             {
               "kind": "property",
               "name": "window",
-              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean }",
+              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean; items?: readonly DesktopWindowMenuItemConfig[] }",
               "doc": "The \"Window\" submenu's items."
             }
           ]
@@ -18286,6 +18286,38 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowMenuItemConfig",
+          "slug": "DesktopWindowMenuItemConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItemConfig",
+          "doc": "One of the app's own items in the backend's \"Window\" submenu (DesktopMenuConfig.window).",
+          "docFull": "One of the app's own items in the backend's \"Window\" submenu ({@link DesktopMenuConfig.window}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id: string",
+              "doc": "What the click reports (unique among the items, at most 128 characters)."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "label: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+W\"`)."
+            }
+          ]
         },
         {
           "name": "DesktopWindowsConfig",
@@ -45871,6 +45903,12 @@
             },
             {
               "kind": "property",
+              "name": "onSecondInstance",
+              "signature": "readonly onSecondInstance?: (event: DesktopSecondInstanceEvent) => void | Promise<void>",
+              "doc": "Called on every later launch of the app while it runs (`desktop.app.singleInstance`), with its\n`args` and `cwd`: the static form of {@linkcode DesktopExtensionHost.onSecondInstance}. An\nerror is logged, never surfaced."
+            },
+            {
+              "kind": "property",
               "name": "setup",
               "signature": "readonly setup?: (host: DesktopExtensionHost) => void",
               "doc": "Called once, when the app's bridge starts (before any page can call), with the\n{@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its\ndeclared {@linkcode DesktopCapability.events}) and `pickedPath`. Keep the host in a module\nvariable so work started outside a method call — by `desktop.ts`, a tray menu, a timer — can\nstream to the page. An error it throws is logged, never surfaced."
@@ -46375,7 +46413,7 @@
           "kind": "interface",
           "signature": "interface DesktopExtensionHost",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, and `windows()` lists the open windows now. Each subscription returns its\nunsubscribe.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows\nnow. Each subscription returns its unsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46433,7 +46471,25 @@
               "kind": "method",
               "name": "onBeforeQuit",
               "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
-              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when\nit returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a\npage's guards get); one that throws or runs past it is logged and does not cancel, so a quit\nis never held for good. A refused OS session end asks the OS to stop it, which it may not\nhonour (macOS ignores an accessory app's refusal). Returns the unsubscribe."
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when\nit returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a\npage's guards get); one that throws or runs past it is logged and does not cancel, so a quit\nis never held for good. While a {@linkcode DesktopExtensionHost.confirm} box opened during the\nguards' turn is on screen the 5 seconds stop counting, so a guard can await the user's answer;\nthey go on when the box closes. Not for the OS's session end (a logout, a shutdown): its 5\nseconds always run (and the OS's own deadline, 10 s on macOS and 4 s on Windows), so answer it\nwithout asking. A refused OS session end asks the OS to stop it, which it may not honour\n(macOS ignores an accessory app's refusal). Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "quit",
+              "signature": "quit(): Promise<boolean>",
+              "doc": "Quit the app, typed: the whole quit again, as `quitApp()` runs it (the other `onBeforeQuit`\nguards, the pages' `onBeforeQuit` / `onCloseRequested`, the `onAppQuit` hooks), except that\nthis extension's own guards are not asked again: it decided already. For a guard that cancels\nat once, asks the user, then quits. The approval lasts until the quit goes through or another\nquit starts (the user, the OS, `quitApp()`), so guards that each ask and quit again never ask\none another round in a loop. Called while the guards are being asked, it waits for their\nanswer first. Resolves `true` when the app is quitting, `false` when another guard or a page\nrefused or holds the quit (a page asking its user lets it go itself), or with no desktop\nruntime. Rejects with a {@linkcode DesktopCapError} (`conflict`) when called from inside this\nextension's own guard: return `true` from the guard instead."
+            },
+            {
+              "kind": "method",
+              "name": "onWindowMenuItem",
+              "signature": "onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void",
+              "doc": "Call `fn` on every click on one of the app's own Window-menu items\n(`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or\n`null` with no window open). Each click is delivered once to each subscriber (and to\n`runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive\nfrom runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw\nor a rejection is logged. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void",
+              "doc": "Call `fn` on every later launch of the app while it runs, forwarded by the single-instance\nlock (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`.\nIt runs after `runDesktop({ onSecondInstance })` opened its window, if any; the deep links and\nfiles the launch carried still reach the pages' `onDeepLink` / `onOpenFile`. A throw or a\nrejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe."
             },
             {
               "kind": "method",
@@ -46445,7 +46501,7 @@
               "kind": "method",
               "name": "confirm",
               "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
-              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16)."
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
             },
             {
               "kind": "method",
@@ -47550,6 +47606,12 @@
             },
             {
               "kind": "method",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void",
+              "doc": "Call `fn` on every later launch of the app while it runs (`desktop.app.singleInstance`), with\nthe launch's `args` and `cwd`, after what {@linkcode RunDesktopOptions.onSecondInstance} opens.\nA throw or a rejection is logged. Returns the unsubscribe; never called without denext's\npinned runtime (or in a sidecar's child)."
+            },
+            {
+              "kind": "method",
               "name": "emit",
               "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
               "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
@@ -47564,7 +47626,13 @@
               "kind": "method",
               "name": "onBeforeQuit",
               "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
-              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called."
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. The 5 seconds stop counting while an extension's `host.confirm` box opened during the\nguards' turn is up, except for the OS's session end. Returns the unsubscribe. Outside the\ndesktop runtime `fn` is never called."
+            },
+            {
+              "kind": "method",
+              "name": "quit",
+              "signature": "quit(): Promise<boolean>",
+              "doc": "Quit the app again, the whole sequence (the extensions' guards, the pages, the quit hooks),\nexcept that the guards added with {@linkcode onBeforeQuit} here are not asked again (see\n`DesktopExtensionHost.quit`, the same rules). Resolves `true` when the app is quitting, `false`\nwhen a guard or a page refused or holds it, or outside the desktop runtime."
             }
           ]
         },
@@ -47637,6 +47705,44 @@
             }
           ],
           "returns": "The env vars to set on the deno desktop child.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSecondInstanceEvent",
+          "slug": "DesktopSecondInstanceEvent",
+          "kind": "interface",
+          "signature": "interface DesktopSecondInstanceEvent",
+          "doc": "A later launch of the app while it runs, forwarded by the single-instance lock (desktop.app.singleInstance; Deno.desktop's \"secondinstance\").",
+          "docFull": "A later launch of the app while it runs, forwarded by the single-instance lock\n(`desktop.app.singleInstance`; `Deno.desktop`'s `\"secondinstance\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "args",
+              "signature": "readonly args: readonly string[]",
+              "doc": "The second launch's command-line arguments, after the executable."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd: string",
+              "doc": "The second launch's working directory."
+            }
+          ]
+        },
+        {
+          "name": "DesktopSecondInstanceHandler",
+          "slug": "DesktopSecondInstanceHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopSecondInstanceHandler = (event: DesktopSecondInstanceEvent) => DesktopOpenWindowOptions | undefined",
+          "doc": "What a second launch of the app opens (runDesktop({ onSecondInstance })): called for every one, window showing or not, it answers the open options, or undefined for nothing more. Without it a second launch with no window showing opens what the Dock's reopen would.",
+          "docFull": "What a second launch of the app opens (`runDesktop({ onSecondInstance })`): called for every\none, window showing or not, it answers the open options, or `undefined` for nothing more.\nWithout it a second launch with no window showing opens what the Dock's reopen would.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -48555,6 +48661,70 @@
           ]
         },
         {
+          "name": "DesktopWindowMenuItem",
+          "slug": "DesktopWindowMenuItem",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItem",
+          "doc": "One of the app's own items in the \"Window\" submenu (desktop.menu.window.items).",
+          "docFull": "One of the app's own items in the \"Window\" submenu (`desktop.menu.window.items`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "What a click reports to `onWindowMenuItem` (unique among the items)."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+W\"`)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuItemContext",
+          "slug": "DesktopWindowMenuItemContext",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItemContext",
+          "doc": "What runDesktop({ onWindowMenuItem }) and an extension's host.onWindowMenuItem get with a click on one of the app's own Window-menu items (desktop.menu.window.items).",
+          "docFull": "What `runDesktop({ onWindowMenuItem })` and an extension's `host.onWindowMenuItem` get with a\nclick on one of the app's own Window-menu items (`desktop.menu.window.items`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "keyWindow",
+              "signature": "readonly keyWindow: { readonly id: string; readonly key?: string } | null",
+              "doc": "The key window when the item was chosen (the app window focused last, else the one opened\nlast): its id and, when it was opened with one, its app key. `null` with no app window open\n(the tray panel does not count)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuItemHandler",
+          "slug": "DesktopWindowMenuItemHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowMenuItemHandler = (id: string, ctx: DesktopWindowMenuItemContext) => void | Promise<void>",
+          "doc": "A handler of the app's own Window-menu items: the item's id (as configured, without the prefix) and the key window. Called once per click; a throw or a rejection is logged.",
+          "docFull": "A handler of the app's own Window-menu items: the item's `id` (as configured, without the\nprefix) and the key window. Called once per click; a throw or a rejection is logged.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopWindowMenuSettings",
           "slug": "DesktopWindowMenuSettings",
           "kind": "interface",
@@ -48583,6 +48753,12 @@
               "name": "list",
               "signature": "readonly list?: boolean",
               "doc": "List the open windows, each focusing its window when chosen."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items?: readonly DesktopWindowMenuItem[]",
+              "doc": "The app's own items, after denext's: a click reaches the backend once (`runDesktop({\nonWindowMenuItem })`, an extension's `host.onWindowMenuItem`), never the pages."
             }
           ]
         },
@@ -50156,6 +50332,18 @@
               "name": "onDockReopen",
               "signature": "onDockReopen?: DesktopDockReopenHandler",
               "doc": "What a click on the macOS Dock icon opens when no window is showing: called with the keyed\nwindows the user closed (`ctx.closed`, most recent first), it answers the open options, or\n`undefined` to open nothing. Without it the click reopens the most recently closed keyed\nwindow, else shows the main window. With a window showing the click only activates the app."
+            },
+            {
+              "kind": "property",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance?: DesktopSecondInstanceHandler",
+              "doc": "Called on every later launch of the app while it runs, forwarded by the single-instance lock\n(`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`, a\nwindow showing or not: it answers the open options, or `undefined` to open nothing more. The\ndeep links and files the launch carried still reach the pages' `onDeepLink` / `onOpenFile`,\nand the runtime has raised a showing window already. Without it a second launch with no window\nshowing opens what the Dock's reopen would (the most recently closed keyed window, else the\nmain window shown again). A throw, or a window that cannot open, is logged. Never called\nwithout denext's pinned runtime."
+            },
+            {
+              "kind": "property",
+              "name": "onWindowMenuItem",
+              "signature": "onWindowMenuItem?: DesktopWindowMenuItemHandler",
+              "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from\nruntime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only\nwhile the main window is open. A throw or a rejection is logged."
             },
             {
               "kind": "property",

@@ -63,6 +63,111 @@ and this project adheres to
   `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
   tokens (a sign-in whose first factor was a passkey still takes a code). `GET /native/passkeys`
   and `DELETE /native/passkeys/:id` list and remove the bearer's passkeys.
+- **Content collections: element overrides for `.md` entries.** `<Content entry={post} components={{
+  a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
+  as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
+  entries.
+- **`@denext/backend`: `requireUploadSize` per bucket.** A bucket with `requireUploadSize: true`
+  refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
+  upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
+  `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
+- **`@denext/backend`: a heap cap for Edge Functions.** `functions: { memoryMb }` (or a function's
+  own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
+  it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
+  `"unstable": ["worker-options"]` in `deno.json`.
+- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
+  `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
+  limit and a timed-out one is retried. Synchronous work is not preempted.
+- **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
+  cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
+  of `start.limits`; `compile: { limits: false }` bakes none.
+- **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
+  sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
+  (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
+  `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
+- **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
+  stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
+  `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
+  RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
+  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the runtime has
+  it. `createTestClient(handler, { cookieJar })` and `new CookieJar(store)` apply a URL-aware
+  store's host, path, expiry and `Secure` rules; the default name-keyed jar is unchanged.
+
+### Changed
+
+- **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
+  (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
+  shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
+  under denext's Deno with `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`), makes
+  that a streaming `HTMLRewriter` transform; the string path stays the default everywhere, the
+  flag alone included. Both write the same bytes. It is opt-in because it is slower on today's
+  runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through the
+  rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
+  `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
+  came first before.
+- **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
+  remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
+  until it is re-signed, so a revocation would stop reaching anyone.
+- **`@denext/graphql`: a schema object it can't trace reloads in `denext dev`.** One built in
+  `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
+  the config on an edit under the directory of any project module the config reaches, instead of
+  needing a dev-server restart.
+- **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
+  are in the built-in exception list**, as the GitHub release host their package.json declares
+  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.19 the runtime allows that host's
+  redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
+
+### Fixed
+
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
+  the file.** On a route that renders as one client bundle (a page or layout that calls a hook
+  itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
+  `unauthorized.tsx` answered with the route's bundle, which rendered the page again, so the page
+  stayed as it was. The server now sends that render as markup without the route's entry, and the
+  file shows under the layouts.
+- **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
+  The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
+  `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or
+  whose socket reached another instance, is answered `resync` straight away instead of going
+  `stale` only after 10 seconds of silence.
+- **Realtime: a frame the Live hub had not sent when the connection dropped still arrives
+  (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
+  on the return, ahead of `resumed`, numbered as before and marked `again: true`;
+  `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
+  window was lost, and the gap made the hook `stale`.
+- **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
+  `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
+  `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
+  also get the unstable features the app runs with (`--unstable-kv`, `-cron`, `-net`,
+  `-broadcast-channel`, `-webgpu`).
+- **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
+  `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
+  tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
+  exported; the options may also be a top-level `const`.
+- **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
+  linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
+  collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
+- **An install log explains `Requires ffi access`.** A dependency's lifecycle script stopped by the
+  jail while loading a native addon (typically an install check that loads the package's own
+  prebuilt addon) now reports it and says to leave the package unapproved (out of
+  `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
+  OS can't confine the script, a jailed script can't load it.
+- **React Native mode: `LayoutAnimation` animates frames, not scale.** A view the commit resized
+  plays its width and height from the old size to the new one, so its content lays out at each
+  size instead of being drawn stretched (a page container's background or border no longer
+  stretches), and a moved view is translated from its old place to where that first frame lays it
+  out, as React Native animates a view's frame.
+
+### Documentation
+
+- **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
+  and the known limitations say that packaging embeds the file a `../` path names.
+
+## [4.16.0] - 2026-11-11
+
+### Added
+
 - **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
   label, accelerator? }]` adds items to the "Window" submenu next to New Window, Reopen Closed
   Window and the window list, merged into a page's `setAppMenu` menu the same way. A click goes to
@@ -123,94 +228,18 @@ and this project adheres to
   `http2.constants`' status codes, `DatabaseSync#enableLoadExtension()`,
   `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
   and `dns.resolve("")`.
-- **Content collections: element overrides for `.md` entries.** `<Content entry={post} components={{
-  a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
-  as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
-  entries.
-- **`@denext/backend`: `requireUploadSize` per bucket.** A bucket with `requireUploadSize: true`
-  refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
-  upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
-  `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
-- **`@denext/backend`: a heap cap for Edge Functions.** `functions: { memoryMb }` (or a function's
-  own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
-  it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
-  `"unstable": ["worker-options"]` in `deno.json`.
-- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
-  `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
-  limit and a timed-out one is retried. Synchronous work is not preempted.
-- **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
-  cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
-  of `start.limits`; `compile: { limits: false }` bakes none.
-- **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
-  sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
-  (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
-  `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
-- **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
-  stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
-  `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
-  RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
-  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the runtime has
-  it. `createTestClient(handler, { cookieJar })` and `new CookieJar(store)` apply a URL-aware
-  store's host, path, expiry and `Secure` rules; the default name-keyed jar is unchanged.
 
 ### Changed
 
-- **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
-  (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
-  shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
-  under denext's Deno with `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`), makes
-  that a streaming `HTMLRewriter` transform; the string path stays the default everywhere, the
-  flag alone included. Both write the same bytes. It is opt-in because it is slower on today's
-  runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through the
-  rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
-  `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
-  came first before.
-- **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
-  remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
-  until it is re-signed, so a revocation would stop reaching anyone.
 - **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.17.** It carries the Node.js
   compatibility work above, `Deno.permissions.names`, and `--allow-read` / `--allow-write` scopes
   checked against the path a symlink leads to (a link inside an allowed folder that points outside
   it now needs its target granted too; a scope still covers its own resolved location, such as
   macOS's `/tmp`). In app windows, a chunk the app writes in one piece reaches the page as one
   write. The [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
-- **`@denext/graphql`: a schema object it can't trace reloads in `denext dev`.** One built in
-  `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
-  the config on an edit under the directory of any project module the config reaches, instead of
-  needing a dev-server restart.
-- **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
-  are in the built-in exception list**, as the GitHub release host their package.json declares
-  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.19 the runtime allows that host's
-  redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
-  `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
 
 ### Fixed
 
-- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
-  the file.** On a route that renders as one client bundle (a page or layout that calls a hook
-  itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
-  `unauthorized.tsx` answered with the route's bundle, which rendered the page again, so the page
-  stayed as it was. The server now sends that render as markup without the route's entry, and the
-  file shows under the layouts.
-- **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
-  The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
-  `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or
-  whose socket reached another instance, is answered `resync` straight away instead of going
-  `stale` only after 10 seconds of silence.
-- **Realtime: a frame the Live hub had not sent when the connection dropped still arrives
-  (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
-  on the return, ahead of `resumed`, numbered as before and marked `again: true`;
-  `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
-  window was lost, and the gap made the hook `stale`.
-- **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
-  `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
-  `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
-  also get the unstable features the app runs with (`--unstable-kv`, `-cron`, `-net`,
-  `-broadcast-channel`, `-webgpu`).
-- **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
-  `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
-  tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
-  exported; the options may also be a top-level `const`.
 - **`spa.proxy` relays a `deflate` response correctly on runtime 3.0.0-denext.17.** That runtime's
   `fetch` decodes `deflate` as it does `gzip` and `br`, so the proxy now drops the stale
   `Content-Encoding` and `Content-Length` for it too. On stock Deno a `deflate` body is still relayed
@@ -227,24 +256,13 @@ and this project adheres to
   stopped by a signal, and the restore still works on a full disk, where rewriting the file
   fails, by moving the saved original back over it. The next build still cleans entries an older
   denext left behind.
-- **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
-  linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
-  collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
-- **An install log explains `Requires ffi access`.** A dependency's lifecycle script stopped by the
-  jail while loading a native addon (typically an install check that loads the package's own
-  prebuilt addon) now reports it and says to leave the package unapproved (out of
-  `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
-  OS can't confine the script, a jailed script can't load it.
-- **React Native mode: `LayoutAnimation` animates frames, not scale.** A view the commit resized
-  plays its width and height from the old size to the new one, so its content lays out at each
-  size instead of being drawn stretched (a page container's background or border no longer
-  stretches), and a moved view is translated from its old place to where that first frame lays it
-  out, as React Native animates a view's frame.
+
+### Security
+
+- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
 
 ### Documentation
 
-- **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
-  and the known limitations say that packaging embeds the file a `../` path names.
 - **Permissions are described as least-privilege guardrails.** A new page,
   [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
   checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)
@@ -262,10 +280,6 @@ and this project adheres to
   `3.0.0-denext.16` adds; `denext/markdown` and `denext/deploy` are in the API reference; and the
   config, deployment, backend, desktop, toolchain and auth pages are corrected where they had
   drifted from the code.
-
-### Security
-
-- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
 
 ## [4.15.0] - 2026-11-10
 
@@ -21931,7 +21945,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.15.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1

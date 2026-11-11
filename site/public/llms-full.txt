@@ -1736,7 +1736,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.15.0"` — The denext framework version.
+- `VERSION: "4.16.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2000,6 +2000,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
 - `type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver"` — How far above other windows an always-on-top window floats (Electron's level names).
+- `interface DesktopWindowMenuItemConfig` — One of the app's own items in the backend's "Window" submenu (DesktopMenuConfig.window).
 - `interface DesktopWindowsConfig` — DesktopConfig.windows: Windows launch settings of the packaged app.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = "client" | "server" | null` — Which boundary a module declares, or null when it declares none.
@@ -3072,6 +3073,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRuntimeConfig` — What resolveDesktopCapabilities reads: the project config, or the JSON slice of it the desktop sync writes to .deno-desktop/config.json ({ desktop, spa: { proxy } }), which the generated desktop.ts imports so denext.config.ts (and every plugin it imports) stays out of the packaged app. Typed loosely so a JSON module's inferred type is accepted as it is.
 - `desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: readonly string[], pin?: { readonly version: string }): string[]` — The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. From 3.0.0-rc.5 that is the runtime's default, so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
+- `interface DesktopSecondInstanceEvent` — A later launch of the app while it runs, forwarded by the single-instance lock (desktop.app.singleInstance; Deno.desktop's "secondinstance").
+- `type DesktopSecondInstanceHandler = (event: DesktopSecondInstanceEvent) => DesktopOpenWindowOptions | undefined` — What a second launch of the app opens (runDesktop({ onSecondInstance })): called for every one, window showing or not, it answers the open options, or undefined for nothing more. Without it a second launch with no window showing opens what the Dock's reopen would.
 - `interface DesktopSecureStore` — An extension's own secrets in the OS credential store: the store the pages reach as secureStore (the runtime's Keychain store on macOS, the Secret Service on Linux, the PasswordVault on Windows), under a namespace of the extension's own: <app identifier>/ext/<name>, <name> being the capability's name. A page can never read or write it, nor can another extension; the extension cannot reach the pages' items either. Keys and values are the page API's: a key must not start with - or hold a control character (a validation DesktopCapError), a value is any string.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `interface DesktopSessionWindow` — A keyed window that was open at the last exit (WindowStore.lastSession).
@@ -3101,6 +3104,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
 - `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
+- `interface DesktopWindowMenuItem` — One of the app's own items in the "Window" submenu (desktop.menu.window.items).
+- `interface DesktopWindowMenuItemContext` — What runDesktop({ onWindowMenuItem }) and an extension's host.onWindowMenuItem get with a click on one of the app's own Window-menu items (desktop.menu.window.items).
+- `type DesktopWindowMenuItemHandler = (id: string, ctx: DesktopWindowMenuItemContext) => void | Promise<void>` — A handler of the app's own Window-menu items: the item's id (as configured, without the prefix) and the key window. Called once per click; a throw or a rejection is logged.
 - `interface DesktopWindowMenuSettings` — The standard window items (desktop.menu.window), resolved.
 - `interface DesktopWindowRef` — One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).
 - `interface DesktopWindows` — The app's windows, as desktop.ts drives them (DesktopRuntime.windows).
