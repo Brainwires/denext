@@ -7,16 +7,9 @@
 // the config's own relative import resolved to — so the module comes from Deno's cache and is
 // never evaluated a second time; its exports are compared to the value by identity.
 
-import {
-  dirname,
-  fromFileUrl,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  SEPARATOR,
-  toFileUrl,
-} from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, resolve, toFileUrl } from "@std/path";
+import * as posix from "@std/path/posix";
+import * as windows from "@std/path/windows";
 
 /** A value's exporting module and export name. */
 export interface TracedExport {
@@ -147,33 +140,97 @@ async function localModules(entry: string, cwd: string): Promise<string[]> {
   }
 }
 
+/** Which OS's paths: `"windows"` (drive letters, `\`, case-insensitive) or `"posix"`. */
+export type PathFlavor = "posix" | "windows";
+
+/** This OS's path flavor. */
+const OS_FLAVOR: PathFlavor = Deno.build.os === "windows" ? "windows" : "posix";
+
+/** A path normalized for `flavor`: on Windows without the verbatim `\\?\` prefix, `/` as `\`. */
+function normalized(path: string, flavor: PathFlavor): string {
+  if (flavor === "posix") return posix.normalize(path);
+  return windows.normalize(path.replace(/^\\\\\?\\(?!UNC\\)/, "").replaceAll("/", "\\"));
+}
+
+/** A normalized path's comparison key: Windows paths compare case-insensitively. */
+function key(path: string, flavor: PathFlavor): string {
+  return flavor === "windows" ? path.toLowerCase() : path;
+}
+
 /**
- * Watch globs (project-relative) for the project modules the config's import graph reaches, alias
- * imports included: the directory of each (its scripts and SDL files, below it too), the
- * shallowest directories only; a module at the project root is watched as itself. The config,
- * `node_modules` and dot-folders (`.denext`) are left out. Empty when the graph reaches none.
+ * The segments of `file` below the first of `roots` that holds it (in the file's own spelling),
+ * or `null` when none does (another drive included).
+ */
+function segmentsBelow(
+  file: string,
+  roots: readonly string[],
+  flavor: PathFlavor,
+): string[] | null {
+  const api = flavor === "windows" ? windows : posix;
+  for (const root of roots) {
+    const rel = api.relative(key(root, flavor), key(file, flavor));
+    if (rel === "" || rel.startsWith("..") || api.isAbsolute(rel)) continue;
+    const count = rel.split(api.SEPARATOR).length;
+    return file.split(api.SEPARATOR).slice(-count);
+  }
+  return null;
+}
+
+/**
+ * Watch globs for module files, relative to the project and always written with `/` (the
+ * prepare-step watcher joins them onto the project root itself): the directory of each module
+ * inside one of `roots` (its scripts and SDL files, below it too), the shallowest directories
+ * only; a module at the project root is watched as itself. `configs`, `node_modules` and
+ * dot-folders (`.denext`) are left out. Paths compare in `flavor`'s terms, so a Windows path's
+ * drive-letter case, folder case and verbatim prefix don't matter, and a module on another drive
+ * is outside.
+ *
+ * @param files Each module's absolute path, or several spellings of it (as given, real path).
+ * @param roots The project root's spellings (as given, and its real path).
+ * @param configs The config file's spellings.
+ * @param flavor Whose paths these are (default: this OS's).
+ * @returns The globs, sorted.
+ */
+export function watchGlobs(
+  files: readonly (string | readonly string[])[],
+  roots: readonly string[],
+  configs: readonly string[],
+  flavor: PathFlavor = OS_FLAVOR,
+): string[] {
+  const rootPaths = roots.map((r) => normalized(r, flavor));
+  const configKeys = new Set(configs.map((c) => key(normalized(c, flavor), flavor)));
+  const top = new Set<string>();
+  const dirs = new Set<string>();
+  for (const spellings of files) {
+    const paths = (typeof spellings === "string" ? [spellings] : spellings)
+      .map((f) => normalized(f, flavor));
+    if (paths.some((p) => configKeys.has(key(p, flavor)))) continue;
+    const parts = paths.map((p) => segmentsBelow(p, rootPaths, flavor)).find((x) => x !== null);
+    if (!parts || parts.some((p) => p === "node_modules" || p.startsWith("."))) continue;
+    if (parts.length === 1) top.add(parts[0]);
+    else dirs.add(parts.slice(0, -1).join("/"));
+  }
+  const shallowest = [...dirs].filter((d) =>
+    ![...dirs].some((o) => o !== d && d.startsWith(o + "/"))
+  );
+  return [...top, ...shallowest.map((d) => `${d}/**/${SCHEMA_FILES}`)].sort();
+}
+
+/**
+ * Watch globs (project-relative, written with `/`) for the project modules the config's import
+ * graph reaches, alias imports included ({@linkcode watchGlobs}). Empty when it reaches none.
  *
  * @param config The config file's absolute path.
  * @param projectRoot The project root.
  * @returns The globs, sorted.
  */
 export async function configGraphWatch(config: string, projectRoot: string): Promise<string[]> {
-  // `deno info` names modules by their real path (`/private/var/…` for `/var/…` on macOS).
+  // `deno info` names modules by their real path (`/private/var/…` for `/var/…` on macOS; a
+  // long name for a Windows 8.3 one), so each path is compared as given and as its real path.
   const real = (p: string) => Deno.realPath(p).catch(() => p);
-  const root = await real(isAbsolute(projectRoot) ? projectRoot : resolve(projectRoot));
-  const configFile = await real(config);
-  const files = new Set<string>();
-  const dirs = new Set<string>();
-  for (const file of await localModules(configFile, root)) {
-    const rel = relative(root, file);
-    const parts = rel.split(SEPARATOR);
-    if (file === configFile || rel.startsWith("..") || isAbsolute(rel)) continue;
-    if (parts.some((p) => p === "node_modules" || p.startsWith("."))) continue;
-    if (parts.length === 1) files.add(rel);
-    else dirs.add(dirname(rel));
-  }
-  const shallowest = [...dirs].filter((d) =>
-    ![...dirs].some((o) => o !== d && d.startsWith(o + SEPARATOR))
-  );
-  return [...files, ...shallowest.map((d) => join(d, "**", SCHEMA_FILES))].sort();
+  const root = isAbsolute(projectRoot) ? projectRoot : resolve(projectRoot);
+  const realConfig = await real(config);
+  const modules = await localModules(realConfig, root);
+  const files = await Promise.all(modules.map(async (f) => [f, await real(f)]));
+  return watchGlobs(files, [root, await real(root)], [config, realConfig]);
 }
