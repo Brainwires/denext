@@ -80,7 +80,9 @@ export default async function Post({ params }: { params: { slug: string } }) {
 ```
 
 `renderContent(entry, { components })` is the function form; `components` reaches an MDX
-document (`{ h1: Heading, Callout }`).
+document (`{ h1: Heading, Callout }`), and a `.md` entry renders as elements with the ones it
+names replaced (`{ a: SiteLink, code: Code }`), as `denext/markdown`'s `<Markdown components>`
+does.
 
 ## CLI
 
@@ -100,8 +102,8 @@ document (`{ h1: Heading, Callout }`).
   nested lists, fenced and indented code, code spans of any backtick-run length, blockquotes /
   `> [!NOTE]` callouts, GFM pipe tables, inline and reference-style links and images, GFM
   footnotes (`[^1]`, a numbered section with back-links), emphasis; raw HTML is escaped, and
-  `javascript:`/`data:` link and image targets are dropped). A document that needs components is
-  an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
+  `javascript:`/`data:` link and image targets are dropped); `components` swaps its elements for
+  your own. A document that uses custom components inline is an `.mdx` entry. A `.mdx` entry is compiled **at build** (and at dev
   startup / on change) into a component module under `.denext/content/<collection>/<id>.js`
   with denext's build-time `@mdx-js/mdx` — nothing MDX-related runs at request time — and
   `renderContent(entry, { components })` passes `components` to the document. `format` on each

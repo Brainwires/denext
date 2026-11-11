@@ -70,6 +70,10 @@ and this project adheres to
   `http2.constants`' status codes, `DatabaseSync#enableLoadExtension()`,
   `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
   and `dns.resolve("")`.
+- **Content collections: element overrides for `.md` entries.** `<Content entry={post} components={{
+  a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
+  as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
+  entries.
 
 ### Changed
 
