@@ -77,7 +77,7 @@ export interface Harness {
   subscribe(
     conn: TestConn,
     table: string,
-    options?: { filter?: TableFilter; key?: string; subId?: string },
+    options?: { filter?: TableFilter; key?: string; subId?: string; resubscribe?: boolean },
   ): Promise<{ key: string; ok: boolean }>;
   /** Unsubscribe one sub id. */
   unsubscribe(conn: TestConn, subId?: string): void;
@@ -174,6 +174,7 @@ export function realtimeHarness(options: HarnessOptions = {}): Harness {
         subId: options.subId ?? "s1",
         channelId: REALTIME_CHANNEL_ID,
         key,
+        ...(options.resubscribe ? { resubscribe: true } : {}),
       });
       return { key, ok: conn.readies > before };
     },

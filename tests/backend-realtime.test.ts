@@ -1995,6 +1995,21 @@ Deno.test("publicationTable / triggerArgs / dropTriggersSql: a catalog row as a 
 const unnumbered = (frames: TableChangesFrame[]) => frames.map(({ seq: _seq, ...rest }) => rest);
 
 /**
+ * The frames a browser keeps, as `useTableChanges` does: a copy sent again after a reconnect
+ * (`again`) numbered at or before the last frame it has is dropped. `last` is the last `seq` it
+ * had before these.
+ */
+function arrived(frames: TableChangesFrame[], last = 0): TableChangesFrame[] {
+  const kept: TableChangesFrame[] = [];
+  for (const frame of frames) {
+    if (frame.again && last !== 0 && frame.seq <= last) continue;
+    kept.push(frame);
+    last = frame.seq;
+  }
+  return kept;
+}
+
+/**
  * Wait for the replayed frame carrying `key` (the last a replay sends): the hub delivers a
  * subscriber's frames in order, so every frame before it has arrived too, and a lost one shows
  * as a wrong list rather than a timeout.
@@ -2042,9 +2057,10 @@ Deno.test("realtime replay: a reconnecting subscriber gets what it missed, re-re
     assertEquals(engine.stats.rereads - rereads, 1, "only B's live group re-read while A was away");
 
     const back = env.hub.conn(env.a);
+    const seen = () => arrived(back.frames, 1);
     assert((await env.hub.subscribe(back, "notes", { key })).ok);
-    await until(() => back.frames.length === 2, 3_000, "resumed + replay");
-    assertEquals(unnumbered(back.frames), [
+    await until(() => seen().length === 2, 3_000, "resumed + replay");
+    assertEquals(unnumbered(seen()), [
       { resumed: true },
       {
         changes: [
@@ -2055,14 +2071,14 @@ Deno.test("realtime replay: a reconnecting subscriber gets what it missed, re-re
       },
     ]);
     // Numbered on from the frame before the drop: no gap, nothing to re-read.
-    assertEquals(back.frames.map((f) => f.seq), [2, 3]);
+    assertEquals(seen().map((f) => f.seq), [2, 3]);
     assertEquals(engine.stats.replays, 1);
 
     // Live again afterwards.
     env.sql.insert("notes", { id: 5, owner: A, body: "after" });
-    await until(() => back.frames.length === 3);
-    assertEquals(back.frames[2].changes?.map((c) => c.key), ["5"]);
-    assertEquals(back.frames[2].seq, 4);
+    await until(() => seen().length === 3);
+    assertEquals(seen()[2].changes?.map((c) => c.key), ["5"]);
+    assertEquals(seen()[2].seq, 4);
   } finally {
     await env.done();
   }
@@ -2153,9 +2169,10 @@ Deno.test("realtime replay: a gap the journal no longer covers, or a lost listen
     env.sql.reconnect();
     await engine.flush();
     const again = env.hub.conn(env.a);
+    const seen = () => arrived(again.frames, 2);
     assert((await env.hub.subscribe(again, "notes", { key })).ok);
-    await until(() => again.frames.length === 2, 3_000, "resumed, then the resync");
-    assertEquals(unnumbered(again.frames), [{ resumed: true }, { resync: true }]);
+    await until(() => seen().length === 2, 3_000, "resumed, then the resync");
+    assertEquals(unnumbered(seen()), [{ resumed: true }, { resync: true }]);
   } finally {
     await env.done();
   }
@@ -2385,12 +2402,69 @@ Deno.test("realtime replay: a frame in the hub's window still reaches a reconnec
     await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
     env.hub.drop(first);
     const back = env.hub.conn(env.a);
-    assert((await env.hub.subscribe(back, "notes", { key })).ok);
-    await until(() => window.held() === 2, 3_000, "the resume");
+    assert((await env.hub.subscribe(back, "notes", { key, resubscribe: true })).ok);
+    await until(() => window.held() === 3, 3_000, "the frame sent again, and the resume");
     window.release();
-    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
-    assertEquals(changesOf(back).map((c) => c.key), ["1"], "the same grant keeps it");
+    await until(() => back.frames.length >= 3, 3_000, "the frame, its copy and the resume");
+    assertEquals(changesOf(back).map((c) => c.key), ["1", "1"], "the same grant keeps it");
+    // The copy keeps its number and is marked: the browser drops it, having frame 1 already.
+    assertEquals(back.frames.map((f) => [f.seq, f.again ?? false]), [[1, false], [1, true], [
+      2,
+      false,
+    ]]);
     assertEquals(unnumbered(back.frames).at(-1), { resumed: true });
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame the hub had not fanned out at a drop is sent again on the return", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
+    env.hub.drop(first);
+    window.release(); // the hub flushes with no subscriber left: the frame reaches no one
+    await settle(40);
+    assertEquals(first.frames, []);
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key, resubscribe: true })).ok);
+    await until(() => back.frames.length >= 2, 3_000, "the frame again, then the resume");
+    assertEquals(unnumbered(back.frames), [
+      { changes: [{ op: "insert", key: "1", row: { id: 1, owner: A, body: "x" } }], again: true },
+      { resumed: true },
+    ]);
+    // Numbered as the first time: frame 1 follows nothing the browser had, so it applies.
+    assertEquals(back.frames.map((f) => f.seq), [1, 2]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: a marked re-subscribe this instance does not hold is answered resync at once", async () => {
+  const env = await setUp();
+  try {
+    // A key this instance never saw (swept, or held by another instance), re-sent after a
+    // reconnect: what the browser missed is unknown, so it is told to re-read now.
+    const lost = env.hub.conn(env.a);
+    const key = encodeSubscriptionKey({ table: "notes", nonce: newNonce() });
+    assert((await env.hub.subscribe(lost, "notes", { key, resubscribe: true })).ok);
+    await until(() => lost.frames.length === 1, 3_000, "the answer to the re-subscribe");
+    assertEquals(lost.frames, [{ seq: 1, resync: true }]);
+    // Live from there on.
+    env.sql.insert("notes", { id: 1, owner: A, body: "after" });
+    await until(() => lost.frames.length === 2, 3_000, "the next change");
+    assertEquals(lost.frames[1].changes?.map((c) => c.key), ["1"]);
+    // A first subscribe (no mark) gets no such frame.
+    const fresh = env.hub.conn(env.a);
+    await env.hub.subscribe(fresh, "notes");
+    await settle(120);
+    assertEquals(fresh.frames, []);
   } finally {
     await env.done();
   }
@@ -2456,9 +2530,9 @@ Deno.test("realtime replay: a frame another instance read under the same claims 
     assert((await hubB.subscribe(back, "notes", { key })).ok);
     await until(() => windowB.held() === 2, 3_000, "the resume");
     windowB.release();
-    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
+    await until(() => back.frames.length >= 3, 3_000, "the frame, its copy and the resume");
     assertEquals(
-      changesOf(back).map((c) => c.key),
+      arrived(back.frames).flatMap((f) => f.changes ?? []).map((c) => c.key),
       ["1"],
       "the same grant keeps it, cross-instance",
     );

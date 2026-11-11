@@ -819,7 +819,8 @@ missed changes are coalesced and re-read once, when they return. When the gap ca
 older than the retention, more than `replay.maxChangesPerTable` (10 000 by default) changes of the table, the
 database listener was lost meanwhile, the reconnect reached another instance (no sticky
 sessions), or the viewer came back with other claims than they left with (a changed role, team or
-tenant; a refreshed token is the same claims) — `stale` turns true and `onResync` runs, as before.
+tenant; a refreshed token is the same claims) — the server says so at once, `stale` turns true and
+`onResync` runs.
 
 ### How it works
 
@@ -883,9 +884,13 @@ tenant; a refreshed token is the same claims) — `stale` turns true and `onResy
    re-read as the subscriber through the same tracked-key rules as live changes, numbered on from
    the frames before the drop. A position the journal no longer covers, or a journaled listener
    loss, or a reconnect re-authorized under other claims (the frames kept for it were read under
-   the old ones, and are dropped), is `{ resync: true }` instead; a reconnect answered by neither
-   within 10 seconds (the subscription was dropped, or the socket reached another instance) marks
-   the hook `stale`. Every frame is published under a digest of the grant (role and claims) it was
+   the old ones, and are dropped), is `{ resync: true }` instead. The browser marks a subscription
+   it re-sends after a reconnect, so one the instance no longer holds (dropped, or the socket
+   reached another instance) is answered `{ resync: true }` at once; with an older denext, which
+   sends no mark, a reconnect answered by neither within 10 seconds marks the hook `stale`. The
+   frames handed to the Live hub in the second before a drop are sent again on the return, ahead
+   of `resumed`, numbered as the first time and marked `again: true`: one the hub had not fanned
+   out yet when the connection closed then still arrives, and the hook drops a copy of one it has. Every frame is published under a digest of the grant (role and claims) it was
    read as, and every subscriber is admitted under the grant it has, so the Live hub — on any
    instance, behind a shared channel transport too — never sends a frame read under other claims
    than the subscriber's; one it drops that way is a sequence gap, which the hook answers with

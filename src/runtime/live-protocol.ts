@@ -175,6 +175,11 @@ export interface LiveChannelSubscribe {
    * a channel with `history` only.
    */
   since?: string;
+  /**
+   * The server acknowledged this subscription before, and the client re-sends it after its
+   * connection came back (the channel's `authorize` sees `ctx.resubscribe`).
+   */
+  resubscribe?: true;
 }
 
 /** Client → server: drop a {@link LiveChannelSubscribe}. */

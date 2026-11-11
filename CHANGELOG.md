@@ -130,6 +130,16 @@ and this project adheres to
 
 ### Fixed
 
+- **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
+  The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
+  `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or
+  whose socket reached another instance, is answered `resync` straight away instead of going
+  `stale` only after 10 seconds of silence.
+- **Realtime: a frame the Live hub had not sent when the connection dropped still arrives
+  (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
+  on the return, ahead of `resumed`, numbered as before and marked `again: true`;
+  `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
+  window was lost, and the gap made the hook `stale`.
 - **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
   `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
   `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they

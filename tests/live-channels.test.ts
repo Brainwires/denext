@@ -73,6 +73,29 @@ Deno.test("channel hub: dropping one connection de-indexes without scanning the 
   resetChannels();
 });
 
+Deno.test("channel hub: authorize sees ctx.resubscribe on a subscription the client re-sends", async () => {
+  resetChannels();
+  const seen: (boolean | undefined)[] = [];
+  createChannel<{ n: number }>({
+    id: "again",
+    authorize: (ctx) => {
+      seen.push(ctx.resubscribe);
+      return true;
+    },
+  });
+  const { hub, conn } = fakeHub();
+  const c = conn(1);
+  await hub.subscribe(c, { subId: "s", channelId: "again", key: "k" });
+  hub.drop(c);
+  const back = conn(2);
+  await hub.subscribe(back, { subId: "s", channelId: "again", key: "k", resubscribe: true });
+  // Anything but `true` is no mark.
+  await hub.subscribe(conn(3), { subId: "s", channelId: "again", key: "k", resubscribe: "yes" });
+  assertEquals(seen, [undefined, true, undefined]);
+  hub.dispose();
+  resetChannels();
+});
+
 Deno.test("channel hub: onIdle says whether the key was unsubscribed or its connection closed", async () => {
   resetChannels();
   const events: string[] = [];
