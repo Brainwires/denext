@@ -11,6 +11,8 @@
   "imports": {
     "@denext/denext": "jsr:@denext/denext@^4.15.0",
     "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/path/posix": "jsr:@std/path@^1.0.0/posix",
+    "@std/path/windows": "jsr:@std/path@^1.0.0/windows",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.24.6",
     "@denext/openapi": "jsr:@denext/openapi@^0.7.0"

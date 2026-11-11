@@ -14,7 +14,7 @@ import {
   runMatchingPrepareSteps,
 } from "../src/plugin/mod.ts";
 import { createSchema, graphql } from "../packages/graphql/mod.ts";
-import { configGraphWatch, traceExport } from "../packages/graphql/trace.ts";
+import { configGraphWatch, traceExport, watchGlobs } from "../packages/graphql/trace.ts";
 
 // graphql-yoga's parse / validate caches (lru-cache) memoize their clock for 1 ms behind a timer:
 // let it fire inside each test rather than after it.
@@ -270,8 +270,9 @@ async function aliasedProject(): Promise<{ root: string; config: string }> {
 Deno.test("configGraphWatch: the directories of the project modules the config reaches, aliases too", async () => {
   const { root, config } = await aliasedProject();
   try {
+    // Written with `/` on every OS: the watcher joins the glob onto the project root itself.
     assertEquals(await configGraphWatch(config, root), [
-      join("graphql", "**", "*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}"),
+      "graphql/**/*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}",
     ]);
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -328,4 +329,40 @@ Deno.test("graphql dev: a schema object it can't trace reloads by re-importing t
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
+});
+
+const GLOB = "**/*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}";
+
+Deno.test("watchGlobs: Windows paths — drive letters, case, verbatim prefix, 8.3 roots, other drives", () => {
+  const root = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\denext_gql_alias_x";
+  const realRoot = "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\denext_gql_alias_x";
+  const globs = watchGlobs(
+    [
+      // deno info's real path, with a lower-case drive letter and the verbatim prefix.
+      "\\\\?\\c:\\Users\\runneradmin\\AppData\\Local\\Temp\\denext_gql_alias_x\\GraphQL\\schema.ts",
+      // A forward-slash spelling, nested below another watched folder.
+      "C:/Users/runneradmin/AppData/Local/Temp/denext_gql_alias_x/GraphQL/types/user.ts",
+      realRoot + "\\lib\\deep\\util.ts",
+      realRoot + "\\root-module.ts",
+      realRoot + "\\denext.config.ts", // the config itself
+      realRoot + "\\node_modules\\pkg\\index.js",
+      realRoot + "\\.denext\\gen.ts",
+      "D:\\Users\\runneradmin\\AppData\\Local\\Temp\\denext_gql_alias_x\\other.ts", // another drive
+      "C:\\elsewhere\\x.ts",
+    ],
+    [root, realRoot],
+    [root + "\\denext.config.ts", realRoot.toUpperCase() + "\\DENEXT.CONFIG.TS"],
+    "windows",
+  );
+  assertEquals(globs, [`GraphQL/${GLOB}`, `lib/deep/${GLOB}`, "root-module.ts"]);
+});
+
+Deno.test("watchGlobs: POSIX paths are case-sensitive and use the root's real path too", () => {
+  const globs = watchGlobs(
+    [["/var/p/graphql/schema.ts", "/private/var/p/graphql/schema.ts"], "/private/var/P/x/y.ts"],
+    ["/var/p", "/private/var/p"],
+    ["/var/p/denext.config.ts"],
+    "posix",
+  );
+  assertEquals(globs, [`graphql/${GLOB}`]);
 });
