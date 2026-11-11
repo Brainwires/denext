@@ -3,7 +3,13 @@
 // reloads under `denext dev` — traced to the project module that exports it and re-imported
 // from there, as the module-path form is.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
@@ -14,7 +20,13 @@ import {
   runMatchingPrepareSteps,
 } from "../src/plugin/mod.ts";
 import { createSchema, graphql } from "../packages/graphql/mod.ts";
-import { configGraphWatch, traceExport, watchGlobs } from "../packages/graphql/trace.ts";
+import {
+  configGraphWatch,
+  infoArgs,
+  localModulesOf,
+  traceExport,
+  watchGlobs,
+} from "../packages/graphql/trace.ts";
 
 // graphql-yoga's parse / validate caches (lru-cache) memoize their clock for 1 ms behind a timer:
 // let it fire inside each test rather than after it.
@@ -365,4 +377,88 @@ Deno.test("watchGlobs: POSIX paths are case-sensitive and use the root's real pa
     "posix",
   );
   assertEquals(globs, [`graphql/${GLOB}`]);
+});
+
+// What `deno info --json --no-lock C:\\…\\denext.config.ts` printed on Windows (runtime
+// 3.0.0-denext.17), exit 0 and nothing on stderr: the bare path read as a URL with a `c:` scheme.
+const WINDOWS_BARE_PATH_INFO = JSON.stringify({
+  version: 1,
+  roots: ["c:\\denext-debug\\gqlwatch\\proj\\denext.config.ts"],
+  modules: [{ kind: "external", specifier: "c:\\denext-debug\\gqlwatch\\proj\\denext.config.ts" }],
+  redirects: {},
+  npmPackages: {},
+});
+
+Deno.test("infoArgs: the entry goes to deno info as a file: URL, never a bare Windows path", () => {
+  assertEquals(infoArgs("C:\\denext-debug\\proj\\denext.config.ts", "windows"), [
+    "info",
+    "--json",
+    "--no-lock",
+    "file:///C:/denext-debug/proj/denext.config.ts",
+  ]);
+  assertEquals(
+    infoArgs("/srv/app/denext.config.ts", "posix").at(-1),
+    "file:///srv/app/denext.config.ts",
+  );
+});
+
+Deno.test("localModulesOf: an entry deno info didn't read as a local module is an error, not an empty graph", () => {
+  const bare = "c:\\denext-debug\\gqlwatch\\proj\\denext.config.ts";
+  let err = assertThrows(() => localModulesOf(WINDOWS_BARE_PATH_INFO, bare));
+  assertStringIncludes((err as Error).message, "did not read");
+  const url = "file:///srv/app/denext.config.ts";
+  err = assertThrows(() =>
+    localModulesOf(
+      JSON.stringify({ roots: [url], modules: [{ specifier: url, error: "Module not found" }] }),
+      url,
+    )
+  );
+  assertStringIncludes((err as Error).message, "Module not found");
+  const ok = JSON.stringify({
+    roots: [url],
+    modules: [
+      { kind: "esm", specifier: url },
+      { kind: "esm", specifier: "file:///srv/app/graphql/schema.ts" },
+      { kind: "esm", specifier: "https://jsr.io/@std/path/1.1.6/mod.ts" },
+    ],
+  });
+  assertEquals(localModulesOf(ok, url), [
+    "/srv/app/denext.config.ts",
+    "/srv/app/graphql/schema.ts",
+  ]);
+});
+
+Deno.test("configGraphWatch: deno info's failure is thrown with its stderr, and the plugin reports it", async () => {
+  const { root, config } = await aliasedProject();
+  try {
+    await Deno.writeTextFile(join(root, "deno.json"), "{ not json");
+    const err = await assertRejects(() => configGraphWatch(config, root));
+    assertStringIncludes((err as Error).message, "deno info");
+    assertStringIncludes((err as Error).message, "failed (exit");
+    // Through the plugin: a dev notice and the dev overlay, and no reload is wired.
+    const reported: string[] = [];
+    const logged: string[] = [];
+    const { error } = console;
+    console.error = (...a: unknown[]) => logged.push(a.map(String).join(" "));
+    try {
+      resetPlugins();
+      await applyPlugins({
+        projectRoot: root,
+        appDir: join(root, "app"),
+        config: { plugins: [graphql({ schema: costSchema })] } as DenextConfig,
+        mode: "dev",
+        load: noopLoad,
+        reportDevError: (title) => reported.push(title),
+      });
+    } finally {
+      console.error = error;
+    }
+    assertEquals(reported, [
+      "GraphQL schema reload is off: the config's module graph could not be read",
+    ]);
+    assertStringIncludes(logged.join("\n"), "a schema edit needs a dev-server restart");
+  } finally {
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
 });

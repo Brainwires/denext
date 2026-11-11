@@ -606,8 +606,18 @@ async function reloadSourceOf(
     return { source: traced, watch: defaultSchemaWatch(relative(ctx.projectRoot, traced.file)) };
   }
   const config = await configFileOf(ctx.projectRoot);
-  const watch = config ? await configGraphWatch(config, ctx.projectRoot) : [];
-  if (!config || watch.length === 0) return null;
+  if (!config) return null;
+  let watch: string[];
+  try {
+    watch = await configGraphWatch(config, ctx.projectRoot);
+  } catch (error) {
+    // Not silently: without the graph a schema edit needs a dev-server restart.
+    const title = "GraphQL schema reload is off: the config's module graph could not be read";
+    console.error(`[@denext/graphql] ${title} (a schema edit needs a dev-server restart):`, error);
+    ctx.reportDevError?.(title, error);
+    return null;
+  }
+  if (watch.length === 0) return null;
   return { source: { config, path }, watch };
 }
 
