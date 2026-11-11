@@ -114,6 +114,24 @@ export function bakedLimitsNotice(
 }
 
 /**
+ * The limits a `build --compile` executable bakes in: `compile.limits` when set (`false`: none),
+ * else `start.limits`.
+ *
+ * @param config The project config.
+ * @returns The limits, or `undefined` for none.
+ */
+export function compiledLimits(
+  config:
+    | { start?: { limits?: StartLimits }; compile?: { limits?: StartLimits | false } }
+    | null
+    | undefined,
+): StartLimits | undefined {
+  const own = config?.compile?.limits;
+  if (own === false) return undefined;
+  return own ?? config?.start?.limits;
+}
+
+/**
  * The runtime flags `start.limits` asks for (`--max-memory=512m`, `--max-cpu-time=<n>`,
  * `--max-time=<n>`, in that order). A value the runtime would refuse is left out (the config
  * validator reports it).

@@ -43,29 +43,33 @@ const LIMIT_KEYS = ["memory", "cpuSeconds", "deadlineSeconds"] as const;
  * What is wrong with a `start.limits` value, as `[key path, message]` pairs (none when valid).
  *
  * @param limits The configured value.
+ * @param path Its key path in the config (`start.limits`, `compile.limits`).
  * @returns The problems.
  */
-export function resourceLimitProblems(limits: unknown): Array<[string, string]> {
+export function resourceLimitProblems(
+  limits: unknown,
+  path = "start.limits",
+): Array<[string, string]> {
   if (limits === undefined) return [];
   if (typeof limits !== "object" || limits === null || Array.isArray(limits)) {
-    return [["start.limits", "must be an object"]];
+    return [[path, "must be an object"]];
   }
   const problems: Array<[string, string]> = [];
   const record = limits as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (!(LIMIT_KEYS as readonly string[]).includes(key)) {
-      problems.push([`start.limits.${key}`, `is not a limit (${LIMIT_KEYS.join(", ")})`]);
+      problems.push([`${path}.${key}`, `is not a limit (${LIMIT_KEYS.join(", ")})`]);
     }
   }
   if (record.memory !== undefined && memoryLimitBytes(record.memory) === null) {
     problems.push([
-      "start.limits.memory",
+      `${path}.memory`,
       'must be at least 32 MB: a whole number of megabytes, or a size such as "512m" or "2g"',
     ]);
   }
   for (const key of ["cpuSeconds", "deadlineSeconds"] as const) {
     if (record[key] !== undefined && !validSeconds(record[key])) {
-      problems.push([`start.limits.${key}`, "must be a whole number of seconds, at least 1"]);
+      problems.push([`${path}.${key}`, "must be a whole number of seconds, at least 1"]);
     }
   }
   return problems;

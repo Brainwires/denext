@@ -85,6 +85,9 @@ and this project adheres to
 - **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
   `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
   limit and a timed-out one is retried. Synchronous work is not preempted.
+- **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
+  cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
+  of `start.limits`; `compile: { limits: false }` bakes none.
 
 ### Changed
 
