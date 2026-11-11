@@ -430,6 +430,12 @@ back, never unlimited), believed only from a trusted proxy — a peer in `rateLi
 `trustForwardedHeaders` (any other peer is keyed as itself) — and `rateLimitLocalAddresses: true`
 counts such a peer as itself.
 
+Outbound calls: `safeFetch(url, { userAgent: "x/1" | false, cookieJar })` from `denext/server`
+(`User-Agent: denext` by default, a header in `headers` wins; `cookieJar` stores each hop's
+`Set-Cookie`); `runtimeCookieJar()` is the runtime's `Deno.CookieJar` (denext's Deno with
+`--unstable-cookies`, else `null`; `using jar = runtimeCookieJar()`), and in tests
+`createTestClient(handler, { cookieJar })` / `new CookieJar(store)` from `denext/testing`.
+
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
 ```ts
@@ -676,14 +682,15 @@ icon from the first frame), `openWindow({ url, overlay, focusable: false, … })
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
 `setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
-windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
+windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
+`{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
 (`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
 decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
-`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
+`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `app.onSecondInstance(fn)` on its result / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
 `lastSession()`, `desktop.menu.window.reopenClosed: "list"` lists the closed windows by `document.title`,
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
@@ -703,8 +710,11 @@ other in a loop; `conflict` from inside its own guard); `host.confirm({ message,
 is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
 3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
 `ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
-subframe from a privileged method, and trust `kind` only when `verified` (a runtime that publishes
-`Deno.desktop.marksFrames`; else it is the page's own report). With no tray host (stock GNOME)
+subframe from a privileged method; `kind` is `verified` only where the runtime marks frames
+(`Deno.desktop.marksFrames`) and the engine says which frame called (CEF, macOS's WKWebView), else
+it is the page's own report (always on WebView2 and WebKitGTK, and on a runtime without
+`marksFrames`), so requiring `verified` refuses every call there: refuse a `verified` non-main frame or an unverified `"sub"`, or use
+`desktop.backend: "cef"` where it matters. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
@@ -768,9 +778,14 @@ navigation anywhere else (a link, a script, a redirect, `window.open`) opens an 
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). To decide in code,
 `runDesktop({ onWillNavigate: (e) => … })` (also `onWillNavigate(fn)` on its result and `host.onWillNavigate(fn)`)
-sees every window's top-level navigation first (`e.url`, `e.window`, `e.kind`, `e.initiator`):
+sees the top-level navigations a page starts first (`e.url`, `e.window`, `e.kind`, `e.initiator`; not
+back / forward, reloads, sub-frames, popups, `about:blank` or the runtime's own):
 `e.preventDefault()` refuses it, `e.allow()` loads it in place (a refusal wins; decide synchronously); it fires
-only on a runtime that publishes `Deno.desktop.navigationEvents` (`runtimeHasNavigationEvents()`). It takes effect under denext's pinned Deno Desktop runtime, which
+only on a runtime that reports navigation events (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`);
+on one that doesn't the hook is never called. While it is subscribed, CEF and WebView2 cancel each navigation and start it again
+as a new history entry (WebView2 as a GET, so a form POST loses its body; CEF keeps a same-origin POST);
+WebKitGTK decides at the response (the request already sent; `kind` `"other"`, no `initiator`, back /
+forward and reloads included). `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.17 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
@@ -899,7 +914,8 @@ Docs: https://denext.dev/docs/react-native
 
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
-authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
+requireUploadSize?, authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm;
+`requireUploadSize: true` refuses a signed upload URL without `size`). Server:
 `storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload(key, body,
 { upsert?, cacheControl?, metadata? }) / download / info / exists / copy / move / listFolder / list /
 remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` from
@@ -925,7 +941,9 @@ WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admi
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
-valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`;
+`functions: { memoryMb }` caps each worker's heap (runtime 3.0.0-rc.2+, `"unstable": ["worker-options"]`;
+over it: `546 WORKER_LIMIT`).
 With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
 server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
 inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
@@ -1083,7 +1101,8 @@ or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
 `start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
 (runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
 the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
-into a compiled binary, which takes no flag to change them: `./app` and `./app start` serve under
+into a compiled binary (`compile: { limits }` gives it its own, same shape; `compile: { limits: false }`
+bakes none), which takes no flag to change them: `./app` and `./app start` serve under
 them, and from denext's Deno 3.0.0-denext.8 its `job` / `db` lift them (the generated main module's
 `Deno.disarmResourceLimits(import.meta)`, which nothing else can call), while on an older runtime
 those verbs run under them and print a notice; never `dev` or tests; not applied on stock Deno, with

@@ -20,9 +20,10 @@
 // outside its package that it writes (`siblingWrite`), and a browser cache gets `executables`.
 // From denext.1 (item 124) the download host a package declares for itself (node-pre-gyp's
 // `binary.host`) is honoured only when `jailScripts.knownPackages` lists it: `declaredHosts`
-// holds the reviewed ones; from denext.19 a declared `github.com` also gets the hosts GitHub
-// redirects a release download to ({@linkcode DECLARED_HOST_REDIRECTS}), which denext grants as a
-// `net` list on the runtimes before it. There is no per-package opt-out, so
+// holds the reviewed ones; where the runtime passes on a declared host's redirects, a declared
+// `github.com` also gets the hosts GitHub redirects a release download to
+// ({@linkcode DECLARED_HOST_REDIRECTS}), which denext grants as a `net` list on a runtime that
+// doesn't. There is no per-package opt-out, so
 // each entry is the narrowest grant that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
 // the dependencies they find, and `denext doctor` flags a missing one; nothing here ever turns the
 // jail off. Data only: src/build/jail-scripts.ts reads it. The runtime mirrors this list (its
@@ -109,8 +110,8 @@ export interface JailExceptionEntry {
    * reviewed: written to `jailScripts.knownPackages` on a runtime that honours a declared host
    * only when that lists it (3.0.0-denext.1 and later). Older runtimes allow a declared host by
    * itself. A declared `github.com` (a release download) redirects to the hosts in
-   * {@linkcode DECLARED_HOST_REDIRECTS}: the runtime allows them with it from 3.0.0-denext.19, and
-   * on the runtimes before it the entry's `net` lists them.
+   * {@linkcode DECLARED_HOST_REDIRECTS}: a runtime that passes on a declared host's redirects
+   * allows them with it, and on one that doesn't the entry's `net` lists them.
    */
   readonly declaredHosts?: readonly string[];
   /** What the exception cannot fix, and what to do about it. */
@@ -135,7 +136,7 @@ const GITHUB = [
 /**
  * The hosts a declared download host hands its downloads off to, keyed by that host: a script
  * allowed the declared host needs these too, as its download fails without them. Mirrors the
- * runtime's `DECLARED_HOST_REDIRECTS` (3.0.0-denext.19).
+ * runtime's `DECLARED_HOST_REDIRECTS`.
  */
 export const DECLARED_HOST_REDIRECTS: Readonly<Record<string, readonly string[]>> = {
   "github.com": GITHUB.slice(1),

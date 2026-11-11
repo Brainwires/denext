@@ -611,8 +611,8 @@ try {
 
 Requests carry `User-Agent: denext` unless `headers` sets one; `userAgent: "my-app/1"` replaces
 that default and `userAgent: false` sends none (some servers refuse a request without one). These
-are the values of `Deno.createHttpClient({ userAgent })` on runtime `3.0.0-denext.19` and later,
-but `safeFetch` writes its own request, so the option works on every runtime.
+are the values `Deno.createHttpClient({ userAgent })` takes on a runtime that has that option, but
+`safeFetch` writes its own request, so the option works on every runtime.
 
 `cookieJar` gives the calls a cookie session: each redirect hop's `Set-Cookie` is stored and the
 matching cookies go out on the next hop and on later calls with the same jar (a `Cookie` in

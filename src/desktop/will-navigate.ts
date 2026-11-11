@@ -1,7 +1,8 @@
 /**
  * The app's will-navigate hook: `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
- * result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
- * window before the runtime's navigation guard (`desktop.app.origin`,
+ * result and an extension's `host.onWillNavigate(fn)` see the top-level navigations pages start
+ * in every window (not back / forward, reloads, sub-frames, popups or the runtime's own) before
+ * the runtime's navigation guard (`desktop.app.origin`,
  * `desktop.app.allowedNavigationOrigins`) applies, and may refuse it (`preventDefault()`) or let
  * it load in the window although the guard would send it to the browser (`allow()`).
  *
@@ -21,7 +22,10 @@
  * @module
  */
 
-/** How a top-level navigation started. */
+/**
+ * How a top-level navigation started. `"window-open"` is reserved: popups (`window.open`,
+ * `target="_blank"`) keep their own rule and the runtime does not report them.
+ */
 export type DesktopNavigationKind = "link" | "script" | "redirect" | "window-open" | "other";
 
 /** A top-level navigation about to happen ({@linkcode DesktopWillNavigateHandler}). */

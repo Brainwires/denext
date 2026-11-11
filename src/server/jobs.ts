@@ -71,7 +71,8 @@ export interface JobDefinition<R = unknown> {
   retry?: JobRetry;
   /**
    * The longest one attempt may run, in milliseconds (a whole number, at most 2^31-1). Past it
-   * the attempt fails with a `JobTimeoutError` (`job "<name>" timed out after <n> ms`) and the
+   * the attempt fails with an `Error` whose `name` is `"JobTimeoutError"` (check `err.name`; there
+   * is no class to import), message `job "<name>" timed out after <n> ms`, and the
    * handler's `signal` aborts with that error, so an `await` on a `fetch` or a query that takes
    * the signal stops; with `retry`, the next attempt follows as after any failure. The handler
    * itself is not preempted: synchronous work runs on until it returns, so check

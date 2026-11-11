@@ -632,6 +632,23 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **A bridge handler's `ctx.caller.frame` is verified only on CEF and WKWebView.** A runtime that
+  marks frames (`Deno.desktop.marksFrames`) does so only where the engine says which frame made
+  the request: CEF, and macOS's WKWebView where WebKit reports the frame. WebView2 (Windows) and
+  WebKitGTK (Linux) don't, so there, and everywhere on a runtime without `marksFrames`,
+  `verified` is `false` and `kind` is the page's own report. A check that requires `verified`
+  refuses every call on those engines; fall back to the page's report there, or build with
+  `desktop.backend: "cef"` ([details](https://denext.dev/docs/desktop#desktop-extension-caller)).
+- **`onWillNavigate` needs a runtime that reports navigation events, and engines deliver it
+  differently.** On a runtime without `Deno.desktop.navigationEvents` (`runtimeHasNavigationEvents()`
+  is `false`) it is never called. Where it runs it does not see back / forward, reloads,
+  sub-frames, popups, `about:blank` / `about:srcdoc` or the runtime's own navigation. CEF and
+  WebView2 can't hold a navigation, so while a hook is subscribed each one is cancelled and started
+  again as a new history entry once decided: WebView2 restarts it as a GET (a form POST loses its
+  body); CEF keeps a same-origin POST's method and body and loads a cross-origin one by URL.
+  WKWebView holds the navigation. WebKitGTK (2.40 and later) decides at the response, after the
+  request was sent, reports every `kind` as `"other"` with no `initiator`, and reports back /
+  forward and reloads too.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

@@ -4091,22 +4091,35 @@ desktop: {
         the frame&apos;s own; <code>verified</code>) and <code>window</code> (the window id, as{" "}
         <code>ctx.windowId</code>). A privileged method can refuse anything but the main frame. The
         frame is <code>verified</code>{" "}
-        when the runtime marks each request with it (a runtime that publishes{" "}
+        when the runtime marks each request with it (one that publishes{" "}
         <code>Deno.desktop.marksFrames</code>); otherwise it is what the page reported, which a
-        same-origin frame holding the token could misstate, so check <code>verified</code>{" "}
-        before relying on it:
+        same-origin frame holding the token could misstate. The runtime marks frames only where the
+        engine says which frame made a request: CEF, and macOS&apos;s WKWebView where WebKit reports
+        the frame. WebView2 (Windows) and WebKitGTK (Linux) don&apos;t, so there, and everywhere on
+        a runtime without <code>marksFrames</code>, <code>verified</code> is always{" "}
+        <code>false</code>{" "}
+        and a check that requires it refuses every call. Refuse a verified subframe, and where the
+        frame is unverified fall back to the page&apos;s report:
       </p>
       <Code lang="ts">
         {`wipe: {
   handler: (_args, ctx) => {
     const frame = ctx.caller?.frame;
-    if (frame?.kind !== "main" || !frame.verified) {
+    // Verified: the runtime said which frame called. Unverified (WebView2, WebKitGTK, a runtime
+    // without marksFrames): the page's own report, so refuse what it says is a subframe.
+    const subframe = frame?.verified ? frame.kind !== "main" : frame?.kind === "sub";
+    if (subframe) {
       throw new DesktopCapError("forbidden", "only the app's own page may wipe", { status: 403 });
     }
     return wipeEverything();
   },
 },`}
       </Code>
+      <p>
+        Where a method must never answer an unverified caller, require <code>verified</code>{" "}
+        and build with <code>desktop.backend: "cef"</code>{" "}
+        (CEF marks frames on every OS), or decide per platform with <code>Deno.build.os</code>.
+      </p>
 
       <h3 id="desktop-extension-events">Events no page call started</h3>
       <p>
@@ -4914,11 +4927,14 @@ export default {
           To decide in code, pass <code>runDesktop({"{ onWillNavigate }"})</code>{" "}
           (or subscribe later with <code>onWillNavigate(fn)</code> on its result, or{" "}
           <code>host.onWillNavigate(fn)</code>{" "}
-          in an extension). It sees every top-level navigation of every window before the static
-          policy: <code>event.url</code>, <code>event.window</code>, <code>event.kind</code>{" "}
-          (<code>"link"</code>, <code>"script"</code>, <code>"redirect"</code>,{" "}
-          <code>"window-open"</code>, <code>"other"</code>) and <code>event.initiator</code>{" "}
-          when the engine says. <code>event.preventDefault()</code>{" "}
+          in an extension). It sees the top-level navigations pages start (links, scripts, forms,
+          server redirects) in every window before the static policy: <code>event.url</code>,{" "}
+          <code>event.window</code>, <code>event.kind</code> (<code>"link"</code>,{" "}
+          <code>"script"</code>, <code>"redirect"</code>, <code>"other"</code>;{" "}
+          <code>"window-open"</code>{" "}
+          is reserved, as popups keep their own rule and are not reported) and{" "}
+          <code>event.initiator</code> when the engine says. <code>event.preventDefault()</code>
+          {" "}
           refuses it (nothing loads, nothing opens in the browser); <code>event.allow()</code>{" "}
           loads it in the window although the policy would send it to the browser. A refusal wins;
           decide synchronously (a returned promise is not waited for), and a throw is logged and
@@ -4933,11 +4949,34 @@ export default {
             {`await runDesktop({
   importMetaUrl: import.meta.url,
   onWillNavigate: (event) => {
-    if (event.kind === "window-open" && !event.url.startsWith("https://")) event.preventDefault();
-    if (new URL(event.url).origin === "https://login.example.com") event.allow();
+    const url = new URL(event.url);
+    if (event.kind === "script" && url.protocol === "http:") event.preventDefault();
+    if (url.origin === "https://login.example.com") event.allow();
   },
 });`}
           </Code>
+          It is not called for back / forward, reloads, sub-frames, popups (<code>
+            window.open
+          </code>, <code>target="_blank"</code>), <code>about:blank</code> /{" "}
+          <code>about:srcdoc</code>{" "}
+          or the runtime&apos;s own navigation. How the engine waits for the answer differs:
+          <ul>
+            <li>
+              WKWebView (macOS) holds the navigation until the hook has decided.
+            </li>
+            <li>
+              CEF and WebView2 can&apos;t hold one, so while a hook is subscribed each navigation is
+              cancelled and started again once it may load, as a new history entry. WebView2 starts
+              it again as a GET of its URL, so a form POST arrives without its body; CEF keeps a
+              same-origin POST&apos;s method and body and loads a cross-origin one by URL.
+            </li>
+            <li>
+              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides at the
+              response: the request has already been sent, every <code>kind</code> is{" "}
+              <code>"other"</code> with no{" "}
+              <code>initiator</code>, and back / forward and reloads are reported too.
+            </li>
+          </ul>
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}

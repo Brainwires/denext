@@ -346,6 +346,11 @@ const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
           {" "}
           <code>channel.revoke(key)</code>{" "}
           ends access immediately, cluster-wide. An unknown channel id is <code>denied</code>.{" "}
+          <code>ctx.resubscribe</code> (the first argument to <code>authorize</code>) is{" "}
+          <code>true</code>{" "}
+          when the browser re-sends a subscription after a reconnect, and absent on a first
+          subscribe and on a TTL re-authorization, so a channel that keeps per-key state can answer
+          one it no longer holds.{" "}
           A payload read for a particular subscriber (rows under their row-level security) is
           published with the grant it was read under,{" "}
           <code>{"publish(key, payload, { grant })"}</code>, and <code>authorize</code>{" "}

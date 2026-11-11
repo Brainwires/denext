@@ -138,9 +138,9 @@ export interface DesktopCapCtx {
  * runtime the memory transport with an `Origin` equal to the app origin), so `origin` is that
  * origin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made
  * the call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop
- * runtime that publishes `Deno.desktop.marksFrames`), else as the calling page reported it
- * (`verified: false`: a subframe that holds the token can claim to be the main frame), and
- * `"unknown"` when neither said.
+ * runtime that publishes `Deno.desktop.marksFrames`, under CEF or WKWebView; WebView2 and
+ * WebKitGTK don't say which frame called), else as the calling page reported it (`verified: false`: a subframe
+ * that holds the token can claim to be the main frame), and `"unknown"` when neither said.
  */
 export interface DesktopCaller {
   /** The origin of the calling window's page (the app origin, or the loopback origin). */

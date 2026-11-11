@@ -115,7 +115,10 @@ const classMember = (ref: Ref, module: string, name: string, member: string) =>
 Deno.test("API reference: a class lists its members, with types, doc comments and static marks", async () => {
   const ref = await readReference();
   const absorb = classMember(ref, "denext/testing", "CookieJar", "absorb");
-  assertEquals([absorb.kind, absorb.signature], ["method", "absorb(headers: Headers): void"]);
+  assertEquals([absorb.kind, absorb.signature], [
+    "method",
+    "absorb(headers: Headers, url?: string): void",
+  ]);
   assertStringIncludes(absorb.doc, "Set-Cookie");
   const ctor = classMember(ref, "denext/server", "PageCache", "constructor");
   assertEquals([ctor.kind, ctor.signature], ["constructor", "constructor(buildId?: string)"]);
@@ -151,6 +154,7 @@ Deno.test("API reference: every parent left unlinked is a platform type, not an 
     "Array",
     "AsyncDisposable",
     "AsyncIterableIterator",
+    "Disposable",
     "Error",
     "PromiseLike",
     "ReadableStream",
@@ -174,7 +178,10 @@ Deno.test("API reference: every parent left unlinked is a platform type, not an 
 Deno.test("API reference: denext_read_docs and denext_search_docs reach class members", async () => {
   const page = await readDocs("api:denext-testing/CookieJar");
   assert(!page.isError);
-  assertStringIncludes(page.text, "- `absorb(headers: Headers): void` — Absorb every `Set-Cookie`");
+  assertStringIncludes(
+    page.text,
+    "- `absorb(headers: Headers, url?: string): void` — Absorb every `Set-Cookie`",
+  );
   const snapshot = await readDocs("api:denext/Snapshot");
   assertStringIncludes(snapshot.text, "`static wrap<F>(");
 });

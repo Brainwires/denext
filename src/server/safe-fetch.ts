@@ -617,8 +617,8 @@ export interface SafeFetchOptions {
   /**
    * The `User-Agent` sent when `headers` sets none: a string replaces the default (`denext`),
    * `false` (or `null`) sends none. A `User-Agent` in `headers` still wins. The same values as
-   * runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })`; `safeFetch` writes its
-   * own request, so the option works on every runtime. A string with a character a header value
+   * the runtime's `Deno.createHttpClient({ userAgent })` where it has that option; `safeFetch`
+   * writes its own request, so the option works on every runtime. A string with a character a header value
    * can't hold, or any other value, is a `TypeError` and nothing is sent.
    */
   userAgent?: string | false | null;

@@ -52,7 +52,8 @@ denext's runtime is the forward line. Every "Since" cell below names the full re
 `2.9.7-denext.N` row comes from the first line (`2.9.7-denext.1` to `2.9.7-denext.22`), which sorts
 before every `3.0.0` release, so `2.9.7-denext.16` is not `3.0.0-denext.16`. `3.0.0-denext.14` and
 `3.0.0-denext.15` were never released; their work shipped in `3.0.0-denext.16`.
-denext 4.x pins `3.0.0-denext.17`, the newest release, so every row below applies to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
+Every row below applies to the runtime denext pins (`denext toolchain status` names it); a later
+release's rows are added once denext pins it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
 escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From

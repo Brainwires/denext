@@ -48,16 +48,23 @@ and this project adheres to
   project's installed entries without changing anything, and `--json` now carries the warning an
   install prints when its entries run the fallback command.
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
-  result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
-  window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it
+  result and an extension's `host.onWillNavigate(fn)` see the top-level navigations pages start in
+  every window (`url`, `window`, `kind`, `initiator`; not back / forward, reloads, sub-frames,
+  popups or the runtime's own) before the navigation guard, and may refuse one
   (`preventDefault()`) or load it in place (`allow()`). It fires on a Deno Desktop runtime that
   dispatches the event (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`); elsewhere
-  the static policy decides alone.
+  the static policy decides alone. Runtime 3.0.0-denext.20 and later; the pinned 3.0.0-denext.17
+  has neither this nor the frame marks below, so the hook is not called and `verified` is `false`.
+  While a hook is subscribed, CEF and WebView2 cancel each navigation and start it again as a new
+  history entry (WebView2 as a GET, so a form POST loses its body), and WebKitGTK decides at the
+  response.
 - **Desktop: every bridge handler knows who called.** A capability or extension handler gets
   `ctx.caller`: the window's `origin`, the calling `frame` (`kind` `"main"` / `"sub"` /
   `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a
   privileged method can refuse a subframe. The frame is verified on a Deno Desktop runtime that
-  marks each request with it (`Deno.desktop.marksFrames`); elsewhere it is the page's own report.
+  marks each request with it (`Deno.desktop.marksFrames`, runtime 3.0.0-denext.20 and later, under
+  CEF and WKWebView); elsewhere it is the page's own report, as on WebView2, WebKitGTK and the
+  pinned 3.0.0-denext.17, where `verified` is always `false`.
 - **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
   finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
   `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
@@ -75,15 +82,16 @@ and this project adheres to
   own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
   it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
   `"unstable": ["worker-options"]` in `deno.json`.
-- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
-  `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
-  limit and a timed-out one is retried. Synchronous work is not preempted.
+- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with an
+  `Error` whose `name` is `"JobTimeoutError"` and aborts the handler's `signal` with it; with
+  `retry`, each attempt has its own limit and a timed-out one is retried. Synchronous work is not
+  preempted.
 - **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
   cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
   of `start.limits`; `compile: { limits: false }` bakes none.
 - **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
   sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
-  (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
+  (runtime 3.0.0-denext.20's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
   `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
 - **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
   stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
@@ -114,12 +122,21 @@ and this project adheres to
   needing a dev-server restart.
 - **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
   are in the built-in exception list**, as the GitHub release host their package.json declares
-  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.19 the runtime allows that host's
+  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.20 the runtime allows that host's
   redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
   `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
 
 ### Fixed
 
+- **Docs: runtime gates, the API reference and a few reference rows.** The docs describe a
+  runtime gate by the capability that detects it (`Deno.desktop.navigationEvents`,
+  `Deno.desktop.marksFrames`, a runtime that passes on a declared host's redirects) rather than a
+  release number. The `ctx.caller` example no longer refuses every call where frames are unmarked
+  (WebView2, WebKitGTK), and `onWillNavigate` lists what it doesn't report and how CEF, WebView2
+  and WebKitGTK deliver it (also in KNOWN-LIMITATIONS). The API reference carries this release's
+  exports. The auth routes table lists `GET /native/passkeys` and `DELETE /native/passkeys/:id`,
+  the environment page `DENEXT_HTML_REWRITER`, the Live page `ctx.resubscribe`, and the jobs page
+  says the timeout error is an `Error` named `"JobTimeoutError"` (there is no class).
 - **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
   the file.** On a route that renders as one client bundle (a page or layout that calls a hook
   itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
@@ -178,9 +195,10 @@ and this project adheres to
   runtime only while the main window is open.
 - **Desktop: a hook for the app's second launch.** With `desktop.app.singleInstance`,
   `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })`, an extension's
-  `host.onSecondInstance(fn)` and a capability's static `onSecondInstance` hook hear every later
-  launch; without a handler, one with no window showing reopens as a Dock click does. Deep links
-  and opened files keep their routing.
+  `host.onSecondInstance(fn)`, a capability's static `onSecondInstance` hook, and
+  `onSecondInstance(fn)` on `runDesktop()`'s result hear every later launch; without a handler,
+  one with no window showing reopens as a Dock click does. Deep links and opened files keep their
+  routing.
 - **Desktop: a quit guard can wait for the user.** While a `host.confirm` box opened by an
   `onBeforeQuit` guard is on screen, the guards' 5-second deadline stops counting, and it goes on
   when the box closes. A session end (a logout, a shutdown) keeps its bound: its deadline never

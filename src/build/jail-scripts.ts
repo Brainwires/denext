@@ -98,7 +98,7 @@ export interface JailRuntime {
   readonly writeRoots: boolean;
   /** A declared download host needs `jailScripts.knownPackages` (denext.1, item 124). */
   readonly knownPackages: boolean;
-  /** A declared host's redirect targets come with it (denext.19). */
+  /** A declared host's redirect targets come with it. */
   readonly declaredRedirects: boolean;
   /** `deno info --json` carries `lifecycleJail` (denext.1, item 124). */
   readonly confinementInfo: boolean;

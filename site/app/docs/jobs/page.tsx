@@ -154,9 +154,10 @@ export default defineJob({
 
       <h2 id="timeouts">Timeouts</h2>
       <p>
-        <code>timeoutMs</code> bounds one attempt: past it the attempt fails with a{" "}
-        <code>JobTimeoutError</code>{" "}
-        (<code>job "sync" timed out after 60000 ms</code>) and the handler's <code>signal</code>
+        <code>timeoutMs</code> bounds one attempt: past it the attempt fails with an{" "}
+        <code>Error</code> whose <code>name</code> is <code>"JobTimeoutError"</code>{" "}
+        (<code>job "sync" timed out after 60000 ms</code>; check{" "}
+        <code>err.name</code>, as there is no class to import) and the handler's <code>signal</code>
         {" "}
         aborts with that error, so a <code>fetch</code> or query that takes the signal stops. With
         {" "}

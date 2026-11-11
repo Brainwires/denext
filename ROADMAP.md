@@ -72,13 +72,6 @@ KNOWN-LIMITATIONS entry)
 
 Not blocking 5.0; each item says why.
 
-## Supply chain (lifecycle-script jail)
-
-- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
-  `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
-  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
-  _Why 5.x: Low, and only legacy package versions hit it (`bcrypt` 5 already has advice)._
-
 ## Deno Desktop
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
@@ -90,8 +83,6 @@ Not blocking 5.0; each item says why.
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
   plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
 - **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
-- **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
-  `NEEDED` check). _Why 5.x: coverage work, no known failure._
 - **The AppImage non-exchange swap fallback window** (a documented risk). _Why 5.x: Low._
 - **WKWebView passkey refusal latency** (laufey). _Why 5.x: slow, not wrong._
 
@@ -106,22 +97,16 @@ Not blocking 5.0; each item says why.
 
 ## Backend (`@denext/backend`)
 
-Low findings of the 4.8 backend audit (realtime and storage):
-
-- **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
-  detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
-  so the server answers one that recreated the subscription with an explicit `resync`.
-  _Why 5.x: Low, latency only._
 - **`@prisma/adapter-mssql` against a live SQL Server** (or a CI service container). _Why 5.x: a
   test gap on an adapter that is wired and unit-tested._
 
 ## Framework compatibility surfaces
 
-- **Fresh partial navigation:** `f-view-transition`, region history replay and the rest listed in
-  KNOWN-LIMITATIONS. _Why 5.x: fixable gaps, none blocking._
-- **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,
-  `unmountComponentAtNode`, callbacks, the precompile JSX helpers and render-to-string streaming
-  (the parity gate lists them). _Why 5.x: small, independent gaps._
+- **Fresh partial navigation:** the gaps left in KNOWN-LIMITATIONS (merging an answer's
+  `<script>` / `<style>` into the head, history across reloads). _Why 5.x: fixable gaps, none
+  blocking._
+- **Preact compat:** render-to-string streaming (the parity gate lists it). _Why 5.x: a small,
+  independent gap._
 
 ## Build toolchain: waiting on `deno bundle`
 
