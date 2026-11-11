@@ -79,6 +79,74 @@ Deno.test("resolveFunctions: defaults and validation", () => {
   );
   const per = resolveFunctions({ functions: { a: { verifyJwt: false, timeoutMs: 5 } } });
   assertEquals(per.functions.a, { verifyJwt: false, timeoutMs: 5, env: {} });
+  // memoryMb: a positive whole number of megabytes, for every function or one.
+  assertEquals(resolved.memoryMb, undefined);
+  const capped = resolveFunctions({ memoryMb: 128, functions: { a: { memoryMb: 32 } } });
+  assertEquals([capped.memoryMb, capped.functions.a.memoryMb], [128, 32]);
+  assertThrows(() => resolveFunctions({ memoryMb: 0 }), TypeError, "functions.memoryMb");
+  assertThrows(
+    () => resolveFunctions({ functions: { a: { memoryMb: 1.5 } } }),
+    TypeError,
+    "functions.functions.a.memoryMb",
+  );
+});
+
+Deno.test("functions: memoryMb needs Deno's worker options in deno.json", async () => {
+  const root = await Deno.makeTempDir();
+  const load = ((path: string) => import(path)) as unknown as ModuleLoader;
+  try {
+    for (const functions of [{ memoryMb: 64 }, { functions: { a: { memoryMb: 64 } } }]) {
+      resetPlugins();
+      const config = { plugins: [backend({ functions })] } as DenextConfig;
+      await assertRejects(
+        () =>
+          applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "prod", load }),
+        TypeError,
+        "worker-options",
+      );
+    }
+  } finally {
+    resetPlugins();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "FunctionHost: memoryMb caps the worker's heap; a worker over it answers 546 WORKER_LIMIT",
+  async fn() {
+    const seen: unknown[] = [];
+    const host = new FunctionHost("m", "/tmp/m.ts", undefined, (url, options) => {
+      seen.push(options);
+      return new Worker(url, { type: "module" });
+    }, 24);
+    const response = await host.call(
+      { url: "https://x.test/m", method: "GET", headers: [], body: null },
+      {},
+      1000,
+    );
+    await response.body?.cancel();
+    assertStringIncludes(JSON.stringify(seen[0]), `"deno":{"memoryMb":24}`);
+    host.stop();
+    // For real, on the toolchain (the cap needs --unstable-worker-options in the process).
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--unstable-worker-options",
+        new URL("./fixtures/function-memory/probe.ts", import.meta.url).pathname,
+      ],
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    const line = new TextDecoder().decode(out.stdout).trim().split("\n").pop()!;
+    assertEquals(JSON.parse(line), {
+      status: 546,
+      body: {
+        code: "WORKER_LIMIT",
+        message: "Function failed due to not having enough compute resources (please check logs)",
+      },
+    });
+  },
 });
 
 Deno.test("discoverFunctions: <name>.ts, <name>/index.ts; _shared, tests and bad names skipped", async () => {

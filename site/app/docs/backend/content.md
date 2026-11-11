@@ -1511,8 +1511,8 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
 - **`EdgeRuntime.waitUntil(promise)`** is accepted: the worker stays up, so the work finishes.
 - **Errors** come back in Supabase's relay shape, `{ code, message }`: `404 NOT_FOUND`,
   `401 UNAUTHORIZED`, `503 BOOT_ERROR` (the module failed to load, or exports no handler),
-  `500 WORKER_ERROR` (the handler threw), `504 WORKER_TIMEOUT` (past `timeoutMs`) and `413` for a
-  body over the cap.
+  `500 WORKER_ERROR` (the handler threw), `504 WORKER_TIMEOUT` (past `timeoutMs`), `546
+  WORKER_LIMIT` (the worker went over `memoryMb`) and `413` for a body over the cap.
 
 ### Isolation
 
@@ -1548,13 +1548,21 @@ There is nothing to `download` or `deploy`: the functions ship inside the app, w
 | `verifyJwt`    | `true`            | Require a valid caller before a function runs.                                                        |
 | `timeoutMs`    | 150 000           | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
 | `maxBodyBytes` | 20 MiB            | The largest request body passed to a function.                                                        |
+| `memoryMb`     | none              | Each function worker's heap cap in megabytes (runtime 3.0.0-rc.2+; needs `"worker-options"`, below).  |
 | `env`          | `{}`              | Variables every function reads from `Deno.env`, over the process's own.                               |
 | `url`          | see above         | The URL functions read as `SUPABASE_URL` (default: `canonicalOrigin`, else the server's own address). |
-| `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
+| `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`, `memoryMb`.                    |
 
 A function's worker acknowledges each abort. One that does not within a second (busy in synchronous
 code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving
 get `504`, and the next call starts on a fresh worker.
+
+`memoryMb` caps each function worker's JavaScript heap (`new Worker(…, { deno: { memoryMb } })`,
+denext's Deno from runtime 3.0.0-rc.2), for every function or one (`functions: { report: {
+memoryMb: 256 } }`). A worker over it is terminated: the requests it was serving get `546
+WORKER_LIMIT`, as on Supabase, and the next call starts a fresh worker. Memory outside the heap
+(`ArrayBuffer`s, native code) is not counted. Like `permissions`, it needs `"unstable":
+["worker-options"]` in `deno.json`.
 
 ## The admin endpoint
 

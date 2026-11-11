@@ -78,6 +78,10 @@ and this project adheres to
   refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
   upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
   `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
+- **`@denext/backend`: a heap cap for Edge Functions.** `functions: { memoryMb }` (or a function's
+  own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
+  it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
+  `"unstable": ["worker-options"]` in `deno.json`.
 
 ### Changed
 

@@ -9,6 +9,12 @@
   server API mints for that bucket pins its exact size. The `POST /_denext/storage/sign` route
   always carries one, and Supabase's `/storage/v1/object/upload/sign` is unaffected. Off by default:
   size-less signed uploads stay allowed.
+- **`memoryMb` for Edge Functions.** `functions: { memoryMb: 128 }`, or one function's
+  `functions: { functions: { report: { memoryMb: 256 } } }`, caps each function worker's
+  JavaScript heap (`new Worker(…, { deno: { memoryMb } })`, runtime 3.0.0-rc.2 and later). A worker
+  over it is terminated: the requests it was serving answer `546 WORKER_LIMIT`, and the next call
+  starts a fresh one. Like `permissions`, it needs `"unstable": ["worker-options"]` in `deno.json`;
+  the plugin refuses to start without it.
 
 ### Changed
 
