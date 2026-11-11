@@ -1048,7 +1048,8 @@ and a schedule never fires on startup nor overlaps a still-running instance of t
 14 days); the Cron page of `denext ui` shows it. `jobs: { history: { store } }` takes any
 `JobHistoryStore` — `postgresJobHistoryStore({ url })` shares one history across replicas.
 `defineJob({ retry: { attempts, backoff } })`
-re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
+re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`), and
+`timeoutMs` fails an attempt that runs longer (its `signal` aborts; synchronous work isn't preempted).
 
 ```ts
 // jobs/cleanup.ts

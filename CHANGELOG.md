@@ -82,6 +82,9 @@ and this project adheres to
   own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
   it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
   `"unstable": ["worker-options"]` in `deno.json`.
+- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with a
+  `JobTimeoutError` and aborts the handler's `signal` with it; with `retry`, each attempt has its own
+  limit and a timed-out one is retried. Synchronous work is not preempted.
 
 ### Changed
 
