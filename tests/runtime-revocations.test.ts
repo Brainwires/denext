@@ -22,6 +22,7 @@ import {
   loadRuntimeRevocations,
   REVOCATION_CHECK_ENV,
   REVOCATION_DEFAULT_EXPIRY_DAYS,
+  REVOCATION_EXPIRY_WARN_DAYS,
   REVOCATION_FETCH_BUDGET_MS,
   REVOCATION_KEYS_FILE_ENV,
   REVOCATION_MAX_BYTES,
@@ -842,4 +843,34 @@ Deno.test("revocationStatus / revocationStatusLine", () => {
     revocationStatusLine(revocationStatus(off, decideRevocation(null, []), "1", null)).detail,
     "no revocation key configured",
   );
+});
+
+Deno.test("revocationStatusLine warns while the list in force is about to expire", () => {
+  const DAY = 86_400_000;
+  const list = listAt([]);
+  const status = revocationStatus(
+    { configured: true, list, source: "cache" as const, expired: null },
+    decideRevocation(list, []),
+    "3.0.0-denext.3",
+    null,
+  );
+  const expires = Date.parse(list.expiresAt);
+  assertEquals(REVOCATION_EXPIRY_WARN_DAYS, 7);
+  // A week and a minute out: quiet.
+  const quiet = revocationStatusLine(status, undefined, expires - 7 * DAY - 60_000);
+  assert(quiet.ok);
+  assertEquals(
+    quiet.detail,
+    `list #${list.sequence}, expires ${list.expiresAt}; toolchain 3.0.0-denext.3 not revoked`,
+  );
+  // Inside the week: a warning that names the date and the days left.
+  const soon = revocationStatusLine(status, undefined, expires - 3 * DAY + 60_000);
+  assertFalse(soon.ok);
+  assertStringIncludes(
+    soon.detail,
+    `list #${list.sequence} EXPIRES SOON, ${list.expiresAt} (in 3 days`,
+  );
+  assertStringIncludes(soon.detail, "not revoked");
+  const last = revocationStatusLine(status, undefined, expires - 60_000);
+  assertStringIncludes(last.detail, "(in 1 day;");
 });

@@ -603,6 +603,11 @@ warning, never a failed release; run `deno task revocations resign` by hand when
 for more than about 10 days. Sign on a machine whose clock is right: a list dated more than a day
 ahead of a user's clock is refused.
 
+Two warnings come first. `deno task release` checks the published list before it bumps anything
+(step 0b) and warns — it never stops — when fewer than 10 days remain, when the list has expired
+or when it can't be read; `deno task revocations expiry` runs the same check on its own. And
+`denext doctor` (with `toolchain status`) warns everyone once fewer than 7 days remain.
+
 **The compiled-in floor.** Each release compiles in the sequence of the list published when it
 was cut (`RUNTIME_REVOCATION_MIN_SEQUENCE` in `src/build/runtime-revocation-keys.ts`), so a fresh
 install never takes an older, still-valid list from a stale or tampered mirror. `deno task

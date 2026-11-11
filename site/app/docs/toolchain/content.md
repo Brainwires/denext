@@ -304,7 +304,9 @@ at all.
   at most) and print the list's sequence, its expiry and what it says about the pinned toolchain.
   `toolchain status --json` carries the same as `revocation`: `revoked`, `reason`, `advisory`,
   `fixedIn`, `runningRollback`, `running`, `listSequence`, `listExpiresAt` (and `expiredAt` for a
-  list that was ignored because it expired). `doctor` warns about a revoked pin and an expired list.
+  list that was ignored because it expired). `doctor` warns about a revoked pin, an expired list and
+  a list with fewer than 7 days left before it expires (it is ignored from then on, until the
+  maintainers re-sign it).
 - `toolchain prune` keeps the rollback release's cache, so the fallback works offline.
 - The toolchain marker denext hands the processes it starts (`DENEXT_TOOLCHAIN_ACTIVE`) never
   skips the check or picks the fallback on its own, so a value leaked from a parent shell or a

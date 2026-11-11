@@ -18,6 +18,8 @@
 //       entries by component then newest version first); --check only refuses one that isn't
 //   deno task revocations resign [--if-due] [--no-publish]     fresh expiry + sequence, same entries
 //   deno task revocations verify [<file>]               a file, or the published copies
+//   deno task revocations expiry                        warn when the published list expires
+//       within 10 days, has expired or can't be read (`deno task release` step 0b runs the same)
 //   deno task revocations publish <file>                upload a signed list
 //   deno task revocations floor [--file <keys module>]  raise the compiled-in minimum sequence
 //       (RUNTIME_REVOCATION_MIN_SEQUENCE in src/build/runtime-revocation-keys.ts) to the published
@@ -41,6 +43,7 @@ import { join } from "@std/path";
 import {
   checkRevocationList,
   freshRevocationList,
+  REVOCATION_RESIGN_DAYS,
   REVOCATION_URLS,
   type RevocationEnvelope,
   revocationKeys,
@@ -250,6 +253,47 @@ export async function readSignedList(
 async function publishedList(deps: RevocationsDeps): Promise<RuntimeRevocationList | null> {
   const text = await deps.published();
   return text === null ? null : await readSignedList(text, deps.keys, deps.now());
+}
+
+/**
+ * The release gate's warning about the published list's expiry (`deno task release` step 0b, and
+ * `deno task revocations expiry`): `null` while more than `days` days remain (or no key is
+ * compiled in, so there is nothing to keep fresh); otherwise one line saying when it lapses — or
+ * that it has, or that it could not be read — and what re-signs it. Never throws: the list is
+ * advisory and the gate only warns.
+ *
+ * @param deps The process seams.
+ * @param days The margin (default {@linkcode REVOCATION_RESIGN_DAYS}, when step 7 re-signs it).
+ * @returns The warning, or `null`.
+ */
+export async function publishedExpiryWarning(
+  deps: RevocationsDeps,
+  days: number = REVOCATION_RESIGN_DAYS,
+): Promise<string | null> {
+  if (deps.keys.length === 0) return null;
+  let list: RuntimeRevocationList | null;
+  try {
+    list = await publishedList(deps);
+  } catch (err) {
+    return `the published revoked-runtimes list could not be verified (${
+      err instanceof Error ? err.message : err
+    }); check it with \`deno task revocations verify\``;
+  }
+  if (!list) {
+    return "no published revoked-runtimes list could be read (offline?), so its expiry is unchecked";
+  }
+  const now = deps.now().getTime();
+  const left = Date.parse(list.expiresAt) - now;
+  const resign = "`deno task revocations resign` on the machine that holds the key";
+  if (!(left > 0)) {
+    return `the published revoked-runtimes list #${list.sequence} EXPIRED at ${list.expiresAt}: ` +
+      `denext ignores it until it is re-signed — run ${resign} now`;
+  }
+  if (!revocationResignDue(list, now, days)) return null;
+  const inDays = Math.ceil(left / 86_400_000);
+  return `the published revoked-runtimes list #${list.sequence} expires ${list.expiresAt} ` +
+    `(in ${inDays} day${inDays === 1 ? "" : "s"}): this release's step 7 re-signs it when run ` +
+    `on the machine that holds the key; otherwise run ${resign} before then`;
 }
 
 /** Sign `revoked` above `previous`, then verify it against the compiled-in keys. */
@@ -679,7 +723,7 @@ async function floor(deps: RevocationsDeps, flags: Record<string, string | boole
 }
 
 const USAGE = "usage: deno task revocations <keygen | init | add | sign | canonical | resign | " +
-  "verify | publish | floor> (see the header of scripts/runtime-revocations.ts)";
+  "verify | expiry | publish | floor> (see the header of scripts/runtime-revocations.ts)";
 
 /**
  * The CLI.
@@ -711,6 +755,10 @@ export async function main(args: string[], deps: RevocationsDeps = realDeps()): 
       return await canonical(deps, arg ?? fail(USAGE), flags);
     case "verify":
       return await verify(deps, arg);
+    case "expiry": {
+      const warning = await publishedExpiryWarning(deps);
+      return deps.log(warning ? `warning — ${warning}` : "the published list is not near expiry");
+    }
     case "publish":
       return await publish(deps, await Deno.readTextFile(arg ?? fail(USAGE)));
     case "floor":

@@ -17,6 +17,8 @@
 //      green, and so are the newest desktop-ci.yml, e2e.yml, desktop-window.yml and
 //      native-plugins.yml runs on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
+//   0b. warn (never abort) when the published revoked-runtimes list expires within 10 days, has
+//      expired or can't be read (`deno task revocations expiry`), while there is time to re-sign
 //   1. bump the version pins (scripts/bump-version.ts)
 //   1c. raise the compiled-in revoked-runtimes floor to the published list's sequence
 //      (`deno task revocations floor`; a warning on failure, never an abort), so this release
@@ -78,6 +80,7 @@ import {
   corpusReleaseState,
 } from "./lib/docs-corpus-package.ts";
 import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
+import { publishedExpiryWarning, realDeps as revocationsDeps } from "./runtime-revocations.ts";
 import { copyStrippedTree } from "./publish-strip.ts";
 import {
   detectResume,
@@ -441,6 +444,7 @@ async function main(): Promise<void> {
   await checkPreconditions(tag, branch);
   const base = await capture("git", "rev-parse", "HEAD");
   await checkCi(branch, false, base);
+  await warnRevocationExpiry();
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
   // Step 0 refuses a HEAD whose ci.yml `check` job (fmt + lint + the whole suite) is not green.
@@ -453,6 +457,7 @@ async function main(): Promise<void> {
 async function dryRun(version: string, tag: string, branch: string): Promise<void> {
   console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
   await checkCi(branch, true, await capture("git", "rev-parse", "HEAD"));
+  await warnRevocationExpiry();
   await prepareRelease(version, true);
   console.log("3. docs:api          (skipped — dry run)");
   console.log("3b. badge:tests      (skipped — dry run)");
@@ -681,6 +686,26 @@ async function resignRevocations(): Promise<void> {
         "holds the key (CONTRIBUTING.md → A bad runtime release).",
     );
   }
+}
+
+/**
+ * Step 0b: warn — never abort — when the published revoked-runtimes list expires within 10 days,
+ * has expired or can't be read. A lapsed list is ignored by every denext, so a revocation would
+ * stop reaching users; step 7 re-signs it only on the machine that holds the key, and only after
+ * the tag, so the warning comes first, while there is time to re-sign.
+ *
+ * @param check The check (test seam; default the published list through the real process).
+ * @param warn Where the warning goes.
+ * @returns The warning printed, or `null`.
+ */
+export async function warnRevocationExpiry(
+  check: () => Promise<string | null> = () => publishedExpiryWarning(revocationsDeps()),
+  warn: (line: string) => void = console.warn,
+): Promise<string | null> {
+  const warning = await check().catch((err) => `could not check its expiry (${err})`);
+  if (warning) warn(`0b. revoked-runtimes list: warning — ${warning}`);
+  else console.log("0b. revoked-runtimes list: not near expiry");
+  return warning;
 }
 
 /** Step 1c's command: raise the compiled-in revoked-runtimes floor to the published list's. */

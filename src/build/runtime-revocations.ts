@@ -58,6 +58,11 @@ const REVOCATION_FORCE_BUDGET_MS = 5000;
 export const REVOCATION_DEFAULT_EXPIRY_DAYS = 21;
 /** A list with fewer days than this before it expires is re-signed (`deno task release`). */
 export const REVOCATION_RESIGN_DAYS = 10;
+/**
+ * `doctor` (and `toolchain status`) warn about a list with fewer days than this before it
+ * expires: once it lapses denext ignores it, and a revocation stops reaching anyone.
+ */
+export const REVOCATION_EXPIRY_WARN_DAYS = 7;
 
 /** How far ahead of the clock a list's `issuedAt` / `sequence` may be (a skewed signer). */
 export const REVOCATION_MAX_FUTURE_MS = 24 * 3600_000;
@@ -992,25 +997,37 @@ export function revocationStatus(
 
 /**
  * One line for a report (`toolchain status`, `doctor`): the list's sequence and expiry, and what
- * it says about the pinned runtime; `ok` is false when the pin is revoked or the list expired.
+ * it says about the pinned runtime; `ok` is false when the pin is revoked, the list expired, or
+ * it expires within {@linkcode REVOCATION_EXPIRY_WARN_DAYS} days.
  *
  * @param s The status.
  * @param what The runtime's name (default `toolchain <pinned>`).
+ * @param now The clock, epoch ms.
  * @returns The line, and whether nothing needs attention.
  */
 export function revocationStatusLine(
   s: RuntimeRevocationStatus,
   what = `toolchain ${s.pinned}`,
+  now: number = Date.now(),
 ): { ok: boolean; detail: string } {
   if (!s.configured) {
     return { ok: true, detail: "no revocation key configured in this denext (check off)" };
   }
+  const left = s.listExpiresAt === null ? NaN : Date.parse(s.listExpiresAt) - now;
+  const expiring = left < REVOCATION_EXPIRY_WARN_DAYS * DAY_MS;
+  const days = Math.max(1, Math.ceil(left / DAY_MS));
   const list = s.listSequence === null
     ? s.expiredAt
       ? `the list EXPIRED at ${s.expiredAt} (ignored; a maintainer re-signs it)`
       : "no list (offline, or none published yet)"
+    : expiring
+    ? `list #${s.listSequence} EXPIRES SOON, ${s.listExpiresAt} (in ${days} day${
+      days === 1 ? "" : "s"
+    }; ignored after that until a maintainer re-signs it)`
     : `list #${s.listSequence}, expires ${s.listExpiresAt}`;
-  if (!s.revoked) return { ok: s.expiredAt === null, detail: `${list}; ${what} not revoked` };
+  if (!s.revoked) {
+    return { ok: s.expiredAt === null && !expiring, detail: `${list}; ${what} not revoked` };
+  }
   const run = s.runningRollback
     ? `running ${s.running} instead`
     : "still running it (no safe fallback pinned)";

@@ -16,13 +16,14 @@ import {
   minSequenceIn,
   parseArgs,
   pinImpact,
+  publishedExpiryWarning,
   readSignedList,
   type RevocationsDeps,
   RSYNC_ROOT_ENV,
   type RunResult,
   withMinSequence,
 } from "../scripts/runtime-revocations.ts";
-import { REVOCATION_FLOOR } from "../scripts/release.ts";
+import { REVOCATION_FLOOR, warnRevocationExpiry } from "../scripts/release.ts";
 import {
   decideRevocation,
   freshRevocationList,
@@ -636,3 +637,49 @@ function assertThrowsMessage(fn: () => unknown, text: string): void {
   }
   throw new Error("did not throw");
 }
+
+Deno.test("expiry: the release gate warns before the published list lapses, never throws", async () => {
+  const DAY = 86_400_000;
+  const f = await withKey();
+  // No key compiled in: nothing to keep fresh.
+  assertEquals(await publishedExpiryWarning({ ...f.deps, keys: [] }), null);
+  // Nothing readable (offline, or none published).
+  assertStringIncludes((await publishedExpiryWarning(f.deps))!, "list could be read");
+  // Signed 5 days ago: 16 days left, quiet.
+  const at = (daysAgo: number) => freshRevocationList([], new Date(NOW.getTime() - daysAgo * DAY));
+  await publishedWith(f, at(5));
+  assertEquals(await publishedExpiryWarning(f.deps), null);
+  await main(["expiry"], f.deps);
+  assertEquals(f.logged.at(-1), "the published list is not near expiry");
+  // Signed 15 days ago: 6 days left, inside the 10-day margin.
+  const due = at(15);
+  await publishedWith(f, due);
+  const soon = (await publishedExpiryWarning(f.deps))!;
+  assertStringIncludes(soon, `list #${due.sequence} expires ${due.expiresAt} (in 6 days)`);
+  assertStringIncludes(soon, "deno task revocations resign");
+  await main(["expiry"], f.deps);
+  assertStringIncludes(f.logged.at(-1)!, "warning — the published revoked-runtimes list");
+  // Signed 22 days ago: lapsed.
+  const lapsed = at(22);
+  await publishedWith(f, lapsed);
+  assertStringIncludes(
+    (await publishedExpiryWarning(f.deps))!,
+    `list #${lapsed.sequence} EXPIRED at ${lapsed.expiresAt}`,
+  );
+  // A list signed by a key this checkout doesn't carry: reported, not thrown.
+  f.published.text = f.published.text!.replace(/"signature":"[^"]+"/, '"signature":"AAAA"');
+  assertStringIncludes((await publishedExpiryWarning(f.deps))!, "could not be verified");
+  // The release step prints the warning and carries on.
+  const warned: string[] = [];
+  assertEquals(await warnRevocationExpiry(() => Promise.resolve("x"), (l) => warned.push(l)), "x");
+  assertEquals(warned, ["0b. revoked-runtimes list: warning — x"]);
+  assertEquals(
+    await warnRevocationExpiry(() => Promise.reject(new Error("boom")), (l) => warned.push(l)),
+    "could not check its expiry (Error: boom)",
+  );
+  assertEquals(
+    await warnRevocationExpiry(() => Promise.resolve(null), (l) => warned.push(l)),
+    null,
+  );
+  assertEquals(warned.length, 2);
+});
