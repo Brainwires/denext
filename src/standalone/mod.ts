@@ -27,7 +27,7 @@ import { loadEnv } from "../server/env.ts";
 import { abortJobRuns } from "../server/jobs.ts";
 import { setStandaloneState } from "../server/standalone.ts";
 import { holdOffBakedIdleTrim } from "../build/idle-trim.ts";
-import { bakedLimitsNotice, type CompiledLimitsKey } from "../build/resource-limits.ts";
+import { bakedLimitsNotice } from "../build/resource-limits.ts";
 
 /** The verbs a compiled app runs (the first is the default). */
 const VERBS = ["start", "job", "db"] as const;
@@ -142,7 +142,7 @@ export async function runStandalone(
     idleTrimBaked?: boolean;
     limitsBaked?: readonly string[];
     limitsLifted?: boolean;
-    limitsFrom?: CompiledLimitsKey;
+    limitsFrom?: "compile.limits" | "start.limits";
   } = {},
 ): Promise<void> {
   const projectDir = fromFileUrl(projectUrl).replace(/[\\/]$/, "");
