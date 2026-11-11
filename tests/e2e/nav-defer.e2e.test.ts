@@ -1,8 +1,9 @@
 // Real-browser proof that a soft navigation streams its deferred values per boundary, as a
 // document load does: navigating to a route whose client component `<Await>`s a fast and a slow
 // deferred value renders the route at once with both fallbacks, reveals the fast value while the
-// slow one is still loading, then the slow one — with no full reload. The same holds for a
-// navigation sent as a POST (what a Remix `shouldRevalidate` echo too large for headers makes it).
+// slow one is still loading (held until the test releases it), then the slow one — with no full
+// reload. The same holds for a navigation sent as a POST (what a Remix `shouldRevalidate` echo
+// too large for headers makes it).
 //
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
 
@@ -54,6 +55,12 @@ async function navigateDeferred(post: boolean): Promise<void> {
       await page.evaluate(`${has("slow-wait")} && !${has("slow")}`),
       "the fast boundary revealed before the slow value arrived",
     );
+    // The slow value waits for this release (fixtures/soft-nav/app/slow-gate.ts), not a clock:
+    // the order above holds however long the runner took to commit the route.
+    const release = await fetch(server.origin + "/release-slow", { method: "POST" });
+    assert(release.ok, `release-slow answered ${release.status}`);
+    const { released } = await release.json() as { released: number };
+    assert(released >= 1, "the navigation's render was waiting on the slow value");
     await pollFor(page, has("slow"));
     assert(
       await page.evaluate(
