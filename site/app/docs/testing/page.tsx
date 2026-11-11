@@ -39,6 +39,19 @@ const home = await client.get("/");`}
         needed JavaScript, the test would fail.
       </Callout>
       <p>
+        <code>client.cookies</code>{" "}
+        keys cookies by name and sends every one on every request. For a browser's rules (host,{" "}
+        <code>Path</code>, expiry, <code>Secure</code>, the <code>__Host-</code> /{" "}
+        <code>__Secure-</code> prefixes, a <code>Domain</code>{" "}
+        no wider than the registrable domain), pass the runtime's jar: on denext's Deno with{" "}
+        <code>--unstable-cookies</code>,{" "}
+        <code>createTestClient(app, {"{"} cookieJar: new Deno.CookieJar() {"}"})</code> (or{" "}
+        <code>runtimeCookieJar()</code> from{" "}
+        <code>denext/server</code>, null without the flag). Any object with{" "}
+        <code>getCookieString</code>, <code>setCookie</code>, <code>getCookies</code> and{" "}
+        <code>clear</code> works too.
+      </p>
+      <p>
         The <code>plugins</code> in <code>denext.config.ts</code> run as they do under{" "}
         <code>denext dev</code>: their prepare steps once, their route synthesizers over the scanned
         routes, and their request handlers for what the App Router doesn't match. A Pages Router app

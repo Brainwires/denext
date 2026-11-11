@@ -614,6 +614,15 @@ that default and `userAgent: false` sends none (some servers refuse a request wi
 are the values of `Deno.createHttpClient({ userAgent })` on runtime `3.0.0-denext.19` and later,
 but `safeFetch` writes its own request, so the option works on every runtime.
 
+`cookieJar` gives the calls a cookie session: each redirect hop's `Set-Cookie` is stored and the
+matching cookies go out on the next hop and on later calls with the same jar (a `Cookie` in
+`headers` bypasses it). Pass the runtime's `Deno.CookieJar` (denext's Deno with
+`--unstable-cookies`; `runtimeCookieJar()` from `denext/server` returns one, or `null` without the
+flag, and holds a runtime resource: `using jar = runtimeCookieJar()`), which applies RFC 6265bis's
+host, path, `Secure` and Public Suffix List rules. The OAuth sign-in's back-channel calls (token,
+ID token keys, userinfo) share one such jar per sign-in when the runtime has it; elsewhere they keep
+no cookies, as before.
+
 For fixed, trusted URLs plain `fetch` is fine. Keep using `fetch`/`cachedFetch`
 for your **own** backends (internal services, `localhost`) — those are exactly
 the addresses `safeFetch` deliberately blocks.

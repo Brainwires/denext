@@ -44,6 +44,7 @@ export type {
   RedirectHop,
   TestClient,
   TestClientOptions,
+  TestCookieStore,
   TestForm,
   TestHandler,
   TestRequestInit,

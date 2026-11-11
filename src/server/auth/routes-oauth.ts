@@ -33,6 +33,7 @@
  */
 
 import { readCappedBody, STALLED } from "../body.ts";
+import { runtimeCookieJar } from "../fetch-cookies.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { accountNotLinkedCode, type ResolvedSignIn, resolveSignInUser } from "./adapter-link.ts";
 import type { AdapterAccount } from "./adapter.ts";
@@ -612,11 +613,14 @@ export async function fetchOAuthProfile(
     throw new Error(`the authorization response's iss names another issuer than ${provider.id}'s`);
   }
   // Pin the fetch to the provider's own hosts PLUS whatever discovery resolved — a
-  // discovery-only provider configures no URL for `providerHosts` to derive them from.
+  // discovery-only provider configures no URL for `providerHosts` to derive them from. The
+  // sign-in's calls share one cookie session where the runtime has a jar (--unstable-cookies).
+  using cookieJar = runtimeCookieJar();
   const doFetch = makeProviderFetch(
     provider,
     ctx.config.dangerouslyAllowInsecureProviders,
     endpointHosts(endpoints),
+    cookieJar,
   );
   const checks = transactionChecks(provider, params.tx);
   const tokens = await exchangeCodeForTokens(

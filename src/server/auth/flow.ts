@@ -11,6 +11,7 @@
  */
 
 import { safeFetch } from "../safe-fetch.ts";
+import { addRequestCookies, type FetchCookieJar, storeResponseCookies } from "../fetch-cookies.ts";
 import type { OAuthProvider } from "./types.ts";
 
 /** A `fetch` used for provider calls (real `safeFetch`, or a dev-insecure variant). */
@@ -51,14 +52,22 @@ function providerHosts(provider: OAuthProvider, extraHosts: readonly string[]): 
  * @param provider The provider whose configured endpoints seed the host allowlist.
  * @param allowInsecure Development opt-in permitting `http://localhost` providers.
  * @param extraHosts Hosts resolved after the fact (OIDC discovery), added to the allowlist.
+ * @param cookieJar The cookie session the calls share (one sign-in's token, ID token and
+ * userinfo calls): the runtime's `Deno.CookieJar` where the process has it, else none.
  * @returns The pinned fetch to hand the flow helpers.
  */
 export function makeProviderFetch(
   provider: OAuthProvider,
   allowInsecure = false,
   extraHosts: readonly string[] = [],
+  cookieJar?: FetchCookieJar | null,
 ): ProviderFetch {
-  return makeHostPinnedFetch(providerHosts(provider, extraHosts), provider.id, allowInsecure);
+  return makeHostPinnedFetch(
+    providerHosts(provider, extraHosts),
+    provider.id,
+    allowInsecure,
+    cookieJar,
+  );
 }
 
 /**
@@ -70,18 +79,21 @@ export function makeProviderFetch(
  * @param label The provider id, used in the refusal message.
  * @param allowInsecure Development opt-in: use the platform `fetch` (so `http://localhost`
  * works) while still enforcing the host allowlist ourselves.
+ * @param cookieJar A cookie session for the calls (none: no cookies kept).
  * @returns The pinned fetch.
  */
 export function makeHostPinnedFetch(
   hosts: readonly string[],
   label: string,
   allowInsecure: boolean,
+  cookieJar?: FetchCookieJar | null,
 ): ProviderFetch {
   const allowed = [...hosts];
+  const jar = cookieJar ?? undefined;
   if (!allowInsecure) {
-    return (url, init) => safeFetch(url, { ...init, allowedHosts: allowed });
+    return (url, init) => safeFetch(url, { ...init, allowedHosts: allowed, cookieJar: jar });
   }
-  return makeInsecureHostPinnedFetch(allowed, label);
+  return makeInsecureHostPinnedFetch(allowed, label, jar);
 }
 
 /** Redirect statuses the dev fetch follows itself (the set `safeFetch` follows). */
@@ -109,17 +121,24 @@ interface DevHop {
  * endpoint with a `307` could send denext — and with it the `client_secret` in the POST
  * body — to any host it named; only the first URL had ever been checked.
  */
-function makeInsecureHostPinnedFetch(allowed: readonly string[], label: string): ProviderFetch {
+function makeInsecureHostPinnedFetch(
+  allowed: readonly string[],
+  label: string,
+  jar?: FetchCookieJar,
+): ProviderFetch {
   return async (url, init) => {
     const hop: DevHop = { url, method: init.method, body: init.body };
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
       assertHostAllowed(hop.url, allowed, label);
+      const headers = new Headers(init.headers);
+      if (jar) addRequestCookies(jar, headers, hop.url);
       const res = await fetch(hop.url, {
         method: hop.method,
-        headers: init.headers,
+        headers,
         body: hop.body,
         redirect: "manual",
       });
+      if (jar) storeResponseCookies(jar, res.headers, hop.url);
       const location = REDIRECT_STATUS.has(res.status) ? res.headers.get("location") : null;
       if (location === null) return res;
       await res.body?.cancel().catch(() => {});

@@ -108,6 +108,13 @@ and this project adheres to
   sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
   (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
   `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
+- **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
+  stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
+  `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
+  RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
+  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the runtime has
+  it. `createTestClient(handler, { cookieJar })` and `new CookieJar(store)` apply a URL-aware
+  store's host, path, expiry and `Secure` rules; the default name-keyed jar is unchanged.
 
 ### Changed
 
