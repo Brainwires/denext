@@ -54,6 +54,7 @@ import {
 import {
   getScreens,
   getTitleBarPreferences,
+  getWindows,
   getWindowState,
   maximizeWindow,
   onCloseRequested,
@@ -1466,6 +1467,13 @@ const appChecks: Check[] = [
     async () => {
       const caps = await appCapabilities();
       eq(caps.appMenu, true, "appCapabilities().appMenu");
+      // The title reporter rides the window binding (BrowserWindow.bind), as window tokens do.
+      const windowCaps = await raw("windows").capabilities({}) as { capabilitySubsets?: boolean };
+      if (windowCaps.capabilitySubsets !== true) {
+        throw new Skip(
+          "this runtime has no BrowserWindow.bind, which the page-title reporter needs",
+        );
+      }
       await setAppMenu([
         { label: "Kitchen", submenu: [{ id: SECONDARY_MENU_ID, label: "From the second window" }] },
       ]);
@@ -1481,9 +1489,7 @@ const appChecks: Check[] = [
       try {
         await win.focus();
         // The injected title reporter carries the page's document.title to the window's label.
-        const titleOf = async () =>
-          ((await raw("windows").list({})) as { id: string; title?: string }[])
-            .find((w) => w.id === win.id)?.title;
+        const titleOf = async () => (await getWindows()).find((w) => w.id === win.id)?.title;
         await waitFor(
           async () => (await titleOf()) === SECONDARY_TITLE,
           "the secondary window's page title",

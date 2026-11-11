@@ -3090,7 +3090,7 @@ settings.onClosed(() => console.log("closed"));
 await settings.setBounds({ x: 100, y: 100 });
 
 await windowHandle("main").show(); // the window the app started with
-console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, …]`}
+console.log(await getWindows());   // [{ id: "main", kind: "main", visible, title? }, …]`}
       </Code>
       <p>
         From <code>desktop.ts</code>, <code>runDesktop()</code> resolves with{" "}

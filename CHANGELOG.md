@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: `getWindows()` reports each window's title.** The `title` the Window menu shows (as
+  opened, then the page's `document.title` or `setWindowTitle`) is in every entry of `getWindows()`
+  and the `windows` capability's `list`.
 - **examples/companion: Loopy is a voice assistant.** Loopy is redrawn (two crossed wire clips with a
   bead head and 13 moods) and talks back over a Realtime speech API on WebRTC: hold Space, click
   Loopy, or press a global shortcut to talk; the transcripts show in its bubble, its mouth follows
