@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-11-11
+
 ### Added
 
 - **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
@@ -99,6 +101,10 @@ and this project adheres to
   fails, by moving the saved original back over it. The next build still cleans entries an older
   denext left behind.
 
+### Security
+
+- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
+
 ### Documentation
 
 - **Permissions are described as least-privilege guardrails.** A new page,
@@ -118,10 +124,6 @@ and this project adheres to
   `3.0.0-denext.16` adds; `denext/markdown` and `denext/deploy` are in the API reference; and the
   config, deployment, backend, desktop, toolchain and auth pages are corrected where they had
   drifted from the code.
-
-### Security
-
-- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
 
 ## [4.15.0] - 2026-11-10
 
@@ -21787,7 +21789,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.15.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
