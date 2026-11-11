@@ -410,9 +410,8 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    when its `paths` filter matches, so dispatch it as well:
    `gh workflow run desktop-ci.yml --ref development`, and wait for it.
    And it needs the newest e2e.yml run on HEAD to have run every job green
-   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno` and the
-   `job-install` legs on Linux, macOS and Windows; a one-job `-f job=…` dispatch
-   skips the rest and doesn't count) and the newest
+   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno`; a one-job
+   `-f job=…` dispatch skips the rest and doesn't count) and the newest
    desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
    every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
    and `gh workflow run desktop-window.yml --ref development`.

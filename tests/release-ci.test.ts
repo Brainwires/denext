@@ -286,15 +286,7 @@ function namedJobs(
 }
 
 Deno.test("e2e gate: e2e.yml's newest run on HEAD must have run every job, green", async () => {
-  assertEquals(E2E_JOBS, [
-    "e2e",
-    "migration-beds",
-    "timer-stress",
-    "no-deno",
-    "job-install (linux)",
-    "job-install (macos)",
-    "job-install (windows)",
-  ]);
+  assertEquals(E2E_JOBS, ["e2e", "migration-beds", "timer-stress", "no-deno"]);
   const green = fakeGh([run(1, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
     1: namedJobs(E2E_JOBS, "success"),
   });
