@@ -4080,6 +4080,34 @@ desktop: {
 },`}
       </Code>
 
+      <h3 id="desktop-extension-caller">Who called: ctx.caller</h3>
+      <p>
+        Every handler gets <code>ctx.caller</code>: <code>origin</code>{" "}
+        (the calling window&apos;s origin: the app origin, or the loopback origin under the stock
+        runtime), <code>frame</code> (<code>kind</code> <code>"main"</code> for the top-level page,
+        {" "}
+        <code>"sub"</code> for a frame inside it, or <code>"unknown"</code>; <code>origin</code>
+        {" "}
+        the frame&apos;s own; <code>verified</code>) and <code>window</code> (the window id, as{" "}
+        <code>ctx.windowId</code>). A privileged method can refuse anything but the main frame. The
+        frame is <code>verified</code>{" "}
+        when the runtime marks each request with it (a runtime that publishes{" "}
+        <code>Deno.desktop.marksFrames</code>); otherwise it is what the page reported, which a
+        same-origin frame holding the token could misstate, so check <code>verified</code>{" "}
+        before relying on it:
+      </p>
+      <Code lang="ts">
+        {`wipe: {
+  handler: (_args, ctx) => {
+    const frame = ctx.caller?.frame;
+    if (frame?.kind !== "main" || !frame.verified) {
+      throw new DesktopCapError("forbidden", "only the app's own page may wipe", { status: 403 });
+    }
+    return wipeEverything();
+  },
+},`}
+      </Code>
+
       <h3 id="desktop-extension-events">Events no page call started</h3>
       <p>
         A method&apos;s <code>ctx.emit(event, data)</code>{" "}

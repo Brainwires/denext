@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: every bridge handler knows who called.** A capability or extension handler gets
+  `ctx.caller`: the window's `origin`, the calling `frame` (`kind` `"main"` / `"sub"` /
+  `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a
+  privileged method can refuse a subframe. The frame is verified on a Deno Desktop runtime that
+  marks each request with it (`Deno.desktop.marksFrames`); elsewhere it is the page's own report.
 - **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
   finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
   `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native

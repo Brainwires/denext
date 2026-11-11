@@ -89,6 +89,13 @@ export interface DesktopCapCtx {
    */
   readonly windowId?: string;
   /**
+   * Who called: the window's origin, the calling frame (main or sub, with its own origin) and the
+   * window id, so a privileged handler can check the sender as well as the gate does. The bridge
+   * always sets it; absent (a context built by hand, in a test) means nothing is known. See
+   * {@linkcode DesktopCaller}.
+   */
+  readonly caller?: DesktopCaller;
+  /**
    * Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a
    * method with `timeoutMs: false` it also aborts when the calling page's request goes away (that
    * page reloaded, navigated or closed).
@@ -121,6 +128,36 @@ export interface DesktopCapCtx {
    * apart from the pages' `secureStore` and from every other extension's.
    */
   readonly secureStore: DesktopSecureStore;
+}
+
+/**
+ * The sender of a bridge call ({@linkcode DesktopCapCtx.caller}).
+ *
+ * The bridge answers only the app's own pages (the per-launch token, and under denext's pinned
+ * runtime the memory transport with an `Origin` equal to the app origin), so `origin` is that
+ * origin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made
+ * the call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop
+ * runtime that publishes `Deno.desktop.marksFrames`), else as the calling page reported it
+ * (`verified: false`: a subframe that holds the token can claim to be the main frame), and
+ * `"unknown"` when neither said.
+ */
+export interface DesktopCaller {
+  /** The origin of the calling window's page (the app origin, or the loopback origin). */
+  readonly origin: string;
+  /** The frame that made the call. */
+  readonly frame: DesktopCallerFrame;
+  /** The calling window's id ({@linkcode DesktopCapCtx.windowId}). */
+  readonly window: string;
+}
+
+/** The frame a bridge call came from ({@linkcode DesktopCaller.frame}). */
+export interface DesktopCallerFrame {
+  /** `"main"` (the top-level page), `"sub"` (a frame inside it) or `"unknown"`. */
+  readonly kind: "main" | "sub" | "unknown";
+  /** The frame's own origin (the request's `Origin`, else the window's origin). */
+  readonly origin: string;
+  /** Whether the runtime told `kind`, rather than the calling page. */
+  readonly verified: boolean;
 }
 
 /**

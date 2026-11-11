@@ -127,6 +127,8 @@ export type { DesktopEventLog } from "../desktop/bridge-events.ts";
 // The desktop native-extension authoring API is served from `denext/desktop` (this module).
 export {
   defineDesktopExtension,
+  type DesktopCaller,
+  type DesktopCallerFrame,
   type DesktopCapability,
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
