@@ -116,28 +116,68 @@ export async function traceExport(
   return null;
 }
 
-/** The local `file:` modules of `entry`'s module graph, as `deno info` resolves it. */
-async function localModules(entry: string, cwd: string): Promise<string[]> {
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", "--no-lock", entry],
-    cwd,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "null",
-    signal: AbortSignal.timeout(INFO_TIMEOUT_MS),
-  }).output().catch(() => null);
-  if (!out?.success) return [];
-  try {
-    const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as {
-      modules?: { specifier?: string }[];
-    };
-    return (graph.modules ?? [])
-      .map((m) => m.specifier ?? "")
-      .filter((s) => s.startsWith("file:"))
-      .map((s) => fromFileUrl(s));
-  } catch {
-    return [];
+/**
+ * The `deno info` arguments for `entry`. The entry goes as a `file:` URL: `deno info` reads
+ * a bare Windows path (`C:\\app\\denext.config.ts`) as a URL whose scheme is the drive letter,
+ * reports it as one `external` module and exits 0, so its graph would come back empty.
+ *
+ * @param entry The entry module's absolute path.
+ * @param flavor Whose path it is (default: this OS's).
+ * @returns The arguments after the executable.
+ */
+export function infoArgs(entry: string, flavor: PathFlavor = OS_FLAVOR): string[] {
+  const url = (flavor === "windows" ? windows : posix).toFileUrl(entry).href;
+  return ["info", "--json", "--no-lock", url];
+}
+
+/**
+ * The local `file:` modules of a `deno info --json` graph, read from its output. Throws when the
+ * entry itself is missing, `external` (not read as a local module) or failed to load (its
+ * `error`), rather than report an empty graph: `deno info` exits 0 in each case.
+ *
+ * @param json `deno info --json`'s output.
+ * @param entryUrl The entry's `file:` URL, as it was passed.
+ * @returns The modules' paths, the entry's included.
+ */
+export function localModulesOf(json: string, entryUrl: string): string[] {
+  const graph = JSON.parse(json) as {
+    roots?: string[];
+    modules?: { specifier?: string; kind?: string; error?: string }[];
+  };
+  const modules = graph.modules ?? [];
+  const root = modules.find((m) => m.specifier === entryUrl);
+  if (!root || root.kind === "external" || root.error !== undefined) {
+    const why = root?.error ?? `it reported ${JSON.stringify(graph.roots ?? [])}`;
+    throw new Error(`deno info did not read ${entryUrl} as a local module: ${why}`);
   }
+  return modules.map((m) => m.specifier ?? "").filter((s) => s.startsWith("file:"))
+    .map((s) => fromFileUrl(s));
+}
+
+/**
+ * The local `file:` modules of `entry`'s module graph, as `deno info` resolves it. Throws with
+ * `deno info`'s own error (its stderr, or why it could not start) when it fails.
+ */
+async function localModules(entry: string, cwd: string): Promise<string[]> {
+  const args = infoArgs(entry);
+  let out: Deno.CommandOutput;
+  try {
+    out = await new Deno.Command(Deno.execPath(), {
+      args,
+      cwd,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+      signal: AbortSignal.timeout(INFO_TIMEOUT_MS),
+    }).output();
+  } catch (error) {
+    throw new Error(`deno info could not run: ${(error as Error).message}`, { cause: error });
+  }
+  const stderr = new TextDecoder().decode(out.stderr).trim();
+  if (!out.success) {
+    throw new Error(`deno info ${args.at(-1)} failed (exit ${out.code}): ${stderr || "no output"}`);
+  }
+  return localModulesOf(new TextDecoder().decode(out.stdout), args.at(-1)!);
 }
 
 /** Which OS's paths: `"windows"` (drive letters, `\`, case-insensitive) or `"posix"`. */
@@ -218,7 +258,8 @@ export function watchGlobs(
 
 /**
  * Watch globs (project-relative, written with `/`) for the project modules the config's import
- * graph reaches, alias imports included ({@linkcode watchGlobs}). Empty when it reaches none.
+ * graph reaches, alias imports included ({@linkcode watchGlobs}). Empty when it reaches none;
+ * throws (with `deno info`'s error) when the graph can't be read.
  *
  * @param config The config file's absolute path.
  * @param projectRoot The project root.
