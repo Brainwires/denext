@@ -111,7 +111,11 @@ async function realRun(cmd: string, args: string[], stdin?: string): Promise<Run
     stderr: "inherit",
   }).spawn();
   // Fed as a stream, so a secret on stdin never touches a command line.
-  if (piped) await ReadableStream.from([new TextEncoder().encode(stdin)]).pipeTo(child.stdin);
+  if (piped) {
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(stdin));
+    await writer.close();
+  }
   const { code, stdout } = await child.output();
   return { code, stdout: new TextDecoder().decode(stdout) };
 }
