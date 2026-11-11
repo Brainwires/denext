@@ -149,6 +149,10 @@ and this project adheres to
 
 ### Fixed
 
+- **Fresh partial navigation: an answer from another origin is never applied**
+  ([GHSA-w737-gq2w-763w](https://github.com/Brainwires/denext/security/advisories/GHSA-w737-gq2w-763w)).
+  A partial request whose redirect landed on another origin is now loaded as a full page instead of
+  having its `<Partial>` regions and head tags applied, as App Router navigation already does.
 - **Docs: runtime gates, the API reference and a few reference rows.** The docs describe a
   runtime gate by the capability that detects it (`Deno.desktop.navigationEvents`,
   `Deno.desktop.marksFrames`, a runtime that passes on a declared host's redirects) rather than a
