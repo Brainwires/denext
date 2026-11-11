@@ -6,12 +6,11 @@
  * waits for the next DOM change (the commit the app's `setState` causes), measures again before
  * that frame paints, and plays Web Animations from the old geometry to the new one:
  *
- *   - `update`: a view that moved is translated from its old position, and a view that changed
- *     size is scaled from its old size (FLIP; one transform, so the compositor runs it and the
- *     layout is final from the first frame). Each view's transform is computed against the one
- *     its nearest measured ancestor already plays, so a child of a resized view starts at its
- *     own old place and size rather than inheriting the parent's stretch (a counter-scale).
- *     While a resize plays, the view's content is drawn scaled.
+ *   - `update`: as React Native animates a view's frame, a view that changed size plays its
+ *     width and height from the old size to the new one (its content lays out at each size,
+ *     never drawn stretched), and a view that moved is translated from its old position to where
+ *     that first frame lays it out, relative to the offset its nearest measured ancestor already
+ *     carries (FLIP for position).
  *   - `create`: a view that appeared animates `create.property` (`opacity` or a scale) in.
  *   - `delete`: a view that disappeared is drawn once more, as a snapshot clone in a fixed
  *     layer at its old place, and animates the property out.
@@ -207,102 +206,77 @@ function timingOf(config: LayoutAnimationConfig, anim: LayoutAnimationAnim | und
   };
 }
 
-/**
- * Where a view is drawn on the first frame of the animation: page point `q` of its final layout
- * is drawn at `scale * q + offset` (per axis). Views that don't animate map like their ancestor.
- */
-export interface FrameMap {
-  readonly sx: number;
-  readonly sy: number;
-  readonly tx: number;
-  readonly ty: number;
-}
-
-/** No transform. */
-const IDENTITY: FrameMap = { sx: 1, sy: 1, tx: 0, ty: 0 };
-
-/** The old / new rectangle slice the FLIP reads. */
+/** The old / new rectangle slice a frame animation reads. */
 type Box = Pick<DOMRect, "left" | "top" | "width" | "height">;
 
-/**
- * A view's FLIP start transform: the `translate(…) scale(…)` that, under its ancestor's start
- * map `parent` and with `origin` (the view's `transform-origin`, px from its border box's top
- * left), draws the view's final box `after` over its old box `before`. Returns the view's own
- * start map too, for its descendants. Exported for testing.
- *
- * @param before The view's rectangle before the commit.
- * @param after Its rectangle after.
- * @param parent The nearest measured ancestor's start map.
- * @param origin The view's `transform-origin` in px.
- */
-export function flipTransform(
-  before: Box,
-  after: Box,
-  parent: FrameMap,
-  origin: { x: number; y: number } = { x: after.width / 2, y: after.height / 2 },
-): { x: number; y: number; scaleX: number; scaleY: number; map: FrameMap } {
-  // The view's start map M(q) = r * (q - after) + before; with M = parent ∘ L and the view's
-  // own L(q) = o + t + s * (q - o) (o = its origin on the page):
-  //   s = r / parent.s,  t = (before - parent.t) / parent.s - after - (1 - s) * (o - after).
-  const rx = after.width > 0 && before.width > 0 ? before.width / after.width : 1;
-  const ry = after.height > 0 && before.height > 0 ? before.height / after.height : 1;
-  const scaleX = rx / parent.sx;
-  const scaleY = ry / parent.sy;
-  const x = (before.left - parent.tx) / parent.sx - after.left - (1 - scaleX) * origin.x;
-  const y = (before.top - parent.ty) / parent.sy - after.top - (1 - scaleY) * origin.y;
-  const map = {
-    sx: rx,
-    sy: ry,
-    tx: before.left - rx * after.left,
-    ty: before.top - ry * after.top,
-  };
-  return { x, y, scaleX, scaleY, map };
-}
-
-/** A view's `transform-origin` in px (`"50px 15px"`; the box's centre when unreadable). */
-function originOf(style: CSSStyleDeclaration, after: Box): { x: number; y: number } {
-  const [ox, oy] = String(style.transformOrigin ?? "").split(" ").map(parseFloat);
-  return {
-    x: Number.isFinite(ox) ? ox : after.width / 2,
-    y: Number.isFinite(oy) ? oy : after.height / 2,
-  };
-}
-
-/** A measured view's old and new geometry, read before any FLIP transform starts. */
+/** A measured view's old and new geometry, read before any animation starts. */
 interface Measured {
   el: Element;
   before: DOMRect;
   after: DOMRect;
-  transform: string;
-  origin: { x: number; y: number };
+  style: CSSStyleDeclaration;
+}
+
+/** Whether a view's frame size changed (half a pixel or more on either axis). */
+export function resized(before: Box, after: Box): boolean {
+  return Math.abs(before.width - after.width) >= 0.5 ||
+    Math.abs(before.height - after.height) >= 0.5;
 }
 
 /**
- * One view's FLIP start keyframe against its ancestor's start map `parent` (`null` when it
- * neither moved nor resized), and the start map its descendants inherit.
+ * A resized view's size keyframes: its border box from the old size to the new one, as React
+ * Native animates a view's frame (the content lays out at each size; nothing is drawn stretched).
+ * Exported for testing.
+ *
+ * @param before The view's rectangle before the commit.
+ * @param after Its rectangle after.
  */
-function flipFrame(m: Measured, parent: FrameMap): { frame: Keyframe | null; map: FrameMap } {
-  const f = flipTransform(m.before, m.after, parent, m.origin);
-  const moves = Math.abs(f.x) >= 0.5 || Math.abs(f.y) >= 0.5;
-  const scales = Math.abs(f.scaleX - 1) >= 0.001 || Math.abs(f.scaleY - 1) >= 0.001;
-  if (!moves && !scales) return { frame: null, map: parent };
-  const own = m.transform === "none" ? "" : ` ${m.transform}`;
-  const scale = scales ? ` scale(${f.scaleX}, ${f.scaleY})` : "";
-  return { frame: { transform: `translate(${f.x}px, ${f.y}px)${scale}${own}` }, map: f.map };
-}
-
-/** A connected view's new rectangle, transform and origin. */
-function measure(el: Element, before: DOMRect): Measured {
-  const after = el.getBoundingClientRect();
-  const style = getComputedStyle(el);
-  return { el, before, after, transform: style.transform, origin: originOf(style, after) };
+export function sizeFrames(before: Box, after: Box): Keyframe[] {
+  const frame = (b: Box): Keyframe => ({
+    boxSizing: "border-box",
+    width: `${b.width}px`,
+    height: `${b.height}px`,
+  });
+  return [frame(before), frame(after)];
 }
 
 /**
- * The moved and resized views' FLIP transforms (each against its nearest measured ancestor).
- * Every view is measured before the first one starts: a started animation draws its view's
- * descendants transformed, so a rectangle read after an ancestor's `animate()` would be that
- * drawing, not the new layout.
+ * A view's position offset on the first frame: how far its old place `before` lies from where
+ * the first frame lays it out (`start`), less the offset its nearest measured ancestor already
+ * carries it by (`parent`). Exported for testing.
+ *
+ * @param before The view's rectangle before the commit.
+ * @param start Its rectangle with the resized views at their old sizes.
+ * @param parent The nearest measured ancestor's total offset.
+ */
+export function moveOffset(
+  before: Box,
+  start: Box,
+  parent: { x: number; y: number } = { x: 0, y: 0 },
+): { x: number; y: number; total: { x: number; y: number } } {
+  const total = { x: before.left - start.left, y: before.top - start.top };
+  return { x: total.x - parent.x, y: total.y - parent.y, total };
+}
+
+/** A connected view's new rectangle and style. */
+function measure(el: Element, before: DOMRect): Measured {
+  return { el, before, after: el.getBoundingClientRect(), style: getComputedStyle(el) };
+}
+
+/** Whether a view takes a width and height (an inline box or `display: contents` doesn't). */
+function sizable(style: CSSStyleDeclaration): boolean {
+  const display = String(style.display ?? "");
+  return display !== "inline" && display !== "contents" && display !== "none";
+}
+
+/**
+ * The moved and resized views' animations, as React Native animates frames: a resized view's
+ * width and height play from the old size to the new one (its content lays out at each size),
+ * and a moved view is translated from its old place to where the layout puts it, relative to
+ * its nearest measured ancestor's offset. The new layout is read before anything starts; the
+ * first frame's layout (the resized views at their old sizes) is read once the size animations
+ * hold it, and only then do the translations start, so a view whose place follows a resizing
+ * parent is not moved twice.
  */
 function moveAnimations(p: Pending): Animation[] {
   const update = p.config.update;
@@ -310,23 +284,31 @@ function moveAnimations(p: Pending): Animation[] {
   const timing = timingOf(p.config, update);
   const measured: Measured[] = [];
   for (const [el, before] of p.rects) if (el.isConnected) measured.push(measure(el, before));
-  const maps = new Map<Element, FrameMap>();
+  const sizes = measured
+    .filter((m) => resized(m.before, m.after) && sizable(m.style))
+    .map((m) => m.el.animate(sizeFrames(m.before, m.after), timing));
+  const offsets = new Map<Element, { x: number; y: number }>();
   const starts: [Element, Keyframe][] = [];
   for (const m of measured) {
-    const { frame, map } = flipFrame(m, inheritedMap(m.el, maps));
-    maps.set(m.el, map);
-    if (frame) starts.push([m.el, frame]);
+    const f = moveOffset(m.before, m.el.getBoundingClientRect(), inheritedOffset(m.el, offsets));
+    offsets.set(m.el, f.total);
+    if (Math.abs(f.x) < 0.5 && Math.abs(f.y) < 0.5) continue;
+    const own = m.style.transform && m.style.transform !== "none" ? ` ${m.style.transform}` : "";
+    starts.push([m.el, { transform: `translate(${f.x}px, ${f.y}px)${own}` }]);
   }
-  return starts.map(([el, frame]) => el.animate([frame, {}], timing));
+  return [...sizes, ...starts.map(([el, frame]) => el.animate([frame, {}], timing))];
 }
 
-/** The start map an element's nearest measured ancestor already applies to it. */
-function inheritedMap(el: Element, maps: Map<Element, FrameMap>): FrameMap {
+/** The total offset an element's nearest measured ancestor already carries it by. */
+function inheritedOffset(
+  el: Element,
+  offsets: Map<Element, { x: number; y: number }>,
+): { x: number; y: number } {
   for (let a = el.parentElement; a; a = a.parentElement) {
-    const m = maps.get(a);
-    if (m) return m;
+    const o = offsets.get(a);
+    if (o) return o;
   }
-  return IDENTITY;
+  return { x: 0, y: 0 };
 }
 
 /** The views added by the commit (the roots of each added subtree). */

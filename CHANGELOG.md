@@ -165,6 +165,11 @@ and this project adheres to
   prebuilt addon) now reports it and says to leave the package unapproved (out of
   `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
   OS can't confine the script, a jailed script can't load it.
+- **React Native mode: `LayoutAnimation` animates frames, not scale.** A view the commit resized
+  plays its width and height from the old size to the new one, so its content lays out at each
+  size instead of being drawn stretched (a page container's background or border no longer
+  stretches), and a moved view is translated from its old place to where that first frame lays it
+  out, as React Native animates a view's frame.
 
 ### Documentation
 

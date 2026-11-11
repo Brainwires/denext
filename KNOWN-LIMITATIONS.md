@@ -568,9 +568,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
-- **`LayoutAnimation` resizes by scaling** (FLIP: a resized view's content is drawn stretched
-  while the animation plays, where React Native lays it out at each size), takes the next DOM
-  change as the commit, and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`LayoutAnimation`** takes the next DOM change as the commit, skips pages over 3,000 elements,
+  and moves a view by a transform from its old place to where the first frame lays it out (a view
+  whose place depends on a resizing ancestor can differ slightly mid-way from React Native's
+  straight-line frame). Snap props are CSS scroll snap.
 - **`adjustsFontSizeToFit` needs a box to overflow** (`numberOfLines` or a fixed size).
   `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
   metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
