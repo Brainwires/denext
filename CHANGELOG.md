@@ -113,6 +113,11 @@ and this project adheres to
 
 ### Changed
 
+- **The built-in lifecycle-script host grants that denext writes are limited to port 443.**
+  `denext migrate`, `create` and `add` write each built-in download host in
+  `supplyChain.jailScripts.packages` as `host:443` (a bare host there is every port), the same
+  hosts and port as the runtime's own built-in list. `denext doctor` still accepts an entry an
+  older denext wrote with bare hosts, with a hint naming the `host:443` form.
 - **`deno task revocations sign` refuses when it can't read the published list** (maintainers).
   The check that refuses an entries file leaving out a published revocation needs the published
   list; when it can't be fetched or verified, `sign` now stops with the reason instead of signing

@@ -28,6 +28,15 @@
 // the dependencies they find, and `denext doctor` flags a missing one; nothing here ever turns the
 // jail off. Data only: src/build/jail-scripts.ts reads it. The runtime mirrors this list (its
 // `cli/supply_chain/builtin_exceptions.rs`): a change here is a change there too.
+//
+// Every host grant here is pinned to port 443 ({@linkcode BUILTIN_JAIL_PORT}), as the runtime pins
+// its own: the downloads are HTTPS, and a host a script may reach is also a way out for what it
+// can read, so a built-in grant opens that host's HTTPS port and no other. A bare host in deno.json
+// means every port; a host the project lists itself keeps the meaning it gives it. A declared host
+// (`declaredHosts`, written to `knownPackages`) stays a bare name: the runtime matches it by name.
+
+/** The only port a built-in host grant opens: each host below is written `host:443`. */
+export const BUILTIN_JAIL_PORT = 443;
 
 /** One package's exception, in the shape of deno.json's `supplyChain.jailScripts.packages.<name>`. */
 export interface JailPackageException {
@@ -84,8 +93,9 @@ export interface JailExceptionEntry {
    */
   readonly exception: JailPackageException;
   /**
-   * The hosts the script downloads from (redirect targets included), the `net` grant on a runtime
-   * that takes a host list. A mirror or proxy the user configures needs its own host added.
+   * The hosts the script downloads from (redirect targets included), each `host:443`
+   * ({@linkcode BUILTIN_JAIL_PORT}), the `net` grant on a runtime that takes a host list. A mirror
+   * or proxy the user configures needs its own host added.
    */
   readonly hosts?: readonly string[];
   /**
@@ -126,17 +136,17 @@ const HOME_CACHE =
   "that under `write`) for the install and the app, or skip the download here and install the " +
   "browser after the install.";
 
-/** GitHub release downloads: the release URL and the hosts it redirects to. */
+/** GitHub release downloads: the release URL and the hosts it redirects to, on port 443. */
 const GITHUB = [
-  "github.com",
-  "objects.githubusercontent.com",
-  "release-assets.githubusercontent.com",
+  "github.com:443",
+  "objects.githubusercontent.com:443",
+  "release-assets.githubusercontent.com:443",
 ];
 
 /**
  * The hosts a declared download host hands its downloads off to, keyed by that host: a script
- * allowed the declared host needs these too, as its download fails without them. Mirrors the
- * runtime's `DECLARED_HOST_REDIRECTS`.
+ * allowed the declared host needs these too, as its download fails without them. Built-in
+ * grants, so pinned to {@linkcode BUILTIN_JAIL_PORT}. Mirrors the runtime's `DECLARED_HOST_REDIRECTS`.
  */
 export const DECLARED_HOST_REDIRECTS: Readonly<Record<string, readonly string[]>> = {
   "github.com": GITHUB.slice(1),
@@ -159,8 +169,8 @@ export function declaredHostRedirects(host: string): readonly string[] {
 const GITHUB_DECLARED = "install (`node-pre-gyp install`) downloads the prebuilt binding from " +
   "the GitHub release its package.json declares (`binary.host`), else builds it";
 
-/** node-gyp's Node.js headers, for a build from source. */
-const NODE_HEADERS = "nodejs.org";
+/** node-gyp's Node.js headers, for a build from source (port 443). */
+const NODE_HEADERS = "nodejs.org:443";
 
 /** The caveat of the packages that build from source with node-gyp when no prebuilt binary fits. */
 const NODE_GYP = "A build from source with node-gyp also downloads the Node.js headers (set " +
@@ -171,9 +181,9 @@ const PLAYWRIGHT_BROWSERS = ["chromium", "firefox", "webkit"] as const;
 
 /** Playwright's browser download CDNs (its built-in mirror list). */
 const PLAYWRIGHT_HOSTS = [
-  "cdn.playwright.dev",
-  "playwright.azureedge.net",
-  "playwright.download.prss.microsoft.com",
+  "cdn.playwright.dev:443",
+  "playwright.azureedge.net:443",
+  "playwright.download.prss.microsoft.com:443",
 ];
 
 /**
@@ -190,7 +200,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@prisma/client",
-    hosts: ["binaries.prisma.sh"],
+    hosts: ["binaries.prisma.sh:443"],
     reason: "postinstall runs `prisma generate`, which may download the engines (from " +
       "binaries.prisma.sh) and writes the client to the generator's `output`",
     exception: {
@@ -211,7 +221,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@prisma/engines",
-    hosts: ["binaries.prisma.sh"],
+    hosts: ["binaries.prisma.sh:443"],
     via: ["prisma", "@prisma/client"],
     reason: "postinstall downloads the query and schema engines from binaries.prisma.sh into " +
       "its package",
@@ -228,7 +238,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@sentry/cli",
-    hosts: ["downloads.sentry-cdn.com"],
+    hosts: ["downloads.sentry-cdn.com:443"],
     reason: "install.js downloads the sentry-cli binary into its package when the platform " +
       "package is missing",
     exception: {
@@ -238,7 +248,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "@tensorflow/tfjs-node",
-    hosts: ["storage.googleapis.com", NODE_HEADERS],
+    hosts: ["storage.googleapis.com:443", NODE_HEADERS],
     reason: "install script downloads the libtensorflow shared library",
     exception: { net: true },
     caveat: NODE_GYP,
@@ -282,9 +292,9 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   {
     name: "chromedriver",
     hosts: [
-      "chromedriver.storage.googleapis.com",
-      "googlechromelabs.github.io",
-      "storage.googleapis.com",
+      "chromedriver.storage.googleapis.com:443",
+      "googlechromelabs.github.io:443",
+      "storage.googleapis.com:443",
     ],
     reason: "install.js downloads the chromedriver binary into its package",
     exception: {
@@ -300,7 +310,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   },
   {
     name: "cypress",
-    hosts: ["cdn.cypress.io", "download.cypress.io"],
+    hosts: ["cdn.cypress.io:443", "download.cypress.io:443"],
     cache: { env: "CYPRESS_CACHE_FOLDER", path: "~/.cache/Cypress" },
     reason: "postinstall downloads the Cypress app into ~/.cache/Cypress",
     exception: {
@@ -411,7 +421,7 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
   })),
   {
     name: "puppeteer",
-    hosts: ["storage.googleapis.com"],
+    hosts: ["storage.googleapis.com:443"],
     cache: { env: "PUPPETEER_CACHE_DIR", path: "~/.cache/puppeteer" },
     reason: "postinstall downloads Chrome for Testing into ~/.cache/puppeteer",
     exception: {

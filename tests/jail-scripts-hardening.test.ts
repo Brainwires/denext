@@ -74,15 +74,15 @@ Deno.test("jail hosts: on rc.6 a browser download gets its hosts and a `~` cache
     assertEquals(pkgs.puppeteer, {
       env: ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
       write: ["~/.cache/puppeteer"],
-      net: ["storage.googleapis.com"],
+      net: ["storage.googleapis.com:443"],
       // rc.6 sweeps executables out of a `~` path unless the entry keeps them (item 111)
       executables: true,
     });
     assertEquals(pkgs.sharp.net, [
-      "github.com",
-      "nodejs.org",
-      "objects.githubusercontent.com",
-      "release-assets.githubusercontent.com",
+      "github.com:443",
+      "nodejs.org:443",
+      "objects.githubusercontent.com:443",
+      "release-assets.githubusercontent.com:443",
     ]);
     // `~` is the runtime's to resolve: no literal `~` directory appears in the project
     assertFalse(await Deno.stat(join(dir, "~")).then(() => true, () => false));

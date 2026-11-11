@@ -535,7 +535,7 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
   // on a runtime with host lists the fix names the hosts, not the whole network
   assertStringIncludes(
     explainJailFailures(failures, "3.0.0-rc.6").join("\n"),
-    '"net":["storage.googleapis.com"]',
+    '"net":["storage.googleapis.com:443"]',
   );
   assertStringIncludes(text, '"supplyChain.jailScripts.packages" → "@acme/native" → "write"');
   assertStringIncludes(text, "never allowed in the jail");

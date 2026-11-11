@@ -590,7 +590,10 @@ Deno.test("jail denext.19: GitHub-declared packages get knownPackages, and the r
     assertEquals(e?.declaredHosts, ["github.com"], name);
   }
   assertFalse(JAIL_NOT_NEEDED.some((n) => n.name === "bcrypt"), "bcrypt 5 needs an entry");
-  const redirects = ["objects.githubusercontent.com", "release-assets.githubusercontent.com"];
+  const redirects = [
+    "objects.githubusercontent.com:443",
+    "release-assets.githubusercontent.com:443",
+  ];
   assertEquals(DECLARED_HOST_REDIRECTS["github.com"], redirects);
   assertEquals(declaredHostRedirects("github.com"), redirects);
   assertEquals(declaredHostRedirects("GitHub.com.:443"), redirects);

@@ -121,6 +121,7 @@ import {
   requiredJailExceptions,
   upstreamByNameAdvice,
 } from "../../build/jail-scripts.ts";
+import { BUILTIN_JAIL_PORT } from "../../build/jail-exceptions.ts";
 import { commandMeta } from "../command-meta.ts";
 
 /** Whether `path` is an existing directory. */
@@ -590,7 +591,37 @@ export async function jailScriptsCheck(
   const detail = nothing
     ? confinement!.detail // the jail's real state on this machine (runtime 3.0.0-denext.1 and later)
     : passingJailDetail(required, project.setting, on) + note;
-  return { name, ok: !exposed, detail: lead + detail, critical: false };
+  const hints = on ? bareBuiltinHostHints(required, project.setting) : [];
+  const hinted = hints.map((h) => `; ${h}`).join("");
+  return { name, ok: !exposed, detail: lead + detail + hinted, critical: false };
+}
+
+/**
+ * The configured exceptions that list a built-in host bare (every port), as an older denext wrote
+ * them, where the built-in grant is now that host's port 443 only: accepted as they are, each with
+ * the `host:443` form to narrow it to. A host the project added itself is left alone.
+ */
+function bareBuiltinHostHints(
+  required: readonly JailRequirement[],
+  setting: JailSetting,
+): string[] {
+  return required.flatMap((r) => {
+    const builtin = r.exception.net;
+    const own = Object.hasOwn(setting.packages, r.entry.name)
+      ? setting.packages[r.entry.name]?.net
+      : undefined;
+    if (!Array.isArray(builtin) || !Array.isArray(own)) return [];
+    const bare = own.filter((h): h is string =>
+      typeof h === "string" && !h.includes(":") && builtin.includes(`${h}:${BUILTIN_JAIL_PORT}`)
+    );
+    if (bare.length === 0) return [];
+    const pinned = bare.map((h) => `"${h}:${BUILTIN_JAIL_PORT}"`).join(", ");
+    return [
+      `${r.entry.name}'s "net" grants ${bare.join(", ")} on every port; the built-in grant is ` +
+      `port ${BUILTIN_JAIL_PORT} only: list ${pinned} there instead under ` +
+      `"supplyChain.jailScripts.packages"`,
+    ];
+  });
 }
 
 /** What {@linkcode jailScriptsCheck} decides from. */

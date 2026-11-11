@@ -754,7 +754,7 @@ root `package.json`, workspace members) are your code and are not jailed.
   GitHub release download redirects to another host: on a runtime that allows a declared host's
   redirect targets with it, a listed `github.com` also reaches the hosts it redirects to
   (`objects.githubusercontent.com`, `release-assets.githubusercontent.com`); on one that doesn't,
-  denext lists those under the package's `net`.
+  denext lists those under the package's `net`, each on port 443 (`host:443`).
 - **What a host list holds (runtime `3.0.0-rc.6`).** The jail starts an allow-listing proxy on
   loopback for the script and points every client at it (`HTTP(S)_PROXY`, `ALL_PROXY`, npm's and
   `global-agent`'s proxy keys, `NODE_USE_ENV_PROXY=1`); the OS lets the script reach only that
@@ -798,7 +798,7 @@ From runtime `3.0.0-rc.6`, puppeteer's and msw's exceptions read:
     "jailScripts": {
       "packages": {
         "puppeteer": {
-          "net": ["storage.googleapis.com"],
+          "net": ["storage.googleapis.com:443"],
           "env": ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
           "write": ["~/.cache/puppeteer"],
           "executables": true
@@ -860,7 +860,9 @@ name in that advice comes from the install log, which the script itself can prin
 quoted as a JSON string, and only a plain DNS name is ever quoted back as a host.
 On a runtime that takes host lists, doctor also flags a built-in package whose exception still
 grants `"net": true` (all a runtime before `3.0.0-rc.6` could take) and prints the narrower one:
-its download hosts and cache, with your own `env` and `write` kept.
+its download hosts and cache, with your own `env` and `write` kept. An exception an older denext
+wrote with bare built-in hosts (every port) still passes; doctor adds a hint naming the `host:443`
+form to narrow each one to. A host you added yourself is left as you wrote it.
 
 **The runtime in use, not the pin.** `denext add` and `denext doctor` plan the jail for the Deno
 the install runs on: the pinned toolchain, or what `DENEXT_DENO=stock` / `DENEXT_DENO=<path>` or a
@@ -921,7 +923,9 @@ an upstream proxy, and doctor never suggests turning the jail off.
 | `sqlite3`                                           | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                                                              |
 | `wrtc`                                              | downloads the WebRTC binding from its declared host                                                       | `knownPackages` (`3.0.0-denext.1`): `node-webrtc.s3.amazonaws.com`                                                                 |
 
-On runtime `3.0.0-rc.6` and later each `net` grant is the package's download hosts: GitHub
+On runtime `3.0.0-rc.6` and later each `net` grant is the package's download hosts, each pinned to
+port 443 (`"github.com:443"`; a bare host in `net` is every port), the same hosts and port the
+runtime's own built-in list grants: GitHub
 releases (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`)
 for the prebuilt bindings, Electron and ffmpeg-static, `nodejs.org` for a node-gyp build's headers,
 `storage.googleapis.com` for puppeteer and `@tensorflow/tfjs-node`, Playwright's CDNs,
