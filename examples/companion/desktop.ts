@@ -8,27 +8,56 @@
 // icon) and the tray come from `desktop.*` in denext.config.ts through `.deno-desktop/config.json`,
 // the runtime part of the config every export and `denext desktop` command rewrites, so the config
 // module is never compiled into the app.
+//
+// Loopy's voice (voice/): the `loopyVoice` capability mints Realtime sessions with the OpenAI key
+// kept in the OS keychain. The keychain is the `secureStore` capability (`denext desktop add
+// secure-store`), but it is taken OUT of the page's bridge and handed to the voice backend alone,
+// so the page can set or clear the key and never read it back.
 import config from "./.deno-desktop/config.json" with { type: "json" };
-import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  resolveDesktopCapabilities,
+  runDesktop,
+} from "denext/desktop";
 import { inboxFilePath } from "./inbox/paths.ts";
 import { DEFAULT_PORT, type Inbox, REPLY_PATH, replyResponse, startInbox } from "./inbox/server.ts";
+import { dataDir } from "./inbox/paths.ts";
+import { voiceCapabilities } from "./voice/extension.ts";
+import { installQuitCleanup, type QuitApi, quitLoopy, trayAction } from "./voice/lifecycle.ts";
+import { createToolset } from "./voice/toolset.ts";
 
 const resolved = await resolveDesktopCapabilities(config, { base: import.meta.url });
 let inbox: Inbox | undefined;
 
+// Loopy's tools (voice/toolset.ts), with the memory file and the browser profile in the app's data
+// folder. Chrome dies with Loopy: on the tray's Quit, the page's Quit (`beforequit`) and `unload`.
+const toolset = createToolset({ dataDir: dataDir() });
+const desktopApi = (Deno as unknown as { desktop?: QuitApi }).desktop;
+installQuitCleanup(() => toolset.killBrowser(), desktopApi);
+
 const app = await runDesktop({
   importMetaUrl: import.meta.url,
   ...resolved,
+  capabilities: voiceCapabilities(
+    resolved.capabilities,
+    DesktopCapError,
+    undefined,
+    toolset,
+  ) as DesktopCapability[],
   onRequest: (request, url) =>
     url.pathname === REPLY_PATH ? replyResponse(request, inbox?.replies) : null,
 });
 
-// The tray (`desktop.tray`) is the way back with no Dock icon: show or hide Loopy's window.
-app.tray?.onMenuItem((id) => {
-  const loopy = app.windows.get("main");
-  if (id === "show") loopy?.show();
-  else if (id === "hide") loopy?.hide();
-});
+// The tray (`desktop.tray`) is the way back with no Dock icon: show or hide Loopy's window, or
+// quit (Loopy's own item, so Chrome is killed before the app goes).
+app.tray?.onMenuItem((id) =>
+  trayAction(id, {
+    show: () => app.windows.get("main")?.show(),
+    hide: () => app.windows.get("main")?.hide(),
+    quit: () => quitLoopy(() => toolset.killBrowser(), desktopApi),
+  })
+);
 
 if (!app.sidecarChild) {
   const port = Number(Deno.env.get("LOOPY_PORT") ?? DEFAULT_PORT);

@@ -27,9 +27,11 @@
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
     "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/app": "../../src/desktop/app.ts",
     "denext/desktop/client": "../../src/desktop/client.ts",
     "denext/desktop/window": "../../src/desktop/window.ts",
-    "denext/mobile": "../../src/mobile/mod.ts"
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "@astral/astral": "jsr:@astral/astral@^0.5.3"
   },
   "fmt": {
     "lineWidth": 100,

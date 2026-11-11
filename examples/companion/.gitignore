@@ -8,3 +8,4 @@ dist/
 node_modules/
 # Packaging scripts: written from the current scaffold template by `deno task desktop:package`.
 scripts/package-*.ts
+.loopy/
