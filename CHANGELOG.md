@@ -152,6 +152,16 @@ and this project adheres to
 
 ### Changed
 
+- **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
+  (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
+  shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
+  under denext's Deno with `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`), makes
+  that a streaming `HTMLRewriter` transform; the string path stays the default everywhere, the
+  flag alone included. Both write the same bytes. It is opt-in because it is slower on today's
+  runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through the
+  rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
+  `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
+  came first before.
 - **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
   remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
   until it is re-signed, so a revocation would stop reaching anyone.
@@ -173,6 +183,22 @@ and this project adheres to
 
 ### Fixed
 
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
+  the file.** On a route that renders as one client bundle (a page or layout that calls a hook
+  itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
+  `unauthorized.tsx` answered with the route's bundle, which rendered the page again, so the page
+  stayed as it was. The server now sends that render as markup without the route's entry, and the
+  file shows under the layouts.
+- **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
+  The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
+  `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or
+  whose socket reached another instance, is answered `resync` straight away instead of going
+  `stale` only after 10 seconds of silence.
+- **Realtime: a frame the Live hub had not sent when the connection dropped still arrives
+  (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
+  on the return, ahead of `resumed`, numbered as before and marked `again: true`;
+  `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
+  window was lost, and the gap made the hook `stale`.
 - **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
   `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
   `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they

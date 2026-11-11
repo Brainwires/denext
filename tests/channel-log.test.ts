@@ -533,6 +533,37 @@ Deno.test("subscribeChannel: sends `since`, skips a seen cursor, resumes from th
   }
 });
 
+Deno.test("subscribeChannel: a subscription the server acknowledged is re-sent marked as a re-subscribe", async () => {
+  const { subscribeChannel } = await import("../src/client/live-client.ts");
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  const [ws0, loc0] = [g.WebSocket, g.location];
+  g.WebSocket = FakeSocket;
+  g.location = { protocol: "http:", host: "localhost:8000", href: "http://localhost:8000/" };
+  try {
+    const off = subscribeChannel("ch", "acked", () => {}, () => {});
+    const pending = subscribeChannel("ch", "pending", () => {}, () => {});
+    const ws = FakeSocket.last!;
+    ws.open();
+    const first = ws.subscribes();
+    assertEquals(first.map((f) => f.resubscribe), [undefined, undefined], "a first subscribe");
+    ws.emit({ type: "channel-ready", subId: first[0].subId });
+    ws.open(); // a reconnect re-sends every subscription
+    const again = ws.subscribes().slice(2);
+    // Only the acknowledged one is a re-subscribe; the other never reached the server.
+    assertEquals(again.map((f) => [f.key, f.resubscribe]), [["acked", true], [
+      "pending",
+      undefined,
+    ]]);
+    off();
+    pending();
+  } finally {
+    g.WebSocket = ws0;
+    if (loc0 === undefined) delete g.location;
+    else g.location = loc0;
+  }
+});
+
 Deno.test("channel log: a publish's grant is logged, in memory and in Redis, and a replay honours it", async () => {
   // The logs keep the stamp.
   const memory = inMemoryChannelLog();

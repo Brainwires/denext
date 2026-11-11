@@ -21,7 +21,7 @@ import {
   builtSpaPartytown,
   newScriptNonce,
   spaPartytownLib,
-  stampWorkerNonce,
+  stampWorkerNonceBody,
 } from "./script-workers.ts";
 
 export interface SpaProdServerOptions {
@@ -34,8 +34,10 @@ export interface SpaProdServerOptions {
 }
 
 /** The shell response for a navigation (no body for HEAD). */
-function shellResponse(request: Request, shell: string): Response {
-  return new Response(request.method === "HEAD" ? null : shell, {
+function shellResponse(request: Request, shell: string | ReadableStream<Uint8Array>): Response {
+  const head = request.method === "HEAD";
+  if (head && typeof shell !== "string") void shell.cancel(); // streamed: nothing reads it
+  return new Response(head ? null : shell, {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
   });
 }
@@ -69,7 +71,7 @@ export async function startSpaProdServer(
   const partytownDir = await builtSpaPartytown(paths.config, clientDir);
   const lib = spaPartytownLib(paths.config);
   const shellFor = partytownDir
-    ? () => stampWorkerNonce(shell, lib, newScriptNonce())
+    ? () => stampWorkerNonceBody(shell, lib, newScriptNonce())
     : () => shell;
 
   const servedPartytown = (url: URL, request: Request, secure: boolean) =>
@@ -138,7 +140,7 @@ function spaLocalServer(ctx: {
   publicDir: string;
   prefix: string;
   /** The shell for one response (stamped with its own nonce when Partytown is on). */
-  shell: () => string;
+  shell: () => string | ReadableStream<Uint8Array>;
   hstsCfg: Parameters<typeof applyDefaultSecurityHeaders>[2];
 }): (request: Request, url: URL, secure: boolean) => Promise<Response> {
   // Unpacked once: the per-request path reads closure locals, as it did inline.

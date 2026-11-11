@@ -90,6 +90,12 @@ export interface TableChangesFrame<Row = Record<string, unknown>> {
    * A reconnect answered by neither this nor `resync` lost the subscription: re-read.
    */
   resumed?: true;
+  /**
+   * Sent again after a reconnect, numbered as the first time: the connection dropped just after
+   * it was sent, so it may not have arrived. One numbered at or before the last frame received
+   * arrived already and is dropped.
+   */
+  again?: true;
 }
 
 /** A value a filter compares against. */

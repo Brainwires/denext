@@ -623,6 +623,12 @@ Partytown on any page of the origin. denext closes both:
   dev` and `denext start` stamp each shell response instead: a fresh nonce on the boot tag and
   the shell's own scripts, and `'nonce-…'` in the `spa.csp` policy's `script-src`. The worker
   scripts the app renders take the nonce the boot ran with, and the checks below are the same.
+  The shell is stamped as a string, a stamped tag with the `nonce` as its last attribute. With
+  `DENEXT_HTML_REWRITER=1` and denext's Deno with `HTMLRewriter` turned on
+  (`--unstable-html-rewriter`, or `"unstable": ["html-rewriter"]` in `deno.json`) it streams
+  through the rewriter instead, with the same bytes. That is opt-in because it is slower on
+  today's runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through
+  the rewriter, a 17 KB one 48 µs against 6.5 ms. It is kept for runtimes where it pays off.
   A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no

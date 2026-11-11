@@ -182,6 +182,22 @@ Deno.test("useTableChanges: subscribes with a fresh key and keeps rows from init
       flushSync();
       assertEquals(waits.armed, 0, "answered");
       assertEquals([state.stale, resyncs.length, container.textContent], [false, 2, "uno,seven"]);
+      // Frames sent again after a drop (`again`, numbered as the first time): one it has is
+      // dropped, not a gap; the next one applies.
+      frame(7, {
+        seq: 7,
+        again: true,
+        changes: [{ op: "insert", key: "7", row: { id: 7, body: "SEVEN" } }],
+      });
+      flushSync();
+      assertEquals([state.stale, resyncs.length, container.textContent], [false, 2, "uno,seven"]);
+      frame(8, {
+        seq: 8,
+        again: true,
+        changes: [{ op: "insert", key: "8", row: { id: 8, body: "eight" } }],
+      });
+      flushSync();
+      assertEquals([state.stale, container.textContent], [false, "uno,seven,eight"]);
       // A reconnect the server does not answer (it lost the subscription): stale once the wait
       // ends, not before.
       ws.deliver({ type: "channel-ready", subId: sent.subId });

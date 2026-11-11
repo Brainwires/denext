@@ -75,7 +75,11 @@ client tree (an event handler that returns the call's promise, a `<form action>`
 `useActionState`) the server renders the current URL with the signal raised at the page: the
 page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx` replaces the page in
 place under the layouts. The URL stays and nothing reloads; `redirect()` from an action still
-navigates. A caller that catches the rejection itself decides what happens instead.
+navigates. A caller that catches the rejection itself decides what happens instead. On a route
+that renders as one client bundle (a page or layout that calls a hook itself), the file arrives
+as server markup without the route's bundle, which would render the page again over it: the
+layouts' client state starts over, and their client parts come back to life on the next
+navigation.
 
 ## `useErrorBoundary()`
 
