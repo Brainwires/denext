@@ -132,7 +132,7 @@ export {
   runtimeHasNavigationEvents,
 } from "../desktop/will-navigate.ts";
 import {
-  createWillNavigateHooks,
+  createWindowNavigationHooks,
   type DesktopWillNavigateHandler,
   type WillNavigateHooks,
 } from "../desktop/will-navigate.ts";
@@ -1903,13 +1903,9 @@ function desktopNavigationHooks(
   appWindow: unknown,
   first: DesktopWillNavigateHandler | undefined,
 ): WillNavigateHooks {
-  const navigation = createWillNavigateHooks({
-    watchWindows: (attach) =>
-      windows.lifecycle?.onWindowOpened((info) => {
-        const window = windows.registry?.get(info.id)?.window ??
-          (info.id === "main" ? appWindow : undefined);
-        if (window) attach(info.id, window as EventTarget);
-      }) ?? (() => {}),
+  const navigation = createWindowNavigationHooks({
+    lifecycle: windows.lifecycle,
+    windowFor: (id) => windows.registry?.get(id)?.window ?? (id === "main" ? appWindow : undefined),
   });
   if (first) navigation.add(first);
   return navigation;

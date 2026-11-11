@@ -27,7 +27,7 @@ import { loadEnv } from "../server/env.ts";
 import { abortJobRuns } from "../server/jobs.ts";
 import { setStandaloneState } from "../server/standalone.ts";
 import { holdOffBakedIdleTrim } from "../build/idle-trim.ts";
-import { bakedLimitsNotice } from "../build/resource-limits.ts";
+import { bakedLimitsNotice, type CompiledLimitsKey } from "../build/resource-limits.ts";
 
 /** The verbs a compiled app runs (the first is the default). */
 const VERBS = ["start", "job", "db"] as const;
@@ -129,16 +129,21 @@ async function prepareStandalone(projectDir: string): Promise<void> {
  * @param projectUrl The embedded project's root, as a `file:` URL.
  * @param args The command line (default `Deno.args`).
  * @param options `idleTrimBaked`: the binary was compiled with the idle trim baked in (a
- *   `DENEXT_IDLE_TRIM=0` when it runs then holds the trim off). `limitsBaked`: the `start.limits`
- *   flags baked in, which the runtime enforces on `job` and `db` too (it says so when they run).
+ *   `DENEXT_IDLE_TRIM=0` when it runs then holds the trim off). `limitsBaked`: the limit flags
+ *   baked in, which the runtime enforces on `job` and `db` too (it says so when they run), and
+ *   `limitsFrom` the config key they came from (`compile.limits`; default `start.limits`).
  *   `limitsLifted`: the main module lifted them for this run (`Deno.disarmResourceLimits(import.meta)`,
  *   denext's Deno from 3.0.0-denext.8), so `job` / `db` print no notice.
  */
 export async function runStandalone(
   projectUrl: string | URL,
   args: readonly string[] = Deno.args,
-  options: { idleTrimBaked?: boolean; limitsBaked?: readonly string[]; limitsLifted?: boolean } =
-    {},
+  options: {
+    idleTrimBaked?: boolean;
+    limitsBaked?: readonly string[];
+    limitsLifted?: boolean;
+    limitsFrom?: CompiledLimitsKey;
+  } = {},
 ): Promise<void> {
   const projectDir = fromFileUrl(projectUrl).replace(/[\\/]$/, "");
   await prepareStandalone(projectDir);
@@ -151,9 +156,12 @@ export async function runStandalone(
     Deno.exit(2);
   }
   if (outcome.kind !== "run") return console.log(usage(programName()));
-  const notice = options.limitsLifted === true
-    ? null
-    : bakedLimitsNotice(programName(), outcome.command.name, options.limitsBaked ?? []);
+  const notice = options.limitsLifted === true ? null : bakedLimitsNotice(
+    programName(),
+    outcome.command.name,
+    options.limitsBaked ?? [],
+    options.limitsFrom,
+  );
   if (notice) console.error(notice);
   // `job` and `db` find the project through `--cwd`: point it at the embedded one.
   await outcome.command.run({ ...outcome.ctx, global: { ...outcome.ctx.global, cwd: projectDir } });

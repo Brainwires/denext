@@ -1118,3 +1118,44 @@ Deno.test({
     await h.close();
   }
 });
+
+Deno.test({
+  name: "requireUploadSize: Supabase's /object/upload/sign, which sends no size, is exempt",
+}, async () => {
+  const h = await storageHarness(backend({
+    supabase: await supabaseKeys(),
+    storage: {
+      secret: "storage-secret-at-least-32-characters",
+      driver: fs({ dir: ".storage" }),
+      buckets: { strict: { requireUploadSize: true } },
+    },
+  }));
+  const service = { authorization: `Bearer ${SECRET_KEY}` };
+  try {
+    // The flag is on: the server API refuses a size-less signed upload.
+    const strict = storage.bucket("strict", { service: true });
+    assertEquals(
+      await code(strict.createSignedUploadUrl("a.txt", { contentType: "text/plain" })),
+      "bad_request",
+    );
+    // Supabase's sign route has no size to give, and still signs and uploads.
+    const signed = await h.fetch(`${ORIGIN}/storage/v1/object/upload/sign/strict/a.txt`, {
+      method: "POST",
+      headers: service,
+    });
+    assertEquals(signed.status, 200);
+    const { url, token } = await signed.json();
+    assert(typeof token === "string" && url.includes(`token=${token}`), url);
+    const put = await h.fetch(`${ORIGIN}/storage/v1${url}`, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: "hey",
+    });
+    assertEquals(put.status, 200, await put.clone().text());
+    await put.body?.cancel();
+    assertEquals((await strict.info("a.txt"))?.size, 3);
+    await storage.emptyBucket("strict", { service: true });
+  } finally {
+    await h.close();
+  }
+});

@@ -85,9 +85,14 @@ export interface WillNavigateOptions {
   readonly supported?: boolean;
   /**
    * Follow the app's windows: call `attach` for each open window and each one that opens, and
+   * `detach` for each one that closes for good (its listener and entry are dropped, so a closed
+   * window is not kept referenced and a window that reuses its id is listened to again), and
    * return the unsubscribe. Without it no window is listened to.
    */
-  readonly watchWindows?: (attach: (id: string, window: EventTarget) => void) => () => void;
+  readonly watchWindows?: (
+    attach: (id: string, window: EventTarget) => void,
+    detach: (id: string) => void,
+  ) => () => void;
   /** Log a handler's failure (default `console.error`). */
   readonly log?: (message: string, err: unknown) => void;
 }
@@ -161,6 +166,13 @@ export function createWillNavigateHooks(options: WillNavigateOptions = {}): Will
     attached.set(id, { window, listener });
   };
 
+  const detach = (id: string) => {
+    const entry = attached.get(id);
+    if (!entry) return;
+    entry.window.removeEventListener(EVENT, entry.listener);
+    attached.delete(id);
+  };
+
   const stop = () => {
     unwatch?.();
     unwatch = undefined;
@@ -176,7 +188,7 @@ export function createWillNavigateHooks(options: WillNavigateOptions = {}): Will
     add: (fn) => {
       handlers.add(fn);
       if (supported && unwatch === undefined && options.watchWindows) {
-        unwatch = options.watchWindows(attach);
+        unwatch = options.watchWindows(attach, detach);
       }
       return () => {
         handlers.delete(fn);
@@ -184,4 +196,44 @@ export function createWillNavigateHooks(options: WillNavigateOptions = {}): Will
       };
     },
   };
+}
+
+/** The window lifecycle {@linkcode createWindowNavigationHooks} follows. */
+export interface NavigationWindowLifecycle {
+  /** Each open window (replayed) and each one that opens; returns the unsubscribe. */
+  onWindowOpened(fn: (info: { id: string }) => void): () => void;
+  /** Each window that closes for good; returns the unsubscribe. */
+  onWindowClosed(fn: (info: { id: string }) => void): () => void;
+}
+
+/**
+ * The app's will-navigate hooks over its windows (`runDesktop`'s): each window that opens is
+ * listened to while a hook is subscribed, and one that closes for good is let go, so a closed
+ * window is never kept referenced and a window that reuses its id is listened to again.
+ *
+ * @param options The lifecycle (none: no window is listened to), the window object of an id, and
+ *   the runtime support (default: {@linkcode runtimeHasNavigationEvents}).
+ * @returns The hooks.
+ */
+export function createWindowNavigationHooks(options: {
+  readonly lifecycle?: NavigationWindowLifecycle;
+  readonly windowFor: (id: string) => unknown;
+  readonly supported?: boolean;
+}): WillNavigateHooks {
+  return createWillNavigateHooks({
+    ...(options.supported === undefined ? {} : { supported: options.supported }),
+    watchWindows: (attach, detach) => {
+      const lifecycle = options.lifecycle;
+      if (!lifecycle) return () => {};
+      const offOpened = lifecycle.onWindowOpened((info) => {
+        const window = options.windowFor(info.id);
+        if (window) attach(info.id, window as EventTarget);
+      });
+      const offClosed = lifecycle.onWindowClosed((info) => detach(info.id));
+      return () => {
+        offOpened();
+        offClosed();
+      };
+    },
+  });
 }

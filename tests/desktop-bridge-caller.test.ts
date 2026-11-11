@@ -116,6 +116,24 @@ Deno.test("caller: the loopback world's origin, and the calling window", async (
   });
 });
 
+Deno.test("caller: over loopback a runtime frame header is never trusted, marking or not", async () => {
+  // The loopback connection carries whatever headers the page sets, so a subframe holding the
+  // page token could claim the runtime's "main" mark: only the memory connection is marked.
+  const bridge = createDesktopBridge([whoami([])], { marksFrames: true });
+  const forged = await callWho(bridge, {
+    base: LOOPBACK,
+    origin: LOOPBACK,
+    headers: { [DESKTOP_FRAME_HEADER]: "main", "x-denext-desktop-frame": "sub" },
+  });
+  assertEquals(forged.frame, { kind: "sub", origin: LOOPBACK, verified: false });
+  const bare = await callWho(bridge, {
+    base: LOOPBACK,
+    origin: LOOPBACK,
+    headers: { [DESKTOP_FRAME_HEADER]: "main" },
+  });
+  assertEquals(bare.frame, { kind: "unknown", origin: LOOPBACK, verified: false });
+});
+
 Deno.test("runtimeMarksFrames: only Deno.desktop.marksFrames === true", () => {
   assertEquals(runtimeMarksFrames({ marksFrames: true }), true);
   for (const desktop of [undefined, null, {}, { marksFrames: "yes" }, { marksFrames: false }]) {

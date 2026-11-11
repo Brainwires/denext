@@ -7,7 +7,7 @@ import "./helpers/class-runtime.ts";
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { join } from "@std/path";
 import { setDocument } from "../src/client/reconciler.ts";
-import { DomDocument, type TestElement } from "../src/testing/dom.ts";
+import { DomDocument, type DomEl, fireEventOn, type TestElement } from "../src/testing/dom.ts";
 import { act } from "../src/client/mod.ts";
 import PreactCompat, {
   Component,
@@ -184,9 +184,12 @@ Deno.test("jsxAttr serializes as Preact's: bare booleans, dropped values, style 
   assertEquals(jsxAttr("id", 'a"<&>'), 'id="a&quot;&lt;&amp;>"');
   assertEquals(jsxAttr("disabled", true), "disabled");
   assertEquals(jsxAttr("tabindex", 0), 'tabindex="0"');
-  for (const v of [null, undefined, false, () => {}, { a: 1 }]) assertEquals(jsxAttr("x", v), "");
-  assertEquals(jsxAttr("key", "k"), "");
-  assertEquals(jsxAttr("ref", "r"), "");
+  // A function, a key and a ref serialize as "" too (a `String` carrying the value).
+  for (const v of [null, undefined, false, () => {}, { a: 1 }]) {
+    assertEquals(String(jsxAttr("x", v)), "");
+  }
+  assertEquals(String(jsxAttr("key", "k")), "");
+  assertEquals(String(jsxAttr("ref", "r")), "");
   assertEquals(
     jsxAttr("style", { color: "red", fontSize: 12, opacity: 0.5, "--v": 1, empty: "", gap: null }),
     'style="color:red;font-size:12px;opacity:0.5;--v:1;"',
@@ -211,9 +214,100 @@ Deno.test("jsxEscape escapes text, keeps elements and drops null / booleans / fu
   assertStrictEquals(jsxEscape(() => 1), null);
   const el = jsx("b", null);
   assertStrictEquals(jsxEscape(el), el);
-  const list: unknown[] = ["<", el, false];
-  assertStrictEquals(jsxEscape(list), list);
-  assertEquals(list, ["&lt;", el, null]);
+  // An array comes back as a new array of escaped items; the caller's array is left as it is.
+  const list: unknown[] = ["<", el, false, ["&"]];
+  const escaped = jsxEscape(list) as unknown[];
+  assert(escaped !== list);
+  assertEquals(escaped, ["&lt;", el, null, ["&amp;"]]);
+  assertEquals(list, ["<", el, false, ["&"]]);
+});
+
+Deno.test("jsxTemplate renders the same array twice with the same output", () => {
+  const tpl = ["<ul>", "</ul>"];
+  const items = ["a&b", "<c>"];
+  const first = renderToString(jsxTemplate(tpl, jsxEscape(items)));
+  const second = renderToString(jsxTemplate(tpl, jsxEscape(items)));
+  assertEquals(first, "<ul>a&amp;b&lt;c></ul>");
+  assertEquals(second, first);
+  assertEquals(items, ["a&b", "<c>"]);
+});
+
+Deno.test("jsxTemplate keeps a precompiled element's handlers, ref and key in the browser", async () => {
+  // What `deno` emits for
+  //   <div ref={outer}><button key="k" onClick={inc} onMouseDownCapture={down}
+  //   onGotPointerCapture={got} ref={(el) => (inner = el)}>{n}</button></div>
+  const tpl = ["<div ", "><button ", " ", " ", " ", " ", ">", "</button></div>"];
+  const clicks: string[] = [];
+  let inner: unknown = null;
+  const outer: { current: unknown } = { current: null };
+  const attrs = [
+    jsxAttr("ref", outer),
+    jsxAttr("key", "k"),
+    jsxAttr("onclick", (e: Event) => clicks.push(e.type)),
+    jsxAttr("onmousedowncapture", (e: Event) => clicks.push("capture:" + e.type)),
+    jsxAttr("ongotpointercapture", (e: Event) => clicks.push(e.type)),
+    jsxAttr("ref", (el: unknown) => {
+      inner = el;
+    }),
+  ];
+  // Each still serializes as Preact's empty attribute.
+  for (const a of attrs) assertEquals(String(a), "");
+  assertEquals(attrs.join(""), "");
+  const tree = jsxTemplate(tpl, ...attrs, jsxEscape(1));
+  // The server output has no trace of them.
+  assertEquals(renderToString(tree), "<div><button>1</button></div>");
+  const button = (tree.props as { children: { key: unknown; props: Record<string, unknown> } })
+    .children;
+  assertEquals(button.key, "k");
+  assertEquals(
+    Object.keys(button.props).filter((k) => k.startsWith("on")).sort(),
+    // Event names are case-insensitive: denext's events read `onMousedown` as `mousedown`.
+    ["onClick", "onGotpointercapture", "onMousedownCapture"],
+  );
+  const el = container();
+  await act(() => {
+    render(tree, el);
+  });
+  const div = (el as unknown as TestElement).children[0];
+  const btn = div.children[0];
+  assertStrictEquals(outer.current, div);
+  assertStrictEquals(inner, btn);
+  await act(() => {
+    fireEventOn(btn as unknown as DomEl, "click");
+    fireEventOn(btn as unknown as DomEl, "mousedown");
+    fireEventOn(btn as unknown as DomEl, "gotpointercapture");
+  });
+  assertEquals(clicks, ["click", "capture:mousedown", "gotpointercapture"]);
+  await act(() => {
+    unmountComponentAtNode(el);
+  });
+  assertStrictEquals(outer.current, null);
+});
+
+Deno.test("jsxAttr: null ref / key serialize as nothing; options.event wraps a template handler", async () => {
+  assertStrictEquals(jsxAttr("ref", null), "");
+  assertStrictEquals(jsxAttr("key", undefined), "");
+  const seen: unknown[] = [];
+  options.event = (e) => {
+    seen.push(e.type);
+    return e;
+  };
+  try {
+    const tree = jsxTemplate(["<a ", ">x</a>"], jsxAttr("onclick", () => seen.push("handler")));
+    const el = container();
+    await act(() => {
+      render(tree, el);
+    });
+    await act(() => {
+      fireEventOn((el as unknown as TestElement).children[0] as unknown as DomEl, "click");
+    });
+    assertEquals(seen, ["click", "handler"]);
+    await act(() => {
+      unmountComponentAtNode(el);
+    });
+  } finally {
+    delete options.event;
+  }
 });
 
 Deno.test("jsxTemplate builds the element tree Deno's precompile transform describes", async () => {

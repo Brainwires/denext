@@ -193,6 +193,12 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
     errors.length = 0;
     await runStandalone(toFileUrl(dir), ["job", "--list"], { ...limits, limitsLifted: true });
     assertEquals(errors.filter((e) => e.includes("start.limits")), []);
+    // Baked from compile.limits: the notice names that key.
+    await runStandalone(toFileUrl(dir), ["job", "--list"], {
+      ...limits,
+      limitsFrom: "compile.limits",
+    });
+    assertStringIncludes(errors.join("\n"), "enforces the compile.limits");
   } finally {
     console.log = log;
     console.error = error;

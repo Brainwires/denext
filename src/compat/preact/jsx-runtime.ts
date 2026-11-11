@@ -275,10 +275,14 @@ function templateProps(
   exprs: readonly unknown[],
 ): Record<string, unknown> {
   const props: Record<string, unknown> = {};
-  const parsed: Array<[string, string | true]> = [];
+  const parsed: Array<[string, unknown]> = [];
   for (const attr of attrs) {
     if (typeof attr !== "number") parsed.push(attr);
-    else if (typeof exprs[attr] === "string") parseAttributes(exprs[attr] as string, parsed);
+    else {
+      const expr = exprs[attr];
+      if (typeof expr === "string") parseAttributes(expr, parsed as Array<[string, string | true]>);
+      else if (expr instanceof TemplateAttr) parsed.push([expr.prop, expr.value]);
+    }
   }
   for (const [name, value] of parsed) props[name] = value;
   return props;
@@ -291,7 +295,9 @@ function buildNode(node: TemplateNode, exprs: readonly unknown[]): unknown {
   const props = templateProps(node.attrs, exprs);
   const kids = node.children.map((c) => buildNode(c, exprs));
   if (kids.length > 0) props.children = kids.length === 1 ? kids[0] : kids;
-  return jsx(node.tag, props as VProps);
+  const key = props.key as Key | undefined;
+  delete props.key;
+  return jsx(node.tag, props as VProps, key);
 }
 
 /**
@@ -329,10 +335,48 @@ function encodeEntities(value: string): string {
 }
 
 /**
+ * An attribute of a precompiled template that has no HTML (an event handler, another function,
+ * a `ref` or a `key`): an empty `String`, so code that joins `jsxAttr` results into markup gets
+ * `""` as from Preact, carrying the value for {@linkcode jsxTemplate}'s element.
+ */
+class TemplateAttr extends String {
+  constructor(readonly prop: string, readonly value: unknown) {
+    super("");
+  }
+}
+
+/** A {@linkcode TemplateAttr}, typed as the empty string it serializes as. */
+function carried(prop: string, value: unknown): string {
+  return new TemplateAttr(prop, value) as unknown as string;
+}
+
+/** Preact's capture suffix: `Capture`, but not the end of `(got|lost)PointerCapture`. */
+const CAPTURE_SUFFIX = /(PointerCapture)$|Capture$/i;
+
+/**
+ * The element prop of a function-valued template attribute: Deno's precompile transform writes
+ * an event prop in lower case (`onclick`, `onclickcapture`), and denext's elements take the
+ * React spelling (`onClick`, `onClickCapture`), as Preact's own diff reads either.
+ */
+function handlerProp(name: string): string {
+  if (name.length < 3 || name[0] !== "o" || name[1] !== "n") return name;
+  let event = name.slice(2);
+  const bare = event.replace(CAPTURE_SUFFIX, "$1");
+  const capture = bare !== event;
+  event = bare;
+  return "on" + event[0].toUpperCase() + event.slice(1) + (capture ? "Capture" : "");
+}
+
+/**
  * Serialize one attribute of a precompiled JSX template (Preact's `jsxAttr`): `name="value"`,
- * a bare `name` for `true`, and `""` for `null`, `false`, a function, an object (but a `style`
- * object, written as CSS), `ref` and `key`. A value with `valueOf` (a signal) is read first,
- * and `options.attr` may return the string itself.
+ * a bare `name` for `true`, and `""` for `null`, `false` and an object (but a `style` object,
+ * written as CSS). A value with `valueOf` (a signal) is read first, and `options.attr` may
+ * return the string itself.
+ *
+ * An event handler (or any function), a `ref` and a `key` have no HTML either, so they too
+ * serialize as `""`, as in Preact; but the empty string denext returns is a `String` object
+ * that carries the value, so the element {@linkcode jsxTemplate} builds keeps its handlers
+ * (`onclick` becomes `onClick`), its ref and its key once it mounts in the browser.
  *
  * @param name The attribute name.
  * @param value Its value.
@@ -343,10 +387,13 @@ export function jsxAttr(name: string, value: unknown): string {
     const result = options.attr(name, value);
     if (typeof result === "string") return result;
   }
+  if (name === "ref" || name === "key") {
+    return value == null ? "" : carried(name, value);
+  }
+  if (typeof value === "function") return carried(handlerProp(name), value);
   if (value !== null && typeof value === "object" && typeof value.valueOf === "function") {
     value = value.valueOf();
   }
-  if (name === "ref" || name === "key") return "";
   if (name === "style" && value !== null && typeof value === "object") {
     return name + '="' + encodeEntities(styleText(value as Record<string, unknown>)) + '"';
   }
@@ -382,8 +429,10 @@ function needsPx(cssName: string, val: unknown): boolean {
 
 /**
  * Escape a dynamic child of a precompiled JSX template (Preact's `jsxEscape`): `null`, a boolean
- * or a function becomes `null`, an element (or a signal) stays as it is, an array is escaped in
- * place, and anything else becomes its entity-encoded text.
+ * or a function becomes `null`, an element (or a signal) stays as it is, an array becomes a new
+ * array of its escaped items, and anything else becomes its entity-encoded text. Unlike Preact,
+ * which escapes an array in place, the caller's array is left as it is, so rendering the same
+ * array again (a module constant, a state value) does not escape its text twice.
  *
  * @param value The child.
  * @returns The escaped child.
@@ -392,10 +441,7 @@ export function jsxEscape<T>(value: T): string | null | VNode | Array<string | n
   if (value == null || typeof value === "boolean" || typeof value === "function") return null;
   if (typeof value === "object") {
     if (isValidElement(value) || isSignal(value)) return value as unknown as VNode;
-    if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) value[i] = jsxEscape(value[i]);
-      return value as Array<string | null | VNode>;
-    }
+    if (Array.isArray(value)) return value.map(jsxEscape) as Array<string | null | VNode>;
   }
   return encodeEntities(String(value));
 }

@@ -2658,3 +2658,95 @@ Deno.test("realtime replay: a table that went quiet does not keep its journal pa
     await env.done();
   }
 });
+
+Deno.test("realtime re-send window: a quiet subscription lets go of its kept frames after 1 s", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => ca.frames.length === 1, 3_000, "the frame");
+    assertEquals(engine.keptFrames, 1, "kept for a drop within the window");
+    // No further frame, no flush: the engine's own timer prunes it.
+    await until(() => engine.keptFrames === 0, 3_000, "the kept frame pruned");
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime re-send window: at most 16 frames are kept", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    const started = Date.now();
+    for (let i = 1; i <= 20; i++) {
+      env.sql.insert("notes", { id: i, owner: A, body: "x" });
+      await engine.flush();
+    }
+    await until(() => changesOf(ca).length === 20, 5_000, "every change");
+    const kept = engine.keptFrames;
+    assert(ca.frames.length > 16, `${ca.frames.length} frames`);
+    assert(kept <= 16, `${kept} kept`);
+    // All 20 within the 1 s window (24 ms apart): the cap, not the age, is what dropped the rest.
+    if (Date.now() - started < 900) assertEquals(kept, 16);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime re-send window: a frame past 1 s is not sent again on a return", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await until(() => first.frames.length === 1, 3_000, "the frame");
+    await until(() => engine.keptFrames === 0, 3_000, "the window over");
+    env.hub.drop(first);
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key, resubscribe: true })).ok);
+    await until(() => back.frames.length >= 1, 3_000, "the resume");
+    await settle(100);
+    assertEquals(back.frames, [{ seq: 2, resumed: true }]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime re-send window: a copy that no longer fits the cap is a resync, numbered next", async () => {
+  // Frames 1 (large) and 2 are handed to the hub, which has not fanned them out at the drop. On
+  // the return frame 1's copy no longer fits: splitting it would number its parts after frame 2's
+  // copy, which the browser would then drop as one it has. One resync replaces the copies.
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "y".repeat(3_000) });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "frame 1 handed to the hub");
+    env.sql.insert("notes", { id: 2, owner: A, body: "small" });
+    await engine.flush();
+    await until(() => window.held() === 2, 3_000, "frame 2 handed to the hub");
+    env.hub.drop(first);
+    window.release();
+    await settle(40);
+    assertEquals(first.frames, []);
+    setChannelPayloadCap(2_000);
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key, resubscribe: true })).ok);
+    await until(() => back.frames.length >= 2, 3_000, "the resync and the resume");
+    await settle(100);
+    const seqs = back.frames.map((f) => f.seq);
+    assertEquals(new Set(seqs).size, seqs.length, `no number twice: ${JSON.stringify(seqs)}`);
+    assertEquals(back.frames, [{ seq: 3, resync: true }, { seq: 4, resumed: true }]);
+  } finally {
+    setChannelPayloadCap(16 * 1024);
+    await env.done();
+  }
+});

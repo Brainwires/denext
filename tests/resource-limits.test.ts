@@ -16,6 +16,7 @@ import {
 import {
   bakedLimitsNotice,
   compiledLimits,
+  compiledLimitsKey,
   compileLimitFlags,
   configTextLimits,
   configuredLimitFlags,
@@ -161,6 +162,26 @@ Deno.test("compiledLimits: compile.limits in place of start.limits; false bakes 
   assertEquals(compiledLimits({ start, compile: { limits: false } }), undefined);
   assertEquals(compiledLimits({ compile: {} }), undefined);
   assertEquals(compiledLimits(undefined), undefined);
+});
+
+Deno.test("compiled limits: the job / db notice names compile.limits when that is what is baked", () => {
+  const start = { limits: { memory: "512m" } };
+  assertEquals(compiledLimitsKey({ start }), "start.limits");
+  assertEquals(compiledLimitsKey({ compile: { limits: { cpuSeconds: 60 } } }), "compile.limits");
+  assertEquals(compiledLimitsKey({ compile: { limits: false } }), "start.limits");
+  assertEquals(compiledLimitsKey(undefined), "start.limits");
+  const notice = bakedLimitsNotice("app", "job", ["--max-cpu-time=60"], "compile.limits")!;
+  assertStringIncludes(notice, "enforces the compile.limits it was compiled with");
+  assert(!notice.includes("start.limits"), notice);
+  assertStringIncludes(notice, "`compile: { limits: false }`");
+  // The generated entry hands the key to the binary only when it is not the default.
+  const entry = (from: "compile.limits" | "start.limits") =>
+    entrySource("file:///p/.denext/compile/main.ts", "file:///p/", false, ["--max-time=60"], from);
+  assertStringIncludes(
+    entry("compile.limits"),
+    'limitsBaked: ["--max-time=60"], limitsLifted, limitsFrom: "compile.limits" });',
+  );
+  assert(!entry("start.limits").includes("limitsFrom"));
 });
 
 Deno.test("resource limits: a compiled executable gets them baked in, off the toolchain a warning", () => {

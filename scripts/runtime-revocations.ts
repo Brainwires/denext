@@ -12,7 +12,8 @@
 //       sign a whole list from an entries file (security/runtime-revocations.json is the one in
 //       the repository): the entries are put in canonical form first, what they do to the
 //       checked-out pins is printed, and a published entry the file leaves out is refused (it
-//       would be un-revoked) unless --force
+//       would be un-revoked) unless --force; so is a published list that can't be read or
+//       verified, as nothing then shows what the file leaves out
 //   deno task revocations canonical <entries.json> [--check]
 //       rewrite an entries file in canonical form (fields in a fixed order, targets sorted,
 //       entries by component then newest version first); --check only refuses one that isn't
@@ -648,9 +649,36 @@ async function sign(deps: RevocationsDeps, file: string, flags: Record<string, s
   const impact = pinImpact(entries, deps.pins ?? checkedOutPins());
   deps.log(`${file}: ${entries.length} revoked; the checked-out pins:`);
   for (const line of impact.lines) deps.log(line);
-  const current = await publishedList(deps).catch(() => null);
+  const current = await publishedForSign(deps, flags.force === true);
   refuseDropped(current, entries, flags.force === true);
   await writeAndPublish(deps, await signFresh(deps, entries, current), flags);
+}
+
+/**
+ * The published list `sign` compares the entries file with. One that can't be read or verified
+ * is refused unless `force`: without it nothing shows that the file keeps every published
+ * revocation, and signing would silently un-revoke the ones it leaves out.
+ */
+async function publishedForSign(
+  deps: RevocationsDeps,
+  force: boolean,
+): Promise<RuntimeRevocationList | null> {
+  let why: string;
+  try {
+    const current = await publishedList(deps);
+    if (current) return current;
+    why = "no published list could be read";
+  } catch (err) {
+    why = `the published list could not be verified (${err instanceof Error ? err.message : err})`;
+  }
+  if (!force) {
+    fail(
+      `${why}, so nothing shows the entries file keeps every published revocation; ` +
+        "--force signs without that check (the first list: `deno task revocations init`)",
+    );
+  }
+  deps.log(`${why}: signing without the published-entries check (--force)`);
+  return null;
 }
 
 /** `canonical <entries.json> [--check]`: rewrite the file in canonical form, or refuse one not in it. */
