@@ -274,7 +274,6 @@ Deno.test("jsxTemplate builds the element tree Deno's precompile transform descr
 
 Deno.test({
   name: 'jsxImportSource "preact" with "jsx": "precompile" renders through denext',
-  sanitizeResources: false,
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "denext_preact_precompile_" });
     try {

@@ -94,6 +94,13 @@ export function unmountComponentAtNode(container: Element): boolean {
  * @returns What `callback` returned.
  */
 export function flushSync<R>(callback: () => R): R;
+/**
+ * Run `callback(arg)` and flush every pending update synchronously (Preact's `flushSync`).
+ *
+ * @param callback The function whose updates are flushed.
+ * @param arg An argument passed to `callback`.
+ * @returns What `callback` returned.
+ */
 export function flushSync<A, R>(callback: (arg: A) => R, arg: A): R;
 export function flushSync<A, R>(callback: (arg?: A) => R, arg?: A): R {
   return coreFlushSync(() => callback(arg)) as R;

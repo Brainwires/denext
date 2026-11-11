@@ -95,6 +95,8 @@ export class CookieJar {
   #url: string;
 
   /**
+   * Create a jar: name-keyed, or over a URL-aware store.
+   *
    * @param store A URL-aware store to keep the cookies in (none: the name-keyed jar).
    * @param url The URL a request or cookie without one is taken to be for (the client's origin).
    */
