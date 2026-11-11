@@ -46,9 +46,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   renders the page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, which
   the server renders for the current URL. Next picks the file nearest the calling component
   (for a client component in a layout, the parent segment's). On a route that renders as one
-  client bundle (a page or layout that calls a hook itself, the compatibility path) the bundle
-  re-renders the page, so the page stays as it was; an async `startTransition` callback that
-  rejects with one leaves it unhandled, as any rejection.
+  client bundle (a page or layout that calls a hook itself, the compatibility path) the file
+  renders as server markup under the layouts, without the route's bundle, so the layouts' client
+  state starts over and their client parts are inert until the next navigation. An async
+  `startTransition` callback that rejects with one leaves it unhandled, as any rejection.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 

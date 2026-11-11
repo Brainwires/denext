@@ -285,6 +285,16 @@ function raisedSignalPage(request: Request): (() => never) | undefined {
 }
 
 /**
+ * Whether the request renders its page as a raised access signal ({@linkcode raisedSignalPage}).
+ *
+ * @param request The page request.
+ * @returns `true` for a soft navigation carrying an access status in `x-denext-signal`.
+ */
+export function raisesAccessSignal(request: Request): boolean {
+  return raisedSignalPage(request) !== undefined;
+}
+
+/**
  * Compose a matched page with its layout chain, loading/error boundaries,
  * templates, and locale messages into a render-ready VNode tree, and resolve its
  * metadata/viewport/segment-config. Shared by the normal render, the PPR

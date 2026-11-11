@@ -122,8 +122,6 @@ Low findings of the 4.8 backend audit (realtime and storage):
 - **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,
   `unmountComponentAtNode`, callbacks, the precompile JSX helpers and render-to-string streaming
   (the parity gate lists them). _Why 5.x: small, independent gaps._
-- **One-bundle (iso) routes keep the page on an action signal.** _Why 5.x: documented in
-  KNOWN-LIMITATIONS._
 
 ## Build toolchain: waiting on `deno bundle`
 

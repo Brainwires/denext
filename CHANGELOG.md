@@ -130,6 +130,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
+  the file.** On a route that renders as one client bundle (a page or layout that calls a hook
+  itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
+  `unauthorized.tsx` answered with the route's bundle, which rendered the page again, so the page
+  stayed as it was. The server now sends that render as markup without the route's entry, and the
+  file shows under the layouts.
 - **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
   The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
   `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or

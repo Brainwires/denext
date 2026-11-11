@@ -22,6 +22,7 @@ import { finalize, finalizeLacking, type RequestState } from "./pipeline-state.t
 import { resolveFlightLoader } from "./flight-routing.ts";
 import {
   augmentPageMetadata,
+  clientEntryOf,
   documentOptions,
   htmlResponse,
   navData,
@@ -222,7 +223,7 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
 function isoNavResponse(pr: PageRequest, rendered: RenderedPage): Response | null {
   const { config } = pr.state.app;
   const isoEntry = pr.soft && !pr.useFlight && isNavMethod(pr.state.request)
-    ? config.clientEntryFor?.(pr.page.route)
+    ? clientEntryOf(pr)
     : undefined;
   if (!isoEntry) return null;
   const payload: IsoNavPayload = {
