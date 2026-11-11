@@ -228,6 +228,18 @@ function keepRecent(audience: Audience, frame: TableChangesFrame, grant: string)
 }
 
 /**
+ * Drop an audience's kept frames past {@linkcode RECENT_MS} (the engine's prune timer, so a
+ * subscription that went quiet does not hold them until its next frame).
+ *
+ * @returns Whether any are still kept.
+ */
+function pruneRecent(audience: Audience, now = Date.now()): boolean {
+  if (audience.recent.length === 0) return false;
+  audience.recent = audience.recent.filter((sent) => now - sent.at <= RECENT_MS);
+  return audience.recent.length > 0;
+}
+
+/**
  * At a drop: the frames handed to the Live hub just before it go ahead of the queue, to be sent
  * again (numbered as before, marked `again`) on the subscriber's return.
  */
@@ -432,6 +444,8 @@ export class RealtimeEngine {
   /** Tables truncated in this burst (delivered before the burst's later changes), with when. */
   #truncated = new Map<string, number | undefined>();
   #timer: ReturnType<typeof setTimeout> | null = null;
+  /** Prunes the audiences' kept frames once they are past {@linkcode RECENT_MS}. */
+  #recentTimer: ReturnType<typeof setTimeout> | null = null;
   #listening: Promise<void> | null = null;
   #listener: SqlListener | null = null;
   #migrated: Promise<void> | null = null;
@@ -1224,9 +1238,12 @@ export class RealtimeEngine {
         }
         const { frame, grant, again } = audience.queue.shift()!;
         if (!again) frame.seq = ++audience.seq;
-        if (await this.#send(audience, frame, grant)) {
+        if (await this.#send(audience, frame, grant, again === true)) {
           audience.sentAt = Date.now();
-          if (channel) keepRecent(audience, frame, grant);
+          if (channel) {
+            keepRecent(audience, frame, grant);
+            this.#armRecentPrune();
+          }
         }
       }
     } finally {
@@ -1235,10 +1252,38 @@ export class RealtimeEngine {
   }
 
   /**
-   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
-   * requeued, under the same grant) instead.
+   * Prune the kept frames {@linkcode RECENT_MS} after the last one is kept, and again while any
+   * remain: a subscription that goes quiet lets go of them without waiting for its next frame.
    */
-  async #send(audience: Audience, frame: TableChangesFrame, grant: string): Promise<boolean> {
+  #armRecentPrune(): void {
+    if (this.#recentTimer !== null || this.#stopped) return;
+    this.#recentTimer = inRoot(() =>
+      setTimeout(() => {
+        this.#recentTimer = null;
+        const now = Date.now();
+        let kept = false;
+        for (const audience of this.#audiences.values()) {
+          if (pruneRecent(audience, now)) kept = true;
+        }
+        if (kept) this.#armRecentPrune();
+      }, RECENT_MS + 1)
+    );
+    Deno.unrefTimer?.(this.#recentTimer as unknown as number);
+  }
+
+  /**
+   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
+   * requeued, under the same grant) instead. A frame sent `again` that no longer fits is not
+   * split: the subscriber may have had it or not, so its parts could neither be numbered as a
+   * copy nor as new without dropping or re-applying changes. It (and the copies behind it) is
+   * replaced by one `resync`, numbered next.
+   */
+  async #send(
+    audience: Audience,
+    frame: TableChangesFrame,
+    grant: string,
+    again = false,
+  ): Promise<boolean> {
     this.stats.frames++;
     if ("fn" in audience.sink) {
       try {
@@ -1259,8 +1304,14 @@ export class RealtimeEngine {
         console.error("[@denext/backend] realtime publish failed", error);
         return false;
       }
-      audience.seq--; // the frame was not sent: its parts take its number
       this.stats.frames--;
+      if (again) {
+        // It kept its first number and took no new one: there is nothing to give back.
+        audience.queue = audience.queue.filter((queued) => !queued.again);
+        audience.queue.unshift({ frame: { seq: 0, resync: true }, grant: audience.grant });
+        return false;
+      }
+      audience.seq--; // the frame was not sent: its parts take its number
       audience.queue.unshift(...splitFrame(frame).map((part) => ({ frame: part, grant })));
       return false;
     }
@@ -1657,6 +1708,13 @@ export class RealtimeEngine {
     return this.#audiences.size;
   }
 
+  /** How many frames the subscriptions keep to send again after a drop (tests). */
+  get keptFrames(): number {
+    let n = 0;
+    for (const audience of this.#audiences.values()) n += audience.recent.length;
+    return n;
+  }
+
   /** How many changes the reconnect journal holds (0 when replay is off). */
   get journalSize(): number {
     return this.#journal?.size ?? 0;
@@ -1667,6 +1725,8 @@ export class RealtimeEngine {
     this.#stopped = true;
     if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = null;
+    if (this.#recentTimer !== null) clearTimeout(this.#recentTimer);
+    this.#recentTimer = null;
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();

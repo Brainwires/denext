@@ -97,9 +97,9 @@ as it is: Deno compiles each tree of plain elements into a `jsxTemplate` call, w
 each dynamic attribute and `jsxEscape` for each dynamic child, and `denext/preact/jsx-runtime`
 serializes them as Preact does (`options.attr` included). denext parses each template once into
 elements, so the result renders through `renderToString` and mounts in the browser like the same
-JSX compiled with `react-jsx`. As in Preact, a precompiled element's event handlers and `key` are
-not kept (`jsxAttr` serializes only attributes): compile an interactive component with
-`react-jsx`, or leave its elements out with `jsxPrecompileSkipElements`.
+JSX compiled with `react-jsx`. Unlike Preact's runtime, which serializes only attributes, a
+precompiled element keeps its event handlers, `ref` and `key` when it mounts, so an interactive
+component needs no `jsxPrecompileSkipElements` entry.
 
 ### `denext/preact/render-to-string`
 

@@ -149,25 +149,40 @@ Deno.test("denext/testing: a client over a URL-aware store keeps cookies per hos
   assertEquals(plain.header(), "a=1");
 });
 
-Deno.test("runtimeCookieJar: the runtime's jar under --unstable-cookies, else null", async () => {
+Deno.test("runtimeCookieJar: null without --unstable-cookies", () => {
+  // No test pass enables the flag, so this process has no runtime jar.
   const has = typeof (Deno as unknown as { CookieJar?: unknown }).CookieJar === "function";
   using jar = runtimeCookieJar();
   assertEquals(jar !== null, has);
-  if (!jar) return;
-  // the browser's rules: Path scoping, and a Domain wider than the host is refused (dropped)
-  const client = createTestClient((request) => {
-    const url = new URL(request.url);
-    if (url.pathname === "/login") {
-      const headers = new Headers();
-      headers.append("set-cookie", "session=s1; Path=/");
-      headers.append("set-cookie", "scoped=1; Path=/admin");
-      headers.append("set-cookie", "wide=1; Domain=example.com");
-      return new Response("in", { headers });
-    }
-    return new Response(request.headers.get("cookie") ?? "none");
-  }, { cookieJar: jar });
-  await client.get("/login");
-  assertEquals((await client.get("/me")).text, "session=s1");
-  const admin = (await client.get("/admin/x")).text;
-  assert(admin.includes("scoped=1") && admin.includes("session=s1"), admin);
+});
+
+/** Whether this process runs on denext's Deno (the toolchain), which carries `Deno.CookieJar`. */
+const onDenextDeno = Boolean((Deno.build as { denext?: string }).denext);
+
+Deno.test({
+  name: "runtimeCookieJar: the runtime's jar under --unstable-cookies applies the browser's rules",
+  // Stock Deno has no `Deno.CookieJar` at all; on denext's Deno a missing jar is a failure.
+  ignore: !onDenextDeno,
+  async fn() {
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--unstable-cookies",
+        new URL("./fixtures/fetch-cookies/runtime-jar-probe.ts", import.meta.url).pathname,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = dec.decode(out.stderr);
+    assert(out.success, stderr);
+    const line = dec.decode(out.stdout).trim().split("\n").pop()!;
+    assertEquals(JSON.parse(line), {
+      jar: true,
+      // `wide` (Domain=example.com, wider than localhost) is refused; `scoped` stays on /admin.
+      me: "session=s1",
+      admin: ["scoped=1", "session=s1"],
+      other: "none",
+    });
+  },
 });

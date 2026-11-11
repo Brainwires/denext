@@ -38,7 +38,10 @@ and this project adheres to
 - **`denext/preact/jsx-runtime`: Deno's precompiled JSX.** `jsxTemplate`, `jsxAttr` and
   `jsxEscape`, with Preact's serialization (and its `options.attr` hook), so a project with
   `"jsx": "precompile"` and `jsxImportSource: "preact"` runs on denext. A template is parsed once
-  into elements, so it renders on the server and mounts in the browser.
+  into elements, so it renders on the server and mounts in the browser with its event handlers,
+  refs and keys (each still serializes as Preact's empty attribute). Unlike Preact, `jsxEscape`
+  returns a new array instead of escaping the caller's in place, so rendering the same array
+  twice does not escape its text twice.
 - **`denext ui`'s Cron page manages the OS-scheduler entries.** A new "OS scheduler" section shows
   which scheduled jobs `denext job install` has handed to launchd, a systemd timer, the crontab or
   Task Scheduler (and any stale entry), with Install / Uninstall buttons that first preview every
@@ -63,8 +66,10 @@ and this project adheres to
   `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a
   privileged method can refuse a subframe. The frame is verified on a Deno Desktop runtime that
   marks each request with it (`Deno.desktop.marksFrames`, runtime 3.0.0-denext.20 and later, under
-  CEF and WKWebView); elsewhere it is the page's own report, as on WebView2, WebKitGTK and the
-  pinned 3.0.0-denext.17, where `verified` is always `false`.
+  CEF and WKWebView), and only for a call over its in-memory connection: over the loopback
+  connection the page sets its own headers, so a frame header there is never trusted. Elsewhere it
+  is the page's own report, as on WebView2, WebKitGTK and the pinned 3.0.0-denext.17, where
+  `verified` is always `false`.
 - **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
   finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
   `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
@@ -88,7 +93,9 @@ and this project adheres to
   preempted.
 - **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
   cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
-  of `start.limits`; `compile: { limits: false }` bakes none.
+  of `start.limits`; `compile: { limits: false }` bakes none. The notice the binary prints when its
+  `job` or `db` runs under baked limits names the key they came from and points at
+  `compile: { limits: false }`.
 - **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
   sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
   (runtime 3.0.0-denext.20's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
@@ -97,12 +104,19 @@ and this project adheres to
   stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
   `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
   RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
-  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the runtime has
-  it. `createTestClient(handler, { cookieJar })` and `new CookieJar(store)` apply a URL-aware
-  store's host, path, expiry and `Secure` rules; the default name-keyed jar is unchanged.
+  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the server process
+  has it. The jar is opt-in: denext does not pass the flag to `dev` or `start`, so add
+  `--unstable-cookies` (or `"unstable": ["cookies"]` in `deno.json`) to turn it on; without it
+  those calls carry no cookies, as before. `createTestClient(handler, { cookieJar })` and
+  `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules; the
+  default name-keyed jar is unchanged.
 
 ### Changed
 
+- **`deno task revocations sign` refuses when it can't read the published list** (maintainers).
+  The check that refuses an entries file leaving out a published revocation needs the published
+  list; when it can't be fetched or verified, `sign` now stops with the reason instead of signing
+  without the check. `--force` signs anyway and says the check was skipped.
 - **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
   (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
   shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
@@ -113,6 +127,13 @@ and this project adheres to
   rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
   `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
   came first before.
+- **The SPA shell stamp rewrites each stamped tag as `HTMLRewriter` writes it.** On both paths a
+  `<script>` the stamp changes keeps its attributes as written but joined by single spaces (extra
+  spaces and line breaks between them are dropped), and a `<script ... />` is written with `/`
+  before `>`. Tooling that hashes or snapshots the served shell's bytes sees the new spacing.
+- **The SPA shell stamp lists the nonce in every `Content-Security-Policy` `<meta>`.** A shell with
+  several policy `<meta>` tags gets `'nonce-…'` in each one's `script-src`, where only the first
+  was stamped before (a browser enforces every policy, so a later one refused the stamped scripts).
 - **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
   remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
   until it is re-signed, so a revocation would stop reaching anyone.
@@ -152,7 +173,10 @@ and this project adheres to
   (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
   on the return, ahead of `resumed`, numbered as before and marked `again: true`;
   `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
-  window was lost, and the gap made the hook `stale`.
+  window was lost, and the gap made the hook `stale`. At most 16 are kept per subscription, and a quiet
+  subscription lets go of them after that second instead of holding them until its next frame. A
+  copy that no longer fits the channel's payload cap is replaced, with the copies behind it, by one
+  `resync`.
 - **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
   `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
   `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
@@ -161,7 +185,12 @@ and this project adheres to
 - **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
   `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
   tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
-  exported; the options may also be a top-level `const`.
+  exported; the options may also be a top-level `const`. Migration: only an `outDir` written in the
+  `runDesktop(…)` call's own object literal (or that top-level `const`'s) is read now. One that
+  reaches `runDesktop` through a spread (`runDesktop({ ...options })`) or through a helper in the
+  entry that calls `runDesktop` with its own argument is no longer seen, so `run` / `build` export to `out/`
+  while the app serves its own folder (a blank window), and `denext doctor` no longer flags it for
+  packaging. Write `outDir` in the call itself, or drop it and serve `out/`.
 - **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
   linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
   collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).

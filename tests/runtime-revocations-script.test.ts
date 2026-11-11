@@ -546,7 +546,8 @@ Deno.test("sign: the committed list signed with a test key — the shipped verif
   const dir = await Deno.makeTempDir();
   try {
     const out = join(dir, "signed.json");
-    await main(["sign", COMMITTED, "--out", out, "--no-publish"], f.deps);
+    // Nothing is published for this key: the first signing skips the published-entries check.
+    await main(["sign", COMMITTED, "--out", out, "--no-publish", "--force"], f.deps);
     assertStringIncludes(f.logged.join("\n"), "70 revoked; the checked-out pins:");
     assert(!f.logged.some((l) => l.includes("WARNING")), f.logged.join("\n"));
     assertEquals(f.web, [], "--no-publish publishes nothing");
@@ -682,4 +683,44 @@ Deno.test("expiry: the release gate warns before the published list lapses, neve
     null,
   );
   assertEquals(warned.length, 2);
+});
+
+Deno.test("sign: a published list that can't be read or verified is refused unless --force", async () => {
+  const f = await withKey();
+  const dir = await Deno.makeTempDir();
+  try {
+    const out = join(dir, "list.json");
+    const entries = join(dir, "entries.json");
+    await Deno.writeTextFile(entries, JSON.stringify({ revoked: [] }));
+    // Unreachable (offline, or nothing published): nothing shows what the file would un-revoke.
+    f.published.text = null;
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "no published list could be read, so nothing shows the entries file keeps every published",
+    );
+    // Published, but not verifiable under the compiled-in keys (here: not JSON at all).
+    f.published.text = "<html>maintenance</html>";
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "the published list could not be verified",
+    );
+    await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
+    // --force signs anyway, and says the check was skipped.
+    await main(["sign", entries, "--out", out, "--no-publish", "--force"], f.deps);
+    assert(
+      f.logged.some((l) => l.includes("without the published-entries check")),
+      f.logged.join("\n"),
+    );
+    assertEquals(
+      (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+        now: NOW.getTime(),
+      }))
+        ?.revoked,
+      [],
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

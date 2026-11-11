@@ -91,26 +91,32 @@ export function handedLimits(value: string | undefined): string[] | undefined {
   return value === undefined ? undefined : value.split(" ").filter(Boolean);
 }
 
+/** The config key a compiled binary's baked limits came from ({@linkcode compiledLimitsKey}). */
+export type CompiledLimitsKey = "compile.limits" | "start.limits";
+
 /**
- * The line a compiled app prints when it runs `job` or `db` with `start.limits` baked in: `deno
- * compile` stores them in the binary and `denort` enforces them on every run, whatever the verb,
- * with no flag or variable to lift them (Brainwires/deno DENEXT.md item 92).
+ * The line a compiled app prints when it runs `job` or `db` with limits baked in (`compile.limits`,
+ * else `start.limits`): `deno compile` stores them in the binary and `denort` enforces them on
+ * every run, whatever the verb, with no flag or variable to lift them (Brainwires/deno DENEXT.md
+ * item 92).
  *
  * @param program The executable's name.
  * @param verb The verb (`job`, `db`).
  * @param baked The baked flags.
+ * @param from The config key they came from (default `start.limits`).
  * @returns The notice, or `null` for `start` or when none are baked.
  */
 export function bakedLimitsNotice(
   program: string,
   verb: string,
   baked: readonly string[],
+  from: CompiledLimitsKey = "start.limits",
 ): string | null {
   if (baked.length === 0 || (verb !== "job" && verb !== "db")) return null;
-  return `${program}: this binary enforces the start.limits it was compiled with ` +
+  return `${program}: this binary enforces the ${from} it was compiled with ` +
     `(${baked.join(" ")}) on \`${verb}\` too; a run past them ends with their exit code. ` +
     "Run long jobs and migrations with `denext job` / `denext db`, or from a binary compiled " +
-    "without start.limits.";
+    "with `compile: { limits: false }`.";
 }
 
 /**
@@ -129,6 +135,23 @@ export function compiledLimits(
   const own = config?.compile?.limits;
   if (own === false) return undefined;
   return own ?? config?.start?.limits;
+}
+
+/**
+ * The config key {@linkcode compiledLimits} takes the baked limits from: `compile.limits` when it
+ * sets them, else `start.limits`.
+ *
+ * @param config The project config.
+ * @returns The key.
+ */
+export function compiledLimitsKey(
+  config:
+    | { start?: { limits?: StartLimits }; compile?: { limits?: StartLimits | false } }
+    | null
+    | undefined,
+): CompiledLimitsKey {
+  const own = config?.compile?.limits;
+  return own !== undefined && own !== false ? "compile.limits" : "start.limits";
 }
 
 /**

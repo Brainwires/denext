@@ -268,8 +268,9 @@ export function stampWorkerNonceBody(
   lib: string,
   nonce: string,
 ): string | ReadableStream<Uint8Array> {
-  const rewriter = streamable(shell) ? newHtmlRewriter() : null;
-  if (!rewriter) return stampWorkerNonce(shell, lib, nonce);
+  // The opt-in first: the default path never runs the shell check's two regexes.
+  const rewriter = newHtmlRewriter();
+  if (!rewriter || !streamable(shell)) return stampWorkerNonce(shell, lib, nonce);
   const source = `'nonce-${nonce}'`;
   const boot = bootTag(lib, nonce);
   const stamped = rewriter

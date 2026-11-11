@@ -614,7 +614,8 @@ export async function fetchOAuthProfile(
   }
   // Pin the fetch to the provider's own hosts PLUS whatever discovery resolved — a
   // discovery-only provider configures no URL for `providerHosts` to derive them from. The
-  // sign-in's calls share one cookie session where the runtime has a jar (--unstable-cookies).
+  // sign-in's calls share one cookie session where the runtime has a jar: opt-in, only in a
+  // process the app started with --unstable-cookies (denext never adds the flag itself).
   using cookieJar = runtimeCookieJar();
   const doFetch = makeProviderFetch(
     provider,

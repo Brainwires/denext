@@ -99,6 +99,31 @@ Deno.test("stampWorkerNonceBody: without DENEXT_HTML_REWRITER=1, the string path
   }
 });
 
+Deno.test("stampWorkerNonceBody: not opted in, the shell is never scanned for its <head>", () => {
+  // The default path checks the opt-in before it runs the streaming path's shell regexes.
+  const before = Deno.env.get("DENEXT_HTML_REWRITER");
+  Deno.env.delete("DENEXT_HTML_REWRITER");
+  try {
+    const shell = Object.assign(new String(CSP_SHELL), {
+      match(): never {
+        throw new Error("the shell was scanned");
+      },
+    }) as unknown as string;
+    assertEquals(stampWorkerNonceBody(shell, LIB, "n"), stampWorkerNonce(CSP_SHELL, LIB, "n"));
+  } finally {
+    if (before !== undefined) Deno.env.set("DENEXT_HTML_REWRITER", before);
+  }
+});
+
+Deno.test("stampWorkerNonce: every CSP <meta> of the shell lists the nonce", () => {
+  const shell = `<html><head>` +
+    `<meta http-equiv="Content-Security-Policy" content="script-src 'self'">` +
+    `<meta http-equiv="Content-Security-Policy" content="script-src 'none'"></head></html>`;
+  const out = stampWorkerNonce(shell, LIB, "n");
+  assertStringIncludes(out, `content="script-src 'nonce-n' 'self'"`);
+  assertStringIncludes(out, `content="script-src 'nonce-n' 'none'"`);
+});
+
 /** Shells the byte-equality check stamps on both paths: built ones and hand-written edge cases. */
 async function stampCorpus(): Promise<string[]> {
   const built = (spa: Record<string, unknown>, devScriptSrc?: string) =>

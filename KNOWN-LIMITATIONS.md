@@ -411,10 +411,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
   its `signal` / `computed` / `effect` (and hook forms) take no options argument (the parity
-  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Under `"jsx": "precompile"`,
-  an element Deno precompiles into a template drops its event handlers and `key` (Preact's
-  `jsxAttr` serializes only attributes), so an interactive component compiled that way needs
-  `react-jsx`. Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
+  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
   `attr` (for elements the Preact entry points create); `diffed`,
   `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
   so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during

@@ -7,6 +7,7 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   createWillNavigateHooks,
+  createWindowNavigationHooks,
   type DesktopWillNavigateEvent,
   runtimeHasNavigationEvents,
 } from "../src/desktop/will-navigate.ts";
@@ -129,4 +130,75 @@ Deno.test("runtimeHasNavigationEvents: only Deno.desktop.navigationEvents === tr
   for (const desktop of [undefined, null, {}, { navigationEvents: 1 }]) {
     assertEquals(runtimeHasNavigationEvents(desktop), false, JSON.stringify(desktop));
   }
+});
+
+/** An EventTarget that counts its "willnavigate" listeners. */
+class CountingWindow extends EventTarget {
+  listeners = 0;
+  override addEventListener(
+    type: string,
+    fn: EventListenerOrEventListenerObject | null,
+    o?: boolean | AddEventListenerOptions,
+  ): void {
+    if (type === "willnavigate") this.listeners++;
+    super.addEventListener(type, fn, o);
+  }
+  override removeEventListener(
+    type: string,
+    fn: EventListenerOrEventListenerObject | null,
+    o?: boolean | EventListenerOptions,
+  ): void {
+    if (type === "willnavigate") this.listeners--;
+    super.removeEventListener(type, fn, o);
+  }
+}
+
+Deno.test("onWillNavigate: a window that closes is let go, and one that reuses its id is listened to", () => {
+  const opened = new Set<(info: { id: string }) => void>();
+  const closed = new Set<(info: { id: string }) => void>();
+  const open = new Map<string, CountingWindow>();
+  const lifecycle = {
+    onWindowOpened: (fn: (info: { id: string }) => void) => {
+      opened.add(fn);
+      for (const id of open.keys()) fn({ id }); // the open windows are replayed
+      return () => void opened.delete(fn);
+    },
+    onWindowClosed: (fn: (info: { id: string }) => void) => {
+      closed.add(fn);
+      return () => void closed.delete(fn);
+    },
+  };
+  const registry = { get: (id: string) => open.has(id) ? { window: open.get(id) } : undefined };
+  const openWindow = (id: string) => {
+    const w = new CountingWindow();
+    open.set(id, w);
+    for (const fn of opened) fn({ id });
+    return w;
+  };
+  const closeWindow = (id: string) => {
+    open.delete(id);
+    for (const fn of closed) fn({ id });
+  };
+  const main = openWindow("main");
+  const hooks = createWindowNavigationHooks({
+    lifecycle,
+    windowFor: (id) => registry.get(id)?.window,
+    supported: true,
+  });
+  const seen: string[] = [];
+  const off = hooks.add((e) => void seen.push(`${e.window} ${e.url}`));
+  const panel = openWindow("panel");
+  assertEquals([hooks.listening(), main.listeners, panel.listeners], [2, 1, 1]);
+  closeWindow("panel");
+  assertEquals([hooks.listening(), panel.listeners], [1, 0], "the closed window is dropped");
+  // A new window under the same id is listened to again.
+  const again = openWindow("panel");
+  assertEquals([hooks.listening(), again.listeners], [2, 1]);
+  again.dispatchEvent(navigation({ url: "myapp://app/x" }).event);
+  main.dispatchEvent(navigation({ url: "myapp://app/y" }).event);
+  assertEquals(seen, ["panel myapp://app/x", "main myapp://app/y"]);
+  // The last unsubscribe stops watching both the openings and the closings.
+  off();
+  assertEquals([hooks.listening(), main.listeners, again.listeners], [0, 0, 0]);
+  assertEquals([opened.size, closed.size], [0, 0]);
 });

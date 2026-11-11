@@ -340,7 +340,8 @@ function frameKind(value: string | null): "main" | "sub" | undefined {
 /**
  * Who sent an RPC that passed the gate ({@link DesktopCaller}): the window's origin (the app
  * origin in the memory world, the validated loopback origin otherwise), the frame (the runtime's
- * mark when it marks frames, else the page's own report, unverified) and the window.
+ * mark when it marks frames and the call came over the memory connection, else the page's own
+ * report, unverified) and the window.
  */
 function callerOf(
   request: Request,
@@ -349,7 +350,11 @@ function callerOf(
   marksFrames: boolean,
 ): DesktopCaller {
   const origin = trust.kind === "memory" ? trust.origin : new URL(request.url).origin;
-  const marked = marksFrames ? frameKind(request.headers.get(DESKTOP_FRAME_HEADER)) : undefined;
+  // Only the in-memory connection carries the runtime's mark: over loopback the page sets its own
+  // headers, so a frame header there is never trusted.
+  const marked = marksFrames && trust.kind === "memory"
+    ? frameKind(request.headers.get(DESKTOP_FRAME_HEADER))
+    : undefined;
   const reported = frameKind(request.headers.get(FRAME_HEADER));
   const frame: DesktopCallerFrame = {
     kind: marked ?? reported ?? "unknown",

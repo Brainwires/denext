@@ -35,7 +35,10 @@
   after 10 seconds of silence.
 - **Realtime: a frame caught in the Live hub's window at a drop still arrives.** The frames handed
   to the hub in the second before a drop are sent again on the return, ahead of `resumed`,
-  numbered as before and marked `again: true`; `useTableChanges` drops a copy of one it has.
+  numbered as before and marked `again: true`; `useTableChanges` drops a copy of one it has. At most 16 are kept per subscription, and a quiet
+  subscription lets go of them after that second instead of holding them until its next frame. A
+  copy that no longer fits the channel's payload cap is replaced, with the copies behind it, by one
+  `resync`.
 - **`db({ as })` takes a request identity only with a Supabase role.** `anon`, `authenticated`
   or `service_role`; any other role is a `TypeError` (from `identityScope()` too) before a
   statement runs, and `isRequestIdentity()` answers `false` for it.
