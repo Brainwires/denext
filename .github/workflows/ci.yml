@@ -364,7 +364,7 @@ jobs:
     runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
-    timeout-minutes: 90
+    timeout-minutes: 130 # the suite's main pass alone took 81 min on the shared container (2026-11-11)
     services:
       postgres:
         image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
