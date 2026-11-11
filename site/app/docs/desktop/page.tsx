@@ -4578,8 +4578,12 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           the child is <code>deno run</code>{" "}
           with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
           <code>--unstable-*</code>,{" "}
-          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
-          the app holds unscoped on an older one. An unmodified{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or on an older one
+          the permissions the app holds unscoped and the unstable features it can be seen to run
+          with (<code>--unstable-kv</code>, <code>-cron</code>, <code>-net</code>,{" "}
+          <code>-broadcast-channel</code>, <code>-webgpu</code>); either way followed by the{" "}
+          <code>desktop.denoFlags</code> that <code>deno run</code> takes (all but{" "}
+          <code>--exclude-unused-npm</code>) and the run did not give already. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.

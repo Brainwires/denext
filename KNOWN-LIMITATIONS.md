@@ -792,8 +792,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own code cannot. An unscoped write grant could change a binary that is not signed, and with
   unscoped read and write the app could symlink a folder above the program's before the runtime
   first writes it and race a spawn the same way. Under
-  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
-  the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
+  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets the
+  permissions the app holds unscoped, `desktop.denoFlags` and the unstable features with an API of
+  their own (`kv`, `cron`, `net`, `broadcast-channel`, `webgpu`), but no scoped grants, `--config`
+  or other `--unstable-*` flags given on the command line.
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
   writes through `/usr/bin/security`, which any program of the same user can read back) an app
   without a provisioning profile that grants a keychain access group keeps its items in the login

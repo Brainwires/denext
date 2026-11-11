@@ -14,6 +14,7 @@
  * @module
  */
 
+import { desktopDenoFlags } from "../deno-flags.ts";
 import type {
   DenextConfig,
   DesktopCapabilitiesConfig,
@@ -127,6 +128,11 @@ export interface ResolvedDesktop {
    */
   readonly configSidecars: SidecarDefinition[];
   /**
+   * `desktop.denoFlags`, checked: under `deno run desktop.ts`, a module sidecar's children are
+   * started with those `deno run` takes.
+   */
+  readonly denoFlags: string[];
+  /**
    * Each capability's own secure store by capability name (`ctx.secureStore` / `host.secureStore`,
    * `<identifier>/ext/<name>`), when the `secureStore` capability is enabled; `runDesktop` hands it
    * to the bridge.
@@ -237,7 +243,10 @@ export async function resolveDesktopCapabilities(
     (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier;
   const appId = explicitId ?? DEFAULT_APP_ID;
   const dirs = desktopAppDirs(appId);
-  const base = desktopLaunchBase(config, caps, explicitId, dirs);
+  const base = {
+    ...desktopLaunchBase(config, caps, explicitId, dirs),
+    denoFlags: desktopDenoFlags(config),
+  };
 
   if (!caps) return { capabilities: [], ...base };
   assertAppIdentity(Boolean(explicitId), caps);

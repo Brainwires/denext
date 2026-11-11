@@ -17,7 +17,8 @@
  *   CLI (an app run with `deno run`), the command is `deno run` with the app's own Deno flags
  *   (`process.execArgv`, on denext's Deno from `FIRST_EXEC_ARGV_RUNTIME`: scoped grants, unstable
  *   features, `--config` and the rest), or on an older Deno the permissions the app was granted
- *   unscoped.
+ *   unscoped and the unstable features it runs with; either way followed by the `desktop.denoFlags`
+ *   that apply to `deno run` and are not given already.
  * - The child runs the entry, whose `runDesktop` sees the variable before anything else
  *   ({@linkcode readSidecarChildLaunch}), removes it (a grandchild does not inherit it), and instead
  *   of serving a window runs the sidecar's module ({@linkcode runSidecarChild}): `process.argv` is
@@ -94,6 +95,16 @@ export interface SidecarChildBaseOptions {
   /** The Deno's `Deno.build.denext` (denext's Deno only), which says whether `execArgv` is filled. */
   readonly denextVersion?: string;
   /**
+   * The `--unstable-*` flags this Deno CLI run has on ({@linkcode cliUnstableFlags}), for a Deno
+   * whose `execArgv` is empty; not used by a compiled app.
+   */
+  readonly unstableFlags?: readonly string[];
+  /**
+   * `desktop.denoFlags` ({@linkcode sidecarDenoRunFlags}), added after the CLI's own flags unless
+   * one of the same name is there; not used by a compiled app (its build took them).
+   */
+  readonly denoFlags?: readonly string[];
+  /**
    * Whether the runtime authorizes a fork of its own executable without `--allow-run`
    * ({@linkcode runtimeAuthorizesSelfFork}); only a compiled app's runtime can.
    */
@@ -127,12 +138,79 @@ export function sidecarChildBase(options: SidecarChildBaseOptions): SidecarChild
   };
 }
 
-/** A Deno CLI child's flags: the parent's `execArgv` where the Deno fills it, else its grants. */
+/**
+ * A Deno CLI child's flags: the parent's `execArgv` where the Deno fills it, else its grants and
+ * unstable features; then the `desktop.denoFlags` not given already.
+ */
 function cliChildFlags(options: SidecarChildBaseOptions): string[] {
   const execArgv = options.execArgv ?? [];
-  return execArgv.length > 0 && supportsExecArgv(options.denextVersion ?? "")
+  const own = execArgv.length > 0 && supportsExecArgv(options.denextVersion ?? "")
     ? [...execArgv]
-    : [...(options.permissionFlags ?? [])];
+    : [...(options.permissionFlags ?? []), ...(options.unstableFlags ?? [])];
+  return withMissingFlags(own, options.denoFlags ?? []);
+}
+
+/** `own`, then each of `extra` whose name is not there yet. */
+function withMissingFlags(own: string[], extra: readonly string[]): string[] {
+  const given = new Set(own.map(flagName));
+  for (const flag of extra) {
+    if (given.has(flagName(flag))) continue;
+    own.push(flag);
+    given.add(flagName(flag));
+  }
+  return own;
+}
+
+/** A flag's name (`--lock` of `--lock=deno.lock`). */
+function flagName(flag: string): string {
+  const eq = flag.indexOf("=");
+  return eq < 0 ? flag : flag.slice(0, eq);
+}
+
+/** The `desktop.denoFlags` entries `deno run` does not take (they shape the compiled binary). */
+const COMPILE_ONLY_FLAGS: ReadonlySet<string> = new Set(["--exclude-unused-npm"]);
+
+/**
+ * The `desktop.denoFlags` a Deno CLI child is started with: every entry but the compile-only
+ * ones (`--exclude-unused-npm`). Pure.
+ *
+ * @param denoFlags `desktop.denoFlags`, checked.
+ * @returns The flags for `deno run`.
+ */
+export function sidecarDenoRunFlags(denoFlags: readonly string[] | undefined): string[] {
+  return (denoFlags ?? []).filter((flag) => !COMPILE_ONLY_FLAGS.has(flagName(flag)));
+}
+
+/** The unstable features a Deno CLI run can be seen to have on, and the API each one adds. */
+const UNSTABLE_PROBES: ReadonlyArray<readonly [string, (g: Record<string, unknown>) => boolean]> = [
+  ["--unstable-kv", (g) => typeof (g.Deno as Record<string, unknown>)?.openKv === "function"],
+  ["--unstable-cron", (g) => typeof (g.Deno as Record<string, unknown>)?.cron === "function"],
+  [
+    "--unstable-net",
+    (g) => typeof (g.Deno as Record<string, unknown>)?.listenDatagram === "function",
+  ],
+  ["--unstable-broadcast-channel", (g) => typeof g.BroadcastChannel === "function"],
+  ["--unstable-webgpu", (g) => (g.navigator as Record<string, unknown> | undefined)?.gpu != null],
+];
+
+/**
+ * The `--unstable-*` flags this Deno CLI run evidently has on, told from the APIs each adds (a
+ * Deno that leaves `process.execArgv` empty gives no other way to read them): `--unstable-kv`,
+ * `-cron`, `-net`, `-broadcast-channel` and `-webgpu`. Features with no API of their own (sloppy
+ * imports, `--unstable-fs`, …) are not seen, and stay for `desktop.denoFlags` or the config's
+ * `unstable` list to carry.
+ *
+ * @param global The global object (tests pass a fake).
+ * @returns The flags, in a fixed order.
+ */
+export function cliUnstableFlags(global: Record<string, unknown> = globalThis as never): string[] {
+  const flags: string[] = [];
+  for (const [flag, on] of UNSTABLE_PROBES) {
+    try {
+      if (on(global)) flags.push(flag);
+    } catch { /* a getter that throws: not on */ }
+  }
+  return flags;
 }
 
 /** The variable denext's pinned runtime hands the forks it authorizes (their per-launch token). */
@@ -208,9 +286,14 @@ function entryPathOf(importMetaUrl: string | undefined): string | undefined {
  *
  * @param name The sidecar's name.
  * @param importMetaUrl The app entry's `import.meta.url`.
+ * @param denoFlags `desktop.denoFlags` (a Deno CLI child gets those `deno run` takes).
  * @returns The base.
  */
-export function parentChildBase(name: string, importMetaUrl: string | undefined): SidecarChildBase {
+export function parentChildBase(
+  name: string,
+  importMetaUrl: string | undefined,
+  denoFlags?: readonly string[],
+): SidecarChildBase {
   const standalone = isStandalone();
   const entryPath = entryPathOf(importMetaUrl);
   return sidecarChildBase({
@@ -220,6 +303,8 @@ export function parentChildBase(name: string, importMetaUrl: string | undefined)
     ...(entryPath !== undefined ? { entryPath } : {}),
     ...(standalone ? { selfForkAuthorized: runtimeAuthorizesSelfFork() } : {
       permissionFlags: cliPermissionFlags(),
+      unstableFlags: cliUnstableFlags(),
+      denoFlags: sidecarDenoRunFlags(denoFlags),
       execArgv: process.execArgv,
       ...denextVersionOf(currentDenoIdentity().denext),
     }),
@@ -412,6 +497,8 @@ export interface RunSidecarChildOptions {
   readonly importMetaUrl: string;
   /** The app's cache folder (where a bundled backend's packages are unpacked). */
   readonly cacheDir?: string;
+  /** `desktop.denoFlags`, for a grandchild started under the Deno CLI. */
+  readonly denoFlags?: readonly string[];
 }
 
 /**
@@ -455,7 +542,7 @@ export async function runSidecarChild(
     secrets: Object.freeze({}),
     ready: () => {},
     onShutdown: () => {},
-    ...helpers.childHelpers(parentChildBase(def.name, options.importMetaUrl)),
+    ...helpers.childHelpers(parentChildBase(def.name, options.importMetaUrl, options.denoFlags)),
   });
   await import(entry);
 }

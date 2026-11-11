@@ -738,6 +738,12 @@ export interface RunDesktopOptions {
    * is laid over it.
    */
   configSidecars?: readonly SidecarDefinition[];
+  /**
+   * `desktop.denoFlags` (from {@link resolveDesktopCapabilities}): under `deno run desktop.ts`, a
+   * module sidecar's `spawnSelf` / `childCommand` children are started with those `deno run` takes,
+   * after the run's own flags. A packaged app's build took them already.
+   */
+  denoFlags?: readonly string[];
 }
 
 /**
@@ -1876,6 +1882,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
   await runSidecarChild(launch, {
     importMetaUrl: options.importMetaUrl,
     ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+    ...(options.denoFlags ? { denoFlags: options.denoFlags } : {}),
   });
   return {
     window: undefined,
@@ -1905,6 +1912,7 @@ async function createSidecars(
     ...(options.importMetaUrl ? { importMetaUrl: options.importMetaUrl } : {}),
     ...(dataDir ? { dataDir } : {}),
     ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+    ...(options.denoFlags ? { denoFlags: options.denoFlags } : {}),
     emit,
   });
 }

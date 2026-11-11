@@ -9,6 +9,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
   cliPermissionFlags,
+  cliUnstableFlags,
   parentChildBase,
   readSidecarChildLaunch,
   runtimeAuthorizesSelfFork,
@@ -18,6 +19,7 @@ import {
   sidecarChildHelpersUrl,
   sidecarChildLaunch,
   type SidecarChildLaunchInput,
+  sidecarDenoRunFlags,
 } from "../src/desktop/sidecar-child.ts";
 import {
   SIDECAR_CHILD_ARGC_ENV,
@@ -138,6 +140,90 @@ Deno.test("sidecarChildBase: the Deno CLI passes its execArgv from denext's Deno
   assertEquals(FIRST_EXEC_ARGV_RUNTIME, "3.0.0-denext.8");
   assertEquals(supportsExecArgv("3.0.0-denext.8"), true);
   assertEquals(supportsExecArgv("3.0.0-denext.7"), false);
+});
+
+Deno.test("sidecarChildBase: a Deno CLI child gets desktop.denoFlags and the run's unstable features", () => {
+  const args = (options: Partial<SidecarChildBaseOptions>) => {
+    const base = sidecarChildBase({
+      name: "server",
+      execPath: "/deno",
+      entryPath: "/p/desktop.ts",
+      standalone: false,
+      permissionFlags: ["--allow-read"],
+      ...options,
+    });
+    return "args" in base ? base.args : base.error;
+  };
+  const denoFlags = sidecarDenoRunFlags([
+    "--node-modules-dir=none",
+    "--exclude-unused-npm", // compile-only: never for deno run
+    "--unstable-sloppy-imports",
+    "--unstable-kv",
+  ]);
+  assertEquals(denoFlags, [
+    "--node-modules-dir=none",
+    "--unstable-sloppy-imports",
+    "--unstable-kv",
+  ]);
+  // An older Deno (no execArgv): the grants, the unstable features seen, then the config's flags
+  // not given already.
+  assertEquals(args({ unstableFlags: ["--unstable-kv", "--unstable-cron"], denoFlags }), [
+    "run",
+    "--allow-read",
+    "--unstable-kv",
+    "--unstable-cron",
+    "--node-modules-dir=none",
+    "--unstable-sloppy-imports",
+    "/p/desktop.ts",
+  ]);
+  // denext's Deno with execArgv: the run's own flags win over a config flag of the same name.
+  assertEquals(
+    args({
+      execArgv: ["--allow-read=/p", "--node-modules-dir=auto"],
+      denextVersion: "3.0.0-denext.8",
+      unstableFlags: ["--unstable-cron"], // not used: execArgv says it all
+      denoFlags,
+    }),
+    [
+      "run",
+      "--allow-read=/p",
+      "--node-modules-dir=auto",
+      "--unstable-sloppy-imports",
+      "--unstable-kv",
+      "/p/desktop.ts",
+    ],
+  );
+  // A compiled app's build took them.
+  assertEquals(args({ standalone: true, unstableFlags: ["--unstable-kv"], denoFlags }), [
+    "run",
+    "/p/desktop.ts",
+  ]);
+  assertEquals(sidecarDenoRunFlags(undefined), []);
+});
+
+Deno.test("cliUnstableFlags: told from the APIs each unstable feature adds", () => {
+  const fn = () => {};
+  assertEquals(cliUnstableFlags({ Deno: {} }), []);
+  assertEquals(
+    cliUnstableFlags({
+      Deno: { openKv: fn, cron: fn, listenDatagram: fn },
+      BroadcastChannel: fn,
+      navigator: { gpu: {} },
+    }),
+    [
+      "--unstable-kv",
+      "--unstable-cron",
+      "--unstable-net",
+      "--unstable-broadcast-channel",
+      "--unstable-webgpu",
+    ],
+  );
+  const throwing = {
+    get Deno(): never {
+      throw new Error("no");
+    },
+  };
+  assertEquals(cliUnstableFlags(throwing), []);
 });
 
 Deno.test("sidecarChildBase: only a compiled app's runtime can authorize its self-forks", () => {
@@ -489,4 +575,13 @@ Deno.test({
       await inst.stop(0);
     }
   },
+});
+
+Deno.test("resolveDesktopCapabilities: desktop.denoFlags reaches runDesktop for the sidecars' children", async () => {
+  const { resolveDesktopCapabilities } = await import("../src/desktop/caps/mod.ts");
+  const resolved = await resolveDesktopCapabilities({
+    desktop: { denoFlags: ["--node-modules-dir=none", "--unstable-kv"] },
+  } as never);
+  assertEquals(resolved.denoFlags, ["--node-modules-dir=none", "--unstable-kv"]);
+  assertEquals((await resolveDesktopCapabilities(undefined)).denoFlags, []);
 });

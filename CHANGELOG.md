@@ -87,6 +87,11 @@ and this project adheres to
 
 ### Fixed
 
+- **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
+  `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
+  `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
+  also get the unstable features the app runs with (`--unstable-kv`, `-cron`, `-net`,
+  `-broadcast-channel`, `-webgpu`).
 - **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
   `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
   tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is

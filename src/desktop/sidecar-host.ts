@@ -69,6 +69,8 @@ export interface SidecarHostOptions {
   readonly dataDir?: string;
   /** The app's cache folder (a packaged app's program sidecars are copied out there). */
   readonly cacheDir?: string;
+  /** `desktop.denoFlags`: a module sidecar's children under the Deno CLI get those `deno run` takes. */
+  readonly denoFlags?: readonly string[];
   /** Push an event to the page (the bridge's `emit`). */
   readonly emit?: (cap: string, event: string, data: unknown) => void;
   /** Override how a sidecar starts (tests). */
@@ -161,7 +163,7 @@ async function defaultLauncher(
   const base = options.importMetaUrl ?? `${toFileUrl(Deno.cwd()).href}/`;
   if ("module" in def.run) {
     const entry = sidecarModuleUrl(def, base);
-    const child = parentChildBase(def.name, options.importMetaUrl);
+    const child = parentChildBase(def.name, options.importMetaUrl, options.denoFlags);
     if (def.run.nodeModules === undefined) return workerSidecarLauncher({ entry, child });
     return bundledLauncher(def.name, entry, options.cacheDir, child);
   }
