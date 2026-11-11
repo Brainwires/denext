@@ -603,7 +603,11 @@ Deno.test("host.quit: a quit from anywhere else asks every guard again; another 
 });
 
 Deno.test("host.quit: from inside its own guard it is refused; while the guards are asked it waits for them", async () => {
-  const { reg, api, quits } = registry();
+  // b holds its answer for as long as the test needs: the guards' deadline must not end the
+  // wait on a loaded machine (past it the quit goes on by design, which has its own test).
+  const { reg, api, quits, warnings } = registry({
+    lifecycleTimeouts: { quitMs: 100, guardMs: 60_000 },
+  });
   const { a, b } = twoExtensions(reg);
   let inside: unknown;
   a.onBeforeQuit(async () => {
@@ -618,11 +622,17 @@ Deno.test("host.quit: from inside its own guard it is refused; while the guards 
   // Another quit asked for meanwhile waits for the guards' answer, which lets the quit go.
   let waited: boolean | undefined;
   void reg.lifecycle.requestQuit().then((v) => (waited = v));
-  await wait(20);
+  // A stall longer than the default test deadline (100 ms), as a busy CI runner gives (a timer
+  // jitter run once failed here), then a full macrotask turn, so every microtask the second quit
+  // could settle on has run. Only b's answer may end its wait.
+  const start = performance.now();
+  while (performance.now() - start < 150) { /* descheduled */ }
+  await tick();
   assertEquals([waited, quits.length], [undefined, 0]);
   slow.resolve(true);
   await until(() => waited !== undefined);
   assertEquals([waited, quits.length], [true, 1]);
+  assert(!warnings.some((w) => w.includes("gave no answer")), "b answered; no deadline ran out");
 });
 
 Deno.test("host.quit: false with no runtime to quit", async () => {
