@@ -210,7 +210,10 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         <code>denext.config.ts</code>{" "}
         reloads the same way: the plugin follows the config's relative imports to the module that
         exports it and re-imports that module after an edit. One it cannot trace (built in the
-        config itself, or imported through an alias) needs a restart, and a dev notice says so.
+        config itself, or imported through an import-map alias) reloads by re-importing the config:
+        an edit under the directory of any project module the config's import graph reaches reads
+        the schema from its <code>graphql()</code>{" "}
+        plugin again. An edit to the config itself still restarts the dev server.
       </p>
       <p>
         Each reload logs one line naming the edited files (

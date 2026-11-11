@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **A schema object the plugin can't trace reloads in `denext dev`.** One built in
+  `denext.config.ts` itself, or imported through an import-map alias, needed a dev-server restart
+  after an edit; the plugin now re-imports the config through the dev loader and reads the schema
+  from its `graphql()` plugin, on an edit under the directory of any project module the config's
+  import graph reaches. The "could not trace" notice is gone.
+
 ## 0.7.0
 
 ### Security

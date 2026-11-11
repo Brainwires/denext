@@ -126,7 +126,6 @@ Low findings of the 4.8 backend audit (realtime and storage):
 
 ## Framework compatibility surfaces
 
-- **`@denext/graphql` reloads only a schema it can trace.** _Why 5.x: dev-server restart works._
 - **Fresh partial navigation:** `f-view-transition`, region history replay and the rest listed in
   KNOWN-LIMITATIONS. _Why 5.x: fixable gaps, none blocking._
 - **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,

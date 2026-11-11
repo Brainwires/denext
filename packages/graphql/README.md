@@ -175,8 +175,10 @@ on the old schema complete (over SSE and WebSocket), so a client resubscribes ag
 one. `watch: ["app/graphql/**/*.ts", "lib/resolvers/**/*.ts"]` names the files yourself. A schema
 object or factory imported into `denext.config.ts` reloads too: the plugin follows the config's
 relative imports to the module that exports it and re-imports that module after an edit. One it
-cannot trace (built in the config itself, or imported through an alias) needs a restart, and a dev
-notice says so.
+cannot trace (built in the config itself, or imported through an import-map alias) reloads by
+re-importing the config: an edit under the directory of any project module the config's import
+graph reaches reads the schema from the config's `graphql()` plugin again. An edit to the config
+itself still restarts the dev server.
 
 Each reload logs one line naming the edited files (`[@denext/graphql] schema reloaded after an edit
 to app/graphql/schema.ts`). A reload that fails (a syntax error, a schema that no longer builds)

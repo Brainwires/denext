@@ -29,7 +29,7 @@ import {
   TOO_LARGE,
   verifyOrigin,
 } from "@denext/denext/plugin-kit";
-import { dirname, isAbsolute, join, normalize, relative } from "@std/path";
+import { basename, dirname, isAbsolute, join, normalize, relative } from "@std/path";
 import type {
   DocumentNode,
   FieldNode,
@@ -49,7 +49,13 @@ import {
   type YogaServerOptions,
 } from "graphql-yoga";
 import { createGraphqlCommand, sdlFromIntrospection } from "./command.ts";
-import { type TracedExport, traceExport } from "./trace.ts";
+import {
+  configFileOf,
+  configGraphWatch,
+  SCHEMA_FILES,
+  type TracedExport,
+  traceExport,
+} from "./trace.ts";
 import { createConnectionLimiter, releaseWhenDone, resolveCaps, wantsStream } from "./limits.ts";
 import {
   acceptGraphqlWs,
@@ -151,7 +157,7 @@ export type {
  * its default export, either a schema or a factory). Every form reloads on an edit under
  * `denext dev` — see {@linkcode GraphqlOptions.watch}: a schema object or factory imported into
  * `denext.config.ts` is traced to the project module that exports it (through the config's
- * relative imports) and re-imported from there.
+ * relative imports) and re-imported from there; one it can't trace is re-read from the config.
  */
 export type SchemaSource =
   | GraphQLSchema
@@ -278,8 +284,9 @@ export interface GraphqlOptions {
    * (the schema module alone when it sits at the project root) — the module path given, or the
    * module a schema object / factory was traced to. In-flight subscriptions on the old schema end
    * (`complete`). A schema object that cannot be traced (it is built in `denext.config.ts`
-   * itself, or reached through a non-relative import) needs a restart after an edit; a dev notice
-   * says so.
+   * itself, or reached through an import-map alias) reloads by re-importing the config through
+   * the dev loader; by default an edit under the directory of any project module the config's
+   * import graph reaches triggers it.
    */
   watch?: string[];
 }
@@ -291,7 +298,7 @@ export interface GraphqlOptions {
  */
 export function graphql(options: GraphqlOptions): DenextPlugin {
   if (!options?.schema) throw new TypeError("graphql(): `schema` is required");
-  return {
+  const plugin: DenextPlugin = {
     name: "@denext/graphql",
     async setup(ctx: PluginContext) {
       const {
@@ -318,7 +325,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       let getSchema = once(() => resolveSchema(options.schema, ctx));
       // A dev reload re-imports the schema from its module: the path given, or the module a
       // schema object / factory imported into the config was traced to.
-      const reloadFrom = dev ? await reloadSourceOf(options.schema, ctx) : null;
+      const reloadFrom = dev ? await reloadSourceOf(options.schema, path, ctx) : null;
       const yogaFor = (end: AbortSignal) =>
         once(async () =>
           createYoga({
@@ -359,7 +366,7 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
         ctx.addPrepareStep((prep) => {
           stale = true; // reloaded by the next request, after the dev server applied the edit
           for (const file of prep.changed ?? []) edits.add(relative(ctx.projectRoot, file));
-        }, { watch: options.watch ?? defaultSchemaWatch(reloadFrom.watch) });
+        }, { watch: options.watch ?? reloadFrom.watch });
       }
 
       const wsDeps = socketDeps(options.websocket, {
@@ -446,7 +453,13 @@ export function graphql(options: GraphqlOptions): DenextPlugin {
       ctx.addCommand(createGraphqlCommand(() => getSdl(), undefined, path));
     },
   };
+  // A dev reload of an untraced schema re-imports the config and reads its options from here.
+  Object.defineProperty(plugin, PLUGIN_OPTIONS, { value: options });
+  return plugin;
 }
+
+/** Where a `graphql()` plugin object keeps its options (not enumerable). */
+const PLUGIN_OPTIONS = Symbol.for("@denext/graphql.options");
 
 /** The options with their defaults (dev turns GraphiQL and introspection on). */
 function settingsOf(options: GraphqlOptions, ctx: PluginContext) {
@@ -498,11 +511,12 @@ function nativeResponse(raw: unknown): Response {
 }
 
 async function resolveSchema(
-  source: SchemaSource | TracedExport,
+  source: SchemaSource | TracedExport | ConfigSource,
   ctx: PluginContext,
 ): Promise<GraphQLSchema> {
   if (typeof source === "function") return await source();
   if (isTraced(source)) return await fromModule(ctx, source.file, source.name);
+  if (isConfigSource(source)) return await fromConfig(ctx, source);
   if (typeof source !== "string") return source;
   return await fromModule(ctx, isAbsolute(source) ? source : join(ctx.projectRoot, source));
 }
@@ -528,30 +542,73 @@ function isTraced(source: unknown): source is TracedExport {
     !("getQueryType" in source);
 }
 
-/** Where a dev reload re-imports the schema from, and the path its default watch globs follow. */
+/**
+ * An untraced schema's dev reload: re-import `config` (through the dev loader, so every edited
+ * module it reaches is fresh) and take `schema` from its `graphql()` plugin serving `path`.
+ */
+interface ConfigSource {
+  config: string;
+  path: string;
+}
+
+function isConfigSource(source: unknown): source is ConfigSource {
+  return typeof source === "object" && source !== null && "config" in source &&
+    "path" in source && !("getQueryType" in source);
+}
+
+/** The `plugins` a config module lists: a named export, else the default object's (or factory's). */
+async function configPlugins(mod: Record<string, unknown>): Promise<unknown[]> {
+  if (Array.isArray(mod.plugins)) return mod.plugins;
+  const base = typeof mod.default === "function"
+    ? await (mod.default as (phase: string, ctx: object) => unknown)("development", {
+      defaultConfig: {},
+    })
+    : mod.default;
+  const plugins = (base as { plugins?: unknown } | undefined)?.plugins;
+  return Array.isArray(plugins) ? plugins : [];
+}
+
+/** The schema of the re-imported config's `graphql()` plugin serving the same path. */
+async function fromConfig(ctx: PluginContext, source: ConfigSource): Promise<GraphQLSchema> {
+  const mod = await ctx.load(source.config) as Record<string, unknown>;
+  const mine = (await configPlugins(mod))
+    .map((p) => (p as Record<symbol, GraphqlOptions | undefined> | null)?.[PLUGIN_OPTIONS])
+    .find((o) => o !== undefined && (o.path ?? "/graphql") === source.path);
+  if (!mine) {
+    throw new Error(
+      `graphql(): ${basename(source.config)} no longer lists a graphql() plugin at ${source.path}`,
+    );
+  }
+  return await resolveSchema(mine.schema, ctx);
+}
+
+/** Where a dev reload re-imports the schema from, and the files whose edit reloads it. */
 interface ReloadSource {
-  source: string | TracedExport;
-  watch: string;
+  source: string | TracedExport | ConfigSource;
+  watch: string[];
 }
 
 /**
  * The module a dev reload re-imports the schema from: a module path as given; a schema object or
- * factory traced to the project module exporting it; else `null` (a dev notice: edits need a
- * restart).
+ * factory traced to the project module exporting it; else the config itself, re-imported on an
+ * edit to a project module its import graph reaches (an object built in the config, or imported
+ * through an import-map alias). `null` only when there is no config, or its graph reaches no
+ * project module (an edit to the config restarts the dev server anyway).
  */
 async function reloadSourceOf(
   schema: SchemaSource,
+  path: string,
   ctx: PluginContext,
 ): Promise<ReloadSource | null> {
-  if (typeof schema === "string") return { source: schema, watch: schema };
+  if (typeof schema === "string") return { source: schema, watch: defaultSchemaWatch(schema) };
   const traced = await traceExport(schema, ctx.projectRoot);
-  if (traced) return { source: traced, watch: relative(ctx.projectRoot, traced.file) };
-  console.warn(
-    "[@denext/graphql] could not trace the module that exports `schema` (a relative import of " +
-      "denext.config.*); a schema edit needs a dev-server restart. Pass its module path " +
-      '(`schema: "./app/graphql/schema.ts"`) to reload it on an edit.',
-  );
-  return null;
+  if (traced) {
+    return { source: traced, watch: defaultSchemaWatch(relative(ctx.projectRoot, traced.file)) };
+  }
+  const config = await configFileOf(ctx.projectRoot);
+  const watch = config ? await configGraphWatch(config, ctx.projectRoot) : [];
+  if (!config || watch.length === 0) return null;
+  return { source: { config, path }, watch };
 }
 
 /**
@@ -578,7 +635,7 @@ function traceReload(
 function defaultSchemaWatch(source: string): string[] {
   const dir = dirname(normalize(source));
   if (dir === "." || dir === "/") return [source];
-  return [join(dir, "**", "*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}")];
+  return [join(dir, "**", SCHEMA_FILES)];
 }
 
 /**
