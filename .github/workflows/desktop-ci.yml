@@ -146,6 +146,8 @@ on:
       - "scripts/ci/desktop-*.ts"
       - "scripts/ci/_packaged-app.ts"
       - "scripts/ci/desktop-appimage-smoke.sh"
+      - "scripts/ci/desktop-linux-launch-smoke.sh" # installers-linux: the .rpm / .deb app launches
+      - "scripts/ci/linux-needed-check.ts" # installers-linux: the packages' NEEDED check
       - "scripts/ci/pick-windows-runner.ts" # the windows-runner job: our Windows runner or the overflow
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
@@ -700,6 +702,16 @@ jobs:
           deno install
       - name: Package (.tar.gz + .deb + .rpm)
         run: deno run -A scripts/package-linux.ts --format tar.gz,deb,rpm && ls -la dist
+      # Every ELF file each package installs links only libraries the package ships, declares (its
+      # Depends / Requires) or gets through one of those, or the C runtime; never a libnode.so*.
+      - name: NEEDED — every packaged ELF's libraries are shipped, declared or base
+        run: |
+          set -eux
+          rm -rf "$RUNNER_TEMP/deb-tree" "$RUNNER_TEMP/rpm-tree" && mkdir -p "$RUNNER_TEMP/deb-tree" "$RUNNER_TEMP/rpm-tree"
+          dpkg-deb -x dist/denext-native-x64.deb "$RUNNER_TEMP/deb-tree"
+          deno run -A ../../scripts/ci/linux-needed-check.ts "$RUNNER_TEMP/deb-tree" --declared "$(dpkg-deb -f dist/denext-native-x64.deb Depends)"
+          rpm2cpio dist/denext-native-x64.rpm | (cd "$RUNNER_TEMP/rpm-tree" && cpio -idm --quiet)
+          deno run -A ../../scripts/ci/linux-needed-check.ts "$RUNNER_TEMP/rpm-tree" --declared "$(rpm -qpR dist/denext-native-x64.rpm)"
       # The app id (desktop.app.identifier) names the .desktop entry, the hicolor icon, the D-Bus
       # service (notification-click activation) and the scheduled-notification timers postrm stops.
       - name: .deb — install through apt (dependencies resolved), check, remove
@@ -750,6 +762,24 @@ jobs:
             rpm -e denext-native
             test ! -e /usr/lib/denext-native
             test ! -e /usr/share/dbus-1/services/$id.service'
+      # The installed .rpm's app on Fedora, launched under Xvfb and then under Weston's headless
+      # backend with GDK_BACKEND=wayland and no DISPLAY (scripts/ci/desktop-linux-launch-smoke.sh).
+      # WebKitGTK's bubblewrap sandbox cannot make its namespaces in an unprivileged container, so
+      # the container turns it off; the launch is what is under test.
+      - name: .rpm — the app launches on Fedora (Xvfb, then headless Wayland)
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/../../scripts/ci:/ci:ro" \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 fedora:latest bash -euxc '
+            dnf install -y /dist/denext-native-x64.rpm /usr/bin/xvfb-run /usr/bin/xauth /usr/bin/dbus-run-session /usr/bin/weston
+            bash /ci/desktop-linux-launch-smoke.sh x11 /usr/bin/denext-native
+            bash /ci/desktop-linux-launch-smoke.sh wayland /usr/bin/denext-native'
+      # The same .deb's app on this Ubuntu runner under Weston's headless backend: Wayland only.
+      - name: .deb — the app launches under headless Wayland (Weston)
+        run: |
+          set -eux
+          sudo apt-get install -y ./dist/denext-native-x64.deb weston dbus
+          bash ../../scripts/ci/desktop-linux-launch-smoke.sh wayland /usr/bin/denext-native
+          sudo apt-get remove -y denext-native
       # The CEF backend's .deb: its setuid sandbox helper installs root-owned with mode 4755, and
       # desktop.linux.requireSandbox reaches the launch file (the runtime then refuses to start
       # unsandboxed, exit 78).
