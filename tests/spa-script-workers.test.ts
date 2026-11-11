@@ -82,11 +82,17 @@ Deno.test("stampWorkerNonce: a stamped tag is written as HTMLRewriter writes it"
   );
 });
 
-Deno.test("stampWorkerNonceBody: without the runtime's HTMLRewriter, the string path's string", () => {
+Deno.test("stampWorkerNonceBody: without DENEXT_HTML_REWRITER=1, the string path's string", () => {
   const before = Deno.env.get("DENEXT_HTML_REWRITER");
-  Deno.env.set("DENEXT_HTML_REWRITER", "0");
   try {
-    assertEquals(stampWorkerNonceBody(CSP_SHELL, LIB, "n"), stampWorkerNonce(CSP_SHELL, LIB, "n"));
+    for (const value of [undefined, "0", "true"]) {
+      if (value === undefined) Deno.env.delete("DENEXT_HTML_REWRITER");
+      else Deno.env.set("DENEXT_HTML_REWRITER", value);
+      assertEquals(
+        stampWorkerNonceBody(CSP_SHELL, LIB, "n"),
+        stampWorkerNonce(CSP_SHELL, LIB, "n"),
+      );
+    }
   } finally {
     if (before === undefined) Deno.env.delete("DENEXT_HTML_REWRITER");
     else Deno.env.set("DENEXT_HTML_REWRITER", before);
@@ -124,33 +130,39 @@ async function stampCorpus(): Promise<string[]> {
   ];
 }
 
+/** Stamp `shells` in a child with `--unstable-html-rewriter` and `DENEXT_HTML_REWRITER=<env>`. */
+async function stampInChild(shells: string[], env: string) {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "-A",
+      "--unstable-html-rewriter",
+      new URL("./fixtures/html-rewriter/stamp.ts", import.meta.url).pathname,
+    ],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+    env: { DENEXT_HTML_REWRITER: env },
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(shells)));
+  await writer.close();
+  const out = await child.output();
+  assert(out.success, new TextDecoder().decode(out.stderr));
+  return JSON.parse(new TextDecoder().decode(out.stdout)) as {
+    rewriter: string;
+    pairs: [string, string, boolean][];
+  };
+}
+
 Deno.test({
-  name: "stampWorkerNonceBody: streamed through the runtime's HTMLRewriter, byte-identical",
+  name:
+    "stampWorkerNonceBody: opted in, streamed through the runtime's HTMLRewriter, byte-identical",
   // The rewriter is denext's Deno's (runtime 3.0.0-denext.3+), behind a flag: stamped in a child.
   ignore: !(Deno.build as { denext?: string }).denext,
   async fn() {
     const shells = await stampCorpus();
-    const child = new Deno.Command(Deno.execPath(), {
-      args: [
-        "run",
-        "-A",
-        "--unstable-html-rewriter",
-        new URL("./fixtures/html-rewriter/stamp.ts", import.meta.url).pathname,
-      ],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-      env: { DENEXT_HTML_REWRITER: "1" },
-    }).spawn();
-    const writer = child.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(JSON.stringify(shells)));
-    await writer.close();
-    const out = await child.output();
-    assert(out.success, new TextDecoder().decode(out.stderr));
-    const { rewriter, pairs } = JSON.parse(new TextDecoder().decode(out.stdout)) as {
-      rewriter: string;
-      pairs: [string, string, boolean][];
-    };
+    const { rewriter, pairs } = await stampInChild(shells, "1");
     assertEquals(rewriter, "function");
     assertEquals(pairs.length, shells.length);
     for (const [i, [string, streamed, viaRewriter]] of pairs.entries()) {
@@ -158,6 +170,10 @@ Deno.test({
       // The two hand-written shells without exactly one head take the string path.
       assertEquals(viaRewriter, i < shells.length - 2, `shell ${i} streamed`);
     }
+    // The flag alone (no opt-in) keeps the string path: the rewriter is slower today.
+    const plain = await stampInChild(shells, "");
+    assertEquals(plain.rewriter, "function");
+    assertEquals(plain.pairs.map(([, , via]) => via), shells.map(() => false));
   },
 });
 

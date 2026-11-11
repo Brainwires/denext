@@ -207,8 +207,8 @@ function bootTag(lib: string, nonce: string): string {
  * page's policy lists its nonce passes. Without `spa.csp` there is no policy to list it in, and
  * the boot accepts the nonce as is.
  *
- * This is the string path; {@linkcode stampWorkerNonceBody} streams the same bytes through the
- * runtime's `HTMLRewriter` where it has one. A tag it changes is written as `HTMLRewriter` writes
+ * This is the string path (the default); {@linkcode stampWorkerNonceBody} streams the same bytes
+ * through the runtime's `HTMLRewriter` when `DENEXT_HTML_REWRITER=1` opts in. A tag it changes is written as `HTMLRewriter` writes
  * it (the attributes as written, one space apart, the added `nonce` last).
  *
  * @param shell The built (or dev) HTML shell.
@@ -254,9 +254,9 @@ function streamable(shell: string): boolean {
 }
 
 /**
- * {@linkcode stampWorkerNonce} as a response body: streamed through the runtime's `HTMLRewriter`
- * where it has one (the first bytes go out while the rest is still being rewritten), else the
- * string path's string. Both are the same bytes.
+ * {@linkcode stampWorkerNonce} as a response body: the string path's string by default; streamed
+ * through the runtime's `HTMLRewriter` only with `DENEXT_HTML_REWRITER=1` and a runtime that has
+ * one (slower on today's runtimes: see src/server/html-rewriter.ts). Both are the same bytes.
  *
  * @param shell The built (or dev) HTML shell.
  * @param lib The public path Partytown is served under (ends with `/`).

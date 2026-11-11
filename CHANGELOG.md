@@ -107,13 +107,16 @@ and this project adheres to
 
 ### Changed
 
-- **A SPA's per-response shell stamp streams through the runtime's `HTMLRewriter` when it has
-  one.** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the shell's
-  scripts, its Partytown boot tag and its `spa.csp` policy. Under denext's Deno with
-  `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`) that is now a streaming
-  `HTMLRewriter` transform; elsewhere, or with `DENEXT_HTML_REWRITER=0`, the string path stays.
-  Both write the same bytes. A stamped `<script>` now carries `nonce` as its last attribute, the
-  way `HTMLRewriter` writes it, where it came first before.
+- **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
+  (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
+  shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
+  under denext's Deno with `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`), makes
+  that a streaming `HTMLRewriter` transform; the string path stays the default everywhere, the
+  flag alone included. Both write the same bytes. It is opt-in because it is slower on today's
+  runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through the
+  rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
+  `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
+  came first before.
 - **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
   remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
   until it is re-signed, so a revocation would stop reaching anyone.
