@@ -75,7 +75,16 @@ jobs:
       - name: Install Playwright's Chromium and WebKit
         # tests/e2e/spa-shell.e2e.test.ts drives both engines through playwright-core (pinned in
         # deno.json); under CI=1 it fails rather than skips when they are missing.
-        run: deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium webkit
+        # On GitHub's image `--with-deps` runs apt-get: apt gets retries and timeouts first
+        # (scripts/ci/apt-install.sh --configure), and the whole install is retried with a backoff.
+        run: |
+          if [ "${{ runner.environment }}" = github-hosted ]; then bash scripts/ci/apt-install.sh --configure; fi
+          for delay in 0 15 30 60; do
+            sleep "$delay"
+            if timeout 1200 deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium webkit; then exit 0; fi
+            echo "::warning::playwright install failed; retrying"
+          done
+          echo "::error::playwright could not install chromium and webkit"; exit 1
 
       - name: E2E tests (headless Chromium via astral)
         # astral downloads a pinned Chromium on first run; the suite builds example
@@ -135,7 +144,16 @@ jobs:
         # A bed with a `browser` check (tests/migration-bed/_bed.ts) hydrates a page in headless
         # Chromium through astral, which downloads its own pinned Chromium but not the shared
         # libraries it links; this installs them (and Playwright's Chromium), as the e2e job does.
-        run: deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium
+        # On GitHub's image `--with-deps` runs apt-get: apt gets retries and timeouts first
+        # (scripts/ci/apt-install.sh --configure), and the whole install is retried with a backoff.
+        run: |
+          if [ "${{ runner.environment }}" = github-hosted ]; then bash scripts/ci/apt-install.sh --configure; fi
+          for delay in 0 15 30 60; do
+            sleep "$delay"
+            if timeout 1200 deno run -A npm:playwright-core@1.63.0 install ${{ runner.environment == 'github-hosted' && '--with-deps' || '' }} chromium; then exit 0; fi
+            echo "::warning::playwright install failed; retrying"
+          done
+          echo "::error::playwright could not install chromium"; exit 1
 
       - name: Migration beds
         run: deno task test:migration-bed
@@ -206,8 +224,12 @@ jobs:
 
       - name: Install and run an app in a container with no Deno
         run: |
+          # A clean Debian has to download its three packages: apt's own retries and timeouts, and
+          # the whole install retried with a backoff (apt_retry).
           docker run --rm -v "$PWD/dist/no-deno:/art:ro" debian:bookworm-slim sh -c '
-            apt-get update -qq && apt-get install -y -qq curl ca-certificates procps >/dev/null &&
+            apt_retry() { for d in 0 15 30 60; do sleep $d; timeout 900 "$@" && return 0; done; return 1; }
+            o="-o Acquire::Retries=5 -o Acquire::http::Timeout=30"
+            apt_retry sh -c "apt-get $o update -qq && apt-get $o install -y -qq curl ca-certificates procps >/dev/null" &&
             sh /art/no-deno-e2e.sh'
 
   # `denext job install` for real (tests/integration/job-install-roundtrip.test.ts): a throwaway
