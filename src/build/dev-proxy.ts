@@ -14,6 +14,7 @@
 
 import { WebSocket as NodeWebSocket } from "ws";
 import type { SpaProxyConfig } from "../server/config.ts";
+import { currentDenoIdentity, fetchDecodesDeflate } from "./deno-version.ts";
 
 /** True when `pathname` is under one of the proxied prefixes (exact match or sub-path). */
 export function matchesProxyPrefix(pathname: string, prefixes: readonly string[]): boolean {
@@ -64,15 +65,26 @@ function frontIsSecure(req: Request, url: URL): boolean {
   return url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
 }
 
+/** Whether this process's `fetch` decodes a `deflate` body (denext's Deno from 3.0.0-denext.17). */
+const FETCH_DECODES_DEFLATE = fetchDecodesDeflate(currentDenoIdentity().denext ?? "");
+
 /**
- * The content encodings Deno's `fetch` decodes transparently (a single `gzip` or `br` token —
- * verified against Deno 2.9: `deflate`, `zstd`, `x-gzip` and a multi-encoding list arrive
- * as-is). After such a decode the response still carries the upstream `Content-Encoding` and
- * the ENCODED `Content-Length`, so neither describes the bytes `res.body` yields.
+ * The content encodings Deno's `fetch` decodes transparently: a single `gzip` or `br` token, and
+ * on denext's Deno from 3.0.0-denext.17 a single `deflate` token too (verified against stock
+ * Deno 2.9: `deflate`, `zstd`, `x-gzip` and a multi-encoding list arrive as-is). After such a
+ * decode the response still carries the upstream `Content-Encoding` and the ENCODED
+ * `Content-Length`, so neither describes the bytes `res.body` yields.
+ *
+ * @param contentEncoding The upstream response's `Content-Encoding`.
+ * @param deflateDecoded Whether this `fetch` decodes `deflate` (this process's runtime by default).
+ * @returns Whether `fetch` already decoded the body.
  */
-function fetchDecodedEncoding(contentEncoding: string | null): boolean {
+export function fetchDecodedEncoding(
+  contentEncoding: string | null,
+  deflateDecoded: boolean = FETCH_DECODES_DEFLATE,
+): boolean {
   const enc = contentEncoding?.trim().toLowerCase();
-  return enc === "gzip" || enc === "br";
+  return enc === "gzip" || enc === "br" || (deflateDecoded && enc === "deflate");
 }
 
 /**
@@ -137,10 +149,10 @@ async function proxyHttp(
   // Secure, which the browser would otherwise refuse to store).
   const secure = frontIsSecure(req, url);
   const outHeaders = new Headers(res.headers);
-  // `fetch` already decoded a gzip/br body, so the upstream encoding (and the length of the
+  // `fetch` already decoded a gzip/br (and, on denext's Deno, deflate) body, so the upstream encoding (and the length of the
   // ENCODED bytes) no longer describe what is relayed: a browser handed plain bytes labelled
   // `gzip` fails with "cannot decode raw data" (WebKit) / ERR_CONTENT_DECODING_FAILED (Chromium).
-  // An encoding `fetch` does not decode (deflate, zstd, …) is relayed verbatim WITH its headers,
+  // An encoding `fetch` does not decode (zstd, deflate on stock Deno, …) is relayed verbatim WITH its headers,
   // which still describe the bytes. The front server may re-encode.
   if (fetchDecodedEncoding(res.headers.get("content-encoding"))) {
     outHeaders.delete("content-encoding");

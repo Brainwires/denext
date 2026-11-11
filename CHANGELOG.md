@@ -82,6 +82,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`spa.proxy` relays a `deflate` response correctly on runtime 3.0.0-denext.17.** That runtime's
+  `fetch` decodes `deflate` as it does `gzip` and `br`, so the proxy now drops the stale
+  `Content-Encoding` and `Content-Length` for it too. On stock Deno a `deflate` body is still relayed
+  as it arrived, with its headers.
 - **An error boundary whose own fallback throws no longer freezes the page.** An `error.tsx` (or
   any `<ErrorBoundary>` or class error boundary) whose error UI threw while rendering, for example
   by calling a hook that needs a provider it doesn't have, caught its own error again and

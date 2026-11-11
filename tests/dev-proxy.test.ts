@@ -9,7 +9,12 @@ import {
   gzipSync,
   inflateSync,
 } from "node:zlib";
-import { matchesProxyPrefix, proxyToBackend } from "../src/build/dev-proxy.ts";
+import {
+  fetchDecodedEncoding,
+  matchesProxyPrefix,
+  proxyToBackend,
+} from "../src/build/dev-proxy.ts";
+import { fetchDecodesDeflate } from "../src/build/deno-version.ts";
 import { validateDenextConfig } from "../src/build/paths.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -155,7 +160,7 @@ Deno.test({
         assertEquals(res.headers.get("content-length"), null);
       });
     }
-    await t.step("a deflate body (not decoded by fetch) keeps its headers and bytes", async () => {
+    await t.step("a deflate body is relayed with headers that describe its bytes", async () => {
       const res = await relay("/deflate");
       assertEquals(res.status, 200);
       const bytes = new Uint8Array(await res.arrayBuffer());
@@ -270,4 +275,25 @@ Deno.test("proxyToBackend: a client's hop-by-hop headers never reach the backend
   } finally {
     await backend.close();
   }
+});
+
+Deno.test("fetchDecodedEncoding: deflate counts as decoded only where fetch decodes it", () => {
+  // Stock Deno 2.9 hands a deflate body over still encoded; denext's Deno from 3.0.0-denext.17
+  // decodes it, and the relayed headers must then drop the stale encoding.
+  for (const deflateDecoded of [false, true]) {
+    assert(fetchDecodedEncoding("gzip", deflateDecoded));
+    assert(fetchDecodedEncoding(" BR ", deflateDecoded));
+    assertEquals(fetchDecodedEncoding("deflate", deflateDecoded), deflateDecoded);
+    assert(!fetchDecodedEncoding("zstd", deflateDecoded));
+    assert(!fetchDecodedEncoding("gzip, deflate", deflateDecoded));
+    assert(!fetchDecodedEncoding(null, deflateDecoded));
+  }
+});
+
+Deno.test("fetchDecodesDeflate: from 3.0.0-denext.17; stock Deno (no marker) never", () => {
+  assert(!fetchDecodesDeflate(""));
+  assert(!fetchDecodesDeflate("3.0.0-denext.16"));
+  assert(!fetchDecodesDeflate("3.0.0-rc.6"));
+  assert(fetchDecodesDeflate("3.0.0-denext.17"));
+  assert(fetchDecodesDeflate("3.0.0-denext.18"));
 });
