@@ -10,7 +10,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import {
@@ -422,9 +422,10 @@ Deno.test("localModulesOf: an entry deno info didn't read as a local module is a
       { kind: "esm", specifier: "https://jsr.io/@std/path/1.1.6/mod.ts" },
     ],
   });
+  // `fromFileUrl` gives this OS's spelling (a backslashed path on Windows).
   assertEquals(localModulesOf(ok, url), [
-    "/srv/app/denext.config.ts",
-    "/srv/app/graphql/schema.ts",
+    fromFileUrl(url),
+    fromFileUrl("file:///srv/app/graphql/schema.ts"),
   ]);
 });
 
