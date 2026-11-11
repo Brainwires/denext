@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
+  finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
+  `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
+  tokens (a sign-in whose first factor was a passkey still takes a code). `GET /native/passkeys`
+  and `DELETE /native/passkeys/:id` list and remove the bearer's passkeys.
 - **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
   label, accelerator? }]` adds items to the "Window" submenu next to New Window, Reopen Closed
   Window and the window list, merged into a page's `setAppMenu` menu the same way. A click goes to

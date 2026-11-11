@@ -225,9 +225,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
-  pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
-  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server). Planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and

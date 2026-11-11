@@ -97,8 +97,6 @@ Not blocking 5.0; each item says why.
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
   plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
 - **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
-- **Native passkey rows:** a step-up of a pending native sign-in, and list / delete. _Why 5.x: a
-  fixable gap on a new surface._
 - **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
   `NEEDED` check). _Why 5.x: coverage work, no known failure._
 - **The AppImage non-exchange swap fallback window** (a documented risk). _Why 5.x: Low._
