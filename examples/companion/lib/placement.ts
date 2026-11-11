@@ -8,7 +8,11 @@
 // (WAYLAND_PANEL_INSET), until the runtime anchors a layer surface to the edges nearest its
 // position (`layerShellEdgeAnchor`), where the compositor keeps it clear of the panels itself.
 
-/** Loopy's window size (kept equal to `desktop.window` in denext.config.ts). */
+/**
+ * Loopy's window size at 100 %, the base for the size math. `desktop.window` in denext.config.ts
+ * opens at the default size (`scaledWindowSize(SCALE.default)`, 325 × 375), and the page resizes
+ * the window to its size setting.
+ */
 export const WINDOW_SIZE = { width: 260, height: 300 } as const;
 
 /** The gap between the window and the work area's edges. */
@@ -99,4 +103,35 @@ export function cornerOnScreen(
     size,
   );
   return { x: corner.x - origin.x, y: corner.y - origin.y };
+}
+
+/** A window size. */
+export interface Size {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The window size for Loopy drawn at `scale` percent: {@linkcode WINDOW_SIZE} (100 %) scaled and
+ * rounded to whole pixels. The page scales its contents by the same factor, so they fill it.
+ */
+export function scaledWindowSize(scale: number): Size {
+  const k = scale / 100;
+  return {
+    width: Math.round(WINDOW_SIZE.width * k),
+    height: Math.round(WINDOW_SIZE.height * k),
+  };
+}
+
+/**
+ * The bounds for resizing a window at `current` to `size` with its bottom-right corner kept where
+ * it is (Loopy stands in the corner, so it grows up and to the left).
+ */
+export function anchoredBounds(current: Rect, size: Size): Rect {
+  return {
+    x: Math.round(current.x + current.width - size.width),
+    y: Math.round(current.y + current.height - size.height),
+    width: size.width,
+    height: size.height,
+  };
 }

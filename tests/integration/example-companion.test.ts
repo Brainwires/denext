@@ -24,6 +24,9 @@ Deno.test("examples/companion: exports Loopy's page, its client bundle and its s
   assertStringIncludes(html, "<title>Loopy</title>");
   assertMatch(html, /<svg class="loopy" data-state="hidden"[^>]*aria-label="Loopy"/);
   assertStringIncludes(html, 'href="/styles.css"');
+  // The read-aloud toggle says what it does (it was "Voice on/off" before the voice assistant).
+  assertStringIncludes(html, "Read aloud off");
+  assert(!html.includes("Voice off"), "the old label is gone");
   // Only Loopy and its buttons catch clicks before a bubble opens; the empty bubble row and the
   // room beside Loopy let them through (lib/window-setup.ts follows the marked elements).
   const marked = [...html.matchAll(/<(\w+)([^>]*)>/g)]
@@ -35,9 +38,21 @@ Deno.test("examples/companion: exports Loopy's page, its client bundle and its s
     assertStringIncludes(css, `[data-state="${state}"]`, `a ${state} move`);
   }
   let bundled = false;
+  let voice = false;
   for await (const entry of walk(join(outDir, "_denext"), { exts: [".js"] })) {
     const text = await Deno.readTextFile(entry.path);
     if (text.includes("/_loopy/reply") && text.includes("Fold up")) bundled = true;
+    if (text.includes("oai-events") && text.includes("/v1/realtime/calls")) voice = true;
+    // The voice backend (voice/: the key, minting secrets, the tools) stays on the server.
+    for (const backend of ["/v1/realtime/client_secrets", "/v1/responses", "/v1/embeddings"]) {
+      assert(!text.includes(backend), `${entry.path} holds the backend (${backend})`);
+    }
+    assert(!text.includes("DevTools listening on"), `${entry.path} holds the browser driver`);
   }
   assert(bundled, "the client bundle holds the companion");
+  assert(voice, "and its WebRTC voice client");
+  // The dev route serves the browser only: nothing of it is exported.
+  for await (const entry of walk(outDir)) {
+    assert(!entry.path.includes(join("api", "voice")), `${entry.path} exported`);
+  }
 });

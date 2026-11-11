@@ -19,10 +19,37 @@ export type LoopyState =
   | "dismiss";
 
 /** How a message wants Loopy to look while it speaks. */
-export type LoopyMood = "neutral" | "thinking" | "attention" | "success";
+export type LoopyMood =
+  | "neutral"
+  | "thinking"
+  | "attention"
+  | "success"
+  | "confused"
+  | "mad"
+  | "sad"
+  | "excited"
+  | "sleepy"
+  | "love"
+  | "surprised"
+  | "shocked"
+  | "wow";
 
 /** Every mood, for validation. */
-export const MOODS: readonly LoopyMood[] = ["neutral", "thinking", "attention", "success"];
+export const MOODS: readonly LoopyMood[] = [
+  "neutral",
+  "thinking",
+  "attention",
+  "success",
+  "confused",
+  "mad",
+  "sad",
+  "excited",
+  "sleepy",
+  "love",
+  "surprised",
+  "shocked",
+  "wow",
+];
 
 /** What the machine holds. */
 export interface LoopyModel {
@@ -47,12 +74,21 @@ export const INITIAL_MODEL: LoopyModel = { state: "hidden", pendingMood: null };
 export function moodState(mood: LoopyMood): LoopyState {
   switch (mood) {
     case "thinking":
+    case "confused":
       return "think";
     case "attention":
       return "point";
     case "success":
+    case "excited":
+    case "love":
+    case "wow":
       return "celebrate";
     case "neutral":
+    case "mad":
+    case "sad":
+    case "sleepy":
+    case "surprised":
+    case "shocked":
       return "idle";
   }
 }

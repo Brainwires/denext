@@ -22,8 +22,11 @@ export default {
       activationPolicy: "accessory",
     },
     window: {
-      width: 260,
-      height: 300,
+      // Loopy at its default size, 125 % of the 260 × 300 base (lib/placement.ts WINDOW_SIZE ×
+      // lib/voice-settings.ts SCALE.default), so the first frame needs no resize; the page resizes
+      // the window to the size setting after that.
+      width: 325,
+      height: 375,
       title: "Loopy",
       resizable: false,
       // Creation-time (written to .deno-desktop/app.json): Loopy stands on the desktop itself.
@@ -41,6 +44,10 @@ export default {
       overlay: true,
     },
     backdrop: "none",
+    // Loopy's voice is WebRTC, which Linux's system WebView (WebKitGTK) doesn't have: Chromium
+    // (CEF) there, the system WebView on macOS and Windows. CEF paints the window opaque, so on
+    // Linux Loopy stands in a small square of its own.
+    backend: { linux: "cef" },
     tray: {
       icon: "/tray.png",
       tooltip: "Loopy",
@@ -48,13 +55,46 @@ export default {
         { id: "show", label: "Show Loopy" },
         { id: "hide", label: "Hide Loopy" },
         { separator: true },
-        { role: "quit" },
+        // Loopy's own Quit (desktop.ts): it kills the browser, then quits the app.
+        { id: "quit", label: "Quit Loopy" },
       ],
     },
-    // The inbox file (token + port) goes in the app's data folder; desktop.ts writes it, so the
-    // packaged app needs write access there. Listening on loopback is in the baseline.
-    extraPermissions: { write: ["$APPDATA"] },
+    // The inbox file (token + port), the memory database and the browser profile go in the app's
+    // data folder, so the packaged app writes there. Listening on loopback is in the baseline, and
+    // so is connecting to it (the browser's DevTools socket). The voice backend (voice/) talks to
+    // api.openai.com only: Realtime sessions, web search and embeddings. `run` is Chrome or
+    // Chromium where they install (voice/chrome.ts CHROME_PATHS), nothing else.
+    extraPermissions: {
+      write: ["$APPDATA"],
+      net: ["api.openai.com"],
+      run: [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      ],
+    },
     // Just the app bundle: no installers for an example.
     installers: { macos: [], linux: [], windows: [] },
+    // The OpenAI key lives in the OS keychain (desktop.ts hands the secure store to the voice
+    // backend only, never to the page); the push-to-talk shortcut works from any app; a web
+    // search's source links open in the system browser (http and https only, nothing else the
+    // shell capability can do). The microphone is granted to the window's own origin only, in the
+    // packaged app (`denext task desktop:package`; a `desktop run` window has none); macOS asks
+    // the user once, with this text.
+    capabilities: {
+      secureStore: true,
+      globalShortcuts: true,
+      shell: { openExternal: ["https:", "http:"] },
+      microphone: {
+        usageDescription: "Loopy listens to you only while you talk to it: hold Space, click " +
+          "Loopy or press its shortcut.",
+      },
+    },
   },
 } satisfies DenextConfig;
