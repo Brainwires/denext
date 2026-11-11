@@ -8,10 +8,16 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { JAIL_NOT_NEEDED, JAIL_SCRIPT_EXCEPTIONS } from "../src/build/jail-exceptions.ts";
+import {
+  DECLARED_HOST_REDIRECTS,
+  declaredHostRedirects,
+  JAIL_NOT_NEEDED,
+  JAIL_SCRIPT_EXCEPTIONS,
+} from "../src/build/jail-exceptions.ts";
 import {
   applyJailExceptions,
   explainJailFailures,
+  JAIL_DECLARED_REDIRECTS_RELEASE,
   JAIL_HARDENED_RELEASE,
   jailConfinement,
   jailFailures,
@@ -27,6 +33,7 @@ import {
 const RC5 = "3.0.0-rc.5";
 const RC6 = "3.0.0-rc.6";
 const DENEXT1 = "3.0.0-denext.1";
+const DENEXT19 = JAIL_DECLARED_REDIRECTS_RELEASE;
 /** No environment: a test never inherits the runner's `npm_config_*`. */
 const NO_ENV = () => undefined;
 
@@ -67,6 +74,7 @@ Deno.test("jail runtime: each feature from its release, none on stock Deno", () 
     hostLists: false,
     writeRoots: false,
     knownPackages: false,
+    declaredRedirects: false,
     confinementInfo: false,
     packageJsonHome: false,
   };
@@ -86,11 +94,15 @@ Deno.test("jail runtime: each feature from its release, none on stock Deno", () 
     hostLists: true,
     writeRoots: true,
     knownPackages: true,
+    declaredRedirects: false,
     confinementInfo: true,
     packageJsonHome: true,
   };
-  for (const v of [DENEXT1, "3.0.0-denext.2", "3.0.0-denext.10", "3.0.0", "3.1.0"]) {
+  for (const v of [DENEXT1, "3.0.0-denext.2", "3.0.0-denext.10", "3.0.0-denext.18"]) {
     assertEquals(jailRuntime(v), all, v);
+  }
+  for (const v of [DENEXT19, "3.0.0-denext.20", "3.0.0", "3.1.0"]) {
+    assertEquals(jailRuntime(v), { ...all, declaredRedirects: true }, v);
   }
 });
 
@@ -101,6 +113,7 @@ Deno.test("jail runtime: the hardened gate is 3.0.0-denext.1, above every 3.0.0-
     hostLists: true,
     writeRoots: true,
     knownPackages: false,
+    declaredRedirects: false,
     confinementInfo: false,
     packageJsonHome: false,
   };
@@ -210,7 +223,6 @@ Deno.test("jail rc.6: an entry written for rc.5 is completed, its own grants kep
 Deno.test("jail denext.1: reviewed declared hosts are written to knownPackages, never before", async () => {
   for (const e of JAIL_SCRIPT_EXCEPTIONS.filter((e) => e.declaredHosts)) {
     assertEquals(e.exception, {}, `${e.name}: knownPackages is its only grant`);
-    for (const h of e.declaredHosts!) assertFalse(h.includes("github"), `${e.name}: ${h}`);
   }
   const files = {
     "deno.json": "{}\n",
@@ -561,9 +573,51 @@ Deno.test({
 
 Deno.test("jail: bcrypt and bufferutil say approving works only where the OS confines (denext.1)", () => {
   for (const name of ["bcrypt", "bufferutil"]) {
-    const why = JAIL_NOT_NEEDED.find((n) => n.name === name)?.why ?? "";
+    const why = JAIL_NOT_NEEDED.find((n) => n.name === name)?.why ??
+      JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === name)?.caveat ?? "";
     assertStringIncludes(why, "unapproved", name);
     assertStringIncludes(why, "where the OS confines lifecycle scripts", name);
     assertStringIncludes(why, "3.0.0-denext.1", name);
+  }
+});
+
+Deno.test("jail denext.19: GitHub-declared packages get knownPackages, and the redirect hosts before denext.19", async () => {
+  // mirrored from the runtime's BUILTIN_KNOWN_PACKAGES / DECLARED_HOST_REDIRECTS
+  assertEquals(JAIL_DECLARED_REDIRECTS_RELEASE, "3.0.0-denext.19");
+  const github = ["@discordjs/opus", "argon2", "bcrypt", "libxmljs"];
+  for (const name of github) {
+    const e = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === name);
+    assertEquals(e?.declaredHosts, ["github.com"], name);
+  }
+  assertFalse(JAIL_NOT_NEEDED.some((n) => n.name === "bcrypt"), "bcrypt 5 needs an entry");
+  const redirects = ["objects.githubusercontent.com", "release-assets.githubusercontent.com"];
+  assertEquals(DECLARED_HOST_REDIRECTS["github.com"], redirects);
+  assertEquals(declaredHostRedirects("github.com"), redirects);
+  assertEquals(declaredHostRedirects("GitHub.com.:443"), redirects);
+  assertEquals(declaredHostRedirects("example.com"), []);
+  assertEquals(declaredHostRedirects("node-precompiled-binaries.grpc.io"), []);
+  const files = {
+    "deno.json": "{}\n",
+    "package.json": { dependencies: { bcrypt: "5", argon2: "0.27", "@discordjs/opus": "0.9" } },
+  };
+  const dir = await project(files);
+  try {
+    assertEquals((await applyJailExceptions(dir, { version: RC6, env: NO_ENV })).action, "none");
+    // denext.1 .. denext.18: the declared host is listed, and its redirects are a `net` list
+    await applyJailExceptions(dir, { version: "3.0.0-denext.18", env: NO_ENV });
+    const known = Object.fromEntries(
+      ["@discordjs/opus", "argon2", "bcrypt"].map((n) => [n, ["github.com"]]),
+    );
+    const net = { net: redirects };
+    assertEquals(await jailIn(join(dir, "deno.json")), {
+      packages: { "@discordjs/opus": net, argon2: net, bcrypt: net },
+      knownPackages: known,
+    });
+    // denext.19: the runtime allows the redirects with the declared host, so no `net` grant
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await applyJailExceptions(dir, { version: DENEXT19, env: NO_ENV });
+    assertEquals(await jailIn(join(dir, "deno.json")), { knownPackages: known });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

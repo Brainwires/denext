@@ -120,6 +120,11 @@ and this project adheres to
   `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
   the config on an edit under the directory of any project module the config reaches, instead of
   needing a dev-server restart.
+- **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
+  are in the built-in exception list**, as the GitHub release host their package.json declares
+  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.19 the runtime allows that host's
+  redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
 
 ### Fixed
 
