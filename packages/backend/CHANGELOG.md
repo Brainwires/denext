@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **`requireUploadSize` per bucket.** `buckets: { docs: { requireUploadSize: true } }` refuses a
+  `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed upload URL the
+  server API mints for that bucket pins its exact size. The `POST /_denext/storage/sign` route
+  always carries one, and Supabase's `/storage/v1/object/upload/sign` is unaffected. Off by default:
+  size-less signed uploads stay allowed.
+
 ### Changed
 
 - **An idle webhooks deliverer wakes rarely.** Under `delivery: "auto"` the background

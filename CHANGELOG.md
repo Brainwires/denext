@@ -74,6 +74,10 @@ and this project adheres to
   a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
   as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
   entries.
+- **`@denext/backend`: `requireUploadSize` per bucket.** A bucket with `requireUploadSize: true`
+  refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
+  upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
+  `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
 
 ### Changed
 

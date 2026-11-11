@@ -52,13 +52,14 @@ export default {
 
 A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 
-| Field       | Default | What it does                                                                                                                                                                             |
-| ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `public`    | `false` | Downloads need no signature and no `authorize` call; their URLs are stable and cacheable. Uploads, deletes and listings still go through `authorize`.                                    |
-| `maxBytes`  | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                  |
-| `mime`      | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes. |
-| `authorize` | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                |
-| `versioned` | off     | Object versioning ([below](#object-versioning)): `true` keeps overwritten and deleted objects as noncurrent versions; `false` suspends it.                                               |
+| Field               | Default | What it does                                                                                                                                                                                                       |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `public`            | `false` | Downloads need no signature and no `authorize` call; their URLs are stable and cacheable. Uploads, deletes and listings still go through `authorize`.                                                              |
+| `maxBytes`          | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                                            |
+| `mime`              | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes.                           |
+| `authorize`         | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                                          |
+| `versioned`         | off     | Object versioning ([below](#object-versioning)): `true` keeps overwritten and deleted objects as noncurrent versions; `false` suspends it.                                                                         |
+| `requireUploadSize` | `false` | `createSignedUploadUrl` without `size` is refused (`bad_request`), so every signed upload URL pins its exact size. The plugin's own sign route always sends one; Supabase's `/object/upload/sign` is not affected. |
 
 `op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
 copy is `download` on the source and `upload` on the destination, a move adds `delete` on the

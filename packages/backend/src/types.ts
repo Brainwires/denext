@@ -43,6 +43,15 @@ export interface BucketConfig {
    */
   mime?: string[];
   /**
+   * Refuse a signed upload whose exact size is not given: `createSignedUploadUrl` without `size`
+   * fails (`bad_request`, 400), so every signed upload URL pins its size (an S3 presigned PUT
+   * must then match it byte for byte). The plugin's own `POST /_denext/storage/sign` always
+   * carries the size; Supabase's `/storage/v1/object/upload/sign`, which has none, is not
+   * affected. Default `false`: size-less signed uploads stay allowed, capped by
+   * {@link maxBytes} when the bytes arrive.
+   */
+  requireUploadSize?: boolean;
+  /**
    * Decide one operation for the current request. Runs whenever a storage call is made inside
    * a request (the plugin's endpoints, and the server API called from a route handler, Server
    * Action or page); a call outside any request (a job, a script) is trusted and skips it.

@@ -126,6 +126,12 @@ async function signedUpload(
   caller: Caller,
 ): Promise<SignedUpload> {
   const k = normalizeKey(key);
+  if (bucket.requireUploadSize === true && options.size === undefined) {
+    throw new StorageError(
+      "bad_request",
+      `bucket ${JSON.stringify(bucket.name)} requires the upload's size (requireUploadSize)`,
+    );
+  }
   const { owner, pin } = await checkUpload(rt, bucket, k, caller);
   const contentType = checkContentType(bucket, options.contentType);
   const max = capFor(bucket, options.maxBytes, options.size);
