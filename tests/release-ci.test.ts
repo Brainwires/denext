@@ -286,7 +286,15 @@ function namedJobs(
 }
 
 Deno.test("e2e gate: e2e.yml's newest run on HEAD must have run every job, green", async () => {
-  assertEquals(E2E_JOBS, ["e2e", "migration-beds", "timer-stress", "no-deno"]);
+  assertEquals(E2E_JOBS, [
+    "e2e",
+    "migration-beds",
+    "timer-stress",
+    "no-deno",
+    "job-install (linux)",
+    "job-install (macos)",
+    "job-install (windows)",
+  ]);
   const green = fakeGh([run(1, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
     1: namedJobs(E2E_JOBS, "success"),
   });
@@ -423,7 +431,13 @@ Deno.test("release CI gate: every required job is a job of ci.yml", async () => 
 
 Deno.test("e2e + desktop window gates: every required job is named in its workflow", async () => {
   const e2e = await Deno.readTextFile(new URL("../.github/workflows/e2e.yml", import.meta.url));
-  for (const job of E2E_JOBS) assertStringIncludes(e2e, `\n  ${job}:\n`, job);
+  // A matrix job's legs are named `<job id> (<label>)`: the id is a job, each label a leg.
+  for (const job of E2E_JOBS) {
+    const leg = /^(.+) \((.+)\)$/.exec(job);
+    assertStringIncludes(e2e, `\n  ${leg ? leg[1] : job}:\n`, job);
+    if (leg) assertStringIncludes(e2e, `label: ${leg[2]},`, job);
+  }
+  assertStringIncludes(e2e, "name: job-install (${{ matrix.label }})");
   const win = await Deno.readTextFile(
     new URL("../.github/workflows/desktop-window.yml", import.meta.url),
   );
