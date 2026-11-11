@@ -271,9 +271,6 @@ async function cleanUp(rt: RoundTrip): Promise<void> {
 Deno.test({
   name: "denext job install: a real entry installs, fires through the scheduler and uninstalls",
   ignore: !ENABLED,
-  // The scheduler's processes are not this test's to account for.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await sandbox();
     const rt: RoundTrip = {
