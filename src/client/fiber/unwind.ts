@@ -99,6 +99,30 @@ function prepareFallbackRender(suspense: Fiber): void {
   if (isHydrating) dropHydrationCursor();
 }
 
+/**
+ * The boundaries that caught a render error during the current render pass (React's
+ * `DidCapture`): one of them re-renders its error UI on this same pass, so a throw from that
+ * UI must go to the next boundary up — catching it again re-rendered the same error UI forever
+ * (a class boundary's `render()`, a component boundary, a function `<ErrorBoundary>` whose
+ * mark {@link findErrorBoundary} also checks). A WeakSet, replaced at each pass start, so a
+ * pass that ends in a throw retains nothing.
+ */
+let capturedThisPass: WeakSet<Fiber> | null = null;
+
+/** Start a render pass with no boundary marked as having caught (see {@link capturedThisPass}). */
+export function resetCapturedBoundaries(): void {
+  capturedThisPass = null;
+}
+
+/** The nearest error boundary above `fiber` that has not already caught on this pass. */
+function nearestUncapturedBoundary(fiber: Fiber): Fiber | null {
+  let boundary = findErrorBoundary(fiber);
+  while (boundary !== null && capturedThisPass?.has(boundary)) {
+    boundary = findErrorBoundary(boundary);
+  }
+  return boundary;
+}
+
 /** A component suspended: hand the render to its nearest Suspense boundary. */
 function handleSuspend(sourceFiber: Fiber, thenable: Promise<unknown>): Fiber {
   const suspense = findSuspense(sourceFiber);
@@ -131,11 +155,12 @@ function handleSuspend(sourceFiber: Fiber, thenable: Promise<unknown>): Fiber {
  * it as uncaught and surface it.
  */
 function handleRenderError(sourceFiber: Fiber, thrown: unknown): Fiber {
-  const boundary = findErrorBoundary(sourceFiber);
+  const boundary = nearestUncapturedBoundary(sourceFiber);
   if (!boundary) {
     reportUncaught(sourceFiber, thrown); // no boundary → onUncaughtError, then surface
     throw thrown;
   }
+  (capturedThisPass ??= new WeakSet()).add(boundary);
   if (isClassBoundary(boundary)) {
     const cs = getClassSupport();
     if (!cs || !cs.handleClassError(boundary as never, thrown, componentErrorInfo(boundary))) {

@@ -566,3 +566,127 @@ Deno.test("runDesktop: a close before the windows are set up goes through the cl
     await Deno.remove(outDir, { recursive: true });
   }
 });
+
+Deno.test("runDesktop (pinned runtime): the app's own Window-menu items reach desktop.ts and the extensions once; runtime.quit() skips its own guard", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop, quits } = quittingDesktop(() => FakeMenuWindow.all);
+    const fromRunDesktop: unknown[] = [];
+    const fromHost: unknown[] = [];
+    const ext: DesktopCapability = {
+      name: "ext",
+      methods: {},
+      setup: (host) => {
+        host.onWindowMenuItem((id, ctx) => void fromHost.push([id, ctx]));
+      },
+    };
+    const { runtime, served } = await boot({
+      outDir,
+      port: 1,
+      window: { key: "workspace" },
+      configMenu: {
+        window: {
+          items: [{ id: "end", label: "Close and End", accelerator: "CommandOrControl+E" }],
+        },
+      },
+      onWindowMenuItem: (id, ctx) => void fromRunDesktop.push([id, ctx]),
+      capabilities: [ext],
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const main = FakeMenuWindow.all[0];
+    const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
+    // (The submenu also carries the macOS roles when the test runs on a Mac.)
+    const items = menu[0].submenu.items.filter((e) => typeof e === "object" && e && "item" in e);
+    assertEquals(items, [{
+      item: {
+        id: "denext:window:item:end",
+        label: "Close and End",
+        enabled: true,
+        accelerator: "CommandOrControl+E",
+      },
+    }]);
+    // A real click: the window's "menuclick", then Deno.desktop's; denext hears one of them.
+    const click = { detail: { id: "denext:window:item:end" } };
+    main.dispatchEvent(new CustomEvent("menuclick", click));
+    desktop.dispatchEvent(new CustomEvent("menuclick", click));
+    const expected = [["end", { keyWindow: { id: "main", key: "workspace" } }]];
+    assertEquals(fromRunDesktop, expected, "desktop.ts: once");
+    assertEquals(fromHost, expected, "the extension: once");
+    // Never queued for a page.
+    const token = injectedGlobal(
+      await (await served.handler(get("http://127.0.0.1:1/"), {})).text(),
+    )!.token as string;
+    assertEquals((await pageRpc(served, token)("app", "take")).data, []);
+    // runtime.quit(): its own guard (which cancelled to ask) is not asked again.
+    let asked = 0;
+    runtime.onBeforeQuit(() => (asked++, false));
+    assertEquals(desktop.quit(), false);
+    await until(() => asked === 1);
+    assertEquals(await runtime.quit(), true);
+    assertEquals([asked, quits.length], [1, 1]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance, the extensions and still the deep links", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    const fromRunDesktop: unknown[] = [];
+    const fromHook: unknown[] = [];
+    const fromHost: unknown[] = [];
+    const fromRuntime: unknown[] = [];
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = {
+      name: "ext",
+      methods: {},
+      onSecondInstance: (event) => void fromHook.push(event),
+      setup: (h) => {
+        host = h;
+      },
+    };
+    const { runtime, served } = await boot({
+      outDir,
+      port: 1,
+      deepLinks: ["myapp"],
+      onSecondInstance: (event) => void fromRunDesktop.push(event),
+      capabilities: [ext],
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const off = host!.onSecondInstance((event) => void fromHost.push(event));
+    const offRuntime = runtime.onSecondInstance((event) => void fromRuntime.push(event));
+    const launch = (args: string[]) =>
+      desktop.dispatchEvent(
+        new CustomEvent("secondinstance", {
+          detail: { args, cwd: "/work", urls: ["myapp://open/1"], files: [] },
+        }),
+      );
+    launch(["myapp://open/1", "--flag"]);
+    const expected = [{ args: ["myapp://open/1", "--flag"], cwd: "/work" }];
+    await until(() => fromHook.length === 1);
+    assertEquals(fromRunDesktop, expected);
+    assertEquals(fromHook, expected);
+    assertEquals(fromHost, expected);
+    assertEquals(fromRuntime, expected, "DesktopRuntime.onSecondInstance");
+    // The deep link is routed to the page as before.
+    const token = injectedGlobal(
+      await (await served.handler(get("http://127.0.0.1:1/"), {})).text(),
+    )!.token as string;
+    assertEquals((await pageRpc(served, token)("deepLinks", "take")).data, [
+      { url: "myapp://open/1", launch: false },
+    ]);
+    // Unsubscribed: the host hears no more; desktop.ts's handler and the static hook still do.
+    off();
+    offRuntime();
+    launch([]);
+    await until(() => fromHook.length === 2);
+    assertEquals([fromRunDesktop.length, fromHost.length, fromRuntime.length], [2, 1, 1]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});

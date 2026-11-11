@@ -450,7 +450,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // to an app whose .deno-desktop/app.json bakes the capability (NotCapable otherwise).
     trust: "none",
     notes:
-      "aggregate CPU / GPU / memory load in percent, no per-process data (pinned runtime from the release after 3.0.0-denext.13; every call is `unsupported` under an older one)",
+      "aggregate CPU / GPU / memory load in percent, no per-process data (pinned runtime from 3.0.0-denext.16; every call is `unsupported` under an older one)",
   },
   updates: {
     key: "updates",
@@ -508,7 +508,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("microphone"),
-      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Microphone, "Let desktop apps access your microphone") the window refuses the device and appCapabilities().microphoneAccess reads "denied" with the reason (Deno Desktop runtime after 3.0.0-denext.13). Linux asks nobody.',
+      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Microphone, "Let desktop apps access your microphone") the window refuses the device and appCapabilities().microphoneAccess reads "denied" with the reason (Deno Desktop runtime from 3.0.0-denext.16). Linux asks nobody.',
     ],
   },
   camera: {
@@ -520,7 +520,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("camera"),
-      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Camera, "Let desktop apps access your camera") the window refuses the device and appCapabilities().cameraAccess reads "denied" with the reason (Deno Desktop runtime after 3.0.0-denext.13). Linux asks nobody.',
+      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Camera, "Let desktop apps access your camera") the window refuses the device and appCapabilities().cameraAccess reads "denied" with the reason (Deno Desktop runtime from 3.0.0-denext.16). Linux asks nobody.',
     ],
   },
   passkeys: {

@@ -142,6 +142,56 @@ Deno.test("setup: the host's confirm is refused as unsupported on a runtime with
   assertEquals([err.code, err.status], ["unsupported", 501]);
 });
 
+Deno.test("setup: the host's confirm box goes through the lifecycle (the quit guards' deadline pauses for it)", async () => {
+  const boxes: Promise<unknown>[] = [];
+  const owners: unknown[] = [];
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "guard", methods: {}, setup: (h) => void (host = h) }], {
+    lifecycle: {
+      onWindowOpened: () => () => {},
+      onWindowClosed: () => () => {},
+      onAppQuit: () => () => {},
+      onBeforeQuit: (_fn, owner) => (owners.push(["guard", owner]), () => {}),
+      windows: () => [],
+      requestQuit: (owner) => (owners.push(["quit", owner]), Promise.resolve(true)),
+      whileGuardAsks: (box) => (boxes.push(box), box),
+    },
+  });
+  const asked = host!.confirm({ message: "Quit anyway?" });
+  assertEquals(boxes.length, 1, "the box was handed to whileGuardAsks");
+  await assertRejects(() => asked, DesktopCapError); // no message boxes in this process
+  // The guards and the quit carry the capability as their owner.
+  host!.onBeforeQuit(() => true);
+  assertEquals(await host!.quit(), true);
+  assertEquals(owners, [["guard", "guard"], ["quit", "guard"]]);
+  // Without a lifecycle (no window): quit resolves false, a menu subscription is kept by nobody.
+  let bare: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "x", methods: {}, setup: (h) => void (bare = h) }]);
+  assertEquals(await bare!.quit(), false);
+  bare!.onWindowMenuItem(() => {})();
+});
+
+Deno.test("setup: the host's onSecondInstance is desktop.ts's subscription, a no-op without it", () => {
+  const subscribed: unknown[] = [];
+  let unsubscribed = 0;
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "single", methods: {}, setup: (h) => void (host = h) }], {
+    onSecondInstance: (fn) => {
+      subscribed.push(fn);
+      return () => void unsubscribed++;
+    },
+  });
+  const fn = () => {};
+  const off = host!.onSecondInstance(fn);
+  assertEquals(subscribed, [fn]);
+  off();
+  assertEquals(unsubscribed, 1);
+  // No desktop runtime: kept by nobody.
+  let bare: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "x", methods: {}, setup: (h) => void (bare = h) }]);
+  bare!.onSecondInstance(() => {})();
+});
+
 Deno.test("setup: the host's openWindow is desktop.ts's windows.open, unsupported without it", () => {
   const opened: unknown[] = [];
   const ref = { id: "window-1", kind: "window" } as unknown as DesktopWindowRef;

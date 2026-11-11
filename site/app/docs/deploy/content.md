@@ -430,6 +430,13 @@ Push the repo and point the entrypoint at `jsr:@denext/denext@^4.0.0/cli` with a
 TLS and autoscaling; still set a per-instance `maxConcurrency` (§1) and your
 secrets (`SESSION_SECRET`, etc.) as environment variables.
 
+The `denoDeploy()` preset ([deploy adapters](#deploy-adapters)) writes that entrypoint for you:
+`denext.deploy.ts` registers the build's schedules with `Deno.cron` at its top level, puts the cache
+on Deno KV (`denoKvCacheStore()`) when `cache.store` is unset, and starts the server;
+`.denext/deploy/deno-deploy/app.json` holds the build settings and the one-time
+`deno deploy create` command, and `denext deploy` runs `deno deploy --prod` with
+`DENO_DEPLOY_TOKEN` from the environment.
+
 denext's cache defaults to Deno's built-in `node:sqlite` (a local SQLite file),
 but Deno Deploy has no persistent local filesystem, so the cache falls back to a
 per-instance **in-memory** store there. For a cache that is durable and shared
@@ -1036,8 +1043,9 @@ A few things the framework deliberately cannot decide for you:
 **Run production with least privilege.** The `dev`/`build` tasks use `-A`
 because they bundle; `denext start` serves prebuilt output and never needs
 `--allow-run`. The `start` task `denext create` writes is the least-privilege
-set, and it is what the Docker image runs. It limits what a bug or a bad dependency can reach; it
-is not a sandbox for hostile code ([Permission flags are guardrails](/docs/security#permission-flags-are-guardrails)):
+set, and it is what the Docker image runs. Its grants are least-privilege
+guardrails, not a sandbox, and its network, read and env access is unscoped:
+see [Permissions](/docs/permissions) before you rely on them.
 
 ```sh
 deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext/cli start .

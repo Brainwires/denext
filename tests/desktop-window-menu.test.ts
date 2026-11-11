@@ -11,7 +11,13 @@ import type { RegistryWindow } from "../src/desktop/window-registry.ts";
 import { setUpDesktopWindows } from "../src/desktop/app-windows.ts";
 import { FIRST_APP_MENU_EVENT_RUNTIME } from "../src/build/deno-version.ts";
 import { desktopMenuProblem, resolveDesktopMenuSettings } from "../src/desktop/menu-config.ts";
-import type { DesktopNewWindowHandler } from "../src/desktop/window-menu.ts";
+import type { DesktopWindowMenuSettings } from "../src/desktop/menu-config.ts";
+import type {
+  DesktopNewWindowHandler,
+  DesktopWindowMenuItemHandler,
+} from "../src/desktop/window-menu.ts";
+import { createDesktopBridge } from "../src/desktop/bridge.ts";
+import type { DesktopExtensionHost } from "../src/desktop/extension.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -85,8 +91,9 @@ const WINDOW_CLICK_RUNTIME = "3.0.0-denext.13";
 function setup(
   options: {
     os?: string;
-    menu?: { newWindow?: string | false; reopenClosed?: boolean; list?: boolean };
+    menu?: DesktopWindowMenuSettings;
     newWindow?: DesktopNewWindowHandler;
+    onWindowMenuItem?: DesktopWindowMenuItemHandler;
     title?: string;
     runtimeVersion?: string;
     keepAlive?: boolean;
@@ -115,6 +122,7 @@ function setup(
       window: options.menu ?? { newWindow: "/", reopenClosed: true, list: true },
     },
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
+    ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
     // A runtime whose clicks reach the main window, unless a test names one (whatever runs it).
     runtimeVersion: options.runtimeVersion ?? WINDOW_CLICK_RUNTIME,
     ...(options.keepAlive !== undefined ? { appSettings: { keepAlive: options.keepAlive } } : {}),
@@ -404,4 +412,154 @@ Deno.test("window menu: Reopen Closed Window and the list keep working after the
   assertEquals(first.calls, ["show", "focus"]);
   appClick(api, "denext:window:new");
   assertEquals(s.windows.list().length, 3);
+});
+
+// --- the app's own items (desktop.menu.window.items) ------------------------------------------
+
+const ITEMS: DesktopWindowMenuSettings["items"] = [
+  { id: "end", label: "Close Window and End", accelerator: "CommandOrControl+Shift+W" },
+  { id: "tile", label: "Tile" },
+];
+
+Deno.test("window menu items: after denext's items, before the list, with reserved ids", () => {
+  const { main } = setup({
+    menu: { newWindow: "/", reopenClosed: true, list: true, items: ITEMS },
+  });
+  assertEquals(windowSubmenu(main).map(brief), [
+    "denext:window:new:New Window[CommandOrControl+N]",
+    "denext:window:reopen:Reopen Closed Window[CommandOrControl+Shift+T](off)",
+    "---",
+    "denext:window:item:end:Close Window and End[CommandOrControl+Shift+W]",
+    "denext:window:item:tile:Tile",
+    "---",
+    "denext:window:focus:main:workspace",
+  ]);
+  // Items alone make the submenu.
+  const alone = setup({ menu: { items: ITEMS.slice(1) } });
+  assertEquals(windowSubmenu(alone.main).map(brief), ["denext:window:item:tile:Tile"]);
+});
+
+Deno.test("window menu items: a click reaches desktop.ts and each extension once, with the key window, never a page", async () => {
+  const seen: unknown[] = [];
+  const { s, main } = setup({
+    menu: { newWindow: "/", items: ITEMS },
+    onWindowMenuItem: (id, ctx) => void seen.push(["desktop.ts", id, ctx]),
+  });
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "ext", methods: {}, setup: (h) => (host = h) }], {
+    lifecycle: s.lifecycle!,
+    onWindowMenuItem: (fn) => s.onWindowMenuItem(fn),
+  });
+  const off = host!.onWindowMenuItem((id, ctx) => void seen.push(["ext", id, ctx]));
+  // The page has a menu of its own: it hears its own items only.
+  const app = s.app!.capability;
+  await app.methods.setAppMenu.handler({
+    menu: [{ label: "Window", children: [{ id: "mine", label: "Mine", enabled: true }] }],
+  }, ctx());
+  main.click("denext:window:new"); // window-1, keyed
+  const other = FakeWin.made.at(-1)!;
+  other.dispatchEvent(new Event("focus"));
+  main.click("denext:window:item:end");
+  assertEquals(seen, [
+    ["desktop.ts", "end", { keyWindow: { id: s.windows.byKey("window-1")!.id, key: "window-1" } }],
+    ["ext", "end", { keyWindow: { id: s.windows.byKey("window-1")!.id, key: "window-1" } }],
+  ]);
+  assertEquals(await app.methods.take.handler({}, ctx()), [], "no page queue sees it");
+  assertEquals(await app.methods.take.handler({}, ctx(s.windows.byKey("window-1")!.id)), []);
+  // The main window takes the focus back: it is the key window now. Unsubscribed: desktop.ts only.
+  seen.length = 0;
+  off();
+  main.dispatchEvent(new Event("focus"));
+  main.click("denext:window:item:tile");
+  assertEquals(seen, [["desktop.ts", "tile", { keyWindow: { id: "main", key: "workspace" } }]]);
+});
+
+Deno.test("window menu items: a failing handler is a warning; nothing to handle a click is a warning", () => {
+  const failing = setup({
+    menu: { items: ITEMS },
+    onWindowMenuItem: () => {
+      throw new Error("boom");
+    },
+  });
+  failing.main.click("denext:window:item:end");
+  assert(failing.warnings.some((w) => w.includes('"end"') && w.includes("boom")));
+  const none = setup({ menu: { items: ITEMS } });
+  none.main.click("denext:window:item:end");
+  assert(none.warnings.some((w) => w.includes("nothing handles it")));
+});
+
+Deno.test("window menu items: with no window open the clicks still arrive, keyWindow null (app-level event)", () => {
+  const seen: unknown[] = [];
+  const { main, api } = setup({
+    runtimeVersion: FIRST_APP_MENU_EVENT_RUNTIME,
+    keepAlive: true,
+    menu: { items: ITEMS },
+    onWindowMenuItem: (id, ctx) => void seen.push([id, ctx]),
+  });
+  assert(main.userClose());
+  appClick(api, "denext:window:item:end");
+  assertEquals(seen, [["end", { keyWindow: null }]]);
+});
+
+Deno.test("window menu items: before the app-level menu event the clicks come from the main window only", () => {
+  const seen: unknown[] = [];
+  const { main, api } = setup({
+    runtimeVersion: WINDOW_CLICK_RUNTIME,
+    keepAlive: true,
+    menu: { items: ITEMS },
+    onWindowMenuItem: (id) => void seen.push(id),
+  });
+  appClick(api, "denext:window:item:end"); // not listened to on this runtime
+  main.click("denext:window:item:end");
+  assertEquals(seen, ["end"]);
+});
+
+Deno.test("window menu items: a page's application menu may not use the reserved id prefix", async () => {
+  const { s } = setup({ menu: { items: ITEMS } });
+  const app = s.app!.capability;
+  let error: unknown;
+  try {
+    await app.methods.setAppMenu.handler({
+      menu: [{ id: "denext:window:item:end", label: "Fake", enabled: true }],
+    }, ctx());
+  } catch (err) {
+    error = err;
+  }
+  assertStringIncludes(String((error as Error)?.message), "reserved");
+});
+
+Deno.test("window menu items: desktop.menu.window.items is checked at config load and at launch", () => {
+  const items = (value: unknown) => desktopMenuProblem({ window: { items: value } });
+  assertEquals(items([{ id: "a", label: "A", accelerator: "CommandOrControl+A" }]), null);
+  assertEquals(items({})?.[0], "menu.window.items");
+  assertEquals(items([1])?.[0], "menu.window.items[0]");
+  assertEquals(items([{ label: "A" }])?.[0], "menu.window.items[0].id");
+  assertEquals(items([{ id: "a\n", label: "A" }])?.[0], "menu.window.items[0].id");
+  assertEquals(items([{ id: "a".repeat(129), label: "A" }])?.[0], "menu.window.items[0].id");
+  assertEquals(items([{ id: "a", label: "" }])?.[0], "menu.window.items[0].label");
+  assertEquals(
+    items([{ id: "a", label: "A", accelerator: 1 }])?.[0],
+    "menu.window.items[0].accelerator",
+  );
+  assertEquals(
+    items([{ id: "a", label: "A" }, { id: "a", label: "B" }]),
+    ["menu.window.items[1].id", '"a" is used by another item'],
+  );
+  assertEquals(
+    items(Array.from({ length: 33 }, (_, i) => ({ id: `i${i}`, label: "x" })))?.[1],
+    "holds at most 32 items",
+  );
+  assertEquals(
+    resolveDesktopMenuSettings({
+      menu: { window: { items: [{ id: "a", label: "A", extra: 1 }] } },
+    }),
+    { window: { items: [{ id: "a", label: "A" }] } },
+  );
+  const validate = (menu: unknown) => validateDenextConfig({ desktop: { menu } } as DenextConfig);
+  validate({ window: { items: [{ id: "a", label: "A" }] } });
+  assertThrows(
+    () => validate({ window: { items: [{ id: "a" }] } }),
+    Error,
+    "desktop.menu.window.items[0].label",
+  );
 });

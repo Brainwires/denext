@@ -227,7 +227,7 @@ export interface AppCapabilities {
    * the page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`
    * capability on, and `checkPermission("microphone")` reads `"blocked"`. `null` when no switch is
    * set, and on macOS / Linux. Probed on every call (the user can flip a switch while the app
-   * runs). `"unknown"` before the runtime after 3.0.0-denext.13.
+   * runs). `"unknown"` before runtime 3.0.0-denext.16.
    */
   readonly microphoneAccess: "allowed" | "denied" | PlatformUnknown | null;
   /** Windows, when `microphoneAccess` is `"denied"`: which switch refuses and where it is. */
@@ -293,7 +293,7 @@ const SECRET_STATES = [
  * tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);
  * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and
  * native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches
- * (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads `"unknown"`.
+ * (the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads `"unknown"`.
  *
  * @returns The capabilities.
  */
@@ -474,7 +474,9 @@ export async function getActivationPolicy(): Promise<ActivationPolicy | null> {
 
 /**
  * Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no
- * window showing, the main window is shown again first; `hasVisibleWindows` says whether one was.
+ * window showing, the click first reopens the most recently closed keyed window (its key, path and
+ * frame), else shows the main window, unless `runDesktop({ onDockReopen })` in `desktop.ts`
+ * decides what opens; `hasVisibleWindows` says whether a window was showing.
  *
  * @param handler Called with `{ hasVisibleWindows }`.
  * @returns A function that unsubscribes.

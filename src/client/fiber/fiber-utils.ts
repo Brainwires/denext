@@ -157,10 +157,15 @@ export function isHookBoundary(fiber: Fiber): boolean {
   return componentBoundary !== null && componentBoundary(fiber);
 }
 
+/**
+ * The nearest error boundary above `fiber`. A function `<ErrorBoundary>` that holds a caught
+ * error renders only its fallback, so a throw from below it came from that fallback: it goes to
+ * the next boundary up, never back to the same one (which re-rendered it forever).
+ */
 export function findErrorBoundary(fiber: Fiber): Fiber | null {
   for (let n = fiber.return; n !== null; n = n.return) {
     if (
-      n.tag === "errorboundary" ||
+      (n.tag === "errorboundary" && n.ext?.__error == null) ||
       ((typeof __DENEXT_HOOK_BOUNDARIES__ === "undefined" || __DENEXT_HOOK_BOUNDARIES__) &&
         isHookBoundary(n)) ||
       isClassBoundary(n)

@@ -718,9 +718,9 @@ let warnedUntrustedProxy = false;
  * header.
  *
  * In that shape the "client IP" every per-IP limiter would key on is the proxy, so all
- * traffic shares one bucket and the 21st sign-in start *app-wide* is a 429 for fifteen
- * minutes. The per-IP budgets are therefore skipped for such a request (the credentials
- * limiter, whose key also carries the submitted identifier, keeps working), and the
+ * traffic shares one bucket and the 101st sign-in start *app-wide* (the default budget is 100) is
+ * a 429 for fifteen minutes. The per-IP budgets are therefore skipped for such a request (the
+ * credentials limiter, whose key also carries the submitted identifier, keeps working), and the
  * operator is told once how to get the limiter back. A request with no recorded peer (a
  * handler called directly) keeps them, keyed `unknown`.
  *

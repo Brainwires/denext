@@ -60,7 +60,12 @@ import {
 } from "./extension.ts";
 import type { PickedPaths } from "./picked-paths.ts";
 import type { WindowLifecycleHost } from "./window-lifecycle.ts";
-import type { DesktopOpenWindowOptions, DesktopWindowRef } from "./app-windows.ts";
+import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
+import type {
+  DesktopOpenWindowOptions,
+  DesktopSecondInstanceEvent,
+  DesktopWindowRef,
+} from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
@@ -133,6 +138,20 @@ export interface DesktopBridgeOptions {
    * delegates to. Without it (no desktop runtime, a test) `openWindow` throws `unsupported`.
    */
   readonly openWindow?: (options: DesktopOpenWindowOptions) => DesktopWindowRef;
+  /**
+   * Subscribe to the app's own Window-menu items (`desktop.menu.window.items`): what
+   * {@link DesktopExtensionHost.onWindowMenuItem} delegates to. Without it (no window menu, a test)
+   * a subscription is kept by nobody.
+   */
+  readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
+  /**
+   * Subscribe to the app's second launches (`desktop.app.singleInstance`): what
+   * {@link DesktopExtensionHost.onSecondInstance} delegates to. Without it (no desktop runtime, a
+   * test) a subscription is kept by nobody.
+   */
+  readonly onSecondInstance?: (
+    fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>,
+  ) => () => void;
 }
 
 /**
@@ -158,6 +177,8 @@ const NO_LIFECYCLE: WindowLifecycleHost = {
   onAppQuit: () => () => {},
   onBeforeQuit: () => () => {},
   windows: () => [],
+  requestQuit: () => Promise.resolve(false),
+  whileGuardAsks: (box) => box,
 };
 
 /** The runtime bridge: a request handler for its two paths, and an event emitter. */
@@ -496,10 +517,15 @@ export function createDesktopBridge(
     onWindowOpened: (fn) => lifecycle.onWindowOpened(fn),
     onWindowClosed: (fn) => lifecycle.onWindowClosed(fn),
     onAppQuit: (fn) => lifecycle.onAppQuit(fn),
-    onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn),
+    // The owner is the capability: its own `quit()` skips its own guards.
+    onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn, cap.name),
+    quit: () => lifecycle.requestQuit(cap.name),
+    onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
+    onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
-    confirm: (confirmOptions) => desktopConfirm(confirmOptions),
+    // A box up while the quit guards are asked stops their deadline (not a session end's).
+    confirm: (confirmOptions) => lifecycle.whileGuardAsks(desktopConfirm(confirmOptions)),
     openWindow: (windowOptions) => {
       if (!options.openWindow) {
         throw new DesktopCapError("unsupported", "openWindow needs the desktop runtime's windows", {

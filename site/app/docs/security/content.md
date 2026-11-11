@@ -77,10 +77,13 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    — the stable `cacheComponents` opt-in — but resumes dynamic holes by buffered
    server-side splice, not the streaming-resume mechanism the Cache-Components
    CVE targets.)
-5. **Deno permission model as a guardrail.** The production process runs under
-   explicit least-privilege `--allow-*` grants, which narrows what a bug, an RCE or a
-   path traversal that did land can reach. That is defence in depth, not a sandbox
-   for hostile code: see [Permission flags are guardrails](#permission-flags-are-guardrails).
+5. **Deno's permissions as least-privilege guardrails.** The process runs
+   under explicit `--allow-*` grants, so an RCE or path traversal that did land
+   is limited to what those grants allow through Deno's own APIs. They are
+   checks inside Deno, not a sandbox: a subprocess, FFI or a native addon goes
+   around them, and kernel enforcement is planned, not shipped. See
+   [Permissions](/docs/permissions) for the grants that amount to full trust, and
+   [Permission flags are guardrails](#permission-flags-are-guardrails).
 
 The flip side: a few things are **our** responsibility precisely _because_ we
 reimplement them — see [Known Gaps](#known-gaps--residual-risk).
@@ -321,7 +324,10 @@ process that holds them, and several grants hand over more than their name sugge
 
 Treat code you haven't reviewed as having every permission the process could reach this way, and
 run it only where that is acceptable: [Untrusted repositories](#untrusted-repositories) lists which
-verbs run a project's code. An OS-enforced mode for fixed permission sets is planned.
+verbs run a project's code. Kernel enforcement of the grants (Landlock on Linux, Seatbelt on macOS,
+so a subprocess, FFI or a native addon is held to them too) is in design for the runtime fork; it is
+on the 5.x part of the [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md), not
+shipped.
 
 ### `denext dashboard` — a password-gated database GUI
 

@@ -266,6 +266,12 @@ export default function Cli() {
           </tr>
           <tr>
             <td>
+              <code>deploy</code>, <code>deploy prepare</code>
+            </td>
+            <td>build directory, exclusive</td>
+          </tr>
+          <tr>
+            <td>
               <code>doctor</code>
             </td>
             <td>build directory, shared (readers run side by side; a build is waited out)</td>

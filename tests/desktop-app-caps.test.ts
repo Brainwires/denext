@@ -1809,7 +1809,7 @@ Deno.test("app: the Linux CEF sandbox and the file chooser follow the probe (run
   assertEquals(await capsWith(undefined), ["unknown", null, "unknown", null]);
 });
 
-Deno.test("app: Windows' microphone and camera privacy switches follow the probe (the runtime after 3.0.0-denext.13)", async () => {
+Deno.test("app: Windows' microphone and camera privacy switches follow the probe (the runtime from 3.0.0-denext.16)", async () => {
   const capsWith = async (features: Record<string, unknown> | undefined) => {
     const cap = createAppController({
       window: undefined,

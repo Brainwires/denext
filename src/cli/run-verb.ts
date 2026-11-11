@@ -161,13 +161,7 @@ async function maybeReexecForCss(
 ): Promise<boolean> {
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
   const paths = await resolveProject(dir);
-  // Self-heal a previous run that was killed before it could restore the app's deno.json
-  // (see the transient css-redirect injection below), so this build starts from the
-  // committed config, not a leftover mutated one: from the backup when one survived, else
-  // by splicing out any css→shim entries that were left with no backup at all (`doctor`
-  // skips this so it can report them).
-  await restoreAppConfig(paths.configPath, paths.outDir);
-  if (heal) await healLeakedCssShims(paths.configPath);
+  await restoreCommittedAppConfig(paths.configPath, paths.outDir, heal);
   const css = await buildAppCss({
     projectDir: dir,
     configPath: paths.configPath,
@@ -194,15 +188,66 @@ async function maybeReexecForCss(
   // css→shim redirects have to live there for the build. Inject them TRANSIENTLY (a
   // backup is kept) and restore the committed deno.json once the build child exits, so
   // `deno task build/export` leaves the app's config byte-identical.
-  if (css.appConfigRedirects) {
-    await injectCssRedirectsTransiently(paths.configPath, paths.outDir, css.appConfigRedirects);
-  }
-  return await reexecWithConfig(
-    css.configPath,
-    "DENEXT_CSS_ACTIVE",
-    () => restoreAppConfig(paths.configPath, paths.outDir),
-    limits,
+  return await withCssRedirects(
+    paths.configPath,
+    paths.outDir,
+    css.appConfigRedirects,
+    () =>
+      reexecWithConfig(
+        css.configPath,
+        "DENEXT_CSS_ACTIVE",
+        () => restoreAppConfig(paths.configPath, paths.outDir),
+        limits,
+      ),
   );
+}
+
+/**
+ * Put the app's committed `deno.json` back before a run patches it: from the backup a run
+ * killed mid-build left (SIGKILL, power loss, a full disk that failed its restore), else — with
+ * `heal` — by splicing out css→shim entries left with no backup at all, as an older denext could
+ * leave them. `doctor` passes `heal: false` so it can report them instead.
+ *
+ * @param configPath The app's `deno.json`.
+ * @param outDir The `.denext` output dir (holds the backup).
+ * @param heal Splice out leftover entries that have no backup.
+ */
+export async function restoreCommittedAppConfig(
+  configPath: string,
+  outDir: string,
+  heal: boolean,
+): Promise<void> {
+  await restoreAppConfig(configPath, outDir);
+  if (heal) await healLeakedCssShims(configPath);
+}
+
+/**
+ * Run `run` with `redirects` injected into the app's `deno.json` ({@linkcode
+ * injectCssRedirectsTransiently}), restoring the committed bytes on every way out: `run`'s own
+ * cleanup on a normal exit, the guard on a signal or `Deno.exit`, and here on a throw — Deno
+ * dispatches no `unload` for an uncaught error, so a run that threw (a spawn that failed, a full
+ * disk) used to leave the entries in the config. With no `redirects`, just runs `run`.
+ *
+ * @param configPath The app's `deno.json`.
+ * @param outDir The `.denext` output dir (holds the backup).
+ * @param redirects The css→shim entries to inject, or `undefined` for none.
+ * @param run The work that needs them (the build re-exec).
+ * @returns What `run` returned.
+ */
+export async function withCssRedirects<T>(
+  configPath: string,
+  outDir: string,
+  redirects: Record<string, string> | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!redirects) return await run();
+  try {
+    await injectCssRedirectsTransiently(configPath, outDir, redirects);
+    return await run();
+  } catch (err) {
+    await restoreAppConfig(configPath, outDir).catch(() => {});
+    throw err;
+  }
 }
 
 /** The residual standalone-binary path of {@linkcode maybeReexecForCss}: CSS imports cannot work. */
@@ -226,7 +271,7 @@ function warnStandaloneCss(): void {
 async function injectCssRedirectsTransiently(
   configPath: string,
   outDir: string,
-  redirects: Parameters<typeof injectAppConfigRedirects>[2],
+  redirects: Record<string, string>,
 ): Promise<void> {
   // A previous run killed mid-build (SIGKILL, power loss) skipped its restore and left the
   // redirects — and its backup — behind; put the committed config back before injecting

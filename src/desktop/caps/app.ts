@@ -51,7 +51,7 @@ import { base64ToBytes } from "../../mobile/base64.ts";
 import { supportsAppMenuEvent } from "../../build/deno-version.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
-import type { BackendMenu } from "../window-menu.ts";
+import { APP_ITEM_PREFIX, type BackendMenu } from "../window-menu.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
@@ -676,6 +676,12 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
           );
         }
         const { items, ids } = nativeMenu(argsOf(args).menu);
+        // The app's own Window-menu items (`desktop.menu.window.items`) are the backend's.
+        for (const id of ids) {
+          if (id.startsWith(APP_ITEM_PREFIX)) {
+            throw invalid(`menu: the id prefix "${APP_ITEM_PREFIX}" is reserved for the backend`);
+          }
+        }
         s.pageMenu = items;
         s.appMenuIds = ids;
         applyAppMenu(s);

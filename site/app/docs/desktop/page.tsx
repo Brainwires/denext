@@ -2093,10 +2093,11 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>secureStore</code> (Keychain · PasswordVault · libsecret)
             </td>
             <td>
-              an unscoped <code>--allow-sys</code> (the runtime&apos;s store) and{" "}
-              <code>--allow-run</code>: security ·{" "}
-              <code>--allow-run</code>: powershell.exe · an unscoped <code>--allow-sys</code>{" "}
-              (the runtime&apos;s libsecret)
+              <code>--allow-run</code>: security only while <code>desktop.secureStore.legacy</code>
+              {" "}
+              is on ·{" "}
+              <code>--allow-run</code>: powershell.exe · none. Before runtime 3.0.0-denext.16 macOS
+              and Linux also bake an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
             </td>
             <td>full</td>
           </tr>
@@ -2109,8 +2110,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>listDir</code>, <code>downloadToFile</code>
             </td>
             <td>
-              broad <code>--allow-write</code>{" "}
-              (the runtime confines it to the app-support / cache folders)
+              <code>--allow-write</code>{" "}
+              scoped to the app-support / cache folders (runtime 3.0.0-denext.8+ with{" "}
+              <code>desktop.app.identifier</code>; broad before, the runtime confining it)
             </td>
             <td>broad</td>
           </tr>
@@ -2122,7 +2124,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>openSqlite</code>, <code>deleteSqlite</code> (<code>node:sqlite</code>)
             </td>
             <td>
-              broad <code>--allow-write</code> (runtime-confined to the app-support folder)
+              <code>--allow-write</code>{" "}
+              scoped to the app-support folder (runtime 3.0.0-denext.8+ with{" "}
+              <code>desktop.app.identifier</code>; broad before, runtime-confined)
             </td>
             <td>broad</td>
           </tr>
@@ -2470,10 +2474,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         closes; <code>get</code>{" "}
         also reads it when the keychain answers with no value for the key (a value the keychain
         holds wins), a later keychain write of the key clears it and <code>delete</code>{" "}
-        clears both. Only a refusal (<code>backend_unavailable</code>,{" "}
-        <code>store_failed</code>) falls back: a <code>validation</code>, <code>forbidden</code> or
+        clears both. Only a refusal (<code>backend_unavailable</code>, <code>store_failed</code>, or
         {" "}
-        <code>timeout</code> error still rejects.
+        <code>unavailable</code> when the capability is not enabled) falls back: a{" "}
+        <code>validation</code>, <code>forbidden</code> or <code>timeout</code> error still rejects.
       </Callout>
       <Callout kind="note">
         <strong>The secure store on macOS.</strong> Under the pinned runtime{" "}
@@ -2499,18 +2503,18 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         marker in the store, and later launches never import such an item again (another program
         could have planted it). A write over one the runtime&apos;s store finds in its way reads its
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
-        (or the stock one) keeps the <code>security</code> path. The capability bakes an unscoped
+        (or the stock one) keeps the <code>security</code>{" "}
+        path. Under the pinned runtime (3.0.0-denext.17; from 3.0.0-denext.16 the runtime reads the
+        capability list denext writes into{" "}
+        <code>.deno-desktop/app.json</code>) the capability bakes no{" "}
+        <code>--allow-sys</code>; an older runtime needs an unscoped one for its store. It bakes
         {" "}
-        <code>--allow-sys</code>{" "}
-        for the runtime&apos;s store (until the runtime reads the capability list denext writes into
-        {" "}
-        <code>.deno-desktop/app.json</code>), plus <code>--allow-run=security</code> while{" "}
-        <code>desktop.secureStore.legacy</code>{" "}
+        <code>--allow-run=security</code> only while <code>desktop.secureStore.legacy</code>{" "}
         is on. That is the default, so an app that shipped the <code>security</code>{" "}
         path keeps moving its users&apos; items; set{" "}
-        <code>{"desktop: { secureStore: { legacy: false } }"}</code> once it no longer needs to, and
-        {" "}
-        <code>security</code>{" "}
+        <code>{"desktop: { secureStore: { legacy: false } }"}</code>{" "}
+        (<code>DesktopSecureStoreConfig</code>, from{" "}
+        <code>denext/server</code>) once it no longer needs to, and <code>security</code>{" "}
         is neither run nor baked (under a runtime without its own macOS store every call then
         rejects <code>backend_unavailable</code>, naming the setting).{" "}
         <code>denext desktop add secure-store</code> writes <code>legacy: false</code>{" "}
@@ -2525,8 +2529,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         {" "}
         capability under <code>&lt;desktop.app.identifier&gt;/ext/&lt;name&gt;</code>{" "}
         (its capability name) through <code>ctx.secureStore</code> in a handler or{" "}
-        <code>host.secureStore</code> in <code>setup</code> (<code>get(key)</code>,{" "}
-        <code>set(key, value)</code>,{" "}
+        <code>host.secureStore</code> in <code>setup</code> (a <code>DesktopSecureStore</code>:{" "}
+        <code>get(key)</code>, <code>set(key, value)</code>,{" "}
         <code>delete(key)</code>; the page API&apos;s key rules). No page can read an
         extension&apos;s secrets, nor one extension another&apos;s. The extension store needs{" "}
         <code>secure-store</code> enabled; without it every call rejects{" "}
@@ -2649,9 +2653,11 @@ desktop: {
         {" "}
         <code>pty</code>{" "}
         only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.16) has no terminals yet: opening one rejects with{" "}
-        <code>NotSupported</code>. Once it does, the terminal is a ConPTY, whose output carries its
-        own VT sequences even for plain text.
+        (3.0.0-denext.17) has no terminals yet: opening one rejects with <code>unsupported</code>
+        {" "}
+        (<code>error.data.reason</code>{" "}
+        says why). Once it does, the terminal is a ConPTY, whose output carries its own VT sequences
+        even for plain text.
       </Callout>
 
       <h3 id="desktop-system-stats">System stats</h3>
@@ -2950,7 +2956,9 @@ onCloseRequested(({ reason }) => {
         {" "}
         <code>app.onDockReopen(fn)</code> on what <code>runDesktop()</code>{" "}
         resolves with hears every click, with{" "}
-        <code>hasVisibleWindows</code>, and returns the unsubscribe.
+        <code>hasVisibleWindows</code>, and returns the unsubscribe. A{" "}
+        <a href="#desktop-second-instance">second launch</a>{" "}
+        with no window showing reopens the same way.
       </p>
       <Code lang="ts">
         {`// desktop.ts — bring back the last workspace, or open a fresh one
@@ -3177,10 +3185,34 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         resolves with), is asked before any page&apos;s <code>onBeforeQuit</code> /{" "}
         <code>onCloseRequested</code>: returning (or resolving) <code>false</code>{" "}
         cancels the quit. The guards get 5 seconds together, the deadline a page&apos;s guards get;
-        one that throws or runs past it does not cancel, so a quit is never held for good. The OS
-        session-end rules are the pages&apos;: a refusal asks the OS to stop the logout, which macOS
-        ignores for an accessory app, and macOS takes no input for the app while a session end is
-        pending.
+        one that throws or runs past it does not cancel, so a quit is never held for good. While a
+        {" "}
+        <code>host.confirm</code>{" "}
+        box an extension opened during the guards&apos; turn is on screen, the 5 seconds stop
+        counting, so a guard can simply await the user&apos;s answer; they go on when the box
+        closes. The OS session-end rules are the pages&apos;: a refusal asks the OS to stop the
+        logout, which macOS ignores for an accessory app, and macOS takes no input for the app while
+        a session end is pending. A session end (a logout, a shutdown) never pauses the deadline:
+        its 5 seconds always run, box or not, and one that arrives while a plain quit is paused on a
+        box makes the deadline count again, so a session end is never held longer than today (and
+        the OS&apos;s own deadline, 10 seconds on macOS and 4 on Windows, still applies). Answer it
+        without asking.
+      </p>
+      <p id="desktop-host-quit">
+        <code>host.quit()</code> (and <code>app.quit()</code> on what <code>runDesktop()</code>{" "}
+        resolves with) quits the app again, typed: the whole sequence <code>quitApp()</code>{" "}
+        runs, the other guards, the pages&apos; <code>onBeforeQuit</code> /{" "}
+        <code>onCloseRequested</code> and the <code>onAppQuit</code>{" "}
+        hooks included, except that the caller&apos;s own guards are not asked again: it has
+        decided. That suits a guard that cancels at once, asks, then quits. The approval lasts until
+        the quit goes through or a new quit starts from anywhere else (the user, the OS,{" "}
+        <code>quitApp()</code>), so two guards that each cancel, ask and quit again never ask each
+        other round in a loop. Called while the guards are being asked, it waits for their answer
+        first; called from inside the caller&apos;s own guard it rejects with <code>conflict</code>
+        {" "}
+        (return <code>true</code> instead). It resolves <code>true</code>{" "}
+        when the app is quitting, and <code>false</code>{" "}
+        when another guard or a page refused or holds the quit, or with no desktop runtime.
       </p>
       <p id="desktop-host-confirm">
         <code>host.confirm(options)</code>{" "}
@@ -3225,6 +3257,17 @@ export default defineDesktopExtension({
       return choice === 0;
     });
   },
+});`}
+      </Code>
+      <Code lang="ts">
+        {`// desktop/extensions/shells.ts — cancel at once, ask, then quit for real
+host.onBeforeQuit(() => {
+  if (!shells.busy()) return true;
+  void (async () => {
+    const choice = await host.confirm({ message: "End the running shells?", buttons: ["Quit", "Cancel"], cancelId: 1 });
+    if (choice === 0) await host.quit(); // this guard is not asked again
+  })();
+  return false;
 });`}
       </Code>
       <Code lang="ts">
@@ -3278,14 +3321,34 @@ export default defineDesktopExtension({
         (the open windows by title, key or id, each showing and focusing its window). A
         window&apos;s title in these lists follows its page: its <code>document.title</code>{" "}
         as it changes, or a <code>setWindowTitle</code>{" "}
-        call. The menu is set through the main window and its clicks come back through it, so it
-        answers while the main window is open or hidden (a kept-alive app with every other window
-        closed); once the main window has closed for good the runtime delivers the backend no menu
-        clicks. On macOS the submenu starts with Minimize and Zoom and ends with Bring All to Front,
-        as the OS&apos;s Window menu does. A page&apos;s <code>setAppMenu</code>{" "}
+        call. From runtime 3.0.0-denext.16 the menu&apos;s clicks arrive app-wide (<code>
+          Deno.desktop
+        </code>&apos;s{" "}
+        <code>"menuclick"</code>), whichever window is key and after the main window has closed. An
+        older runtime delivers them through the main window only, so there the menu answers while
+        the main window is open or hidden, and not once it has closed for good. On macOS the submenu
+        starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s Window menu
+        does. A page&apos;s <code>setAppMenu</code>{" "}
         keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
         else the submenu is appended; the backend answers these items itself, so{" "}
         <code>onAppMenuItem</code> never sees them.
+      </p>
+      <p id="desktop-window-menu-items">
+        <code>items: [{"{ id, label, accelerator? }"}]</code>{" "}
+        adds the app&apos;s own items to the same submenu, after denext&apos;s and before the window
+        list (at most 32; ids unique, at most 128 characters). Their clicks go to the backend, not
+        the pages: <code>runDesktop({"{ onWindowMenuItem: (id, { keyWindow }) => … }"})</code>{" "}
+        and an extension&apos;s <code>host.onWindowMenuItem(fn)</code>{" "}
+        are each called once per click, with the item&apos;s <code>id</code> and the key window as
+        {" "}
+        <code>{"{ id, key? }"}</code>{" "}
+        (the app window focused last, with its app key when it was opened with one), or{" "}
+        <code>null</code>{" "}
+        when no window is open. In the native menu the ids carry a reserved prefix, so they never
+        collide with a page&apos;s items (a page&apos;s <code>setAppMenu</code>{" "}
+        may not use it), and no page&apos;s queue sees these clicks. With no window open the clicks
+        still arrive from runtime 3.0.0-denext.16; on an older runtime the items work only while the
+        main window is open.
       </p>
       <Code lang="ts">
         {`// denext.config.ts
@@ -3294,6 +3357,15 @@ export default { desktop: { menu: { window: { newWindow: "/", reopenClosed: true
 // desktop.ts — give New Window its own key and page
 const app = await runDesktop({
   newWindow: ({ suggestedKey }) => ({ url: "/workspace", key: suggestedKey, title: "Workspace" }),
+});
+
+// The app's own item: denext.config.ts
+// desktop: { menu: { window: { items: [{ id: "end", label: "Close Window and End Its Jobs", accelerator: "CommandOrControl+Shift+W" }] } } }
+// desktop.ts — one call per click, with the key window (null with none open)
+await runDesktop({
+  onWindowMenuItem: (id, { keyWindow }) => {
+    if (id === "end" && keyWindow) endJobsAndClose(keyWindow.id);
+  },
 });`}
       </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
@@ -3877,7 +3949,7 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
           (<code>cameraAccess</code> for the camera) with the switch in{" "}
           <code>microphoneAccessReason</code>, so the app can send the user to Settings. Each
           request reads the switches again, so turning one back on works without a relaunch. This
-          needs the Deno Desktop runtime after 3.0.0-denext.13 (laufey&apos;s privacy-switch check);
+          needs the Deno Desktop runtime from 3.0.0-denext.16 (laufey&apos;s privacy-switch check);
           on an older one these facts read <code>"unknown"</code>{" "}
           and the engine fails to open the device with an error of its own.
         </li>
@@ -4163,8 +4235,11 @@ if (doc?.handle) await tools.info({ handle: doc.handle });`}
 
       <h3 id="desktop-extension-secrets">An extension&apos;s own secrets</h3>
       <p>
-        <code>ctx.secureStore</code> (and <code>host.secureStore</code> in{" "}
-        <code>setup</code>) keeps an extension&apos;s secrets in the OS credential store the
+        <code>ctx.secureStore</code> (and <code>host.secureStore</code> in <code>setup</code>), a
+        {" "}
+        <code>DesktopSecureStore</code> from <code>denext/desktop</code> (<code>get</code> /{" "}
+        <code>set</code> /{" "}
+        <code>delete</code>), keeps an extension&apos;s secrets in the OS credential store the
         pages&apos; <code>secureStore</code> uses, under a namespace of its own (<code>
           &lt;desktop.app.identifier&gt;/ext/&lt;name&gt;
         </code>): a page can&apos;t read or overwrite them, and the extension can&apos;t reach the
@@ -4965,6 +5040,29 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         otherwise) and at most once per scheme per launch (<code>claim_limit</code>); a Windows{" "}
         &quot;UserChoice&quot; cannot be overridden (<code>registered: false</code>).
       </p>
+      <p id="desktop-second-instance">
+        Every second launch also reaches the backend, links or not:{" "}
+        <code>runDesktop({"{ onSecondInstance: ({ args, cwd }) => options }"})</code>{" "}
+        is called with the launch&apos;s arguments (after the executable) and working directory,
+        whether a window is showing or not, and answers a window to open (the{" "}
+        <code>windows.open</code> options), or <code>undefined</code>{" "}
+        for nothing more. Without it a second launch with no window showing opens what the
+        Dock&apos;s reopen would (the most recently closed keyed window, else the main window shown
+        again); with a window showing the runtime has already brought it to the front. An extension
+        hears the same launches with a static <code>onSecondInstance(event)</code> hook or{" "}
+        <code>host.onSecondInstance(fn)</code>, and <code>desktop.ts</code> with{" "}
+        <code>app.onSecondInstance(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with (each returns the unsubscribe). The links and files the launch carried still
+        go to <code>onDeepLink</code> / <code>onOpenFile</code>{" "}
+        as above. Without denext&apos;s pinned runtime none of these is ever called.
+      </p>
+      <Code lang="ts">
+        {`// desktop.ts — "app --new-window" opens one more window; anything else is left as it is
+await runDesktop({
+  onSecondInstance: ({ args, cwd }) =>
+    args.includes("--new-window") ? { url: \`/?cwd=\${encodeURIComponent(cwd)}\` } : undefined,
+});`}
+      </Code>
 
       <h2 id="desktop-security">Security model</h2>
       <p>
@@ -5013,7 +5111,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           window, and enable only what you use.
         </li>
         <li>
-          <strong>Permissions are honest about their reach.</strong> <code>fs</code> and{" "}
+          <strong>Permissions are honest about their reach.</strong>{" "}
+          The baked flags are least-privilege guardrails: checks inside Deno&apos;s APIs, not an OS
+          sandbox (see <a href="/docs/permissions">Permissions</a>). <code>fs</code> and{" "}
           <code>sqlite</code> stay inside the app's folders. <code>dialogs</code>{" "}
           needs unscoped read and write, because Deno bakes permissions at build time and the user
           picks paths at run time; the runtime narrows file calls to the paths picked this session.

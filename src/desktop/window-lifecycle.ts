@@ -11,6 +11,12 @@
  *    WindowLifecycle.onBeforeQuit}) are asked, 5 seconds for all of them (a page's deadline).
  *    A `false` cancels the quit (and asks the OS to stop a session end, `cancelQuit`); a throw or
  *    a guard past the deadline is logged and does not cancel. Then the quit is issued again.
+ *    While a message box an extension opened during this phase is on screen (`host.confirm`,
+ *    {@linkcode WindowLifecycle.whileGuardAsks}) the deadline stops counting, and it goes on
+ *    when the box closes. Never for the OS's session end (`beforequit`'s `reason:
+ *    "session-end"`): there the 5 seconds always run, a box or not, and a session end that
+ *    arrives while a plain quit's deadline is paused restarts it, so a session end is never held
+ *    past them (and the OS's own deadline, 10 s on macOS and 4 s on Windows, still applies).
  * 2. The runtime closes every window; a page's `onBeforeQuit` / `onCloseRequested` may hold it as
  *    before (src/desktop/caps/window.ts). Each window that closes is reported `onWindowClosed`
  *    with `appQuitting: true`.
@@ -18,6 +24,14 @@
  *    hook are waited for, 3 seconds together, then the quit is issued again
  *    with every consent kept and the runtime ends the process. With no window open (a tray app)
  *    step 3 happens inside step 1.
+ *
+ * A quit asked for again ({@linkcode WindowLifecycle.requestQuit}, `host.quit()` /
+ * `DesktopRuntime.quit()`) is a new quit, guards and pages included, except that the guards of
+ * whoever asked (that extension's, or `desktop.ts`'s) are not asked again: it decided already. The
+ * approval lasts until the quit goes through or a new quit starts from anywhere else (the user,
+ * the OS, `quitApp()`), so two guards that each cancel, ask their user and quit again cannot ask
+ * each other round in a loop. A `requestQuit` made while the guards are being asked waits for
+ * their answer first; one made from inside the asker's own guard is refused (`conflict`).
  *
  * The last app window closing without `desktop.app.keepAlive` is a quit too: `onWindowClosed`
  * gets `appQuitting: true`, the `onAppQuit` hooks run (bounded), then the process exits. Without
@@ -28,11 +42,12 @@
  * @module
  */
 
-import type {
-  DesktopCapability,
-  DesktopExtensionHost,
-  DesktopWindowClosedInfo,
-  DesktopWindowInfo,
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopExtensionHost,
+  type DesktopWindowClosedInfo,
+  type DesktopWindowInfo,
 } from "./extension.ts";
 import type { DesktopAppApi } from "./launch-events.ts";
 import {
@@ -56,12 +71,46 @@ type WindowClosedHook = (info: DesktopWindowClosedInfo) => void | Promise<void>;
 type AppQuitHook = () => void | Promise<void>;
 /** A before-quit guard: `false` cancels the quit. */
 type BeforeQuitGuard = () => boolean | Promise<boolean>;
+/** A registered guard: who added it ({@linkcode WindowLifecycleHost.requestQuit} skips its owner's). */
+interface GuardEntry {
+  readonly fn: BeforeQuitGuard;
+  readonly name: string;
+  readonly owner?: string;
+}
 
-/** The subscription half of {@linkcode DesktopExtensionHost} (what the bridge hands a `setup`). */
-export type WindowLifecycleHost = Pick<
-  DesktopExtensionHost,
-  "onWindowOpened" | "onWindowClosed" | "onAppQuit" | "onBeforeQuit" | "windows"
->;
+/** A deadline that can stop counting (nested pauses) and go on. */
+interface PausableDeadline {
+  /** Resolves once the time ran out (never after `clear`). */
+  readonly expired: Promise<void>;
+  pause(): void;
+  resume(): void;
+  /** Count again now, whatever the pauses (a session end arrived). */
+  release(): void;
+  clear(): void;
+}
+
+/** The lifecycle half of {@linkcode DesktopExtensionHost} (what the bridge hands a `setup`). */
+export interface WindowLifecycleHost
+  extends
+    Pick<DesktopExtensionHost, "onWindowOpened" | "onWindowClosed" | "onAppQuit" | "windows"> {
+  /**
+   * Add a before-quit guard; `owner` names who added it (an extension's capability name, or
+   * `"desktop.ts"`), so that owner's {@linkcode requestQuit} skips it.
+   */
+  onBeforeQuit(fn: BeforeQuitGuard, owner?: string): () => void;
+  /**
+   * Quit again, the full sequence (guards, pages, quit hooks), skipping `owner`'s own guards:
+   * resolves `true` when the app is quitting (or its quit hooks run), `false` when a guard or a
+   * page refused or holds it, or there is no runtime to quit. Waits for a quit whose guards are
+   * being asked; refused (`conflict`) from inside `owner`'s own guard.
+   */
+  requestQuit(owner?: string): Promise<boolean>;
+  /**
+   * `box` is a message box on screen (`host.confirm`): while it is, the guards' deadline does not
+   * count, if the guards are being asked for a quit that is not the OS's session end.
+   */
+  whileGuardAsks<T>(box: Promise<T>): Promise<T>;
+}
 
 /** Options for {@linkcode createWindowLifecycle}. */
 export interface WindowLifecycleOptions {
@@ -147,7 +196,7 @@ interface LifecycleState {
   readonly opened: Set<{ fn: WindowOpenedHook; name: string }>;
   readonly closed: Set<{ fn: WindowClosedHook; name: string }>;
   readonly quit: Set<{ fn: AppQuitHook; name: string }>;
-  readonly guards: Set<{ fn: BeforeQuitGuard; name: string }>;
+  readonly guards: Set<GuardEntry>;
   /** `onWindowClosed` promises not settled yet (the quit waits for them). */
   readonly pending: Set<Promise<void>>;
   /** The lifecycle itself is issuing the quit again (its `beforequit` passes). */
@@ -164,6 +213,18 @@ interface LifecycleState {
   issuing: boolean;
   /** A quit's last close is held while the quit hooks run. */
   holding: boolean;
+  /** The guards are being asked for the OS's session end (their deadline never pauses). */
+  sessionEnd: boolean;
+  /** The guards' deadline while they are asked. */
+  deadline: PausableDeadline | undefined;
+  /** The guards' answer for the quit being decided (with whether it was issued again). */
+  phase: Promise<boolean> | undefined;
+  /** Owners whose guards are not asked again for this quit (they asked for it: `requestQuit`). */
+  readonly approved: Set<string>;
+  /** Owners with a guard not answered yet, and how many. */
+  readonly asking: Map<string, number>;
+  /** `requestQuit` is issuing the quit (its `beforequit` keeps the approvals). */
+  requesting: boolean;
 }
 
 /** The message of a hook failure. */
@@ -222,23 +283,96 @@ function quitWorkChanged(st: LifecycleState): void {
   st.options.onQuitWorkChanged?.();
 }
 
+/** A deadline of `ms` that {@linkcode PausableDeadline.pause} stops and `resume` goes on with. */
+function pausableDeadline(ms: number): PausableDeadline {
+  let remaining = ms;
+  let started = 0;
+  let pauses = 0;
+  let done = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let fire: () => void = () => {};
+  const expired = new Promise<void>((resolve) => (fire = resolve));
+  const arm = () => {
+    started = Date.now();
+    timer = setTimeout(() => {
+      done = true;
+      fire();
+    }, Math.max(0, remaining));
+  };
+  arm();
+  return {
+    expired,
+    pause: () => {
+      if (done || pauses++ > 0) return;
+      clearTimeout(timer);
+      remaining -= Date.now() - started;
+    },
+    resume: () => {
+      if (done || pauses === 0 || --pauses > 0) return;
+      arm();
+    },
+    release: () => {
+      if (done || pauses === 0) return;
+      pauses = 0;
+      arm();
+    },
+    clear: () => {
+      done = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
+/** The guards to ask for this quit: all but those of the owners who asked for it. */
+function guardsToAsk(st: LifecycleState): GuardEntry[] {
+  return [...st.guards].filter((g) => g.owner === undefined || !st.approved.has(g.owner));
+}
+
+/** Ask one guard (its owner counted as asking until it answered): a throw counts as a yes (logged). */
+async function askGuard(st: LifecycleState, { fn, name, owner }: GuardEntry): Promise<boolean> {
+  if (owner !== undefined) st.asking.set(owner, (st.asking.get(owner) ?? 0) + 1);
+  const answered = () => {
+    if (owner === undefined) return;
+    const left = (st.asking.get(owner) ?? 1) - 1;
+    if (left > 0) st.asking.set(owner, left);
+    else st.asking.delete(owner);
+  };
+  try {
+    const out = fn();
+    // A plain answer has been given now (whatever it starts after returning is not the guard).
+    if (typeof (out as Promise<boolean> | undefined)?.then !== "function") {
+      answered();
+      return out !== false;
+    }
+    try {
+      return (await out) !== false;
+    } finally {
+      answered();
+    }
+  } catch (err) {
+    st.options.warn(`${name}.onBeforeQuit failed (the quit goes on): ${failure(err)}`);
+    return true;
+  }
+}
+
 /**
- * Ask the guards, 5 seconds for all of them: `false` when one answered so in time; a throw, or
- * the deadline, counts as a yes (logged).
+ * Ask the guards, 5 seconds for all of them (not counting while an extension's message box is up,
+ * unless this is the OS's session end): `false` when one answered so in time; a throw, or the
+ * deadline, counts as a yes (logged).
  */
 async function askGuards(st: LifecycleState): Promise<boolean> {
-  if (st.guards.size === 0) return true;
-  const answers = [...st.guards].map(async ({ fn, name }) => {
-    try {
-      return (await fn()) !== false;
-    } catch (err) {
-      st.options.warn(`${name}.onBeforeQuit failed (the quit goes on): ${failure(err)}`);
-      return true;
-    }
-  });
-  const all = Promise.all(answers).then((list) => list.every((ok) => ok));
+  const guards = guardsToAsk(st);
+  if (guards.length === 0) return true;
+  // The deadline first: a guard may open its box as it is called.
   const ms = st.options.guardTimeoutMs ?? QUIT_GUARD_TIMEOUT_MS;
-  const inTime = await bounded(all, ms);
+  const deadline = pausableDeadline(ms);
+  st.deadline = deadline;
+  const all = Promise.all(guards.map((g) => askGuard(st, g))).then((list) =>
+    list.every((ok) => ok)
+  );
+  const inTime = await Promise.race([all.then(() => true), deadline.expired.then(() => false)]);
+  deadline.clear();
+  st.deadline = undefined;
   if (!inTime) {
     st.options.warn(`an onBeforeQuit guard gave no answer within ${ms} ms: the quit goes on`);
     return true;
@@ -278,25 +412,92 @@ function reissue(st: LifecycleState): boolean {
 }
 
 /** The guards' turn: a `beforequit` was held; ask them, then cancel or issue the quit again. */
-async function startQuit(st: LifecycleState): Promise<void> {
-  if (st.guarding) return; // the first quit's guards decide for a second one meanwhile
+function startQuit(st: LifecycleState, sessionEnd: boolean): void {
+  if (st.phase) {
+    // The first quit's guards decide for a second one meanwhile; a session end among them keeps
+    // its bound: the deadline counts again, box or not.
+    if (sessionEnd) {
+      st.sessionEnd = true;
+      st.deadline?.release();
+    }
+    return;
+  }
+  st.phase = decideQuit(st, sessionEnd);
+}
+
+/** Ask the guards, then cancel or issue the quit again: whether the app is quitting. */
+async function decideQuit(st: LifecycleState, sessionEnd: boolean): Promise<boolean> {
   st.guarding = true;
+  st.sessionEnd = sessionEnd;
   try {
     const allowed = await askGuards(st);
     if (!allowed) {
       // A session end the OS holds for this answer is asked to stop (runtime 3.0.0-denext.8).
       st.options.api?.cancelQuit?.();
-      return;
+      return false;
     }
+    st.approved.clear();
     if (st.options.windows().length === 0 && hasQuitWork(st)) {
       // No close will come to hold: the quit hooks run here.
       await runQuitWork(st);
       st.quitHooksRan = true;
       st.options.beforeExit?.();
     }
-    reissue(st);
+    return reissue(st) || st.holding;
   } finally {
     st.guarding = false;
+    st.sessionEnd = false;
+    st.phase = undefined;
+  }
+}
+
+/** Whether a `beforequit` event is the OS's session end (`reason: "session-end"`). */
+function isSessionEnd(event: Event): boolean {
+  return (event as Event & { reason?: unknown }).reason === "session-end";
+}
+
+/**
+ * Quit again for `owner` ({@linkcode WindowLifecycleHost.requestQuit}): its guards are skipped
+ * until the quit goes through or another quit starts.
+ */
+async function requestQuit(st: LifecycleState, owner?: string): Promise<boolean> {
+  const api = st.options.api;
+  if (typeof api?.quit !== "function") return false;
+  if (owner !== undefined && st.asking.has(owner)) {
+    throw new DesktopCapError(
+      "conflict",
+      `quit() was called from inside ${owner}'s own onBeforeQuit guard: ` +
+        "return true from the guard to let the quit go on",
+    );
+  }
+  if (owner !== undefined) st.approved.add(owner);
+  // A quit being decided: its answer first (if it lets the quit go, this one is done).
+  while (st.phase) {
+    if (await st.phase) return true;
+  }
+  st.requesting = true;
+  let quitting: boolean;
+  try {
+    quitting = quitThrough(st, () => api.quit!.call(api) === true);
+  } finally {
+    st.requesting = false;
+  }
+  return st.phase ? await st.phase : quitting;
+}
+
+/**
+ * Quit through `issue` ({@linkcode WindowLifecycle.quit}): `true` when quitting, or held by the
+ * lifecycle (issued again unless a guard refuses).
+ */
+function quitThrough(st: LifecycleState, issue: () => boolean): boolean {
+  st.issuer = issue;
+  st.issuing = true;
+  try {
+    const quitting = issue() === true;
+    // Held by the guards (`decideQuit` is running) or the last-close hold: issued again.
+    return quitting || st.guarding || st.holding;
+  } finally {
+    st.issuing = false;
   }
 }
 
@@ -307,11 +508,17 @@ function onBeforeQuitEvent(st: LifecycleState, event: Event): void {
   // is issued again with `Deno.desktop.quit()`.
   st.quitHooksRan = false;
   if (!st.issuing) st.issuer = undefined;
-  const needsHold = st.guards.size > 0 ||
-    (hasQuitWork(st) && st.options.windows().length === 0);
-  if (!needsHold) return;
+  // A quit from anywhere but `requestQuit` starts over: every guard is asked again.
+  if (!st.requesting) st.approved.clear();
+  const needsHold = guardsToAsk(st).length > 0 ||
+    (hasQuitWork(st) && st.options.windows().length === 0) || st.phase !== undefined;
+  if (!needsHold) {
+    // Nothing to ask: the quit goes on, and the approvals were for it.
+    st.approved.clear();
+    return;
+  }
   event.preventDefault();
-  void startQuit(st);
+  startQuit(st, isSessionEnd(event));
 }
 
 /** Whether a quit has hooks to wait for. */
@@ -340,6 +547,12 @@ export function createWindowLifecycle(options: WindowLifecycleOptions): WindowLi
     issuer: undefined,
     issuing: false,
     holding: false,
+    sessionEnd: false,
+    deadline: undefined,
+    phase: undefined,
+    approved: new Set(),
+    asking: new Map(),
+    requesting: false,
   };
   const onWindowOpened = (fn: WindowOpenedHook, name = "a host"): () => void => {
     const off = subscribe(st.opened, { fn, name });
@@ -356,13 +569,24 @@ export function createWindowLifecycle(options: WindowLifecycleOptions): WindowLi
     quitWorkChanged(st);
     return off;
   };
-  const onBeforeQuit = (fn: BeforeQuitGuard, name = "a host"): () => void =>
-    subscribe(st.guards, { fn, name });
+  const onBeforeQuit = (fn: BeforeQuitGuard, owner?: string): () => void =>
+    subscribe(st.guards, {
+      fn,
+      name: owner ?? "a host",
+      ...(owner !== undefined ? { owner } : {}),
+    });
   return {
     onWindowOpened: (fn) => onWindowOpened(fn),
     onWindowClosed: (fn) => onWindowClosed(fn),
     onAppQuit: (fn) => onAppQuit(fn),
-    onBeforeQuit: (fn) => onBeforeQuit(fn),
+    onBeforeQuit: (fn, owner) => onBeforeQuit(fn, owner),
+    requestQuit: (owner) => requestQuit(st, owner),
+    whileGuardAsks: (box) => {
+      const deadline = st.deadline;
+      if (!deadline || st.sessionEnd) return box;
+      deadline.pause();
+      return box.finally(() => deadline.resume());
+    },
     windows: () => options.windows(),
     addCapabilities: (caps) => {
       for (const cap of caps) {
@@ -403,17 +627,7 @@ export function createWindowLifecycle(options: WindowLifecycleOptions): WindowLi
       });
       return true;
     },
-    quit: (issue) => {
-      st.issuer = issue;
-      st.issuing = true;
-      try {
-        const quitting = issue() === true;
-        // Held by the guards (`startQuit` is running) or the last-close hold: issued again.
-        return quitting || st.guarding || st.holding;
-      } finally {
-        st.issuing = false;
-      }
-    },
+    quit: (issue) => quitThrough(st, issue),
     endApp: () => {
       if (!hasQuitWork(st)) {
         options.beforeExit?.();

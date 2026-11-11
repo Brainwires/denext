@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.15.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.16.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -155,8 +155,6 @@ seeded fallback. No Deno has the hook below yet.
 
 ## Server and CLI features
 
-- **A compiled binary disarms baked limits for `job` / `db`** (depends on `compile.limits`). _Why
-  5.x: follows `compile.limits`._
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
   11-24); 5.0 only if it ships after that._
 - **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by
@@ -167,6 +165,10 @@ seeded fallback. No Deno has the hook below yet.
 
 ## Runtime fork
 
+- **Kernel enforcement of permissions:** the `--allow-*` grants enforced by the OS too (Landlock on
+  Linux, Seatbelt on macOS), so a subprocess, FFI or a native addon is held to them; until then
+  they are least-privilege guardrails (https://denext.dev/docs/permissions). Allow scopes that
+  resolve symlinks are part of the same track. _Why 5.x: in design._
 - **A Windows console close, logoff or shutdown cuts the drain short** (the handler may block about
   5 s for CLOSE and longer for SHUTDOWN). _Why 5.x: fixable only in part._
 - **V8 cadence:** the next major (16.0, about 12-15) and patch bumps, once the Extended Stable line

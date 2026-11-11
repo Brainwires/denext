@@ -1,16 +1,18 @@
 // The editor's TypeScript backend. denext's Deno toolchain ships `deno lsp` with two TypeScript
-// language services: the in-process TypeScript 6 service (Deno's default) and a TypeScript 7
+// language services: the in-process TypeScript 6 service (stock Deno's default) and a TypeScript 7
 // ("tsgo") backend that runs the pinned native language server from `typescript-lsp/` beside
 // `deno`. `deno lsp` picks the backend once, at `initialize`, from the editor's settings:
 // `"deno.unstable": ["tsgo-lsp"]` selects tsgo (`DENO_UNSTABLE_TSGO_LSP=0` / `=1` in the language
-// server's environment overrides the setting either way).
+// server's environment overrides the setting either way). From runtime 3.0.0-rc.3 a denext release
+// build selects tsgo with no setting or an empty list too; a list naming only other features keeps
+// TypeScript 6.
 //
 // denext makes tsgo the default wherever it sets up an editor: `denext create` / `init` and
 // `denext migrate` write the entry into `.vscode/settings.json`, and `denext upgrade` adds it to an
 // existing project's settings. Only when the settings have no `deno.unstable` key at all: a project
 // that set one (to anything, `[]` included) keeps its own choice. `DENEXT_TSGO_LSP=0` (or `false` /
-// `off` / `no`) makes those commands leave the setting out — the opt-out that keeps TypeScript 6,
-// mirroring `DENEXT_NATIVE_CHECK=0` for type checking.
+// `off` / `no`) makes those commands leave the setting out (on runtimes before 3.0.0-rc.3 that
+// keeps TypeScript 6), mirroring `DENEXT_NATIVE_CHECK=0` for type checking.
 
 import { parse as parseJsonc } from "@std/jsonc";
 

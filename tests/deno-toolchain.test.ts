@@ -176,8 +176,13 @@ Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno onl
     // coverage: stock Deno starts scripts/test-run.ts, which runs every pass on the toolchain under
     // --coverage; backend-integration installs the toolchain itself (the test above); cargo-audit
     // runs only scripts/cargo-audit.ts (cargo-audit over the wasm packages' lockfiles), no project
-    // code, so it stays on the stock Deno.
-    if (setup === -1 || name === "coverage" || name === "cargo-audit") continue;
+    // code, so it stays on the stock Deno; windows-runner only runs scripts/ci/pick-windows-runner.ts
+    // (which Windows runner the Windows jobs take), no project code either.
+    if (
+      setup === -1 || name === "coverage" || name === "cargo-audit" || name === "windows-runner"
+    ) {
+      continue;
+    }
     const at = job.steps.findIndex(onPath);
     assert(at > setup, `${name}: puts the toolchain on PATH after setting up the stock Deno`);
     job.steps.forEach((s, i) => {

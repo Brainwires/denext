@@ -640,7 +640,7 @@ export async function notifySetCategories(
 
 /**
  * What the OS's privacy switches say about `kind` for this app (`app`'s `capabilities`: Windows,
- * the runtime after 3.0.0-denext.13): `"allowed"`, `"denied"`, or `null` when they say nothing (no switch
+ * the runtime from 3.0.0-denext.16): `"allowed"`, `"denied"`, or `null` when they say nothing (no switch
  * set, macOS / Linux, an older runtime).
  */
 export async function osMediaAccess(

@@ -15,6 +15,12 @@
  * quit is not kept. With `reopenClosed: "list"` it is a submenu of them instead, by title, at most
  * {@linkcode MAX_REOPEN_LISTED}, each reopening its own key (the first keeps Cmd/Ctrl+Shift+T).
  *
+ * The app's own items (`items`) follow denext's, before the window list. Their ids are prefixed
+ * with {@linkcode APP_ITEM_PREFIX} in the native menu (a page's `setAppMenu` may not use it), so
+ * they never collide with a page's items, and their clicks never reach a page's queue: each click
+ * is handed once to `onItem` with the item's own id and the key window ({@linkcode
+ * DesktopWindowMenuItemContext}).
+ *
  * Runtime-only (imported by `setUpDesktopWindows`, never a client bundle).
  *
  * @module
@@ -33,6 +39,33 @@ const REOPEN_ID = "denext:window:reopen";
 const REOPEN_PREFIX = "denext:window:reopen:";
 const REOPEN_ACCELERATOR = "CommandOrControl+Shift+T";
 const FOCUS_PREFIX = "denext:window:focus:";
+/**
+ * The prefix of the app's own items' ids in the native menu (`desktop.menu.window.items`): a page's
+ * application menu may not use it, so a click on one is always the backend's.
+ */
+export const APP_ITEM_PREFIX = "denext:window:item:";
+
+/**
+ * What `runDesktop({ onWindowMenuItem })` and an extension's `host.onWindowMenuItem` get with a
+ * click on one of the app's own Window-menu items (`desktop.menu.window.items`).
+ */
+export interface DesktopWindowMenuItemContext {
+  /**
+   * The key window when the item was chosen (the app window focused last, else the one opened
+   * last): its id and, when it was opened with one, its app key. `null` with no app window open
+   * (the tray panel does not count).
+   */
+  readonly keyWindow: { readonly id: string; readonly key?: string } | null;
+}
+
+/**
+ * A handler of the app's own Window-menu items: the item's `id` (as configured, without the
+ * prefix) and the key window. Called once per click; a throw or a rejection is logged.
+ */
+export type DesktopWindowMenuItemHandler = (
+  id: string,
+  ctx: DesktopWindowMenuItemContext,
+) => void | Promise<void>;
 
 /** What `runDesktop({ newWindow })` receives: the windows open now. */
 export interface DesktopNewWindowContext {
@@ -72,6 +105,8 @@ export interface WindowMenuOptions {
   readonly setBackendMenu: (menu: BackendMenu | undefined) => void;
   /** `desktop.ts`'s New Window, if any. */
   readonly newWindow?: DesktopNewWindowHandler;
+  /** One of the app's own items (`settings.items`) was chosen: its configured id. */
+  readonly onItem?: (id: string) => void;
   /** The running OS (default `Deno.build.os`). */
   readonly os?: string;
   /** Where warnings go. */
@@ -146,31 +181,53 @@ function reopenItems(st: MenuState, ids: Set<string>): DesktopMenuItem {
   return { submenu: { label: "Reopen Closed Window", items } };
 }
 
-/** The submenu's items now. */
-function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
-  const s = st.options.settings;
-  const items: DesktopMenuItem[] = [];
-  const ids = new Set<string>();
-  if (st.os === "darwin") {
-    items.push({ role: { role: "minimize" } }, { role: { role: "zoom" } }, "separator");
+/** Start a new group: a separator unless the submenu is empty or ends with one. */
+function separate(items: DesktopMenuItem[]): void {
+  if (items.length > 0 && items.at(-1) !== "separator") items.push("separator");
+}
+
+/** Add items as a group (`entries` as `[id, label, accelerator?]`), their ids to `ids`. */
+function addGroup(
+  items: DesktopMenuItem[],
+  ids: Set<string>,
+  entries: readonly (readonly [string, string, string?])[],
+): void {
+  if (entries.length === 0) return;
+  separate(items);
+  for (const [id, label, accelerator] of entries) {
+    items.push(item(id, label, accelerator ? { accelerator } : {}));
+    ids.add(id);
   }
+}
+
+/** New Window and Reopen Closed Window, as configured. */
+function denextItems(st: MenuState, items: DesktopMenuItem[], ids: Set<string>): void {
+  const s = st.options.settings;
   if (typeof s.newWindow === "string" || st.options.newWindow !== undefined) {
     items.push(item(NEW_ID, "New Window", { accelerator: "CommandOrControl+N" }));
     ids.add(NEW_ID);
   }
   if (s.reopenClosed === true || s.reopenClosed === "list") items.push(reopenItems(st, ids));
+}
+
+/** The submenu's items now. */
+function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
+  const s = st.options.settings;
+  const items: DesktopMenuItem[] = [];
+  const ids = new Set<string>();
+  const mac = st.os === "darwin";
+  if (mac) items.push({ role: { role: "minimize" } }, { role: { role: "zoom" } }, "separator");
+  denextItems(st, items, ids);
+  addGroup(
+    items,
+    ids,
+    (s.items ?? []).map((own) => [APP_ITEM_PREFIX + own.id, own.label, own.accelerator] as const),
+  );
   if (s.list === true) {
     const windows = st.options.registry.list().filter((w) => w.kind !== "panel");
-    if (items.length > 0 && windows.length > 0 && items.at(-1) !== "separator") {
-      items.push("separator");
-    }
-    for (const w of windows) {
-      const id = FOCUS_PREFIX + w.id;
-      items.push(item(id, labelOf(w)));
-      ids.add(id);
-    }
+    addGroup(items, ids, windows.map((w) => [FOCUS_PREFIX + w.id, labelOf(w)] as const));
   }
-  if (st.os === "darwin" && items.length > 3) items.push("separator", { role: { role: "front" } });
+  if (mac && items.length > 3) items.push("separator", { role: { role: "front" } });
   return { items, ids };
 }
 
@@ -224,12 +281,16 @@ function choose(st: MenuState, id: string): void {
   if (id === NEW_ID) return newWindow(st);
   if (id === REOPEN_ID) return reopenClosed(st);
   if (id.startsWith(REOPEN_PREFIX)) return reopenClosed(st, id.slice(REOPEN_PREFIX.length));
-  if (!id.startsWith(FOCUS_PREFIX)) return;
-  const w = st.options.registry.get(id.slice(FOCUS_PREFIX.length));
-  if (!w) return;
+  if (id.startsWith(APP_ITEM_PREFIX)) return st.options.onItem?.(id.slice(APP_ITEM_PREFIX.length));
+  if (id.startsWith(FOCUS_PREFIX)) focusWindow(st, id.slice(FOCUS_PREFIX.length));
+}
+
+/** Show and focus window `windowId` (the list's item); gone: nothing. */
+function focusWindow(st: MenuState, windowId: string): void {
+  const w = st.options.registry.get(windowId);
   try {
-    w.window.show?.();
-    w.window.focus?.();
+    w?.window.show?.();
+    w?.window.focus?.();
   } catch { /* closing */ }
 }
 

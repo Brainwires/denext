@@ -130,6 +130,7 @@ export const NAV: {
       { slug: "differences", label: "Deliberate differences" },
       { slug: "limitations", label: "Known limitations" },
       { slug: "security", label: "Security posture" },
+      { slug: "permissions", label: "Permissions" },
     ],
   },
   {

@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.15.0\"",
+          "signature": "VERSION: \"4.16.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16885,7 +16885,7 @@
               "kind": "property",
               "name": "systemStats",
               "signature": "systemStats?: boolean",
-              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime after\n3.0.0-denext.13 (`unsupported` before it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
+              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime from\n3.0.0-denext.16 (`unsupported` before it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
             },
             {
               "kind": "property",
@@ -16977,7 +16977,7 @@
               "kind": "property",
               "name": "menu",
               "signature": "menu?: DesktopMenuConfig",
-              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window) and `list`\n(the open windows, each focusing its window). On macOS the submenu also carries the standard\nMinimize / Zoom / Bring All to Front items."
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window), `list`\n(the open windows, each focusing its window) and `items` (the app's own items, whose clicks\nreach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the\nsubmenu also carries the standard Minimize / Zoom / Bring All to Front items."
             },
             {
               "kind": "property",
@@ -17414,7 +17414,7 @@
             {
               "kind": "property",
               "name": "window",
-              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean }",
+              "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean; items?: readonly DesktopWindowMenuItemConfig[] }",
               "doc": "The \"Window\" submenu's items."
             }
           ]
@@ -18286,6 +18286,38 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowMenuItemConfig",
+          "slug": "DesktopWindowMenuItemConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItemConfig",
+          "doc": "One of the app's own items in the backend's \"Window\" submenu (DesktopMenuConfig.window).",
+          "docFull": "One of the app's own items in the backend's \"Window\" submenu ({@link DesktopMenuConfig.window}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id: string",
+              "doc": "What the click reports (unique among the items, at most 128 characters)."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "label: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+W\"`)."
+            }
+          ]
         },
         {
           "name": "DesktopWindowsConfig",
@@ -45871,6 +45903,12 @@
             },
             {
               "kind": "property",
+              "name": "onSecondInstance",
+              "signature": "readonly onSecondInstance?: (event: DesktopSecondInstanceEvent) => void | Promise<void>",
+              "doc": "Called on every later launch of the app while it runs (`desktop.app.singleInstance`), with its\n`args` and `cwd`: the static form of {@linkcode DesktopExtensionHost.onSecondInstance}. An\nerror is logged, never surfaced."
+            },
+            {
+              "kind": "property",
               "name": "setup",
               "signature": "readonly setup?: (host: DesktopExtensionHost) => void",
               "doc": "Called once, when the app's bridge starts (before any page can call), with the\n{@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its\ndeclared {@linkcode DesktopCapability.events}) and `pickedPath`. Keep the host in a module\nvariable so work started outside a method call — by `desktop.ts`, a tray menu, a timer — can\nstream to the page. An error it throws is logged, never surfaced."
@@ -46375,7 +46413,7 @@
           "kind": "interface",
           "signature": "interface DesktopExtensionHost",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, and `windows()` lists the open windows now. Each subscription returns its\nunsubscribe.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows\nnow. Each subscription returns its unsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46433,7 +46471,25 @@
               "kind": "method",
               "name": "onBeforeQuit",
               "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
-              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when\nit returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a\npage's guards get); one that throws or runs past it is logged and does not cancel, so a quit\nis never held for good. A refused OS session end asks the OS to stop it, which it may not\nhonour (macOS ignores an accessory app's refusal). Returns the unsubscribe."
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled when\nit returns (or resolves) `false`. The guards are given 5 seconds together (the deadline a\npage's guards get); one that throws or runs past it is logged and does not cancel, so a quit\nis never held for good. While a {@linkcode DesktopExtensionHost.confirm} box opened during the\nguards' turn is on screen the 5 seconds stop counting, so a guard can await the user's answer;\nthey go on when the box closes. Not for the OS's session end (a logout, a shutdown): its 5\nseconds always run (and the OS's own deadline, 10 s on macOS and 4 s on Windows), so answer it\nwithout asking. A refused OS session end asks the OS to stop it, which it may not honour\n(macOS ignores an accessory app's refusal). Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "quit",
+              "signature": "quit(): Promise<boolean>",
+              "doc": "Quit the app, typed: the whole quit again, as `quitApp()` runs it (the other `onBeforeQuit`\nguards, the pages' `onBeforeQuit` / `onCloseRequested`, the `onAppQuit` hooks), except that\nthis extension's own guards are not asked again: it decided already. For a guard that cancels\nat once, asks the user, then quits. The approval lasts until the quit goes through or another\nquit starts (the user, the OS, `quitApp()`), so guards that each ask and quit again never ask\none another round in a loop. Called while the guards are being asked, it waits for their\nanswer first. Resolves `true` when the app is quitting, `false` when another guard or a page\nrefused or holds the quit (a page asking its user lets it go itself), or with no desktop\nruntime. Rejects with a {@linkcode DesktopCapError} (`conflict`) when called from inside this\nextension's own guard: return `true` from the guard instead."
+            },
+            {
+              "kind": "method",
+              "name": "onWindowMenuItem",
+              "signature": "onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void",
+              "doc": "Call `fn` on every click on one of the app's own Window-menu items\n(`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or\n`null` with no window open). Each click is delivered once to each subscriber (and to\n`runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive\nfrom runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw\nor a rejection is logged. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void",
+              "doc": "Call `fn` on every later launch of the app while it runs, forwarded by the single-instance\nlock (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`.\nIt runs after `runDesktop({ onSecondInstance })` opened its window, if any; the deep links and\nfiles the launch carried still reach the pages' `onDeepLink` / `onOpenFile`. A throw or a\nrejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe."
             },
             {
               "kind": "method",
@@ -46445,7 +46501,7 @@
               "kind": "method",
               "name": "confirm",
               "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
-              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16)."
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
             },
             {
               "kind": "method",
@@ -47550,6 +47606,12 @@
             },
             {
               "kind": "method",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void",
+              "doc": "Call `fn` on every later launch of the app while it runs (`desktop.app.singleInstance`), with\nthe launch's `args` and `cwd`, after what {@linkcode RunDesktopOptions.onSecondInstance} opens.\nA throw or a rejection is logged. Returns the unsubscribe; never called without denext's\npinned runtime (or in a sidecar's child)."
+            },
+            {
+              "kind": "method",
               "name": "emit",
               "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
               "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
@@ -47564,7 +47626,13 @@
               "kind": "method",
               "name": "onBeforeQuit",
               "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
-              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called."
+              "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. The 5 seconds stop counting while an extension's `host.confirm` box opened during the\nguards' turn is up, except for the OS's session end. Returns the unsubscribe. Outside the\ndesktop runtime `fn` is never called."
+            },
+            {
+              "kind": "method",
+              "name": "quit",
+              "signature": "quit(): Promise<boolean>",
+              "doc": "Quit the app again, the whole sequence (the extensions' guards, the pages, the quit hooks),\nexcept that the guards added with {@linkcode onBeforeQuit} here are not asked again (see\n`DesktopExtensionHost.quit`, the same rules). Resolves `true` when the app is quitting, `false`\nwhen a guard or a page refused or holds it, or outside the desktop runtime."
             }
           ]
         },
@@ -47637,6 +47705,44 @@
             }
           ],
           "returns": "The env vars to set on the deno desktop child.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSecondInstanceEvent",
+          "slug": "DesktopSecondInstanceEvent",
+          "kind": "interface",
+          "signature": "interface DesktopSecondInstanceEvent",
+          "doc": "A later launch of the app while it runs, forwarded by the single-instance lock (desktop.app.singleInstance; Deno.desktop's \"secondinstance\").",
+          "docFull": "A later launch of the app while it runs, forwarded by the single-instance lock\n(`desktop.app.singleInstance`; `Deno.desktop`'s `\"secondinstance\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "args",
+              "signature": "readonly args: readonly string[]",
+              "doc": "The second launch's command-line arguments, after the executable."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd: string",
+              "doc": "The second launch's working directory."
+            }
+          ]
+        },
+        {
+          "name": "DesktopSecondInstanceHandler",
+          "slug": "DesktopSecondInstanceHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopSecondInstanceHandler = (event: DesktopSecondInstanceEvent) => DesktopOpenWindowOptions | undefined",
+          "doc": "What a second launch of the app opens (runDesktop({ onSecondInstance })): called for every one, window showing or not, it answers the open options, or undefined for nothing more. Without it a second launch with no window showing opens what the Dock's reopen would.",
+          "docFull": "What a second launch of the app opens (`runDesktop({ onSecondInstance })`): called for every\none, window showing or not, it answers the open options, or `undefined` for nothing more.\nWithout it a second launch with no window showing opens what the Dock's reopen would.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -48555,6 +48661,70 @@
           ]
         },
         {
+          "name": "DesktopWindowMenuItem",
+          "slug": "DesktopWindowMenuItem",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItem",
+          "doc": "One of the app's own items in the \"Window\" submenu (desktop.menu.window.items).",
+          "docFull": "One of the app's own items in the \"Window\" submenu (`desktop.menu.window.items`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "What a click reports to `onWindowMenuItem` (unique among the items)."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+W\"`)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuItemContext",
+          "slug": "DesktopWindowMenuItemContext",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuItemContext",
+          "doc": "What runDesktop({ onWindowMenuItem }) and an extension's host.onWindowMenuItem get with a click on one of the app's own Window-menu items (desktop.menu.window.items).",
+          "docFull": "What `runDesktop({ onWindowMenuItem })` and an extension's `host.onWindowMenuItem` get with a\nclick on one of the app's own Window-menu items (`desktop.menu.window.items`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "keyWindow",
+              "signature": "readonly keyWindow: { readonly id: string; readonly key?: string } | null",
+              "doc": "The key window when the item was chosen (the app window focused last, else the one opened\nlast): its id and, when it was opened with one, its app key. `null` with no app window open\n(the tray panel does not count)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuItemHandler",
+          "slug": "DesktopWindowMenuItemHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowMenuItemHandler = (id: string, ctx: DesktopWindowMenuItemContext) => void | Promise<void>",
+          "doc": "A handler of the app's own Window-menu items: the item's id (as configured, without the prefix) and the key window. Called once per click; a throw or a rejection is logged.",
+          "docFull": "A handler of the app's own Window-menu items: the item's `id` (as configured, without the\nprefix) and the key window. Called once per click; a throw or a rejection is logged.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopWindowMenuSettings",
           "slug": "DesktopWindowMenuSettings",
           "kind": "interface",
@@ -48583,6 +48753,12 @@
               "name": "list",
               "signature": "readonly list?: boolean",
               "doc": "List the open windows, each focusing its window when chosen."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items?: readonly DesktopWindowMenuItem[]",
+              "doc": "The app's own items, after denext's: a click reaches the backend once (`runDesktop({\nonWindowMenuItem })`, an extension's `host.onWindowMenuItem`), never the pages."
             }
           ]
         },
@@ -50159,6 +50335,18 @@
             },
             {
               "kind": "property",
+              "name": "onSecondInstance",
+              "signature": "onSecondInstance?: DesktopSecondInstanceHandler",
+              "doc": "Called on every later launch of the app while it runs, forwarded by the single-instance lock\n(`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`, a\nwindow showing or not: it answers the open options, or `undefined` to open nothing more. The\ndeep links and files the launch carried still reach the pages' `onDeepLink` / `onOpenFile`,\nand the runtime has raised a showing window already. Without it a second launch with no window\nshowing opens what the Dock's reopen would (the most recently closed keyed window, else the\nmain window shown again). A throw, or a window that cannot open, is logged. Never called\nwithout denext's pinned runtime."
+            },
+            {
+              "kind": "property",
+              "name": "onWindowMenuItem",
+              "signature": "onWindowMenuItem?: DesktopWindowMenuItemHandler",
+              "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from\nruntime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only\nwhile the main window is open. A throw or a rejection is logged."
+            },
+            {
+              "kind": "property",
               "name": "tray",
               "signature": "tray?: DesktopTrayOptions",
               "doc": "The tray icon the backend owns: created before the first page needs it, kept across page\nreloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from\n{@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the\nbackend, before the pages hear of a click. Setting a tray keeps the app alive with no window\nunless `desktop.app.keepAlive` is `false`."
@@ -50967,8 +51155,8 @@
           "slug": "system",
           "kind": "variable",
           "signature": "system: SystemStatsApi",
-          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
-          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and denext's Deno Desktop runtime after 3.0.0-denext.13.",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime from 3.0.0-denext.16.",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and denext's Deno Desktop runtime from 3.0.0-denext.16.",
           "params": [],
           "returns": "",
           "examples": [
@@ -53162,8 +53350,8 @@
           "slug": "system",
           "kind": "variable",
           "signature": "system: SystemStatsClient",
-          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime after 3.0.0-denext.13).",
-          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, denext's Deno Desktop runtime after 3.0.0-denext.13).",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime from 3.0.0-denext.16).",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, denext's Deno Desktop runtime from 3.0.0-denext.16).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -55279,8 +55467,8 @@
           "slug": "appCapabilities-fn",
           "kind": "function",
           "signature": "appCapabilities(): Promise<AppCapabilities>",
-          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads \"unknown\".",
-          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches\n(the runtime after 3.0.0-denext.13). A fact an older runtime cannot report reads `\"unknown\"`.",
+          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads \"unknown\".",
+          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches\n(the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads `\"unknown\"`.",
           "params": [],
           "returns": "The capabilities.",
           "examples": [],
@@ -55434,7 +55622,7 @@
               "kind": "property",
               "name": "microphoneAccess",
               "signature": "readonly microphoneAccess: \"allowed\" | \"denied\" | PlatformUnknown | null",
-              "doc": "Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›\nPrivacy & security › Microphone: the device-wide switch, \"Microphone access\" and \"Let desktop\napps access your microphone\"): `\"allowed\"`, or `\"denied\"`, in which case the window refuses\nthe page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`\ncapability on, and `checkPermission(\"microphone\")` reads `\"blocked\"`. `null` when no switch is\nset, and on macOS / Linux. Probed on every call (the user can flip a switch while the app\nruns). `\"unknown\"` before the runtime after 3.0.0-denext.13."
+              "doc": "Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›\nPrivacy & security › Microphone: the device-wide switch, \"Microphone access\" and \"Let desktop\napps access your microphone\"): `\"allowed\"`, or `\"denied\"`, in which case the window refuses\nthe page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`\ncapability on, and `checkPermission(\"microphone\")` reads `\"blocked\"`. `null` when no switch is\nset, and on macOS / Linux. Probed on every call (the user can flip a switch while the app\nruns). `\"unknown\"` before runtime 3.0.0-denext.16."
             },
             {
               "kind": "property",
@@ -56011,8 +56199,8 @@
           "slug": "onDockReopen",
           "kind": "function",
           "signature": "onDockReopen(handler: (event: { readonly hasVisibleWindows: boolean }) => void): () => void",
-          "doc": "Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the main window is shown again first; hasVisibleWindows says whether one was.",
-          "docFull": "Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no\nwindow showing, the main window is shown again first; `hasVisibleWindows` says whether one was.",
+          "doc": "Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the click first reopens the most recently closed keyed window (its key, path and frame), else shows the main window, unless runDesktop({ onDockReopen }) in desktop.ts decides what opens; hasVisibleWindows says whether a window was showing.",
+          "docFull": "Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no\nwindow showing, the click first reopens the most recently closed keyed window (its key, path and\nframe), else shows the main window, unless `runDesktop({ onDockReopen })` in `desktop.ts`\ndecides what opens; `hasVisibleWindows` says whether a window was showing.",
           "params": [
             {
               "name": "handler",
@@ -57996,7 +58184,7 @@
           "kind": "function",
           "signature": "checkPermission(name: PermissionName): Promise<PermissionState>",
           "doc": "The current status of a permission, without prompting (see PermissionState for what each status means).",
-          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`\nwhile the OS's privacy switch for the device is off (the runtime after 3.0.0-denext.13;\n`appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
+          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`\nwhile the OS's privacy switch for the device is off (the runtime from 3.0.0-denext.16;\n`appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
           "params": [
             {
               "name": "name",
@@ -72688,6 +72876,1433 @@
           "returns": "The value or the fallback.",
           "examples": [],
           "denextOnly": true
+        }
+      ]
+    },
+    {
+      "module": "denext/markdown",
+      "symbols": [
+        {
+          "name": "Markdown",
+          "slug": "Markdown",
+          "kind": "function",
+          "signature": "Markdown(props: MarkdownProps): VNode",
+          "doc": "Render Markdown as denext elements, with any element swapped for an app's own component.",
+          "docFull": "Render Markdown as denext elements, with any element swapped for an app's own component.\n\nThe document is rendered exactly as {@linkcode renderMarkdown} renders it (same options, same\nescaping and URL rules) and then built as elements, so an override receives only what that\nHTML would carry: the attributes in React spelling (`className`, `href`, `id`, …) and the\nrendered children; a `code` override also gets `inline` and a fenced block's `lang`. No HTML\nstring is injected (no `dangerouslySetInnerHTML`): every text run is a text child.\n\n```tsx\nimport { Markdown } from \"denext/markdown\";\n\n<Markdown\n  source={post.body}\n  html=\"sanitize\"\n  components={{ a: SiteLink, code: ({ inline, lang, children }) => … }}\n/>;\n```",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The source, the element overrides, and MarkdownOptions."
+            }
+          ],
+          "returns": "A fragment of the document's block elements.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MarkdownCodeProps",
+          "slug": "MarkdownCodeProps",
+          "kind": "interface",
+          "signature": "interface MarkdownCodeProps extends MarkdownElementProps",
+          "doc": "What a code override receives on top of MarkdownElementProps: whether it is a fenced or indented block (inside pre) or an inline code span, and a fence's info string.",
+          "docFull": "What a `code` override receives on top of {@linkcode MarkdownElementProps}: whether it is a\nfenced or indented block (inside `pre`) or an inline code span, and a fence's info string.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "inline",
+              "signature": "readonly inline: boolean",
+              "doc": "`true` for a code span, `false` for the code of a block."
+            },
+            {
+              "kind": "property",
+              "name": "lang",
+              "signature": "readonly lang?: string",
+              "doc": "A fenced block's language (```` ```ts ```` → `\"ts\"`), when it named one."
+            }
+          ],
+          "extends": [
+            {
+              "type": "MarkdownElementProps",
+              "ref": "denext-markdown/MarkdownElementProps"
+            }
+          ]
+        },
+        {
+          "name": "MarkdownComponents",
+          "slug": "MarkdownComponents",
+          "kind": "typeAlias",
+          "signature": "type MarkdownComponents = { readonly [tag: string]: Component<any> | string | undefined }",
+          "doc": "Element overrides for Markdown, keyed by the lower-case tag the HTML renderer would write (h1…h6, p, a, img, code, pre, ul, ol, li, blockquote, aside (callouts), table, th, td, em, strong, sup, section, …). A component renders that element in place of the built-in one; a tag name renames it ({ h1: \"h2\" }).",
+          "docFull": "Element overrides for {@linkcode Markdown}, keyed by the lower-case tag the HTML renderer\nwould write (`h1`…`h6`, `p`, `a`, `img`, `code`, `pre`, `ul`, `ol`, `li`, `blockquote`,\n`aside` (callouts), `table`, `th`, `td`, `em`, `strong`, `sup`, `section`, …). A component\nrenders that element in place of the built-in one; a tag name renames it (`{ h1: \"h2\" }`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MarkdownElementProps",
+          "slug": "MarkdownElementProps",
+          "kind": "interface",
+          "signature": "interface MarkdownElementProps",
+          "doc": "The props a Markdown element override receives: the element's attributes in React spelling (className, htmlFor, href, id, src, alt, …) and its rendered children.",
+          "docFull": "The props a {@linkcode Markdown} element override receives: the element's attributes in React\nspelling (`className`, `htmlFor`, `href`, `id`, `src`, `alt`, …) and its rendered children.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "index",
+              "name": "",
+              "signature": "readonly [attribute: string]: unknown",
+              "doc": "The element's attributes, as the HTML renderer writes them."
+            },
+            {
+              "kind": "property",
+              "name": "children",
+              "signature": "readonly children?: VNodeChildren",
+              "doc": "The element's rendered children (absent for `img`, `hr`, `br`)."
+            }
+          ]
+        },
+        {
+          "name": "MarkdownHtmlMode",
+          "slug": "MarkdownHtmlMode",
+          "kind": "typeAlias",
+          "signature": "type MarkdownHtmlMode = \"escape\" | \"sanitize\"",
+          "doc": "How renderMarkdown treats raw HTML in the source: escape it (the default) or sanitize it.",
+          "docFull": "How `renderMarkdown` treats raw HTML in the source: escape it (the default) or sanitize it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MarkdownOptions",
+          "slug": "MarkdownOptions",
+          "kind": "interface",
+          "signature": "interface MarkdownOptions",
+          "doc": "Options for renderMarkdown.",
+          "docFull": "Options for {@linkcode renderMarkdown}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "html",
+              "signature": "readonly html?: MarkdownHtmlMode",
+              "doc": "Raw HTML in the source: `\"escape\"` (the default) shows it as text; `\"sanitize\"` keeps what\nthe allowlist sanitizer allows (see {@linkcode sanitizeHtml}) and drops the rest."
+            },
+            {
+              "kind": "property",
+              "name": "sanitize",
+              "signature": "readonly sanitize?: SanitizeOptions",
+              "doc": "With `html: \"sanitize\"`: additions to the sanitizer's built-in allowlist."
+            },
+            {
+              "kind": "property",
+              "name": "headingIds",
+              "signature": "readonly headingIds?: boolean",
+              "doc": "Give each heading an `id` slugged from its text, as GitHub does (`## Known Gaps` →\n`id=\"known-gaps\"`). Default `true`."
+            },
+            {
+              "kind": "property",
+              "name": "allowDataImages",
+              "signature": "readonly allowDataImages?: boolean",
+              "doc": "Keep a Markdown image whose source is a base64 raster `data:` URL\n(`data:image/(png|gif|jpeg|webp);base64,…`, never SVG). Default `false`: like every other\n`data:` URL it is refused and the image renders as its alt text. Links never take `data:`."
+            },
+            {
+              "kind": "property",
+              "name": "urlPolicy",
+              "signature": "readonly urlPolicy?: (url: string, kind: MarkdownUrlKind) => boolean",
+              "doc": "A further check on every link and image URL, run after the built-in refusal of\n`javascript:` / `vbscript:` / `data:` (it can only refuse more, never allow one of those).\n`url` is the decoded destination; return `false` to drop the link (its label stays) or the\nimage (its alt text stays)."
+            }
+          ]
+        },
+        {
+          "name": "MarkdownProps",
+          "slug": "MarkdownProps",
+          "kind": "interface",
+          "signature": "interface MarkdownProps extends MarkdownOptions",
+          "doc": "Props of Markdown: the source, the element overrides, and the render options.",
+          "docFull": "Props of {@linkcode Markdown}: the source, the element overrides, and the render options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "readonly source: string",
+              "doc": "The Markdown source (any frontmatter already removed)."
+            },
+            {
+              "kind": "property",
+              "name": "components",
+              "signature": "readonly components?: MarkdownComponents",
+              "doc": "Components (or tag names) that render particular elements in place of the built-in ones."
+            }
+          ],
+          "extends": [
+            {
+              "type": "MarkdownOptions",
+              "ref": "denext-markdown/MarkdownOptions"
+            }
+          ]
+        },
+        {
+          "name": "MarkdownUrlKind",
+          "slug": "MarkdownUrlKind",
+          "kind": "typeAlias",
+          "signature": "type MarkdownUrlKind = \"link\" | \"image\"",
+          "doc": "What a URL in the source is for: a link's href or an image's src.",
+          "docFull": "What a URL in the source is for: a link's `href` or an image's `src`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "renderMarkdown",
+          "slug": "renderMarkdown",
+          "kind": "function",
+          "signature": "renderMarkdown(body: string, options?: MarkdownOptions): string",
+          "doc": "Render a Markdown body (frontmatter already stripped) to an HTML string.",
+          "docFull": "Render a Markdown body (frontmatter already stripped) to an HTML string.\n\nRaw HTML is escaped unless `options.html` is `\"sanitize\"`, which keeps the HTML the allowlist\nsanitizer allows ({@linkcode sanitizeHtml}): an HTML block (a line opening with a block-level\ntag, a comment, or a lone tag) is sanitized as one fragment, inline tags together with the\nparagraph, heading, cell or item they sit in. Every element is closed inside that block, except\na block container (`details`, `div`, `blockquote`, `figure`, and `section` / `aside` when\nallowlisted) an HTML block leaves open: it wraps the Markdown blocks that follow until a later\nHTML block closes it, or the document ends. Raw HTML never closes the renderer's own markup, a\n`#fragment` link follows the `user-content-` prefix only to an id the raw HTML defines, and code\nspans and code blocks stay literal.\n\n```ts\nrenderMarkdown(\"Press <kbd>Ctrl</kbd>+<kbd>C</kbd> <img src=x onerror=alert(1)>\", {\n  html: \"sanitize\",\n}); // → '<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd> <img src=\"x\" /></p>'\n```",
+          "params": [
+            {
+              "name": "body",
+              "doc": "The Markdown source, without frontmatter."
+            },
+            {
+              "name": "options",
+              "doc": "How raw HTML is treated (escaped by default), heading ids, and the URL rules."
+            }
+          ],
+          "returns": "HTML: one block element per Markdown block, joined by newlines (the footnotes section, when a footnote is referenced, last).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "sanitizeHtml",
+          "slug": "sanitizeHtml",
+          "kind": "function",
+          "signature": "sanitizeHtml(html: string, options?: SanitizeOptions): string",
+          "doc": "Sanitize an HTML fragment against the allowlist: parse it into a tree and re-serialize it, so only allowed elements and attributes, checked URLs and escaped text come out, every element is closed, and comments, processing instructions, CDATA and doctypes are gone. Idempotent.",
+          "docFull": "Sanitize an HTML fragment against the allowlist: parse it into a tree and re-serialize it, so\nonly allowed elements and attributes, checked URLs and escaped text come out, every element is\nclosed, and comments, processing instructions, CDATA and doctypes are gone. Idempotent.\n\n```ts\nimport { sanitizeHtml } from \"denext/markdown\";\nsanitizeHtml(`<a href=\"javascript:alert(1)\" onclick=\"x()\">hi</a><script>x()</script>`);\n// → \"<a>hi</a>\"\n```",
+          "params": [
+            {
+              "name": "html",
+              "doc": "The untrusted HTML."
+            },
+            {
+              "name": "options",
+              "doc": "Additions to the built-in allowlist."
+            }
+          ],
+          "returns": "Well-formed, allowlisted HTML.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SanitizeOptions",
+          "slug": "SanitizeOptions",
+          "kind": "interface",
+          "signature": "interface SanitizeOptions",
+          "doc": "Extensions to the sanitizer's built-in allowlist. They can only ADD to it: the hard-denied elements (script, style, iframe, form, svg, math, … and any namespaced or custom element) and attributes (on*, style, srcdoc, formaction, xlink:*, any namespaced name) are refused whatever is listed here.",
+          "docFull": "Extensions to the sanitizer's built-in allowlist. They can only ADD to it: the hard-denied\nelements (`script`, `style`, `iframe`, `form`, `svg`, `math`, … and any namespaced or custom\nelement) and attributes (`on*`, `style`, `srcdoc`, `formaction`, `xlink:*`, any namespaced\nname) are refused whatever is listed here.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "allowElements",
+              "signature": "readonly allowElements?: readonly string[]",
+              "doc": "More element names to keep (lower-case HTML names such as `\"center\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "allowAttributes",
+              "signature": "readonly allowAttributes?: Readonly<Record<string, readonly string[]>>",
+              "doc": "More attributes to keep, keyed by element name, or `\"*\"` for every element — for example\n`{ \"*\": [\"class\"] }` keeps `class` (stripped by default) everywhere. A URL-bearing attribute\n(`href`, `src`, `cite`, `poster`, …) is still scheme-checked."
+            },
+            {
+              "kind": "property",
+              "name": "allowDataImages",
+              "signature": "readonly allowDataImages?: boolean",
+              "doc": "Keep `data:image/(png|gif|jpeg|webp);base64,…` URLs, on `<img src>` only (never SVG).\nDefault `false`."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "module": "denext/deploy",
+      "symbols": [
+        {
+          "name": "defineDeployAdapter",
+          "slug": "defineDeployAdapter",
+          "kind": "function",
+          "signature": "defineDeployAdapter(adapter: DeployAdapter): DeployAdapter",
+          "doc": "Declare a deploy adapter (an identity function that type-checks the object).",
+          "docFull": "Declare a deploy adapter (an identity function that type-checks the object).",
+          "params": [
+            {
+              "name": "adapter",
+              "doc": "The adapter."
+            }
+          ],
+          "returns": "The same adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "denoDeploy",
+          "slug": "denoDeploy",
+          "kind": "function",
+          "signature": "denoDeploy(options?: DenoDeployPresetOptions): DeployAdapter",
+          "doc": "The Deno Deploy preset: an entrypoint that maps the schedules onto Deno.cron and the cache onto Deno KV, plus the app settings.",
+          "docFull": "The Deno Deploy preset: an entrypoint that maps the schedules onto `Deno.cron` and the cache\nonto Deno KV, plus the app settings.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The Deno Deploy options."
+            }
+          ],
+          "returns": "The adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DenoDeployPresetOptions",
+          "slug": "DenoDeployPresetOptions",
+          "kind": "interface",
+          "signature": "interface DenoDeployPresetOptions",
+          "doc": "Options for denoDeploy.",
+          "docFull": "Options for {@linkcode denoDeploy}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "org",
+              "signature": "org?: string",
+              "doc": "The Deno Deploy organization (`--org`)."
+            },
+            {
+              "kind": "property",
+              "name": "app",
+              "signature": "app?: string",
+              "doc": "The Deno Deploy app (`--app`)."
+            },
+            {
+              "kind": "property",
+              "name": "prod",
+              "signature": "prod?: boolean",
+              "doc": "Deploy straight to production (default `true`); `false` makes a preview deployment."
+            },
+            {
+              "kind": "property",
+              "name": "kv",
+              "signature": "kv?: boolean",
+              "doc": "Put the page and data cache on Deno KV (`denoKvCacheStore()`). Default: when the config\nnames no `cache.store`. The app needs a KV database attached on Deno Deploy."
+            },
+            {
+              "kind": "property",
+              "name": "entrypoint",
+              "signature": "entrypoint?: string",
+              "doc": "The entrypoint's file name at the project root (default `denext.deploy.ts`)."
+            }
+          ]
+        },
+        {
+          "name": "DEPLOY_MANIFEST_FILE",
+          "slug": "DEPLOY_MANIFEST_FILE",
+          "kind": "variable",
+          "signature": "DEPLOY_MANIFEST_FILE: \"deploy-manifest.json\"",
+          "doc": "The manifest's file name, under the build directory (.denext/deploy-manifest.json).",
+          "docFull": "The manifest's file name, under the build directory (`.denext/deploy-manifest.json`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DEPLOY_MANIFEST_VERSION",
+          "slug": "DEPLOY_MANIFEST_VERSION",
+          "kind": "variable",
+          "signature": "DEPLOY_MANIFEST_VERSION: 1",
+          "doc": "The manifest format version DeployManifest.version carries.",
+          "docFull": "The manifest format version {@linkcode DeployManifest.version} carries.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployAdapter",
+          "slug": "DeployAdapter",
+          "kind": "interface",
+          "signature": "interface DeployAdapter",
+          "doc": "A deploy adapter: prepare writes a target's files from the manifest, and the optional deploy pushes them with the target's own CLI. Declare one in denext.config.ts as deploy: { adapter: fly({ app: \"my-app\" }) }, or contribute one from a plugin with addDeployAdapter.",
+          "docFull": "A deploy adapter: {@linkcode prepare} writes a target's files from the manifest, and the\noptional {@linkcode deploy} pushes them with the target's own CLI. Declare one in\n`denext.config.ts` as `deploy: { adapter: fly({ app: \"my-app\" }) }`, or contribute one from a\nplugin with `addDeployAdapter`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "readonly name: string",
+              "doc": "The adapter's name (its output directory under `.denext/deploy/`)."
+            },
+            {
+              "kind": "method",
+              "name": "prepare",
+              "signature": "prepare(context: DeployContext): void | Promise<void>",
+              "doc": "Write the target's files. Throw an `Error` whose message starts with `denext:` to refuse the\napp (the static preset does, for routes that need a server)."
+            },
+            {
+              "kind": "method",
+              "name": "deploy",
+              "signature": "deploy?(context: DeployContext): void | Promise<void>",
+              "doc": "Push the prepared output (`denext deploy`). Absent: the target has no CLI denext drives."
+            }
+          ]
+        },
+        {
+          "name": "DeployAssetGroup",
+          "slug": "DeployAssetGroup",
+          "kind": "interface",
+          "signature": "interface DeployAssetGroup",
+          "doc": "One directory of files the server serves as they are, with the Cache-Control it sends.",
+          "docFull": "One directory of files the server serves as they are, with the `Cache-Control` it sends.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "urlPrefix",
+              "signature": "urlPrefix: string",
+              "doc": "The URL prefix the files are served under (`/_denext/client/`, `/`)."
+            },
+            {
+              "kind": "property",
+              "name": "dir",
+              "signature": "dir: string",
+              "doc": "The directory, project-relative (`.denext/client`, `public`)."
+            },
+            {
+              "kind": "property",
+              "name": "cacheControl",
+              "signature": "cacheControl: string",
+              "doc": "The `Cache-Control` the production server sends for these files."
+            },
+            {
+              "kind": "property",
+              "name": "immutable",
+              "signature": "immutable: boolean",
+              "doc": "Whether the files are content-hashed (safe to cache forever)."
+            },
+            {
+              "kind": "property",
+              "name": "files",
+              "signature": "files: string[]",
+              "doc": "The files, relative to {@linkcode dir}, sorted (precompressed `.gz` siblings left out)."
+            }
+          ]
+        },
+        {
+          "name": "DeployCache",
+          "slug": "DeployCache",
+          "kind": "interface",
+          "signature": "interface DeployCache",
+          "doc": "The data / page (ISR) cache store the config chooses.",
+          "docFull": "The data / page (ISR) cache store the config chooses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "store",
+              "signature": "store: \"default\" | \"sqlite\" | \"memory\" | \"custom\"",
+              "doc": "`\"default\"` (`node:sqlite` in `.denext/` where the disk is writable, else memory),\n`\"sqlite\"`, `\"memory\"`, or `\"custom\"` (a store object, e.g. Redis or Deno KV)."
+            }
+          ]
+        },
+        {
+          "name": "DeployCompile",
+          "slug": "DeployCompile",
+          "kind": "interface",
+          "signature": "interface DeployCompile",
+          "doc": "What denext build --compile produced.",
+          "docFull": "What `denext build --compile` produced.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "output",
+              "signature": "output: string",
+              "doc": "The executable, project-relative."
+            },
+            {
+              "kind": "property",
+              "name": "target",
+              "signature": "target?: string",
+              "doc": "The `deno compile --target` triple (absent: the build machine's)."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "permissions: string[]",
+              "doc": "The `--allow-*` baked into it."
+            }
+          ]
+        },
+        {
+          "name": "DeployConfig",
+          "slug": "DeployConfig",
+          "kind": "interface",
+          "signature": "interface DeployConfig",
+          "doc": "The deploy key of denext.config.ts.",
+          "docFull": "The `deploy` key of `denext.config.ts`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "adapter",
+              "signature": "adapter?: DeployAdapter",
+              "doc": "The adapter `denext build` runs after every build (its `prepare`), and `denext deploy` uses:\na preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`, `genericHost()`,\n`staticHost()`) or your own {@linkcode DeployAdapter}."
+            }
+          ]
+        },
+        {
+          "name": "DeployContext",
+          "slug": "DeployContext",
+          "kind": "interface",
+          "signature": "interface DeployContext",
+          "doc": "What an adapter's prepare and deploy receive.",
+          "docFull": "What an adapter's `prepare` and `deploy` receive.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "manifest",
+              "signature": "readonly manifest: DeployManifest",
+              "doc": "The deploy manifest of the build."
+            },
+            {
+              "kind": "property",
+              "name": "projectDir",
+              "signature": "readonly projectDir: string",
+              "doc": "The project root (absolute)."
+            },
+            {
+              "kind": "property",
+              "name": "outDir",
+              "signature": "readonly outDir: string",
+              "doc": "The adapter's output directory (absolute): `.denext/deploy/<adapter name>/`."
+            },
+            {
+              "kind": "property",
+              "name": "dryRun",
+              "signature": "readonly dryRun: boolean",
+              "doc": "`--dry-run`: say what would be written or run, and write / run nothing."
+            },
+            {
+              "kind": "method",
+              "name": "writeFile",
+              "signature": "writeFile(path: string, contents: string, options?: DeployWriteOptions): Promise<boolean>",
+              "doc": "Write a generated file (UTF-8). Resolves to whether it was written: `false` when dry-running\nor when a hand-edited project file was left alone.",
+              "params": [
+                {
+                  "name": "path",
+                  "doc": "A relative, /-separated path (no ..)."
+                },
+                {
+                  "name": "contents",
+                  "doc": "The file's contents."
+                },
+                {
+                  "name": "options",
+                  "doc": "Where it goes (the adapter's directory by default)."
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "log",
+              "signature": "log(message: string): void",
+              "doc": "Print a progress line."
+            },
+            {
+              "kind": "method",
+              "name": "warn",
+              "signature": "warn(message: string): void",
+              "doc": "Print a warning (something the target cannot do, a file left alone)."
+            },
+            {
+              "kind": "method",
+              "name": "env",
+              "signature": "env(name: string): string | undefined",
+              "doc": "Read an environment variable (credentials come from here, never from a file)."
+            },
+            {
+              "kind": "method",
+              "name": "which",
+              "signature": "which(...names: string[]): Promise<string | null>",
+              "doc": "The first of `names` on `PATH`, as an absolute path, or `null`."
+            },
+            {
+              "kind": "method",
+              "name": "run",
+              "signature": "run(command: readonly string[], options?: DeployRunOptions): Promise<number>",
+              "doc": "Run a command with the terminal attached and the process's environment, resolving to its\nexit code (a dry run prints it and resolves to `0`)."
+            },
+            {
+              "kind": "method",
+              "name": "exportStatic",
+              "signature": "exportStatic(): Promise<string>",
+              "doc": "Run `denext export` on the project and resolve to the export directory (absolute)."
+            }
+          ]
+        },
+        {
+          "name": "DeployEnvVar",
+          "slug": "DeployEnvVar",
+          "kind": "interface",
+          "signature": "interface DeployEnvVar",
+          "doc": "An environment variable the app reads.",
+          "docFull": "An environment variable the app reads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string",
+              "doc": "The variable."
+            },
+            {
+              "kind": "property",
+              "name": "required",
+              "signature": "required: boolean",
+              "doc": "Whether the app cannot run without it: a secret the detected stack needs (`AUTH_SECRET`,\n`DATABASE_URL`, …) or a read the source asserts (`Deno.env.get(\"X\")!`)."
+            },
+            {
+              "kind": "property",
+              "name": "public",
+              "signature": "public: boolean",
+              "doc": "A `DENEXT_PUBLIC_` / `NEXT_PUBLIC_` variable: shipped to the browser."
+            },
+            {
+              "kind": "property",
+              "name": "sources",
+              "signature": "sources: string[]",
+              "doc": "Where it was found: project-relative files, or `\"stack\"` for the detected services."
+            }
+          ]
+        },
+        {
+          "name": "DeployImages",
+          "slug": "DeployImages",
+          "kind": "interface",
+          "signature": "interface DeployImages",
+          "doc": "The built-in image optimizer.",
+          "docFull": "The built-in image optimizer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "optimizer",
+              "signature": "optimizer: boolean",
+              "doc": "Whether `<Image>` requests go through the server's optimizer (`images.unoptimized` off)."
+            },
+            {
+              "kind": "property",
+              "name": "endpoint",
+              "signature": "endpoint: string",
+              "doc": "The optimizer's endpoint."
+            },
+            {
+              "kind": "property",
+              "name": "remoteHosts",
+              "signature": "remoteHosts: string[]",
+              "doc": "The remote hosts it may fetch (`images.remotePatterns` / `images.domains` hostnames)."
+            }
+          ]
+        },
+        {
+          "name": "DeployJob",
+          "slug": "DeployJob",
+          "kind": "interface",
+          "signature": "interface DeployJob",
+          "doc": "A job under jobs/.",
+          "docFull": "A job under `jobs/`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string",
+              "doc": "The job's name (its path under `jobs/` without the extension)."
+            },
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "source: string",
+              "doc": "Its module, project-relative."
+            }
+          ]
+        },
+        {
+          "name": "DeployManifest",
+          "slug": "DeployManifest",
+          "kind": "interface",
+          "signature": "interface DeployManifest",
+          "doc": "The deploy manifest denext build writes to .denext/deploy-manifest.json.",
+          "docFull": "The deploy manifest `denext build` writes to `.denext/deploy-manifest.json`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "version",
+              "signature": "version: 1",
+              "doc": "The format version ({@linkcode DEPLOY_MANIFEST_VERSION})."
+            },
+            {
+              "kind": "property",
+              "name": "denext",
+              "signature": "denext: string",
+              "doc": "The denext version that wrote it."
+            },
+            {
+              "kind": "property",
+              "name": "mode",
+              "signature": "mode: \"app\" | \"spa\" | \"pages\"",
+              "doc": "`\"app\"` (App Router), `\"spa\"` (`mode: \"spa\"`) or `\"pages\"` (no `app/`; a router plugin)."
+            },
+            {
+              "kind": "property",
+              "name": "basePath",
+              "signature": "basePath: string",
+              "doc": "`basePath` (`\"\"` when none)."
+            },
+            {
+              "kind": "property",
+              "name": "trailingSlash",
+              "signature": "trailingSlash: boolean",
+              "doc": "`trailingSlash`."
+            },
+            {
+              "kind": "property",
+              "name": "i18n",
+              "signature": "i18n: { locales: string[]; defaultLocale: string } | null",
+              "doc": "The i18n locales, when the app is localized."
+            },
+            {
+              "kind": "property",
+              "name": "routes",
+              "signature": "routes: DeployRoute[]",
+              "doc": "Every route, sorted by path then kind."
+            },
+            {
+              "kind": "property",
+              "name": "assets",
+              "signature": "assets: DeployAssetGroup[]",
+              "doc": "The files served as they are."
+            },
+            {
+              "kind": "property",
+              "name": "server",
+              "signature": "server: DeployServer",
+              "doc": "How the server starts."
+            },
+            {
+              "kind": "property",
+              "name": "jobs",
+              "signature": "jobs: DeployJob[]",
+              "doc": "The jobs under `jobs/`."
+            },
+            {
+              "kind": "property",
+              "name": "schedules",
+              "signature": "schedules: DeploySchedule[]",
+              "doc": "Every schedule the server registers."
+            },
+            {
+              "kind": "property",
+              "name": "services",
+              "signature": "services: DeployService[]",
+              "doc": "The services under `services/`."
+            },
+            {
+              "kind": "property",
+              "name": "env",
+              "signature": "env: DeployEnvVar[]",
+              "doc": "The environment variables the app reads."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "permissions: DeployPermissions",
+              "doc": "The Deno permissions the server needs."
+            },
+            {
+              "kind": "property",
+              "name": "images",
+              "signature": "images: DeployImages",
+              "doc": "The image optimizer."
+            },
+            {
+              "kind": "property",
+              "name": "cache",
+              "signature": "cache: DeployCache",
+              "doc": "The cache store."
+            },
+            {
+              "kind": "property",
+              "name": "compile",
+              "signature": "compile: DeployCompile | null",
+              "doc": "The `build --compile` executable, or `null` when the build made none."
+            }
+          ]
+        },
+        {
+          "name": "DeployNetPermissions",
+          "slug": "DeployNetPermissions",
+          "kind": "interface",
+          "signature": "interface DeployNetPermissions",
+          "doc": "DeployPermissions.net: the outbound hosts and the listen addresses.",
+          "docFull": "{@linkcode DeployPermissions.net}: the outbound hosts and the listen addresses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "connect",
+              "signature": "connect: string[]",
+              "doc": "`--allow-net-connect` hosts (`[\"*\"]`: unscoped)."
+            },
+            {
+              "kind": "property",
+              "name": "listen",
+              "signature": "listen: string[]",
+              "doc": "`--allow-net-listen` addresses (`[\"*\"]`: unscoped, for the adapter to scope to its port)."
+            }
+          ]
+        },
+        {
+          "name": "DeployPermissions",
+          "slug": "DeployPermissions",
+          "kind": "interface",
+          "signature": "interface DeployPermissions",
+          "doc": "The Deno permissions the production server runs with.",
+          "docFull": "The Deno permissions the production server runs with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "flags",
+              "signature": "flags: string[]",
+              "doc": "The `--allow-*` flags (the least-privilege `start` set plus `compile.permissions`), for any\nDeno: the network grant is the one `--allow-net`."
+            },
+            {
+              "kind": "property",
+              "name": "allowAll",
+              "signature": "allowAll: boolean",
+              "doc": "Whether the app opted into `--allow-all` (`compile.permissions: \"all\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "net",
+              "signature": "net: DeployNetPermissions | null",
+              "doc": "The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno from\n3.0.0-rc.2: `--allow-net-connect` / `--allow-net-listen`). `[\"*\"]` is a direction left\nunscoped. `listen` is `[\"*\"]` unless `compile.permissions.netListen` names addresses: an\nadapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),\nso nothing else in the process can open a listener. `null` under `allowAll`."
+            }
+          ]
+        },
+        {
+          "name": "DeployRoute",
+          "slug": "DeployRoute",
+          "kind": "interface",
+          "signature": "interface DeployRoute",
+          "doc": "One route of the app, classified for a host.",
+          "docFull": "One route of the app, classified for a host.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "path: string",
+              "doc": "The route pattern (`/blog/[slug]`); the middleware's is `\"*\"`."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "kind: DeployRouteKind",
+              "doc": "How it is served."
+            },
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "source: string",
+              "doc": "The module that defines it, project-relative."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "reason?: string",
+              "doc": "Why it is not `\"static\"` (absent for a static route)."
+            },
+            {
+              "kind": "property",
+              "name": "revalidate",
+              "signature": "revalidate?: number",
+              "doc": "An `\"isr\"` route's revalidation period, in seconds."
+            },
+            {
+              "kind": "property",
+              "name": "methods",
+              "signature": "methods?: string[]",
+              "doc": "A route handler's exported HTTP methods (`[\"GET\", \"POST\"]`), when they could be read."
+            },
+            {
+              "kind": "property",
+              "name": "matcher",
+              "signature": "matcher?: string[]",
+              "doc": "The middleware's `config.matcher` patterns, when given as literals (absent: every path)."
+            },
+            {
+              "kind": "property",
+              "name": "metadata",
+              "signature": "metadata?: boolean",
+              "doc": "A metadata route (`sitemap.ts`, `robots.ts`, `manifest.ts`), served by the server."
+            }
+          ]
+        },
+        {
+          "name": "DeployRouteKind",
+          "slug": "DeployRouteKind",
+          "kind": "typeAlias",
+          "signature": "type DeployRouteKind = \"static\" | \"isr\" | \"dynamic\" | \"route-handler\" | \"middleware\"",
+          "doc": "How a route is served, as a host needs to know it: - \"static\" — rendered once (at build or on the first request) and the same for everyone: denext export writes it, and a CDN may cache it until the next deploy. - \"isr\" — cached and re-rendered in the background every DeployRoute.revalidate seconds (export const revalidate = N): needs the server. - \"dynamic\" — rendered per request (dynamic = \"force-dynamic\", a request API such as cookies(), or a dynamic segment with no generateStaticParams): needs the server. - \"route-handler\" — a route.ts (or a metadata route such as sitemap.ts): needs the server. - \"middleware\" — the root middleware.ts / proxy.ts: runs before every matched request.",
+          "docFull": "How a route is served, as a host needs to know it:\n- `\"static\"` — rendered once (at build or on the first request) and the same for everyone:\n  `denext export` writes it, and a CDN may cache it until the next deploy.\n- `\"isr\"` — cached and re-rendered in the background every {@linkcode DeployRoute.revalidate}\n  seconds (`export const revalidate = N`): needs the server.\n- `\"dynamic\"` — rendered per request (`dynamic = \"force-dynamic\"`, a request API such as\n  `cookies()`, or a dynamic segment with no `generateStaticParams`): needs the server.\n- `\"route-handler\"` — a `route.ts` (or a metadata route such as `sitemap.ts`): needs the server.\n- `\"middleware\"` — the root `middleware.ts` / `proxy.ts`: runs before every matched request.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeployRunOptions",
+          "slug": "DeployRunOptions",
+          "kind": "interface",
+          "signature": "interface DeployRunOptions",
+          "doc": "Options for DeployContext.run.",
+          "docFull": "Options for {@linkcode DeployContext.run}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd?: string",
+              "doc": "The working directory (default: the project root)."
+            }
+          ]
+        },
+        {
+          "name": "DeploySchedule",
+          "slug": "DeploySchedule",
+          "kind": "interface",
+          "signature": "interface DeploySchedule",
+          "doc": "One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.",
+          "docFull": "One scheduled run: a job and the cron expression (UTC, POSIX weekdays) that fires it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "cron",
+              "signature": "cron: string",
+              "doc": "The cron expression."
+            },
+            {
+              "kind": "property",
+              "name": "job",
+              "signature": "job: string",
+              "doc": "The job it runs."
+            },
+            {
+              "kind": "property",
+              "name": "from",
+              "signature": "from: \"config\" | \"job\"",
+              "doc": "Where the schedule is declared: `denext.config`'s `scheduledJobs`, or the job's own file."
+            }
+          ]
+        },
+        {
+          "name": "DeployServer",
+          "slug": "DeployServer",
+          "kind": "interface",
+          "signature": "interface DeployServer",
+          "doc": "How the production server is started.",
+          "docFull": "How the production server is started.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "command",
+              "signature": "command: string[]",
+              "doc": "The command that serves the built app (`deno run --allow-… jsr:@denext/denext/cli start .`)."
+            },
+            {
+              "kind": "property",
+              "name": "port",
+              "signature": "port: number",
+              "doc": "The port it listens on unless `PORT` says otherwise."
+            },
+            {
+              "kind": "property",
+              "name": "portEnv",
+              "signature": "portEnv: \"PORT\"",
+              "doc": "The environment variable the port is read from."
+            },
+            {
+              "kind": "property",
+              "name": "healthPath",
+              "signature": "healthPath: string",
+              "doc": "The liveness/readiness endpoint (`200` while up; `503` when a registered check fails)."
+            },
+            {
+              "kind": "property",
+              "name": "drain",
+              "signature": "drain: { ms: number; env: \"DENEXT_SHUTDOWN_DRAIN_MS\" }",
+              "doc": "How long `SIGTERM` drains in-flight requests by default (ms), and the variable that sets it."
+            },
+            {
+              "kind": "property",
+              "name": "buildDir",
+              "signature": "buildDir: string",
+              "doc": "The build directory the server reads, and writes its durable cache to, project-relative."
+            },
+            {
+              "kind": "property",
+              "name": "idleTrim",
+              "signature": "idleTrim?: boolean",
+              "doc": "Whether a server started on denext's pinned Deno toolchain should run with its idle trim\n(`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):\nthe pinned toolchain has it (3.0.0-rc.5 or later) and the project does not opt out\n(`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A\n`--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1."
+            },
+            {
+              "kind": "property",
+              "name": "limits",
+              "signature": "limits?: string[]",
+              "doc": "The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,\n`--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on\ndenext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`\n(a `--compile` executable has them baked in already). Absent in a manifest from before denext\n4.10."
+            },
+            {
+              "kind": "property",
+              "name": "tls",
+              "signature": "tls?: DeployServerTls | null",
+              "doc": "`start.tls` — the server serves HTTPS itself — with each certificate's host names and the\nenvironment variables naming its PEM files (never the paths or the files), for a generator to\npass those variables through, make the files readable and probe health over `https:`; `null`\nwhen the server serves plain HTTP. Several certificates need denext's Deno from runtime\n3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3."
+            }
+          ]
+        },
+        {
+          "name": "DeployServerTls",
+          "slug": "DeployServerTls",
+          "kind": "interface",
+          "signature": "interface DeployServerTls",
+          "doc": "DeployServer.tls: the certificates the server serves HTTPS with.",
+          "docFull": "{@linkcode DeployServer.tls}: the certificates the server serves HTTPS with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "certificates",
+              "signature": "certificates: DeployTlsCertificate[]",
+              "doc": "One entry per certificate, in config order."
+            }
+          ]
+        },
+        {
+          "name": "DeployService",
+          "slug": "DeployService",
+          "kind": "interface",
+          "signature": "interface DeployService",
+          "doc": "A supervised service under services/, started with the server.",
+          "docFull": "A supervised service under `services/`, started with the server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string",
+              "doc": "The service's name (its path under `services/` without the extension)."
+            },
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "source: string",
+              "doc": "Its module, project-relative."
+            }
+          ]
+        },
+        {
+          "name": "DeployTlsCertificate",
+          "slug": "DeployTlsCertificate",
+          "kind": "interface",
+          "signature": "interface DeployTlsCertificate",
+          "doc": "One certificate of DeployServerTls.",
+          "docFull": "One certificate of {@linkcode DeployServerTls}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "hostnames",
+              "signature": "hostnames: string[]",
+              "doc": "The host names it serves (exact, a one-label `*.` wildcard, or `\"*\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "certFileEnv",
+              "signature": "certFileEnv: string",
+              "doc": "The environment variable holding the certificate (chain) file's path."
+            },
+            {
+              "kind": "property",
+              "name": "keyFileEnv",
+              "signature": "keyFileEnv: string",
+              "doc": "The environment variable holding the private key file's path."
+            }
+          ]
+        },
+        {
+          "name": "DeployWriteOptions",
+          "slug": "DeployWriteOptions",
+          "kind": "interface",
+          "signature": "interface DeployWriteOptions",
+          "doc": "Where DeployContext.writeFile writes.",
+          "docFull": "Where {@linkcode DeployContext.writeFile} writes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "in",
+              "signature": "readonly in?: \"output\" | \"project\"",
+              "doc": "`\"output\"` (default): under {@linkcode DeployContext.outDir}, the adapter's own directory,\nreplaced freely. `\"project\"`: under the project root, for files a target's tooling expects\nthere (`Dockerfile`, `fly.toml`) — an existing file is replaced only when it carries\n{@linkcode marker} (denext wrote it), else it is left alone with a warning (`--force`\nreplaces it)."
+            },
+            {
+              "kind": "property",
+              "name": "marker",
+              "signature": "readonly marker?: string",
+              "doc": "The generated-file marker a `\"project\"` file carries (required there)."
+            }
+          ]
+        },
+        {
+          "name": "docker",
+          "slug": "docker",
+          "kind": "function",
+          "signature": "docker(options?: DockerPresetOptions): DeployAdapter",
+          "doc": "The Docker preset: the production image denext generate docker writes (and its compose stack, with stack: true).",
+          "docFull": "The Docker preset: the production image `denext generate docker` writes (and its compose\nstack, with `stack: true`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The image options."
+            }
+          ],
+          "returns": "The adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DockerPresetOptions",
+          "slug": "DockerPresetOptions",
+          "kind": "interface",
+          "signature": "interface DockerPresetOptions",
+          "doc": "Options for docker.",
+          "docFull": "Options for {@linkcode docker}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "port",
+              "signature": "port?: number",
+              "doc": "The port the image exposes and the server binds (default 3000)."
+            },
+            {
+              "kind": "property",
+              "name": "denoTag",
+              "signature": "denoTag?: string",
+              "doc": "The `denoland/deno` image tag (default: the Deno version running the build)."
+            },
+            {
+              "kind": "property",
+              "name": "stack",
+              "signature": "stack?: boolean",
+              "doc": "The self-hosted stack too: Postgres, storage and migrations behind docker compose."
+            },
+            {
+              "kind": "property",
+              "name": "image",
+              "signature": "image?: string",
+              "doc": "The image `denext deploy` builds (`registry.example.com/team/app:tag`; default: the app's name)."
+            },
+            {
+              "kind": "property",
+              "name": "push",
+              "signature": "push?: boolean",
+              "doc": "Push the image after building it (`denext deploy`); registry login is `docker login`'s."
+            }
+          ]
+        },
+        {
+          "name": "fly",
+          "slug": "fly",
+          "kind": "function",
+          "signature": "fly(options?: FlyPresetOptions): DeployAdapter",
+          "doc": "The Fly.io preset: the Docker image and a fly.toml.",
+          "docFull": "The Fly.io preset: the Docker image and a `fly.toml`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The Fly options."
+            }
+          ],
+          "returns": "The adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FlyPresetOptions",
+          "slug": "FlyPresetOptions",
+          "kind": "interface",
+          "signature": "interface FlyPresetOptions",
+          "doc": "Options for fly.",
+          "docFull": "Options for {@linkcode fly}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "app",
+              "signature": "app?: string",
+              "doc": "The Fly app (default: the project directory's name)."
+            },
+            {
+              "kind": "property",
+              "name": "region",
+              "signature": "region?: string",
+              "doc": "`primary_region` (default `\"iad\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "port",
+              "signature": "port?: number",
+              "doc": "The port the image listens on (default 3000)."
+            },
+            {
+              "kind": "property",
+              "name": "memory",
+              "signature": "memory?: string",
+              "doc": "The machine's memory (default `\"512mb\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "denoTag",
+              "signature": "denoTag?: string",
+              "doc": "The `denoland/deno` image tag (default: the Deno version running the build)."
+            },
+            {
+              "kind": "property",
+              "name": "drainMs",
+              "signature": "drainMs?: number",
+              "doc": "The shutdown drain (ms; `0`: as long as Fly allows). Default: `DENEXT_SHUTDOWN_DRAIN_MS` in\nthe environment `prepare` runs in, else 10 s. `kill_timeout` is the drain plus 20 s (Fly's\nmost is 300 s)."
+            }
+          ]
+        },
+        {
+          "name": "genericHost",
+          "slug": "genericHost",
+          "kind": "function",
+          "signature": "genericHost(options?: GenericHostPresetOptions): DeployAdapter",
+          "doc": "The generic-host preset: a systemd unit, nginx and Caddy snippets and an env example.",
+          "docFull": "The generic-host preset: a systemd unit, nginx and Caddy snippets and an env example.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The host options."
+            }
+          ],
+          "returns": "The adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GenericHostPresetOptions",
+          "slug": "GenericHostPresetOptions",
+          "kind": "interface",
+          "signature": "interface GenericHostPresetOptions",
+          "doc": "Options for genericHost.",
+          "docFull": "Options for {@linkcode genericHost}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name?: string",
+              "doc": "The service's name (default: the project directory's name)."
+            },
+            {
+              "kind": "property",
+              "name": "directory",
+              "signature": "directory?: string",
+              "doc": "Where the app lives on the host (default `/srv/<name>`)."
+            },
+            {
+              "kind": "property",
+              "name": "user",
+              "signature": "user?: string",
+              "doc": "The user the service runs as (default: the service's name)."
+            },
+            {
+              "kind": "property",
+              "name": "port",
+              "signature": "port?: number",
+              "doc": "The port the server listens on behind the proxy (default 3000). With `start.tls` the server\nserves HTTPS itself on every interface, with no proxy: default 443 (the unit grants\n`CAP_NET_BIND_SERVICE` for a port below 1024)."
+            },
+            {
+              "kind": "property",
+              "name": "domain",
+              "signature": "domain?: string",
+              "doc": "The public domain the proxy serves. Default: `denext deploy prepare --domain <host>`, else the\nhost of `DENEXT_CANONICAL_ORIGIN` in the environment `prepare` runs in. With none, nothing\nnames a domain: the unit reads `DENEXT_CANONICAL_ORIGIN` from its env file, nginx answers any\nhost name, Caddy serves plain HTTP on `:80`, and `prepare` warns."
+            },
+            {
+              "kind": "property",
+              "name": "deno",
+              "signature": "deno?: string",
+              "doc": "The Deno the unit runs the server on (default `<directory>/.deno/bin/deno`: denext's Deno\ntoolchain, which `build.sh` links there); unused with a compiled build."
+            },
+            {
+              "kind": "property",
+              "name": "maxConnections",
+              "signature": "maxConnections?: number",
+              "doc": "Concurrent connections per client address the proxy allows (default 100)."
+            },
+            {
+              "kind": "property",
+              "name": "drainMs",
+              "signature": "drainMs?: number",
+              "doc": "The shutdown drain (ms; `0` waits for every request). Default: `DENEXT_SHUTDOWN_DRAIN_MS` in\nthe environment `prepare` runs in, else 10 s. The unit sets it and gives systemd's\n`TimeoutStopSec` the drain plus 20 s, so a stop never kills the server mid-drain."
+            }
+          ]
+        },
+        {
+          "name": "staticHost",
+          "slug": "staticHost",
+          "kind": "function",
+          "signature": "staticHost(options?: StaticPresetOptions): DeployAdapter",
+          "doc": "The static-host preset: refuse an app that needs a server, else export it with cache headers.",
+          "docFull": "The static-host preset: refuse an app that needs a server, else export it with cache headers.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The preset options."
+            }
+          ],
+          "returns": "The adapter.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StaticPresetOptions",
+          "slug": "StaticPresetOptions",
+          "kind": "interface",
+          "signature": "interface StaticPresetOptions",
+          "doc": "Options for staticHost.",
+          "docFull": "Options for {@linkcode staticHost}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "headers",
+              "signature": "headers?: boolean",
+              "doc": "Write the `_headers` file into the export (default `true`)."
+            }
+          ]
         }
       ]
     },

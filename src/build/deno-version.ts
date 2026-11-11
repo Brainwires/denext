@@ -364,6 +364,25 @@ export function supportsExecArgv(version: string): boolean {
 }
 
 /**
+ * The first release of denext's Deno whose `fetch` decodes a `deflate` (zlib) response body, as
+ * it does `gzip` and `br` (Brainwires/deno DENEXT.md, the item that has `fetch()` follow Node's
+ * proxy configuration). Stock Deno 2.9 hands a `deflate` body over still encoded.
+ */
+const FIRST_FETCH_DEFLATE_RUNTIME = "3.0.0-denext.17";
+
+/**
+ * Whether denext's Deno of `version` decodes a `deflate` response in `fetch` (from
+ * {@linkcode FIRST_FETCH_DEFLATE_RUNTIME}). A version that does not parse (stock Deno has none)
+ * does not.
+ *
+ * @param version A version of denext's Deno (`Deno.build.denext`).
+ * @returns Whether `fetch` yields a `deflate` body decoded.
+ */
+export function fetchDecodesDeflate(version: string): boolean {
+  return compareDenoVersions(version, FIRST_FETCH_DEFLATE_RUNTIME) >= 0;
+}
+
+/**
  * The first Deno Desktop runtime that expands `$DENO_DESKTOP_CACHE` at the start of a baked
  * `--allow-read` / `--allow-write` / `--allow-run` value (and the matching `--deny-*`) to the
  * app's cache folder, `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md

@@ -2216,7 +2216,7 @@ Two behaviours worth knowing:
   `clientIpForLimits()` follow; with or without the header, and in local development too),
   every visitor looks like the proxy — so the sign-in-start,
   session-read and captcha budgets are skipped for it and every IP-wide bucket is dropped, with one
-  console warning naming the fix, instead of turning the 21st sign-in site-wide into a
+  console warning naming the fix, instead of turning the 101st sign-in site-wide (past the default budget of 100) into a
   fifteen-minute outage. The per-subject keys keep working: the credentials limiter's (it
   carries the submitted identifier), the send budget's address and the second-factor
   budget's user.

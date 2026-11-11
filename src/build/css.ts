@@ -873,8 +873,29 @@ export async function restoreAppConfig(configPath: string, outDir: string): Prom
   const bak = appConfigBackupPath(outDir);
   const original = await Deno.readTextFile(bak).catch(() => null);
   if (original === null) return;
-  await writeManagedFile(configPath, original); // no write when it already holds the original
+  try {
+    await writeManagedFile(configPath, original); // no write when it already holds the original
+  } catch (err) {
+    // A full disk (ENOSPC) can refuse even this small write; moving the backup over the config
+    // needs no new space.
+    if (!moveBackupOver(bak, configPath, original)) throw err;
+    return;
+  }
   await Deno.remove(bak).catch(() => {});
+}
+
+/**
+ * The restore's fallback when writing the config failed: rename the backup (the original bytes)
+ * over it. False when the rename fails too (the backup then stays for the next run's restore).
+ */
+function moveBackupOver(bak: string, configPath: string, original: string): boolean {
+  try {
+    recordSelfWrite(configPath, original);
+    Deno.renameSync(bak, configPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -890,7 +911,12 @@ export function restoreAppConfigSync(configPath: string, outDir: string): void {
   if (original === null) return;
   if (readTextSync(configPath) !== original) {
     recordSelfWrite(configPath, original);
-    Deno.writeTextFileSync(configPath, original);
+    try {
+      Deno.writeTextFileSync(configPath, original);
+    } catch (err) {
+      if (!moveBackupOver(bak, configPath, original)) throw err;
+      return;
+    }
   }
   try {
     Deno.removeSync(bak);

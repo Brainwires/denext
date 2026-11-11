@@ -198,7 +198,7 @@ See [Data & caching](/docs/data).
 
 ## Production server
 
-The knobs `denext start` (and `denext dev`) hand to the request handler. Four of
+The knobs `denext start` (and `denext dev`) hand to the request handler. Seven of
 them also read an env var when the config leaves them unset — **config > env >
 default** — so a deployment can set them without a config change. A custom
 server that embeds denext passes the same names to `createApp()` / `serve()`
@@ -331,7 +331,8 @@ itself (it reads neither the config keys nor the env vars for them).
   `deadlineSeconds` its wall-clock lifetime (exit 124), each a whole number of
   seconds from 1 up. Applied by `denext start` (to the process that serves,
   never a CLI re-run before it), baked into the `build --compile` binary (whose
-  `job` and `db` run under them too: the runtime can't lift them) and written
+  `job` and `db` lift them from denext's Deno 3.0.0-denext.8; on an older runtime
+  they run under them) and written
   into the generated Docker image / systemd unit; never for `dev`, tests or
   `denext job`; not applied on stock Deno (a warning says so). See
   [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
@@ -356,6 +357,12 @@ export default {
 Per-request observability is code, not config: export `onRequest(info)` from
 `instrumentation.ts` (beside `register` / `onRequestError`) — see
 [Deployment › Observability](/docs/deploy#14-observability).
+
+- **`deploy`** — `DeployConfig` (`{ adapter? }`). The deploy adapter `denext build` runs after
+  every build (its `prepare`, given the typed `.denext/deploy-manifest.json`) and `denext deploy`
+  pushes with: a preset from `denext/deploy` (`docker()`, `fly()`, `denoDeploy()`,
+  `genericHost()`, `staticHost()`) or your own adapter. See
+  [Deployment › Deploy adapters](/docs/deploy#deploy-adapters).
 
 ## Dev server
 
@@ -450,7 +457,9 @@ See [Writing a plugin](/docs/plugins).
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
   (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
   `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
-  `updates`, and `extensions` (module paths of your `defineDesktopExtension` modules).
+  `updates`, `pty` (`true` or `{ onWindowClose, replayBytes, shells }`), `microphone` and `camera`
+  (`true` or `{ usageDescription }`), and `extensions` (module paths of your
+  `defineDesktopExtension` modules).
   The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
   flags from it. Written by `denext desktop add <capability>`. Distinct from
@@ -474,7 +483,11 @@ See [Writing a plugin](/docs/plugins).
   opens in the user's browser; needs the pinned runtime). The rest of `desktop`:
   `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
   `preload`, `inspectable`, the first window (`window`, `titleBar`, `backdrop`,
-  `minSize`, `maxSize`), `installers`, `linux`, `extraPermissions` and `denoFlags`.
+  `minSize`, `maxSize`), `menu` (the backend's "Window" submenu: `newWindow`,
+  `reopenClosed`, `list`, `items`), `tray` (a tray icon the backend owns), `permissions`
+  (`"default"` or `"strict"`, which scopes the baked `--allow-read` / `--allow-env`),
+  `installers`, `linux` and `windows` (each OS's launch settings), `extraPermissions`
+  and `denoFlags`.
   `desktop.backend` is the window engine, `"webview"` (default) or `"cef"`, for every
   target or per OS (`{ macos?, windows?, linux?, default? }`); see
   [Desktop apps › The window engine, per OS](/docs/desktop#desktop-backend).
@@ -543,7 +556,7 @@ export default {
 ## Build & optimization
 
 Build-time switches. All off by default except `nodeResolve`,
-`momentumSafeScroll` and the `optimizePackageImports` defaults. The client transforms among them
+`momentumSafeScroll`, `platformExtensions` and the `optimizePackageImports` defaults. The client transforms among them
 (`reactCompiler`, `asyncContext`, `features`) apply to `denext build` and `denext export` alike,
 every `--platform` target included.
 

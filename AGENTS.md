@@ -638,7 +638,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 `pty` (runtime 3.0.0-denext.12+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
-`system-stats` (runtime after 3.0.0-denext.13, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
+`system-stats` (runtime from 3.0.0-denext.16, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
@@ -680,17 +680,24 @@ connected display; macOS Spaces are not restored; `desktop.window.key` does the 
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
 (`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
-decides; `app.onDockReopen(fn)` hears every click), `windows.forget(key)` drops a key from reopening and
+decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
+`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
 `lastSession()`, `desktop.menu.window.reopenClosed: "list"` lists the closed windows by `document.title`,
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
 at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reopenClosed: true, list: true }` adds
 New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s window), Reopen Closed Window
-(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+(Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`; its `items: [{ id, label,
+accelerator? }]` add the app's own, whose clicks reach the backend once, never a page: `runDesktop({ onWindowMenuItem:
+(id, { keyWindow }) => … })` / `host.onWindowMenuItem(fn)`, `keyWindow` `{ id, key? }` or `null` with no window open (from
+runtime 3.0.0-denext.16; older: only while the main window is open). An extension follows the windows with `onWindowOpened` / `onWindowClosed`
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
 as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
 `onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
-guards; the OS session-end rules are the pages'); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
+guards, paused while a `host.confirm` box opened then is up, never for a session end, whose 5 s always run; the OS
+session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s result) quits again, typed, guards and pages
+included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
+other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
 is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
 3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
@@ -727,7 +734,7 @@ show / hide need the pinned runtime (`unsupported` elsewhere; ask `windowCapabil
 packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
 `desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
-leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
+leaves it to `confirmAppUpdate()`. Packaging bakes least-privilege guardrails: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
 `launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
 `--allow-sys`, which the pinned runtime requires for them), and
@@ -755,7 +762,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.16 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.17 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1240,6 +1247,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 
 ## What's different to keep in mind
 
+- **Permissions are least-privilege guardrails, not a sandbox.** `--allow-*` are checks inside
+  Deno's APIs: a subprocess (`--allow-run`), FFI and Node-API addons reach the OS directly, so
+  treat those grants as full trust. Write access to `deno.json`, `.npmrc`, shell rc files or git
+  hooks is code execution; `--allow-net` to localhost reaches local services and cloud metadata;
+  `--allow-env` exposes secrets; `--allow-read` of the home directory exposes credentials; an allow
+  scope follows symlinks that lead out of it. A grant to a proxy host is a grant to all it reaches.
+  Kernel enforcement is planned: https://denext.dev/docs/permissions
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
@@ -1291,7 +1305,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.16 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's 3.0.0-denext.17 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext

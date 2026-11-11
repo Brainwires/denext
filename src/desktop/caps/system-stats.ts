@@ -1,7 +1,7 @@
 /**
  * The `systemStats` capability (`denext desktop add system-stats`): the machine's aggregate CPU,
  * GPU and memory load for the page, over the runtime's `Deno.desktop.systemStats` (denext's Deno
- * Desktop runtime after 3.0.0-denext.13). The page calls it through `system.stats` /
+ * Desktop runtime from 3.0.0-denext.16). The page calls it through `system.stats` /
  * `system.onStats` in `denext/desktop/client` (`../system-stats-client.ts`).
  *
  * Every window has its own samplers, so one window's calls never take another's CPU deltas:

@@ -30,6 +30,8 @@ const BLURB: Record<string, string> = {
   "denext/virtual-masonry": "VirtualMasonry: a virtualized masonry (Pinterest-style) grid.",
   "denext/feature": "feature(): compile-time feature flags, folded and dead-code eliminated.",
   "denext/result": "Result values (ok / err / tryAsync) and an exhaustive match() for unions.",
+  "denext/markdown": "renderMarkdown() and <Markdown>: Markdown rendered escaped by default.",
+  "denext/deploy": "Deploy adapters and presets: docker, fly, denoDeploy, genericHost, staticHost.",
   "denext/jsx-directives": "ClientDirectives: the client:* props, for apps typed by @types/react.",
   "denext/cli/command": "The CLI command contract (for plugins contributing verbs).",
   "denext/plugin-kit": "The semver-stable plugin toolkit: route synthesizers, build steps, verbs.",

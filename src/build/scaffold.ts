@@ -151,7 +151,8 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
     opts.vscode === false ? "" : item(
       "`.vscode/` — turns on the Deno language server on its TypeScript 7 backend (and " +
         "recommends the Deno extension), so the editor resolves `denext` exactly as " +
-        '`deno check` does. `"deno.unstable": []` there keeps TypeScript 6.',
+        "`deno check` does. `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment " +
+        "keeps TypeScript 6.",
     ),
   ].join("");
   return `# ${name}

@@ -29,7 +29,7 @@ export type { SystemStats, SystemStatsOptions, SystemStatsSubscribeOptions };
 
 /** Why `systemStats` cannot run under this runtime. */
 const NO_RUNTIME_REASON =
-  "this Deno Desktop runtime has no Deno.desktop.systemStats (denext's Deno Desktop runtime after 3.0.0-denext.13 has it)";
+  "this Deno Desktop runtime has no Deno.desktop.systemStats (denext's Deno Desktop runtime from 3.0.0-denext.16 has it)";
 
 /** Why `systemStats` cannot run on this OS. */
 const NO_OS_REASON = "this Deno Desktop runtime has no system stats on this OS";
@@ -167,7 +167,7 @@ export function createSystemStats(api: () => DesktopAppApi | undefined): SystemS
 /**
  * The machine's aggregate CPU, GPU and memory load, for the desktop app's own process
  * (`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add
- * system-stats`) and denext's Deno Desktop runtime after 3.0.0-denext.13.
+ * system-stats`) and denext's Deno Desktop runtime from 3.0.0-denext.16.
  *
  * @example
  * ```ts

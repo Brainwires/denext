@@ -198,8 +198,10 @@ denext task dev`}
         {" "}
         and <code>denext build</code> run the same framework. <code>denext create</code>{" "}
         writes both. <code>start</code>{" "}
-        only serves, so it runs least-privilege: network, read, env, and a write grant for{" "}
-        <code>.denext</code> alone, where the default cache lives.
+        only serves, so it runs with least-privilege guardrails: network, read, env, and a write
+        grant for <code>.denext</code>{" "}
+        alone, where the default cache lives. They are checks inside Deno, not a sandbox: see{" "}
+        <a href="/docs/permissions">Permissions</a>.
       </p>
       <p>
         <code>denext upgrade</code> moves them together, with every first-party{" "}
@@ -209,8 +211,8 @@ denext task dev`}
         range), keeping each pin's <code>^</code>/<code>~</code> and the rest of the file as it was.
         {" "}
         <code>--dry-run</code> prints the plan, <code>--check</code>{" "}
-        exits 1 when anything is out of date (for CI), and <code>--to 3.2.0</code>{" "}
-        names the version.
+        exits 1 when anything is out of date (for CI), and <code>--to 4.16.0</code>{" "}
+        names the version (one older than the pin also needs <code>--allow-downgrade</code>).
       </p>
 
       <h2>Your first page</h2>
@@ -347,10 +349,12 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         the same resolution, types and lint plugin as the CLI. Any editor that speaks the Deno
         language server works the same way. The settings also hold{" "}
         <code>"deno.unstable": ["tsgo-lsp"]</code>, which runs the language server on its TypeScript
-        7 backend (the native build denext's Deno toolchain ships); <code>"deno.unstable": []</code>
+        7 backend (the native build denext's Deno toolchain ships). From runtime 3.0.0-rc.3 that
+        backend is also the runtime&apos;s own default, with no setting or an empty list; a{" "}
+        <code>deno.unstable</code> list naming other features but not <code>"tsgo-lsp"</code>, or
         {" "}
-        keeps TypeScript 6, and <code>DENEXT_TSGO_LSP=0</code> stops denext writing the entry (see
-        {" "}
+        <code>DENO_UNSTABLE_TSGO_LSP=0</code>, keeps TypeScript 6, and{" "}
+        <code>DENEXT_TSGO_LSP=0</code> only stops denext writing the entry (see{" "}
         <a href="/docs/toolchain#typescript-7-language-server">TypeScript 7 language server</a>).
         Type-check from the terminal with <code>denext check</code>, and lint with{" "}
         <code>denext lint</code> — the <code>denext/*</code>{" "}

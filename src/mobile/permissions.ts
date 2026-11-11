@@ -318,7 +318,7 @@ async function desktopNotifications(
 
 /**
  * `blocked` when the page runs in a Deno Desktop window and the OS keeps `name` (the microphone or
- * camera) from the app (Windows' privacy switches, the runtime after 3.0.0-denext.13): the window then
+ * camera) from the app (Windows' privacy switches, the runtime from 3.0.0-denext.16): the window then
  * refuses `getUserMedia` whatever the WebView's own permission says. `undefined` otherwise, and the
  * WebView answers (also when the probe fails: it only ever adds a refusal).
  */
@@ -378,7 +378,7 @@ function notAnswerable(fn: string, name: PermissionName): PermissionError {
  * web (and for `microphone`, which the WebView itself asks for) the browser's Permissions /
  * Notifications API. In a Deno Desktop window with the `notifications` capability,
  * `notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`
- * while the OS's privacy switch for the device is off (the runtime after 3.0.0-denext.13;
+ * while the OS's privacy switch for the device is off (the runtime from 3.0.0-denext.16;
  * `appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
  * here can answer: a plugin that is not installed and no browser API.
  *

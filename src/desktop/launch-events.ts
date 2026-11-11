@@ -329,7 +329,7 @@ export interface DesktopAppApi {
    */
   readonly speech?: DesktopSpeechApi;
   /**
-   * Aggregate CPU, GPU and memory load (denext's Deno Desktop runtime after 3.0.0-denext.13, behind
+   * Aggregate CPU, GPU and memory load (denext's Deno Desktop runtime from 3.0.0-denext.16, behind
    * the `systemStats` capability and `system.stats` in `denext/desktop` / `denext/desktop/client`).
    * Its calls reject `NotCapable` unless the app bakes the `systemStats` capability.
    */

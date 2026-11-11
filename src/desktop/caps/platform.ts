@@ -6,7 +6,7 @@
  * 2.9.7-denext.12 adds the Chromium sandbox a Linux CEF window runs in and the file chooser a Linux
  * dialog uses, each with the runtime's reason. Runtime 3.0.0-rc.1 adds, on Linux, whether the
  * compositor blurs behind a window (KWin's blur) and whether passkeys with USB security keys work
- * (libwebauthn), each with the runtime's reason when not. The runtime after 3.0.0-denext.13 adds, on Windows,
+ * (libwebauthn), each with the runtime's reason when not. The runtime from 3.0.0-denext.16 adds, on Windows,
  * whether the OS's privacy switches let the app use the microphone and the camera (and which switch
  * refuses). The runtime (laufey) does the probing:
  * D-Bus names, the Secret Service's lock state, the portal versions, the cookie store. denext only
@@ -235,7 +235,7 @@ export async function platformFacts(api: DesktopAppApi | undefined): Promise<Pla
 }
 
 /**
- * Windows' privacy switches for the microphone and camera (the runtime after 3.0.0-denext.13): `"unknown"`
+ * Windows' privacy switches for the microphone and camera (the runtime from 3.0.0-denext.16): `"unknown"`
  * before it; the reason only with `"denied"`.
  */
 function mediaAccessFacts(

@@ -582,9 +582,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.16
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.16-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 7aadf0d0e5e140a20cedf4b06eb8876d2d165a40d42533713d3574e09c1e47a1
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.17
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.17-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 13cf3688da70ab8a2a417eb827d69e3b1fb3d74b5a298c56861630ecebb209b7
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -749,17 +749,57 @@ jobs:
           grep -E 'the manager downloads, pauses, resumes and uploads \(macOS URLSession\) \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
           grep -E 'the plugin and the manager type-check against UIKit and a Capacitor stub \.\.\. ok' "$RUNNER_TEMP/native-storage.txt"
 
+  # Picks each Windows x64 job's runner (scripts/ci/pick-windows-runner.ts): our self-hosted
+  # Windows x64 runner (RUNNER_WINDOWS_X64) while it has a free slot (none of this repository's
+  # other runs holds it, queued or running), windows-latest for the overflow; windows-latest on a
+  # fork's pull request. It never fails the run: on any error every job keeps our runner, and a
+  # Windows job whose pick is empty falls back to the variable (each runs `if: !cancelled()`).
+  windows-runner:
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+      contents: read
+    outputs:
+      windows_tests: ${{ steps.pick.outputs.windows_tests }}
+      windows_resolve: ${{ steps.pick.outputs.windows_resolve }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/pick-windows-runner.ts
+          sparse-checkout-cone-mode: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
+      # The script bounds its API calls (60 s) and prints the fallback itself on an API error; a
+      # crash before it prints leaves the outputs empty, which the jobs read as "the variable".
+      - name: Pick
+        id: pick
+        env:
+          PICK_JOBS: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && 'windows_tests windows_resolve' || 'windows_resolve' }}
+          PICK_RUNNER: ${{ vars.RUNNER_WINDOWS_X64 }}
+          PICK_SLOTS: ${{ vars.RUNNER_WINDOWS_X64_SLOTS || '1' }}
+          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+        run: |
+          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-windows-runner.ts >> "$GITHUB_OUTPUT" ||
+            echo "::warning::the Windows runner pick failed: every Windows job takes RUNNER_WINDOWS_X64"
+
   # The unit and integration suites on Windows: the same tasks as `check` and `integration`, so a
   # drive letter, a backslash or a file Windows keeps locked fails here rather than on a user's
   # machine. Heavy (both suites on one runner): PRs, `main` and a manual dispatch, like
   # `integration`. The JDK is there for the same reason as in `check` (the Android templates).
   windows-tests:
-    # The self-hosted Windows x64 CLI runner (session 0, no desktop: this job opens no window) the repository variable
-    # RUNNER_WINDOWS_X64_CLI names (a label, or a JSON array), else RUNNER_WINDOWS_X64, else windows-latest; always
-    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
-    # pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest'))) }}
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    needs: windows-runner
+    # Our self-hosted Windows x64 runner (the repository variable RUNNER_WINDOWS_X64: a label, or a
+    # JSON array) while it has a free slot, else windows-latest (the overflow), as the windows-runner
+    # job picked; that job's output empty (it failed), RUNNER_WINDOWS_X64, else windows-latest. Always
+    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes
+    # a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (needs.windows-runner.outputs.windows_tests || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 150
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
     # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
@@ -871,11 +911,14 @@ jobs:
   # which Windows refuses, so a build that passed on Linux and macOS could fail here (a bare
   # package.json dependency under `nodeModulesDir: "manual"`). Runs on every event.
   windows-resolve:
-    # The self-hosted Windows x64 CLI runner (session 0, no desktop: this job opens no window) the repository variable
-    # RUNNER_WINDOWS_X64_CLI names (a label, or a JSON array), else RUNNER_WINDOWS_X64, else windows-latest; always
-    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
-    # pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (startsWith((vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64), '[') && (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || format('"{0}"', (vars.RUNNER_WINDOWS_X64_CLI || vars.RUNNER_WINDOWS_X64) || 'windows-latest'))) }}
+    needs: windows-runner
+    # Our self-hosted Windows x64 runner (the repository variable RUNNER_WINDOWS_X64: a label, or a
+    # JSON array) while it has a free slot, else windows-latest (the overflow), as the windows-runner
+    # job picked; that job's output empty (it failed), RUNNER_WINDOWS_X64, else windows-latest. Always
+    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes
+    # a fork's code; a same-repo pull_request runs on it).
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (needs.windows-runner.outputs.windows_resolve || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 15
     # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
     # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).

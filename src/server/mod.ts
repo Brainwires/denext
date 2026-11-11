@@ -341,6 +341,7 @@ export {
   type DesktopWindowButtonPosition,
   type DesktopWindowConfig,
   type DesktopWindowLevel,
+  type DesktopWindowMenuItemConfig,
   type DesktopWindowsConfig,
   type ExperimentalConfig,
   type HeaderRule,

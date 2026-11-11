@@ -118,7 +118,7 @@ More: [/docs/desktop](/docs/desktop).
 
 **Why it happens.** Node.js has no permission model on by default, and the Electron main process is a Node.js process.
 
-**What denext does.** A packaged denext desktop app runs under Deno's permission model. The packaging scripts derive the `--allow-*` flags from the capabilities the app declares (`desktop.capabilities`) instead of granting everything; with no capabilities the app gets loopback network, read and env only.
+**What denext does.** A packaged denext desktop app runs under Deno's permissions, as least-privilege guardrails (checks inside Deno's APIs, not an OS sandbox: see [Permissions](/docs/permissions)). The packaging scripts derive the `--allow-*` flags from the capabilities the app declares (`desktop.capabilities`) instead of granting everything; with no capabilities the app gets loopback network, read and env only.
 
 **Evidence.**
 

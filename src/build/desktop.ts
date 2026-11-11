@@ -62,6 +62,8 @@ import {
   type DesktopDockReopenEvent,
   type DesktopDockReopenHandler,
   type DesktopOpenWindowOptions,
+  type DesktopSecondInstanceEvent,
+  type DesktopSecondInstanceHandler,
   type DesktopWindowRef,
   type DesktopWindows,
   type DesktopWindowsSetup,
@@ -69,7 +71,10 @@ import {
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
 import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
-import type { DesktopNewWindowHandler } from "../desktop/window-menu.ts";
+import type {
+  DesktopNewWindowHandler,
+  DesktopWindowMenuItemHandler,
+} from "../desktop/window-menu.ts";
 import type {
   DesktopTrayHandle,
   DesktopTrayIcon,
@@ -100,6 +105,8 @@ export type {
   DesktopDockReopenEvent,
   DesktopDockReopenHandler,
   DesktopOpenWindowOptions,
+  DesktopSecondInstanceEvent,
+  DesktopSecondInstanceHandler,
   DesktopTrayHandle,
   DesktopTrayIcon,
   DesktopTrayOptions,
@@ -138,7 +145,14 @@ export {
 export type { SessionWindow as DesktopSessionWindow } from "../desktop/window-store.ts";
 /** `desktop.menu` resolved, and `runDesktop({ newWindow })`'s handler and its context. */
 export type { DesktopMenuSettings, DesktopWindowMenuSettings } from "../desktop/menu-config.ts";
-export type { DesktopNewWindowContext, DesktopNewWindowHandler } from "../desktop/window-menu.ts";
+export type {
+  DesktopNewWindowContext,
+  DesktopNewWindowHandler,
+  DesktopWindowMenuItemContext,
+  DesktopWindowMenuItemHandler,
+} from "../desktop/window-menu.ts";
+/** One of the app's own Window-menu items (`desktop.menu.window.items`), resolved. */
+export type { DesktopWindowMenuItem } from "../desktop/menu-config.ts";
 /** A keyed window the user closed (`runDesktop({ onDockReopen })`'s context). */
 export type { ClosedWindow as DesktopClosedWindow } from "../desktop/window-registry.ts";
 // The machine's aggregate CPU, GPU and memory load, straight from the runtime (no bridge).
@@ -549,6 +563,9 @@ async function devProxyResponse(
   return new Response(injected.html, { status: res.status, statusText: res.statusText, headers });
 }
 
+/** Who `DesktopRuntime.onBeforeQuit` guards belong to: `DesktopRuntime.quit()` skips them. */
+const DESKTOP_TS_OWNER = "desktop.ts";
+
 /**
  * Options for {@linkcode runDesktop} (and {@linkcode createDesktopHandler}): where to serve the
  * static export from, an optional loopback reverse proxy and request escape hatch, the signed
@@ -671,6 +688,26 @@ export interface RunDesktopOptions {
    */
   onDockReopen?: DesktopDockReopenHandler;
   /**
+   * Called on every later launch of the app while it runs, forwarded by the single-instance lock
+   * (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`, a
+   * window showing or not: it answers the open options, or `undefined` to open nothing more. The
+   * deep links and files the launch carried still reach the pages' `onDeepLink` / `onOpenFile`,
+   * and the runtime has raised a showing window already. Without it a second launch with no window
+   * showing opens what the Dock's reopen would (the most recently closed keyed window, else the
+   * main window shown again). A throw, or a window that cannot open, is logged. Never called
+   * without denext's pinned runtime.
+   */
+  onSecondInstance?: DesktopSecondInstanceHandler;
+  /**
+   * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
+   * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
+   * key when it was opened with one), or `null` with no window open. The clicks never reach the
+   * pages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from
+   * runtime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only
+   * while the main window is open. A throw or a rejection is logged.
+   */
+  onWindowMenuItem?: DesktopWindowMenuItemHandler;
+  /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
    * {@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the
@@ -744,6 +781,13 @@ export interface DesktopRuntime {
    * happens. Returns the unsubscribe; a no-op where there is no Dock (Windows, Linux).
    */
   onDockReopen(fn: (event: DesktopDockReopenEvent) => void): () => void;
+  /**
+   * Call `fn` on every later launch of the app while it runs (`desktop.app.singleInstance`), with
+   * the launch's `args` and `cwd`, after what {@linkcode RunDesktopOptions.onSecondInstance} opens.
+   * A throw or a rejection is logged. Returns the unsubscribe; never called without denext's
+   * pinned runtime (or in a sidecar's child).
+   */
+  onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -763,9 +807,18 @@ export interface DesktopRuntime {
    * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled
    * when it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`
    * hosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not
-   * cancel. Returns the unsubscribe. Outside the desktop runtime `fn` is never called.
+   * cancel. The 5 seconds stop counting while an extension's `host.confirm` box opened during the
+   * guards' turn is up, except for the OS's session end. Returns the unsubscribe. Outside the
+   * desktop runtime `fn` is never called.
    */
   onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void;
+  /**
+   * Quit the app again, the whole sequence (the extensions' guards, the pages, the quit hooks),
+   * except that the guards added with {@linkcode onBeforeQuit} here are not asked again (see
+   * `DesktopExtensionHost.quit`, the same rules). Resolves `true` when the app is quitting, `false`
+   * when a guard or a page refused or holds it, or outside the desktop runtime.
+   */
+  quit(): Promise<boolean>;
   /**
    * Set when this launch is a child a module sidecar started (`denextSidecar.spawnSelf` /
    * `childCommand`): the sidecar's name. `runDesktop` then ran that sidecar's module headless
@@ -1688,6 +1741,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
+    ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
+    ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;
   if (windowsRef.closedEarly) windows.mainClosed();
@@ -1702,6 +1757,10 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // The capabilities' static window-lifecycle hooks (`onWindowOpened` is replayed for the main
   // window, open already); their `setup` hosts subscribe through the bridge below.
   windows.lifecycle?.addCapabilities(capabilities);
+  // Their static second-launch hooks (`DesktopCapability.onSecondInstance`).
+  for (const cap of capabilities) {
+    if (cap.onSecondInstance) windows.onSecondInstance(cap.onSecondInstance);
+  }
   const bridge = createDesktopBridge(
     capabilities,
     {
@@ -1717,6 +1776,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       ...(windows.lifecycle ? { lifecycle: windows.lifecycle } : {}),
       // An extension host's openWindow is desktop.ts's windows.open.
       ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
+      onWindowMenuItem: (fn: DesktopWindowMenuItemHandler) => windows.onWindowMenuItem(fn),
+      onSecondInstance: (fn) => windows.onSecondInstance(fn),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
@@ -1782,13 +1843,15 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     setActivationPolicy: (policy) => windows.setActivationPolicy(policy),
     getActivationPolicy: () => windows.getActivationPolicy(),
     onDockReopen: (fn) => windows.onDockReopen(fn),
+    onSecondInstance: (fn) => windows.onSecondInstance(fn),
     trust,
     emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
-    onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn) ?? (() => {}),
+    onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn, DESKTOP_TS_OWNER) ?? (() => {}),
+    quit: () => windows.lifecycle?.requestQuit(DESKTOP_TS_OWNER) ?? Promise.resolve(false),
   };
 }
 
@@ -1823,6 +1886,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
       throw new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`);
     },
     onBeforeQuit: () => () => {},
+    quit: () => Promise.resolve(false),
     sidecarChild: launch.name,
   };
 }

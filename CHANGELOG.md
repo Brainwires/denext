@@ -8,6 +8,123 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-11-11
+
+### Added
+
+- **Desktop: the app's own items in the backend's Window menu.** `desktop.menu.window.items: [{ id,
+  label, accelerator? }]` adds items to the "Window" submenu next to New Window, Reopen Closed
+  Window and the window list, merged into a page's `setAppMenu` menu the same way. A click goes to
+  the backend once, never to a page's queue: `runDesktop({ onWindowMenuItem: (id, { keyWindow })
+  => … })` and an extension's `host.onWindowMenuItem(fn)` get the item's id and the key window
+  (`{ id, key? }`, or `null` with no window open). Their ids carry a reserved prefix a page's menu
+  may not use. With no window open the clicks arrive from runtime 3.0.0-denext.16; on an older
+  runtime only while the main window is open.
+- **Desktop: a hook for the app's second launch.** With `desktop.app.singleInstance`,
+  `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })`, an extension's
+  `host.onSecondInstance(fn)` and a capability's static `onSecondInstance` hook hear every later
+  launch; without a handler, one with no window showing reopens as a Dock click does. Deep links
+  and opened files keep their routing.
+- **Desktop: a quit guard can wait for the user.** While a `host.confirm` box opened by an
+  `onBeforeQuit` guard is on screen, the guards' 5-second deadline stops counting, and it goes on
+  when the box closes. A session end (a logout, a shutdown) keeps its bound: its deadline never
+  pauses. `host.quit()` (and `quit()` on `runDesktop`'s result) is a typed quit that runs the
+  whole sequence again, guards and pages included, except the caller's own guards, so a guard can
+  cancel, ask, then quit without the untyped `Deno.desktop.quit()`. The approval lasts until the
+  quit goes through or another quit starts, so guards that each ask and quit again never loop.
+- **Node.js compatibility: native addons install in a plain `package.json` project.** An approved
+  install script for a well-known native package (`better-sqlite3`, `sqlite3`, `sharp`, `canvas`,
+  `keytar`, `node-pty`, `re2`, `electron`, `@prisma/engines`, `@sentry/cli` and others) now gets
+  the download hosts it fetches its prebuilt binary from, so `deno install --allow-scripts` no
+  longer fails with `getaddrinfo EPERM github.com` in a project that never listed it under
+  `supplyChain.jailScripts.packages`. Only those hosts are granted, never the whole network; a
+  project's own entry still wins. Takes effect with denext's Deno toolchain 3.0.0-denext.17, as do
+  the Node.js items below.
+- **Node.js compatibility: `fetch()` follows Node's global proxy.** With `NODE_USE_ENV_PROXY=1`,
+  `--use-env-proxy` or `http.setGlobalProxyFromEnv()` (and `NO_PROXY`), `fetch()` goes through the
+  same proxy as `node:http`, and decodes a `deflate` response body. `node:http` also gains Node
+  26's checks on a proxied request's Host and path, `server.maxHeadersCount`,
+  `--max-http-header-size` and `--insecure-http-parser` through `NODE_OPTIONS`, and fixes for a
+  kept-alive socket that never sent its next request and for a pipelined connection that stalled.
+- **Node.js compatibility: sockets on inherited descriptors.** `net.Socket({ fd })`,
+  `server.listen({ fd })` and `tty.ReadStream(fd)` open a descriptor the process already owns
+  (stdio, an inherited fd, a FIFO opened through `node:fs`), so socket activation from a service
+  manager works with only `--allow-net`. Long Unix socket paths work on macOS.
+- **Node.js compatibility: real TLS session resumption.** `node:tls` emits a real `'session'` for
+  every session ticket, `setSession()` / `options.session` resume it, `getTLSTicket()` exists, and
+  servers issue tickets under their `ticketKeys`. The `ciphers` option is honoured.
+- **Node.js compatibility: the legacy `node:crypto` ciphers and curves.** AES in CFB, CFB-8, CFB-1,
+  OFB, CCM, OCB and XTS, AES-192 CBC and GCM, camellia, sm4 and the remaining 3DES modes, plus the
+  brainpool curves, so libraries for SSH, PDF and smart cards stop failing with
+  `ERR_CRYPTO_UNKNOWN_CIPHER`.
+- **Node.js compatibility: `--cpu-prof` and `--heap-prof` write their profiles.** Under `node` (the
+  shim) and as Deno flags, with Node's file names, one profile per worker, and the
+  `--heapsnapshot-signal` / `--heapsnapshot-near-heap-limit` options; the `v8` and `Worker`
+  profiling APIs work too.
+- **Node.js compatibility: async context for monitoring agents.** `AsyncLocalStorage` keeps its
+  store across native socket reads, write callbacks and the request handler of a server that
+  listened inside `run()`, `AsyncLocalStorage.prototype.withScope()` exists, and the
+  `async_hooks` resource graph covers the HTTP request path, as APM agents expect.
+- **Node.js compatibility: smaller gaps.** `process.execve()`, `process.setgroups()` /
+  `initgroups()`, `process.finalization`, `performance.nodeTiming`, a fuller `process.versions` and
+  an inspectable `process.env`; `node:sea` reads the files a compiled program carries, and `node`'s
+  SEA and snapshot flags are refused with a pointer to `denext build --compile`; all of
+  `http2.constants`' status codes, `DatabaseSync#enableLoadExtension()`,
+  `v8.isStringOneByteRepresentation()`, `require("_http_client")` / `require("_http_incoming")`,
+  and `dns.resolve("")`.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.17.** It carries the Node.js
+  compatibility work above, `Deno.permissions.names`, and `--allow-read` / `--allow-write` scopes
+  checked against the path a symlink leads to (a link inside an allowed folder that points outside
+  it now needs its target granted too; a scope still covers its own resolved location, such as
+  macOS's `/tmp`). In app windows, a chunk the app writes in one piece reaches the page as one
+  write. The [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
+
+### Fixed
+
+- **`spa.proxy` relays a `deflate` response correctly on runtime 3.0.0-denext.17.** That runtime's
+  `fetch` decodes `deflate` as it does `gzip` and `br`, so the proxy now drops the stale
+  `Content-Encoding` and `Content-Length` for it too. On stock Deno a `deflate` body is still relayed
+  as it arrived, with its headers.
+- **An error boundary whose own fallback throws no longer freezes the page.** An `error.tsx` (or
+  any `<ErrorBoundary>` or class error boundary) whose error UI threw while rendering, for example
+  by calling a hook that needs a provider it doesn't have, caught its own error again and
+  re-rendered forever with the main thread at 100 %. As in React, the error now goes to the next
+  boundary up, or to the root's uncaught-error handling when there is none. Server rendering and
+  streaming already did this.
+- **A build that fails partway no longer leaves `.denext/css-shims` entries in `deno.json`.** The
+  css→shim redirects a build adds to an app's own `deno.json` (an app with `npm:` imports or a
+  manual `node_modules`) are now removed when the build throws, not only when it finishes or is
+  stopped by a signal, and the restore still works on a full disk, where rewriting the file
+  fails, by moving the saved original back over it. The next build still cleans entries an older
+  denext left behind.
+
+### Security
+
+- **`spa.proxy` no longer forwards a client's hop-by-hop headers to the backend** ([GHSA-6jhm-9cwm-wf5c](https://github.com/Brainwires/denext/security/advisories/GHSA-6jhm-9cwm-wf5c)). `Connection`, `Upgrade`, `TE`, `Keep-Alive`, `Proxy-Connection`, `Proxy-Authorization` and every header the `Connection` header names are now removed before a request is proxied, as RFC 9110 requires; WebSocket upgrades through the proxy keep working. Affects 2.0.0 through 4.15.0.
+
+### Documentation
+
+- **Permissions are described as least-privilege guardrails.** A new page,
+  [Permissions](https://denext.dev/docs/permissions), says what Deno's `--allow-*` flags are:
+  checks inside Deno's own APIs, not an OS sandbox, with kernel enforcement (Landlock, Seatbelt)
+  planned. It lists the permission footguns: `--allow-run` and `--allow-ffi` mean full trust,
+  write access to config files (`deno.json`, `.npmrc`, shell startup files, git hooks) is code
+  execution, `--allow-net` to localhost reaches local services and cloud metadata, `--allow-env`
+  exposes secrets, `--allow-read` of the home directory exposes credentials, and an allow scope
+  follows a symlink that leads out of it. It also covers how network permissions behave with
+  `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, for `fetch()`, `WebSocket`,
+  `node:http` and npm clients. The security, runtime reference, deployment targets, deploy,
+  desktop and getting-started pages, the README, AGENTS.md, POLICIES.md and MISSION.md now use the
+  same wording.
+- **The docs match 4.15's runtime.** The runtime reference gives every version in full
+  (`2.9.7-denext.15`, `3.0.0-denext.16`) and, with the desktop runtime page, covers what
+  `3.0.0-denext.16` adds; `denext/markdown` and `denext/deploy` are in the API reference; and the
+  config, deployment, backend, desktop, toolchain and auth pages are corrected where they had
+  drifted from the code.
+
 ## [4.15.0] - 2026-11-10
 
 ### Added
@@ -21672,7 +21789,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.15.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
 [4.13.1]: https://jsr.io/@denext/denext@4.13.1
