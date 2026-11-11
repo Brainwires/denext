@@ -751,8 +751,9 @@ root `package.json`, workspace members) are your code and are not jailed.
   (`"knownPackages": { "grpc": ["node-precompiled-binaries.grpc.io"] }`; `host` covers every
   port, `host:port` one), and never when it is or resolves to this machine or its network. An
   unlisted one reaches nothing, and the install prints the host and the line that allows it. A
-  GitHub release download redirects to another host, which a declaration can't cover: those
-  packages get a `net` host list instead.
+  GitHub release download redirects to another host: from runtime `3.0.0-denext.19` a listed
+  `github.com` also reaches the hosts it redirects to (`objects.githubusercontent.com`,
+  `release-assets.githubusercontent.com`); before it, denext lists those under the package's `net`.
 - **What a host list holds (runtime `3.0.0-rc.6`).** The jail starts an allow-listing proxy on
   loopback for the script and points every client at it (`HTTP(S)_PROXY`, `ALL_PROXY`, npm's and
   `global-agent`'s proxy keys, `NODE_USE_ENV_PROXY=1`); the OS lets the script reach only that
@@ -890,10 +891,13 @@ an upstream proxy, and doctor never suggests turning the jail off.
 
 | Package                                             | Why its script needs more                                                                                 | Exception                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `@discordjs/opus`                                   | node-pre-gyp downloads the binding from its declared GitHub release                                       | `knownPackages` (`3.0.0-denext.1`): `github.com` (before `3.0.0-denext.19` also `net`: its redirect hosts)    |
 | `@prisma/client`                                    | postinstall runs `prisma generate` (may fetch the engines; writes the client to the generator's `output`) | `net`, Prisma's env, `write`: each `output` outside `node_modules`, and `node_modules/.prisma` (`3.0.0-rc.6`) |
 | `@prisma/engines` (with `prisma`, `@prisma/client`) | postinstall downloads the engines from binaries.prisma.sh                                                 | `net`, `PRISMA_*` mirror and engine-path env                                                                  |
 | `@sentry/cli`                                       | downloads the binary when the platform package is missing                                                 | `net`, `SENTRYCLI_*`                                                                                          |
 | `@tensorflow/tfjs-node`                             | downloads libtensorflow                                                                                   | `net`                                                                                                         |
+| `argon2` (before 0.28)                              | node-pre-gyp downloads the binding from its declared GitHub release                                       | `knownPackages`: `github.com` (as `@discordjs/opus`)                                                          |
+| `bcrypt` (5)                                        | node-pre-gyp downloads the binding from its declared GitHub release                                       | `knownPackages`: `github.com` (as `@discordjs/opus`)                                                          |
 | `better-sqlite3`                                    | `prebuild-install` from GitHub, else node-gyp                                                             | `net` (or leave it unapproved: the toolchain serves better-sqlite3 over the built-in SQLite)                  |
 | `canvas`                                            | `prebuild-install` from GitHub (canvas 3), else node-gyp                                                  | `net`                                                                                                         |
 | `chromedriver`                                      | downloads chromedriver into its package                                                                   | `net`, `CHROMEDRIVER_*`                                                                                       |
@@ -903,6 +907,7 @@ an upstream proxy, and doctor never suggests turning the jail off.
 | `grpc`                                              | node-pre-gyp downloads the binding from its declared host                                                 | `knownPackages` (`3.0.0-denext.1`): `node-precompiled-binaries.grpc.io`                                       |
 | `keytar`                                            | `prebuild-install` from GitHub, else node-gyp                                                             | `net`                                                                                                         |
 | `lefthook`                                          | `lefthook install` writes `.git/hooks`                                                                    | `write`: the repository's `.git/hooks`                                                                        |
+| `libxmljs`                                          | node-pre-gyp downloads the binding from its declared GitHub release                                       | `knownPackages`: `github.com` (as `@discordjs/opus`)                                                          |
 | `msw`                                               | copies `mockServiceWorker.js` into `msw.workerDirectory`                                                  | `write`: those directories                                                                                    |
 | `node-pty`                                          | node-gyp build when no prebuilt binary matches                                                            | `net`                                                                                                         |
 | `node-sass`                                         | downloads the libsass binding from GitHub                                                                 | `net`, `SASS_BINARY_*`                                                                                        |
@@ -952,7 +957,7 @@ prebuilt binaries that `node-gyp-build` loads at run time, so leave their instal
 unapproved. Approving them works where the OS confines lifecycle scripts (macOS, Linux with
 Landlock) from runtime `3.0.0-denext.1`, which lets the install check load the package's own binary;
 elsewhere, and on older runtimes, the approved check fails. `bcrypt` 5 downloads from GitHub
-through node-pre-gyp, which from `3.0.0-denext.1` needs a host grant: upgrade to `bcrypt` 6.
+through node-pre-gyp and gets the `knownPackages` entry above (upgrading to `bcrypt` 6 needs none).
 
 ## Supply chain: install gates
 

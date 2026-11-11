@@ -38,6 +38,7 @@ import { stripAnsi } from "./explain/parse.ts";
 import { npmWorkspaceOf, workspaceOf } from "./workspace-imports.ts";
 import { npmrcValue } from "./npmrc-supply-chain.ts";
 import {
+  declaredHostRedirects,
   JAIL_SCRIPT_EXCEPTIONS,
   type JailExceptionEntry,
   type JailPackageException,
@@ -77,6 +78,13 @@ export function jailHostListsSupported(
  */
 export const JAIL_HARDENED_RELEASE = "3.0.0-denext.1";
 
+/**
+ * The first release of denext's Deno that allows a declared download host's redirect targets with
+ * it (a declared `github.com` reaches the hosts GitHub hands a release download to; the
+ * runtime's `DECLARED_HOST_REDIRECTS`). Before it denext lists those hosts under the entry's `net`.
+ */
+export const JAIL_DECLARED_REDIRECTS_RELEASE = "3.0.0-denext.19";
+
 /** What a release of denext's Deno takes and reports for the lifecycle-script jail. */
 export interface JailRuntime {
   /** The jail is on unless the project opts out ({@linkcode JAIL_DEFAULT_RELEASE}). */
@@ -90,6 +98,8 @@ export interface JailRuntime {
   readonly writeRoots: boolean;
   /** A declared download host needs `jailScripts.knownPackages` (denext.1, item 124). */
   readonly knownPackages: boolean;
+  /** A declared host's redirect targets come with it (denext.19). */
+  readonly declaredRedirects: boolean;
   /** `deno info --json` carries `lifecycleJail` (denext.1, item 124). */
   readonly confinementInfo: boolean;
   /** package.json's `"deno"` object holds the settings when there is no deno.json (denext.1, item 125). */
@@ -119,6 +129,7 @@ export function jailRuntime(
     hostLists: rc6,
     writeRoots: rc6,
     knownPackages: hardened,
+    declaredRedirects: atLeast(version, JAIL_DECLARED_REDIRECTS_RELEASE),
     confinementInfo: hardened,
     packageJsonHome: hardened,
   };
@@ -792,10 +803,11 @@ export function entryException(
   const cache = runtime.hostLists ? entry.cache : undefined;
   const write = [...new Set([...entry.exception.write ?? [], ...rootWrites(entry, version)])];
   const env = [...new Set([...entry.exception.env ?? [], ...cache ? [cache.env] : []])].sort();
+  const redirects = redirectHosts(entry, runtime);
   const net = !entry.exception.net
-    ? undefined
+    ? (redirects.length ? redirects : undefined)
     : runtime.hostLists && entry.hosts?.length
-    ? [...new Set(entry.hosts)].sort()
+    ? [...new Set([...entry.hosts, ...redirects])].sort()
     : true;
   return {
     ...(env.length ? { env } : {}),
@@ -803,6 +815,16 @@ export function entryException(
     ...(net !== undefined ? { net } : {}),
     ...(runtime.writeRoots && entry.cache ? { executables: true } : {}),
   };
+}
+
+/**
+ * The hosts the entry's declared download hosts redirect to, as a `net` list on a runtime that
+ * needs `knownPackages` for a declared host but doesn't allow its redirect targets with it
+ * (3.0.0-denext.1 up to {@linkcode JAIL_DECLARED_REDIRECTS_RELEASE}); empty elsewhere.
+ */
+function redirectHosts(entry: JailExceptionEntry, runtime: JailRuntime): string[] {
+  if (!runtime.knownPackages || runtime.declaredRedirects) return [];
+  return [...new Set((entry.declaredHosts ?? []).flatMap(declaredHostRedirects))].sort();
 }
 
 /**

@@ -52,6 +52,11 @@ export const jobMeta: CommandMeta = {
       help: "install: remove this project's entries (all, or the named jobs')",
     },
     {
+      name: "status",
+      type: "boolean",
+      help: "install: list this project's entries the OS scheduler holds; change nothing",
+    },
+    {
       name: "user",
       type: "boolean",
       help: "install: the user's scheduler (default): LaunchAgents, systemd --user / crontab, " +
@@ -71,6 +76,7 @@ export const jobMeta: CommandMeta = {
   usage: "denext job <name> [--payload '<json>']\ndenext job --list [--json]\n" +
     "denext job --history [--read-only] [--json]\ndenext job --clear-history [--json]\n" +
     "denext job install [<name>...] [--dry-run] [--uninstall] [--user | --system] [--json]\n" +
+    "denext job install --status [--user | --system] [--json]\n" +
     "  Installs the scheduled jobs (each job's `schedule` + config scheduledJobs) as OS\n" +
     "  scheduler entries that run `denext job <name>` in this directory: launchd on macOS,\n" +
     "  systemd timers on Linux (crontab without a systemd user manager), Task Scheduler on\n" +

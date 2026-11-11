@@ -28,6 +28,13 @@ class El {
   hasAttribute(name: string): boolean {
     return name in this.attrs;
   }
+  setAttribute(name: string, value: string): void {
+    this.attrs[name] = value;
+  }
+  listeners: Record<string, (() => void)[]> = {};
+  addEventListener(type: string, fn: () => void): void {
+    (this.listeners[type] ??= []).push(fn);
+  }
   closest(selector: string): El | null {
     const attr = /^\[(.+)\]$/.exec(selector)?.[1];
     const matches = attr ? this.hasAttribute(attr) : this.tagName === selector;
@@ -102,17 +109,20 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
       return true;
     },
   });
-  g.history = {
-    state: null,
-    pushState: (_s: unknown, _t: string, url: string) => {
+  const fakeHistory = {
+    state: null as unknown,
+    pushState: (state: unknown, _t: string, url: string) => {
       report.pushed.push(url);
+      fakeHistory.state = state;
       loc.href = new URL(url, loc.href).href;
     },
-    replaceState: (_s: unknown, _t: string, url: string) => {
+    replaceState: (state: unknown, _t: string, url: string) => {
       report.replaced.push(url);
+      fakeHistory.state = state;
       loc.href = new URL(url, loc.href).href;
     },
   };
+  g.history = fakeHistory;
   g.scrollTo = () => {};
   g.HTMLFormElement = FormEl;
   const RealFormData = FormData;
@@ -234,5 +244,164 @@ export async function runPartialNavScenarios(): Promise<PartialNavReport> {
   await settle();
   report.declined = report.fetched.splice(mark).map((f) => f.url);
   report.title = fakeDocument.title;
+  return report;
+}
+
+/** What the head, view-transition and back / forward scenarios observed. */
+export interface PartialHistoryReport {
+  /** The page head after a partial answer merged its own: `tag attr=value …` per element. */
+  head: string[];
+  /** The region's text while a new stylesheet loads, then once it has. */
+  whileLoading: string;
+  afterLoad: string;
+  /** How many swaps ran in a view transition: one under `f-view-transition`, then still one. */
+  transitions: number[];
+  /** The page text after each history step. */
+  steps: string[];
+  /** What each pop claim answered. */
+  claims: unknown[];
+  /** The partial requests made. */
+  fetched: string[];
+}
+
+/** Drive the head merge, the view transition and back / forward through a fake browser. */
+// fallow-ignore-next-line unused-export -- imported by the child process tests/fresh-partial-nav.test.ts starts
+export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport> {
+  const report: PartialHistoryReport = {
+    head: [],
+    whileLoading: "",
+    afterLoad: "",
+    transitions: [],
+    steps: [],
+    claims: [],
+    fetched: [],
+  };
+  const listeners: { type: string; fn: Listener; capture: boolean }[] = [];
+  const loc = { href: ORIGIN + "/", origin: ORIGIN, pathname: "/", search: "", hash: "" };
+  const g = globalThis as Record<string, unknown>;
+  const headChildren: El[] = [
+    new El("meta", { name: "description", content: "old" }),
+    new El("meta", { charset: "utf-8" }),
+    new El("link", { rel: "stylesheet", href: "/a.css" }),
+  ];
+  let transitions = 0;
+  g.document = {
+    title: "",
+    head: {
+      querySelectorAll: (tag: string) => headChildren.filter((c) => c.tagName === tag),
+      appendChild: (el: El) => headChildren.push(el),
+    },
+    createElement: (tag: string) => new El(tag),
+    addEventListener: (type: string, fn: Listener, capture?: boolean) =>
+      listeners.push({ type, fn, capture: capture === true }),
+    startViewTransition: (update: () => void) => {
+      transitions++;
+      update();
+      return { updateCallbackDone: Promise.resolve() };
+    },
+  };
+  g.location = loc;
+  const states: unknown[] = [];
+  const fakeHistory = {
+    state: null as unknown,
+    pushState: (state: unknown, _t: string, url: string) => {
+      fakeHistory.state = state;
+      states.push(state);
+      loc.href = new URL(url, loc.href).href;
+    },
+    replaceState: (state: unknown, _t: string, url: string) => {
+      fakeHistory.state = state;
+      states.push(state);
+      loc.href = new URL(url, loc.href).href;
+    },
+  };
+  g.history = fakeHistory;
+  g.scrollTo = () => {};
+
+  const meta = (attrs: Record<string, string>) => h("meta", attrs);
+  const trees: Record<string, VNode> = {
+    "/parts/styled": h("html", null, [
+      h("head", { key: "h" }, [
+        meta({ key: "1", name: "description", content: "new" }),
+        meta({ key: "2", property: "og:title", content: "Styled" }),
+        meta({ key: "3", charSet: "latin1" }),
+        h("link", { key: "4", rel: "stylesheet", href: "/a.css" }),
+        h("link", { key: "5", rel: "stylesheet", href: "/b.css", crossOrigin: "anonymous" }),
+        h("link", { key: "6", rel: "icon", href: "/icon.png" }),
+      ]),
+      h("body", { key: "b" }, [
+        h("svg", { key: "s" }, h("meta", { name: "in-svg", content: "x" })),
+        h(Partial, { key: "p", name: "list" }, "styled"),
+      ]),
+    ]),
+    "/parts/plain": h(Partial, { name: "list" }, "one"),
+    "/parts/two": h(Partial, { name: "list", mode: "append", key: "two" }, "+two"),
+    "/parts/three": h(Partial, { name: "list", mode: "append", key: "three" }, "+three"),
+    "/": h(Partial, { name: "list", mode: "append", key: "f" }, "fetched"),
+  };
+  setFlightParser((flight) => trees[flight as string]);
+  g.fetch = (input: URL) => {
+    const url = new URL(input);
+    report.fetched.push(url.pathname + url.search);
+    const body = JSON.stringify({ flight: url.pathname, title: null });
+    return Promise.resolve(new Response(body, { headers: { "x-denext-flight": "1" } }));
+  };
+
+  const screen = await render(h("main", null, h(Partial, { name: "list" }, "one")));
+  const settle = () => screen.act(() => new Promise((r) => setTimeout(r, 20)));
+  const text = () => screen.container.textContent ?? "";
+  const click = async (target: El) => {
+    const e = { target, defaultPrevented: false, preventDefault() {} };
+    for (const l of listeners) if (l.type === "click" && !l.capture) l.fn(e);
+    await settle();
+  };
+
+  // The head merge and the view transition: the swap waits for the new stylesheet.
+  const nav = new El("div", { "f-client-nav": "" });
+  const vt = new El("div", { "f-view-transition": "" }, nav);
+  await click(new El("button", { type: "button", "f-partial": "/parts/styled" }, vt));
+  report.whileLoading = text();
+  for (const fn of headChildren.find((c) => c.attrs.href === "/b.css")?.listeners.load ?? []) {
+    fn();
+  }
+  await settle();
+  report.afterLoad = text();
+  report.transitions.push(transitions);
+  report.head = headChildren.map((c) =>
+    [c.tagName, ...Object.entries(c.attrs).map(([k, v]) => `${k}=${v}`)].join(" ")
+  );
+  await click(new El("button", { type: "button", "f-partial": "/parts/plain" }, nav));
+  report.transitions.push(transitions);
+
+  // Back / forward: two links append to the region, then the pops walk the entries.
+  const follow = async (href: string, partial: string) => {
+    const link = new El("a", { href, "f-partial": partial }, nav);
+    const e = { target: link, defaultPrevented: false, preventDefault() {} };
+    for (const l of listeners) if (l.type === "click" && l.capture) l.fn(e);
+    await navigate(link.href); // denext's own link listener, in the same dispatch
+    await settle();
+    report.steps.push(text());
+  };
+  await follow("/?page=2", "/parts/two");
+  await follow("/?page=3", "/parts/three");
+  const page2 = states[states.length - 2];
+  const page3 = states[states.length - 1];
+  const first = states.find((s) => s !== page2 && s !== page3);
+  const pop = async (href: string, state: unknown) => {
+    loc.href = ORIGIN + href;
+    fakeHistory.state = state;
+    const claim = g.__dnxPop as (href: string, event: unknown) => unknown;
+    report.claims.push(claim(ORIGIN + href, { state }));
+    await settle();
+    report.steps.push(text());
+  };
+  await pop("/?page=2", page2); // back
+  await pop("/", first); // back
+  await pop("/?page=3", page3); // forward
+  // A stack layout claiming after: it answers what this declines.
+  g.__dnxPop = (href: string) => `next:${new URL(href).search}`;
+  await pop("/#top", null);
+  // An entry this page load holds no record of: fetched, its regions replaced.
+  await pop("/?page=9", { denextFreshEntry: "gone" });
   return report;
 }

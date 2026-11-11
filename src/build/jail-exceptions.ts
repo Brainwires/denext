@@ -20,10 +20,13 @@
 // outside its package that it writes (`siblingWrite`), and a browser cache gets `executables`.
 // From denext.1 (item 124) the download host a package declares for itself (node-pre-gyp's
 // `binary.host`) is honoured only when `jailScripts.knownPackages` lists it: `declaredHosts`
-// holds the reviewed ones. There is no per-package opt-out, so
+// holds the reviewed ones; from denext.19 a declared `github.com` also gets the hosts GitHub
+// redirects a release download to ({@linkcode DECLARED_HOST_REDIRECTS}), which denext grants as a
+// `net` list on the runtimes before it. There is no per-package opt-out, so
 // each entry is the narrowest grant that lets the script do its job. `denext migrate` / `create` / `add` write the entries for
 // the dependencies they find, and `denext doctor` flags a missing one; nothing here ever turns the
-// jail off. Data only: src/build/jail-scripts.ts reads it.
+// jail off. Data only: src/build/jail-scripts.ts reads it. The runtime mirrors this list (its
+// `cli/supply_chain/builtin_exceptions.rs`): a change here is a change there too.
 
 /** One package's exception, in the shape of deno.json's `supplyChain.jailScripts.packages.<name>`. */
 export interface JailPackageException {
@@ -105,8 +108,9 @@ export interface JailExceptionEntry {
    * The download hosts the package's own package.json declares (node-pre-gyp's `binary.host`),
    * reviewed: written to `jailScripts.knownPackages` on a runtime that honours a declared host
    * only when that lists it (3.0.0-denext.1 and later). Older runtimes allow a declared host by
-   * itself. Only hosts that serve the file themselves are listed: a GitHub release download
-   * redirects to another host, which a declaration can't cover (those packages get a `net` list).
+   * itself. A declared `github.com` (a release download) redirects to the hosts in
+   * {@linkcode DECLARED_HOST_REDIRECTS}: the runtime allows them with it from 3.0.0-denext.19, and
+   * on the runtimes before it the entry's `net` lists them.
    */
   readonly declaredHosts?: readonly string[];
   /** What the exception cannot fix, and what to do about it. */
@@ -127,6 +131,32 @@ const GITHUB = [
   "objects.githubusercontent.com",
   "release-assets.githubusercontent.com",
 ];
+
+/**
+ * The hosts a declared download host hands its downloads off to, keyed by that host: a script
+ * allowed the declared host needs these too, as its download fails without them. Mirrors the
+ * runtime's `DECLARED_HOST_REDIRECTS` (3.0.0-denext.19).
+ */
+export const DECLARED_HOST_REDIRECTS: Readonly<Record<string, readonly string[]>> = {
+  "github.com": GITHUB.slice(1),
+};
+
+/**
+ * The hosts a declared download host (`host`, any port, any case, a trailing dot allowed)
+ * redirects to; empty for a host that serves its files itself.
+ *
+ * @param host The declared host.
+ * @returns The redirect targets.
+ */
+export function declaredHostRedirects(host: string): readonly string[] {
+  const port = /:(\d*)$/.exec(host);
+  const name = (port ? host.slice(0, port.index) : host).replace(/\.+$/, "").toLowerCase();
+  return Object.hasOwn(DECLARED_HOST_REDIRECTS, name) ? DECLARED_HOST_REDIRECTS[name] : [];
+}
+
+/** The reason of the node-pre-gyp packages whose older versions declare a GitHub release host. */
+const GITHUB_DECLARED = "install (`node-pre-gyp install`) downloads the prebuilt binding from " +
+  "the GitHub release its package.json declares (`binary.host`), else builds it";
 
 /** node-gyp's Node.js headers, for a build from source. */
 const NODE_HEADERS = "nodejs.org";
@@ -150,6 +180,13 @@ const PLAYWRIGHT_HOSTS = [
  * script; `tests/jail-scripts.test.ts` checks its shape.
  */
 export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
+  {
+    name: "@discordjs/opus",
+    declaredHosts: ["github.com"],
+    reason: GITHUB_DECLARED,
+    exception: {},
+    caveat: NODE_GYP,
+  },
   {
     name: "@prisma/client",
     hosts: ["binaries.prisma.sh"],
@@ -204,6 +241,25 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     reason: "install script downloads the libtensorflow shared library",
     exception: { net: true },
     caveat: NODE_GYP,
+  },
+  {
+    name: "argon2",
+    declaredHosts: ["github.com"],
+    reason: "before 0.28 " + GITHUB_DECLARED + "; from 0.28 the binaries ship in the package " +
+      "and `node-gyp-build` loads them at run time",
+    exception: {},
+    caveat: NODE_GYP,
+  },
+  {
+    name: "bcrypt",
+    declaredHosts: ["github.com"],
+    reason: "bcrypt 5 " + GITHUB_DECLARED,
+    exception: {},
+    caveat: "bcrypt 6 ships prebuilt binaries that `node-gyp-build` loads at run time, so leave " +
+      "its install script unapproved. Approving it works where the OS confines lifecycle scripts " +
+      "(macOS, Linux with Landlock) from runtime 3.0.0-denext.1, which lets the install check " +
+      "load the package's own binary; elsewhere, and on older runtimes, the approved check fails. " +
+      NODE_GYP,
   },
   {
     name: "better-sqlite3",
@@ -299,6 +355,13 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     writeTargets: ["git-hooks"],
     caveat: "A repository whose `.git` is a file (a worktree or submodule) or that sets " +
       "`core.hooksPath` keeps its hooks elsewhere: list that directory under `write` by hand.",
+  },
+  {
+    name: "libxmljs",
+    declaredHosts: ["github.com"],
+    reason: GITHUB_DECLARED,
+    exception: {},
+    caveat: NODE_GYP,
   },
   {
     name: "msw",
@@ -406,15 +469,6 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
   {
     name: "esbuild",
     why: "its binary is an optional dependency; the install script only checks it",
-  },
-  {
-    name: "bcrypt",
-    why: "bcrypt 6 ships prebuilt binaries that `node-gyp-build` loads at run time, so leave its " +
-      "install script unapproved. Approving it works where the OS confines lifecycle scripts " +
-      "(macOS, Linux with Landlock) from runtime 3.0.0-denext.1, which lets the install check load " +
-      "the package's own binary; elsewhere, and on older runtimes, the approved check fails. " +
-      "bcrypt 5 downloads from GitHub through node-pre-gyp, which from denext.1 needs a host grant: " +
-      "upgrade to bcrypt 6",
   },
   {
     name: "playwright",

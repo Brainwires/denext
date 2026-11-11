@@ -20,6 +20,30 @@ and this project adheres to
   (with its own macOS usage text) and builds with CEF on Linux (`desktop.backend: { linux: "cef" }`),
   whose system WebView has no WebRTC. A refused microphone names the fix: the OS's privacy settings
   (on Windows, the switch `appCapabilities().microphoneAccessReason` reports) or the packaged app.
+- **Fresh partial navigation: view transitions, head merging and back / forward.** Under an
+  element with `f-view-transition`, a partial swap runs inside `document.startViewTransition` where
+  the browser has it; an answer's `<meta>` elements (by `name`, `property`, `http-equiv` or
+  `itemprop`) are updated or added and its new stylesheets loaded before the regions swap; and
+  browser back / forward between partial-navigation entries restores each region as the entry
+  left it (an `append` / `prepend` history included) instead of re-rendering the whole page.
+  `denext migrate` no longer lists `f-view-transition` for review.
+- **`denext/preact/compat`: Preact's remaining `react-dom` helpers.** `createFactory`,
+  `findDOMNode` (a mounted class instance's first DOM node), `isFragment`, `isMemo` and
+  `unmountComponentAtNode`; `render(vnode, parent, callback)` / `hydrate(vnode, parent, callback)`
+  call `callback` once the DOM is updated and keep one root per container (a second `render`
+  re-renders it), and `flushSync(fn, arg)` passes `arg` to `fn`.
+- **`denext/preact/jsx-runtime`: Deno's precompiled JSX.** `jsxTemplate`, `jsxAttr` and
+  `jsxEscape`, with Preact's serialization (and its `options.attr` hook), so a project with
+  `"jsx": "precompile"` and `jsxImportSource: "preact"` runs on denext. A template is parsed once
+  into elements, so it renders on the server and mounts in the browser.
+- **`denext ui`'s Cron page manages the OS-scheduler entries.** A new "OS scheduler" section shows
+  which scheduled jobs `denext job install` has handed to launchd, a systemd timer, the crontab or
+  Task Scheduler (and any stale entry), with Install / Uninstall buttons that first preview every
+  file and command the dry run would write and run; plain forms, refused under `--read-only` and
+  not read under `--offline`. The `/api/config/cron` twin adds `osScheduler` and takes the same
+  `os-install` / `os-uninstall` intents. `denext job install --status [--json]` lists this
+  project's installed entries without changing anything, and `--json` now carries the warning an
+  install prints when its entries run the fallback command.
 - **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
   result and an extension's `host.onWillNavigate(fn)` see every top-level navigation of every
   window (`url`, `window`, `kind`, `initiator`) before the navigation guard, and may refuse it
@@ -114,6 +138,17 @@ and this project adheres to
 - **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
   cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
   of `start.limits`; `compile: { limits: false }` bakes none.
+- **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
+  sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
+  (runtime 3.0.0-denext.19's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
+  `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
+- **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
+  stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
+  `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
+  RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
+  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the runtime has
+  it. `createTestClient(handler, { cookieJar })` and `new CookieJar(store)` apply a URL-aware
+  store's host, path, expiry and `Secure` rules; the default name-keyed jar is unchanged.
 
 ### Changed
 
@@ -130,6 +165,11 @@ and this project adheres to
   `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
   the config on an edit under the directory of any project module the config reaches, instead of
   needing a dev-server restart.
+- **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
+  are in the built-in exception list**, as the GitHub release host their package.json declares
+  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.19 the runtime allows that host's
+  redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
 
 ### Fixed
 
@@ -166,6 +206,11 @@ and this project adheres to
   prebuilt addon) now reports it and says to leave the package unapproved (out of
   `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
   OS can't confine the script, a jailed script can't load it.
+- **React Native mode: `LayoutAnimation` animates frames, not scale.** A view the commit resized
+  plays its width and height from the old size to the new one, so its content lays out at each
+  size instead of being drawn stretched (a page container's background or border no longer
+  stretches), and a moved view is translated from its old place to where that first frame lays it
+  out, as React Native animates a view's frame.
 
 ### Documentation
 

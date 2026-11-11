@@ -590,6 +590,22 @@ Deno.test("migrate --check: Fresh 2 — golden report (source, changes, won't mi
   });
 });
 
+Deno.test("migrate --check: f-view-transition is not a review item (partial navigation runs it)", async () => {
+  await withTree({
+    "deno.json": { imports: { "fresh": "jsr:@fresh/core@^2.3.3" } },
+    "main.ts": `import { App } from "fresh";\nexport const app = new App().fsRoutes();\n`,
+    "routes/_app.tsx": `export default function A({ Component }) {
+  return <html><body f-client-nav f-view-transition><Component /></body></html>;
+}
+`,
+    "routes/index.tsx": `export default function Home() { return <p>home</p>; }\n`,
+  }, async (dir) => {
+    const report = await checkMigration(dir, { denextLocalPath: REPO });
+    assertEquals(report.source, "fresh");
+    assertEquals(report.review.filter((r) => r.item.includes("view-transition")), []);
+  });
+});
+
 Deno.test("migrate --check: Fresh 1.x — golden report", async () => {
   await withTree(FRESH1, async (dir) => {
     const report = await checkMigration(dir, { denextLocalPath: REPO });

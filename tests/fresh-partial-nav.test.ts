@@ -9,7 +9,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { inChild } from "./helpers/isolated.ts";
-import type { PartialNavReport } from "./helpers/fresh-partial-dom.ts";
+import type { PartialHistoryReport, PartialNavReport } from "./helpers/fresh-partial-dom.ts";
 
 Deno.test("partial navigation: buttons, links and forms fetch and swap their regions", async () => {
   const { value: r } = await inChild<PartialNavReport>({
@@ -32,10 +32,49 @@ Deno.test("partial navigation: buttons, links and forms fetch and swap their reg
   ]);
   // A link pushes its href; a form replaces the entry with its action, as Fresh does.
   assertEquals(r.pushed, ["http://app.test/?page=2"]);
-  assertEquals(r.replaced, ["http://app.test/search", "http://app.test/"]);
+  // The first swap marks the entry it shows (same URL), so back / forward can find it again.
+  assertEquals(r.replaced, ["http://app.test/", "http://app.test/search", "http://app.test/"]);
   assertEquals(r.assigned, ["http://app.test/landed"], "the redirect is followed in full");
   assertEquals(r.title, "Answered");
   assertEquals(r.ignored, 0, "nothing else was fetched");
   assertEquals(r.foreign, [], "a cross-origin f-partial is never fetched");
   assert(r.declined.every((u) => u.startsWith("/?page=3")), r.declined.join());
+});
+
+Deno.test("partial navigation: head merge, view transitions and back / forward", async () => {
+  const { value: r } = await inChild<PartialHistoryReport>({
+    imports:
+      `import { runPartialHistoryScenarios } from "@repo/tests/helpers/fresh-partial-dom.ts";`,
+    body: "return await runPartialHistoryScenarios();",
+  });
+  // The answer's head merged into the page's: a <meta> updated by name and one added by
+  // property; the charset, an existing stylesheet, a non-stylesheet link and an <svg>'s content
+  // left alone; the new stylesheet added (and waited for) before the region swapped.
+  assertEquals(r.head, [
+    "meta name=description content=new",
+    "meta charset=utf-8",
+    "link rel=stylesheet href=/a.css",
+    "meta property=og:title content=Styled",
+    "link rel=stylesheet href=/b.css crossorigin=anonymous",
+  ]);
+  assertEquals([r.whileLoading, r.afterLoad], ["one", "styled"]);
+  // Under f-view-transition the swap ran in document.startViewTransition; elsewhere not.
+  assertEquals(r.transitions, [1, 1]);
+  assertEquals(r.steps, [
+    "one+two", // link to ?page=2 appended
+    "one+two+three", // link to ?page=3 appended
+    "one+two", // back: the region as ?page=2 left it, with no request
+    "one", // back to the first entry
+    "one+two+three", // forward
+    "one+two+three", // a pop that is not partial navigation's: left to the next claim
+    "fetched", // an entry with no record here: fetched, its region replaced (not appended)
+  ]);
+  assertEquals(r.claims, [true, true, true, "next:", true]);
+  assertEquals(r.fetched, [
+    "/parts/styled?fresh-partial=true",
+    "/parts/plain?fresh-partial=true",
+    "/parts/two?fresh-partial=true",
+    "/parts/three?fresh-partial=true",
+    "/?page=9&fresh-partial=true",
+  ]);
 });

@@ -137,6 +137,21 @@ region's content; a region the page lacks is skipped with a warning. Islands ins
 region hydrate. An answer with no partials navigates the whole page instead (a link or a GET
 form), and a full-page navigation renders each region with the new page's children.
 
+Before the regions swap, the answer's head is merged into the page's, as Fresh does: its
+`<title>`, each `<meta>` (matched by `name`, `property`, `http-equiv` or `itemprop`; a `charset`
+is left alone) updated or added, and each stylesheet `<link>` the page lacks added and waited for
+(up to three seconds) so the new regions never paint unstyled. `<script>` and `<style>` elements
+are not merged, and nothing the page already has is removed. Under an element with
+`f-view-transition` (`<body f-client-nav f-view-transition>`), the swap runs inside
+`document.startViewTransition` where the browser has it, so `view-transition-name` styles
+animate it; elsewhere, and in browsers without the API, it swaps at once.
+
+Browser back and forward between the entries partial navigation made show each region as that
+entry left it, with no request: an `append` or `prepend` history is restored, not refetched or
+appended twice. An entry made before a reload is fetched as a partial request and its regions
+are replaced with the answer's (whatever their `mode`); an entry from a whole-page navigation,
+or one whose page has been re-rendered since, renders the whole page as before.
+
 The mode is Fresh's `mode` prop (`<Partial name="cart" mode="append">`; the type is `PartialMode`
 from `denext/fresh/partial`). `applyPartialTree(tree)` from the same module applies the regions of
 an already-parsed answer by hand and returns how many partials the answer held.
@@ -210,7 +225,6 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 | Review                                                         | What to do                                                                                                                                                 |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fresh({ … })` options in `vite.config`                        | Not carried: the migration reads `routes/`, `islands/` and `client.ts` at their default places.                                                            |
-| `f-view-transition`                                            | Partial navigation swaps the regions without the View Transitions wrapper.                                                                                 |
 | An inline `<script dangerouslySetInnerHTML>`                   | denext's default CSP runs no inline script: move the code to a file under `public/` or into `instrumentation-client.ts`, or allow it in `csp.scriptSrc`.   |
 | A WebSocket upgrade (`ctx.upgrade()`, `Deno.upgradeWebSocket`) | Works under `denext start` / `dev`, not on every deploy target; [Live channels](/docs/live) are portable.                                                  |
 | `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; check code that picks a file path by `PROD` (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |

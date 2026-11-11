@@ -393,11 +393,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** partial navigation swaps the `<Partial>` regions without Fresh's View Transitions
-  wrapper (`f-view-transition`) and takes only the answer's `<title>` from its head; browser
-  back / forward re-renders the whole page (a region's `append` / `prepend` history is not
-  replayed). `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not
-  run; `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** partial navigation merges only the `<title>`, `<meta>` and stylesheet `<link>`
+  elements of an answer's head (no `<script>` or `<style>`, and nothing the page has is
+  removed). Browser back / forward to an entry partial navigation made before a reload fetches
+  it and replaces its regions, and back past a whole-page navigation re-renders that page, so an
+  `append` / `prepend` history is replayed only between entries of the same page load and page.
+  `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not run;
+  `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
@@ -407,13 +409,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
-  its `signal` / `computed` / `effect` (and hook forms) take no options argument.
-  `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
-  `unmountComponentAtNode`, and its `render` / `hydrate` / `flushSync` take no callback;
-  `denext/preact/jsx-runtime` lacks Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`,
-  `jsxEscape`), so `"jsx": "precompile"` needs `react-jsx`. (The parity gate lists each in
-  `tests/fixtures/react-parity-known-gaps.json`.) Of Preact's `options` hooks denext calls
-  `vnode`, `event` and `useDebugValue` (for elements the Preact entry points create); `diffed`,
+  its `signal` / `computed` / `effect` (and hook forms) take no options argument (the parity
+  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Under `"jsx": "precompile"`,
+  an element Deno precompiles into a template drops its event handlers and `key` (Preact's
+  `jsxAttr` serializes only attributes), so an interactive component compiled that way needs
+  `react-jsx`. Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
+  `attr` (for elements the Preact entry points create); `diffed`,
   `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
   so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
   a server render, and a production build compiles its boundary support in only when the app's
@@ -568,9 +569,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
-- **`LayoutAnimation` resizes by scaling** (FLIP: a resized view's content is drawn stretched
-  while the animation plays, where React Native lays it out at each size), takes the next DOM
-  change as the commit, and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`LayoutAnimation`** takes the next DOM change as the commit, skips pages over 3,000 elements,
+  and moves a view by a transform from its old place to where the first frame lays it out (a view
+  whose place depends on a resizing ancestor can differ slightly mid-way from React Native's
+  straight-line frame). Snap props are CSS scroll snap.
 - **`adjustsFontSizeToFit` needs a box to overflow** (`numberOfLines` or a fixed size).
   `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
   metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is

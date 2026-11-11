@@ -342,6 +342,7 @@ denext job --history                 # recent runs, through the configured histo
 denext job install cleanup        # just this one (others stay as they are)
 denext job install --dry-run      # print the files and scheduler commands, change nothing
 denext job install --uninstall    # remove this project's entries (or name jobs to remove)
+denext job install --status       # list this project's installed entries, change nothing
 sudo denext job install --system  # the machine's scheduler, still run as you`}
       </Code>
       <ul>
@@ -377,6 +378,11 @@ sudo denext job install --system  # the machine's scheduler, still run as you`}
         (or{" "}
         <code>$DENEXT_INSTALL/bin</code>). Without one, they run the current Deno on denext's CLI
         module, and the command warns that this path can change when the toolchain is upgraded.
+      </p>
+      <p>
+        The <a href="/docs/ui#cron">Cron page</a> of <code>denext ui</code>{" "}
+        shows the same entries and installs or removes them for the logged-in user, after a preview
+        of every file and command (the command's <code>--dry-run</code>).
       </p>
       <h3 id="os-scheduler-time-zones">Time zones</h3>
       <p>

@@ -7,9 +7,11 @@
  * - `event(e)` — before an event handler an intrinsic element created through those entry
  *   points runs; a non-undefined return value is passed to the handler in the event's place.
  * - `useDebugValue(value)` — from `useDebugValue` in `denext/preact/hooks`.
+ * - `attr(name, value)` — from `jsxAttr` in `denext/preact/jsx-runtime` (precompiled JSX); a
+ *   returned string replaces the attribute's HTML.
  *
  * The rest are never called: denext's reconciler does not run Preact's diff, so `diffed`,
- * `unmount`, `requestAnimationFrame`, `debounceRendering`, `__suspenseDidResolve`, `attr`,
+ * `unmount`, `requestAnimationFrame`, `debounceRendering`, `__suspenseDidResolve`,
  * `_addHookName` and Preact's mangled internal hooks (`__b`, `__r`, `__c`, `__e`, `__h`, …) can
  * be set but have no effect. The vnode passed to `vnode` is denext's element (`type`, `props`,
  * `key`; the `ref` is in `props`), not Preact's internal shape.
@@ -39,7 +41,7 @@ export interface Options {
   _addHookName?(name: string | number): void;
   /** Never called on denext. */
   __suspenseDidResolve?(vnode: VNode, cb: () => void): void;
-  /** Never called on denext (no precompiled-JSX attribute hook). */
+  /** Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML. */
   attr?(name: string, value: unknown): string | void;
   /** Preact's internal hooks may be set; denext never calls them. */
   [hook: string]: unknown;

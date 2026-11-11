@@ -338,9 +338,9 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
       // The preset's move runs for 300 ms and pollFor samples every 100 ms plus a CDP round
       // trip, so polling getAnimations() for it can miss the whole animation on a loaded runner.
       // Record every animation the commit starts instead, then seek them all to their first
-      // frame and read where the moved row is drawn: FLIP draws it at its old place. (The row's
-      // own keyframe is relative to its ancestors' — the list's container grew too, so it plays
-      // a scale its rows counter-scale — so the drawn box, not one keyframe, is the contract.)
+      // frame and read where the moved row is drawn: it starts at its old place. (The row's own
+      // keyframe is relative to its ancestors' — the list's container grew too, so its frame
+      // plays from the old height — so the drawn box, not one keyframe, is the contract.)
       const before = await page.evaluate(`${el("la-b")}.getBoundingClientRect().top`) as number;
       await page.evaluate(`(() => {
         const started = globalThis.__laStarted = [];

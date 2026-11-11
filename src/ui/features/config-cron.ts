@@ -72,6 +72,15 @@ import {
   writeFileAtomic,
 } from "../security.ts";
 import { confirmed, postedField } from "./plugins.ts";
+import {
+  readScheduler,
+  schedulerIntent,
+  schedulerNotice,
+  schedulerPayload,
+  type SchedulerRead,
+  SchedulerSection,
+  submitScheduler,
+} from "./config-cron-scheduler.ts";
 
 /** Where the feature is documented. */
 const DOCS = "https://denext.dev/docs/jobs";
@@ -223,6 +232,8 @@ interface CronState {
    * the default database resolves outside the project (see {@linkcode historyPath}).
    */
   readonly historyRead: JobHistory | null;
+  /** What `denext job install --status` found in the OS scheduler, or why it was not read. */
+  readonly scheduler: SchedulerRead;
 }
 
 /** The denext config as this panel reads it: its name, its bytes, and its stamp. */
@@ -326,7 +337,10 @@ function lastMeaningful(lines: readonly string[]): string | null {
 }
 
 /** The listing half of the state — what the discovery child found. */
-type Listing = Omit<CronState, "configName" | "source" | "base" | "historyDb" | "historyRead">;
+type Listing = Omit<
+  CronState,
+  "configName" | "source" | "base" | "historyDb" | "historyRead" | "scheduler"
+>;
 
 /** An empty listing carrying the reason discovery produced nothing. */
 function empty(error?: string): Listing {
@@ -400,13 +414,18 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
  */
 async function readState(dir: string, offline: boolean, readOnly: boolean): Promise<CronState> {
   const config = await readConfigFile(dir);
-  const listing = await listingFor(dir, offline, config.base);
+  // The OS scheduler's status is its own child: started alongside discovery, not after it.
+  const [listing, scheduler] = await Promise.all([
+    listingFor(dir, offline, config.base),
+    readScheduler(dir, offline),
+  ]);
   const historyDb = await historyPath(dir);
   return {
     ...listing,
     ...config,
     historyDb,
     historyRead: await readHistory({ dir, offline, readOnly }, listing, historyDb),
+    scheduler,
   };
 }
 
@@ -943,6 +962,15 @@ function SchedulerNote({ state }: { readonly state: CronState }): VNode {
   );
 }
 
+/** The jobs at least one schedule will really fire, each once, in schedule order. */
+function firingJobs(state: CronState): string[] {
+  const out: string[] = [];
+  for (const entry of state.schedules) {
+    if (skipReason(entry, state.jobs) === null && !out.includes(entry.job)) out.push(entry.job);
+  }
+  return out;
+}
+
 /** The whole panel. */
 function CronPanel(
   { ctx, state, notice, body }: {
@@ -975,6 +1003,8 @@ function CronPanel(
     h(Jobs, { state }),
     state.error === undefined ? h("h2", null, "Run history") : null,
     state.error === undefined ? h(History, { ctx, state }) : null,
+    h("h2", null, "OS scheduler"),
+    h(SchedulerSection, { ctx, read: state.scheduler, scheduled: firingJobs(state) }),
     // A pending change replaces the editor with its diff: reviewing and editing at once would
     // let the form drift from the value the confirm button carries.
     body ?? h(ScheduleEditor, { ctx, state }),
@@ -1414,6 +1444,7 @@ function payload(state: CronState): Record<string, unknown> {
     configScheduled: state.configScheduled,
     denoCron: state.denoCron,
     history: { enabled: state.history, ...historyPayload(state) },
+    osScheduler: schedulerPayload(state.scheduler),
     ...(state.error === undefined ? {} : { error: state.error }),
   };
 }
@@ -1444,7 +1475,7 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
       })),
     );
   }
-  const notice = ctx.url.searchParams.get("saved") === "1"
+  const notice = schedulerNotice(ctx) ?? (ctx.url.searchParams.get("saved") === "1"
     ? h(
       Note,
       null,
@@ -1453,7 +1484,7 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
         "next time the app starts — the recorder is installed at server boot, and the dev " +
         "server does not re-run job boot on reload.",
     )
-    : undefined;
+    : undefined);
   return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, notice })));
 }
 
@@ -1674,11 +1705,28 @@ function proposed(ctx: UiContext, state: CronState): Proposal {
   return carried === "" ? rowValue(ctx, state) : carriedValue(carried);
 }
 
-async function submit(ctx: UiContext, state: CronState): Promise<Response> {
-  if (ctx.readOnly) return refuse(ctx, state, "read-only — the config is not written", 403);
+/** The POSTs that are not a schedule edit (history, the OS scheduler), or `null` for an edit. */
+async function submitOther(ctx: UiContext, state: CronState): Promise<Response | null> {
   const intent = postedField(ctx, INTENT_FIELD);
   if (intent === INTENT_HISTORY) return await submitHistory(ctx, state);
   if (intent === INTENT_CLEAR_HISTORY) return await submitClearHistory(ctx, state);
+  const os = schedulerIntent(ctx);
+  if (os === null) return null;
+  return await submitScheduler(ctx, os, {
+    refuse: (reason, status) => refuse(ctx, state, reason, status),
+    review: (body) => panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body }))),
+  });
+}
+
+async function submit(ctx: UiContext, state: CronState): Promise<Response> {
+  if (ctx.readOnly) {
+    const what = schedulerIntent(ctx) === null
+      ? "the config is not written"
+      : "the OS scheduler is not changed";
+    return refuse(ctx, state, `read-only — ${what}`, 403);
+  }
+  const other = await submitOther(ctx, state);
+  if (other) return other;
   const proposal = proposed(ctx, state);
   if ("no" in proposal) return refuse(ctx, state, proposal.no.reason, proposal.no.status);
   const { value } = proposal;
