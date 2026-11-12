@@ -132,16 +132,21 @@ export type DesktopTitleBarStyle = typeof TITLE_BARS[number];
  * The title visibilities (`desktop.window.titleVisibility`, a window's `titleVisibility`):
  * `"hidden"` keeps the native title bar, its buttons and its drag area but draws no title text.
  */
-export const TITLE_VISIBILITIES = ["visible", "hidden"] as const;
 /** A title visibility. */
-export type DesktopTitleVisibility = typeof TITLE_VISIBILITIES[number];
+export type DesktopTitleVisibility = "visible" | "hidden";
+export const TITLE_VISIBILITIES: readonly DesktopTitleVisibility[] = ["visible", "hidden"];
 /**
  * The macOS toolbar styles (`desktop.window.toolbarStyle`, a window's `toolbarStyle`): an empty
  * toolbar in that style lays the title bar out; `"automatic"` adds none.
  */
-export const TOOLBAR_STYLES = ["automatic", "unified", "unifiedCompact", "expanded"] as const;
 /** A toolbar style. */
-export type DesktopToolbarStyle = typeof TOOLBAR_STYLES[number];
+export type DesktopToolbarStyle = "automatic" | "unified" | "unifiedCompact" | "expanded";
+export const TOOLBAR_STYLES: readonly DesktopToolbarStyle[] = [
+  "automatic",
+  "unified",
+  "unifiedCompact",
+  "expanded",
+];
 const POLICIES = ["regular", "accessory"] as const;
 /** The most `desktop.app.maxWindows` may be. */
 export const MAX_WINDOWS_LIMIT = 64;
