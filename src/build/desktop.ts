@@ -95,6 +95,8 @@ export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
 export type {
   DesktopAppSettings,
+  DesktopTitleVisibility,
+  DesktopToolbarStyle,
   DesktopWindowSettings,
   DesktopWindowSize,
 } from "../desktop/window-config.ts";

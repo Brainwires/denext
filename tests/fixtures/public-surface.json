@@ -1993,6 +1993,8 @@
     "DesktopSessionWindow:interface",
     "DesktopSignWindowsDeps:interface",
     "DesktopStrictPermissionsError:class",
+    "DesktopTitleVisibility:typeAlias",
+    "DesktopToolbarStyle:typeAlias",
     "DesktopTrayHandle:interface",
     "DesktopTrayIcon:typeAlias",
     "DesktopTrayOptions:interface",
