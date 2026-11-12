@@ -8,7 +8,12 @@
 // that per artifact kind, never more.
 
 import { desktopRun } from "./desktop-package-script.ts";
-import { macosCodesignArgs, type NotaryCredentials, notarytoolSubmitArgs } from "./code-signing.ts";
+import {
+  macosCodesignArgs,
+  type NotaryCredentials,
+  notaryCredentials,
+  notarytoolSubmitArgs,
+} from "./code-signing.ts";
 
 /** What a packaged macOS artifact is. */
 export type DesktopMacosArtifactKind = "app" | "dmg" | "pkg";
@@ -18,8 +23,11 @@ export type DesktopMacosSignature = "developer-id" | "ad-hoc" | "unsigned";
 
 /** A packaged artifact and what was done to it. */
 export interface DesktopMacosArtifact {
+  /** The artifact's path. */
   readonly path: string;
+  /** An `.app`, a `.dmg` or a `.pkg`. */
   readonly kind: DesktopMacosArtifactKind;
+  /** How it is signed. */
   readonly signature: DesktopMacosSignature;
   /** Accepted by the notary service. */
   readonly notarized: boolean;
@@ -31,6 +39,17 @@ export interface DesktopMacosArtifact {
 export interface DesktopMacosDistributeDeps {
   /** Runs a command, throwing on a non-zero exit (default {@linkcode desktopRun}). */
   readonly run?: (cmd: string[]) => Promise<void>;
+}
+
+/**
+ * The notary credentials in the environment: `DENEXT_NOTARY_PROFILE` (a keychain profile), else
+ * an App Store Connect API key (`DENEXT_NOTARY_KEY` + `DENEXT_NOTARY_KEY_ID`, with
+ * `DENEXT_NOTARY_ISSUER` for a team key) — what `denext build --compile --sign` reads too.
+ *
+ * @returns The credentials, or `undefined` when none are set.
+ */
+export function desktopNotaryCredentials(): NotaryCredentials | undefined {
+  return notaryCredentials();
 }
 
 /** Whether `identity` is no identity, or the ad-hoc one (`"-"`). */

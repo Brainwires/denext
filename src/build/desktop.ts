@@ -297,7 +297,6 @@ export {
   macosCodesignArgs,
   type MacosCodesignOptions,
   type NotaryCredentials,
-  notaryCredentials,
   notarytoolSubmitArgs,
   type SigntoolCertificateDeps,
   type StoreCommandResult,
@@ -314,6 +313,7 @@ export {
   desktopMacosDistributionNote,
   type DesktopMacosSignature,
   desktopNotarizeMacos,
+  desktopNotaryCredentials,
   desktopSignMacosDmg,
 } from "./desktop-macos-distribute.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.

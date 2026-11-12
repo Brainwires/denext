@@ -102,12 +102,12 @@ const {
   desktopRun: run,
   desktopRuntimeDenoFlags,
   desktopNotarizeMacos,
+  desktopNotaryCredentials,
   desktopRuntimeEnv,
   desktopSignMacosDmg,
   desktopWithAppVersion,
   macosCodesignArgs,
   macosSigningEntitlements,
-  notaryCredentials,
   parseDesktopPackageArgs,
   runDesktopPackageMain,
   syncDesktopAppConfig,
@@ -483,7 +483,7 @@ interface Signing {
   /** The bundle identifier the profile was checked against (the built .app must carry it). */
   profileIdentifier: string | undefined;
   /** DENEXT_NOTARY_PROFILE, else the DENEXT_NOTARY_KEY API key; undefined → not notarized. */
-  notary: ReturnType<typeof notaryCredentials>;
+  notary: ReturnType<typeof desktopNotaryCredentials>;
   /** "Developer ID Installer: …" for the .pkg. */
   installerIdentity: string | undefined;
 }
@@ -492,7 +492,7 @@ async function signingFromEnv(): Promise<Signing> {
   // "-" asks for the ad-hoc signature, as no identity does.
   const raw = Deno.env.get("DENEXT_CODESIGN_IDENTITY");
   const identity = raw && raw !== "-" ? raw : undefined;
-  const notary = notaryCredentials();
+  const notary = desktopNotaryCredentials();
   if (!identity) {
     console.warn(
       "⚠  DENEXT_CODESIGN_IDENTITY is unset → ad-hoc signature only. The app runs\n" +

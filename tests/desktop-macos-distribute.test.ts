@@ -205,5 +205,5 @@ Deno.test("scaffold: the macOS script signs, notarizes and staples each .dmg, an
   assertStringIncludes(script, "desktopMacosDistributionNote(done)");
   assert(!script.includes("signed + notarized + stapled — ready to distribute"));
   // Either notary credential (a keychain profile or an API key), as `build --compile --sign` takes.
-  assertStringIncludes(script, "const notary = notaryCredentials();");
+  assertStringIncludes(script, "const notary = desktopNotaryCredentials();");
 });
