@@ -920,7 +920,7 @@
       "name": "fallow",
       "summary": "Add the fallow code-health gate to a project",
       "usage": "denext fallow <action> [dir] [options]",
-      "description": "  denext fallow init [dir] [--dry-run]\n\n  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@3.30.0)\n        and coverage/ + .fallow/ to .gitignore. Run `denext task hooks:install` to\n        enable the commit gate.",
+      "description": "  denext fallow init [dir] [--dry-run]\n\n  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@3.34.0)\n        and coverage/ + .fallow/ to .gitignore. Run `denext task hooks:install` to\n        enable the commit gate.",
       "flags": [
         {
           "name": "dry-run",
@@ -947,7 +947,7 @@
       "name": "fastlane",
       "summary": "Run denext's managed fastlane (pinned; installed on first use)",
       "usage": "denext fastlane [args...] [-- <deno args>]",
-      "description": "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n  denext fastlane ios beta flavor:staging\n  denext fastlane android release track:production\nThe first run installs fastlane 2.240.1 on a pinned portable Ruby\ninto denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\nthe Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n  denext toolchain install --with fastlane   install it ahead of time\n  DENEXT_FASTLANE=<path>                     run that fastlane instead (unverified)",
+      "description": "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n  denext fastlane ios beta flavor:staging\n  denext fastlane android release track:production\nThe first run installs fastlane 2.241.2 on a pinned portable Ruby\ninto denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\nthe Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n  denext toolchain install --with fastlane   install it ahead of time\n  DENEXT_FASTLANE=<path>                     run that fastlane instead (unverified)",
       "flags": [],
       "positionals": [
         {

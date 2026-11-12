@@ -1,50 +1,50 @@
 {
   "schema": 1,
-  "version": "1.18.1",
-  "tag": "v1.18.1",
+  "version": "1.19.2",
+  "tag": "v1.19.2",
   "repository": "https://github.com/gleam-lang/gleam",
-  "published": "2026-08-01T22:40:22Z",
+  "published": "2026-10-12T10:30:24Z",
   "targets": {
     "darwin-aarch64": {
-      "file": "gleam-v1.18.1-aarch64-apple-darwin.tar.gz",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-aarch64-apple-darwin.tar.gz",
-      "sha256": "1aae21fd5c70b89e0972427934a13b33886efa7f08bf428e1baee5ebd10d1753",
-      "size": 9108155,
+      "file": "gleam-v1.19.2-aarch64-apple-darwin.tar.gz",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-aarch64-apple-darwin.tar.gz",
+      "sha256": "fa7c6113e162ab1d979f72e7dde3e907b87e4b30c518af178768e577d180324d",
+      "size": 9234148,
       "format": "tar.gz"
     },
     "darwin-x86_64": {
-      "file": "gleam-v1.18.1-x86_64-apple-darwin.tar.gz",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-x86_64-apple-darwin.tar.gz",
-      "sha256": "bd5017621ad5b7509568d5d004a2c1d5fb8f70e7555b1abdb62f35908c0ee1b6",
-      "size": 9579999,
+      "file": "gleam-v1.19.2-x86_64-apple-darwin.tar.gz",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-x86_64-apple-darwin.tar.gz",
+      "sha256": "c578192530507b868c4a6c8cb7ad5d2ab0830890257f41036f17c82853f19d05",
+      "size": 9702221,
       "format": "tar.gz"
     },
     "linux-aarch64": {
-      "file": "gleam-v1.18.1-aarch64-unknown-linux-musl.tar.gz",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-aarch64-unknown-linux-musl.tar.gz",
-      "sha256": "ea08a64846677f36da7f2e9163c4393dd9a9dee814d13a8fb28fbe7dcbf32f6d",
-      "size": 9962380,
+      "file": "gleam-v1.19.2-aarch64-unknown-linux-musl.tar.gz",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "d1d1a9d53f6b317c0563a4806873c8ccace54291ead023373728af379402d4f1",
+      "size": 10126116,
       "format": "tar.gz"
     },
     "linux-x86_64": {
-      "file": "gleam-v1.18.1-x86_64-unknown-linux-musl.tar.gz",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-x86_64-unknown-linux-musl.tar.gz",
-      "sha256": "4955a38c2e8c99457458e2471472ccd5ee3c45bd7637a315ce33bccf0dd75d9e",
-      "size": 10426993,
+      "file": "gleam-v1.19.2-x86_64-unknown-linux-musl.tar.gz",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "2ba2afb66ca9f6dcc01a4a6e9169b6942963bad6483bec9571ddc078cfe6f41f",
+      "size": 10565692,
       "format": "tar.gz"
     },
     "windows-aarch64": {
-      "file": "gleam-v1.18.1-aarch64-pc-windows-msvc.zip",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-aarch64-pc-windows-msvc.zip",
-      "sha256": "2fa5f4374fa565e320a47520ec92eeaf933622e698ce216e5af2b95054f8fcbb",
-      "size": 7996320,
+      "file": "gleam-v1.19.2-aarch64-pc-windows-msvc.zip",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-aarch64-pc-windows-msvc.zip",
+      "sha256": "f9bb658ab191bb0f85e21045dcef36c2900ce83be50aef84dcf2a88c88cd5e32",
+      "size": 8135771,
       "format": "zip"
     },
     "windows-x86_64": {
-      "file": "gleam-v1.18.1-x86_64-pc-windows-msvc.zip",
-      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.18.1/gleam-v1.18.1-x86_64-pc-windows-msvc.zip",
-      "sha256": "1702b597e27486be7eb5fd8d3624eeca7ae5e183009e01ae2550b8a9b2a96a44",
-      "size": 8529553,
+      "file": "gleam-v1.19.2-x86_64-pc-windows-msvc.zip",
+      "url": "https://github.com/gleam-lang/gleam/releases/download/v1.19.2/gleam-v1.19.2-x86_64-pc-windows-msvc.zip",
+      "sha256": "21744a7fb040f64142c1b45b7a0149bf2c46b4aa46b435abd35848f9821ce729",
+      "size": 8697119,
       "format": "zip"
     }
   }

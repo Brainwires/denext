@@ -67,7 +67,7 @@ project already has compiled output: then the plugin keeps it and says why once.
 ## The compiler
 
 denext manages Gleam like its [Deno toolchain](/docs/toolchain): each denext
-release pins one Gleam release (1.18.1 today) with a SHA-256 per platform, and
+release pins one Gleam release (1.19.2 today) with a SHA-256 per platform, and
 the first command that needs it — `denext add gleam:`, or the plugin at
 `denext dev` / `build` — downloads it into the toolchain cache:
 

@@ -21,7 +21,7 @@ import { readJson, setJsonValue } from "./json-edit.ts";
  * project's gate verdict changes only when its `deno.json` does; it is old enough to
  * clear Deno's default minimum-dependency-age hold.
  */
-export const FALLOW_VERSION = "3.30.0";
+export const FALLOW_VERSION = "3.34.0";
 
 /** How a generated task runs fallow: from npm through Deno, at the pinned version. */
 const FALLOW_RUN = `deno run -A npm:fallow@${FALLOW_VERSION}`;

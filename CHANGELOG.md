@@ -113,6 +113,28 @@ and this project adheres to
 
 ### Changed
 
+- **Managed fastlane 2.241.2** (fastlane advisories
+  [GHSA-m67f-ghvw-j7qp](https://github.com/fastlane/fastlane/security/advisories/GHSA-m67f-ghvw-j7qp),
+  [GHSA-hqmj-jmgc-wmwp](https://github.com/fastlane/fastlane/security/advisories/GHSA-hqmj-jmgc-wmwp)
+  and
+  [GHSA-gqqf-9mh3-3578](https://github.com/fastlane/fastlane/security/advisories/GHSA-gqqf-9mh3-3578)).
+  `denext fastlane`, `denext mobile add fastlane` and `create --fastlane` now run fastlane 2.241.2
+  (was 2.240.1), on Homebrew's portable Ruby 4.0.9 (was 4.0.7_1), with a regenerated
+  checksum-locked Gemfile.lock. The fixed fastlane keeps its session and API key files private to
+  the user, keeps `match` downloads inside its working directory, and no longer lets another process take
+  over a Swift Fastfile's runner channel.
+- **Managed Gleam 1.19.2** (Gleam advisory
+  [GHSA-jhcr-c7qm-8589](https://github.com/gleam-lang/gleam/security/advisories/GHSA-jhcr-c7qm-8589)).
+  `denext add gleam:<package>` and `plugins: [gleam()]` now compile with Gleam 1.19.2 (was 1.18.1),
+  which no longer lets a Hex dependency's application name point its build directory outside the
+  build tree.
+- **`denext create --fallow` and `denext fallow init` pin `npm:fallow@3.34.0`** (was 3.30.0; fallow
+  advisories
+  [GHSA-jfwm-3p3c-6hx5](https://github.com/fallow-rs/fallow/security/advisories/GHSA-jfwm-3p3c-6hx5)
+  and
+  [GHSA-h4fr-cmh5-qr62](https://github.com/fallow-rs/fallow/security/advisories/GHSA-h4fr-cmh5-qr62)):
+  the audit no longer reads config files or probes paths outside the project root. Existing
+  projects can change the version in their `deno.json` tasks.
 - **The built-in lifecycle-script host grants that denext writes are limited to port 443.**
   `denext migrate`, `create` and `add` write each built-in download host in
   `supplyChain.jailScripts.packages` as `host:443` (a bare host there is every port), the same
