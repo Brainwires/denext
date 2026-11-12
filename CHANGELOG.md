@@ -21,7 +21,9 @@ and this project adheres to
   unsigned`, …) and says "ready to distribute" only when all are. An identity of `-` counts as
   ad-hoc, and the package script now takes an App Store Connect API key (`DENEXT_NOTARY_KEY` +
   `DENEXT_NOTARY_KEY_ID` [+ `DENEXT_NOTARY_ISSUER`]) as well as `DENEXT_NOTARY_PROFILE`. Existing
-  apps adopt it with `denext desktop package --regenerate-scripts`.
+  apps adopt it with `denext desktop package --regenerate-scripts`; until they do, `denext desktop
+  package`, `denext desktop doctor` and `denext doctor` warn that the script ships its `.dmg`
+  un-notarized.
 
 ## [4.16.0] - 2026-11-11
 

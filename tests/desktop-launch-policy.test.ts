@@ -23,6 +23,7 @@ import {
   isDesktopProject,
   launchPolicyProblems,
   staleBackendPackageScripts,
+  staleNotarizePackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
   supportsStrictLaunch,
@@ -138,6 +139,16 @@ Deno.test("launchPolicyProblems: empty rpIds, an unwritable bridgeOrigins and st
   assertStringIncludes(backend[0].message, "scripts/package-macos.ts never passes desktop.backend");
   assertStringIncludes(backend[0].message, "builds deno.json's");
   assertStringIncludes(backend[0].fix, "--regenerate-scripts");
+  const notarize = launchPolicyProblems(ok, desktopBridgeOrigins, [], [], [
+    "scripts/package-macos.ts",
+  ]);
+  assertEquals(notarize.length, 1);
+  assertStringIncludes(
+    notarize[0].message,
+    "scripts/package-macos.ts predates per-installer notarization",
+  );
+  assertStringIncludes(notarize[0].message, ".dmg ships unsigned and un-notarized");
+  assertStringIncludes(notarize[0].fix, "--regenerate-scripts");
 });
 
 Deno.test("stalePackageScripts + isDesktopProject: read the project's files", async () => {
@@ -178,6 +189,13 @@ Deno.test("stalePackageScripts + isDesktopProject: read the project's files", as
         "cmd.push(...await desktopBackendArgs(import.meta.url, 'darwin'));\n",
     );
     assertEquals(await staleBackendPackageScripts(dir), []);
+    // It never signs and notarizes its .dmg (desktopSignMacosDmg).
+    assertEquals(await staleNotarizePackageScripts(dir), ["scripts/package-macos.ts"]);
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-macos.ts"),
+      "installers.push(await desktopSignMacosDmg(await makeDmg(app), s.identity));\n",
+    );
+    assertEquals(await staleNotarizePackageScripts(dir), []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -251,6 +269,21 @@ Deno.test("desktop doctor CLI: projectLaunchPolicy reads the project's config an
     const problems = await projectLaunchPolicy(dir);
     assertEquals(problems?.length, 1);
     assertStringIncludes(problems![0].message, "passkeyRpIds would be empty");
+    // A macOS script from before per-installer notarization: `desktop doctor` and `denext doctor`
+    // both name it.
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-macos.ts"),
+      "await writeLaufeyLaunchConfig(import.meta.url, 'darwin', out);\n" +
+        "cmd.push(...await desktopBackendArgs(import.meta.url, 'darwin'));\n" +
+        "installers.push(await makeDmg(app));\n",
+    );
+    const stale = (await projectLaunchPolicy(dir))!;
+    assertEquals(stale.length, 2);
+    assertStringIncludes(stale[1].message, "predates per-installer notarization");
+    const check = await desktopLaunchPolicyCheck(dir, { desktop: {} });
+    assert(check && !check.ok);
+    assertStringIncludes(check.detail, "predates per-installer notarization");
 
     const broken = await Deno.makeTempDir({ prefix: "denext-launch-policy-cli-bad-" });
     try {

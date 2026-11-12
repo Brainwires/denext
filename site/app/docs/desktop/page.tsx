@@ -774,7 +774,9 @@ denext task desktop:package --arch universal`}
       <p>
         Without an identity (or with the ad-hoc <code>-</code>) the <code>.dmg</code>{" "}
         is left unsigned. A packaging script written before an installer was notarized on its own
-        adopts this with <code>denext desktop package --regenerate-scripts</code>.
+        adopts this with <code>denext desktop package --regenerate-scripts</code>; until then{" "}
+        <code>denext desktop package</code>, <code>denext desktop doctor</code> and{" "}
+        <code>denext doctor</code> warn that it ships its <code>.dmg</code> un-notarized.
       </p>
 
       <h2>Linux</h2>
