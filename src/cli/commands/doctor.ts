@@ -42,6 +42,7 @@ import {
   mediaCaptureRuntime,
   readProjectDenoJson as readDenoJson,
   staleBackendPackageScripts,
+  staleNotarizePackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
@@ -907,6 +908,7 @@ export async function desktopLaunchPolicyCheck(
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
     await staleBackendPackageScripts(dir),
+    await staleNotarizePackageScripts(dir),
   );
   const media = mediaCaptureRuntimeProblem(
     config,

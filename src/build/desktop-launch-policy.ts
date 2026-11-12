@@ -435,17 +435,34 @@ export async function staleBackendPackageScripts(dir: string): Promise<string[]>
 }
 
 /**
+ * The project's macOS package script when it predates per-installer notarization (it never calls
+ * `desktopSignMacosDmg`): its .dmg ships unsigned and un-notarized, which Gatekeeper refuses,
+ * while the script's last line says "signed + notarized + stapled".
+ *
+ * @param dir The project directory.
+ * @returns `["scripts/package-macos.ts"]` when that script is stale so, else empty.
+ */
+export async function staleNotarizePackageScripts(dir: string): Promise<string[]> {
+  const rel = "scripts/package-macos.ts";
+  const text = await Deno.readTextFile(join(dir, rel)).catch(() => null);
+  return text !== null && !/\bdesktopSignMacosDmg\b/.test(text) ? [rel] : [];
+}
+
+/**
  * Why the packaged launch file would leave a policy unpinned or refuse every ceremony: a passkeys
  * capability with no RP ID (`passkeyRpIds` empty, so laufey refuses every ceremony with
  * `invalid_rp`), a `desktop.app.bridgeOrigins` that cannot be written (no `bridgeOrigins`: under
  * the strict policy the bridge then serves no document), and package scripts that do not write
  * denext's launch file at all ({@linkcode stalePackageScripts}) or never pass `desktop.backend`
- * to `deno desktop` ({@linkcode staleBackendPackageScripts}).
+ * to `deno desktop` ({@linkcode staleBackendPackageScripts}), and a macOS script that ships its
+ * installers un-notarized ({@linkcode staleNotarizePackageScripts}).
  *
  * @param config The project config.
  * @param bridgeOrigins Computes the launch file's `bridgeOrigins` (throws on a bad entry).
  * @param staleScripts The project's stale package scripts (default none).
  * @param staleBackendScripts The package scripts that never pass `desktop.backend` (default none).
+ * @param staleNotarizeScripts The package scripts that predate per-installer notarization (default
+ *   none).
  * @returns The problems (empty when the launch policy is complete).
  */
 export function launchPolicyProblems(
@@ -453,6 +470,7 @@ export function launchPolicyProblems(
   bridgeOrigins: (config: unknown) => string[],
   staleScripts: readonly string[] = [],
   staleBackendScripts: readonly string[] = [],
+  staleNotarizeScripts: readonly string[] = [],
 ): LaunchPolicyProblem[] {
   const problems: LaunchPolicyProblem[] = [];
   try {
@@ -491,6 +509,17 @@ export function launchPolicyProblems(
         } desktop.backend to deno desktop (desktopBackendArgs): a denext.config.ts desktop.backend ` +
         "that gives macOS another engine than deno.json's fetches that engine's runtime but " +
         "builds deno.json's",
+      fix: "denext desktop package --regenerate-scripts",
+    });
+  }
+  if (staleNotarizeScripts.length > 0) {
+    problems.push({
+      message:
+        `${staleNotarizeScripts.join(", ")} predate${
+          staleNotarizeScripts.length === 1 ? "s" : ""
+        } per-installer notarization (desktopSignMacosDmg): the .dmg ships unsigned and ` +
+        "un-notarized (Gatekeeper refuses it: 'no usable signature'), a .pkg is notarized only " +
+        "with DENEXT_NOTARY_PROFILE, and the last line still says 'signed + notarized + stapled'",
       fix: "denext desktop package --regenerate-scripts",
     });
   }

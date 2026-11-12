@@ -161,6 +161,20 @@ and this project adheres to
 
 ### Fixed
 
+- **Desktop: macOS `.dmg` installers are signed, notarized and stapled.** `denext desktop package`
+  notarized and stapled the `.app`, then wrapped it in a `.dmg` it never signed, while its last line
+  said "signed + notarized + stapled — ready to distribute": Gatekeeper refused the image
+  (`spctl -t open` → "no usable signature") and `xcrun stapler validate` failed on it. The `.dmg`
+  is now code-signed with the app's Developer ID identity (secure timestamp) and notarized and
+  stapled with its own ticket, beside the `.app`'s (stapled first, so the installers hold the
+  stapled app) and a signed `.pkg`'s; the installers are submitted together, and every ticket is
+  validated. The last line names what each artifact is (`.app signed + notarized + stapled; .dmg
+  unsigned`, …) and says "ready to distribute" only when all are. An identity of `-` counts as
+  ad-hoc, and the package script now takes an App Store Connect API key (`DENEXT_NOTARY_KEY` +
+  `DENEXT_NOTARY_KEY_ID` [+ `DENEXT_NOTARY_ISSUER`]) as well as `DENEXT_NOTARY_PROFILE`. Existing
+  apps adopt it with `denext desktop package --regenerate-scripts`; until they do, `denext desktop
+  package`, `denext desktop doctor` and `denext doctor` warn that the script ships its `.dmg`
+  un-notarized.
 - **Fresh partial navigation: an answer from another origin is never applied**
   ([GHSA-w737-gq2w-763w](https://github.com/Brainwires/denext/security/advisories/GHSA-w737-gq2w-763w)).
   A partial request whose redirect landed on another origin is now loaded as a full page instead of

@@ -740,8 +740,11 @@ export default {
   --password "app-specific-password"   # from appleid.apple.com`}
       </Code>
       <p>
-        Then set the profile name; the script submits the bundle, waits for the result, and staples
-        the ticket:
+        Then set the profile name (or, instead of a profile, an App Store Connect API key:{" "}
+        <code>DENEXT_NOTARY_KEY</code> with the <code>.p8</code> path,{" "}
+        <code>DENEXT_NOTARY_KEY_ID</code>, and <code>DENEXT_NOTARY_ISSUER</code>{" "}
+        for a team key); the script submits the bundle, waits for the result, and staples the
+        ticket:
       </p>
       <Code lang="bash">
         {`export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
@@ -749,8 +752,31 @@ export DENEXT_NOTARY_PROFILE="denext-notary"
 denext task desktop:package --arch universal`}
       </Code>
       <p>
-        The resulting <code>.app</code> (and <code>.dmg</code>) in <code>dist/</code>{" "}
-        is signed, notarized, and stapled — ready to distribute.
+        Each artifact in <code>dist/</code> gets its own ticket. The <code>.app</code>{" "}
+        is notarized and stapled first, so the installers hold the stapled app (it keeps its ticket
+        when a user copies it out of the disk image). Then the <code>.dmg</code>{" "}
+        is code-signed with the same identity (with a secure timestamp), and it and a signed{" "}
+        <code>.pkg</code>{" "}
+        are notarized and stapled too, submitted together: a disk image is code of its own to
+        Gatekeeper, which refuses an unsigned one (<code>source=no usable signature</code> from{" "}
+        <code>spctl -a -t open --context context:primary-signature</code>) whatever app it holds.
+        Every stapled ticket is checked with <code>xcrun stapler validate</code>.
+      </p>
+      <p>
+        The script&apos;s last line names what each kind of artifact is, and says{" "}
+        <em>ready to distribute</em> only when every one is signed, notarized and stapled:
+      </p>
+      <Code lang="text">
+        {`  (.app signed + notarized + stapled; .dmg signed + notarized + stapled — ready to distribute)
+  (.app signed, NOT notarized; .dmg signed, NOT notarized — set DENEXT_NOTARY_PROFILE …)
+  (.app ad-hoc signed; .dmg unsigned — not distributable; see the macOS distribution doc)`}
+      </Code>
+      <p>
+        Without an identity (or with the ad-hoc <code>-</code>) the <code>.dmg</code>{" "}
+        is left unsigned. A packaging script written before an installer was notarized on its own
+        adopts this with <code>denext desktop package --regenerate-scripts</code>; until then{" "}
+        <code>denext desktop package</code>, <code>denext desktop doctor</code> and{" "}
+        <code>denext doctor</code> warn that it ships its <code>.dmg</code> un-notarized.
       </p>
 
       <h2>Linux</h2>
@@ -1073,9 +1099,12 @@ denext desktop package --target-os windows --format msi,zip`}
           {" "}
           — what MDM tools and <code>installer -pkg</code> deploy). Set{" "}
           <code>DENEXT_INSTALLER_IDENTITY</code> to a <em>Developer ID Installer</em>{" "}
-          identity to sign the <code>.pkg</code>; with <code>DENEXT_NOTARY_PROFILE</code>{" "}
-          it is notarized and stapled like the app. Without one the <code>.pkg</code>{" "}
-          is unsigned, which Gatekeeper and MDM reject.
+          identity to sign the{" "}
+          <code>.pkg</code>; with notary credentials it is notarized and stapled like the app (see
+          {" "}
+          <a href="#notarization">Notarization</a>), as is the{" "}
+          <code>.dmg</code>, which is code-signed with the app&apos;s identity. Without one the{" "}
+          <code>.pkg</code> is unsigned, which Gatekeeper and MDM reject.
         </li>
         <li>
           <strong>Linux</strong> — <code>tar.gz</code>, <code>deb</code>{" "}

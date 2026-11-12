@@ -589,14 +589,28 @@ Deno.test("packageScriptAge reads the current templates as current", () => {
   for (const name of ["package-macos.ts", "package-linux.ts", "package-windows.ts"]) {
     assertEquals(
       packageScriptAge(templateFor(name)),
-      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true, backend: true },
+      {
+        runtime: true,
+        formats: true,
+        runtimeFlags: true,
+        vcRuntime: true,
+        backend: true,
+        notarizedInstallers: true,
+      },
       name,
     );
   }
   assertEquals(
     packageScriptWarnings(
       "package-linux.ts",
-      { runtime: true, formats: true, runtimeFlags: true, vcRuntime: true, backend: true },
+      {
+        runtime: true,
+        formats: true,
+        runtimeFlags: true,
+        vcRuntime: true,
+        backend: true,
+        notarizedInstallers: true,
+      },
       "deb",
     ),
     [],
@@ -618,6 +632,7 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
     runtimeFlags: false,
     vcRuntime: true,
     backend: true,
+    notarizedInstallers: true,
   });
   // Under a pinned runtime before 3.0.0-rc.5 the flag matters, so the script is flagged.
   const lines = packageScriptWarnings("package-macos.ts", age, undefined, {
@@ -639,7 +654,14 @@ Deno.test("packageScriptAge flags a macOS script that predates desktopRuntimeDen
   // A pre-3.1 script gets the older warning only (regenerating fixes both).
   const legacy = packageScriptWarnings(
     "package-macos.ts",
-    { runtime: false, formats: false, runtimeFlags: false, vcRuntime: true, backend: false },
+    {
+      runtime: false,
+      formats: false,
+      runtimeFlags: false,
+      vcRuntime: true,
+      backend: false,
+      notarizedInstallers: false,
+    },
     undefined,
   );
   assertEquals(legacy.length, 1);
@@ -661,6 +683,7 @@ Deno.test("packageScriptAge flags a Windows script that copies the VC++ runtime 
     runtimeFlags: true,
     vcRuntime: false,
     backend: true,
+    notarizedInstallers: true,
   });
   const lines = packageScriptWarnings("package-windows.ts", age, undefined);
   assertEquals(lines.length, 1);
@@ -687,6 +710,7 @@ Deno.test("packageScriptAge flags a macOS script that never passes desktop.backe
     runtimeFlags: true,
     vcRuntime: true,
     backend: false,
+    notarizedInstallers: true,
   });
   const lines = packageScriptWarnings("package-macos.ts", age, undefined);
   assertEquals(lines.length, 1);
@@ -694,6 +718,28 @@ Deno.test("packageScriptAge flags a macOS script that never passes desktop.backe
   assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
   // The Linux and Windows scripts pass it through buildDesktopBundle: never this warning.
   assertEquals(packageScriptWarnings("package-linux.ts", age, undefined), []);
+});
+
+Deno.test("packageScriptAge flags a macOS script that predates per-installer notarization", () => {
+  // The macOS template before desktopSignMacosDmg: the .dmg was never signed or notarized, and the
+  // last line still said "signed + notarized + stapled".
+  const current = templateFor("package-macos.ts");
+  const stale = current.replaceAll("desktopSignMacosDmg", "makeDmgOnly");
+  assert(stale !== current, "template shape moved");
+  const age = packageScriptAge(stale);
+  assertEquals(age.notarizedInstallers, false);
+  assertEquals(packageScriptAge(current).notarizedInstallers, true);
+  const lines = packageScriptWarnings("package-macos.ts", age, undefined);
+  assertEquals(lines.length, 1);
+  assertStringIncludes(lines[0], "scripts/package-macos.ts predates per-installer notarization");
+  assertStringIncludes(lines[0], ".dmg ships unsigned and un-notarized");
+  assertStringIncludes(lines[0], "denext desktop package --regenerate-scripts");
+  // Linux / Windows scripts have no .dmg; a pre-3.1 macOS script gets only the older warning.
+  assertEquals(packageScriptWarnings("package-linux.ts", age, undefined), []);
+  assertEquals(
+    packageScriptWarnings("package-macos.ts", { ...age, runtime: false }, undefined).length,
+    1,
+  );
 });
 
 Deno.test("desktop package refuses a stale macOS script while macOS's engine differs from deno.json's", async () => {

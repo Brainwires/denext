@@ -316,6 +316,19 @@ export {
   type StoreCommandRunner,
   type StoreCommandRunnerSync,
 } from "./code-signing.ts";
+// scripts/package-macos.ts: the .app and each installer signed, notarized and stapled on its own,
+// and the closing line naming what each artifact is.
+export {
+  type DesktopMacosArtifact,
+  desktopMacosArtifact,
+  type DesktopMacosArtifactKind,
+  type DesktopMacosDistributeDeps,
+  desktopMacosDistributionNote,
+  type DesktopMacosSignature,
+  desktopNotarizeMacos,
+  desktopNotaryCredentials,
+  desktopSignMacosDmg,
+} from "./desktop-macos-distribute.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,
