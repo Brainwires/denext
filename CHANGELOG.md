@@ -56,8 +56,7 @@ and this project adheres to
   popups or the runtime's own) before the navigation guard, and may refuse one
   (`preventDefault()`) or load it in place (`allow()`). It fires on a Deno Desktop runtime that
   dispatches the event (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`); elsewhere
-  the static policy decides alone. Runtime 3.0.0-denext.20 and later; the pinned 3.0.0-denext.17
-  has neither this nor the frame marks below, so the hook is not called and `verified` is `false`.
+  the static policy decides alone. Runtime 3.0.0-denext.20 and later.
   While a hook is subscribed, CEF and WebView2 cancel each navigation and start it again as a new
   history entry (WebView2 as a GET, so a form POST loses its body), and WebKitGTK decides at the
   response.
@@ -68,8 +67,7 @@ and this project adheres to
   marks each request with it (`Deno.desktop.marksFrames`, runtime 3.0.0-denext.20 and later, under
   CEF and WKWebView), and only for a call over its in-memory connection: over the loopback
   connection the page sets its own headers, so a frame header there is never trusted. Elsewhere it
-  is the page's own report, as on WebView2, WebKitGTK and the pinned 3.0.0-denext.17, where
-  `verified` is always `false`.
+  is the page's own report, as on WebView2 and WebKitGTK, where `verified` is always `false`.
 - **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
   finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
   `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
@@ -113,6 +111,20 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.21.** It reports navigation
+  events and marks frames (`Deno.desktop.navigationEvents`, `Deno.desktop.marksFrames`), so
+  `onWillNavigate` is called and a bridge caller's frame is verified under CEF and WKWebView,
+  and its built-in lifecycle-script host grants open port 443 only. It also carries
+  3.0.0-denext.18's work and: terminals on Windows (`Deno.openPty` and node-pty on ConPTY), an app-wide application menu
+  (`Deno.desktop.setApplicationMenu`), V8 15.6.75.57 with 19 V8 security fixes, CEF 156.0.28
+  (Chromium 156.0.8078.88; not yet the fix for the exploited CVE-2026-125350, so keep
+  `desktop.app.allowedNavigationOrigins` minimal), Node's `process.report`, `NODE_V8_COVERAGE`,
+  trace event files, `node --permission` mapped onto Deno's permissions, ML-DSA / ML-KEM keys,
+  `"node"` in deno.json to pick the Node.js major `process.version` reports, `--trace-exit`,
+  `--deterministic`, native addons built from source in the lifecycle-script jail, `deno add`'s
+  supply-chain checks over the dependencies it brings in, and an inherited descriptor needing the
+  permission its kind implies. The [runtime reference](https://denext.dev/docs/runtime-reference)
+  lists each change.
 - **`deno task revocations sign` refuses when it can't read the published list** (maintainers).
   The check that refuses an entries file leaving out a published revocation needs the published
   list; when it can't be fetched or verified, `sign` now stops with the reason instead of signing

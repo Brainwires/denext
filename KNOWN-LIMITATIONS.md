@@ -669,9 +669,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
-- **Terminals (`pty`) need runtime 3.0.0-denext.12 or later** (`Deno.openPty`); under an older runtime
-  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.17) has no terminals on Windows
-  yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
+- **Terminals (`pty`) need a runtime with `Deno.openPty`**; under one without it every call rejects
+  `unsupported`, as it does on Windows under a runtime whose `Deno.openPty` throws `NotSupported`
+  there (`error.data.reason` says why). On Windows (10 1809 and later) the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
   with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
   folder on Linux only.
@@ -743,8 +743,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.17). Chrome's
-  fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
+- **The pinned runtime's CEF backend is on Chromium 156.0.8078.88** (CEF 156.0.28), which does not
+  yet carry the fix for the exploited CVE-2026-125350. Chrome's fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).

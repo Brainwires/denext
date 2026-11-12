@@ -2504,8 +2504,7 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         could have planted it). A write over one the runtime&apos;s store finds in its way reads its
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
         (or the stock one) keeps the <code>security</code>{" "}
-        path. Under the pinned runtime (3.0.0-denext.17; from 3.0.0-denext.16 the runtime reads the
-        capability list denext writes into{" "}
+        path. Under the pinned runtime (which reads the capability list denext writes into{" "}
         <code>.deno-desktop/app.json</code>) the capability bakes no{" "}
         <code>--allow-sys</code>; an older runtime needs an unscoped one for its store. It bakes
         {" "}
@@ -2652,12 +2651,10 @@ desktop: {
         inherited. A shell is still full trust: what is typed into it runs as the user, so enable
         {" "}
         <code>pty</code>{" "}
-        only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.17) has no terminals yet: opening one rejects with <code>unsupported</code>
-        {" "}
-        (<code>error.data.reason</code>{" "}
-        says why). Once it does, the terminal is a ConPTY, whose output carries its own VT sequences
-        even for plain text.
+        only in an app whose page you trust with that. On Windows (10 1809 and later) the terminal
+        is a ConPTY, whose output carries its own VT sequences even for plain text; under a runtime
+        without terminals on Windows, opening one rejects with <code>unsupported</code>{" "}
+        (<code>error.data.reason</code> says why).
       </Callout>
 
       <h3 id="desktop-system-stats">System stats</h3>

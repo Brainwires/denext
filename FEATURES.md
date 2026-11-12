@@ -754,7 +754,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
   to its window (`onWindowClose: "kill" | "detach"`, `replayBytes` replayed on attach), and
   only the absolute `shells` listed in the config can start (baked as the app's
-  `--allow-run`). Windows has no terminals yet (`unsupported`). — `src/desktop/caps/pty.ts`.
+  `--allow-run`). On Windows a terminal is a ConPTY, under a runtime whose `Deno.openPty`
+  runs there (else `unsupported`). — `src/desktop/caps/pty.ts`.
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
   origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
@@ -1097,7 +1098,7 @@ cache uses Deno's built-in `node:sqlite`.)
 ## Build, tooling & CLI
 
 - **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
-  themselves on a pinned `3.0.0-denext.17` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  themselves on a pinned build of denext's Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
   compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and

@@ -1,6 +1,7 @@
 // scripts/ci/linux-needed-check.ts: the Linux packages' NEEDED check, on ELF files built here
 // (64- and 32-bit, both byte orders) and on the libraries the pinned runtime's launchers really
-// need (3.0.0-denext.17, read from the x86_64 webview and CEF archives).
+// need (read from 3.0.0-denext.17's x86_64 webview and CEF archives; 3.0.0-denext.21's pass
+// `checkTree` against the same dependencies with no problem).
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
