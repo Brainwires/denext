@@ -678,7 +678,7 @@ windows), found again with `windows.byKey(key)`; a keyed window's frame is saved
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
-(`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
+(`width` > saved > default), opened windows take `desktop.titleBar`, `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), `desktop.window.titleVisibility: "hidden"` (no title text, the native title bar kept; Linux only under client-side decorations) and `desktop.window.toolbarStyle` (macOS `"unified"` / `"unifiedCompact"` / `"expanded"`; not with `titleBar: "hidden"`), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
 decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
 `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and

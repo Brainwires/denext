@@ -631,6 +631,13 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **A hidden title on Linux needs client-side decorations.** `desktop.window.titleVisibility:
+  "hidden"` works where GTK draws the title bar itself (GNOME and other Wayland compositors without
+  server-side decorations, or `GTK_CSD=1`); where the window manager draws it (KDE Plasma, X11
+  window managers) and on the CEF backend the title stays, `windowCapabilities().titleVisibility`
+  is `false` and `setTitleVisibility("hidden")` rejects `unsupported`. denext never switches a
+  window to client-side decorations to fake it. `desktop.window.toolbarStyle` is macOS-only
+  (macOS 11 and later) and has no equivalent on Windows or Linux.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

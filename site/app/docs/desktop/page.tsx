@@ -2850,8 +2850,11 @@ onCloseRequested(({ reason }) => {
           <strong>Chrome</strong>: <code>setTitleBarStyle</code> (<code>"hidden"</code> /{" "}
           <code>"hiddenInset"</code>, macOS), <code>setWindowButtonPosition</code>{" "}
           (the traffic lights; <code>desktop.window.windowButtonPosition</code>{" "}
-          sets them at launch), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
-          <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
+          sets them at launch), <code>setTitleVisibility</code> and <code>setToolbarStyle</code>
+          {" "}
+          (<a href="#desktop-title-options">native title options</a>),{" "}
+          <code>setWindowBackdrop</code> (<code>"mica"</code>, <code>"acrylic"</code>,{" "}
+          <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
           on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
           <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>,
           {" "}
@@ -3070,6 +3073,73 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
         moves them later from a page. It is applied after the title bar style, needs denext&apos;s
         pinned runtime, and is ignored on Windows and Linux.
+      </p>
+      <h3 id="desktop-title-options">Native title options</h3>
+      <p>
+        Two options change the OS&apos;s own title bar instead of replacing it with a page-drawn
+        one: the native buttons, the drag area and the double-click action stay. Each OS does it
+        natively; denext draws nothing.
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    window: {
+      titleVisibility: "hidden", // no title text; the title still names the window in the Dock
+      toolbarStyle: "unified", // macOS: the title left-aligned in one tall bar, as in Finder
+    },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          <strong>
+            <code>titleVisibility: "hidden"</code>
+          </strong>{" "}
+          hides the title text and keeps the title bar. The window keeps its title, so it is still
+          named in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS and
+          Windows hide it on every backend. On Linux only a title bar GTK draws itself can hide its
+          title (client-side decorations, as on GNOME under Wayland); where the window manager draws
+          the title bars (KDE Plasma, X11 window managers), and on the CEF backend, the title stays:
+          {" "}
+          <code>windowCapabilities().titleVisibility</code> is <code>false</code> and{" "}
+          <code>setTitleVisibility("hidden")</code> rejects <code>unsupported</code>{" "}
+          with the reason. The window is never switched to client-side decorations to fake it.
+        </li>
+        <li>
+          <strong>
+            <code>toolbarStyle</code>
+          </strong>{" "}
+          (macOS 11 and later) attaches an empty toolbar that lays the title bar out:{" "}
+          <code>"unified"</code> is one tall bar with the title left-aligned (Finder, Safari),{" "}
+          <code>"unifiedCompact"</code> the same, shorter, <code>"expanded"</code>{" "}
+          puts the title on its own row, and <code>"automatic"</code>{" "}
+          (the default) adds no toolbar. Windows and Linux have no such thing:{" "}
+          <code>windowCapabilities().toolbarStyle</code> is <code>false</code>{" "}
+          there, the config value is ignored, and <code>setToolbarStyle</code> rejects{" "}
+          <code>unsupported</code>.
+        </li>
+      </ul>
+      <p>
+        How they combine with <code>desktop.titleBar</code>: with <code>"default"</code>{" "}
+        every combination works; with <code>"hiddenInset"</code>{" "}
+        the toolbar style sets the inset toolbar&apos;s style (<code>"unifiedCompact"</code>{" "}
+        gives a shorter inset); <code>"hidden"</code> has no toolbar, so a toolbar style other than
+        {" "}
+        <code>"automatic"</code> is a config error there (use <code>"hiddenInset"</code>{" "}
+        for that look), and while a toolbar style is set <code>setTitleBarStyle("hidden")</code>
+        {" "}
+        answers <code>false</code>. The hidden title bar styles never draw the title; a{" "}
+        <code>titleVisibility</code> choice applies again under{" "}
+        <code>"default"</code>. A frameless window has no title bar: either option on one is an
+        error. Windows opened with <code>windows.open</code> / <code>openWindow</code>{" "}
+        take both from <code>desktop.window</code> unless their own <code>titleVisibility</code> /
+        {" "}
+        <code>toolbarStyle</code> say, and a page changes its window&apos;s with{" "}
+        <code>setTitleVisibility</code> / <code>setToolbarStyle</code> from{" "}
+        <code>denext/desktop/window</code> (feature-detect with{" "}
+        <code>windowCapabilities()</code>). Both need a Deno Desktop runtime with the window&apos;s
+        title options; on one without them the config values are skipped with a warning and the
+        setters reject <code>unsupported</code>.
       </p>
       <p>
         A <code>capabilities</code>{" "}
