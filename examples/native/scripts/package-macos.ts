@@ -606,7 +606,10 @@ async function finishArtifacts(
       ),
     );
     done.push(
-      ...await desktopNotarizeMacos(await installersFor(app, formats, s), s.notary),
+      ...await desktopNotarizeMacos(
+        await installersFor(app, formats, s),
+        s.notary,
+      ),
     );
   }
   return done;

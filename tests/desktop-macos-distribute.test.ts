@@ -194,9 +194,10 @@ Deno.test("scaffold: the macOS script signs, notarizes and staples each .dmg, an
   const script = MACOS_PACKAGE_SCRIPT;
   // The .dmg is signed with the app's identity, then notarized with the installers.
   assertStringIncludes(script, "desktopSignMacosDmg(await makeDmg(app), s.identity)");
+  // Wrapped as `deno fmt` lays it out in a scaffolded app (80 columns).
   assertStringIncludes(
     script,
-    "await desktopNotarizeMacos(await installersFor(app, formats, s), s.notary)",
+    "await desktopNotarizeMacos(\n        await installersFor(app, formats, s),\n        s.notary,\n      )",
   );
   // The .app is notarized + stapled before its installers are built (they hold the stapled .app).
   const appNotarized = script.indexOf('[desktopMacosArtifact(app, "app", signed)]');
