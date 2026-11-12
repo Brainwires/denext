@@ -297,12 +297,25 @@ export {
   macosCodesignArgs,
   type MacosCodesignOptions,
   type NotaryCredentials,
+  notaryCredentials,
   notarytoolSubmitArgs,
   type SigntoolCertificateDeps,
   type StoreCommandResult,
   type StoreCommandRunner,
   type StoreCommandRunnerSync,
 } from "./code-signing.ts";
+// scripts/package-macos.ts: the .app and each installer signed, notarized and stapled on its own,
+// and the closing line naming what each artifact is.
+export {
+  type DesktopMacosArtifact,
+  desktopMacosArtifact,
+  type DesktopMacosArtifactKind,
+  type DesktopMacosDistributeDeps,
+  desktopMacosDistributionNote,
+  type DesktopMacosSignature,
+  desktopNotarizeMacos,
+  desktopSignMacosDmg,
+} from "./desktop-macos-distribute.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,

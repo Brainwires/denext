@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Desktop: macOS `.dmg` installers are signed, notarized and stapled.** `denext desktop package`
+  notarized and stapled the `.app`, then wrapped it in a `.dmg` it never signed, while its last line
+  said "signed + notarized + stapled — ready to distribute": Gatekeeper refused the image
+  (`spctl -t open` → "no usable signature") and `xcrun stapler validate` failed on it. The `.dmg`
+  is now code-signed with the app's Developer ID identity (secure timestamp) and notarized and
+  stapled with its own ticket, beside the `.app`'s (stapled first, so the installers hold the
+  stapled app) and a signed `.pkg`'s; the installers are submitted together, and every ticket is
+  validated. The last line names what each artifact is (`.app signed + notarized + stapled; .dmg
+  unsigned`, …) and says "ready to distribute" only when all are. An identity of `-` counts as
+  ad-hoc, and the package script now takes an App Store Connect API key (`DENEXT_NOTARY_KEY` +
+  `DENEXT_NOTARY_KEY_ID` [+ `DENEXT_NOTARY_ISSUER`]) as well as `DENEXT_NOTARY_PROFILE`. Existing
+  apps adopt it with `denext desktop package --regenerate-scripts`.
+
 ## [4.16.0] - 2026-11-11
 
 ### Added
