@@ -148,9 +148,14 @@ and this project adheres to
   self-test on a machine where no window may show. `runDesktop` hides the main window as it adopts
   it, before its first page load (so the runtime never reveals it), every window opened later is
   created hidden, `show()` / `focus()` / `maximize()` / `restore()` / `setFullScreen()` and the
-  Dock's reopen and `bounce()` do nothing, and the app is an `"accessory"` one (no Dock icon;
-  `--headless` also sets `LAUFEY_ACTIVATION_POLICY=accessory` for the first frame). The CEF backend
-  still shows its first window as it creates it, and the macOS host activates the app at launch.
+  Dock's reopen and `bounce()` do nothing, and the app is an `"accessory"` one (no Dock icon). The
+  webview host gets `LAUFEY_HEADLESS=1` and `LAUFEY_ACTIVATION_POLICY=accessory` from its first
+  frame: `denext desktop run` / `dev` set both whenever the run is headless (`--headless`, or
+  `DENEXT_DESKTOP_HEADLESS=1` in their environment), and a packaged app is started with all three
+  (`DENEXT_DESKTOP_HEADLESS=1 LAUFEY_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory ./MyApp`). A host
+  that reads `LAUFEY_HEADLESS` keeps every window hidden, CEF's first one included, and does not
+  activate the app at launch on macOS; under one that doesn't, the CEF backend still shows its
+  first window as it creates it, and the macOS host activates the app.
 - **Sidecar bundles per architecture.** Each `--arch` a package script builds (`both` on Linux and
   Windows, each half of a macOS `universal`) bundles a Node backend sidecar for its own arch: only
   that arch's `prebuilds/<platform>-<arch>/` (node-gyp-build's `darwin-x64+arm64` for either), only
@@ -162,6 +167,14 @@ and this project adheres to
   are signed per arch as before. A macOS package script from before this release keeps the host
   arch's addons in both halves until `denext desktop package --regenerate-scripts`.
 
+### Changed
+
+- **An accessory app no longer activates at launch on macOS.** With runtime 3.0.0-denext.22 the
+  webview host leaves an app whose activation policy is `"accessory"`
+  (`desktop.app.activationPolicy`, a tray app such as one with `dock: "while-window-open"`) in the
+  background when it starts, as well as in headless runs: it no longer takes the focus from the app
+  in front.
+
 ### Fixed
 
 - **Desktop: a reloaded page no longer gets the events of the page before it.** denext's own
@@ -171,9 +184,6 @@ and this project adheres to
   happened before it loaded, and a notification click the last page never took is dropped at the
   next page load (the click that launched the app still waits for a page). The page's pull queues
   take again whenever the event stream connects, so a click made while it connects is not missed.
-
-### Fixed
-
 - **A module sidecar's `process.connected` reads `undefined`.** The worker a `run: { module }`
   sidecar runs in had set it to `false`; Node's main thread without an IPC channel defines none of
   `process.connected`, `channel`, `send` or `disconnect`, and now neither does the sidecar, so a

@@ -3035,26 +3035,31 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         <code>focus()</code>, <code>maximize()</code>, <code>restore()</code> and{" "}
         <code>setFullScreen()</code> on any of them, the Dock&apos;s reopen and its{" "}
         <code>bounce()</code> do nothing. The app switches to the <code>"accessory"</code>{" "}
-        policy (no Dock icon) and refuses any other. <code>--headless</code> also sets{" "}
-        <code>LAUFEY_ACTIVATION_POLICY=accessory</code>, which the webview host reads at process
-        start, so there is no Dock icon from the first frame; set it beside{" "}
+        policy (no Dock icon) and refuses any other. The webview host reads two variables of its own
+        at process start, before any page runs: <code>LAUFEY_HEADLESS=1</code>{" "}
+        keeps every window hidden from the first (CEF&apos;s included) and leaves the app in the
+        background at launch on macOS, and <code>LAUFEY_ACTIVATION_POLICY=accessory</code>{" "}
+        means no Dock icon from the first frame. <code>denext desktop run</code> and{" "}
+        <code>dev</code> set both whenever the run is headless (<code>--headless</code>, or{" "}
         <code>DENEXT_DESKTOP_HEADLESS=1</code>{" "}
-        when you launch a packaged app. A strict-permissions app reads the variable without
+        in their environment); a packaged app reads them from the environment it is started with, so
+        set all three when you launch one. A strict-permissions app reads the variable without
         declaring it.
       </p>
       <Code lang="sh">
         {`denext desktop run --headless
-DENEXT_DESKTOP_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory ./dist/MyApp.app/Contents/MacOS/MyApp`}
+DENEXT_DESKTOP_HEADLESS=1 LAUFEY_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory \\
+  ./dist/MyApp.app/Contents/MacOS/MyApp`}
       </Code>
       <Callout kind="warn">
-        Two engine limits. The CEF backend shows the window it starts with as it creates it, so a
-        headless CEF app flashes its main window before <code>runDesktop</code>{" "}
-        hides it (the system WebView backends on macOS, Windows and Linux never show it). And the
-        macOS host activates the app at launch, so a headless run on macOS takes the focus from the
-        app in front, with no window. A hidden page&apos;s timers are throttled on WKWebView (about
-        once a second, never frozen); a window opened with <code>backgroundThrottling: false</code>
-        {" "}
-        keeps full speed.
+        Under a webview host that does not read <code>LAUFEY_HEADLESS</code>{" "}
+        (<code>appCapabilities()</code>{" "}
+        cannot tell; the runtime reference lists the release that added it), the CEF backend shows
+        the window it starts with as it creates it, so a headless CEF app flashes its main window
+        before <code>runDesktop</code>{" "}
+        hides it, and the macOS host activates the app at launch, taking the focus from the app in
+        front. A hidden page&apos;s timers are throttled on WKWebView (about once a second, never
+        frozen); a window opened with <code>backgroundThrottling: false</code> keeps full speed.
       </Callout>
       <h3 id="desktop-overlay-windows">Overlay windows</h3>
       <p>

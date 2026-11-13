@@ -14,6 +14,7 @@ import {
   headlessDock,
   headlessWindow,
   headlessWindowConstructor,
+  withHeadlessLaunchEnv,
 } from "../src/desktop/headless.ts";
 import { setUpDesktopWindows } from "../src/desktop/app-windows.ts";
 import type { DesktopCapCtx } from "../src/desktop/extension.ts";
@@ -202,9 +203,30 @@ Deno.test("setUpDesktopWindows without headless still shows what it is asked to"
   assertEquals(main.calls, ["show", "focus"]);
 });
 
-Deno.test("desktopHeadlessLaunchEnv: the switch and the accessory policy", () => {
+Deno.test("desktopHeadlessLaunchEnv: the switch, the webview host's headless flag and the accessory policy", () => {
   assertEquals(desktopHeadlessLaunchEnv(), {
     DENEXT_DESKTOP_HEADLESS: "1",
+    LAUFEY_HEADLESS: "1",
     LAUFEY_ACTIVATION_POLICY: "accessory",
   });
+});
+
+Deno.test("withHeadlessLaunchEnv: a headless launch env, set or inherited, gets the host's variables", () => {
+  const host = {
+    DENEXT_DESKTOP_HEADLESS: "1",
+    LAUFEY_HEADLESS: "1",
+    LAUFEY_ACTIVATION_POLICY: "accessory",
+  };
+  // Inherited from this process (`DENEXT_DESKTOP_HEADLESS=1 denext desktop dev`).
+  assertEquals(withHeadlessLaunchEnv({ A: "b" }, "true"), { A: "b", ...host });
+  // Set in the launch env itself.
+  assertEquals(withHeadlessLaunchEnv({ DENEXT_DESKTOP_HEADLESS: "1" }, undefined), host);
+  // The launch env's own value wins over the inherited one.
+  assertEquals(withHeadlessLaunchEnv({ DENEXT_DESKTOP_HEADLESS: "0" }, "1"), {
+    DENEXT_DESKTOP_HEADLESS: "0",
+  });
+  // Not headless: the env as it was.
+  const env = { A: "b" };
+  assertEquals(withHeadlessLaunchEnv(env, undefined), env);
+  assertEquals(withHeadlessLaunchEnv(env, "no"), env);
 });

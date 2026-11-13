@@ -80,7 +80,7 @@ import {
   parseInspectRendererAddr,
 } from "../../build/desktop-inspect-renderer.ts";
 import { commandMeta } from "../command-meta.ts";
-import { desktopHeadlessLaunchEnv } from "../../desktop/headless.ts";
+import { desktopHeadlessLaunchEnv, withHeadlessLaunchEnv } from "../../desktop/headless.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -385,13 +385,16 @@ async function removeScratch(scratch: string): Promise<void> {
 
 /**
  * Launch a built window's executable directly (so its stdout/stderr stream to this terminal), with
- * the launch env on top of this process's. `stop` ends it; `finished` resolves to its exit code.
+ * the launch env on top of this process's (and a headless run's variables when
+ * `DENEXT_DESKTOP_HEADLESS` is set, see `withHeadlessLaunchEnv`). `stop` ends it; `finished`
+ * resolves to its exit code.
  */
 function launchDesktopWindow(
   built: BuiltDesktopWindow,
   dir: string,
-  env: Record<string, string>,
+  launchEnv: Record<string, string>,
 ): DesktopWindow & { readonly code: Promise<number> } {
+  const env = withHeadlessLaunchEnv(launchEnv);
   const child = new Deno.Command(built.exe, {
     cwd: dir,
     env: built.bootstrap ? { ...env, LAUFEY_CWD: resolve(dir) } : env,

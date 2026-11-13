@@ -21,14 +21,38 @@
 export const DESKTOP_HEADLESS_ENV = "DENEXT_DESKTOP_HEADLESS";
 
 /**
- * The launch env of a headless run (`denext desktop run --headless`): this module's switch, and the
- * macOS activation policy the webview host reads at process start (`LAUFEY_ACTIVATION_POLICY`), so
- * the app has no Dock icon from its first frame.
+ * The launch env of a headless run (`denext desktop run --headless`): this module's switch, and
+ * what the webview host reads at process start: `LAUFEY_HEADLESS=1` (a host that reads it keeps
+ * every window hidden, CEF's first one included, and does not activate the app on macOS) and the
+ * macOS activation policy (`LAUFEY_ACTIVATION_POLICY`), so the app has no Dock icon from its first
+ * frame.
  *
  * @returns The variables to add to the launched app's env.
  */
 export function desktopHeadlessLaunchEnv(): Record<string, string> {
-  return { [DESKTOP_HEADLESS_ENV]: "1", LAUFEY_ACTIVATION_POLICY: "accessory" };
+  return {
+    [DESKTOP_HEADLESS_ENV]: "1",
+    LAUFEY_HEADLESS: "1",
+    LAUFEY_ACTIVATION_POLICY: "accessory",
+  };
+}
+
+/**
+ * `env` with the headless launch env ({@linkcode desktopHeadlessLaunchEnv}) on top when the launch
+ * is headless: `env` sets `DENEXT_DESKTOP_HEADLESS`, or (when it does not) this process's
+ * environment does, which the launched app inherits. So `denext desktop run` / `dev` under
+ * `DENEXT_DESKTOP_HEADLESS=1` hand the webview host its variables too, not only `--headless`.
+ *
+ * @param env The launch env.
+ * @param inherited This process's `DENEXT_DESKTOP_HEADLESS` (default: read from the environment).
+ * @returns `env`, or a copy with the headless variables.
+ */
+export function withHeadlessLaunchEnv(
+  env: Record<string, string>,
+  inherited: string | undefined = headlessEnv(),
+): Record<string, string> {
+  const raw = DESKTOP_HEADLESS_ENV in env ? env[DESKTOP_HEADLESS_ENV] : inherited;
+  return desktopHeadless(raw) ? { ...env, ...desktopHeadlessLaunchEnv() } : env;
 }
 
 /** The window methods that would show, raise or activate a window: no-ops when headless. */
