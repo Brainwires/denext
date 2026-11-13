@@ -90,9 +90,12 @@ case "$1 $2" in
     # Where the archive is, whether it is there, and its folder's mode, as gh sees them.
     d="\$(dirname "$3")"
     echo "$3 \$([ -f "$3" ] && echo present || echo missing) \$(ls -ld "$d" | cut -c1-10)" >> "$STUB_LOG.ghfile"
-    # A snap-confined gh has a private /tmp: an archive outside $HOME is not there for it.
+    # A snap-confined gh has a private /tmp, and its home interface grants only the non-hidden
+    # paths under $HOME (not ~/.cache): any other archive is not there for it.
     if [ "$STUB_GH_VERIFY" = "private-tmp" ]; then
-      case "$3" in "$HOME"/*) exit 0 ;; esac
+      case "$3" in
+        "$HOME"/*) case "/\${3#"$HOME"/}" in */.*) ;; *) exit 0 ;; esac ;;
+      esac
       echo "failed to get open local artifact: open $3: no such file or directory" >&2; exit 1
     fi
     [ "$STUB_GH_VERIFY" = "ok" ] && exit 0
@@ -554,45 +557,55 @@ Deno.test("install.sh: a signed-in gh must verify the archive's build attestatio
   }
 });
 
-/** The `install-*` folders left under `dir` (none once the installer has exited). */
-async function installDirsLeft(dir: string): Promise<string[]> {
+/** The folders named `prefix…` left under `dir` (none once the installer has exited). */
+async function dirsLeft(dir: string, prefix = "install-"): Promise<string[]> {
   const left: string[] = [];
   try {
-    for await (const e of Deno.readDir(dir)) if (e.name.startsWith("install-")) left.push(e.name);
+    for await (const e of Deno.readDir(dir)) if (e.name.startsWith(prefix)) left.push(e.name);
   } catch {
     // no folder at all
   }
   return left;
 }
 
+/** Move the stub `gh` to `<dir>/snap/bin/gh`, as the snap store's is found; returns that folder. */
+async function snapGh(r: Release): Promise<string> {
+  const snapBin = join(r.dir, "snap", "bin");
+  await Deno.mkdir(snapBin, { recursive: true });
+  await Deno.rename(join(r.stubs, "gh"), join(snapBin, "gh"));
+  return snapBin;
+}
+
+/** The archive path, presence and folder mode of the run's one `gh attestation verify`. */
+function verified(run: Run): { path: string; state: string; mode: string } {
+  assertEquals(run.ghFile.length, 1, run.ghFile.join("\n") + run.stderr);
+  const [path, state, mode] = run.ghFile[0].split(" ");
+  return { path, state, mode };
+}
+
 Deno.test(
   "install.sh: the archive is fetched and verified in a private folder under the user's cache, removed after",
-  {
-    ignore: NO_SH,
-  },
+  { ignore: NO_SH },
   async () => {
     const r = await Release.create();
     try {
-      // A snap-confined gh (Ubuntu's /snap/bin/gh) cannot read /tmp; a folder under $HOME it can.
-      const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp" });
+      const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "ok" });
       assertEquals(ok.code, 0, ok.stderr);
-      assertStringIncludes(ok.stdout, "build attestation verified");
-      assertEquals(ok.ghFile.length, 1, ok.ghFile.join("\n"));
-      const [path, state, mode] = ok.ghFile[0].split(" ");
+      const { path, state, mode } = verified(ok);
       const cache = join(r.dir, ".cache", "denext");
       assert(path.startsWith(`${cache}/install-`), path);
       assertEquals(path.slice(path.lastIndexOf("/") + 1), ASSET);
       assertEquals(state, "present");
       assertEquals(mode, "drwx------");
-      assertEquals(await installDirsLeft(cache), [], "the folder is removed on exit");
+      assertEquals(await dirsLeft(cache), [], "the folder is removed on exit");
 
       // XDG_CACHE_HOME is the cache when it is set; a failed install cleans up too.
       await Deno.remove(r.install, { recursive: true });
       const xdg = join(r.dir, "xdg");
       const bad = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no", XDG_CACHE_HOME: xdg });
       assertEquals(bad.code, 1);
-      assert(bad.ghFile[0]?.startsWith(`${join(xdg, "denext")}/install-`), bad.ghFile.join("\n"));
-      assertEquals(await installDirsLeft(join(xdg, "denext")), []);
+      assert(verified(bad).path.startsWith(`${join(xdg, "denext")}/install-`), bad.ghFile[0]);
+      assertEquals(await dirsLeft(join(xdg, "denext")), []);
       assertEquals(await r.installed(), false);
     } finally {
       await r.remove();
@@ -601,52 +614,72 @@ Deno.test(
 );
 
 Deno.test(
-  "install.sh: a snap-confined gh that cannot open the archive is named, and nothing installs",
-  {
-    ignore: NO_SH,
-  },
+  "install.sh: with a snap gh the archive goes in a non-hidden private folder under $HOME",
+  { ignore: NO_SH },
   async () => {
     const r = await Release.create();
     try {
-      // gh from the snap store, as /snap/bin/gh is found on PATH; the cache folder is unusable
-      // (a file where it would go), so the archive lands in the system temp folder instead.
-      const snapBin = join(r.dir, "snap", "bin");
-      await Deno.mkdir(snapBin, { recursive: true });
-      await Deno.rename(join(r.stubs, "gh"), join(snapBin, "gh"));
-      await Deno.writeTextFile(join(r.dir, "not-a-folder"), "");
-      const tmp = await Deno.makeTempDir({ prefix: "denext_install_systmp_" });
-      try {
-        const run = await r.run(
-          {
-            STUB_GH_AUTH: "1",
-            STUB_GH_VERIFY: "private-tmp",
-            XDG_CACHE_HOME: join(r.dir, "not-a-folder"),
-            TMPDIR: tmp,
-          },
-          [snapBin],
-        );
-        assertEquals(run.code, 1, run.stdout);
-        assertStringIncludes(run.stderr, "snap");
-        assertStringIncludes(run.stderr, "cannot read");
-        assertEquals(await r.installed(), false);
-        assertEquals(await installDirsLeft(tmp), []);
-        // DENEXT_INSECURE=1 is still the only way past it.
-        const forced = await r.run(
-          {
-            STUB_GH_AUTH: "1",
-            STUB_GH_VERIFY: "private-tmp",
-            XDG_CACHE_HOME: join(r.dir, "not-a-folder"),
-            TMPDIR: tmp,
-            DENEXT_INSECURE: "1",
-          },
-          [snapBin],
-        );
-        assertEquals(forced.code, 0, forced.stderr);
-        assertStringIncludes(forced.stderr, "could not be verified");
-      } finally {
-        await Deno.remove(tmp, { recursive: true });
-      }
+      // The snap's home interface grants neither /tmp nor ~/.cache: a visible folder in $HOME.
+      const snapBin = await snapGh(r);
+      const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp" }, [snapBin]);
+      assertEquals(ok.code, 0, ok.stderr);
+      assertStringIncludes(ok.stdout, "build attestation verified");
+      const { path, state, mode } = verified(ok);
+      assert(path.startsWith(`${r.dir}/denext-install-`), path);
+      assertEquals(state, "present");
+      assertEquals(mode, "drwx------");
+      assertEquals(await dirsLeft(r.dir, "denext-install-"), [], "the folder is removed on exit");
+
+      // A non-hidden XDG_CACHE_HOME under $HOME is readable by the snap too, so it is kept.
+      await Deno.remove(r.install, { recursive: true });
+      const xdg = join(r.dir, "cache");
+      const visible = await r.run(
+        { STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp", XDG_CACHE_HOME: xdg },
+        [snapBin],
+      );
+      assertEquals(visible.code, 0, visible.stderr);
+      assert(verified(visible).path.startsWith(`${join(xdg, "denext")}/install-`));
+      assertEquals(await dirsLeft(join(xdg, "denext")), []);
+
+      // A hidden one is not: $HOME/denext-install-* again.
+      await Deno.remove(r.install, { recursive: true });
+      const hidden = await r.run(
+        { STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp", XDG_CACHE_HOME: join(r.dir, ".xdg") },
+        [snapBin],
+      );
+      assertEquals(hidden.code, 0, hidden.stderr);
+      assert(verified(hidden).path.startsWith(`${r.dir}/denext-install-`), hidden.ghFile[0]);
     } finally {
+      await r.remove();
+    }
+  },
+);
+
+Deno.test(
+  "install.sh: a snap-confined gh that cannot open the archive is named, and nothing installs",
+  { ignore: NO_SH },
+  async () => {
+    const r = await Release.create();
+    // A home the installer cannot make a folder in (it does not exist: a read-only one would
+    // not stop root), so the archive lands in the system temp folder, which the snap cannot see.
+    const home = join(r.dir, "no-such-home");
+    const tmp = await Deno.makeTempDir({ prefix: "denext_install_systmp_" });
+    try {
+      const snapBin = await snapGh(r);
+      const env = { STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp", HOME: home, TMPDIR: tmp };
+      const run = await r.run(env, [snapBin]);
+      assertEquals(run.code, 1, run.stdout);
+      assertStringIncludes(run.stderr, "snap");
+      assertStringIncludes(run.stderr, "cannot read");
+      assertStringIncludes(run.stderr, "non-hidden folder");
+      assertEquals(await r.installed(), false);
+      assertEquals(await dirsLeft(tmp, "tmp."), []);
+      // DENEXT_INSECURE=1 is still the only way past it.
+      const forced = await r.run({ ...env, DENEXT_INSECURE: "1" }, [snapBin]);
+      assertEquals(forced.code, 0, forced.stderr);
+      assertStringIncludes(forced.stderr, "could not be verified");
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
       await r.remove();
     }
   },

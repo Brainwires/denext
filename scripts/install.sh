@@ -164,25 +164,45 @@ published_digest() {
   fi
 }
 
-# A private folder (mode 0700) to download and verify in, under the user's cache
-# (`$XDG_CACHE_HOME/denext`, else `~/.cache/denext`) rather than /tmp: the GitHub CLI from the
-# snap store has a private /tmp and could not open an archive there to verify it. Only when that
-# folder cannot be made does it fall back to the system temp folder. The caller removes it on exit.
+# A private folder (mode 0700) to download and verify in, which the GitHub CLI can read, rather
+# than /tmp: the snap store's gh has a private /tmp, and its `home` interface grants only the
+# non-hidden paths under $HOME (not ~/.cache). Without a snap gh it is under the user's cache
+# (`$XDG_CACHE_HOME/denext`, else `~/.cache/denext`); with one, under `$XDG_CACHE_HOME/denext`
+# when that is a non-hidden folder under $HOME, else `$HOME/denext-install-XXXXXX`. Only when
+# none can be made does it fall back to the system temp folder. The caller removes it on exit.
 install_tmpdir() {
   cache="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
-  case "$cache" in
-    /*)
-      if mkdir -p "$cache/denext" 2>/dev/null &&
-        dir="$(mktemp -d "$cache/denext/install-XXXXXX" 2>/dev/null)"; then
-        chmod 700 "$dir"
-        echo "$dir"
-        return 0
-      fi
-      ;;
-  esac
+  if gh_is_snap; then
+    if [ -n "${XDG_CACHE_HOME:-}" ] && visible_under_home "$XDG_CACHE_HOME" &&
+      mkdir -p "$XDG_CACHE_HOME/denext" 2>/dev/null &&
+      private_dir "$XDG_CACHE_HOME/denext" install-XXXXXX; then
+      return 0
+    fi
+    case "${HOME:-}" in /*) private_dir "$HOME" denext-install-XXXXXX && return 0 ;; esac
+  else
+    case "$cache" in
+      /*) mkdir -p "$cache/denext" 2>/dev/null && private_dir "$cache/denext" install-XXXXXX &&
+        return 0 ;;
+    esac
+  fi
   dir="$(mktemp -d)"
   chmod 700 "$dir"
   echo "$dir"
+}
+
+# Make (and print) a mode-0700 folder from the `mktemp` template `$2` in the folder `$1`.
+private_dir() {
+  dir="$(mktemp -d "$1/$2" 2>/dev/null)" || return 1
+  chmod 700 "$dir"
+  echo "$dir"
+}
+
+# Whether `$1` is under $HOME with no hidden (dot) folder on the way: what a snap can read.
+visible_under_home() {
+  case "${HOME:-}" in /*) ;; *) return 1 ;; esac
+  case "$1" in "$HOME"/*) ;; *) return 1 ;; esac
+  case "/${1#"$HOME"/}" in */.*) return 1 ;; esac
+  return 0
 }
 
 # Whether `gh` is the snap store's: found as `.../snap/bin/gh`, or resolving into /snap/.
@@ -229,9 +249,11 @@ verify_attestation() {
     echo "denext: the GitHub CLI here is a snap ($(command -v gh)), and snap confinement means it" >&2
     echo "  cannot read the downloaded archive ($1), so its build attestation was not verified." >&2
     if [ "${DENEXT_INSECURE:-}" != "1" ]; then
-      echo "  Not installing. Point XDG_CACHE_HOME at a folder under your home directory (the" >&2
-      echo "  installer downloads into \$XDG_CACHE_HOME/denext), or install gh from apt or" >&2
-      echo "  https://github.com/cli/cli/releases instead of the snap, then run this again." >&2
+      echo "  Not installing. A snap can read only non-hidden folders under your home: make sure" >&2
+      echo "  \$HOME is writable, or point XDG_CACHE_HOME at a non-hidden folder under your home" >&2
+      echo "  (XDG_CACHE_HOME=\$HOME/denext-cache; the installer downloads into \$XDG_CACHE_HOME/denext)," >&2
+      echo "  or install gh from apt or https://github.com/cli/cli/releases instead of the snap," >&2
+      echo "  then run this again." >&2
       exit 1
     fi
   fi
