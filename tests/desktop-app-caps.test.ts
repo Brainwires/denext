@@ -422,6 +422,22 @@ Deno.test("notifications: clicks are pulled once — the launch click first, for
   ]);
 });
 
+Deno.test("notifications: a page load drops the clicks the last page never took, not a launch click", async () => {
+  const f = fakeNotifications();
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false });
+  const ctx = ctxOf();
+  assertEquals(await call(cap, "take", {}, ctx), []);
+  const respond = (detail: unknown) =>
+    f.listeners.get("notificationresponse")!(new CustomEvent("notificationresponse", { detail }));
+  // A click for the running page it never took (it reloaded first), and one that launched the app.
+  respond({ tag: "denext-3-1", action: null, data: { denext: { id: 3 }, data: {} } });
+  respond({ tag: "denext-4-1", action: null, data: { denext: { id: 4 }, data: {} }, launch: true });
+  await cap.onPageLoad!();
+  assertEquals(await call(cap, "take", {}, ctx), [
+    { id: 4, actionId: "tap", data: {}, launch: true },
+  ]);
+});
+
 Deno.test("notifications: where the runtime cannot schedule, now is a Deno Notification; later is unsupported", async () => {
   const f = fakeNotifications();
   f.noSchedule();

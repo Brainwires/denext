@@ -11,6 +11,12 @@
  * The buffer is bounded and drops oldest, so a client that was away longer than the buffer spans
  * misses the gap — capability consumers must tolerate a repeat and a rare miss.
  *
+ * A NON-RETAINED event (`append(…, { retain: false })`: a menu click, a focus change, a close
+ * request — a one-shot action for the page that is live now) is kept apart, in a buffer of its own,
+ * only so a live page whose stream was interrupted resumes it with `Last-Event-ID`. A connection
+ * without a cursor is a page that subscribes now (a new page, a reload): it never gets them, so an
+ * old click is not acted on again, and they never evict the retained events.
+ *
  * This module is RUNTIME-ONLY (imported by the desktop entry, never a client bundle).
  *
  * @module
@@ -23,6 +29,15 @@ interface LoggedEvent {
   readonly json: string;
   /** The one window it is for (`undefined`: every window). */
   readonly target?: string;
+}
+
+/** How {@linkcode DesktopEventLog.append} keeps an event. */
+export interface DesktopEventAppendOptions {
+  /**
+   * `false`: a one-shot action for the live pages. It is replayed only to a stream that resumes
+   * after it (`Last-Event-ID`), never to a page that subscribes later. Default `true`.
+   */
+  readonly retain?: boolean;
 }
 
 /** A live subscriber's sink: called with each new event once it is connected. */
@@ -40,6 +55,8 @@ const HEARTBEAT_MS = 15_000;
 export class DesktopEventLog {
   #nextId = 0;
   #buffer: LoggedEvent[] = [];
+  /** The non-retained events, kept only for a resuming stream (same bound, its own). */
+  #transient: LoggedEvent[] = [];
   #sinks = new Set<Sink>();
   readonly #max: number;
 
@@ -63,8 +80,15 @@ export class DesktopEventLog {
    * @param event The event name.
    * @param data Its payload (JSON-serializable).
    * @param target The one window it is for (a window id); every window's stream when omitted.
+   * @param options `retain: false` for a one-shot action (see {@linkcode DesktopEventAppendOptions}).
    */
-  append(cap: string, event: string, data: unknown, target?: string): number {
+  append(
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ): number {
     let json: string;
     try {
       json = JSON.stringify({ cap, event, data });
@@ -80,8 +104,9 @@ export class DesktopEventLog {
       json,
       ...(target !== undefined ? { target } : {}),
     };
-    this.#buffer.push(logged);
-    if (this.#buffer.length > this.#max) this.#buffer.shift();
+    const buffer = options?.retain === false ? this.#transient : this.#buffer;
+    buffer.push(logged);
+    if (buffer.length > this.#max) buffer.shift();
     for (const sink of [...this.#sinks]) {
       try {
         sink(logged);
@@ -93,15 +118,20 @@ export class DesktopEventLog {
     return logged.id;
   }
 
-  /** The retained events after `afterId` (all of them when `afterId` is undefined). */
+  /**
+   * The events after `afterId`, in id order: a resuming stream's retained and non-retained ones;
+   * every retained one (and no other) when `afterId` is undefined.
+   */
   #replayFrom(afterId: number | undefined): LoggedEvent[] {
     if (afterId === undefined) return [...this.#buffer];
-    return this.#buffer.filter((e) => e.id > afterId);
+    return [...this.#buffer, ...this.#transient]
+      .filter((e) => e.id > afterId)
+      .sort((a, b) => a.id - b.id);
   }
 
   /**
-   * Open an SSE body for a subscriber: replay the retained backlog (after `lastEventId`, or all of
-   * it), then stream new events live, with periodic heartbeats. The returned stream is closed by
+   * Open an SSE body for a subscriber: replay the backlog (after `lastEventId`, non-retained events
+   * included; or every retained event without one), then stream new events live, with periodic heartbeats. The returned stream is closed by
    * cancelling it (the page navigating away or unsubscribing), which detaches the sink and stops
    * the heartbeat.
    *

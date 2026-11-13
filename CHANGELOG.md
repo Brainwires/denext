@@ -108,9 +108,47 @@ and this project adheres to
 - **Desktop: the managed macOS menu bar.** With `desktop.menu.window` and no page `setAppMenu`, the
   bar is now the app menu, Edit and Window: the Window submenu used to be the bar's first submenu,
   which AppKit shows under the app's name, with the runtime's Edit menu after it.
+- **Desktop: one-shot events, `emit(cap, event, data, { retain: false })`.** `runDesktop`'s
+  `emit`, an extension's `host.emit` and a handler's `ctx.emit` take `retain: false` for an action
+  meant for the page live now (a menu click forwarded from `onAppMenuItem`): the live pages receive
+  it, a live page whose event stream reconnects still does (`Last-Event-ID`), and a page that
+  subscribes later, a reloaded one included, never does, so it is not acted on again. Such events
+  have a replay buffer of their own and never push a deep link out of the retained one.
+- **Headless desktop runs: `denext desktop run --headless`, `DENEXT_DESKTOP_HEADLESS=1`.** The app
+  starts with every window hidden while its pages, extensions and sidecars run: a packaged app's
+  self-test on a machine where no window may show. `runDesktop` hides the main window as it adopts
+  it, before its first page load (so the runtime never reveals it), every window opened later is
+  created hidden, `show()` / `focus()` / `maximize()` / `restore()` / `setFullScreen()` and the
+  Dock's reopen and `bounce()` do nothing, and the app is an `"accessory"` one (no Dock icon;
+  `--headless` also sets `LAUFEY_ACTIVATION_POLICY=accessory` for the first frame). The CEF backend
+  still shows its first window as it creates it, and the macOS host activates the app at launch.
+- **Sidecar bundles per architecture.** Each `--arch` a package script builds (`both` on Linux and
+  Windows, each half of a macOS `universal`) bundles a Node backend sidecar for its own arch: only
+  that arch's `prebuilds/<platform>-<arch>/` (node-gyp-build's `darwin-x64+arm64` for either), only
+  the per-platform packages whose npm `os` and `cpu` allow it (`cpu` was not checked), and a warning
+  for a copied `.node` built for another arch (a `build/Release` addon compiled on the host) or a
+  per-platform optional dependency npm did not install for the target. `run.archDirs`
+  (`{ "darwin-x86_64": "vendor/x64/node_modules" }`, or an `"arm64"` / `"x86_64"` key) names a
+  `node_modules` built for a target, whose packages are copied in place of the host's. The copies
+  are signed per arch as before. A macOS package script from before this release keeps the host
+  arch's addons in both halves until `denext desktop package --regenerate-scripts`.
+
+### Fixed
+
+- **Desktop: a reloaded page no longer gets the events of the page before it.** denext's own
+  one-shot events (menu, tray, Dock and shortcut signals, focus and blur, a close request, the
+  windows opening and closing, system-stats samples) are sent with `retain: false`, so a reloaded
+  page no longer runs its `onWindowFocus`, `onCloseRequested` or window-list handlers for what
+  happened before it loaded, and a notification click the last page never took is dropped at the
+  next page load (the click that launched the app still waits for a page). The page's pull queues
+  take again whenever the event stream connects, so a click made while it connects is not missed.
 
 ### Documentation
 
+- **Desktop: an http://localhost iframe inside the app origin.** The desktop page now says which
+  frames a secure custom-scheme page can load on each engine (localhost and 127.0.0.1 yes;
+  `*.localhost` on Chromium and recent WebKit; any other plain-http host is mixed content
+  everywhere), that the navigation guard never applies to frames, and the ways around it.
 - **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains
   why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
   recent apps (an unpinned app installed under /Applications gets a recents tile whenever its

@@ -627,7 +627,8 @@ export async function desktopBundleCommand(
     ...desktopRuntimeDenoFlags(runtimeEnv, denoFlags),
     "--include",
     "out",
-    ...await desktopIncludeArgs(entryUrl, os),
+    // A bundled sidecar's native packages for this target's arch only (one bundle per arch).
+    ...await desktopIncludeArgs(entryUrl, os, undefined, { target: o.target }),
     ...await desktopNpmArgs(entryUrl),
     "--target",
     o.target,

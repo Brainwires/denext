@@ -146,7 +146,8 @@ export function systemStatsCapability(
     let off: () => void;
     try {
       off = sampler.onStats(
-        (s) => ctx.emit("stats", { id, stats: s }, { window: windowId }),
+        // A live sample for this subscription: never replayed to a page that loads later.
+        (s) => ctx.emit("stats", { id, stats: s }, { window: windowId, retain: false }),
         { intervalMs: a.intervalMs as number, ...sampleOptions(perCore) },
       );
     } catch (err) {

@@ -1879,6 +1879,9 @@ function configExtensionPaths(config: unknown): string[] {
  * @param options `signNativeCode: false` leaves a bundled sidecar's copied native addons as
  *   installed (`denext desktop run` / `dev`); by default they are signed for the target OS with the
  *   package script's credentials before they are archived (see `desktop-sidecar-sign.ts`).
+ *   `target`: the Rust target triple being built (`aarch64-apple-darwin`), or `"host"`: a bundled
+ *   sidecar then keeps only that architecture's prebuilt addons and per-platform packages (and
+ *   uses `run.archDirs`); without it every architecture's are kept.
  * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
  * argv.
  */
@@ -1886,7 +1889,7 @@ export async function desktopIncludeArgs(
   entryUrl: string,
   os?: DesktopOs,
   appEntry?: string,
-  options: { readonly signNativeCode?: boolean } = {},
+  options: { readonly signNativeCode?: boolean; readonly target?: string } = {},
 ): Promise<string[]> {
   // No config → no extensions to embed; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
@@ -1899,9 +1902,24 @@ export async function desktopIncludeArgs(
   const local = projectUrl.protocol === "file:";
   const importMap = local ? await desktopImportMapArgsFor(fromFileUrl(projectUrl)) : [];
   const sidecars = local
-    ? await desktopSidecarIncludeArgs(fromFileUrl(projectUrl), config, os, appEntry, options)
+    ? await desktopSidecarIncludeArgs(fromFileUrl(projectUrl), config, os, appEntry, {
+      ...(options.signNativeCode === undefined ? {} : { signNativeCode: options.signNativeCode }),
+      ...(options.target === undefined ? {} : { arch: desktopTargetArch(options.target) }),
+    })
     : [];
   return [...includes, ...sidecars, ...importMap];
+}
+
+/**
+ * The architecture of a Rust target triple (`aarch64-apple-darwin` → `arm64`, `x86_64-…` →
+ * `x86_64`), or the host's for `"host"`.
+ *
+ * @param target The triple, or `"host"`.
+ * @returns The package scripts' arch name.
+ */
+export function desktopTargetArch(target: string): "x86_64" | "arm64" {
+  const triple = target === "host" ? Deno.build.arch : target;
+  return /^(aarch64|arm64)\b/.test(triple) ? "arm64" : "x86_64";
 }
 
 /** The bundler's module, imported by a computed specifier so `deno desktop` never embeds esbuild. */
@@ -1920,7 +1938,8 @@ const SIDECAR_BUNDLER = "./desktop-sidecar-bundle.ts";
  * @param config The project config.
  * @param os The OS packaged for (default: the host's).
  * @param appEntry The entry that calls `runDesktop`, relative to the project (default `desktop.ts`).
- * @param options `signNativeCode` (default `true`): sign a bundle's copied native code.
+ * @param options `signNativeCode` (default `true`): sign a bundle's copied native code; `arch`: the
+ *   architecture packaged for (only its prebuilt addons kept; default every arch's).
  * @returns The args.
  */
 export async function desktopSidecarIncludeArgs(
@@ -1928,7 +1947,7 @@ export async function desktopSidecarIncludeArgs(
   config: unknown,
   os?: DesktopOs,
   appEntry = "desktop.ts",
-  options: { readonly signNativeCode?: boolean } = {},
+  options: { readonly signNativeCode?: boolean; readonly arch?: "x86_64" | "arm64" } = {},
 ): Promise<string[]> {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   const sidecars = configSidecars(cfg);
@@ -1940,7 +1959,7 @@ export async function desktopSidecarIncludeArgs(
       config: unknown,
       os?: DesktopOs,
       entryDir?: string,
-      options?: { sign?: boolean },
+      options?: { sign?: boolean; arch?: "x86_64" | "arm64" },
     ): Promise<Array<{ dir: string }>>;
   };
   // A Node backend's bundle is loaded from `.deno-desktop/sidecars/<name>/` beside the entry.
@@ -1950,7 +1969,7 @@ export async function desktopSidecarIncludeArgs(
     config,
     os,
     entryDir === "." ? undefined : entryDir,
-    { sign: options.signNativeCode ?? true },
+    { sign: options.signNativeCode ?? true, ...(options.arch ? { arch: options.arch } : {}) },
   );
   const args = reports.flatMap((r) => ["--include", r.dir]);
   // Each as written for an entry at the project root; else the file the app resolves it to.

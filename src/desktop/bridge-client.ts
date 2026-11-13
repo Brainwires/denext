@@ -345,6 +345,22 @@ interface StreamState {
 
 let stream: StreamState | undefined;
 
+/** Called each time the event stream (re)connects: see {@linkcode onDesktopStreamOpen}. */
+const openListeners = new Set<() => void>();
+
+/**
+ * Call `fn` each time this page's event stream connects or reconnects — the moment from which
+ * every event reaches it live. A one-shot event (`retain: false`) emitted before that is not
+ * replayed to a new connection, so a pull queue takes again here to catch what it signalled.
+ *
+ * @param fn Called on each (re)connect; a throw is ignored.
+ * @returns Its removal.
+ */
+export function onDesktopStreamOpen(fn: () => void): () => void {
+  openListeners.add(fn);
+  return () => void openListeners.delete(fn);
+}
+
 /** The `cap:event` key a frame is routed by. */
 function keyOf(cap: string, event: string): string {
   return `${cap}\u0000${event}`;
@@ -467,6 +483,13 @@ async function readOnce(state: StreamState, token: string, signal: AbortSignal):
       cache: "no-store",
     });
     if (res.ok && res.body) {
+      for (const fn of [...openListeners]) {
+        try {
+          fn();
+        } catch {
+          // a listener's bug must not stop the stream
+        }
+      }
       await readEvents(state, res.body);
       return false;
     }
@@ -553,5 +576,6 @@ export function subscribeDesktopEvent(
 export function resetDesktopBridgeForTesting(): void {
   if (stream) disconnect(stream);
   stream = undefined;
+  openListeners.clear();
   windowTokenPromise = undefined;
 }

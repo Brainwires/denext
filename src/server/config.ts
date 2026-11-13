@@ -1479,6 +1479,12 @@ export interface DesktopSidecarRunConfig {
   exclude?: string[];
   /** Further entry modules it starts itself (worker scripts), relative to the module. */
   entries?: string[];
+  /**
+   * Per-target `node_modules` folders whose packages are copied in place of the host's when
+   * packaging for that target: `"<os>-<arch>"` (`"darwin-x86_64"`) or `"<arch>"` (`"arm64"`)
+   * keys, relative to the project. For an addon built per arch with no prebuild for the other.
+   */
+  archDirs?: Record<string, string>;
   /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
   exec?: string;
   /**

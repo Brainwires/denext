@@ -45,6 +45,8 @@ import { readDesktopAppFile } from "./desktop-dev-file.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
+import type { DesktopEventAppendOptions } from "../desktop/bridge-events.ts";
+import { desktopHeadless, headlessWindow } from "../desktop/headless.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
 import type {
@@ -898,7 +900,9 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
   /**
    * Push an event to the pages (`cap` need not be a registered capability's): every window's, or
    * only `options.window`'s. Events are retained for replay, so one emitted before the page
-   * subscribes is still delivered. An extension module reaches the same stream without this
+   * subscribes is still delivered; `{ retain: false }` sends a one-shot action (a menu click
+   * forwarded from `onAppMenuItem`) to the live pages only, so a reloaded page never acts on it
+   * again. An extension module reaches the same stream without this
    * handle through its {@linkcode DesktopCapability.setup} host.
    */
   emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void;
@@ -1765,7 +1769,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // so it still goes through the close rules and the lifecycle hooks.
   const windowsRef: { setup?: DesktopWindowsSetup; closedEarly?: boolean } = {};
   const exit = Deno.exit;
-  const appWindow = installWindowCloseHandler(
+  const adopted = installWindowCloseHandler(
     undefined,
     () => {
       if (windowsRef.setup) windowsRef.setup.mainClosed();
@@ -1773,6 +1777,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     },
     (event) => windowsRef.setup?.interceptMainClose(event) ?? false,
   );
+  // DENEXT_DESKTOP_HEADLESS=1 (`denext desktop run --headless`): the window is hidden at once,
+  // before the sidecars start, and no window of the app shows or takes focus (see headless.ts).
+  const headless = desktopHeadless();
+  const appWindow = headless ? headlessWindow(adopted) : adopted;
+  if (headless && appWindow !== undefined) {
+    console.log("desktop: headless (DENEXT_DESKTOP_HEADLESS): every window stays hidden");
+  }
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
   // in-process memory transport at a stable origin, or the stock runtime's loopback port.
   const trustDecision = resolveDesktopTrust(
@@ -1821,8 +1832,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // handler error include its message; a packaged build stays generic.
   // Events can fire before the bridge exists (a window registered first): they are dropped then.
   const bridgeRef: { bridge?: DesktopBridge } = {};
-  const emitToPage = (cap: string, event: string, data: unknown, target?: string) =>
-    bridgeRef.bridge?.emit(cap, event, data, target);
+  const emitToPage = (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    emitOptions?: DesktopEventAppendOptions,
+  ) => bridgeRef.bridge?.emit(cap, event, data, target, emitOptions);
   const appEvents = desktopAppEvents(options, emitToPage, preloadKey);
   // The sidecars (`desktop.sidecars` + `runDesktop({ sidecars })`): ports and secrets are settled
   // now, so `spa.proxy` can point at the proxied one; they start once the server is up.
@@ -1840,6 +1856,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.app ? { appSettings: options.app } : {}),
     wantsTray: options.tray !== undefined || options.configTray !== undefined,
     exit,
+    ...(headless ? { headless: true } : {}),
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
@@ -1958,7 +1975,14 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onWillNavigate: (fn) => navigation.add(fn),
     onNotificationClick: (fn) => notificationClicks.add(fn),
     trust,
-    emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
+    emit: (cap, event, data, emitOptions) =>
+      bridge.emit(
+        cap,
+        event,
+        data,
+        emitOptions?.window,
+        emitOptions?.retain === false ? { retain: false } : undefined,
+      ),
     sidecar: (name) => {
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);

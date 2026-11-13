@@ -1012,5 +1012,12 @@ export function notificationsCapability(
     name: "notifications",
     methods: { ...schedulingMethods(s), ...deliveryMethods(s), ...webMethods(s) },
     events: ["tap", "webtap"],
+    // A click the last page never took was for that page: a page that loads now does not act on
+    // it again. The click that launched the app is what launched it, and waits for a page.
+    // A web notification's click belonged to the page that showed it.
+    onPageLoad: () => {
+      s.queue?.retainOnly((tap) => tap.launch);
+      s.webQueue?.clear();
+    },
   };
 }
