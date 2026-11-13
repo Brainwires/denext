@@ -44,7 +44,12 @@ and this project adheres to
   overlay is up; `setZoom` / `getZoom`, `find` / `stopFind`, `print()` and `openDevTools()`
   (`not_allowed` unless the app's DevTools are on: a dev run or `desktop.inspectable: true`);
   `contextMenu: "app"` suppresses the engine's menu, and `permissions` also takes
-  `{ prompts, clipboardRead, clipboardWrite }`. A view never gets the desktop bridge, the app's
+  `{ prompts, clipboardRead, clipboardWrite }`. Keys and focus: the app menu's accelerators fire
+  while a view has the keyboard (`menuAccelerators`), `forwardKeys` / `setForwardKeys(keys)` hand
+  chosen accelerators back to the app as `keydown` events with `forwarded: true`, keydowns the
+  view's page left unhandled arrive with `forwarded: false` where the engine can tell
+  (`unhandledKeys`), and a click into an unfocused view fires `focus-change` before the page gets
+  it. A view never gets the desktop bridge, the app's
   storage (named `partition`s, `"ephemeral:"` ones in memory) or the window's navigation guard; it
   loads `http:` / `https:` only and never the app's own origin, with popup, download and
   permission-prompt policies; it closes with its window. `attachWebView(view, element)` keeps a

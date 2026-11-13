@@ -149,6 +149,10 @@ class FakeWebView extends EventTarget {
     this.#rec("print");
     return this.answer;
   }
+  setForwardKeys(keys: string[]) {
+    this.#rec("setForwardKeys", keys);
+    return this.answer;
+  }
   close() {
     this.#rec("close");
     if (this.closed) return;
@@ -222,6 +226,9 @@ const CAPS = {
   contextMenu: true,
   print: true,
   clipboard: true,
+  menuAccelerators: true,
+  unhandledKeys: true,
+  forwardKeys: true,
 };
 /** Every feature on. */
 const ALL_ON = {
@@ -236,6 +243,9 @@ const ALL_ON = {
   contextMenu: true,
   print: true,
   clipboard: true,
+  menuAccelerators: true,
+  unhandledKeys: true,
+  forwardKeys: true,
 };
 /** What an older runtime (or no engine) answers. */
 const NONE = {
@@ -250,6 +260,9 @@ const NONE = {
   contextMenu: false,
   print: false,
   clipboard: false,
+  menuAccelerators: false,
+  unhandledKeys: false,
+  forwardKeys: false,
 };
 const BOUNDS = { x: 10, y: 20, width: 300, height: 200 };
 
@@ -282,6 +295,7 @@ Deno.test("web views backend: capabilities from the runtime, supported: false on
       find: false,
       devTools: false,
       print: false,
+      forwardKeys: false,
     },
   );
   // The engine without a feature: false.
@@ -1405,5 +1419,134 @@ Deno.test("attachWebView: the bounds are cut to the viewport and to clipping scr
     );
     await layout.frame();
     assertEquals(raw.calls, ["bounds:20,50,300,200", "visible:true"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Keys and focus
+// ---------------------------------------------------------------------------------------------
+
+Deno.test("web views backend: forwardKeys on create and setForwardKeys, checked", async () => {
+  const { call, made } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS, forwardKeys: ["CmdOrCtrl+1"] },
+  }) as { id: string };
+  assertEquals(made[0].options.forwardKeys, ["CmdOrCtrl+1"]);
+  const run = (args: unknown) => call("webViewCall", { id, method: "setForwardKeys", args });
+  assertEquals(await run({ keys: ["Meta+Shift+L", "CmdOrCtrl+T"] }), null);
+  assertEquals(await run({ keys: [] }), null);
+  assertEquals(made[0].calls, [["setForwardKeys", ["Meta+Shift+L", "CmdOrCtrl+T"]], [
+    "setForwardKeys",
+    [],
+  ]]);
+  for (
+    const bad of [
+      { keys: "CmdOrCtrl+1" },
+      { keys: [""] },
+      { keys: [1] },
+      { keys: ["a\nb"] },
+      { keys: ["x".repeat(65)] },
+      { keys: Array.from({ length: 65 }, (_, i) => `F${i}`) },
+    ]
+  ) {
+    assertEquals((await rejection(() => run(bad))).code, "validation", JSON.stringify(bad));
+  }
+  for (const forwardKeys of ["CmdOrCtrl+1", [2], Array(65).fill("A")]) {
+    const err = await rejection(() =>
+      call("webViewCreate", { options: { url: "https://a.example", bounds: BOUNDS, forwardKeys } })
+    );
+    assertEquals(err.code, "validation");
+    assertStringIncludes(err.message, "forwardKeys");
+  }
+  // The engine answering false, or a runtime without the member: unsupported.
+  made[0].answer = false;
+  assertEquals((await rejection(() => run({ keys: ["A"] }))).code, "unsupported");
+  Object.defineProperty(made[0], "setForwardKeys", { value: undefined });
+  assertEquals((await rejection(() => run({ keys: ["A"] }))).code, "unsupported");
+  // The runtime's own refusal of the syntax maps to validation.
+  const other = controller({ caps: CAPS });
+  const created = await other.call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  other.made[0].failWith = "invalid";
+  assertEquals(
+    (await rejection(() =>
+      other.call("webViewCall", {
+        id: created.id,
+        method: "setForwardKeys",
+        args: { keys: ["Hyper+?"] },
+      })
+    )).code,
+    "validation",
+  );
+});
+
+Deno.test("web views backend: the runtime's key event becomes keydown, to the page and desktop.ts", async () => {
+  const { c, call, made, emits } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  made[0].fire("key", {
+    type: "keydown",
+    key: "1",
+    code: "Digit1",
+    metaKey: true,
+    forwarded: true,
+    extra: "dropped",
+  });
+  made[0].fire("key", { type: "keyup", key: "1" });
+  made[0].fire("key", JSON.stringify({ type: "keydown", key: "Escape", code: "Escape" }));
+  const keydown = (over: Record<string, unknown>) => ({
+    key: "",
+    code: "",
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    repeat: false,
+    forwarded: false,
+    ...over,
+  });
+  assertEquals(emits.map((e) => e.data), [
+    {
+      id,
+      event: "keydown",
+      detail: keydown({ key: "1", code: "Digit1", metaKey: true, forwarded: true }),
+    },
+    { id, event: "keydown", detail: keydown({ key: "Escape", code: "Escape" }) },
+  ]);
+  const h = await c.createWebView({
+    url: "https://b.example",
+    bounds: BOUNDS,
+    forwardKeys: ["F1"],
+  });
+  const keys: string[] = [];
+  h.on("keydown", (e) => keys.push(`${e.key}:${e.forwarded}`));
+  made[1].fire("key", { type: "keydown", key: "F1", code: "F1", forwarded: true });
+  assertEquals(keys, ["F1:true"]);
+  await h.setForwardKeys(["F2"]);
+  assertEquals(made[1].calls.at(-1), ["setForwardKeys", ["F2"]]);
+});
+
+Deno.test("web views page: forwardKeys, setForwardKeys and keydown on the wire", async () => {
+  await inDesktop(async (rt, ctl) => {
+    const view = await createWebView({
+      url: "https://a.example",
+      bounds: BOUNDS,
+      forwardKeys: ["CmdOrCtrl+1"],
+    });
+    assertEquals(ctl.made[0].options.forwardKeys, ["CmdOrCtrl+1"]);
+    const keys: unknown[] = [];
+    view.on("keydown", (e) => keys.push([e.key, e.forwarded]));
+    await view.setForwardKeys(["CmdOrCtrl+2"]);
+    const wire = rt.calls.filter((c) => c.method === "webViewCall").map((c) => c.args);
+    assertEquals(wire, [{
+      id: view.id,
+      method: "setForwardKeys",
+      args: { keys: ["CmdOrCtrl+2"] },
+    }]);
+    ctl.made[0].fire("key", { type: "keydown", key: "2", code: "Digit2", forwarded: true });
+    await until(() => keys.length === 1);
+    assertEquals(keys, [["2", true]]);
   });
 });

@@ -77,6 +77,13 @@ export interface CreateWebViewOptions {
    * draws its own from the `context-menu` event (which fires in both modes).
    */
   contextMenu?: "native" | "app";
+  /**
+   * Keys the view hands to the page instead of its own page while it has the keyboard:
+   * accelerators as `registerShortcut` takes them (`"CmdOrCtrl+1"`, `"Meta+Shift+L"`), at most
+   * 64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators
+   * still win over them.
+   */
+  forwardKeys?: string[];
   /** Replaces the engine's user agent string for this view. */
   userAgent?: string;
 }
@@ -128,6 +135,21 @@ export interface WebViewEventMap {
     isEditable: boolean;
     mediaType?: "image" | "video" | "audio" | "canvas" | "plugin";
   };
+  /**
+   * A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its
+   * page never saw it), `false` for a keydown its page left unhandled (where the engine can tell:
+   * `unhandledKeys`). DOM `KeyboardEvent` names and values.
+   */
+  keydown: {
+    key: string;
+    code: string;
+    altKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    repeat: boolean;
+    forwarded: boolean;
+  };
   /** The view closed (its `close()`, or its window closed). Nothing follows it. */
   closed: Record<string, never>;
 }
@@ -175,6 +197,12 @@ export interface WebViewCapabilities {
   print: boolean;
   /** Whether the `clipboardRead` / `clipboardWrite` permissions apply. */
   clipboard: boolean;
+  /** Whether the app menu's accelerators fire while a view has the keyboard. */
+  menuAccelerators: boolean;
+  /** Whether keydowns the view's page left unhandled arrive as `keydown` (`forwarded: false`). */
+  unhandledKeys: boolean;
+  /** Whether `forwardKeys` / `setForwardKeys` work. */
+  forwardKeys: boolean;
 }
 
 /** A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`). */
@@ -234,6 +262,8 @@ export interface WebViewHandle {
   openDevTools(): Promise<void>;
   /** Show the OS print dialog for its page. */
   print(): Promise<void>;
+  /** Replace its `forwardKeys` (an empty list forwards none). */
+  setForwardKeys(keys: string[]): Promise<void>;
   /** Listen to one of its events; returns the unsubscribe. */
   on<K extends keyof WebViewEventMap>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void;
   /** Close it (`closed` fires; the handle's calls reject `closed` after). */
@@ -250,6 +280,7 @@ const EVENT_NAMES: ReadonlySet<string> = new Set([
   "new-window",
   "find-result",
   "context-menu",
+  "keydown",
   "closed",
 ]);
 
@@ -461,6 +492,9 @@ export async function webViewCapabilities(): Promise<WebViewCapabilities> {
     contextMenu: flag("contextMenu"),
     print: flag("print"),
     clipboard: flag("clipboard"),
+    menuAccelerators: flag("menuAccelerators"),
+    unhandledKeys: flag("unhandledKeys"),
+    forwardKeys: flag("forwardKeys"),
   };
 }
 
