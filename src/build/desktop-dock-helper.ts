@@ -89,35 +89,27 @@ export function dockHelperFileName(displayName: string): string {
   return name === "" ? "App" : name;
 }
 
-/** The helper's bundle, relative to the app's data folder: `dock-helper/<Name>.app`. */
-function dockHelperDataPath(fileName: string): string {
-  return `${DOCK_HELPER_FOLDER}/${fileName}.app`;
-}
+/** The program the app opens the helper's copy with (LaunchServices). */
+const OPEN_PROGRAM = "/usr/bin/open";
 
 /**
- * The grants the packaged app needs for its Dock helper, as baked values: `run` for the copy's
- * executable and `write` for the folder it is copied into (the copy is staged beside it and renamed
- * into place: Deno denies writes to a run path itself). `undefined` when the build carries no
- * helper.
+ * The grants the packaged app needs for its Dock helper, as baked values: `write` for the folder it
+ * is copied into (`$DENO_DESKTOP_DATA/dock-helper`; the copy and its session file live there) and
+ * `run` for `/usr/bin/open`, which launches the copy through LaunchServices. The copy itself is
+ * never a run grant: Deno denies writes to a run path and to every folder above it, so the app
+ * could not refresh a copy it runs. The connection to the helper is a loopback one, inside the
+ * listen grant every desktop app has. `undefined` when the build carries no helper.
  *
  * @param config The project config.
  * @param os The target OS.
- * @param denoJson The project's deno.json, parsed (optional).
  * @returns The grants.
  */
 export function dockHelperGrants(
   config: unknown,
   os: string,
-  denoJson?: unknown,
 ): { run: string[]; write: string[] } | undefined {
   if (!dockHelperWanted(config, os)) return undefined;
-  const display = dockHelperDisplayName(config, denoJson);
-  if (!display) return undefined;
-  const file = dockHelperFileName(display);
-  return {
-    run: [`${DATA_TOKEN}/${dockHelperDataPath(file)}/Contents/MacOS/${file}`],
-    write: [`${DATA_TOKEN}/${DOCK_HELPER_FOLDER}`],
-  };
+  return { run: [OPEN_PROGRAM], write: [`${DATA_TOKEN}/${DOCK_HELPER_FOLDER}`] };
 }
 
 /** What the helper's Info.plist says. */

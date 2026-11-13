@@ -8,17 +8,22 @@
  * itself stays accessory from launch to quit, and a helper app holds the icon: packaging builds it
  * into `Contents/Helpers/<Name>.app` (src/build/desktop-dock-helper.ts); the app copies it into its
  * data folder (`<data>/dock-helper/<Name>.app`, refreshed whenever the bundled copy's files differ,
- * staged beside it and renamed into place) and runs it as a child while a window shows: a regular
- * app with no window, named and iconed like the app.
+ * staged beside it and renamed into place) and opens it through LaunchServices while a window
+ * shows: a regular app with no window, named and iconed like the app. (It is opened, not spawned:
+ * Deno denies writes to an `--allow-run` path and to the folders above it, so the app could not
+ * keep a copy it may run up to date; `/usr/bin/open` is the one program it runs.)
  *
- * The two talk over the child's stdin / stdout pipes, newline-delimited JSON
- * (`{"t":"activate"}` and `{"t":"quit"}` from the helper, `{"t":"exit"}` to it): nothing another
- * process can reach, so no token and no socket. The helper exits on `exit` or when its stdin
- * closes, so it never outlives the app. Activating it (a Dock click, Cmd-Tab) hands the activation
- * back to the app, which brings its key window up; its Quit (the Dock menu, Cmd-Q while it is
- * frontmost) asks the app to quit, through the quit guards. Where the helper cannot be had (not a
- * packaged build, the copy or the launch failed, it kept crashing) the app keeps the accessory
- * behaviour: its windows, no Dock icon.
+ * The two talk over a loopback connection, newline-delimited JSON. Before it opens the helper the
+ * app listens on an ephemeral 127.0.0.1 port and writes a session file beside the copy (the folder
+ * is the user's own, 0700; the file 0600) with the port, a fresh 256-bit token and the app's pid;
+ * the helper connects and says hello with the token, and the app takes no other connection and
+ * removes the file. Then `{"t":"activate"}` and `{"t":"quit"}` come from the helper and
+ * `{"t":"exit"}` goes to it. The helper exits on `exit` or when the connection closes, so it never
+ * outlives the app. Activating it (a Dock click, Cmd-Tab) hands the activation back to the app,
+ * which brings its key window up; its Quit (the Dock menu, Cmd-Q while it is frontmost) asks the
+ * app to quit, through the quit guards. Where the helper cannot be had (not a packaged build, the
+ * copy or the launch failed, it kept crashing) the app keeps the accessory behaviour: its windows,
+ * no Dock icon.
  *
  * Runtime-only (imported by `runDesktop` through app-windows.ts).
  *
@@ -26,6 +31,7 @@
  */
 
 import { dirname, join } from "@std/path";
+import { timingSafeEqual } from "./auth-session-runtime.ts";
 import {
   DOCK_HELPER_BUNDLE_FOLDER,
   DOCK_HELPER_ENV,
@@ -34,13 +40,13 @@ import {
 } from "../build/desktop-dock-helper.ts";
 
 /** A message from the helper. */
-export type DockHelperMessage = "ready" | "activate" | "quit";
+export type DockHelperMessage = "activate" | "quit";
 
 /** A running helper, as the app drives it. */
 export interface DockHelperChild {
-  /** Ask it to leave (`{"t":"exit"}`, then its stdin is closed). */
+  /** Ask it to leave (`{"t":"exit"}`, then the connection is closed). */
   exit(): void;
-  /** End it (SIGTERM): it did not leave when asked. */
+  /** Drop the connection (the helper exits when it closes): it did not leave when asked. */
   kill(): void;
   /** Its exit code, once it ended. */
   readonly exited: Promise<number>;
@@ -102,10 +108,18 @@ export async function findDockHelperSource(
   return undefined;
 }
 
+/** Bytes as lowercase hex. */
+function toHex(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
 /** SHA-256 of `bytes`, lowercase hex. */
 async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return toHex(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)),
+  );
 }
 
 /** Every entry under `dir`, sorted by path, relative and `/`-separated. */
@@ -204,11 +218,11 @@ export async function installDockHelper(
   return exe;
 }
 
-/** The messages the helper sends. */
-const MESSAGES: ReadonlySet<string> = new Set(["ready", "activate", "quit"]);
+/** The messages the helper sends once it is connected. */
+const MESSAGES: ReadonlySet<string> = new Set(["activate", "quit"]);
 
 /**
- * The helper's message on one line of its stdout, or `undefined` for anything else.
+ * The helper's message on one line of the connection, or `undefined` for anything else.
  *
  * @param line One line.
  * @returns The message.
@@ -222,52 +236,202 @@ export function parseDockHelperLine(line: string): DockHelperMessage | undefined
   }
 }
 
+/** The file beside the helper's copy it reads its session from (`{ port, token, pid }`). */
+const DOCK_HELPER_SESSION_FILE = "session";
+
+/** How the app launches the helper's copy (tests replace it). */
+export type DockHelperOpener = (bundle: string) => Promise<void>;
+
 /**
- * Run the helper's executable as a child: stdin / stdout piped (its messages go to `onMessage`),
- * stderr dropped, and only {@linkcode DOCK_HELPER_ENV} in its environment.
+ * Launch `bundle` through LaunchServices (`/usr/bin/open -n -g`, a new instance in the
+ * background) with {@linkcode DOCK_HELPER_ENV} set: the app may not run a program it can also write
+ * (Deno denies writes to an `--allow-run` path and to the folders above it), so the copy is opened,
+ * not spawned.
  *
- * @param exe The copy's executable.
- * @param onMessage Called with each message.
- * @returns The child.
+ * @param bundle The helper's copy.
  */
-function spawnDockHelper(
-  exe: string,
+async function openDockHelper(bundle: string): Promise<void> {
+  const out = await new Deno.Command("/usr/bin/open", {
+    args: ["-n", "-g", "--env", `${DOCK_HELPER_ENV}=1`, bundle],
+    stdin: "null",
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  if (!out.success) {
+    throw new Error(`open ${bundle} failed: ${new TextDecoder().decode(out.stderr).trim()}`);
+  }
+}
+
+/** Options for {@linkcode launchDockHelper}. */
+export interface DockHelperLaunchOptions {
+  /** Launch the copy (default {@linkcode openDockHelper}). */
+  readonly open?: DockHelperOpener;
+  /** How long the helper has to connect and say hello (default 15 s). */
+  readonly connectTimeoutMs?: number;
+}
+
+/** Read one line (at most 1 KiB) from `conn`: the line and what came after it, or `undefined`. */
+async function readFirstLine(
+  conn: Deno.Conn,
+): Promise<{ line: string; rest: Uint8Array } | undefined> {
+  const buf = new Uint8Array(1024);
+  let used = 0;
+  while (used < buf.length) {
+    const n = await conn.read(buf.subarray(used));
+    if (n === null) return undefined;
+    used += n;
+    const nl = buf.subarray(0, used).indexOf(10);
+    if (nl >= 0) {
+      return {
+        line: new TextDecoder().decode(buf.subarray(0, nl)),
+        rest: buf.slice(nl + 1, used),
+      };
+    }
+  }
+  return undefined;
+}
+
+/** What came after a hello with `token` on `conn`'s first line, or `undefined` for anything else. */
+async function helloFrom(conn: Deno.Conn, token: string): Promise<Uint8Array | undefined> {
+  const first = await readFirstLine(conn).catch(() => undefined);
+  if (!first) return undefined;
+  try {
+    const hello = JSON.parse(first.line) as { t?: unknown; token?: unknown } | null;
+    const ok = hello?.t === "hello" && typeof hello.token === "string" &&
+      timingSafeEqual(hello.token, token);
+    return ok ? first.rest : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Close a connection that may be closed already. */
+function closeConn(conn: Deno.Conn): void {
+  try {
+    conn.close();
+  } catch { /* closed */ }
+}
+
+/**
+ * Accept connections until one says hello with `token`, each read on its own (one that says
+ * nothing holds up no other); the rest are closed. Rejects once the listener closes first.
+ */
+function acceptHelper(
+  listener: Deno.Listener,
+  token: string,
+): Promise<{ conn: Deno.Conn; rest: Uint8Array }> {
+  return new Promise((resolve, reject) => {
+    const pending = new Set<Deno.Conn>();
+    let done = false;
+    const check = async (conn: Deno.Conn) => {
+      pending.add(conn);
+      const rest = await helloFrom(conn, token);
+      pending.delete(conn);
+      if (rest === undefined || done) return closeConn(conn);
+      done = true;
+      for (const other of pending) closeConn(other);
+      resolve({ conn, rest });
+    };
+    (async () => {
+      for await (const conn of listener) void check(conn);
+    })().catch(() => {}).finally(() => {
+      if (done) return;
+      done = true;
+      for (const other of pending) closeConn(other);
+      reject(new Error("the Dock helper did not connect"));
+    });
+  });
+}
+
+/** Write the session file atomically, the user's only (0600). */
+async function writeSession(folder: string, session: Record<string, unknown>): Promise<string> {
+  const file = join(folder, DOCK_HELPER_SESSION_FILE);
+  const temp = join(folder, `.${DOCK_HELPER_SESSION_FILE}-${crypto.randomUUID()}`);
+  await Deno.writeTextFile(temp, JSON.stringify(session), { mode: 0o600 });
+  await Deno.chmod(temp, 0o600);
+  await Deno.rename(temp, file);
+  return file;
+}
+
+/**
+ * Run the helper's copy and connect to it: listen on a loopback port, write the session (the port,
+ * a fresh 256-bit token and the app's pid) beside the copy, launch the copy, and wait for its hello
+ * with that token. The listener closes and the session file goes as soon as the helper is
+ * connected (or the wait timed out). Messages go to `onMessage`.
+ *
+ * @param bundle The helper's copy (`<data>/dock-helper/<Name>.app`).
+ * @param onMessage Called with each message.
+ * @param o The launcher and the timeout (tests).
+ * @returns The connected helper.
+ * @throws When it cannot be launched or does not connect in time.
+ */
+export async function launchDockHelper(
+  bundle: string,
+  onMessage: (message: DockHelperMessage) => void,
+  o: DockHelperLaunchOptions = {},
+): Promise<DockHelperChild> {
+  const token = toHex(crypto.getRandomValues(new Uint8Array(32)));
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  const session = await writeSession(dirname(bundle), { port, token, pid: Deno.pid })
+    .catch((err) => {
+      listener.close();
+      throw err;
+    });
+  const timeout = setTimeout(() => {
+    try {
+      listener.close();
+    } catch { /* closed */ }
+  }, o.connectTimeoutMs ?? 15_000);
+  let connected: { conn: Deno.Conn; rest: Uint8Array };
+  try {
+    await (o.open ?? openDockHelper)(bundle);
+    connected = await acceptHelper(listener, token);
+  } finally {
+    clearTimeout(timeout);
+    try {
+      listener.close();
+    } catch { /* closed */ }
+    await Deno.remove(session).catch(() => {});
+  }
+  return connectedHelper(connected.conn, connected.rest, onMessage);
+}
+
+/** The helper over its connection: its messages read until the connection ends. */
+function connectedHelper(
+  conn: Deno.Conn,
+  rest: Uint8Array,
   onMessage: (message: DockHelperMessage) => void,
 ): DockHelperChild {
-  const child = new Deno.Command(exe, {
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "null",
-    clearEnv: true,
-    env: { [DOCK_HELPER_ENV]: "1" },
-  }).spawn();
-  const writer = child.stdin.getWriter();
-  (async () => {
-    let rest = "";
-    for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream())) {
-      rest += chunk;
-      for (let nl = rest.indexOf("\n"); nl >= 0; nl = rest.indexOf("\n")) {
-        const message = parseDockHelperLine(rest.slice(0, nl));
-        rest = rest.slice(nl + 1);
+  const exited = (async () => {
+    const decoder = new TextDecoder();
+    let text = decoder.decode(rest, { stream: true });
+    const buf = new Uint8Array(4096);
+    for (;;) {
+      for (let nl = text.indexOf("\n"); nl >= 0; nl = text.indexOf("\n")) {
+        const message = parseDockHelperLine(text.slice(0, nl));
+        text = text.slice(nl + 1);
         if (message) onMessage(message);
       }
+      const n = await conn.read(buf).catch(() => null);
+      if (n === null) return 0;
+      text += decoder.decode(buf.subarray(0, n), { stream: true });
     }
-  })().catch(() => {});
+  })();
+  const close = () => {
+    try {
+      conn.close();
+    } catch { /* closed */ }
+  };
   let leaving = false;
   return {
     exit: () => {
       if (leaving) return;
       leaving = true;
-      writer.write(new TextEncoder().encode('{"t":"exit"}\n'))
-        .then(() => writer.close())
-        .catch(() => {});
+      conn.write(new TextEncoder().encode('{"t":"exit"}\n')).then(close, close);
     },
-    kill: () => {
-      try {
-        child.kill("SIGTERM");
-      } catch { /* gone */ }
-    },
-    exited: child.status.then((s) => s.code),
+    kill: close,
+    exited,
   };
 }
 
@@ -534,7 +698,7 @@ export async function startDockHelper(
       if (exe === undefined || !(await Deno.stat(exe).then((i) => i.isFile, () => false))) {
         exe = await installDockHelper(source, dataDir);
       }
-      return spawnDockHelper(exe, onMessage);
+      return await launchDockHelper(dirname(dirname(dirname(exe))), onMessage);
     },
     onActivate: () => focusForDock(o.keyWindow(), o.windows()),
     onQuit: o.quit,

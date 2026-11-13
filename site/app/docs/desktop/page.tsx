@@ -3785,9 +3785,11 @@ export default {
           with it. While a window shows, the app copies it into its data folder (
           <code>
             ~/Library/Application Support/&lt;identifier&gt;/dock-helper/&lt;Name&gt;.app
-          </code>, again whenever the bundled copy&apos;s files differ) and runs it: a regular app
-          with no window of its own, which holds the Dock icon. Its baked grants are the run of that
-          copy and the write of its folder.
+          </code>, again whenever the bundled copy&apos;s files differ) and opens it through
+          LaunchServices: a regular app with no window of its own, which holds the Dock icon. Its
+          baked grants are the write of that folder and the run of <code>/usr/bin/open</code>{" "}
+          (the copy itself is never a run grant: Deno denies writes to a program it may run and to
+          the folders above it, so the app could not keep the copy up to date).
         </li>
         <li>
           Clicking the helper&apos;s Dock icon, or switching to it with Cmd-Tab, brings the
@@ -3799,11 +3801,13 @@ export default {
           click would.
         </li>
         <li>
-          The app and the helper talk over the helper&apos;s stdin / stdout pipes, which no other
-          process can reach. The helper&apos;s windows list in the Dock menu and App Exposé is
-          empty, and the menu bar stays the accessory app&apos;s (none): handle Cmd+W in the page (a
-          {" "}
-          <code>keydown</code> with <code>metaKey</code> calling <code>closeWindow()</code>).
+          The app and the helper talk over a loopback connection: before opening the helper the app
+          writes the port, a fresh token and its process id to a file beside the copy (the folder is
+          the user&apos;s own, 0700), and takes only the connection that presents that token. The
+          helper leaves when the connection closes, so it never outlives the app. The helper&apos;s
+          windows list in the Dock menu and App Exposé is empty, and the menu bar stays the
+          accessory app&apos;s (none): handle Cmd+W in the page (a <code>keydown</code> with{" "}
+          <code>metaKey</code> calling <code>closeWindow()</code>).
         </li>
         <li>
           Where the helper cannot run (a <code>denext desktop run</code> / <code>dev</code>{" "}

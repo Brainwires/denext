@@ -36,6 +36,7 @@ import {
   focusForDock,
   holdsDockIcon,
   installDockHelper,
+  launchDockHelper,
   parseDockHelperLine,
   startDockHelper,
   treeFingerprint,
@@ -139,7 +140,7 @@ Deno.test("packaging: the helper's name, files, Info.plist and grants", () => {
   assertEquals(dockHelperFileName("✓"), "-");
   assertEquals(dockHelperFileName("  "), "App");
   assertEquals(dockHelperGrants(config({ name: "My App", dock: "while-window-open" }), "darwin"), {
-    run: [`${DESKTOP_DATA_TOKEN}/dock-helper/My App.app/Contents/MacOS/My App`],
+    run: ["/usr/bin/open"],
     write: [`${DESKTOP_DATA_TOKEN}/dock-helper`],
   });
   assertEquals(dockHelperGrants(config({ name: "Fleet", dock: false }), "darwin"), undefined);
@@ -168,11 +169,14 @@ Deno.test("packaging: the helper's grants are baked only for macOS on a runtime 
   const flags = desktopBuildFlags(cfg, "darwin", { dataScope: true, cacheScope: true });
   const run = flags.find((f) => f.startsWith("--allow-run"));
   const write = flags.find((f) => f.startsWith("--allow-write"));
-  assertEquals(run, `--allow-run=${DESKTOP_DATA_TOKEN}/dock-helper/Fleet.app/Contents/MacOS/Fleet`);
+  assertEquals(run, "--allow-run=/usr/bin/open");
   assertEquals(write, `--allow-write=${DESKTOP_DATA_TOKEN}/dock-helper`);
   for (const [os, scope] of [["linux", true], ["windows", true], ["darwin", false]] as const) {
     const other = desktopBuildFlags(cfg, os, { dataScope: scope, cacheScope: scope });
-    assert(!other.some((f) => f.includes("dock-helper")), `${os} ${scope}`);
+    assert(
+      !other.some((f) => f.includes("dock-helper") || f.includes("/usr/bin/open")),
+      `${os} ${scope}`,
+    );
   }
 });
 
@@ -257,6 +261,8 @@ Deno.test("packaging: the helper's source is the packed native template", async 
       "DENEXT_DOCK_HELPER",
       "DenextDockHelperFor",
       "'why?'",
+      "INADDR_LOOPBACK",
+      '@"session"',
     ]
   ) assertStringIncludes(source, part);
 });
@@ -264,7 +270,7 @@ Deno.test("packaging: the helper's source is the packed native template", async 
 Deno.test("runtime: the helper's messages and the app bundle of an executable", () => {
   assertEquals(parseDockHelperLine('{"t":"activate"}'), "activate");
   assertEquals(parseDockHelperLine('{"t":"quit"}'), "quit");
-  assertEquals(parseDockHelperLine('{"t":"ready"}'), "ready");
+  assertEquals(parseDockHelperLine('{"t":"hello","token":"x"}'), undefined);
   assertEquals(parseDockHelperLine('{"t":"exit"}'), undefined);
   assertEquals(parseDockHelperLine("garbage"), undefined);
   assertEquals(parseDockHelperLine("null"), undefined);
@@ -338,6 +344,93 @@ Deno.test("runtime: no helper in the bundle (a run / dev build) keeps the access
   }
 });
 
+/** A stand-in for the helper the opener "launches": reads the session beside it and connects. */
+async function fakeHelperConnect(bundle: string, token?: string): Promise<Deno.Conn> {
+  const session = JSON.parse(await Deno.readTextFile(join(bundle, "..", "session")));
+  assertEquals(((await Deno.stat(join(bundle, "..", "session"))).mode ?? 0) & 0o777, 0o600);
+  assertEquals(session.pid, Deno.pid);
+  assertEquals(session.token.length, 64);
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port: session.port });
+  await conn.write(
+    new TextEncoder().encode(`${JSON.stringify({ t: "hello", token: token ?? session.token })}\n`),
+  );
+  return conn;
+}
+
+/** Read from `conn` until it closes (a reset counts as closed). */
+async function readAll(conn: Deno.Conn): Promise<string> {
+  const chunks: string[] = [];
+  const buf = new Uint8Array(256);
+  try {
+    for (let n = await conn.read(buf); n !== null; n = await conn.read(buf)) {
+      chunks.push(new TextDecoder().decode(buf.subarray(0, n)));
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.ConnectionReset)) throw err;
+  }
+  return chunks.join("");
+}
+
+Deno.test("runtime: the app opens the helper and takes only the connection that says hello with the session's token", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "Fleet.app");
+    await Deno.mkdir(bundle);
+    let helper: Deno.Conn | undefined;
+    let impostor: Deno.Conn | undefined;
+    const opened: string[] = [];
+    const messages: DockHelperMessage[] = [];
+    const child = await launchDockHelper(bundle, (m) => messages.push(m), {
+      open: async (path) => {
+        opened.push(path);
+        impostor = await fakeHelperConnect(bundle, "0".repeat(64));
+        helper = await fakeHelperConnect(bundle);
+      },
+    });
+    assertEquals(opened, [bundle]);
+    // The impostor was dropped; the session file is gone once the helper is connected.
+    assertEquals(await readAll(impostor!), "");
+    impostor!.close();
+    await assertRejects(() => Deno.stat(join(dir, "session")), Deno.errors.NotFound);
+    await helper!.write(new TextEncoder().encode('{"t":"activate"}\n{"t":"quit"}\n{"t":"nope"}\n'));
+    for (let i = 0; i < 100 && messages.length < 2; i++) await new Promise((r) => setTimeout(r, 5));
+    assertEquals(messages, ["activate", "quit"]);
+    const tail = readAll(helper!);
+    child.exit();
+    assertEquals(await tail, '{"t":"exit"}\n');
+    helper!.close();
+    assertEquals(await child.exited, 0);
+    assertEquals(messages, ["activate", "quit"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runtime: a helper that never connects times out, and the session file goes", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "Fleet.app");
+    await Deno.mkdir(bundle);
+    await assertRejects(
+      () =>
+        launchDockHelper(bundle, () => {}, { open: () => Promise.resolve(), connectTimeoutMs: 50 }),
+      Error,
+      "did not connect",
+    );
+    await assertRejects(
+      () =>
+        launchDockHelper(bundle, () => {}, {
+          open: () => Promise.reject(new Error("open failed")),
+        }),
+      Error,
+      "open failed",
+    );
+    assertEquals([...Deno.readDirSync(dir)].map((e) => e.name), ["Fleet.app"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** A fake helper child: `end()` makes it exit. */
 function fakeChild() {
   let end!: (code: number) => void;
@@ -389,7 +482,6 @@ Deno.test("presence: the helper runs exactly while a window shows", async () => 
   assertEquals(children.length, 1);
   send!("activate");
   send!("quit");
-  send!("ready");
   assertEquals(events, ["activate", "quit"]);
   // A window replaced by another within the delay keeps the helper.
   showing = false;

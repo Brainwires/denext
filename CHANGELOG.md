@@ -18,9 +18,11 @@ and this project adheres to
   under `/Applications`, so packaging (`denext desktop package`) builds a small helper app into
   `Contents/Helpers/<Name>.app` (clang, the app's architectures, name, icon and version; signed and
   notarized with the app), the app copies it into its data folder (again whenever the bundled copy
-  differs) and runs it as a child while a window shows. Clicking the helper's Dock icon or switching
-  to it with Cmd-Tab brings the app's window to the front; its Quit quits the app through the quit
-  guards. They talk over the child's stdin / stdout pipes only. Where the helper cannot run
+  differs) and opens it through LaunchServices while a window shows. Clicking the helper's Dock icon
+  or switching to it with Cmd-Tab brings the app's window to the front; its Quit quits the app
+  through the quit guards. The two talk over a loopback connection the helper proves with a
+  per-launch token, which it reads from a file in the app's 0700 data folder. The packaged app gets
+  `--allow-run=/usr/bin/open` and the write of `<data>/dock-helper`. Where the helper cannot run
   (`denext desktop run` / `dev` builds, a failed copy or launch) the app keeps the accessory
   behaviour; on Windows and Linux the value is `true`. Needs `desktop.app.identifier`, and not with
   `desktop.permissions: "strict"` or `activationPolicy: "regular"`.

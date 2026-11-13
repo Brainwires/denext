@@ -12,7 +12,6 @@
 // present is left as the user wrote it.
 
 import { createHash } from "node:crypto";
-import { parse as parseJsonc } from "@std/jsonc";
 import { basename, fromFileUrl, isAbsolute, join } from "@std/path";
 import {
   dirname as posixDirname,
@@ -1507,8 +1506,8 @@ function sidecarProgramBake(
 
 /**
  * The Dock helper's grants (`desktop.app.dock: "while-window-open"` on macOS,
- * {@linkcode dockHelperGrants}): `run` for its copy in the data folder, `write` for the folder it is
- * copied into. Only on a runtime that expands `$DENO_DESKTOP_DATA` ({@linkcode folderScope}); on
+ * {@linkcode dockHelperGrants}): `write` for the folder it is copied into, `run` for
+ * `/usr/bin/open`, which launches it. Only on a runtime that expands `$DENO_DESKTOP_DATA` ({@linkcode folderScope}); on
  * another the helper cannot be run and the app keeps the accessory behaviour.
  */
 function dockHelperPermissionSet(
@@ -1517,18 +1516,7 @@ function dockHelperPermissionSet(
   options: DesktopBuildFlagOptions,
 ): DesktopPermissionSet {
   if (!folderScope(cfg, options)) return {};
-  return dockHelperGrants(cfg, os, projectDenoJsonSync(options.projectDir)) ?? {};
-}
-
-/** The project's deno.json (else deno.jsonc), parsed, or `undefined`. */
-function projectDenoJsonSync(dir: string | undefined): unknown {
-  if (dir === undefined) return undefined;
-  for (const name of ["deno.json", "deno.jsonc"]) {
-    try {
-      return parseJsonc(Deno.readTextFileSync(join(dir, name)));
-    } catch { /* not this one */ }
-  }
-  return undefined;
+  return dockHelperGrants(cfg, os) ?? {};
 }
 
 /** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
