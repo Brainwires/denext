@@ -8,6 +8,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { wsBridgesClosed } from "../src/build/dev-proxy.ts";
 import { buildAndServe } from "./e2e/harness.ts";
 
 const SPA = fromFileUrl(new URL("../examples/spa", import.meta.url));
@@ -152,6 +153,10 @@ async function stepWsBridged({ origin }: Ctx): Promise<void> {
     ws.onclose = () => r();
     ws.close();
   });
+  // The proxy closes its upstream socket when this one closes, and `ws` holds a close timer until
+  // the backend answers that close: a teardown that returns first leaves the timer to the leak
+  // sanitizer (seen on a loaded CI runner).
+  await wsBridgesClosed();
 }
 
 Deno.test({

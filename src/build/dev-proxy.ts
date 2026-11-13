@@ -266,6 +266,26 @@ function wireClient(b: WsBridge): void {
   client.onerror = closeUpstream;
 }
 
+/** One promise per open WebSocket bridge, settled once its upstream socket has closed. */
+const openBridges = new Set<Promise<void>>();
+
+/**
+ * Resolves once every WebSocket bridge open now has closed its upstream socket. A bridge closes
+ * its upstream when either side goes away, but `ws` finishes the close handshake with the
+ * backend later, holding a 30 s close timer until the backend answers; a server's shutdown or a
+ * test's teardown that must not leave that timer behind awaits this first.
+ */
+export async function wsBridgesClosed(): Promise<void> {
+  await Promise.all([...openBridges]);
+}
+
+/** Track `upstream` in {@link openBridges} until `ws` emits its `close` (after its timer is cleared). */
+function trackBridge(upstream: NodeWebSocket): void {
+  const closed = new Promise<void>((resolve) => upstream.once("close", () => resolve()));
+  openBridges.add(closed);
+  void closed.then(() => openBridges.delete(closed));
+}
+
 function proxyWebSocket(
   req: Request,
   url: URL,
@@ -294,6 +314,7 @@ function proxyWebSocket(
   if (origin) headers.origin = origin;
   if (cookie) headers.cookie = cookie;
   const upstream = new NodeWebSocket(backendWs.toString(), protocols, { headers });
+  trackBridge(upstream);
   // Binary frames (msgpackr etc.) must arrive as ArrayBuffers so they can be relayed
   // verbatim; the Deno default (Blob) can't be forwarded synchronously.
   client.binaryType = "arraybuffer";
