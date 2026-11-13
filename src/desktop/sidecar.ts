@@ -84,6 +84,15 @@ export type SidecarRun =
      * under the same relative paths. Relative to the module's folder.
      */
     readonly entries?: readonly string[];
+    /**
+     * Per-target `node_modules` folders (relative to the project) whose packages are copied in
+     * place of the host's when packaging for that target: keys `"<os>-<arch>"`
+     * (`"darwin-x86_64"`, `"linux-arm64"`) or `"<arch>"` (`"x86_64"`, `"arm64"`), the first that
+     * matches. For a native addon built per architecture that ships no prebuild for the other
+     * (`node-pty` compiled on the host), or a per-platform optional dependency npm installed only
+     * for the host. The prebuilt addons and npm `os` / `cpu` rules pick the rest per arch.
+     */
+    readonly archDirs?: Readonly<Record<string, string>>;
   }
   | {
     /** The program to spawn. */
@@ -450,12 +459,41 @@ function excludeError(run: Record<string, unknown>): string | null {
   return both === undefined ? null : `run.exclude excludes "${both}", which run.external copies`;
 }
 
+/** The targets `run.archDirs` may name: an arch, or `<os>-<arch>`. */
+const ARCH_DIR_KEY_RE = /^(?:(?:darwin|linux|windows)-)?(?:x86_64|arm64)$/;
+
+/** The problem with `run.archDirs`, or `null`. */
+function archDirsError(archDirs: unknown): string | null {
+  if (archDirs === undefined) return null;
+  if (!isObject(archDirs) || Array.isArray(archDirs)) {
+    return 'run.archDirs must be an object such as { "darwin-x86_64": "vendor/x64/node_modules" }';
+  }
+  for (const [key, dir] of Object.entries(archDirs)) {
+    if (!ARCH_DIR_KEY_RE.test(key)) {
+      return `run.archDirs: "${key}" is not "<arch>" or "<os>-<arch>" (x86_64 / arm64; darwin, ` +
+        "linux, windows)";
+    }
+    if (typeof dir !== "string" || dir === "") {
+      return `run.archDirs["${key}"] must be a node_modules folder path`;
+    }
+  }
+  return null;
+}
+
 /** The problem with a module sidecar's `run`, or `null`. */
 function moduleRunError(run: Record<string, unknown>): string | null {
   const bundled = run.nodeModules !== undefined;
   return first([
     () => typeof run.module === "string" && run.module !== "" ? null : "run.module must be a path",
-    () => unknownOption(run, "run", ["module", "nodeModules", "external", "exclude", "entries"]),
+    () =>
+      unknownOption(run, "run", [
+        "module",
+        "nodeModules",
+        "external",
+        "exclude",
+        "entries",
+        "archDirs",
+      ]),
     () =>
       !bundled || (typeof run.nodeModules === "string" && run.nodeModules !== "")
         ? null
@@ -469,11 +507,14 @@ function moduleRunError(run: Record<string, unknown>): string | null {
         ? null
         : "run.entries must be a string array",
     () => excludeError(run),
+    () => archDirsError(run.archDirs),
     () =>
       bundled ||
-        (run.external === undefined && run.entries === undefined && run.exclude === undefined)
+        (run.external === undefined && run.entries === undefined && run.exclude === undefined &&
+          run.archDirs === undefined)
         ? null
-        : "run.external, run.exclude and run.entries need run.nodeModules (they shape the bundle)",
+        : "run.external, run.exclude, run.entries and run.archDirs need run.nodeModules (they " +
+          "shape the bundle)",
   ]);
 }
 

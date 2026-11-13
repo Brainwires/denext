@@ -23,6 +23,8 @@ import {
 import { createWindowController } from "./caps/window.ts";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import type { DesktopAppApi } from "./launch-events.ts";
+import type { DesktopEventAppendOptions } from "./bridge-events.ts";
+import { headlessDock, headlessWindow, headlessWindowConstructor } from "./headless.ts";
 import type { DesktopAppDirs } from "./app-dirs.ts";
 import type { PickedPaths } from "./picked-paths.ts";
 import {
@@ -291,8 +293,14 @@ export interface DesktopWindowsOptions {
   readonly api?: DesktopAppApi;
   /** `Deno.dock` (default the runtime's). */
   readonly dock?: DockLike;
-  /** Push an event to the pages: every window's, or `target`'s. */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /** Push an event to the pages: every window's, or `target`'s (`retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** `desktop.window` / `desktop.titleBar` / … as resolved. */
   readonly windowSettings?: DesktopWindowSettings;
   /** `desktop.app`'s `keepAlive` / `dock`. */
@@ -330,6 +338,11 @@ export interface DesktopWindowsOptions {
   readonly os?: string;
   /** Where warnings go. */
   readonly warn?: (message: string) => void;
+  /**
+   * Every window stays hidden (`DENEXT_DESKTOP_HEADLESS=1`, see `headless.ts`): the main window,
+   * every window opened later, no Dock icon and no Dock bounce.
+   */
+  readonly headless?: boolean;
   /**
    * The Deno Desktop runtime's version (default `Deno.version.deno`): from `3.0.0-denext.7` the
    * main window with `desktop.window.overlay` and the tray panel are layer-shell overlays where
@@ -438,6 +451,23 @@ interface SetupState {
   readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
   /** The Dock helper's presence (`desktop.app.dock: "while-window-open"`, macOS), once started. */
   dockPresence?: DockPresence;
+}
+
+/**
+ * `options` for a headless launch: the main window hidden, windows opened later created hidden, no
+ * window able to show or focus itself, the Dock without an icon or a bounce, and no Dock helper.
+ */
+function headlessWindowsOptions(options: DesktopWindowsOptions): DesktopWindowsOptions {
+  const dock = headlessDock(options.dock ?? runtimeDock());
+  return {
+    ...options,
+    window: headlessWindow(options.window),
+    ...(options.BrowserWindow !== undefined
+      ? { BrowserWindow: headlessWindowConstructor(options.BrowserWindow) }
+      : {}),
+    ...(dock ? { dock } : {}),
+    appSettings: { ...options.appSettings, dock: false, activationPolicy: "accessory" },
+  };
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -789,8 +819,8 @@ function createRegistry(st: SetupState): WindowRegistry {
     warn: st.warn,
     onQuitWorkChanged: () => applyKeepAlive(st),
     appUrl: (path) => st.appUrl(path),
-    emit: (cap, event, data, target) => {
-      o.emit(cap, event, data, target);
+    emit: (cap, event, data, target, emitOptions) => {
+      o.emit(cap, event, data, target, emitOptions);
       // A window opened, closed or took the focus: the Dock helper follows at once (it also polls).
       if (cap === "windows") st.dockPresence?.sync();
     },
@@ -808,7 +838,7 @@ function createRegistry(st: SetupState): WindowRegistry {
         window,
         api: o.api,
         overlay,
-        emit: (cap, event, data) => o.emit(cap, event, data, id),
+        emit: (cap, event, data, emitOptions) => o.emit(cap, event, data, id, emitOptions),
         closed,
         wayBack: () => st.app?.hasTray() === true,
         ...(o.webViews ? { webViews: () => o.webViews! } : {}),
@@ -971,7 +1001,8 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
  * @param options The adopted window, the runtime APIs, the emitter and the settings.
  * @returns The setup.
  */
-export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWindowsSetup {
+export function setUpDesktopWindows(given: DesktopWindowsOptions): DesktopWindowsSetup {
+  const options = given.headless === true ? headlessWindowsOptions(given) : given;
   const st: SetupState = {
     options,
     dock: options.dock ?? runtimeDock(),

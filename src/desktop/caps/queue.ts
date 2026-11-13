@@ -21,6 +21,8 @@ export interface PullQueue<T> {
   take(): T[];
   /** Forget everything queued. */
   clear(): void;
+  /** Forget the queued items `keep` returns `false` for (the others stay, in order). */
+  retainOnly(keep: (item: T) => boolean): void;
 }
 
 /**
@@ -41,6 +43,11 @@ export function createPullQueue<T>(signal: () => void, max: number = DEFAULT_MAX
     take: () => items.splice(0, items.length),
     clear: () => {
       items.length = 0;
+    },
+    retainOnly: (keep) => {
+      const kept = items.filter(keep);
+      items.length = 0;
+      items.push(...kept);
     },
   };
 }

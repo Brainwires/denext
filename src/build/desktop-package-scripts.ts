@@ -153,7 +153,11 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...desktopRuntimeDenoFlags(env, denoFlags),
     "--include",
     "out",
-    ...await desktopIncludeArgs(import.meta.url),
+    // A bundled sidecar's native packages for this target's arch only (each arch its own bundle,
+    // which lipo then joins).
+    ...await desktopIncludeArgs(import.meta.url, "darwin", undefined, {
+      target: target ?? "host",
+    }),
     // A project with node_modules: embed only the npm packages the entry reaches.
     ...await desktopNpmArgs(import.meta.url),
   ];

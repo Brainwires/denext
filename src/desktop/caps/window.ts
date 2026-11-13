@@ -62,10 +62,14 @@ import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events
 import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
+import type { DesktopEventAppendOptions } from "../bridge-events.ts";
 import { applyWindowLevel, DEFAULT_VIBRANCY } from "../window-config.ts";
 import type { CreateWebViewOptions, WebViewHandle } from "../webview.ts";
 import type { DesktopWebViewSettings } from "../webview-config.ts";
 import { createWebViewHost, type WebViewHost } from "./webview.ts";
+
+/** A one-shot event: for the page live now, never replayed to a page that loads later. */
+const LIVE_ONLY: DesktopEventAppendOptions = { retain: false };
 
 /** How long a guarded close may go unacknowledged before a repeated close request wins. */
 export const UNRESPONSIVE_MS = 5_000;
@@ -212,8 +216,13 @@ export interface WindowControllerOptions {
   readonly window: unknown;
   /** The runtime's app API (`Deno.desktop`, denext's pinned runtime only). */
   readonly api?: DesktopAppApi;
-  /** Push an event to the page's stream (the bridge's `emit`). */
-  readonly emit: (cap: string, event: string, data: unknown) => void;
+  /** Push an event to the page's stream (the bridge's `emit`; `retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** End the process once the window closed for good (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /**
@@ -551,7 +560,7 @@ interface WindowState {
   readonly options: WindowControllerOptions;
   readonly win: BrowserWindowLike | undefined;
   readonly api: DesktopAppApi | undefined;
-  readonly emit: (event: string, data: unknown) => void;
+  readonly emit: (event: string, data: unknown, options?: DesktopEventAppendOptions) => void;
   readonly exit: (code: number) => void;
   readonly picked: PickedPaths;
   readonly resolve: DroppedPathResolver;
@@ -1263,7 +1272,8 @@ function pageUnresponsive(s: WindowState): boolean {
 function askPage(s: WindowState, reason: CloseReason): void {
   if (s.pending && (reason !== "quit" || s.pending.reason === "quit")) return;
   s.pending = { id: crypto.randomUUID(), at: s.now(), acked: false, reason };
-  s.emit("closeRequested", { id: s.pending.id, reason });
+  // Asked of the page live now: a page that loads later never answers an old request.
+  s.emit("closeRequested", { id: s.pending.id, reason }, LIVE_ONLY);
 }
 
 /** The window's `close` listener hook (see {@linkcode WindowController.interceptClose}). */
@@ -1284,8 +1294,8 @@ function installWindowEvents(s: WindowState): void {
   s.installed = true;
   for (const type of STATE_EVENTS) win.addEventListener(type, () => s.emit("state", null));
   win.addEventListener("drop", (e) => void acceptDrop(s, (e as CustomEvent).detail));
-  win.addEventListener("focus", () => s.emit("focus", null));
-  win.addEventListener("blur", () => s.emit("blur", null));
+  win.addEventListener("focus", () => s.emit("focus", null, LIVE_ONLY));
+  win.addEventListener("blur", () => s.emit("blur", null, LIVE_ONLY));
   s.api?.addEventListener?.("displaychanged", () => s.emit("display", null));
   // The user's title bar settings changed (runtime 2.9.7-denext.12).
   s.api?.addEventListener?.(
@@ -1305,7 +1315,8 @@ export function createWindowController(options: WindowControllerOptions): Window
   const win = typeof options.window === "object" && options.window !== null
     ? options.window as BrowserWindowLike
     : undefined;
-  const emit = (event: string, data: unknown) => options.emit("window", event, data);
+  const emit = (event: string, data: unknown, emitOptions?: DesktopEventAppendOptions) =>
+    options.emit("window", event, data, emitOptions);
   const s: WindowState = {
     options,
     win,

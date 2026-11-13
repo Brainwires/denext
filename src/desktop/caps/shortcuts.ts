@@ -90,7 +90,10 @@ export function shortcutsCapability(options: ShortcutsCapabilityOptions = {}): D
   /** Start queueing presses (once). */
   const install = (s: DesktopShortcutsApi, ctx: DesktopCapCtx) => {
     if (queue) return queue;
-    const q = createPullQueue<{ accelerator: string }>(() => ctx.emit("pressed", null));
+    const q = createPullQueue<{ accelerator: string }>(() =>
+      // A press is for the page live now: never replayed to a page that loads later.
+      ctx.emit("pressed", null, { retain: false })
+    );
     queue = q;
     s.addEventListener("shortcut", (e) => {
       const acc = ((e as CustomEvent).detail as { accelerator?: unknown } | null)?.accelerator;

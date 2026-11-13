@@ -50,6 +50,10 @@ import {
 import type { WindowController } from "./caps/window.ts";
 import { isAppQuitting, WINDOW_EVENTS } from "./caps/window.ts";
 import { isAppPath } from "./tray-config.ts";
+import type { DesktopEventAppendOptions } from "./bridge-events.ts";
+
+/** A one-shot event: for the pages live now, never replayed to a page that loads later. */
+const LIVE_ONLY: DesktopEventAppendOptions = { retain: false };
 import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/config.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
@@ -177,8 +181,14 @@ export interface WindowRegistryOptions {
   readonly lifecycleTimeouts?: { readonly quitMs?: number; readonly guardMs?: number };
   /** The URL a window loads for an app path (`/vm?id=1` → `app://localhost/vm?id=1`). */
   readonly appUrl: (path: string) => string;
-  /** Push an event to the pages (every window's, or `target`'s). */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /** Push an event to the pages (every window's, or `target`'s; `retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /**
    * Make the `window` capability controller of a window (its `closed` hook is the registry's);
    * `overlay` when it was created as a layer-shell overlay.
@@ -740,10 +750,15 @@ function register(
   controller.install();
   window.addEventListener("focus", () => {
     st.focusOrder = [id, ...st.focusOrder.filter((f) => f !== id)];
-    st.options.emit("windows", "focus", { id });
+    st.options.emit("windows", "focus", { id }, undefined, LIVE_ONLY);
   });
-  window.addEventListener("blur", () => st.options.emit("windows", "blur", { id }));
-  st.options.emit("windows", "opened", infoOf(entry));
+  window.addEventListener(
+    "blur",
+    () => st.options.emit("windows", "blur", { id }, undefined, LIVE_ONLY),
+  );
+  // What happened to the windows is for the pages live now; a page that loads later asks
+  // `getWindows()` for the current list.
+  st.options.emit("windows", "opened", infoOf(entry), undefined, LIVE_ONLY);
   lifecycleOf(st).windowOpened(infoOf(entry));
   return entry;
 }
@@ -801,7 +816,7 @@ function closed(st: RegistryState, id: string): void {
   st.store.flush();
   if (!quitting && !endsApp) rememberClosed(st, entry);
   st.options.onClosed?.(id, entry, quitting || endsApp);
-  st.options.emit("windows", "closed", { id });
+  st.options.emit("windows", "closed", { id }, undefined, LIVE_ONLY);
   const lifecycle = lifecycleOf(st);
   lifecycle.windowClosed({ ...infoOf(entry), appQuitting: quitting || endsApp });
   // With quit hooks, a quit's last close is held by the lifecycle while they run, and the runtime

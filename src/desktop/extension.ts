@@ -60,7 +60,8 @@ export interface DesktopCapCtx {
    * Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`
    * must be one the capability declared in {@linkcode DesktopCapability.events}; emitting an
    * undeclared event throws. Events are retained for replay, so a page that subscribes later still
-   * receives it. For work that outlives the call (or that no page call started), use the
+   * receives it; `{ retain: false }` sends a one-shot action only to the pages live now. For work
+   * that outlives the call (or that no page call started), use the
    * {@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives.
    */
   emit(event: string, data: unknown, options?: DesktopEmitOptions): void;
@@ -193,6 +194,14 @@ export interface DesktopEmitOptions {
    * window's stream when omitted.
    */
   readonly window?: string;
+  /**
+   * Whether the event is kept for a page that subscribes later (default `true`). Keep state, and
+   * what launched the app (a deep link, an opened file), retained. Pass `false` for a one-shot
+   * action meant for the page that is live now — a menu click, a button press forwarded from the
+   * backend — so a page that loads or reloads afterwards does not receive (and act on) it again.
+   * A non-retained event still reaches a live page whose stream reconnects (`Last-Event-ID`).
+   */
+  readonly retain?: boolean;
 }
 
 /** Options for {@linkcode DesktopCapCtx.pickedPath}. */
@@ -261,7 +270,9 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be
    * one the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.
    * Events are retained for replay: one emitted before any page subscribes is delivered to the
-   * first `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}.
+   * first `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}. Pass
+   * `{ retain: false }` for a one-shot action (a menu click forwarded to the page), which a page
+   * that loads or reloads later never receives.
    */
   emit(event: string, data: unknown, options?: DesktopEmitOptions): void;
   /** The same lookup as {@linkcode DesktopCapCtx.pickedPath}. */

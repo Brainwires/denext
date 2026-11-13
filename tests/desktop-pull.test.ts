@@ -133,7 +133,8 @@ Deno.test("pullQueue: a failed or malformed take delivers nothing and keeps list
   await withRuntime(odd, async () => {
     const got: unknown[] = [];
     const stop = pullQueue("app", "action", (raw) => raw)((x) => got.push(x));
-    await until(() => odd.calls.length === 1);
+    // The first take, and one more when the stream connects.
+    await until(() => odd.calls.length >= 1);
     await new Promise((r) => setTimeout(r, 10));
     assertEquals(got, []);
     stop();

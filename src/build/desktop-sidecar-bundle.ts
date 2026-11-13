@@ -9,7 +9,10 @@
 // listed in `run.external` (packages that read their own files at run time). Those are copied whole
 // into `.deno-desktop/sidecars/<name>/node_modules/` with their dependencies (a pnpm layout is
 // followed through its links) and loaded with `require()`, which resolves from the bundle's folder.
-// Prebuilt addons for other operating systems (`prebuilds/<os>-<arch>/`) are left out. Packages
+// Prebuilt addons for other operating systems (`prebuilds/<os>-<arch>/`) are left out, and, when
+// the bundle is for one architecture (each `--arch` a package script builds), other architectures'
+// too, as are per-platform packages whose npm `os` / `cpu` rule the target out; `run.archDirs`
+// points a target at a `node_modules` built for it, whose copies win. Packages
 // matching `run.exclude` are neither: an import of one becomes a stand-in that throws
 // `MODULE_NOT_FOUND` when it is reached, and a copied package's dependency that matches stays
 // behind.
@@ -56,6 +59,8 @@ export interface SidecarBundleReport {
   readonly bytes: number;
   /** Problems worth reading (a missing dependency, a version conflict, a missing `ffi` grant). */
   readonly warnings: readonly string[];
+  /** The architecture it was bundled for (`undefined`: every arch's prebuilds kept). */
+  readonly arch?: DesktopArch;
 }
 
 /** Node's names for the OSes (`prebuilds/<platform>-<arch>`). */
@@ -64,6 +69,20 @@ const NODE_PLATFORM: Record<DesktopOs, string> = {
   linux: "linux",
   windows: "win32",
 };
+
+/** Node's names for the architectures (`prebuilds/<platform>-<arch>`, npm's `cpu`). */
+const NODE_ARCH: Record<DesktopArch, string> = { x86_64: "x64", arm64: "arm64" };
+
+/** An architecture a desktop app is packaged for (the package scripts' `--arch` names). */
+export type DesktopArch = "x86_64" | "arm64";
+
+/** What the copies are for: Node's platform, and its arch (`undefined`: every arch is kept). */
+interface CopyTarget {
+  readonly platform: string;
+  readonly cpu?: string;
+  /** `run.archDirs`' `node_modules` for this target, whose packages are copied first. */
+  readonly archDir?: string;
+}
 
 /** The prebuild platforms there are (a `prebuilds/` subfolder of another is left out). */
 const PREBUILD_PLATFORMS = ["darwin", "linux", "win32", "android", "freebsd", "openbsd", "sunos"];
@@ -184,17 +203,21 @@ async function findPackage(fromDir: string, name: string): Promise<string | unde
 
 /**
  * Whether a package's subfolder stays behind: its own `node_modules` (dependencies are copied
- * beside it, see copyPackages) and another OS's `prebuilds/<os>-<arch>`.
+ * beside it, see copyPackages), another OS's `prebuilds/<os>-<arch>`, and, for one arch, the
+ * target OS's prebuilds for other arches (`darwin-x64+arm64`, node-gyp-build's universal folder,
+ * is kept for either).
  */
-function skipFolder(parent: string, name: string, platform: string): boolean {
+function skipFolder(parent: string, name: string, target: CopyTarget): boolean {
   if (name === "node_modules") return true;
   if (basename(parent) !== "prebuilds") return false;
-  const os = name.split("-")[0];
-  return PREBUILD_PLATFORMS.includes(os) && os !== platform;
+  const [os, arches = ""] = name.split("-", 2);
+  if (!PREBUILD_PLATFORMS.includes(os)) return false;
+  if (os !== target.platform) return true;
+  return target.cpu !== undefined && arches !== "" && !arches.split("+").includes(target.cpu);
 }
 
-/** Copy `from` into `to` (files, links followed), leaving out other OSes' prebuilds. */
-async function copyTree(from: string, to: string, platform: string): Promise<number> {
+/** Copy `from` into `to` (files, links followed), leaving out other targets' prebuilds. */
+async function copyTree(from: string, to: string, target: CopyTarget): Promise<number> {
   let bytes = 0;
   await Deno.mkdir(to, { recursive: true });
   for await (const e of Deno.readDir(from)) {
@@ -202,7 +225,7 @@ async function copyTree(from: string, to: string, platform: string): Promise<num
     const info = await Deno.stat(src).catch(() => null);
     if (!info) continue;
     if (info.isDirectory) {
-      if (!skipFolder(from, e.name, platform)) bytes += await copyTree(src, dst, platform);
+      if (!skipFolder(from, e.name, target)) bytes += await copyTree(src, dst, target);
     } else if (info.isFile) {
       await Deno.copyFile(src, dst);
       bytes += info.size;
@@ -211,17 +234,42 @@ async function copyTree(from: string, to: string, platform: string): Promise<num
   return bytes;
 }
 
-/** Whether a package's `os` field (npm's) allows `platform` (no field: every OS). */
-async function supportsPlatform(root: string, platform: string): Promise<boolean> {
+/** Whether an npm `os` / `cpu` list allows `value` (no list: every value; `!x` rules one out). */
+function npmListAllows(list: unknown, value: string): boolean {
+  if (!Array.isArray(list) || list.length === 0) return true;
+  if (list.includes(`!${value}`)) return false;
+  const allowed = list.filter((o: unknown) => typeof o === "string" && !o.startsWith("!"));
+  return allowed.length === 0 || allowed.includes(value);
+}
+
+/**
+ * Whether a package's `os` and `cpu` fields (npm's) allow the target (no field: every OS / arch;
+ * `cpu` is only checked for a one-arch target).
+ */
+async function supportsPlatform(root: string, target: CopyTarget): Promise<boolean> {
   try {
-    const os = JSON.parse(await Deno.readTextFile(join(root, "package.json"))).os;
-    if (!Array.isArray(os) || os.length === 0) return true;
-    if (os.includes(`!${platform}`)) return false;
-    const allowed = os.filter((o: unknown) => typeof o === "string" && !o.startsWith("!"));
-    return allowed.length === 0 || allowed.includes(platform);
+    const pkg = JSON.parse(await Deno.readTextFile(join(root, "package.json")));
+    if (!npmListAllows(pkg.os, target.platform)) return false;
+    return target.cpu === undefined || npmListAllows(pkg.cpu, target.cpu);
   } catch {
     return true;
   }
+}
+
+/** `run.archDirs`' copy of package `name` for the target (its real folder), if it has one. */
+async function archCopy(target: CopyTarget, name: string): Promise<string | undefined> {
+  if (target.archDir === undefined) return undefined;
+  const candidate = join(target.archDir, ...name.split("/"));
+  return await exists(join(candidate, "package.json")) ? await Deno.realPath(candidate) : undefined;
+}
+
+/**
+ * Whether an optional dependency's name says it is the target's per-platform build
+ * (`@scope/pkg-darwin-arm64`, `pkg-linux-x64-gnu`): one npm installs only for the host.
+ */
+function namesTarget(name: string, target: CopyTarget): boolean {
+  if (target.cpu === undefined) return false;
+  return new RegExp(`[-_.]${target.platform}-${target.cpu}(?:$|[-_.])`).test(name);
 }
 
 /** The target of a package `exports` value for the first of `conditions` it has. */
@@ -291,14 +339,23 @@ async function dependenciesToCopy(
   copied: ReadonlyMap<string, string>,
   exclusion: Exclusion,
   warnings: string[],
+  target: CopyTarget,
 ): Promise<Array<[string, string]>> {
   const { required, optional } = await dependencyNames(root);
   const out: Array<[string, string]> = [];
   for (const dep of [...required, ...optional]) {
     if (copied.has(dep) || excludes(exclusion, dep)) continue;
-    const found = await findPackage(dirname(root), dep) ?? await findPackage(root, dep);
+    const found = await archCopy(target, dep) ?? await findPackage(dirname(root), dep) ??
+      await findPackage(root, dep);
     if (found) out.push([dep, found]);
     else if (required.includes(dep)) warnings.push(`${name} needs ${dep}, which is not installed`);
+    else if (namesTarget(dep, target)) {
+      warnings.push(
+        `${name}'s ${dep} (for ${target.platform}-${target.cpu}) is not installed: npm installs ` +
+          "only the host's; install it for that target (npm install --os/--cpu) into a folder " +
+          "run.archDirs names",
+      );
+    }
   }
   return out;
 }
@@ -324,7 +381,7 @@ function excludes(exclusion: Exclusion, name: string): boolean {
 async function copyPackages(
   roots: ReadonlyMap<string, string>,
   out: string,
-  platform: string,
+  target: CopyTarget,
   warnings: string[],
   bundled: ReadonlySet<string> = new Set(),
   exclusion: Exclusion = { patterns: [], hits: new Set() },
@@ -334,7 +391,9 @@ async function copyPackages(
   let bytes = 0;
   const queue = [...roots.entries()];
   while (queue.length > 0) {
-    const [name, root] = queue.shift()!;
+    const [name, found] = queue.shift()!;
+    // A copy built for the target (`run.archDirs`) wins over the host's.
+    const root = await archCopy(target, name) ?? found;
     const prior = copied.get(name);
     if (prior !== undefined) {
       if (prior !== root && prior !== "(bundled)") {
@@ -342,10 +401,10 @@ async function copyPackages(
       }
       continue;
     }
-    if (excludes(exclusion, name) || !await supportsPlatform(root, platform)) continue;
+    if (excludes(exclusion, name) || !await supportsPlatform(root, target)) continue;
     copied.set(name, root);
-    bytes += await copyTree(root, join(out, "node_modules", name), platform);
-    queue.push(...await dependenciesToCopy(name, root, copied, exclusion, warnings));
+    bytes += await copyTree(root, join(out, "node_modules", name), target);
+    queue.push(...await dependenciesToCopy(name, root, copied, exclusion, warnings, target));
   }
   return { names: [...copied.keys()].filter((n) => !bundled.has(n)), bytes };
 }
@@ -388,6 +447,7 @@ interface BundledRun {
   readonly external?: readonly string[];
   readonly exclude?: readonly string[];
   readonly entries?: readonly string[];
+  readonly archDirs?: Readonly<Record<string, string>>;
 }
 
 /** What one bundling run collects: the packages to copy (name → folder) and the native ones. */
@@ -411,11 +471,12 @@ async function seedCopies(
   state: BundleState,
   nodeModules: string | undefined,
   entry: string,
+  target: CopyTarget,
 ): Promise<void> {
   if (nodeModules) await seedInstalled(state, nodeModules);
   for (const name of state.external) {
     if (state.toCopy.has(name)) continue;
-    const root = await findPackage(dirname(entry), name);
+    const root = await findPackage(dirname(entry), name) ?? await archCopy(target, name);
     if (root) state.toCopy.set(name, root);
     else state.warnings.push(`external package ${name} is not installed`);
   }
@@ -641,6 +702,124 @@ async function bundleEsmCopies(
   }
 }
 
+/**
+ * What a bundle's copies are for: Node's names for `os` and `arch`, and `run.archDirs`' folder for
+ * them (`"<os>-<arch>"` first, then `"<arch>"`; relative to the project).
+ */
+function copyTarget(
+  projectDir: string,
+  run: BundledRun,
+  os: DesktopOs,
+  arch: DesktopArch | undefined,
+): CopyTarget {
+  const platform = NODE_PLATFORM[os] ?? "linux";
+  if (arch === undefined) return { platform };
+  const dir = run.archDirs?.[`${os}-${arch}`] ?? run.archDirs?.[arch];
+  return {
+    platform,
+    cpu: NODE_ARCH[arch],
+    ...(dir === undefined ? {} : { archDir: resolve(projectDir, dir) }),
+  };
+}
+
+/** Mach-O CPU types: x86_64, arm64. */
+const MACHO_CPU: Record<number, DesktopArch> = { 0x01000007: "x86_64", 0x0100000c: "arm64" };
+/** ELF `e_machine`: x86-64, AArch64. */
+const ELF_MACHINE: Record<number, DesktopArch> = { 0x3e: "x86_64", 0xb7: "arm64" };
+/** PE `Machine`: AMD64, ARM64. */
+const PE_MACHINE: Record<number, DesktopArch> = { 0x8664: "x86_64", 0xaa64: "arm64" };
+
+/**
+ * The architectures a native binary is built for, from its header: a Mach-O (thin or universal),
+ * an ELF or a PE file. `undefined` when it is none of them or another arch's (nothing to say).
+ *
+ * @param bytes The file's first bytes (4 KiB is plenty).
+ * @returns The arches it holds.
+ */
+export function nativeArchesOf(bytes: Uint8Array): DesktopArch[] | undefined {
+  if (bytes.length < 8) return undefined;
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const cpus = machOCpus(v) ?? elfMachine(v) ?? peMachine(v);
+  if (!cpus) return undefined;
+  const found = cpus.table === "macho"
+    ? cpus.keys.map((k) => MACHO_CPU[k])
+    : cpus.keys.map((k) => (cpus.table === "elf" ? ELF_MACHINE : PE_MACHINE)[k]);
+  const arches = found.filter((a): a is DesktopArch => a !== undefined);
+  return arches.length > 0 ? [...new Set(arches)] : undefined;
+}
+
+/** A header's CPU fields, and which table names them. */
+type CpuKeys = { readonly table: "macho" | "elf" | "pe"; readonly keys: number[] };
+
+/** A Mach-O's CPU types: thin (either byte order) or universal (`nfat_arch` entries). */
+function machOCpus(v: DataView): CpuKeys | undefined {
+  const magic = v.getUint32(0, false);
+  if (magic === 0xcffaedfe || magic === 0xcefaedfe) {
+    return { table: "macho", keys: [v.getUint32(4, true)] };
+  }
+  if (magic === 0xfeedfacf || magic === 0xfeedface) {
+    return { table: "macho", keys: [v.getUint32(4, false)] };
+  }
+  if (magic !== 0xcafebabe && magic !== 0xcafebabf) return undefined;
+  // Universal: `nfat_arch` entries of 20 (or, `_64`, 32) bytes after the header.
+  const size = magic === 0xcafebabe ? 20 : 32;
+  const n = Math.min(v.getUint32(4, false), Math.floor((v.byteLength - 8) / size));
+  return { table: "macho", keys: Array.from({ length: n }, (_, i) => v.getUint32(8 + i * size)) };
+}
+
+/** An ELF's `e_machine` (in the file's own byte order). */
+function elfMachine(v: DataView): CpuKeys | undefined {
+  if (v.getUint32(0, false) !== 0x7f454c46 || v.byteLength < 20) return undefined;
+  return { table: "elf", keys: [v.getUint16(18, v.getUint8(5) !== 2)] };
+}
+
+/** A PE file's `Machine` (the `MZ` stub's pointer to `PE\0\0`). */
+function peMachine(v: DataView): CpuKeys | undefined {
+  if (v.getUint16(0, false) !== 0x4d5a || v.byteLength < 0x40) return undefined;
+  const pe = v.getUint32(0x3c, true);
+  if (pe + 6 > v.byteLength || v.getUint32(pe, false) !== 0x50450000) return undefined;
+  return { table: "pe", keys: [v.getUint16(pe + 4, true)] };
+}
+
+/** The first bytes of `path` (a header to read). */
+async function headOf(path: string): Promise<Uint8Array> {
+  const f = await Deno.open(path, { read: true });
+  try {
+    const buf = new Uint8Array(4096);
+    const n = await f.read(buf);
+    return buf.subarray(0, n ?? 0);
+  } finally {
+    f.close();
+  }
+}
+
+/**
+ * The copied `.node` addons under `stage` built for an arch other than `arch` (a `build/Release`
+ * addon compiled on the host, say): one warning each, naming the fix.
+ */
+async function foreignArchAddons(stage: string, arch: DesktopArch): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for await (const e of Deno.readDir(dir)) {
+      const path = join(dir, e.name);
+      if (e.isDirectory) await walk(path);
+      else if (e.isFile && e.name.endsWith(".node")) {
+        const arches = nativeArchesOf(await headOf(path).catch(() => new Uint8Array()));
+        if (arches && !arches.includes(arch)) {
+          const rel = relative(join(stage, "node_modules"), path).replaceAll("\\", "/");
+          out.push(
+            `${rel} is built for ${arches.join(" + ")}, not ${arch}: the ${arch} app cannot load ` +
+              `it; ship a prebuild for ${arch} or point run.archDirs["${arch}"] at a node_modules ` +
+              "built for it",
+          );
+        }
+      }
+    }
+  };
+  await walk(join(stage, "node_modules")).catch(() => {});
+  return out.sort();
+}
+
 /** The bytes of the bundle's files (the archive included). */
 async function bundleBytes(out: string): Promise<number> {
   let bytes = 0;
@@ -658,6 +837,12 @@ export interface BundleSidecarOptions {
   readonly definition: SidecarDefinition;
   /** The OS packaged for (its prebuilt addons are kept). Default: the host's. */
   readonly os?: DesktopOs;
+  /**
+   * The architecture packaged for (each `--arch` of a package script is its own bundle): only its
+   * prebuilt addons and per-platform packages are kept, `run.archDirs` is consulted, and a copied
+   * addon built for another arch is warned about. Default: every arch's are kept.
+   */
+  readonly arch?: DesktopArch;
   /** Whether `ffi` is granted (`permissions.ffi` or `desktop.extraPermissions.ffi`). */
   readonly ffiGranted?: boolean;
   /**
@@ -693,7 +878,8 @@ export async function bundleDesktopSidecar(
   const projectDir = resolve(options.projectDir);
   const entry = resolve(projectDir, run.module);
   const nodeModules = run.nodeModules ? resolve(projectDir, run.nodeModules) : undefined;
-  const platform = NODE_PLATFORM[options.os ?? (Deno.build.os as DesktopOs)] ?? "linux";
+  const os = options.os ?? (Deno.build.os as DesktopOs);
+  const target = copyTarget(projectDir, run, os, options.arch);
   const relDir = `${bundleRoot(options.entryDir)}/${def.name}`;
   const out = join(projectDir, ...relDir.split("/"));
   const state: BundleState = {
@@ -705,7 +891,7 @@ export async function bundleDesktopSidecar(
     nativeCache: new Map(),
     warnings: [],
   };
-  await seedCopies(state, nodeModules, entry);
+  await seedCopies(state, nodeModules, entry, target);
   await Deno.remove(out, { recursive: true }).catch(() => {});
   await Deno.mkdir(out, { recursive: true });
   const plugin = sidecarPlugin(state);
@@ -724,20 +910,18 @@ export async function bundleDesktopSidecar(
   const copied = await copyPackages(
     state.toCopy,
     stage,
-    platform,
+    target,
     state.warnings,
     new Set(bundled),
     state.exclusion,
   );
-  const names = [...bundled, ...copied.names];
-  let signing: SidecarSigningReport = { how: "none", signed: [] };
-  if (names.length > 0) {
-    if (options.sign) {
-      const os = options.os ?? (Deno.build.os as DesktopOs);
-      signing = await signSidecarNativeCode(stage, os, options.sign === true ? {} : options.sign);
-    }
-    await packSidecarModules(stage, out);
+  if (options.arch !== undefined && copied.names.length > 0) {
+    state.warnings.push(...await foreignArchAddons(stage, options.arch));
   }
+  const names = [...bundled, ...copied.names];
+  const signing = names.length > 0
+    ? await signAndPack(stage, out, os, options.sign)
+    : { how: "none" as const, signed: [] };
   await Deno.remove(stage, { recursive: true }).catch(() => {});
   if (state.natives.size > 0 && options.ffiGranted !== true) {
     state.warnings.push(
@@ -754,7 +938,22 @@ export async function bundleDesktopSidecar(
     signing,
     bytes: await bundleBytes(out),
     warnings: state.warnings,
+    ...(options.arch ? { arch: options.arch } : {}),
   };
+}
+
+/** Sign the staged copies' native code (when asked), then archive them beside the bundle. */
+async function signAndPack(
+  stage: string,
+  out: string,
+  os: DesktopOs,
+  sign: BundleSidecarOptions["sign"],
+): Promise<SidecarSigningReport> {
+  const signing: SidecarSigningReport = sign
+    ? await signSidecarNativeCode(stage, os, sign === true ? {} : sign)
+    : { how: "none", signed: [] };
+  await packSidecarModules(stage, out);
+  return signing;
 }
 
 /** Write `.deno-desktop/sidecars/.gitignore` (the bundles are build output) and drop stale bundles. */
@@ -780,6 +979,7 @@ async function tidyBundleDir(
 function reportLine(report: SidecarBundleReport): string {
   const mb = (report.bytes / 1024 / 1024).toFixed(1);
   const parts = [`${mb} MB`];
+  if (report.arch) parts.push(report.arch);
   if (report.copied.length) parts.push(`copied ${report.copied.join(", ")}`);
   if (report.excluded.length) parts.push(`excluded ${report.excluded.join(", ")}`);
   const signed = report.signing.signed.length;
@@ -804,7 +1004,8 @@ function ffiGranted(def: SidecarDefinition, config: unknown): boolean {
  * @param entryDir The folder of the entry that calls `runDesktop`, relative to the project (default
  *   `.`; `denext desktop run --entry app/desktop.ts` → `app`): the bundles go beside it.
  * @param options `sign`: sign the copied native code ({@linkcode BundleSidecarOptions.sign}; default
- *   `true`, what the package scripts get).
+ *   `true`, what the package scripts get); `arch`: the architecture packaged for
+ *   ({@linkcode BundleSidecarOptions.arch}; default every arch's prebuilds kept).
  * @returns The reports.
  */
 export async function bundleDesktopSidecars(
@@ -812,7 +1013,7 @@ export async function bundleDesktopSidecars(
   config: unknown,
   os?: DesktopOs,
   entryDir?: string,
-  options: { readonly sign?: boolean | SidecarSigningDeps } = {},
+  options: { readonly sign?: boolean | SidecarSigningDeps; readonly arch?: DesktopArch } = {},
 ): Promise<SidecarBundleReport[]> {
   const sidecars = ((config as { desktop?: { sidecars?: unknown } } | undefined)?.desktop
     ?.sidecars ?? []) as SidecarDefinition[];
@@ -825,6 +1026,7 @@ export async function bundleDesktopSidecars(
       projectDir,
       definition: def,
       ...(os ? { os } : {}),
+      ...(options.arch ? { arch: options.arch } : {}),
       ffiGranted: ffiGranted(def, config),
       ...(entryDir === undefined ? {} : { entryDir }),
       sign: options.sign ?? true,

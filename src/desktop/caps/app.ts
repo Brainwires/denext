@@ -74,6 +74,7 @@ import { insertCustomMenus, managedBar, mergeWindowSubmenu } from "../menu-bar.t
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
+import type { DesktopEventAppendOptions } from "../bridge-events.ts";
 import { createUserActivity, type UserActivityHandle } from "./user-activity.ts";
 import {
   isPrimaryClick,
@@ -189,8 +190,17 @@ export interface AppControllerOptions {
   readonly window: unknown;
   /** The runtime's app API (`Deno.desktop`), when it has one. */
   readonly api?: DesktopAppApi;
-  /** Push an event to the pages (the bridge's `emit`): every window's, or only `target`'s. */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /**
+   * Push an event to the pages (the bridge's `emit`): every window's, or only `target`'s
+   * (`retain: false`: the live pages only).
+   */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** The `Deno.Tray` constructor (default the runtime's); tests pass a fake. */
   readonly Tray?: TrayConstructor;
   /** `Deno.dock` (default the runtime's); tests pass a fake. */
@@ -481,7 +491,11 @@ function dockMenuWorks(s: AppState): boolean {
 function queueFor(s: AppState, windowId: string): PullQueue<AppAction> {
   let queue = s.queues.get(windowId);
   if (!queue) {
-    queue = createPullQueue<AppAction>(() => s.options.emit("app", "action", null, windowId));
+    // A click is a one-shot action for the page live now: its signal is never replayed to a page
+    // that loads later (the queue itself is emptied by the window's next page load).
+    queue = createPullQueue<AppAction>(() =>
+      s.options.emit("app", "action", null, windowId, { retain: false })
+    );
     s.queues.set(windowId, queue);
   }
   return queue;

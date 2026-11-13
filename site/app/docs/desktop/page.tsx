@@ -150,6 +150,30 @@ watchScanner((id) => emit("scanner", "attached", { id })); // an OS event of you
 import { onDesktopEvent } from "denext/desktop/client";
 const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));`}
       </Code>
+      <p id="desktop-event-retain">
+        Keeping an event for a later page is right for state and for what launched the app (a deep
+        link, an opened file), and wrong for a one-shot action: a menu click forwarded with{" "}
+        <code>emit</code>{" "}
+        would reach the page again after a reload, which then acts on it a second time. Pass{" "}
+        <code>{"{ retain: false }"}</code> for those (with or without{" "}
+        <code>window</code>): the pages live now receive it, and so does a live page whose event
+        stream reconnects (<code>Last-Event-ID</code>), but a page that subscribes later, a reloaded
+        one included, never does. An extension&apos;s <code>host.emit</code> and a handler&apos;s
+        {" "}
+        <code>ctx.emit</code>{" "}
+        take the same option. denext&apos;s own events follow the same rule: menu, tray, Dock and
+        context-menu clicks, shortcut presses, focus and blur, a close request, the windows opening
+        and closing, and system-stats samples are for the live page only (a click waits for the page
+        that is loaded when it happens, and is dropped when that page goes away); deep links, opened
+        files, the notification click that launched the app, the window&apos;s state, display and
+        title-bar changes, sidecar status and progress are retained.
+      </p>
+      <Code lang="ts">
+        {`const app = await runDesktop({
+  importMetaUrl: import.meta.url,
+  onAppMenuItem: (id) => app.emit("qutty", "menu", { id }, { retain: false }),
+});`}
+      </Code>
       <Callout kind="note">
         <code>runDesktop</code> serves the static export (<code>/about</code> →{" "}
         <code>about/index.html</code> or <code>about.html</code>; any other path gets the root{" "}
@@ -2998,6 +3022,40 @@ const app = await runDesktop({
 });
 app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisibleWindows));`}
       </Code>
+      <h3 id="desktop-headless">Headless runs: a self-test with no window</h3>
+      <p>
+        <code>denext desktop run --headless</code>, or <code>DENEXT_DESKTOP_HEADLESS=1</code>{" "}
+        in a packaged app&apos;s environment, starts the app with every window hidden while its
+        pages, extensions and sidecars load and run as usual: for a self-test (a terminal&apos;s
+        round trip, a sidecar&apos;s health) on a machine where no window may appear. Each page
+        still runs in a real window, which is never shown: <code>runDesktop</code>{" "}
+        hides the main window as soon as it adopts it, before its first page load, so the runtime
+        never reveals it, every window opened later (<code>windows.open</code>,{" "}
+        <code>openWindow</code>, a tray panel) is created hidden, and <code>show()</code>,{" "}
+        <code>focus()</code>, <code>maximize()</code>, <code>restore()</code> and{" "}
+        <code>setFullScreen()</code> on any of them, the Dock&apos;s reopen and its{" "}
+        <code>bounce()</code> do nothing. The app switches to the <code>"accessory"</code>{" "}
+        policy (no Dock icon) and refuses any other. <code>--headless</code> also sets{" "}
+        <code>LAUFEY_ACTIVATION_POLICY=accessory</code>, which the webview host reads at process
+        start, so there is no Dock icon from the first frame; set it beside{" "}
+        <code>DENEXT_DESKTOP_HEADLESS=1</code>{" "}
+        when you launch a packaged app. A strict-permissions app reads the variable without
+        declaring it.
+      </p>
+      <Code lang="sh">
+        {`denext desktop run --headless
+DENEXT_DESKTOP_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory ./dist/MyApp.app/Contents/MacOS/MyApp`}
+      </Code>
+      <Callout kind="warn">
+        Two engine limits. The CEF backend shows the window it starts with as it creates it, so a
+        headless CEF app flashes its main window before <code>runDesktop</code>{" "}
+        hides it (the system WebView backends on macOS, Windows and Linux never show it). And the
+        macOS host activates the app at launch, so a headless run on macOS takes the focus from the
+        app in front, with no window. A hidden page&apos;s timers are throttled on WKWebView (about
+        once a second, never frozen); a window opened with <code>backgroundThrottling: false</code>
+        {" "}
+        keeps full speed.
+      </Callout>
       <h3 id="desktop-overlay-windows">Overlay windows</h3>
       <p>
         A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
@@ -4857,7 +4915,10 @@ desktop: {
         declared <code>events</code>, and both keep an event until the page subscribes, like{" "}
         <code>runDesktop</code>&apos;s <code>emit(cap, event, data)</code>. Pass{" "}
         <code>{'{ window: "panel" }'}</code>{" "}
-        (a window id) as a third argument to reach one window instead of every one.
+        (a window id) as a third argument to reach one window instead of every one, and{" "}
+        <code>{"{ retain: false }"}</code>{" "}
+        for a one-shot action that a page loaded later must not receive
+        (<a href="#desktop-event-retain">above</a>).
       </p>
       <Code lang="ts">
         {`// desktop/extensions/jobs.ts
@@ -5171,6 +5232,25 @@ export default defineDesktopExtension({
           used, so the backend starts and fails only on the path that needs the package. A copied
           package&apos;s dependency that matches stays behind too. A name both in{" "}
           <code>external</code> and <code>exclude</code> is a config error.
+          <br />
+          Each architecture a package script builds gets its own bundle (<code>--arch both</code>
+          {" "}
+          on Linux and Windows, each half of a macOS{" "}
+          <code>universal</code>): it keeps only that architecture&apos;s{" "}
+          <code>prebuilds/&lt;platform&gt;-&lt;arch&gt;/</code> (node-gyp-build&apos;s{" "}
+          <code>darwin-x64+arm64</code> for either) and the per-platform packages whose npm{" "}
+          <code>os</code> and <code>cpu</code>{" "}
+          allow it (<code>@scope/pkg-darwin-arm64</code>), and warns about a copied{" "}
+          <code>.node</code>{" "}
+          built for another architecture (an addon compiled on the build machine into{" "}
+          <code>build/Release</code>) or a per-platform optional dependency npm did not install. For
+          those, <code>archDirs</code> names a <code>node_modules</code>{" "}
+          built for a target, whose packages are copied in place of{" "}
+          <code>nodeModules</code>&apos; ones: keys <code>"&lt;os&gt;-&lt;arch&gt;"</code>{" "}
+          (<code>"darwin-x86_64"</code>, <code>"linux-arm64"</code>) or{" "}
+          <code>"&lt;arch&gt;"</code>, relative to the project. <code>denext desktop run</code> and
+          {" "}
+          <code>dev</code> keep every architecture&apos;s.
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
@@ -5286,13 +5366,24 @@ desktop: {
         <code>--no-sign</code>, every PE file there (<code>.node</code>, <code>.dll</code>,{" "}
         <code>.exe</code>) is Authenticode-signed like the bundle&apos;s own.{" "}
         <code>denext desktop run</code> and <code>dev</code>{" "}
-        leave them as installed. The packages copied are the ones installed in{" "}
-        <code>nodeModules</code>: build each architecture from a <code>node_modules</code>{" "}
-        that holds its addons (a universal build needs universal addons, or both architectures&apos;
-        prebuilds).
+        leave them as installed, and each architecture&apos;s bundle is signed on its own. The
+        packages copied are the ones installed in <code>nodeModules</code> (or a target&apos;s{" "}
+        <code>archDirs</code>): give every architecture its addons as prebuilds or through{" "}
+        <code>archDirs</code>.
       </p>
       <Code lang="ts">
-        {`// a program that reads its bootstrap from fd 3 (Electron's --bootstrap-fd 3)
+        {`// node-pty compiled on an arm64 Mac, and again for x86_64 into vendor/x64
+sidecars: [{
+  name: "pty",
+  run: {
+    module: "server/main.mjs",
+    nodeModules: "server/node_modules",
+    archDirs: { "darwin-x86_64": "vendor/x64/node_modules" },
+  },
+  permissions: { ffi: ["*"] },
+}],
+
+// a program that reads its bootstrap from fd 3 (Electron's --bootstrap-fd 3)
 sidecars: [{
   name: "server",
   run: { exec: "./bin/server", bootstrapFd: 3 },
@@ -5839,6 +5930,27 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
         entry logs that the origin is not in effect). Nothing breaks either way: the security gates
         detect which runtime they are under.
       </Callout>
+      <h3 id="desktop-app-origin-iframes">A local server in an iframe</h3>
+      <p>
+        The app origin is a secure context on every engine (the custom scheme is registered as
+        secure, with CORS and fetch, on CEF, WebView2 and WebKitGTK; WKWebView treats a handled
+        scheme as secure), so a frame from <code>http://</code>{" "}
+        is held to the engine&apos;s mixed-content rule, and the window&apos;s navigation guard
+        never looks at frames, only the top-level page. <code>http://localhost</code> and{" "}
+        <code>http://127.0.0.1</code>{" "}
+        are trustworthy origins, which Chromium (CEF, WebView2) loads in a frame;{" "}
+        <code>http://*.localhost</code>{" "}
+        is trustworthy on Chromium, and on WebKit (WKWebView, WebKitGTK) only on recent versions;
+        any other plain-<code>http</code> host (
+        <code>http://app.test</code>) is blocked as mixed content on every engine. WebKit has also
+        upgraded <code>http://localhost</code> requests from a secure page to{" "}
+        <code>https</code>, so test such a frame on WKWebView and WebKitGTK. List the frame&apos;s
+        origins in <code>csp.frameSrc</code>, serve anything but localhost over{" "}
+        <code>https</code>, or reach it through the app&apos;s own origin (
+        <a href="/docs/spa">
+          <code>spa.proxy</code>
+        </a>).
+      </p>
 
       <h2 id="desktop-preload">A preload script</h2>
       <p>

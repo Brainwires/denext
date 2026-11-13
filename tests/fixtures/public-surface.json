@@ -1975,6 +1975,7 @@
     "DesktopDockReopenEvent:interface",
     "DesktopDockReopenHandler:typeAlias",
     "DesktopEmitOptions:interface",
+    "DesktopEventAppendOptions:interface",
     "DesktopEventLog:class",
     "DesktopExtensionHost:interface",
     "DesktopInstallerFormat:typeAlias",

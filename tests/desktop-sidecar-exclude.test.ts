@@ -198,6 +198,6 @@ Deno.test("run.bootstrapFd: an exec sidecar's option, 3 to 9", () => {
   }
   assertEquals(
     sidecarDefinitionError(def({ module: "m.ts", bootstrapFd: 3 })),
-    "run.bootstrapFd is not an option (module, nodeModules, external, exclude, entries)",
+    "run.bootstrapFd is not an option (module, nodeModules, external, exclude, entries, archDirs)",
   );
 });

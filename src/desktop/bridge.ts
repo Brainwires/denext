@@ -40,7 +40,7 @@
 
 import { timingSafeEqual } from "./auth-session-runtime.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
-import { DesktopEventLog } from "./bridge-events.ts";
+import { type DesktopEventAppendOptions, DesktopEventLog } from "./bridge-events.ts";
 import {
   DESKTOP_FRAME_HEADER,
   type DesktopServeInfo,
@@ -227,9 +227,16 @@ export interface DesktopBridge {
   ): Promise<Response | null>;
   /**
    * Push an event to the pages' streams (its `cap` need not be a registered capability's): every
-   * window's, or only `target`'s.
+   * window's, or only `target`'s. `options.retain: false` sends a one-shot action to the live
+   * pages only (see {@linkcode DesktopEventLog.append}).
    */
-  emit(cap: string, event: string, data: unknown, target?: string): void;
+  emit(
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ): void;
   /**
    * A window started a new top-level page load: run the capabilities'
    * {@link DesktopCapability.onPageLoad} so state the previous page owned is released (every
@@ -550,7 +557,7 @@ export function createDesktopBridge(
     if (cap.events?.includes(event) !== true) {
       throw new Error(`desktop cap "${cap.name}" emitted undeclared event "${event}"`);
     }
-    events.append(cap.name, event, data, emitOptions?.window);
+    events.append(cap.name, event, data, emitOptions?.window, retainOf(emitOptions));
   };
   /** A handle the user picked in this launch, to its absolute path; anything else is refused. */
   const pickedPath = (handle: unknown, pathOptions?: DesktopPickedPathOptions): string => {
@@ -726,8 +733,8 @@ export function createDesktopBridge(
       if (url.pathname === EVENTS_PATH) return await handleEvents(request, token, info);
       return null;
     },
-    emit: (cap, event, data, target) => {
-      events.append(cap, event, data, target);
+    emit: (cap, event, data, target, appendOptions) => {
+      events.append(cap, event, data, target, appendOptions);
     },
     pageLoaded,
     navigationStarted: async () => {
@@ -766,6 +773,11 @@ interface PageTracker {
   seen(windowId: string, pageId: string | null): Promise<void>;
   /** The window's page went (released by the caller): the next page id is its first. */
   forget(windowId: string): void;
+}
+
+/** The log's append options for an emit's `retain` (omitted when it keeps the default). */
+function retainOf(options: DesktopEmitOptions | undefined): DesktopEventAppendOptions | undefined {
+  return options?.retain === false ? { retain: false } : undefined;
 }
 
 /**
