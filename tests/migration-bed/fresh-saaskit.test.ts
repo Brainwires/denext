@@ -34,10 +34,6 @@ const SAASKIT: Bed = {
   afterMigrate: [["$deno", "install"]],
   kind: "fresh",
   wontMigrate: [],
-  // SaaSKit opens Deno KV at start, which needs its `deno.json`'s `"unstable": ["kv"]`; the CLI
-  // under test runs from this checkout and resolves its own config, not the app's (a
-  // JSR-installed CLI's `denext task start` resolves the app's), so the bed stops after the build.
-  serve: false,
   files: [
     // The config stays for its plugins, without Fresh's Tailwind plugin.
     { path: "fresh.config.ts", contains: ["kvOAuthPlugin", "ga4Plugin()"], absent: ["tailwind"] },

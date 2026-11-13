@@ -133,8 +133,8 @@ export interface Bed {
    */
   wontMigrate?: string[];
   /**
-   * `false`: stop after the build (the app needs a runtime flag the CLI under test, started from
-   * this checkout, does not take from the app's `deno.json`, such as `"unstable": ["kv"]`).
+   * `false`: stop after the build, for an app that cannot serve where the beds run (it needs a
+   * service or credentials the bed cannot provide).
    */
   serve?: false;
   /** Routes to render-assert. */
