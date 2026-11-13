@@ -10,7 +10,14 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { join } from "@std/path";
-import { boundedOutput, processTree, renderTree, runBounded } from "./helpers/bounded-command.ts";
+import {
+  boundedOutput,
+  processTree,
+  renderSnapshot,
+  renderTree,
+  runBounded,
+  toolhelpRow,
+} from "./helpers/bounded-command.ts";
 import { inChild, pendingSpawns } from "./helpers/isolated.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
@@ -72,8 +79,9 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
     assertStringIncludes(r.output, "phase: waiting on the grandchild", "the tree was running");
     // The tree as it stood at the deadline names the child and the grandchild it waited on.
     assertStringIncludes(r.tree, `${r.pid} `, r.tree);
-    // (Command lines need Win32_Process, which a non-admin remote Windows session is refused.)
-    if (!r.tree.includes("Win32_Process refused")) {
+    // (Command lines need Win32_Process, which a non-admin remote Windows session is refused, and
+    // a PowerShell that starts in time; else the OS snapshot names executables only.)
+    if (!/Win32_Process refused|command lines unavailable/.test(r.tree)) {
       assertStringIncludes(r.tree, "Deno.listen", r.tree);
     }
     assert(
@@ -187,6 +195,56 @@ Deno.test("renderTree: a recycled pid held by a look-alike process reads as gone
   // The same process still matches, and a pid with no row is gone.
   assertStringIncludes(renderTree(list, 950, "deno eval"), "950  ");
   assertEquals(renderTree(list, 777, "deno"), "(pid 777 and its descendants are gone)");
+});
+
+/** A 64-bit `PROCESSENTRY32W`: dwSize, th32ProcessID, cntThreads, th32ParentProcessID, szExeFile. */
+function processEntry(pid: number, ppid: number, threads: number, exe: string): DataView {
+  const view = new DataView(new ArrayBuffer(568));
+  view.setUint32(0, 568, true);
+  view.setUint32(8, pid, true);
+  view.setUint32(28, threads, true);
+  view.setUint32(32, ppid, true);
+  // Noise where the other fields live, and past the name's terminator.
+  view.setUint32(16, 0xdeadbeef, true);
+  view.setUint32(36, 8, true);
+  [...exe].forEach((c, i) => view.setUint16(44 + 2 * i, c.charCodeAt(0), true));
+  view.setUint16(44 + 2 * exe.length + 2, 0x41, true);
+  return view;
+}
+
+Deno.test("toolhelpRow: a PROCESSENTRY32W's pid, parent, threads and executable name", () => {
+  assertEquals(
+    toolhelpRow(processEntry(4321, 77, 12, "deno.exe")),
+    "4321\t77\tthreads 12\tdeno.exe",
+  );
+  // A name that fills all 260 characters has no terminator: it ends at the field's end.
+  const long = "x".repeat(260);
+  assertEquals(toolhelpRow(processEntry(1, 0, 1, long)).split("\t")[3], long);
+});
+
+Deno.test("renderSnapshot: the tree from the OS snapshot, its root matched by executable name", () => {
+  const rows = [
+    toolhelpRow(processEntry(900, 1, 20, "deno.exe")),
+    toolhelpRow(processEntry(901, 900, 9, "deno.exe")),
+    toolhelpRow(processEntry(902, 901, 3, "esbuild.exe")),
+    toolhelpRow(processEntry(950, 1, 4, "powershell.exe")),
+  ];
+  const why = "powershell.exe still running after 5000 ms";
+  const tree = renderSnapshot(rows, 900, why, "C:\\Users\\ci\\deno\\deno.exe");
+  assertEquals(
+    tree,
+    [
+      `${why}: the OS's process snapshot instead, command lines unavailable`,
+      "900  threads 20  deno.exe",
+      "  901 (parent 900)  threads 9  deno.exe",
+      "    902 (parent 901)  threads 3  esbuild.exe",
+    ].join("\n"),
+  );
+  // An id another program now holds reads as gone, under the same note.
+  assertMatch(
+    renderSnapshot(rows, 950, why, "C:/deno/deno.exe"),
+    /command lines unavailable\n\(pid 950 and its descendants are gone\)$/,
+  );
 });
 
 Deno.test("pendingSpawns: a spawn with no exit and an output() with no end are unfinished", () => {

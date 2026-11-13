@@ -27,6 +27,7 @@ import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { cookieFor, functionsApp, ORIGIN } from "./_functions-app.ts";
+import { withoutHeapSize } from "./helpers/heap-flags.ts";
 
 const USER = "6d1c4c6e-7a1e-4d43-9a0f-3c1f0c0a0001";
 
@@ -130,13 +131,15 @@ Deno.test({
     // For real, on the toolchain (the cap needs --unstable-worker-options in the process). The
     // child runs without the coverage run's collection: with it, the runtime's memory-limit
     // termination of a worker busy in a request reaches the parent as no error event, so the
-    // request would end only at its wall-clock limit (504) and prove nothing about the cap.
+    // request would end only at its wall-clock limit (504) and prove nothing about the cap. Nor
+    // does it inherit a heap size from DENO_V8_FLAGS (the Windows test pass sets 4–8 GiB): V8 takes
+    // that over the worker's own 16 MB, and the hog then grew to gigabytes, past its 60 s limit.
     const env = Deno.env.toObject();
     delete env.DENO_COVERAGE_DIR;
     delete env.DENEXT_CHILD_COVERAGE;
     const out = await new Deno.Command(Deno.execPath(), {
       clearEnv: true,
-      env,
+      env: withoutHeapSize(env),
       args: [
         "run",
         "-A",

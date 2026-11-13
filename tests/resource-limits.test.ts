@@ -43,6 +43,7 @@ import { entrySource } from "../src/build/compile-app.ts";
 import { standaloneVerb } from "../src/standalone/mod.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 import { inChild } from "./helpers/isolated.ts";
+import { withoutHeapSize } from "./helpers/heap-flags.ts";
 import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -615,8 +616,10 @@ const reran = await maybeReexecForLimits({
   warn: (m) => console.error(m),
 });
 if (!reran) {
+  // Past 512 MB of heap no limit is in force: exit 99 then, not after eating the host's memory.
   const a: unknown[] = [];
-  for (;;) a.push(new Array(1e5).fill({ x: Math.random() }));
+  while (Deno.memoryUsage().heapUsed < 512 << 20) a.push(new Array(1e5).fill({ x: Math.random() }));
+  Deno.exit(99);
 }
 `;
 
@@ -634,6 +637,8 @@ Deno.test({
       // The hop: started as the toolchain re-exec starts its child (the limits as data).
       const handOff = hopLimits(LIMIT_HOPS.toolchain, runtime.deno, configured);
       assertEquals(handOff.flags, []);
+      // Without the heap size the Windows test pass puts in DENO_V8_FLAGS: V8 takes it over
+      // --max-memory, and the hog then grew to gigabytes before it exited 137.
       const result = await new Deno.Command(Deno.execPath(), {
         args: [
           "run",
@@ -644,7 +649,8 @@ Deno.test({
           script,
           out,
         ],
-        env: handOff.env,
+        clearEnv: true,
+        env: withoutHeapSize({ ...Deno.env.toObject(), ...handOff.env }),
         stdout: "null",
         stderr: "piped",
       }).output();
