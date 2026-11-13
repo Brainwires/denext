@@ -3636,7 +3636,8 @@ if (caps.supported) {
           {" "}
           <code>"blocked"</code>, <code>"aborted"</code> or <code>"failed"</code>),{" "}
           <code>console</code>, <code>focus-change</code>, <code>new-window</code>,{" "}
-          <code>find-result</code>, <code>context-menu</code> and{" "}
+          <code>find-result</code>, <code>context-menu</code>, <code>keydown</code> (see{" "}
+          <a href="#desktop-web-views-keys">Keys and focus</a>) and{" "}
           <code>closed</code>, which comes once, last.
         </li>
         <li>
@@ -3687,9 +3688,10 @@ if (caps.supported) {
           <code>webViewCapabilities()</code> answers <code>supported</code>, the engine, and whether
           {" "}
           <code>capture</code>, <code>evaluate</code>, <code>zOrder</code>, <code>zoom</code>,{" "}
-          <code>find</code>, <code>devTools</code>, <code>contextMenu</code>, <code>print</code> and
+          <code>find</code>, <code>devTools</code>, <code>contextMenu</code>, <code>print</code>,
           {" "}
-          <code>clipboard</code> work (a feature reported <code>false</code> rejects{" "}
+          <code>clipboard</code>, <code>menuAccelerators</code>, <code>unhandledKeys</code> and{" "}
+          <code>forwardKeys</code> work (a feature reported <code>false</code> rejects{" "}
           <code>unsupported</code>). On a runtime without web views it answers{" "}
           <code>supported: false</code> and <code>createWebView</code> rejects{" "}
           <code>unsupported</code>: keep an iframe path behind that check.
@@ -3818,6 +3820,66 @@ async function withOverlay(view: WebViewHandle, tile: HTMLElement, open: () => P
           <code>"ask"</code>.
         </li>
       </ul>
+      <h4 id="desktop-web-views-keys">Keys and focus</h4>
+      <ul>
+        <li>
+          <strong>Menu accelerators come first.</strong>{" "}
+          While a view has the keyboard, a key that matches an accelerator of the app&apos;s menu
+          (the application menu, the window&apos;s menu, the Window menu&apos;s items such as
+          Cmd/Ctrl+W or Cmd/Ctrl+N) goes to the menu before the view&apos;s page, as in a browser:
+          the item fires and the page never sees the key. <code>webViewCapabilities()</code>{" "}
+          reports it as <code>menuAccelerators</code>; where it is <code>false</code>{" "}
+          the view&apos;s page gets those keys.
+        </li>
+        <li>
+          <strong>
+            <code>forwardKeys</code>
+          </strong>{" "}
+          — accelerators the view hands back to the app instead of its page (<code>
+            forwardKeys: ["CmdOrCtrl+1", "Meta+Shift+L"]
+          </code>, the syntax <code>registerShortcut</code> takes; at most 64), each arriving as
+          {" "}
+          <code>keydown</code> with <code>forwarded: true</code>. <code>setForwardKeys(keys)</code>
+          {" "}
+          replaces the list (<code>[]</code>{" "}
+          forwards none). Menu accelerators still win over them. Capability{" "}
+          <code>forwardKeys</code>; without it the option is ignored and <code>setForwardKeys</code>
+          {" "}
+          rejects <code>unsupported</code>.
+        </li>
+        <li>
+          <strong>Unhandled keys.</strong> Where the engine can tell (<code>unhandledKeys</code>
+          {" "}
+          — CEF and WKWebView can; WebView2 cannot), a keydown the view&apos;s page did not handle
+          (not prevented, not typed into a field) arrives after the page had it, as{" "}
+          <code>keydown</code> with <code>forwarded: false</code>{" "}
+          — the place for the app&apos;s own shortcuts that should work inside the view too. The
+          {" "}
+          <code>key</code> / <code>code</code> values and the modifier flags are the DOM{" "}
+          <code>KeyboardEvent</code>&apos;s.
+        </li>
+        <li>
+          <strong>Focus before the click.</strong>{" "}
+          A mouse-down in a view that doesn&apos;t have the keyboard fires <code>focus-change</code>
+          {" "}
+          <code>{`{ focused: true }`}</code>{" "}
+          before the click reaches the view&apos;s page, and the click still arrives (no lost first
+          click), so the app can move its own focus ring first. Leaving the view (a click on the
+          page, Tab past its end) fires <code>{`{ focused: false }`}</code>.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`const view = await createWebView({
+  url: "https://docs.example",
+  bounds: { x: 0, y: 0, width: 0, height: 0 },
+  forwardKeys: ["CmdOrCtrl+1", "CmdOrCtrl+2"], // tab switching stays the app's
+});
+view.on("keydown", (e) => {
+  if (e.forwarded) switchToTab(Number(e.key));
+  else if (e.key === "Escape") closeTile(); // unhandled by the view's page
+});
+view.on("focus-change", ({ focused }) => tile.classList.toggle("focused", focused));`}
+      </Code>
       <Code lang="ts">
         {`export default {
   desktop: {

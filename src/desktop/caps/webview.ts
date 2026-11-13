@@ -61,6 +61,13 @@ const WEBVIEW_EVENTS: readonly (keyof WebViewEventMap)[] = [
   "closed",
 ];
 
+/** The runtime's key event (a `CustomEvent` `"key"`), the page's `keydown` when `type` is one. */
+const RUNTIME_KEY_EVENT = "key";
+
+/** The most `forwardKeys` entries, and the longest one. */
+const MAX_FORWARD_KEYS = 64;
+const MAX_FORWARD_KEY_CHARS = 64;
+
 /** The longest URL a create or navigate takes. */
 const MAX_URL_CHARS = 32 * 1024;
 /** The longest user agent string. */
@@ -122,6 +129,7 @@ interface RuntimeWebView extends EventTarget {
   stopFind?(): boolean;
   openDevTools?(): void;
   print?(): boolean;
+  setForwardKeys?(keys: string[]): boolean;
 }
 
 /** The runtime's web view options (`BrowserWindow.prototype.createWebView`'s argument). */
@@ -143,6 +151,9 @@ const FEATURES: ReadonlyArray<readonly [keyof WebViewCapabilities, readonly stri
   ["contextMenu", []],
   ["print", ["print"]],
   ["clipboard", []],
+  ["menuAccelerators", []],
+  ["unhandledKeys", []],
+  ["forwardKeys", ["setForwardKeys"]],
 ];
 
 /** The window and app API members the web views need (each feature-detected). */
@@ -292,7 +303,31 @@ function policiesOf(o: Record<string, unknown>): Partial<RuntimeWebViewOptions> 
     ...(downloads ? { downloads } : {}),
     ...permissionsOf(o.permissions),
     ...(contextMenu ? { contextMenu } : {}),
+    ...(o.forwardKeys !== undefined ? { forwardKeys: forwardKeysOf(o.forwardKeys) } : {}),
   };
+}
+
+/**
+ * A `forwardKeys` list: at most 64 accelerator strings (`"CmdOrCtrl+1"`, the syntax
+ * `registerShortcut` takes), each one line of 1 to 64 characters; the runtime checks the syntax.
+ */
+function forwardKeysOf(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_FORWARD_KEYS) {
+    throw invalid(`forwardKeys must be an array of at most ${MAX_FORWARD_KEYS} accelerators`);
+  }
+  return value.map((k, i) => {
+    if (
+      typeof k !== "string" || k === "" || k.length > MAX_FORWARD_KEY_CHARS ||
+      // deno-lint-ignore no-control-regex
+      /[\u0000-\u001f\u007f]/.test(k)
+    ) {
+      throw invalid(
+        `forwardKeys[${i}] must be an accelerator of 1 to ${MAX_FORWARD_KEY_CHARS} characters ` +
+          '("CmdOrCtrl+1")',
+      );
+    }
+    return k;
+  });
 }
 
 /** An optional boolean field of `o`. */
@@ -431,6 +466,9 @@ function capabilitiesOf(h: HostState): WebViewCapabilities {
     contextMenu: false,
     print: false,
     clipboard: false,
+    menuAccelerators: false,
+    unhandledKeys: false,
+    forwardKeys: false,
   };
   if (!supported) return out;
   const engine = caps.engine;
@@ -492,17 +530,39 @@ function dropView(h: HostState, entry: Entry, tellPage: boolean): void {
 
 /** Follow `entry`'s runtime events: to the page (its own views) and `desktop.ts`'s listeners. */
 function follow(h: HostState, entry: Entry): void {
+  const deliver = (event: string, detail: unknown) => {
+    if (entry.owner === "page") h.options.emit("webview", { id: entry.id, event, detail });
+    fireListeners(entry, event, detail);
+  };
   for (const event of WEBVIEW_EVENTS) {
     entry.view.addEventListener(event, (e) => {
       if (entry.closed) return;
       if (event === "closed") return dropView(h, entry, true);
-      const detail = detailOf((e as CustomEvent).detail);
-      if (entry.owner === "page") {
-        h.options.emit("webview", { id: entry.id, event, detail });
-      }
-      fireListeners(entry, event, detail);
+      deliver(event, detailOf((e as CustomEvent).detail));
     });
   }
+  entry.view.addEventListener(RUNTIME_KEY_EVENT, (e) => {
+    if (entry.closed) return;
+    const key = keydownOf(detailOf((e as CustomEvent).detail));
+    if (key) deliver("keydown", key);
+  });
+}
+
+/** A runtime key event's detail as the page's `keydown` (other types: `null`). */
+function keydownOf(raw: unknown): WebViewEventMap["keydown"] | null {
+  const d = raw as Record<string, unknown>;
+  if (d.type !== "keydown") return null;
+  const str = (v: unknown) => typeof v === "string" ? v : "";
+  return {
+    key: str(d.key),
+    code: str(d.code),
+    altKey: d.altKey === true,
+    ctrlKey: d.ctrlKey === true,
+    metaKey: d.metaKey === true,
+    shiftKey: d.shiftKey === true,
+    repeat: d.repeat === true,
+    forwarded: d.forwarded === true,
+  };
 }
 
 /** Open a view for `owner` (every check first, then the runtime). */
@@ -760,6 +820,11 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
     return null;
   },
   print: feature("print", "print", () => []),
+  setForwardKeys: feature(
+    "setForwardKeys",
+    "forward keys",
+    (a) => [forwardKeysOf(a.keys)],
+  ),
 };
 
 /** One `webViewCall` method on `entry`. */

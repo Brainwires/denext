@@ -806,7 +806,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   http(s) only, never the app's origin, an optional `desktop.webViews.allowedOrigins`, a
   per-window `limit`), with navigation, `state`, `capture` (a `Blob`, at a chosen scale), isolated
   `evaluate`, stacking (`raise` / `lower` / `setZOrder`), zoom, find, print, DevTools (only where
-  the app's are on), an app-drawn context menu and clipboard permissions, and its events;
+  the app's are on), an app-drawn context menu, clipboard permissions, menu accelerators and
+  `forwardKeys` / unhandled `keydown` events while it has the keyboard, and its events;
   `attachWebView` glues one to an element's visible part and hides it while the element is out of
   view.
   Gated by `webViewCapabilities()`. — `src/desktop/webview.ts`, `src/desktop/caps/webview.ts`.

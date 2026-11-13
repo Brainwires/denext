@@ -114,6 +114,7 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
     stopFind: () => act("stopFind"),
     openDevTools: () => act("openDevTools"),
     print: () => act("print"),
+    setForwardKeys: (keys) => act("setForwardKeys", { keys: [...keys] }),
     on: (event, fn) => addWebViewListener(v, event, fn as (e: unknown) => void),
     close: () => ops.close(),
   };
