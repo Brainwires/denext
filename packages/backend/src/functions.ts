@@ -58,6 +58,8 @@ export interface FunctionConfig {
    * without it Deno would exit the process on the first request).
    */
   permissions?: "inherit" | "none" | Record<string, unknown>;
+  /** This function's worker heap cap in megabytes (default: the directory's `memoryMb`). */
+  memoryMb?: number;
 }
 
 /** `backend({ functions })`: Edge Functions. */
@@ -76,6 +78,15 @@ export interface FunctionsOptions {
   timeoutMs?: number;
   /** The largest request body passed to a function, in bytes (default 20 MiB). */
   maxBodyBytes?: number;
+  /**
+   * Each function worker's JavaScript heap cap, in megabytes (`new Worker(…, { deno: { memoryMb }
+   * })`, denext's Deno from runtime 3.0.0-rc.2). A worker over it is terminated: its in-flight
+   * requests answer `546 WORKER_LIMIT`, as Supabase's edge runtime does, and the next request
+   * starts a fresh one. Memory outside the heap is not counted. Needs Deno's worker options:
+   * list `"worker-options"` in `deno.json`'s `unstable` (the plugin refuses to start otherwise).
+   * Default: no cap.
+   */
+  memoryMb?: number;
   /** Environment variables every function reads from `Deno.env`, over the process's own. */
   env?: Record<string, string>;
   /**
@@ -102,6 +113,8 @@ export interface ResolvedFunctions {
   timeoutMs: number;
   /** The body cap. */
   maxBodyBytes: number;
+  /** The default worker heap cap (MB), or `undefined` for none. */
+  memoryMb: number | undefined;
   /** The shared env overlay. */
   env: Record<string, string>;
   /** The public URL, when configured. */
@@ -124,6 +137,27 @@ function checkEnv(env: unknown, where: string): Record<string, string> {
   return { ...env as Record<string, string> };
 }
 
+/** An optional positive whole number, validated, or `undefined` when unset. */
+function optionalPositive(value: number | undefined, name: string): number | undefined {
+  return value === undefined ? undefined : positiveOption(value, 1, `backend(): ${name}`);
+}
+
+/** One function's settings, validated (`undefined` limits left out). */
+function resolveFunctionConfig(name: string, config: FunctionConfig): FunctionConfig {
+  if (!FUNCTION_NAME.test(name)) {
+    throw new TypeError(`backend(): functions.functions: ${JSON.stringify(name)} is not a name`);
+  }
+  const where = `functions.functions.${name}`;
+  const timeoutMs = optionalPositive(config.timeoutMs, `${where}.timeoutMs`);
+  const memoryMb = optionalPositive(config.memoryMb, `${where}.memoryMb`);
+  return {
+    ...config,
+    env: checkEnv(config.env, `${where}.env`),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(memoryMb === undefined ? {} : { memoryMb }),
+  };
+}
+
 /**
  * Validate `backend({ functions })` and apply the defaults.
  *
@@ -143,20 +177,7 @@ export function resolveFunctions(o: FunctionsOptions): ResolvedFunctions {
   }
   const functions: Record<string, FunctionConfig> = {};
   for (const [name, config] of Object.entries(o.functions ?? {})) {
-    if (!FUNCTION_NAME.test(name)) {
-      throw new TypeError(`backend(): functions.functions: ${JSON.stringify(name)} is not a name`);
-    }
-    functions[name] = {
-      ...config,
-      env: checkEnv(config.env, `functions.functions.${name}.env`),
-      ...(config.timeoutMs === undefined ? {} : {
-        timeoutMs: positiveOption(
-          config.timeoutMs,
-          1,
-          `backend(): functions.functions.${name}.timeoutMs`,
-        ),
-      }),
-    };
+    functions[name] = resolveFunctionConfig(name, config);
   }
   return {
     dir: o.dir,
@@ -168,6 +189,7 @@ export function resolveFunctions(o: FunctionsOptions): ResolvedFunctions {
       20 * 1024 * 1024,
       "backend(): functions.maxBodyBytes",
     ),
+    memoryMb: optionalPositive(o.memoryMb, "functions.memoryMb"),
     env: checkEnv(o.env, "functions.env"),
     url: o.url?.replace(/\/+$/, ""),
     functions,
@@ -265,6 +287,16 @@ const WORKER_URL = new URL("./functions-worker.ts", import.meta.url);
 /** What a caller is told when the function threw or its worker died. */
 const WORKER_ERROR_MESSAGE = "Function exited due to an error (please check logs)";
 
+/** The runtime's error for a worker past its `deno.memoryMb` (denext's Deno from 3.0.0-rc.2). */
+const MEMORY_LIMIT = /reaching memory limit/;
+
+/** Supabase's answer for a function stopped by a resource limit. */
+const WORKER_LIMIT: [status: number, code: string, message: string] = [
+  546,
+  "WORKER_LIMIT",
+  "Function failed due to not having enough compute resources (please check logs)",
+];
+
 /** What a caller is told when the function ran past its wall-clock limit. */
 const WORKER_TIMEOUT_MESSAGE = "Function exceeded its wall-clock limit";
 
@@ -311,6 +343,7 @@ export class FunctionHost {
   readonly #module: string;
   readonly #permissions: FunctionConfig["permissions"];
   readonly #spawn: WorkerFactory;
+  readonly #memoryMb: number | undefined;
   #worker: Worker | undefined;
   #ready: Promise<void> | undefined;
   #nextId = 1;
@@ -325,17 +358,20 @@ export class FunctionHost {
    * @param modulePath Its entry module (absolute path).
    * @param permissions The worker's permissions (`undefined`: inherit).
    * @param spawn Starts a worker.
+   * @param memoryMb The worker's heap cap in megabytes (`undefined`: none).
    */
   constructor(
     name: string,
     modulePath: string,
     permissions: FunctionConfig["permissions"],
     spawn: WorkerFactory = (url, options) => new Worker(url, options),
+    memoryMb?: number,
   ) {
     this.name = name;
     this.#module = toFileUrl(modulePath).href;
     this.#permissions = permissions;
     this.#spawn = spawn;
+    this.#memoryMb = memoryMb;
   }
 
   /** Whether a worker is running (or starting). */
@@ -344,11 +380,15 @@ export class FunctionHost {
   }
 
   #start(env: Record<string, string>): Promise<void> {
-    const options: WorkerOptions & { deno?: { permissions?: unknown } } = {
+    const options: WorkerOptions & { deno?: { permissions?: unknown; memoryMb?: number } } = {
       type: "module",
       name: `function:${this.name}`,
     };
-    if (this.#permissions !== undefined) options.deno = { permissions: this.#permissions };
+    const deno = {
+      ...(this.#permissions !== undefined ? { permissions: this.#permissions } : {}),
+      ...(this.#memoryMb !== undefined ? { memoryMb: this.#memoryMb } : {}),
+    };
+    if (Object.keys(deno).length > 0) options.deno = deno;
     const worker = this.#spawn(WORKER_URL, options);
     this.#worker = worker;
     const ready = new Promise<void>((resolve, reject) => {
@@ -364,7 +404,7 @@ export class FunctionHost {
         event.preventDefault();
         console.error(`[@denext/backend] function ${this.name}: ${event.message}`);
         reject(new Error(event.message));
-        this.#die(worker);
+        this.#die(worker, MEMORY_LIMIT.test(event.message ?? "") ? WORKER_LIMIT : undefined);
       };
       worker.onmessageerror = () => {
         reject(new Error("unreadable message from the worker"));
@@ -658,7 +698,14 @@ function directoryRegistry(
       if (!path) return undefined;
       let host = hosts.get(name);
       if (!host) {
-        host = new FunctionHost(name, path, config.functions[name]?.permissions, spawn);
+        const settings = config.functions[name];
+        host = new FunctionHost(
+          name,
+          path,
+          settings?.permissions,
+          spawn,
+          settings?.memoryMb ?? config.memoryMb,
+        );
         hosts.set(name, host);
       }
       return host;
@@ -910,6 +957,16 @@ async function workerOptionsEnabled(projectRoot: string): Promise<boolean> {
   return false;
 }
 
+/** The settings that need Deno's worker options: `functions.memoryMb`, and each function's own. */
+function workerOptionUsers(config: ResolvedFunctions): string[] {
+  const named = Object.entries(config.functions)
+    .filter(([, f]) =>
+      (f.permissions !== undefined && f.permissions !== "inherit") || f.memoryMb !== undefined
+    )
+    .map(([name]) => `functions ${name}`);
+  return config.memoryMb === undefined ? named : ["functions.memoryMb", ...named];
+}
+
 /**
  * Wire Edge Functions into the plugin: the request handler, and under `denext dev` a watcher
  * that restarts the workers when a file in the functions directory changes.
@@ -918,12 +975,10 @@ async function workerOptionsEnabled(projectRoot: string): Promise<boolean> {
  * @param config The resolved options.
  */
 export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctions): Promise<void> {
-  const withPermissions = Object.entries(config.functions)
-    .filter(([, f]) => f.permissions !== undefined && f.permissions !== "inherit")
-    .map(([name]) => name);
-  if (withPermissions.length && !(await workerOptionsEnabled(ctx.projectRoot))) {
+  const needing = workerOptionUsers(config);
+  if (needing.length && !(await workerOptionsEnabled(ctx.projectRoot))) {
     throw new TypeError(
-      `backend(): functions ${withPermissions.join(", ")} set permissions, which need Deno's ` +
+      `backend(): ${needing.join(", ")} set permissions or memoryMb, which need Deno's ` +
         `worker options: add "unstable": ["worker-options"] to deno.json`,
     );
   }

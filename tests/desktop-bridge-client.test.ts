@@ -73,6 +73,8 @@ Deno.test("desktopRpc: passes the gate and returns data from the envelope", asyn
   assertEquals(req.headers.get(TOKEN_HEADER), FAKE_TOKEN);
   assertEquals(req.headers.get("content-type"), "application/json");
   assertEquals(req.headers.get("origin"), FAKE_ORIGIN);
+  // The page says which frame calls (the top-level page here); the runtime may say it too.
+  assertEquals(req.headers.get("x-denext-desktop-frame"), "main");
   assertEquals(rt.calls, [{ cap: "clipboard", method: "readText", args: {} }]);
 });
 

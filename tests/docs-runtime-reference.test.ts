@@ -1,6 +1,7 @@
 // The runtime reference (`/docs/runtime-reference`): one page listing what denext's Deno adds to
-// stock Deno. It must be reachable (nav, page wrapper), say how to tell the runtime apart, and name
-// the runtime version denext actually pins, so a pin move that forgets the page fails here.
+// stock Deno. It must be reachable (nav, page wrapper), say how to tell the runtime apart, and say
+// which runtime its rows apply to without naming the pinned version (a version there goes stale
+// with every pin move; `denext toolchain status` names it), nor call any release the newest.
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { NAV } from "../site/components/ui.tsx";
@@ -15,11 +16,13 @@ Deno.test("runtime reference: the page is in the docs nav and has its wrapper", 
   assertStringIncludes(await page(), "slug: runtime-reference");
 });
 
-Deno.test("runtime reference: says how to tell the runtime apart, and names the pinned build", async () => {
+Deno.test("runtime reference: says how to tell the runtime apart, and which build its rows cover", async () => {
   const md = await page();
   assertStringIncludes(md, "Deno.build.denext");
   assertStringIncludes(md, "denext <version> (Brainwires)");
-  assertStringIncludes(md, `denext 4.x pins \`${pin.version}\``);
+  assertStringIncludes(md, "Every row below applies to the runtime denext pins");
+  assert(!md.includes(`pins \`${pin.version}\``), "the pinned version is not spelled out");
+  assert(!/the newest release/.test(md), "no newest-release claim");
   assert(!/\bitems? \d/i.test(md), "public text describes changes, not the fork's item numbers");
 });
 

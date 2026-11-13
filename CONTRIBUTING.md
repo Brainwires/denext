@@ -152,6 +152,24 @@ mobile-build.yml and desktop-ci.yml likewise). A newer push to the same branch c
 before it (`tests/workflow-concurrency.test.ts` holds every workflow to this); runs on `main`,
 pull requests, tags and dispatches are never cancelled, and no workflow runs on a schedule.
 
+### CI's stock Deno is a bootstrap
+
+The workflows install stock Deno with `denoland/setup-deno`, and that is by design. Deno 2.9.6 runs
+only what must be stock: `deno fmt --check`, `deno lint` and `doc-lint` (reproducible formatting;
+JSR scores what stock `deno publish` uploads), `deno publish`, and scripts that run no project
+code. Everything else runs on denext's toolchain: a job's next step after setup-deno is
+`scripts/ci/toolchain-on-path.ts`, which puts the pinned toolchain first on `PATH`, or
+`scripts/test-run.ts`, which runs every pass on it (ci.yml's header lists what runs on what). The
+desktop jobs install the toolchain pin's own base Deno (`deno` in
+`src/build/deno-toolchain-pin.json`, 2.9.8) instead, which `deno desktop` and the pinned Deno
+Desktop runtime need.
+
+Moving the bootstrap into the toolchain would mean a hand-rolled download-and-verify step in front
+of every job, in a few dozen places, including the ones that only lint; a stock bootstrap is
+smaller, already SHA-pinned through the action, and fails loudly when the toolchain can't be had.
+`tests/workflow-bootstrap-deno.test.ts` keeps it that way: setup-deno may install only those two
+versions. Bump 2.9.6 deliberately, then re-run `deno fmt`.
+
 ### The Fallow gate
 
 Every commit is gated by [`fallow`](https://github.com/fallow-rs/fallow), a
@@ -575,6 +593,28 @@ prints it and never writes it to disk.
 5. Cut a denext patch release through the normal gates (`deno task release`, then merge
    `development → main`). Publish a GitHub advisory if security is involved.
 6. Optionally point the fork release's notes at the revocation (its assets stay immutable).
+7. Record the entry in `security/runtime-revocations.json`, the unsigned entries file the
+   repository keeps as the list's source, so the next whole-list signing keeps it.
+
+**Signing the whole list from the repository's entries file.** `security/runtime-revocations.json`
+holds every revocation, unsigned, in canonical form (`deno task revocations canonical <file>`
+rewrites one; `--check` refuses one that isn't; a test keeps the committed file canonical and
+checks that it revokes neither of the checked-out pins nor their rollbacks). On the machine with
+the key:
+
+```sh
+deno task revocations sign security/runtime-revocations.json --no-publish
+deno task revocations verify .denext/runtime-revocations.json
+DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root> \
+  deno task revocations publish .denext/runtime-revocations.json
+deno task revocations verify
+```
+
+`sign` prints what the list does to the checked-out pins before it reads the key, and refuses an
+entries file that leaves out an entry the published list has (that would un-revoke it) unless
+`--force`. It refuses as well when the published list can't be read or verified (offline, or a
+copy the compiled-in keys don't verify), since nothing then shows what the file leaves out;
+`--force` signs without that check. Without `--no-publish` it publishes at once.
 
 **Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
 There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign
@@ -582,6 +622,11 @@ There is no scheduled job: `deno task release` re-signs it (step 7, `deno task r
 warning, never a failed release; run `deno task revocations resign` by hand when releases pause
 for more than about 10 days. Sign on a machine whose clock is right: a list dated more than a day
 ahead of a user's clock is refused.
+
+Two warnings come first. `deno task release` checks the published list before it bumps anything
+(step 0b) and warns — it never stops — when fewer than 10 days remain, when the list has expired
+or when it can't be read; `deno task revocations expiry` runs the same check on its own. And
+`denext doctor` (with `toolchain status`) warns everyone once fewer than 7 days remain.
 
 **The compiled-in floor.** Each release compiles in the sequence of the list published when it
 was cut (`RUNTIME_REVOCATION_MIN_SEQUENCE` in `src/build/runtime-revocation-keys.ts`), so a fresh

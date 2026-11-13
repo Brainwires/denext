@@ -675,6 +675,7 @@ export {
   type SafeFetchErrorCode,
   type SafeFetchOptions,
 } from "./safe-fetch.ts";
+export { type FetchCookieJar, type RuntimeCookieJar, runtimeCookieJar } from "./fetch-cookies.ts";
 
 // First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
 // `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it

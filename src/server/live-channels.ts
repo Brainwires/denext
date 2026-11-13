@@ -116,7 +116,13 @@ export interface ChannelHub<C extends ChannelConn> {
   /** Handle a `channel-subscribe` frame. */
   subscribe(
     conn: C,
-    msg: { subId?: unknown; channelId?: unknown; key?: unknown; since?: unknown },
+    msg: {
+      subId?: unknown;
+      channelId?: unknown;
+      key?: unknown;
+      since?: unknown;
+      resubscribe?: unknown;
+    },
   ): Promise<void>;
   /** Handle a `channel-unsubscribe` frame. */
   unsubscribe(conn: C, subId: string): void;
@@ -391,6 +397,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const authorizeSub = async (
     conn: C,
     sub: ChannelSub,
+    resubscribe = false,
   ): Promise<{ decision: "allow" | "deny" | "no-policy"; grant?: string }> => {
     const ch = getChannel(sub.channelId);
     if (!ch || typeof ch.authorize !== "function") {
@@ -399,7 +406,11 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     try {
       const answer = await deps.withConnContext(
         conn,
-        () => ch.authorize!(deps.connContext(conn), sub.key),
+        () =>
+          ch.authorize!(
+            resubscribe ? { ...deps.connContext(conn), resubscribe } : deps.connContext(conn),
+            sub.key,
+          ),
       );
       const { allow, grant } = admissionOf(answer);
       return allow ? { decision: "allow", grant } : { decision: "deny" };
@@ -463,7 +474,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     async subscribe(conn, msg) {
       const shape = subscribeShape(msg);
       if (!shape) return;
-      const { subId, channelId, key, since } = shape;
+      const { subId, channelId, key, since, resubscribe } = shape;
       if (atCap(conn, subId)) {
         return deps.sendError(conn, "limit", "too many subscriptions", { subId });
       }
@@ -472,7 +483,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       const ch = getChannel(channelId);
       if (!ch || !ch.keyOk(key)) return deps.refuse(conn, "deny", "channel", { subId });
       const sub: ChannelSub = { channelId, key, authExpires: 0 };
-      const { decision, grant } = await authorizeSub(conn, sub);
+      const { decision, grant } = await authorizeSub(conn, sub, resubscribe);
       if (decision !== "allow") return deps.refuse(conn, decision, "channel", { subId });
       if (!deps.isConnected(conn)) return;
       if (atCap(conn, subId)) {
@@ -575,15 +586,22 @@ function resumableCursor(ev: ChannelEvent): string | undefined {
  * `since` that is not a cursor is ignored (no replay).
  */
 function subscribeShape(
-  msg: { subId?: unknown; channelId?: unknown; key?: unknown; since?: unknown },
-): { subId: string; channelId: string; key: string; since?: string } | null {
+  msg: {
+    subId?: unknown;
+    channelId?: unknown;
+    key?: unknown;
+    since?: unknown;
+    resubscribe?: unknown;
+  },
+): { subId: string; channelId: string; key: string; since?: string; resubscribe: boolean } | null {
   const { subId, channelId, key } = msg;
   if (typeof subId !== "string" || subId.length === 0 || subId.length > 64) return null;
   if (typeof channelId !== "string" || channelId.length === 0 || channelId.length > 128) {
     return null;
   }
   if (typeof key !== "string" || key.length === 0 || key.length > 128) return null;
+  const resubscribe = msg.resubscribe === true;
   return isCursor(msg.since)
-    ? { subId, channelId, key, since: msg.since }
-    : { subId, channelId, key };
+    ? { subId, channelId, key, since: msg.since, resubscribe }
+    : { subId, channelId, key, resubscribe };
 }

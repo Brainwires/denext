@@ -1,6 +1,7 @@
 // `denext job install [<name>...] [--dry-run] [--uninstall] [--user | --system]`: the project's
-// scheduled jobs as OS scheduler entries (src/cli/job-install/). Reached from `denext job`, which
-// hands over when its first positional is `install`.
+// scheduled jobs as OS scheduler entries (src/cli/job-install/). `--status` lists the entries
+// installed now, changing nothing. Reached from `denext job`, which hands over when its first
+// positional is `install`.
 
 import { fromFileUrl, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";
@@ -18,8 +19,10 @@ import {
   denextCommand,
   type InstallReport,
   type InstallRequest,
+  jobInstallStatus,
   projectId,
   runJobInstall,
+  type StatusReport,
 } from "../job-install/install.ts";
 import type { InstallScope } from "../job-install/spec.ts";
 import { formatOffset, zoneOffsets } from "../job-install/translate.ts";
@@ -125,13 +128,61 @@ function printOutcome(
 ): void {
   const { report, steps, dryRun, warning } = outcome;
   if (ctx.global.json) {
-    console.log(JSON.stringify({ ...report, ...(dryRun ? { steps } : {}) }, null, 2));
+    // The warning the text output prints on stderr, so a JSON reader (the `denext ui` Cron page)
+    // can say it too.
+    const warned = warning && report.installed.length > 0 ? { warning } : {};
+    console.log(JSON.stringify({ ...report, ...warned, ...(dryRun ? { steps } : {}) }, null, 2));
     return;
   }
   if (warning && report.installed.length > 0) console.error(`denext: ${warning}`);
   for (const note of report.warnings) console.error(`denext: ${note}`);
   if (dryRun) printSteps(steps);
   printReport(report, dryRun, offsets);
+}
+
+/** The project's entries, as `--status` prints them. */
+function printStatus(ctx: CommandContext, status: StatusReport): void {
+  if (ctx.global.json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
+  for (const note of status.warnings) console.error(`denext: ${note}`);
+  for (const e of status.installed) {
+    const stale = e.job === undefined ? " — no scheduled job of that name" : "";
+    console.log(`installed ${e.job ?? e.slug} (${e.backend})${stale}`);
+  }
+  if (status.backend === null) {
+    console.log(`No ${status.scope} scheduler here (${status.os}).`);
+  } else if (status.installed.length === 0) {
+    console.log(`Nothing of this project's is installed (${status.backend}).`);
+  }
+}
+
+/** `--status`: what the schedulers hold for this project, read without changing anything. */
+async function statusOf(ctx: CommandContext, host: SchedulerHost): Promise<StatusReport> {
+  if (ctx.flags.uninstall === true || ctx.flags["dry-run"] === true || ctx.positionals.length > 1) {
+    throw new Error("denext job install: --status takes no --uninstall, --dry-run or job names");
+  }
+  const paths = await resolveProject(resolve(ctx.global.cwd ?? "."));
+  const dir = await Deno.realPath(paths.projectDir);
+  const warnings: string[] = [];
+  // The job names only label the entries: a job module that fails to load still lets the
+  // entries be listed, by their slugs.
+  try {
+    await discoverJobs(join(paths.projectDir, "jobs"));
+  } catch (err) {
+    warnings.push(`the jobs could not be listed: ${err instanceof Error ? err.message : err}`);
+  }
+  const project = {
+    dir,
+    id: await projectId(dir),
+    stateDir: resolve(runtimeStateDir(paths.outDir)),
+  };
+  const status = await jobInstallStatus(
+    { project, scope: scopeOf(ctx), knownJobs: jobNames() },
+    host,
+  );
+  return { ...status, warnings };
 }
 
 /**
@@ -146,6 +197,10 @@ export async function jobInstallVerb(
   deps: JobInstallDeps = {},
 ): Promise<number> {
   try {
+    if (ctx.flags.status === true) {
+      printStatus(ctx, await statusOf(ctx, deps.host ?? realSchedulerHost()));
+      return 0;
+    }
     const dryRun = ctx.flags["dry-run"] === true;
     const denext = deps.denext ?? thisDenext();
     const offsets = deps.offsets ?? zoneOffsets();

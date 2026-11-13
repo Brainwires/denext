@@ -126,6 +126,12 @@ Deno.test("validateDenextConfig: compile", () => {
   ok(undefined);
   ok({ include: ["lib/data.json"], permissions: { write: ["app.db"] } });
   ok({ permissions: "all" });
+  ok({ limits: { memory: "256m", deadlineSeconds: 3600 } });
+  ok({ limits: false });
+  bad({ limits: { memory: 8 } }, "`compile.limits.memory` must be at least 32 MB");
+  bad({ limits: { cpuSeconds: 0 } }, "`compile.limits.cpuSeconds`");
+  bad({ limits: { heap: 1 } }, "`compile.limits.heap` is not a limit");
+  bad({ limits: true }, "`compile.limits` must be an object");
   bad([], "`compile` must be an object");
   bad({ include: "lib" }, "`compile.include`");
   bad({ include: ["../secrets"] }, "must stay inside the project");
@@ -187,6 +193,12 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
     errors.length = 0;
     await runStandalone(toFileUrl(dir), ["job", "--list"], { ...limits, limitsLifted: true });
     assertEquals(errors.filter((e) => e.includes("start.limits")), []);
+    // Baked from compile.limits: the notice names that key.
+    await runStandalone(toFileUrl(dir), ["job", "--list"], {
+      ...limits,
+      limitsFrom: "compile.limits",
+    });
+    assertStringIncludes(errors.join("\n"), "enforces the compile.limits");
   } finally {
     console.log = log;
     console.error = error;

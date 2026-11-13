@@ -253,7 +253,11 @@ Deno.test("a client render's own notFound() still ends the render; redirect() is
 // ---- the server render of a raised signal ------------------------------------------------
 
 /** An app dir of `files` (stub sources) whose modules come from `mods`. */
-async function scannedApp(files: string[], mods: Record<string, unknown>) {
+async function scannedApp(
+  files: string[],
+  mods: Record<string, unknown>,
+  options: { clientEntryFor?: () => string } = {},
+) {
   const dir = await Deno.makeTempDir({ prefix: "denext_raised_sig_" });
   for (const rel of files) {
     const full = join(dir, rel);
@@ -269,6 +273,7 @@ async function scannedApp(files: string[], mods: Record<string, unknown>) {
         .sort((a, b) => b.length - a.length)[0];
       return Promise.resolve(key ? mods[key] : undefined);
     },
+    ...options,
   });
   return { dir, app };
 }
@@ -338,6 +343,34 @@ Deno.test("x-denext-signal is honoured only on a soft nav, and only for an acces
       assertEquals(res.status, 200);
       assertStringIncludes(await res.text(), "<p>item-page</p>");
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a one-bundle (isomorphic) route raising a signal answers the signal's file, not its bundle", async () => {
+  // A route that renders as one client bundle re-renders its page from that bundle on an iso
+  // soft nav, which would paint the page over the signal. The raised render comes back as the
+  // full document instead, without the route's entry: the client swaps the file's markup in.
+  const entry = "/_denext/client/shop-item.js";
+  const { dir, app } = await scannedApp(FILES, MODS, { clientEntryFor: () => entry });
+  try {
+    const plain = await app(softNav(null));
+    assertEquals(plain.headers.get("x-denext-iso"), "1", "a plain soft nav stays iso");
+    await plain.body?.cancel();
+
+    const res = await app(softNav("404"));
+    assertEquals(res.status, 404);
+    assertEquals(res.headers.get("x-denext-iso"), null);
+    assertStringIncludes(res.headers.get("cache-control") ?? "", "no-store");
+    const html = await res.text();
+    assertStringIncludes(html, "root:<section>shop-layout:<h1>item-not-found</h1>");
+    assert(!html.includes(entry), "no route entry to re-render the page over it");
+    assert(!html.includes("__denext_data"), "no hydration data for a bundle that won't run");
+
+    // A hard load of the same route keeps its entry.
+    const hard = await app(softNav(null, false));
+    assertStringIncludes(await hard.text(), entry);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

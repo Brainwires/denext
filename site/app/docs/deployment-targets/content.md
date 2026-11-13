@@ -330,6 +330,10 @@ production server starts:
 | `denext generate docker`, the `docker` / `fly` presets | on the `CMD`'s `deno run`, with `ENV DENEXT_LIMITS_APPLIED` |
 | the `genericHost()` systemd unit                       | on `ExecStart`, with `Environment=DENEXT_LIMITS_APPLIED`    |
 
+`compile: { limits }` gives the binary its own limits in place of `start.limits` (same shape and
+checks), and `compile: { limits: false }` bakes none, so an app whose `start.limits` suit
+`denext start` and the Docker image can still ship an unlimited executable.
+
 `denext dev` (where a limit would end the dev server), tests and `denext job` never get
 them. A `start` task run straight on the toolchain (`denext task start`) re-runs itself once with
 them when it has `--allow-run` for its own Deno; the least-privilege task has not, so it warns

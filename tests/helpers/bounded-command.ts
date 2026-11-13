@@ -91,6 +91,108 @@ async function killProcessTree(pid: number): Promise<void> {
 /** How long {@linkcode processTree} may take before it gives up. */
 const TREE_DEADLINE_MS = 30_000;
 
+/**
+ * How long the Windows listing may take once the OS snapshot is in hand
+ * ({@linkcode windowsProcessSnapshot}): it only adds the command lines, so a host too loaded to
+ * start PowerShell quickly falls back to the snapshot instead of holding the caller.
+ */
+const ENRICH_DEADLINE_MS = 5_000;
+
+/** `sizeof(PROCESSENTRY32W)` on 64-bit Windows, and its fields' offsets. */
+const ENTRY_SIZE = 568;
+const ENTRY_PID = 8;
+const ENTRY_THREADS = 28;
+const ENTRY_PPID = 32;
+const ENTRY_EXE = 44;
+const ENTRY_EXE_CHARS = 260;
+
+/**
+ * One `PROCESSENTRY32W` (64-bit layout) as a {@linkcode processListCommand}-shaped row: pid, tab,
+ * parent, tab, thread count, tab, executable name (the snapshot has no command lines).
+ *
+ * @param entry The struct's bytes.
+ * @returns The row.
+ */
+export function toolhelpRow(entry: DataView): string {
+  const pid = entry.getUint32(ENTRY_PID, true);
+  const ppid = entry.getUint32(ENTRY_PPID, true);
+  const threads = entry.getUint32(ENTRY_THREADS, true);
+  let exe = "";
+  for (let i = 0; i < ENTRY_EXE_CHARS; i++) {
+    const unit = entry.getUint16(ENTRY_EXE + 2 * i, true);
+    if (unit === 0) break;
+    exe += String.fromCharCode(unit);
+  }
+  return `${pid}\t${ppid}\tthreads ${threads}\t${exe}`;
+}
+
+/**
+ * Every process, from the OS's own snapshot (`CreateToolhelp32Snapshot` through FFI, in this
+ * process): pid, parent, threads and executable name, one {@linkcode toolhelpRow} each. Nothing is
+ * spawned, so a host too loaded to start PowerShell in time still answers. `null` off Windows,
+ * without FFI permission, or when the call fails.
+ */
+function windowsProcessSnapshot(): string[] | null {
+  if (Deno.build.os !== "windows") return null;
+  try {
+    if (Deno.permissions.querySync({ name: "ffi" }).state !== "granted") return null;
+    const lib = Deno.dlopen("kernel32.dll", {
+      CreateToolhelp32Snapshot: { parameters: ["u32", "u32"], result: "pointer" },
+      Process32FirstW: { parameters: ["pointer", "buffer"], result: "i32" },
+      Process32NextW: { parameters: ["pointer", "buffer"], result: "i32" },
+      CloseHandle: { parameters: ["pointer"], result: "i32" },
+    });
+    try {
+      const TH32CS_SNAPPROCESS = 0x2;
+      const snap = lib.symbols.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+      // INVALID_HANDLE_VALUE is -1: all bits set.
+      if (snap === null || BigInt(Deno.UnsafePointer.value(snap)) === 0xffff_ffff_ffff_ffffn) {
+        return null;
+      }
+      try {
+        const entry = new Uint8Array(ENTRY_SIZE);
+        const view = new DataView(entry.buffer);
+        view.setUint32(0, ENTRY_SIZE, true); // dwSize
+        const rows: string[] = [];
+        for (
+          let ok = lib.symbols.Process32FirstW(snap, entry);
+          ok !== 0;
+          ok = lib.symbols.Process32NextW(snap, entry)
+        ) rows.push(toolhelpRow(view));
+        return rows;
+      } finally {
+        lib.symbols.CloseHandle(snap);
+      }
+    } finally {
+      lib.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * {@linkcode processTree}'s rendering of the OS snapshot when the full listing could not be had:
+ * the snapshot names executables, not command lines, so the root is matched by `expectCommand`'s
+ * file name.
+ *
+ * @param rows The snapshot's rows ({@linkcode toolhelpRow}).
+ * @param pid The root of the tree.
+ * @param why Why the full listing is missing.
+ * @param expectCommand What the root's command line must contain ({@linkcode renderTree}).
+ * @returns The listing, under a `# ` note saying it lacks command lines.
+ */
+export function renderSnapshot(
+  rows: readonly string[],
+  pid: number,
+  why: string,
+  expectCommand?: string,
+): string {
+  const note = `# ${why}: the OS's process snapshot instead, command lines unavailable`;
+  const exe = expectCommand?.split(/[\\/]/).pop();
+  return renderTree([note, ...rows].join("\n"), pid, exe);
+}
+
 /** One process in a {@linkcode processTree} listing: its ids and the rest of its line. */
 interface ProcessRow {
   readonly pid: number;
@@ -153,18 +255,24 @@ export async function processTree(
   timeoutMs = TREE_DEADLINE_MS,
   expectCommand?: string,
 ): Promise<string> {
+  // Windows: the OS snapshot first, taken in this process as things stand now; PowerShell then
+  // adds the command lines if it comes back in time.
+  const snapshot = windowsProcessSnapshot();
+  const budget = snapshot ? Math.min(timeoutMs, ENRICH_DEADLINE_MS) : timeoutMs;
+  const without = (why: string) =>
+    snapshot ? renderSnapshot(snapshot, pid, why, expectCommand) : `(no process list: ${why})`;
   const [program, args] = processListCommand(pid);
   let lister: Deno.ChildProcess;
   try {
     lister = new Deno.Command(program, { args, stdin: "null", stdout: "piped", stderr: "null" })
       .spawn();
   } catch (err) {
-    return `(no process list: ${err instanceof Error ? err.message : err})`;
+    return without(err instanceof Error ? err.message : String(err));
   }
   const out: Sink = { text: "", chunks: [] };
   const read = drain(lister.stdout, out);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<"late">((r) => timer = setTimeout(() => r("late"), timeoutMs));
+  const late = new Promise<"late">((r) => timer = setTimeout(() => r("late"), budget));
   const ended = await Promise.race([lister.status, late]);
   clearTimeout(timer);
   if (ended === "late") {
@@ -173,7 +281,7 @@ export async function processTree(
     } catch { /* exited meanwhile */ }
     await read.cancel();
     await within(lister.status, 5_000);
-    return `(no process list: ${program} still running after ${timeoutMs} ms)`;
+    return without(`${program} still running after ${budget} ms`);
   }
   // Exited: read what is in the pipe, but not past a short grace (see the module comment).
   await within(read.done, 5_000);

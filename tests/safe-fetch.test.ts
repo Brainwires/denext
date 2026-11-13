@@ -623,3 +623,33 @@ Deno.test("M1: connectWithAbort resolves normally when connect wins the race", a
   const out = await connectWithAbort(Promise.resolve(conn), ac.signal);
   assertEquals(out, conn);
 });
+
+Deno.test("safeFetch userAgent: false omits it, a string replaces it, a header still wins", async () => {
+  const resolver: Resolver = () => Promise.resolve(["93.184.216.34"]);
+  const sent: string[] = [];
+  const transport: Transport = (opts) => {
+    sent.push(dec.decode(opts.request));
+    return Promise.resolve(rawResponse(200, { "content-length": "0" }, ""));
+  };
+  const sf = makeSafeFetch({ resolver, transport });
+  const ua = (i: number) => sent[i].match(/\r\nuser-agent: ([^\r]*)\r\n/i)?.[1] ?? null;
+  await sf("https://example.com/");
+  assertEquals(ua(0), "denext", "the default is kept");
+  await sf("https://example.com/", { userAgent: false });
+  assertEquals(ua(1), null, "false sends none");
+  await sf("https://example.com/", { userAgent: "my-agent/1" });
+  assertEquals(ua(2), "my-agent/1");
+  await sf("https://example.com/", { userAgent: false, headers: { "User-Agent": "explicit/2" } });
+  assertEquals(ua(3), "explicit/2", "an explicit header wins over false");
+  await sf("https://example.com/", { userAgent: "x/1", headers: { "user-agent": "explicit/3" } });
+  assertEquals(ua(4), "explicit/3", "and over a string");
+  await assertRejects(
+    () => sf("https://example.com/", { userAgent: "bad\r\nX-Injected: 1" }),
+    TypeError,
+  );
+  await assertRejects(
+    () => sf("https://example.com/", { userAgent: 42 as unknown as string }),
+    TypeError,
+  );
+  assertEquals(sent.length, 5, "a refused userAgent sends nothing");
+});

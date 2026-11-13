@@ -438,6 +438,42 @@ Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for
   }
 });
 
+Deno.test("desktopEntryOutDir: only the outDir runDesktop is passed, read from the syntax tree", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_entry_out_ast_" });
+  try {
+    const entry = async (source: string) => {
+      await Deno.writeTextFile(join(dir, "desktop.ts"), source);
+      return await desktopEntryOutDir(dir, "desktop.ts");
+    };
+    // A comment, a string or another object's outDir before the call is not the call's.
+    assertEquals(
+      await entry('// was outDir: "old"\nrunDesktop({ importMetaUrl: import.meta.url });'),
+      "out",
+    );
+    assertEquals(
+      await entry('const build = { outDir: "dist" };\nrunDesktop({ outDir: "ui" });'),
+      "ui",
+    );
+    assertEquals(
+      await entry('const note = "outDir: \'x\'";\nawait runDesktop({ importMetaUrl: "" });'),
+      "out",
+    );
+    assertEquals(await entry('const build = { outDir: "dist" };\nrunDesktop({});'), "out");
+    // The options as a top-level const, a member call, and a quoted key.
+    assertEquals(
+      await entry('const options = { outDir: "web" };\nawait runDesktop(options);'),
+      "web",
+    );
+    assertEquals(await entry('desktop.runDesktop({ "outDir": "site" });'), "site");
+    // Not a literal: runDesktop's own default is all that can be known.
+    assertEquals(await entry("runDesktop({ outDir: `${base}/ui` });"), "out");
+    assertEquals(await entry("runDesktop({ ...shared });"), "out");
+    assertEquals(await entry("runDesktop({ outDir: "), "out");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop run / build: an export folder other than out is used only when it is new, empty or an export, and is git-ignored", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_desktop_export_target_" });
   try {

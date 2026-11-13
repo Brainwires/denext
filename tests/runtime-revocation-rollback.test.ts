@@ -620,6 +620,34 @@ Deno.test("doctor: the revocation check is absent with no key, and reports a rev
   }
 });
 
+Deno.test("doctor: the revocation check warns while the list in force is about to expire", async () => {
+  const status = (expiresInMs: number) => ({
+    configured: true,
+    pinned: PINNED,
+    revoked: false,
+    reason: null,
+    advisory: null,
+    fixedIn: null,
+    runningRollback: false,
+    running: PINNED,
+    listSequence: 42,
+    listExpiresAt: new Date(Date.now() + expiresInMs).toISOString(),
+    expiredAt: null,
+  });
+  const check = (expiresInMs: number) =>
+    runtimeRevocationsCheck(() =>
+      Promise.resolve({
+        pin: { schema: 1, version: PINNED, targets: {} },
+        revocation: status(expiresInMs),
+      } as unknown as Awaited<ReturnType<typeof selectToolchainPin>>)
+    );
+  const soon = await check(2 * 86_400_000 + 3_600_000);
+  assertEquals([soon?.ok, soon?.critical], [false, false]);
+  assertStringIncludes(soon!.detail, "list #42 EXPIRES SOON");
+  assertStringIncludes(soon!.detail, "(in 3 days;");
+  assertEquals((await check(14 * 86_400_000))?.ok, true);
+});
+
 /** A pin file pair of `version` (runtime + toolchain) with an optional rollback. */
 function pins(
   version: string,

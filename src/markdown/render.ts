@@ -256,6 +256,58 @@ function footnoteRef(label: string, notes: Footnotes): string | null {
 }
 
 /**
+ * Where an inline link's or image's destination ends, scanning from `from` (just past its `(`):
+ * the index of the first `)` that closes no `(` before it, or — with `stopAtSpace` — of the first
+ * whitespace. Parentheses nest as in CommonMark (balanced, at most 32 deep; `\(` / `\)` don't
+ * count), so `[x](https://e.com/a_(b))` keeps its whole URL. -1 when there is no such end, or the
+ * parentheses before it are unbalanced (not a link in CommonMark either).
+ */
+function destinationEnd(s: string, from: number, stopAtSpace: boolean): number {
+  const token = /\\[()]|[()\s]/g; // an escaped paren is consumed whole and counts for nothing
+  token.lastIndex = from;
+  let depth = 0;
+  for (let m = token.exec(s); m !== null; m = token.exec(s)) {
+    const t = m[0];
+    if (t === "(") {
+      if (++depth > 32) return -1;
+    } else if (t === ")") {
+      if (depth-- === 0) return m.index;
+    } else if (t.length === 1 && stopAtSpace) return depth === 0 ? m.index : -1;
+  }
+  return -1;
+}
+
+/**
+ * Replace each `[label](destination…)` (after `prefix`, e.g. `!` for an image) in `s`: `opener`
+ * matches up to and including the `(`, `rest` (sticky) what follows the destination through the
+ * closing `)`. `render` gets the opener's groups, the destination and `rest`'s groups.
+ */
+function replaceInlineTargets(
+  s: string,
+  opener: RegExp,
+  rest: RegExp,
+  stopAtSpace: boolean,
+  render: (open: RegExpExecArray, dest: string, tail: RegExpExecArray) => string,
+): string {
+  let out = "";
+  let last = 0;
+  opener.lastIndex = 0;
+  for (let m = opener.exec(s); m !== null; m = opener.exec(s)) {
+    const start = m.index + m[0].length;
+    const end = destinationEnd(s, start, stopAtSpace);
+    rest.lastIndex = end;
+    const tail = end > start ? rest.exec(s) : null;
+    if (tail === null) {
+      opener.lastIndex = m.index + 1;
+      continue;
+    }
+    out += s.slice(last, m.index) + render(m, s.slice(start, end), tail);
+    last = opener.lastIndex = end + tail[0].length;
+  }
+  return out + s.slice(last);
+}
+
+/**
  * Images: inline `![alt](src "title")`, then reference `![alt][label]` / `![alt][]` / `![alt]`.
  * `plain` turns a held code span inside the alt or title back into its text BEFORE the attribute
  * escaping, so neither can carry markup (or a quote) into the attribute.
@@ -266,12 +318,15 @@ function replaceImages(
   hold: (html: string) => string,
   plain: (text: string) => string,
 ): string {
-  const out = s.replace(
-    /!\[([^\]]*)\]\(([^)\s]+)(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*\)/g,
-    (_m, alt, src, t1, t2) => {
+  const out = replaceInlineTargets(
+    s,
+    /!\[([^\]]*)\]\(/g,
+    /(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*\)/y,
+    true,
+    ([, alt], src, [, t1, t2]) => {
       const title = t1 ?? t2;
       const t = title === undefined ? undefined : plain(title);
-      return hold(renderImage(plain(alt), src, refs.urls, t));
+      return hold(renderImage(plain(alt), src.replace(/\\([()])/g, "$1"), refs.urls, t));
     },
   );
   if (refs.links.size === 0) return out;
@@ -309,7 +364,13 @@ function renderInline(text: string, refs: LinkRefs): string {
   // a URL is never turned into `<em>`; the label stays in place and still takes emphasis.
   const holdLink = (label: string, href: string): string =>
     holdAnchor(label, href, refs.urls, hold);
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => holdLink(label, href));
+  out = replaceInlineTargets(
+    out,
+    /\[([^\]]+)\]\(/g,
+    /\)/y,
+    false,
+    ([, label], href) => holdLink(label, href.replace(/\\([()])/g, "$1")),
+  );
   // Reference links: `[text][label]`, `[label][]`, and the shortcut `[label]` — only when the
   // label was defined (an undefined `[thing]` stays literal text, as in CommonMark).
   if (refs.links.size > 0) {

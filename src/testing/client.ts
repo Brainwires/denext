@@ -3,6 +3,8 @@
 // `mod.ts` barrel so the conformance prober (which the barrel re-exports) can import
 // the client without a barrel cycle.
 
+import { type FetchCookieJar, storeResponseCookies } from "../server/fetch-cookies.ts";
+
 /** A request body helper: a plain object is sent as `x-www-form-urlencoded`. */
 export type FormBody = Record<string, string | number | boolean>;
 
@@ -69,14 +71,43 @@ export interface FormQuery {
 }
 
 /**
+ * A URL-aware cookie store a {@linkcode CookieJar} can delegate to: the runtime's
+ * `Deno.CookieJar` (denext's Deno with `--unstable-cookies`; `runtimeCookieJar()` from
+ * `denext/server`), or any object with these methods.
+ */
+export interface TestCookieStore extends FetchCookieJar {
+  /** The cookies sent to `url`, or every cookie with no URL. */
+  getCookies(url?: string | URL): { name: string; value: string }[];
+  /** Remove every cookie. */
+  clear(): void;
+}
+
+/**
  * A cookie jar: stores cookies set by responses and replays them on later
- * requests, honoring deletions (`Max-Age=0` / a past `Expires`).
+ * requests, honoring deletions (`Max-Age=0` / a past `Expires`). By default it keys cookies by
+ * name alone; constructed over a {@linkcode TestCookieStore} (`new CookieJar(new
+ * Deno.CookieJar())`, or `createTestClient(handler, { cookieJar })`) it applies the store's rules
+ * instead: host, `Path`, expiry, `Secure` and the cookie prefixes, as a browser does.
  */
 export class CookieJar {
   #jar = new Map<string, string>();
+  #store: TestCookieStore | null;
+  #url: string;
 
-  /** Absorb every `Set-Cookie` from a response's headers. */
-  absorb(headers: Headers): void {
+  /**
+   * Create a jar: name-keyed, or over a URL-aware store.
+   *
+   * @param store A URL-aware store to keep the cookies in (none: the name-keyed jar).
+   * @param url The URL a request or cookie without one is taken to be for (the client's origin).
+   */
+  constructor(store: TestCookieStore | null = null, url = "http://localhost/") {
+    this.#store = store;
+    this.#url = url;
+  }
+
+  /** Absorb every `Set-Cookie` from a response's headers (from `url`, for a store). */
+  absorb(headers: Headers, url?: string): void {
+    if (this.#store) return storeResponseCookies(this.#store, headers, url ?? this.#url);
     // `getSetCookie` returns each Set-Cookie separately (Deno/std support it).
     const list = typeof headers.getSetCookie === "function"
       ? headers.getSetCookie()
@@ -106,24 +137,28 @@ export class CookieJar {
     else this.#jar.set(name, value);
   }
 
-  /** The `Cookie` header value for the current jar, or `null` if empty. */
-  header(): string | null {
+  /** The `Cookie` header value for the current jar (for `url`, with a store), or `null`. */
+  header(url?: string): string | null {
+    if (this.#store) return this.#store.getCookieString(url ?? this.#url);
     if (this.#jar.size === 0) return null;
     return [...this.#jar].map(([n, v]) => `${n}=${v}`).join("; ");
   }
 
   /** Read one cookie's current value. */
   get(name: string): string | undefined {
+    if (this.#store) return this.#store.getCookies().find((c) => c.name === name)?.value;
     return this.#jar.get(name);
   }
 
-  /** Set a cookie directly (e.g. to seed a test). */
+  /** Set a cookie directly (e.g. to seed a test); with a store, for the jar's URL and `/`. */
   set(name: string, value: string): void {
+    if (this.#store) return this.#store.setCookie(`${name}=${value}; Path=/`, this.#url);
     this.#jar.set(name, value);
   }
 
   /** Remove all cookies. */
   clear(): void {
+    if (this.#store) return this.#store.clear();
     this.#jar.clear();
   }
 }
@@ -143,6 +178,12 @@ export interface TestClientOptions {
   followRedirects?: boolean;
   /** Max redirects to follow when `followRedirects` is on. Default `10`. */
   maxRedirects?: number;
+  /**
+   * A URL-aware cookie store for the client's {@linkcode CookieJar}: pass `new Deno.CookieJar()`
+   * (denext's Deno with `--unstable-cookies`) to apply the browser's cookie rules (host, `Path`,
+   * expiry, `Secure`, prefixes). Default: the name-keyed jar.
+   */
+  cookieJar?: TestCookieStore;
 }
 
 /** A handler under test: anything that maps a `Request` to a `Response`. */
@@ -310,7 +351,7 @@ export function createTestClient(
   const originHost = new URL(origin).host;
   const followRedirects = options.followRedirects ?? false;
   const maxRedirects = options.maxRedirects ?? 10;
-  const cookies = new CookieJar();
+  const cookies = new CookieJar(options.cookieJar ?? null, `${origin}/`);
 
   const resolve = (path: string): string =>
     path.startsWith("http://") || path.startsWith("https://") ? path : `${origin}${path}`;
@@ -323,10 +364,10 @@ export function createTestClient(
     // same-origin Origin on unsafe methods) so Server Action CSRF checks pass.
     if (!headers.has("host")) headers.set("host", originHost);
     if (UNSAFE.has(method) && !headers.has("origin")) headers.set("origin", origin);
-    const cookieHeader = cookies.header();
+    const cookieHeader = cookies.header(url);
     if (cookieHeader && !headers.has("cookie")) headers.set("cookie", cookieHeader);
     const res = await handler(new Request(url, { ...init, method, headers, body }));
-    cookies.absorb(res.headers);
+    cookies.absorb(res.headers, url);
     return res;
   }
 

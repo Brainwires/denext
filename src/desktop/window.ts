@@ -1313,6 +1313,11 @@ export interface DesktopWindowInfo {
   readonly visible: boolean;
   /** The key it was opened with (`openWindow({ key })`), if any. */
   readonly key?: string;
+  /**
+   * Its title, if it has one: as opened (`openWindow({ title })`) or configured, then as its page
+   * last reported it (`document.title`) or set it (`setWindowTitle`). The Window menu's label.
+   */
+  readonly title?: string;
 }
 
 /** One of the app's windows, by id ({@linkcode openWindow}, {@linkcode windowHandle}). */
@@ -1407,7 +1412,7 @@ export async function openWindow(options: OpenWindowOptions): Promise<DesktopWin
 /**
  * The app's open windows.
  *
- * @returns Each window's id, kind and visibility.
+ * @returns Each window's id, kind, visibility, key and title.
  */
 export async function getWindows(): Promise<DesktopWindowInfo[]> {
   const raw = await desktopRpc<unknown>(WINDOWS, "list", {});
@@ -1420,6 +1425,7 @@ export async function getWindows(): Promise<DesktopWindowInfo[]> {
       kind,
       visible: o.visible !== false,
       ...(typeof o.key === "string" ? { key: o.key } : {}),
+      ...(typeof o.title === "string" ? { title: o.title } : {}),
     }];
   });
 }

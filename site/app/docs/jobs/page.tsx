@@ -152,6 +152,28 @@ export default defineJob({
         one whose wait was cut short by shutdown is recorded as the last attempt.
       </p>
 
+      <h2 id="timeouts">Timeouts</h2>
+      <p>
+        <code>timeoutMs</code> bounds one attempt: past it the attempt fails with an{" "}
+        <code>Error</code> whose <code>name</code> is <code>"JobTimeoutError"</code>{" "}
+        (<code>job "sync" timed out after 60000 ms</code>; check{" "}
+        <code>err.name</code>, as there is no class to import) and the handler's <code>signal</code>
+        {" "}
+        aborts with that error, so a <code>fetch</code> or query that takes the signal stops. With
+        {" "}
+        <code>retry</code>{" "}
+        each attempt has its own limit and a timed-out one is retried like any failure. The handler
+        is not preempted: synchronous work runs on until it returns, so check{" "}
+        <code>signal.aborted</code>{" "}
+        in a long loop, and a scheduled run counts as finished once its attempt has timed out.
+      </p>
+      <Code lang="ts">
+        {`export default defineJob({
+  timeoutMs: 60_000,
+  handler: async ({ signal }) => await fetch(REPORT_URL, { signal }),
+});`}
+      </Code>
+
       <h2 id="run-history">Run history</h2>
       <p>
         Off by default: denext records nothing and writes no file until you ask. With{" "}
@@ -321,6 +343,7 @@ denext job --history                 # recent runs, through the configured histo
 denext job install cleanup        # just this one (others stay as they are)
 denext job install --dry-run      # print the files and scheduler commands, change nothing
 denext job install --uninstall    # remove this project's entries (or name jobs to remove)
+denext job install --status       # list this project's installed entries, change nothing
 sudo denext job install --system  # the machine's scheduler, still run as you`}
       </Code>
       <ul>
@@ -356,6 +379,11 @@ sudo denext job install --system  # the machine's scheduler, still run as you`}
         (or{" "}
         <code>$DENEXT_INSTALL/bin</code>). Without one, they run the current Deno on denext's CLI
         module, and the command warns that this path can change when the toolchain is upgraded.
+      </p>
+      <p>
+        The <a href="/docs/ui#cron">Cron page</a> of <code>denext ui</code>{" "}
+        shows the same entries and installs or removes them for the logged-in user, after a preview
+        of every file and command (the command's <code>--dry-run</code>).
       </p>
       <h3 id="os-scheduler-time-zones">Time zones</h3>
       <p>

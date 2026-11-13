@@ -54,10 +54,12 @@ import {
 import {
   getScreens,
   getTitleBarPreferences,
+  getWindows,
   getWindowState,
   maximizeWindow,
   onCloseRequested,
   onFileDrop,
+  openWindow,
   quitApp,
   setMaximumWindowSize,
   setMinimumWindowSize,
@@ -69,6 +71,7 @@ import {
   windowCapabilities,
 } from "denext/desktop/window";
 import { tiledReason } from "./geometry.ts";
+import { SECONDARY_MENU_ID, SECONDARY_QUERY, SECONDARY_TITLE } from "./second/secondary-window.tsx";
 import {
   ATTACHMENT_NAME,
   ATTACHMENT_PATH,
@@ -1459,6 +1462,51 @@ const appChecks: Check[] = [
     }
     return `menu set; click → ${got[0]}`;
   }],
+  [
+    "windows: a secondary window reports its page title; an app-menu click while it is focused reaches onAppMenuItem once",
+    async () => {
+      const caps = await appCapabilities();
+      eq(caps.appMenu, true, "appCapabilities().appMenu");
+      // The title reporter rides the window binding (BrowserWindow.bind), as window tokens do.
+      const windowCaps = await raw("windows").capabilities({}) as { capabilitySubsets?: boolean };
+      if (windowCaps.capabilitySubsets !== true) {
+        throw new Skip(
+          "this runtime has no BrowserWindow.bind, which the page-title reporter needs",
+        );
+      }
+      await setAppMenu([
+        { label: "Kitchen", submenu: [{ id: SECONDARY_MENU_ID, label: "From the second window" }] },
+      ]);
+      const got: string[] = [];
+      const stop = onAppMenuItem((id) => got.push(id));
+      await sleep(300); // the subscription takes the queue once
+      const win = await openWindow({
+        url: `/second?${SECONDARY_QUERY}`,
+        title: "Kitchen opened",
+        width: 480,
+        height: 360,
+      });
+      try {
+        await win.focus();
+        // The injected title reporter carries the page's document.title to the window's label.
+        const titleOf = async () => (await getWindows()).find((w) => w.id === win.id)?.title;
+        await waitFor(
+          async () => (await titleOf()) === SECONDARY_TITLE,
+          "the secondary window's page title",
+          10_000,
+          async () => String(await titleOf()),
+        );
+        // The secondary page clicks as the key window; this (main) page hears it, once.
+        await waitFor(() => got.length > 0, "the menu click from the secondary window", 10_000);
+        await sleep(500);
+        eq(got.join(","), SECONDARY_MENU_ID, "the clicks reported");
+      } finally {
+        stop();
+        await win.close().catch(() => {});
+      }
+      return `title "${SECONDARY_TITLE}"; click → ${got[0]} (${win.id})`;
+    },
+  ],
   [
     "tray: create, bounds, update, destroy (or skip with the runtime's reason)",
     async ({ setup }) => {

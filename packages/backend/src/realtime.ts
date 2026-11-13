@@ -149,6 +149,15 @@ type AudienceMode = "view" | "raw";
 interface Queued {
   frame: TableChangesFrame;
   grant: string;
+  /** Sent before, as `frame.seq` (sent again after a drop): it keeps its number. */
+  again?: true;
+}
+
+/** A frame handed to the Live hub, kept a moment in case the connection drops before it fans out. */
+interface Sent {
+  frame: TableChangesFrame;
+  grant: string;
+  at: number;
 }
 
 /** One subscription. */
@@ -197,6 +206,53 @@ interface Audience {
   regranted: boolean;
   /** When its last frame was published (epoch ms; 0: none yet). */
   sentAt: number;
+  /**
+   * The frames handed to the Live hub within the last {@linkcode RECENT_MS}: one the hub had not
+   * fanned out when the connection dropped never reached the subscriber, so they are all sent
+   * again on its return, marked `again` (the browser drops the ones it has).
+   */
+  recent: Sent[];
+  /**
+   * A re-subscribe this instance had no subscription for (swept, or held by another instance):
+   * what was missed is unknown, so its first frame is a `resync`.
+   */
+  lost: boolean;
+}
+
+/** Keep a frame just handed to the Live hub, dropping those past {@linkcode RECENT_MS}. */
+function keepRecent(audience: Audience, frame: TableChangesFrame, grant: string): void {
+  const now = Date.now();
+  const recent = audience.recent.filter((sent) => now - sent.at <= RECENT_MS);
+  recent.push({ frame, grant, at: now });
+  audience.recent = recent.slice(-RECENT_MAX);
+}
+
+/**
+ * Drop an audience's kept frames past {@linkcode RECENT_MS} (the engine's prune timer, so a
+ * subscription that went quiet does not hold them until its next frame).
+ *
+ * @returns Whether any are still kept.
+ */
+function pruneRecent(audience: Audience, now = Date.now()): boolean {
+  if (audience.recent.length === 0) return false;
+  audience.recent = audience.recent.filter((sent) => now - sent.at <= RECENT_MS);
+  return audience.recent.length > 0;
+}
+
+/**
+ * At a drop: the frames handed to the Live hub just before it go ahead of the queue, to be sent
+ * again (numbered as before, marked `again`) on the subscriber's return.
+ */
+function requeueRecent(audience: Audience): void {
+  const now = Date.now();
+  const again = audience.recent
+    .filter((sent) => now - sent.at <= RECENT_MS)
+    .map((sent): Queued => ({
+      frame: { ...sent.frame, again: true },
+      grant: sent.grant,
+      again: true,
+    }));
+  audience.queue.unshift(...again);
 }
 
 /** The burst's change to a key after one more notification (`previous`: the burst's so far). */
@@ -269,6 +325,16 @@ export interface RealtimeStats {
 const COALESCE_MS = 16;
 /** Spacing between two frames to the same subscription: longer than the hub's coalescing. */
 const PACE_MS = 24;
+/**
+ * How long a frame handed to the Live hub is kept to be sent again after a drop: past the hub's
+ * coalescing window (16 ms) with room for a busy event loop. One the subscriber had is dropped by
+ * the browser, so the window errs long.
+ */
+const RECENT_MS = 1_000;
+
+/** The most frames kept to be sent again after a drop (older ones show a gap: a re-read). */
+const RECENT_MAX = 16;
+
 /** Frames waiting per subscription before they are replaced by one `resync`. */
 const MAX_QUEUE = 32;
 /** Changes held in one burst before the burst becomes a `resync`. */
@@ -378,6 +444,8 @@ export class RealtimeEngine {
   /** Tables truncated in this burst (delivered before the burst's later changes), with when. */
   #truncated = new Map<string, number | undefined>();
   #timer: ReturnType<typeof setTimeout> | null = null;
+  /** Prunes the audiences' kept frames once they are past {@linkcode RECENT_MS}. */
+  #recentTimer: ReturnType<typeof setTimeout> | null = null;
   #listening: Promise<void> | null = null;
   #listener: SqlListener | null = null;
   #migrated: Promise<void> | null = null;
@@ -1168,9 +1236,15 @@ export class RealtimeEngine {
           await sleep(wait);
           continue; // the subscriber may have left meanwhile
         }
-        const { frame, grant } = audience.queue.shift()!;
-        frame.seq = ++audience.seq;
-        if (await this.#send(audience, frame, grant)) audience.sentAt = Date.now();
+        const { frame, grant, again } = audience.queue.shift()!;
+        if (!again) frame.seq = ++audience.seq;
+        if (await this.#send(audience, frame, grant, again === true)) {
+          audience.sentAt = Date.now();
+          if (channel) {
+            keepRecent(audience, frame, grant);
+            this.#armRecentPrune();
+          }
+        }
       }
     } finally {
       audience.pumping = false;
@@ -1178,10 +1252,38 @@ export class RealtimeEngine {
   }
 
   /**
-   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
-   * requeued, under the same grant) instead.
+   * Prune the kept frames {@linkcode RECENT_MS} after the last one is kept, and again while any
+   * remain: a subscription that goes quiet lets go of them without waiting for its next frame.
    */
-  async #send(audience: Audience, frame: TableChangesFrame, grant: string): Promise<boolean> {
+  #armRecentPrune(): void {
+    if (this.#recentTimer !== null || this.#stopped) return;
+    this.#recentTimer = inRoot(() =>
+      setTimeout(() => {
+        this.#recentTimer = null;
+        const now = Date.now();
+        let kept = false;
+        for (const audience of this.#audiences.values()) {
+          if (pruneRecent(audience, now)) kept = true;
+        }
+        if (kept) this.#armRecentPrune();
+      }, RECENT_MS + 1)
+    );
+    Deno.unrefTimer?.(this.#recentTimer as unknown as number);
+  }
+
+  /**
+   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
+   * requeued, under the same grant) instead. A frame sent `again` that no longer fits is not
+   * split: the subscriber may have had it or not, so its parts could neither be numbered as a
+   * copy nor as new without dropping or re-applying changes. It (and the copies behind it) is
+   * replaced by one `resync`, numbered next.
+   */
+  async #send(
+    audience: Audience,
+    frame: TableChangesFrame,
+    grant: string,
+    again = false,
+  ): Promise<boolean> {
     this.stats.frames++;
     if ("fn" in audience.sink) {
       try {
@@ -1202,8 +1304,14 @@ export class RealtimeEngine {
         console.error("[@denext/backend] realtime publish failed", error);
         return false;
       }
-      audience.seq--; // the frame was not sent: its parts take its number
       this.stats.frames--;
+      if (again) {
+        // It kept its first number and took no new one: there is nothing to give back.
+        audience.queue = audience.queue.filter((queued) => !queued.again);
+        audience.queue.unshift({ frame: { seq: 0, resync: true }, grant: audience.grant });
+        return false;
+      }
+      audience.seq--; // the frame was not sent: its parts take its number
       audience.queue.unshift(...splitFrame(frame).map((part) => ({ frame: part, grant })));
       return false;
     }
@@ -1291,10 +1399,12 @@ export class RealtimeEngine {
    * @param key The subscription key.
    * @param peer Whose quota a signed-out subscriber counts against: its client address, or its
    *   Live connection's id when the address is unknown.
+   * @param resubscribe The browser re-sent the subscription after a reconnect
+   *   (`ChannelContext.resubscribe`): one this instance does not hold is answered `resync`.
    * @returns `false` when it may not; else the admission, under the stamp of its grant — the hub
    *   then delivers it only the frames published under that stamp, wherever they were read.
    */
-  async authorize(key: string, peer = ""): Promise<false | ChannelAdmission> {
+  async authorize(key: string, peer = "", resubscribe = false): Promise<false | ChannelAdmission> {
     const parts = decodeSubscriptionKey(key);
     if (!parts) return false;
     try {
@@ -1311,11 +1421,21 @@ export class RealtimeEngine {
       }
       const sink = { channel: key };
       const ok = await this.#admit({ key, table, filter: parts.filter, scope, grant, sink }, owner);
-      return ok ? { allow: true, grant } : false;
+      return ok ? this.#admitted(key, grant, resubscribe) : false;
     } catch (error) {
       this.#warnOnce(error);
       return false;
     }
+  }
+
+  /**
+   * The admission of a key just admitted as new. A re-subscribe is one this instance did not hold,
+   * so its first frame is a `resync` (see `activate`).
+   */
+  #admitted(key: string, grant: string, resubscribe: boolean): ChannelAdmission {
+    const admitted = this.#audiences.get(key);
+    if (resubscribe && admitted && !admitted.everActive) admitted.lost = true;
+    return { allow: true, grant };
   }
 
   /**
@@ -1403,6 +1523,8 @@ export class RealtimeEngine {
       resume: false,
       regranted: false,
       sentAt: 0,
+      recent: [],
+      lost: false,
     });
     return true;
   }
@@ -1436,6 +1558,13 @@ export class RealtimeEngine {
   activate(key: string): void {
     const audience = this.#audiences.get(key);
     if (!audience) return;
+    if (audience.lost) {
+      // A re-subscribe this instance knew nothing of: tell it at once, rather than leave it to
+      // wait out its resume timeout.
+      audience.lost = false;
+      audience.active = audience.everActive = true;
+      return this.#enqueue(audience, { resync: true });
+    }
     const again = audience.everActive && !audience.active;
     audience.active = audience.everActive = true;
     if (!again) return;
@@ -1471,6 +1600,8 @@ export class RealtimeEngine {
     audience.idleSince = Date.now();
     // With replay the frames not yet sent wait for the reconnect; without, it resyncs anyway.
     if (!this.#journal) audience.queue.length = 0;
+    else requeueRecent(audience);
+    audience.recent = [];
   }
 
   /**
@@ -1577,6 +1708,13 @@ export class RealtimeEngine {
     return this.#audiences.size;
   }
 
+  /** How many frames the subscriptions keep to send again after a drop (tests). */
+  get keptFrames(): number {
+    let n = 0;
+    for (const audience of this.#audiences.values()) n += audience.recent.length;
+    return n;
+  }
+
   /** How many changes the reconnect journal holds (0 when replay is off). */
   get journalSize(): number {
     return this.#journal?.size ?? 0;
@@ -1587,6 +1725,8 @@ export class RealtimeEngine {
     this.#stopped = true;
     if (this.#timer !== null) clearTimeout(this.#timer);
     this.#timer = null;
+    if (this.#recentTimer !== null) clearTimeout(this.#recentTimer);
+    this.#recentTimer = null;
     this.#audiences.clear();
     this.#hooks.clear();
     this.#pending.clear();
@@ -2290,7 +2430,9 @@ export function createRealtimeChannel(): {
     key: (key) => decodeSubscriptionKey(key) !== null,
     authorize: (ctx, key) => {
       const current: RealtimeEngine | undefined = engine();
-      return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId) : false;
+      // `resubscribe` comes from a denext whose Live client marks a re-subscribe (else absent).
+      const again = (ctx as { resubscribe?: boolean }).resubscribe === true;
+      return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId, again) : false;
     },
     authTtlSeconds: 60,
     // Each frame is a batch of changes, numbered: the hub must deliver every one, in order, not

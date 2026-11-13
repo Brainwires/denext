@@ -12,32 +12,88 @@ import { renderToReadableStream } from "../src/jsx/render-to-stream.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 const TIMEOUT_MS = 10_000;
+/** How long a probe Worker may take to load (and type-check its module graph) before it is
+ * ready; separate from the render limit so a busy machine's cold load isn't counted as a loop. */
+const LOAD_TIMEOUT_MS = 120_000;
 
-/** Render one probe scenario in a Worker; reject when it doesn't finish in time. */
-function probe(
-  scenario: "outer" | "root" | "class-outer" | "class-root",
+interface WorkerLimits {
+  loadMs: number;
+  renderMs: number;
+  /** The Worker's `name` (slow-load.ts reads its load delay from it). */
+  name?: string;
+}
+
+/** Start `url` in a Worker, wait (under `loadMs`) for its `ready` message, then post `message`
+ * and wait (under `renderMs`, counted from the post) for its `result`. */
+function runInWorker(
+  url: URL,
+  message: unknown,
+  label: string,
+  limits: WorkerLimits = { loadMs: LOAD_TIMEOUT_MS, renderMs: TIMEOUT_MS },
 ): Promise<Record<string, unknown>> {
-  const worker = new Worker(
-    new URL("./fixtures/error-boundary-loop/probe.ts", import.meta.url),
-    { type: "module" },
-  );
+  const worker = new Worker(url, { type: "module", name: limits.name });
   let timer: ReturnType<typeof setTimeout> | undefined;
   return new Promise<Record<string, unknown>>((resolve, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`the "${scenario}" render did not finish in ${TIMEOUT_MS} ms`)),
-      TIMEOUT_MS,
+      () => reject(new Error(`the "${label}" probe did not load in ${limits.loadMs} ms`)),
+      limits.loadMs,
     );
-    worker.onmessage = (e) => resolve(e.data);
+    worker.onmessage = (e: MessageEvent<{ type: string; data?: Record<string, unknown> }>) => {
+      if (e.data.type === "ready") {
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => reject(new Error(`the "${label}" render did not finish in ${limits.renderMs} ms`)),
+          limits.renderMs,
+        );
+        worker.postMessage(message);
+      } else resolve(e.data.data ?? {});
+    };
     worker.onerror = (e) => {
       e.preventDefault();
       reject(new Error(e.message));
     };
-    worker.postMessage(scenario);
   }).finally(() => {
     clearTimeout(timer);
     worker.terminate();
   });
 }
+
+/** Render one probe scenario in a Worker; reject when it doesn't finish in time. */
+function probe(
+  scenario: "outer" | "root" | "class-outer" | "class-root",
+): Promise<Record<string, unknown>> {
+  return runInWorker(
+    new URL("./fixtures/error-boundary-loop/probe.ts", import.meta.url),
+    scenario,
+    scenario,
+  );
+}
+
+const slowLoad = new URL("./fixtures/error-boundary-loop/slow-load.ts", import.meta.url);
+
+Deno.test("harness: the render limit starts once the Worker has loaded", async () => {
+  // The Worker takes 3 s to load; a 2 s render limit counted from creation would fail before it
+  // is ready. Counted from the post, 2 s is ample for the answer even under coverage
+  // instrumentation, where a 200 ms one was not.
+  const r = await runInWorker(slowLoad, "ok", "slow load", {
+    loadMs: 60_000,
+    renderMs: 2_000,
+    name: "delay:3000",
+  });
+  assertEquals(r, { answered: "ok" });
+});
+
+Deno.test("harness: a render that never finishes still times out after the Worker loads", async () => {
+  const err = await runInWorker(slowLoad, "loop", "loop", { loadMs: 30_000, renderMs: 200 })
+    .then(() => null, (e: Error) => e);
+  assertEquals(err?.message, 'the "loop" render did not finish in 200 ms');
+});
+
+Deno.test("harness: a Worker that loads too slowly fails under the load limit", async () => {
+  const err = await runInWorker(slowLoad, "ok", "slow", { loadMs: 100, renderMs: 10_000 })
+    .then(() => null, (e: Error) => e);
+  assertEquals(err?.message, 'the "slow" probe did not load in 100 ms');
+});
 
 /** Race a server render against the timeout. */
 function bounded<T>(p: Promise<T>): Promise<T> {

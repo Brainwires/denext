@@ -295,7 +295,9 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   (Deno Deploy, or `--unstable-cron`) and a dependency-free minute-tick scheduler
   otherwise. Zero cost when the app defines none. `retry: { attempts, backoff }` retries a
   failed run (fixed or exponential backoff), each attempt recorded in the run history and the
-  overlap guard holding while a run retries.
+  overlap guard holding while a run retries. `timeoutMs` bounds one attempt: past it the attempt
+  fails (an `Error` named `"JobTimeoutError"`) and the handler's `signal` aborts. —
+  `src/server/jobs.ts`.
 - **Supervised services** (`services/<name>.ts` → `defineService({ start })`, or any
   `supervise({ children, strategy, intensity, period })` tree): `one_for_one` / `one_for_all` /
   `rest_for_one` restarts with exponential backoff + jitter, intensity escalation to the parent or
@@ -307,7 +309,11 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   denext's own sources, installed from JSR) as `patches/<name>+<version>.patch` and re-apply
   it at every `dev`/`build`/`start`; a denext patch overrides single framework files through
   the import map (natively) and in memory in the compat runtime prebuild.
-- **`safeFetch`** (SSRF-guarded fetch for untrusted URLs).
+- **`safeFetch`** (SSRF-guarded fetch for untrusted URLs). `userAgent` replaces (or, with
+  `false`, drops) the default `User-Agent: denext`; `cookieJar` keeps a cookie session across
+  redirects and calls, and `runtimeCookieJar()` hands out the runtime's RFC 6265bis
+  `Deno.CookieJar` (denext's Deno with `--unstable-cookies`). — `src/server/safe-fetch.ts`,
+  `src/server/fetch-cookies.ts`.
 - **Databases**: any DB that runs on Deno works — built-in **`node:sqlite`** and
   **Deno KV** are zero-npm; Postgres/MySQL/Drizzle via standard drivers, and Postgres
   first-party — `postgresClient` on `Deno.SQL` (or `fromPostgresJs` on stock Deno), Postgres
@@ -376,7 +382,8 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
 - **Storage** ⚑ — `backend({ storage: { driver, buckets } })` on **S3, Cloudflare R2 or MinIO**
   (`s3({ region, bucket, endpoint? })`: `fetch` plus AWS Signature Version 4 on `crypto.subtle`,
   no SDK) or the local filesystem (`fs({ dir })`). Per-bucket rules: `public`, `maxBytes`,
-  `mime`, and `authorize({ session, op, key })`, run with the request's session (no `authorize`
+  `mime`, `requireUploadSize` (every signed upload URL pins its size), and
+  `authorize({ session, op, key })`, run with the request's session (no `authorize`
   denies). Server API from `@denext/backend/server`: `storage.bucket(name)` →
   `createSignedUploadUrl` / `createSignedUrl` / `upload` / `download` / `head` / `list` /
   `remove` (`{ service: true }` skips `authorize` in a job). The browser uploads to the store
@@ -456,7 +463,8 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   versioning, `storage: { rls: true }` SQL policies). — `src/server/auth/gotrue/`,
   `packages/backend/src/identity.ts`, `storage-api.ts`, `storage-tus.ts`.
 - **Edge Functions, Vault, Queues, vector search, webhooks** — `functions: {}` serves
-  `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker; `vault: {}`
+  `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker (`memoryMb` caps
+  its heap; over it, `546 WORKER_LIMIT`); `vault: {}`
   keeps AES-256-GCM secrets in `vault.secrets`; `queues: {}` is pgmq's SQL API without the
   extension; `vectorSearchSql()` / `matchDocuments()` over pgvector; `webhooks` delivers signed,
   retried table-change hooks and deletes delivered / failed events after a retention (7 / 30
@@ -746,7 +754,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
   to its window (`onWindowClose: "kill" | "detach"`, `replayBytes` replayed on attach), and
   only the absolute `shells` listed in the config can start (baked as the app's
-  `--allow-run`). Windows has no terminals yet (`unsupported`). — `src/desktop/caps/pty.ts`.
+  `--allow-run`). On Windows a terminal is a ConPTY, under a runtime whose `Deno.openPty`
+  runs there (else `unsupported`). — `src/desktop/caps/pty.ts`.
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
   origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
@@ -768,6 +777,19 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
   TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window
   open (runtime 3.0.0-denext.16). — `src/desktop/extension.ts`.
+- **App-level desktop hooks** — `desktop.menu.window.items` add the app's own Window-menu items
+  (`runDesktop({ onWindowMenuItem })` / `host.onWindowMenuItem(fn)`); `runDesktop({
+  onSecondInstance })`, `app.onSecondInstance(fn)` and `host.onSecondInstance(fn)` hear a
+  `singleInstance` second launch; `host.quit()` quits again past the caller's own guard, and a
+  `host.confirm` box a quit guard opened pauses the guards' deadline. —
+  `src/desktop/app-windows.ts`, `src/desktop/extension.ts`.
+- **Will-navigate hook and bridge callers** — `runDesktop({ onWillNavigate })` (or
+  `host.onWillNavigate(fn)`) sees the top-level navigations pages start and may refuse one or
+  load it in place, and every capability or extension handler gets `ctx.caller` (origin, the
+  calling frame and whether the runtime verified it, the window). The hook needs a runtime that
+  reports navigation events (`Deno.desktop.navigationEvents`), a verified frame one that marks
+  frames (`Deno.desktop.marksFrames`). —
+  `src/desktop/will-navigate.ts`, `src/desktop/bridge.ts`.
 - **Traffic lights where the page wants them** — `desktop.window.windowButtonPosition` (and a
   window's own option) places the macOS window buttons under a hidden title bar; ignored on
   Windows and Linux. — `src/desktop/window-config.ts`.
@@ -910,6 +932,13 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
   `--from fresh|preact|tanstack-start` forces each. —
   `src/build/migrate-fresh.ts`, `src/build/migrate-preact.ts`,
   `src/build/migrate-tanstack-start.ts`.
+- **Fresh partial navigation and Preact compat** — under `f-view-transition` a partial swap runs
+  in a view transition, an answer's `<meta>` and new stylesheets merge into the head, and back /
+  forward restores each region; `denext/preact/compat` has `createFactory`, `findDOMNode`,
+  `isFragment`, `isMemo`, `unmountComponentAtNode` and the `render` / `hydrate` callbacks, and
+  `denext/preact/jsx-runtime` runs Deno's precompiled JSX (`jsxTemplate`, `jsxAttr`,
+  `jsxEscape`). — `src/compat/fresh/partial.ts`, `src/compat/preact/compat.ts`,
+  `src/compat/preact/jsx-runtime.ts`.
 - **`denext/signals`** — Preact Signals' API (`signal`, `computed`, `effect`,
   `useSignal`, `Show`, `For`, …) on denext's renderer, in any app; a signal a
   Server Component passes to a client component arrives live. —
@@ -1038,7 +1067,9 @@ cache uses Deno's built-in `node:sqlite`.)
 - **App-testing helper** (`denext/testing`): `createTestApp(dir)` builds an
   in-process request handler (no build, no socket) that renders Server
   Components, runs Server Actions and `middleware.ts`, and reads cookies;
-  `createTestClient` wraps any handler with a **cookie jar**, redirect control,
+  `createTestClient` wraps any handler with a **cookie jar** (`{ cookieJar }` /
+  `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules),
+  redirect control,
   and form parse-and-submit — so you can drive the whole app the way a
   **JavaScript-disabled** browser would and assert progressive enhancement in
   CI.
@@ -1067,7 +1098,7 @@ cache uses Deno's built-in `node:sqlite`.)
 ## Build, tooling & CLI
 
 - **denext's own Deno build (the toolchain)** — the verbs that run project code re-run
-  themselves on a pinned `3.0.0-denext.17` Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
+  themselves on a pinned build of denext's Deno (stock Deno plus `Deno.SQL` and Vitest/Jest
   compatibility in `deno test`), downloaded on first need into `<DENO_DIR>/denext-deno/`,
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
@@ -1250,7 +1281,9 @@ cache uses Deno's built-in `node:sqlite`.)
   (`./app job <name>`, `./app db migrate`), with the Docker image's least-privilege flags baked
   in; cross-compiles to every `deno compile` target. `--sign` (or `compile.sign`) code-signs it:
   `codesign` + notarization on macOS, Authenticode (`signtool`, or `osslsigncode` from macOS and
-  Linux) for Windows, credentials from the environment only. — `src/build/compile-app.ts`,
+  Linux) for Windows, credentials from the environment only. `compile: { limits }` bakes the
+  binary's own resource limits in place of `start.limits` (`false`: none). —
+  `src/build/compile-app.ts`,
   `src/build/compile-sign.ts`, `src/standalone/`.
 - **Shutdown**: SIGTERM drains in-flight requests, stops `services/`, runs the plugin
   teardowns and `instrumentation.ts`'s `onShutdown()`, and exits by `DENEXT_SHUTDOWN_DRAIN_MS`

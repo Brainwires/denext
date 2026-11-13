@@ -31,6 +31,8 @@ export const TOKEN_HEADER = "x-denext-desktop-token";
 const WINDOW_HEADER = "x-denext-desktop-window";
 /** The header that names the calling document (a random id per page load). */
 const PAGE_HEADER = "x-denext-desktop-page";
+/** The header that says which frame calls (`main` / `sub`): the page's own report, unverified. */
+const FRAME_HEADER = "x-denext-desktop-frame";
 /** The window binding the runtime gives each of the app's windows (its per-window token). */
 const WINDOW_BINDING = "__denextWindow";
 /** How long to wait for the window binding to appear (CEF registers bindings asynchronously). */
@@ -172,12 +174,26 @@ function windowToken(): Promise<string | null> {
   return windowTokenPromise;
 }
 
-/** The headers every bridge request carries: the token, the page id and the window's token. */
+/** Whether this document is a frame inside another (`sub`) or the top-level page (`main`). */
+function frameKind(): "main" | "sub" {
+  try {
+    const top = (globalThis as { top?: unknown }).top;
+    return top === undefined || top === null || top === globalThis ? "main" : "sub";
+  } catch {
+    return "sub";
+  }
+}
+
+/**
+ * The headers every bridge request carries: the token, the page id, the frame and the window's
+ * token.
+ */
 async function identityHeaders(token: string): Promise<Record<string, string>> {
   const win = await windowToken();
   return {
     [TOKEN_HEADER]: token,
     [PAGE_HEADER]: PAGE_ID,
+    [FRAME_HEADER]: frameKind(),
     ...(win !== null ? { [WINDOW_HEADER]: win } : {}),
   };
 }

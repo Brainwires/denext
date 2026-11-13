@@ -673,6 +673,13 @@ export interface PackageScriptAge {
    * deno.json's engine, whatever `denext.config.ts` gives macOS.
    */
   readonly backend: boolean;
+  /**
+   * It signs, notarizes and staples each installer on its own (calls `desktopSignMacosDmg`, or
+   * builds no .dmg at all: the Linux and Windows scripts). A
+   * macOS script that does not ships its .dmg unsigned and un-notarized, while its last line says
+   * "signed + notarized + stapled".
+   */
+  readonly notarizedInstallers: boolean;
 }
 
 /**
@@ -688,6 +695,8 @@ export function packageScriptAge(text: string): PackageScriptAge {
     runtimeFlags: /\b(desktopRuntimeDenoFlags|buildDesktopBundle)\b/.test(text),
     vcRuntime: !text.includes('"vcruntime140_1.dll"'),
     backend: /\b(desktopBackendArgs|buildDesktopBundle|desktopBundleCommand)\b/.test(text),
+    // A script that builds no .dmg (Linux, Windows) has nothing to notarize.
+    notarizedInstallers: /\bdesktopSignMacosDmg\b/.test(text) || !/\bhdiutil\b/.test(text),
   };
 }
 
@@ -723,7 +732,8 @@ export async function staleBackendMismatch(
  * that is the default), one copying the VC++ runtime itself (a Windows script
  * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, a macOS script
  * predating `desktopBackendArgs` builds deno.json's engine whatever `denext.config.ts` gives macOS,
- * and a `--format` is not passed to a script that cannot read it.
+ * a macOS script predating `desktopSignMacosDmg` ships its installers un-notarized, and a
+ * `--format` is not passed to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
@@ -766,6 +776,16 @@ export function packageScriptWarnings(
     out.push(
       `  ⚠ scripts/${name} does not pass desktop.backend to deno desktop (desktopBackendArgs): ` +
         "it builds deno.json's engine whatever denext.config.ts gives macOS.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (name === PACKAGE_SCRIPTS.macos && age.runtime && !age.notarizedInstallers) {
+    out.push(
+      `  ⚠ scripts/${name} predates per-installer notarization (desktopSignMacosDmg): ` +
+        "its .dmg ships unsigned and un-notarized (Gatekeeper refuses it: 'no usable signature'), " +
+        "a .pkg is notarized only with DENEXT_NOTARY_PROFILE, and its last line still says " +
+        "'signed + notarized + stapled'.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

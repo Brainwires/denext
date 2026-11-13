@@ -953,13 +953,13 @@ function onWindow(
   return null;
 }
 
-/** One window as `list` reports it. */
+/** One window as `list` reports it: its id, kind, key, visibility and label (title). */
 function info(w: RegisteredWindow): Record<string, unknown> {
   let visible = true;
   try {
     visible = w.window.isVisible?.() ?? true;
   } catch { /* closing */ }
-  return { ...infoOf(w), visible };
+  return { ...infoOf(w), visible, ...(w.title !== undefined ? { title: w.title } : {}) };
 }
 
 /** `setBounds`'s rectangle, checked. */

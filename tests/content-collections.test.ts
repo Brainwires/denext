@@ -315,6 +315,17 @@ Deno.test("renderContent / <Content>: .md through the first-party renderer, .mdx
     const custom = await renderToString(await renderContent(mdx, { components: { h1: H1 } }));
     assertStringIncludes(custom, `<h2 class="custom">Answer</h2>`);
 
+    // …and `.md` entries take the same overrides (denext/markdown's components), via <Content>.
+    const mdCustom = await renderToString(h(Content, { entry: hello, components: { h1: H1 } }));
+    assertStringIncludes(mdCustom, `<h2 class="custom">Hi</h2>`);
+    assertStringIncludes(mdCustom, "<p>body text</p>");
+    // A tag name renames the element; an empty map keeps the HTML-string path.
+    assertStringIncludes(
+      await renderToString(await renderContent(hello, { components: { p: "section" } })),
+      "<section>body text</section>",
+    );
+    assertEquals(await renderToString(await renderContent(hello, { components: {} })), mdHtml);
+
     // A data-only entry has nothing to render.
     await assertRejects(
       () => renderContent({ id: "x", slug: "x", data: {} } as never),

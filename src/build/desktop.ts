@@ -126,7 +126,20 @@ export type { DesktopEventLog } from "../desktop/bridge-events.ts";
 
 // The desktop native-extension authoring API is served from `denext/desktop` (this module).
 export {
+  type DesktopNavigationKind,
+  type DesktopWillNavigateEvent,
+  type DesktopWillNavigateHandler,
+  runtimeHasNavigationEvents,
+} from "../desktop/will-navigate.ts";
+import {
+  createWindowNavigationHooks,
+  type DesktopWillNavigateHandler,
+  type WillNavigateHooks,
+} from "../desktop/will-navigate.ts";
+export {
   defineDesktopExtension,
+  type DesktopCaller,
+  type DesktopCallerFrame,
   type DesktopCapability,
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
@@ -303,6 +316,19 @@ export {
   type StoreCommandRunner,
   type StoreCommandRunnerSync,
 } from "./code-signing.ts";
+// scripts/package-macos.ts: the .app and each installer signed, notarized and stapled on its own,
+// and the closing line naming what each artifact is.
+export {
+  type DesktopMacosArtifact,
+  desktopMacosArtifact,
+  type DesktopMacosArtifactKind,
+  type DesktopMacosDistributeDeps,
+  desktopMacosDistributionNote,
+  type DesktopMacosSignature,
+  desktopNotarizeMacos,
+  desktopNotaryCredentials,
+  desktopSignMacosDmg,
+} from "./desktop-macos-distribute.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,
@@ -699,6 +725,17 @@ export interface RunDesktopOptions {
    */
   onSecondInstance?: DesktopSecondInstanceHandler;
   /**
+   * Called before every top-level navigation of every window, ahead of the navigation guard
+   * (`desktop.app.origin`, `desktop.app.allowedNavigationOrigins`): `event.preventDefault()`
+   * refuses it (nothing loads, nothing opens in the browser), `event.allow()` loads it in place
+   * although the guard would send it to the browser (a refusal wins). `event` carries the `url`,
+   * the `window` id, the `kind` (`"link"`, `"script"`, `"redirect"`, `"window-open"`, `"other"`)
+   * and the `initiator` when the engine says. Decide synchronously; a throw is logged and decides
+   * nothing. Never called on a runtime without the hook (one that publishes no
+   * `Deno.desktop.navigationEvents`).
+   */
+  onWillNavigate?: DesktopWillNavigateHandler;
+  /**
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
    * key when it was opened with one), or `null` with no window open. The clicks never reach the
@@ -738,6 +775,12 @@ export interface RunDesktopOptions {
    * is laid over it.
    */
   configSidecars?: readonly SidecarDefinition[];
+  /**
+   * `desktop.denoFlags` (from {@link resolveDesktopCapabilities}): under `deno run desktop.ts`, a
+   * module sidecar's `spawnSelf` / `childCommand` children are started with those `deno run` takes,
+   * after the run's own flags. A packaged app's build took them already.
+   */
+  denoFlags?: readonly string[];
 }
 
 /**
@@ -788,6 +831,12 @@ export interface DesktopRuntime {
    * pinned runtime (or in a sidecar's child).
    */
   onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` before every top-level navigation of every window, as
+   * {@linkcode RunDesktopOptions.onWillNavigate} is (after it). Returns the unsubscribe; never
+   * called on a runtime without the hook (or in a sidecar's child).
+   */
+  onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -1761,9 +1810,11 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   for (const cap of capabilities) {
     if (cap.onSecondInstance) windows.onSecondInstance(cap.onSecondInstance);
   }
+  const navigation = desktopNavigationHooks(windows, appWindow, options.onWillNavigate);
   const bridge = createDesktopBridge(
     capabilities,
     {
+      onWillNavigate: (fn: DesktopWillNavigateHandler) => navigation.add(fn),
       appSupportDir: options.appSupportDir,
       getWindow: (id) => registry?.get(id)?.window ?? appWindow,
       ...(registry
@@ -1844,6 +1895,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     getActivationPolicy: () => windows.getActivationPolicy(),
     onDockReopen: (fn) => windows.onDockReopen(fn),
     onSecondInstance: (fn) => windows.onSecondInstance(fn),
+    onWillNavigate: (fn) => navigation.add(fn),
     trust,
     emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {
@@ -1853,6 +1905,23 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn, DESKTOP_TS_OWNER) ?? (() => {}),
     quit: () => windows.lifecycle?.requestQuit(DESKTOP_TS_OWNER) ?? Promise.resolve(false),
   };
+}
+
+/**
+ * The app's will-navigate hooks over its windows (the registry's, else the adopted one), with
+ * `runDesktop({ onWillNavigate })` subscribed first when given.
+ */
+function desktopNavigationHooks(
+  windows: DesktopWindowsSetup,
+  appWindow: unknown,
+  first: DesktopWillNavigateHandler | undefined,
+): WillNavigateHooks {
+  const navigation = createWindowNavigationHooks({
+    lifecycle: windows.lifecycle,
+    windowFor: (id) => windows.registry?.get(id)?.window ?? (id === "main" ? appWindow : undefined),
+  });
+  if (first) navigation.add(first);
+  return navigation;
 }
 
 /**
@@ -1876,6 +1945,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
   await runSidecarChild(launch, {
     importMetaUrl: options.importMetaUrl,
     ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+    ...(options.denoFlags ? { denoFlags: options.denoFlags } : {}),
   });
   return {
     window: undefined,
@@ -1905,6 +1975,7 @@ async function createSidecars(
     ...(options.importMetaUrl ? { importMetaUrl: options.importMetaUrl } : {}),
     ...(dataDir ? { dataDir } : {}),
     ...(options.appDirs?.cache ? { cacheDir: options.appDirs.cache } : {}),
+    ...(options.denoFlags ? { denoFlags: options.denoFlags } : {}),
     emit,
   });
 }

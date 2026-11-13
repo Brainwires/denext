@@ -7,7 +7,9 @@
 // the config's own relative import resolved to — so the module comes from Deno's cache and is
 // never evaluated a second time; its exports are compared to the value by identity.
 
-import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, resolve, toFileUrl } from "@std/path";
+import * as posix from "@std/path/posix";
+import * as windows from "@std/path/windows";
 
 /** A value's exporting module and export name. */
 export interface TracedExport {
@@ -25,6 +27,12 @@ const CONFIG_FILES = [
   "denext.config.mjs",
 ];
 
+/** The script and SDL files a schema's directory holds (a watch glob's last segment). */
+export const SCHEMA_FILES = "*.{ts,tsx,js,jsx,mts,mjs,graphql,gql}";
+
+/** How long `deno info` may take to list the config's module graph. */
+const INFO_TIMEOUT_MS = 60_000;
+
 /** The most modules one trace imports. */
 const MAX_MODULES = 200;
 
@@ -35,7 +43,7 @@ const MAX_MODULES = 200;
 const IMPORT = /\b(?:import|export)\s+(type\s+)?(?:[^"';]*?\bfrom\s*)?["'](\.{1,2}\/[^"'\n]+)["']/g;
 
 /** The existing config file of the project, if any. */
-async function configFileOf(projectRoot: string): Promise<string | null> {
+export async function configFileOf(projectRoot: string): Promise<string | null> {
   for (const name of CONFIG_FILES) {
     const file = join(projectRoot, name);
     if (await isFile(file)) return file;
@@ -106,4 +114,164 @@ export async function traceExport(
     queue.push(...await relativeImports(file, root));
   }
   return null;
+}
+
+/**
+ * The `deno info` arguments for `entry`. The entry goes as a `file:` URL: `deno info` reads
+ * a bare Windows path (`C:\\app\\denext.config.ts`) as a URL whose scheme is the drive letter,
+ * reports it as one `external` module and exits 0, so its graph would come back empty.
+ *
+ * @param entry The entry module's absolute path.
+ * @param flavor Whose path it is (default: this OS's).
+ * @returns The arguments after the executable.
+ */
+export function infoArgs(entry: string, flavor: PathFlavor = OS_FLAVOR): string[] {
+  const url = (flavor === "windows" ? windows : posix).toFileUrl(entry).href;
+  return ["info", "--json", "--no-lock", url];
+}
+
+/**
+ * The local `file:` modules of a `deno info --json` graph, read from its output. Throws when the
+ * entry itself is missing, `external` (not read as a local module) or failed to load (its
+ * `error`), rather than report an empty graph: `deno info` exits 0 in each case.
+ *
+ * @param json `deno info --json`'s output.
+ * @param entryUrl The entry's `file:` URL, as it was passed.
+ * @returns The modules' paths, the entry's included.
+ */
+export function localModulesOf(json: string, entryUrl: string): string[] {
+  const graph = JSON.parse(json) as {
+    roots?: string[];
+    modules?: { specifier?: string; kind?: string; error?: string }[];
+  };
+  const modules = graph.modules ?? [];
+  const root = modules.find((m) => m.specifier === entryUrl);
+  if (!root || root.kind === "external" || root.error !== undefined) {
+    const why = root?.error ?? `it reported ${JSON.stringify(graph.roots ?? [])}`;
+    throw new Error(`deno info did not read ${entryUrl} as a local module: ${why}`);
+  }
+  return modules.map((m) => m.specifier ?? "").filter((s) => s.startsWith("file:"))
+    .map((s) => fromFileUrl(s));
+}
+
+/**
+ * The local `file:` modules of `entry`'s module graph, as `deno info` resolves it. Throws with
+ * `deno info`'s own error (its stderr, or why it could not start) when it fails.
+ */
+async function localModules(entry: string, cwd: string): Promise<string[]> {
+  const args = infoArgs(entry);
+  let out: Deno.CommandOutput;
+  try {
+    out = await new Deno.Command(Deno.execPath(), {
+      args,
+      cwd,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+      signal: AbortSignal.timeout(INFO_TIMEOUT_MS),
+    }).output();
+  } catch (error) {
+    throw new Error(`deno info could not run: ${(error as Error).message}`, { cause: error });
+  }
+  const stderr = new TextDecoder().decode(out.stderr).trim();
+  if (!out.success) {
+    throw new Error(`deno info ${args.at(-1)} failed (exit ${out.code}): ${stderr || "no output"}`);
+  }
+  return localModulesOf(new TextDecoder().decode(out.stdout), args.at(-1)!);
+}
+
+/** Which OS's paths: `"windows"` (drive letters, `\`, case-insensitive) or `"posix"`. */
+export type PathFlavor = "posix" | "windows";
+
+/** This OS's path flavor. */
+const OS_FLAVOR: PathFlavor = Deno.build.os === "windows" ? "windows" : "posix";
+
+/** A path normalized for `flavor`: on Windows without the verbatim `\\?\` prefix, `/` as `\`. */
+function normalized(path: string, flavor: PathFlavor): string {
+  if (flavor === "posix") return posix.normalize(path);
+  return windows.normalize(path.replace(/^\\\\\?\\(?!UNC\\)/, "").replaceAll("/", "\\"));
+}
+
+/** A normalized path's comparison key: Windows paths compare case-insensitively. */
+function key(path: string, flavor: PathFlavor): string {
+  return flavor === "windows" ? path.toLowerCase() : path;
+}
+
+/**
+ * The segments of `file` below the first of `roots` that holds it (in the file's own spelling),
+ * or `null` when none does (another drive included).
+ */
+function segmentsBelow(
+  file: string,
+  roots: readonly string[],
+  flavor: PathFlavor,
+): string[] | null {
+  const api = flavor === "windows" ? windows : posix;
+  for (const root of roots) {
+    const rel = api.relative(key(root, flavor), key(file, flavor));
+    if (rel === "" || rel.startsWith("..") || api.isAbsolute(rel)) continue;
+    const count = rel.split(api.SEPARATOR).length;
+    return file.split(api.SEPARATOR).slice(-count);
+  }
+  return null;
+}
+
+/**
+ * Watch globs for module files, relative to the project and always written with `/` (the
+ * prepare-step watcher joins them onto the project root itself): the directory of each module
+ * inside one of `roots` (its scripts and SDL files, below it too), the shallowest directories
+ * only; a module at the project root is watched as itself. `configs`, `node_modules` and
+ * dot-folders (`.denext`) are left out. Paths compare in `flavor`'s terms, so a Windows path's
+ * drive-letter case, folder case and verbatim prefix don't matter, and a module on another drive
+ * is outside.
+ *
+ * @param files Each module's absolute path, or several spellings of it (as given, real path).
+ * @param roots The project root's spellings (as given, and its real path).
+ * @param configs The config file's spellings.
+ * @param flavor Whose paths these are (default: this OS's).
+ * @returns The globs, sorted.
+ */
+export function watchGlobs(
+  files: readonly (string | readonly string[])[],
+  roots: readonly string[],
+  configs: readonly string[],
+  flavor: PathFlavor = OS_FLAVOR,
+): string[] {
+  const rootPaths = roots.map((r) => normalized(r, flavor));
+  const configKeys = new Set(configs.map((c) => key(normalized(c, flavor), flavor)));
+  const top = new Set<string>();
+  const dirs = new Set<string>();
+  for (const spellings of files) {
+    const paths = (typeof spellings === "string" ? [spellings] : spellings)
+      .map((f) => normalized(f, flavor));
+    if (paths.some((p) => configKeys.has(key(p, flavor)))) continue;
+    const parts = paths.map((p) => segmentsBelow(p, rootPaths, flavor)).find((x) => x !== null);
+    if (!parts || parts.some((p) => p === "node_modules" || p.startsWith("."))) continue;
+    if (parts.length === 1) top.add(parts[0]);
+    else dirs.add(parts.slice(0, -1).join("/"));
+  }
+  const shallowest = [...dirs].filter((d) =>
+    ![...dirs].some((o) => o !== d && d.startsWith(o + "/"))
+  );
+  return [...top, ...shallowest.map((d) => `${d}/**/${SCHEMA_FILES}`)].sort();
+}
+
+/**
+ * Watch globs (project-relative, written with `/`) for the project modules the config's import
+ * graph reaches, alias imports included ({@linkcode watchGlobs}). Empty when it reaches none;
+ * throws (with `deno info`'s error) when the graph can't be read.
+ *
+ * @param config The config file's absolute path.
+ * @param projectRoot The project root.
+ * @returns The globs, sorted.
+ */
+export async function configGraphWatch(config: string, projectRoot: string): Promise<string[]> {
+  // `deno info` names modules by their real path (`/private/var/…` for `/var/…` on macOS; a
+  // long name for a Windows 8.3 one), so each path is compared as given and as its real path.
+  const real = (p: string) => Deno.realPath(p).catch(() => p);
+  const root = isAbsolute(projectRoot) ? projectRoot : resolve(projectRoot);
+  const realConfig = await real(config);
+  const modules = await localModules(realConfig, root);
+  const files = await Promise.all(modules.map(async (f) => [f, await real(f)]));
+  return watchGlobs(files, [root, await real(root)], [config, realConfig]);
 }

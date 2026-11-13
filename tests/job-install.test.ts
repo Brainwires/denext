@@ -15,7 +15,12 @@ import { type JobInstallDeps, jobInstallVerb } from "../src/cli/commands/job-ins
 import { jobCommand } from "../src/cli/commands/job.ts";
 import { crontabSlugs, withoutBlocks } from "../src/cli/job-install/crontab.ts";
 import { dryRunHost, type DryRunStep, type SchedulerHost } from "../src/cli/job-install/host.ts";
-import { denextCommand, jobSlug, runJobInstall } from "../src/cli/job-install/install.ts";
+import {
+  denextCommand,
+  jobSlug,
+  projectId,
+  runJobInstall,
+} from "../src/cli/job-install/install.ts";
 import { launchdIntervals } from "../src/cli/job-install/launchd.ts";
 import { taskSlugs, windowsArg } from "../src/cli/job-install/schtasks.ts";
 import { onCalendarValues } from "../src/cli/job-install/systemd.ts";
@@ -643,6 +648,80 @@ Deno.test("denext job <name> --if-due runs the job only in a matching minute", a
     assert(await exists());
     const bad = await quietly(() => jobCommand.run(ctxFor(dir, ["cleanup"], { "if-due": "nope" })));
     assertEquals(bad.codes, [1]);
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--status lists this project's entries per scheduler, changing nothing", async () => {
+  const dir = await project();
+  const host = new FakeHost("darwin", "/Users/u");
+  try {
+    const before = await verb(dir, host, ["install"], { status: true });
+    assertEquals(before.code, 0);
+    assertStringIncludes(before.text, "Nothing of this project's is installed (launchd).");
+    assertEquals((await verb(dir, host, ["install"])).code, 0);
+    // A stale entry (a job since deleted) shows by its slug, with no job name.
+    const id = await projectId(await Deno.realPath(dir));
+    host.files.set(
+      `/Users/u/Library/LaunchAgents/dev.denext.job.${id}.gone.plist`,
+      `<!-- denext-managed project=${id} job=gone -->`,
+    );
+    host.ran.length = 0;
+    const files = host.files.size;
+    const text = await verb(dir, host, ["install"], { status: true });
+    assertStringIncludes(text.text, "installed cleanup (launchd)");
+    assertStringIncludes(text.text, "installed gone (launchd) — no scheduled job of that name");
+    const json = await verb(dir, host, ["install"], { status: true }, undefined, true);
+    assertEquals(JSON.parse(json.text), {
+      backend: "launchd",
+      scope: "user",
+      os: "darwin",
+      installed: [
+        { backend: "launchd", slug: "cleanup", job: "cleanup" },
+        { backend: "launchd", slug: "gone" },
+      ],
+      warnings: [],
+    });
+    assertEquals(host.changes(), [], "a status read changes nothing");
+    assertEquals(host.files.size, files);
+    // --status is a read: with --uninstall or job names it is refused.
+    const mixed = await verb(dir, host, ["install"], { status: true, uninstall: true });
+    assertEquals(mixed.code, 1);
+    assertStringIncludes(mixed.text, "--status takes no --uninstall, --dry-run or job names");
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--status says when this machine has no scheduler for the scope", async () => {
+  const dir = await project();
+  const host = new FakeHost("linux", "/home/u");
+  host.systemdSystem = false;
+  try {
+    const out = await verb(dir, host, ["install"], { status: true, system: true }, undefined, true);
+    assertEquals(out.code, 0);
+    assertEquals(JSON.parse(out.text).backend, null);
+    const text = await verb(dir, host, ["install"], { status: true, system: true });
+    assertStringIncludes(text.text, "No system scheduler here (linux).");
+  } finally {
+    clearJobs();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("--json carries the fallback-command warning an install prints in text", async () => {
+  const dir = await project();
+  try {
+    const out = await verb(dir, new FakeHost("linux", "/home/u"), ["install"], {
+      "dry-run": true,
+    }, {
+      offsets: [0],
+      denext: { argv: ["/cache/deno", "run", "-A", "cli.ts"], warning: "no installed denext" },
+    }, true);
+    assertEquals(JSON.parse(out.text).warning, "no installed denext");
   } finally {
     clearJobs();
     await Deno.remove(dir, { recursive: true });

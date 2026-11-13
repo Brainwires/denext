@@ -87,8 +87,10 @@ interface ChannelSubClient {
   cursor?: string;
   onValue: (value: unknown, seq: number, cursor?: string) => void;
   onError: (info: LiveErrorInfo) => void;
-  /** Called once when the server acks the subscription is registered (`channel-ready`). */
+  /** Called when the server acks the subscription is registered (`channel-ready`). */
   onReady?: () => void;
+  /** The server has acknowledged it once: a later subscribe frame is a re-subscribe. */
+  ready?: boolean;
 }
 
 const boundaries = new Map<string, Boundary>();
@@ -420,7 +422,11 @@ function handleServerMessage(raw: string): void {
     case "channel-ready":
       // A subscription-registered ack — surface it so `useChannel` can move `idle → subscribed`
       // (a channel has no initial value, so this is the only pre-first-push "live now" signal).
-      channelSubs.get(msg.subId)?.onReady?.();
+      {
+        const sub = channelSubs.get(msg.subId);
+        if (sub) sub.ready = true;
+        sub?.onReady?.();
+      }
       break;
     case "channel":
       deliverChannel(msg);
@@ -495,7 +501,14 @@ function deliverError(msg: LiveErrorInfo & { subId?: string }): void {
 
 /** A `channel-subscribe` frame; `since` resumes a logged channel from the last cursor. */
 function channelSubscribeFrame(subId: string, c: ChannelSubClient): LiveClientMessage {
-  const frame = { type: "channel-subscribe" as const, subId, channelId: c.channelId, key: c.key };
+  const frame: LiveClientMessage = {
+    type: "channel-subscribe",
+    subId,
+    channelId: c.channelId,
+    key: c.key,
+    // Acknowledged before: re-sent after a reconnect (the channel's `authorize` sees it).
+    ...(c.ready ? { resubscribe: true as const } : {}),
+  };
   return c.cursor === undefined ? frame : { ...frame, since: c.cursor };
 }
 

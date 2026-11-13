@@ -341,8 +341,9 @@ Deno.test("dev server drain: services keep running through in-flight requests, t
     assert(!g.__svcLog.includes("stop first"), "services outlive an in-flight request");
     release();
     assertEquals(await response, "ok");
+    // The drain barrier: `finished` resolves only once the services have stopped and the
+    // teardowns ran, so a caller that removes the project next races nothing still writing.
     await server.finished;
-    await until(() => g.__svcLog!.includes("stop first"));
     assertEquals(g.__svcLog, [
       "start first",
       "start second",
@@ -356,6 +357,55 @@ Deno.test("dev server drain: services keep running through in-flight requests, t
     await stopServices();
     delete g.__svcLog;
     delete g.__svcGate;
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("dev server drain: finished waits for the services' stop and the teardowns", async () => {
+  const g = globalThis as { __svcLog?: string[]; __svcStopGate?: Promise<void> };
+  g.__svcLog = [];
+  let releaseStop!: () => void;
+  g.__svcStopGate = new Promise<void>((r) => releaseStop = r);
+  const dir = await fixture({
+    "deno.json": JSON.stringify({}),
+    "app/page.tsx": "export default function Page() { return null; }\n",
+    // A service whose stop is still running after the server stopped serving.
+    "services/slow-stop.ts": `import { defineService } from "${SUPERVISE}";\n` +
+      `export default defineService({ async start(ctx) { globalThis.__svcLog.push("start");` +
+      ` await ctx.stopped; globalThis.__svcLog.push("stopping"); await globalThis.__svcStopGate;` +
+      ` globalThis.__svcLog.push("stopped"); } });\n`,
+  });
+  const controller = new AbortController();
+  try {
+    const paths = await resolveProject(dir);
+    let server!: Deno.HttpServer;
+    await new Promise<void>((resolve) => {
+      server = startDevServer({
+        paths,
+        port: 0,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: () => resolve(),
+      });
+    });
+    await until(() => g.__svcLog!.includes("start"));
+    let finished = false;
+    void server.finished.then(() => finished = true);
+    controller.abort();
+    await until(() => g.__svcLog!.includes("stopping"));
+    // Let every queued continuation run: nothing but the gate holds the stop now.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    assert(!finished, "finished waits for the services' stop");
+    releaseStop();
+    await server.finished;
+    assertEquals(g.__svcLog, ["start", "stopping", "stopped"]);
+    assertEquals(supervisionStatus(), [], "every supervisor stopped before finished");
+  } finally {
+    controller.abort();
+    releaseStop();
+    await stopServices();
+    delete g.__svcLog;
+    delete g.__svcStopGate;
     await removeTempDir(dir);
   }
 });

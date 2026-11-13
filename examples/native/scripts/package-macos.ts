@@ -30,9 +30,11 @@
  *                             GPU / Plugin helpers get Chromium's own entitlements.
  *   DENEXT_PROVISIONING_PROFILE  a .provisionprofile to embed (overrides
  *                             `desktop.macos.provisioningProfile` in denext.config.ts).
- *   DENEXT_NOTARY_PROFILE     a `xcrun notarytool store-credentials` keychain profile.
- *                             Set (with a real identity) → notarize + staple each app (and
- *                             each signed .pkg).
+ *   DENEXT_NOTARY_PROFILE     a `xcrun notarytool store-credentials` keychain profile, or
+ *   DENEXT_NOTARY_KEY         an App Store Connect API key (.p8), with DENEXT_NOTARY_KEY_ID
+ *                             (+ DENEXT_NOTARY_ISSUER for a team key). Set (with a real identity)
+ *                             → notarize + staple each app, each .dmg (code-signed with the same
+ *                             identity) and each signed .pkg, every one with its own ticket.
  *   DENEXT_INSTALLER_IDENTITY "Developer ID Installer: Name (TEAMID)" — signs the .pkg.
  *                             Omit → an unsigned .pkg (MDM tools and Gatekeeper reject it).
  *   DENEXT_APP_NAME           output base name (default: `desktop.app.name` in denext.config.ts,
@@ -92,16 +94,20 @@ const {
   desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
+  desktopMacosArtifact,
+  desktopMacosDistributionNote,
   desktopMacosSigning,
   desktopNpmArgs,
   desktopPackageFlags,
   desktopRun: run,
   desktopRuntimeDenoFlags,
+  desktopNotarizeMacos,
+  desktopNotaryCredentials,
   desktopRuntimeEnv,
+  desktopSignMacosDmg,
   desktopWithAppVersion,
   macosCodesignArgs,
   macosSigningEntitlements,
-  notarytoolSubmitArgs,
   parseDesktopPackageArgs,
   runDesktopPackageMain,
   syncDesktopAppConfig,
@@ -319,21 +325,6 @@ async function sign(
   await run(["codesign", "--verify", "--deep", "--strict", app]);
 }
 
-/** Notarize + staple a .app (requires a real identity + a notarytool keychain profile). */
-async function notarize(app: string, profile: string): Promise<void> {
-  const zip = `${app}.zip`;
-  try {
-    await run(["ditto", "-c", "-k", "--keepParent", app, zip]);
-    await run(
-      notarytoolSubmitArgs(zip, { kind: "keychain-profile", profile }),
-    );
-    await run(["xcrun", "stapler", "staple", app]);
-  } finally {
-    // Remove the submission zip even if notarytool/staple failed.
-    await Deno.remove(zip).catch(() => {});
-  }
-}
-
 /** Image size in MiB for a .dmg of `bytes` of content: 25% headroom plus 64 MiB. hdiutil's own
  * estimate for a copied tree runs short on some macOS images ("No space left on device"); with
  * UDZO the final image is still compressed, so the headroom only sizes the temporary image. */
@@ -461,8 +452,8 @@ async function makeDmg(app: string): Promise<string> {
   return dmg;
 }
 
-/** Wrap a .app in an installer package (productbuild) that installs it into /Applications;
- * signed with the Developer ID Installer identity, and notarized + stapled with a notary profile. */
+/** Wrap a .app in an installer package (productbuild) that installs it into /Applications,
+ * signed with the Developer ID Installer identity (finishArtifacts notarizes + staples it). */
 async function makePkg(app: string, s: Signing): Promise<string> {
   const pkg = app.replace(/\.app$/, ".pkg");
   await Deno.remove(pkg).catch(() => {});
@@ -475,15 +466,7 @@ async function makePkg(app: string, s: Signing): Promise<string> {
     "/Applications",
     pkg,
   ]);
-  if (s.installerIdentity && s.notaryProfile) {
-    await run(
-      notarytoolSubmitArgs(pkg, {
-        kind: "keychain-profile",
-        profile: s.notaryProfile,
-      }),
-    );
-    await run(["xcrun", "stapler", "staple", pkg]);
-  } else if (!s.installerIdentity) {
+  if (!s.installerIdentity) {
     console.warn(
       `  ${pkg}: unsigned (set DENEXT_INSTALLER_IDENTITY to a "Developer ID Installer" identity).`,
     );
@@ -499,14 +482,17 @@ interface Signing {
   provisioningProfile: string | undefined;
   /** The bundle identifier the profile was checked against (the built .app must carry it). */
   profileIdentifier: string | undefined;
-  notaryProfile: string | undefined;
+  /** DENEXT_NOTARY_PROFILE, else the DENEXT_NOTARY_KEY API key; undefined → not notarized. */
+  notary: ReturnType<typeof desktopNotaryCredentials>;
   /** "Developer ID Installer: …" for the .pkg. */
   installerIdentity: string | undefined;
 }
 
 async function signingFromEnv(): Promise<Signing> {
-  const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
-  const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
+  // "-" asks for the ad-hoc signature, as no identity does.
+  const raw = Deno.env.get("DENEXT_CODESIGN_IDENTITY");
+  const identity = raw && raw !== "-" ? raw : undefined;
+  const notary = desktopNotaryCredentials();
   if (!identity) {
     console.warn(
       "⚠  DENEXT_CODESIGN_IDENTITY is unset → ad-hoc signature only. The app runs\n" +
@@ -514,7 +500,7 @@ async function signingFromEnv(): Promise<Signing> {
         '   "Developer ID Application: … (TEAMID)" identity to distribute.',
     );
   }
-  if (notaryProfile && !identity) {
+  if (notary && !identity) {
     throw new Error(
       "notarization needs DENEXT_CODESIGN_IDENTITY (a real Developer ID identity).",
     );
@@ -532,7 +518,7 @@ async function signingFromEnv(): Promise<Signing> {
     entitlements: mac.entitlements,
     provisioningProfile: mac.provisioningProfile,
     profileIdentifier: mac.identifier,
-    notaryProfile,
+    notary,
     installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
 }
@@ -587,17 +573,20 @@ function signingPlanNote(identity: string | undefined): string | undefined {
 }
 
 /**
- * Sign, notarize and wrap each bundle in its installers; returns the installer paths. A
- * lipo-merged (universal) bundle always needs re-signing; for others we re-sign only when a real
- * identity is provided (deno desktop already applied ad-hoc).
+ * Sign, notarize and wrap each bundle in its installers; returns what was done to each .app and
+ * installer. A lipo-merged (universal) bundle always needs re-signing; for others we re-sign only
+ * when a real identity is provided (deno desktop already applied ad-hoc). The .app is notarized +
+ * stapled before its installers are built, so they hold the stapled .app (for users who copy it
+ * out); then the .dmg (code-signed with the same identity) and the signed .pkg are notarized +
+ * stapled too, each with its own ticket, submitted together.
  */
 async function finishArtifacts(
   artifacts: string[],
   opts: Opts,
   formats: string[],
   s: Signing,
-): Promise<string[]> {
-  const installers: string[] = [];
+): Promise<ReturnType<typeof desktopMacosArtifact>[]> {
+  const done: ReturnType<typeof desktopMacosArtifact>[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
       console.log(`Re-signing ${app} with identity "${s.identity ?? "-"}"`);
@@ -609,21 +598,40 @@ async function finishArtifacts(
         s.profileIdentifier,
       );
     }
-    if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
-    if (formats.includes("dmg")) installers.push(await makeDmg(app));
-    if (formats.includes("pkg")) installers.push(await makePkg(app, s));
+    const signed = s.identity ? "developer-id" : "ad-hoc";
+    done.push(
+      ...await desktopNotarizeMacos(
+        [desktopMacosArtifact(app, "app", signed)],
+        s.notary,
+      ),
+    );
+    done.push(
+      ...await desktopNotarizeMacos(
+        await installersFor(app, formats, s),
+        s.notary,
+      ),
+    );
   }
-  return installers;
+  return done;
 }
 
-function distributionNote(s: Signing): string {
-  if (!s.identity) {
-    return "  (ad-hoc — not distributable; see the macOS distribution doc)";
+/** Build the installers of a (signed, stapled) .app: the .dmg code-signed with its identity, the
+ * .pkg signed by productbuild with the installer identity. */
+async function installersFor(
+  app: string,
+  formats: string[],
+  s: Signing,
+): Promise<ReturnType<typeof desktopMacosArtifact>[]> {
+  const installers: ReturnType<typeof desktopMacosArtifact>[] = [];
+  if (formats.includes("dmg")) {
+    installers.push(await desktopSignMacosDmg(await makeDmg(app), s.identity));
   }
-  if (!s.notaryProfile) {
-    return "  (signed, NOT notarized — set DENEXT_NOTARY_PROFILE to notarize)";
+  if (formats.includes("pkg")) {
+    const pkg = await makePkg(app, s);
+    const pkgSigned = s.installerIdentity ? "developer-id" : "unsigned";
+    installers.push(desktopMacosArtifact(pkg, "pkg", pkgSigned));
   }
-  return "  (signed + notarized + stapled — ready to distribute)";
+  return installers;
 }
 
 async function main(): Promise<void> {
@@ -660,15 +668,17 @@ async function main(): Promise<void> {
   const signingPlan = signingPlanNote(signing.identity);
   if (signingPlan) console.log(signingPlan);
   const artifacts = await buildArtifacts(opts, name);
-  const installers = await finishArtifacts(
+  const done = await finishArtifacts(
     artifacts,
     opts,
     plan.formats,
     signing,
   );
   console.log("\n✓ Packaged:");
-  for (const a of [...artifacts, ...installers]) console.log("  " + a);
-  console.log(distributionNote(signing));
+  for (const a of artifacts) console.log("  " + a);
+  for (const a of done) if (a.kind !== "app") console.log("  " + a.path);
+  // What each artifact actually is: signed, notarized, stapled — never more than was done.
+  console.log(desktopMacosDistributionNote(done));
 }
 
 if (import.meta.main) await runDesktopPackageMain(main);

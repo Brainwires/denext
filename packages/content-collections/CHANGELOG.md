@@ -4,6 +4,14 @@
 
 - Requires `@denext/denext` ^4.14.0.
 
+### Added
+
+- **`components` reach `.md` entries.** `<Content entry={post} components={{ a: SiteLink }} />`
+  (and `renderContent(entry, { components })`) renders a `.md` body as elements with the ones it
+  names replaced, as `denext/markdown`'s `<Markdown components>` does; `markdownElements()` from
+  `@denext/content-collections/markdown` is the same call. Without `components` it renders as
+  before.
+
 ### Changed
 
 - **The Markdown renderer moved into denext as `denext/markdown`.**

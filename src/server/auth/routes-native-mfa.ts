@@ -141,12 +141,31 @@ async function spendCodeCheck(ctx: AuthRouteContext, caller: Caller): Promise<Re
 }
 
 /** The second factor passed: start the native session and fire `signIn`; the tokens. */
-async function signInNative(ctx: AuthRouteContext, caller: Caller, method: string) {
-  const { native, pending } = caller;
+function signInNative(ctx: AuthRouteContext, caller: Caller, method: string) {
+  return finishNativeSignIn(ctx, caller.native, caller.pending, [method]);
+}
+
+/**
+ * Finish a pending native sign-in whose second factor passed: start the native session (its
+ * `amr` the first factor's, then `methods`) and fire `signIn`. Shared with the passkey step-up
+ * at `/native/passkey/authenticate` (`routes-native-passkeys.ts`).
+ *
+ * @param ctx The route context.
+ * @param native The resolved native settings.
+ * @param pending The pending sign-in (its token already spent).
+ * @param methods The second factor's authentication methods.
+ * @returns The native token pair.
+ */
+export async function finishNativeSignIn(
+  ctx: AuthRouteContext,
+  native: ResolvedNative,
+  pending: NativeMfaPending,
+  methods: readonly string[],
+) {
   const first = pending.amr ?? ["ext"];
   const snapshot = await snapshotFor(ctx.config, pending.user, pending.provider, [
     ...first,
-    method,
+    ...methods,
   ]);
   const tokens = await startNativeSession(ctx.config, native, snapshot);
   await emitAuthEvent(ctx.options, "signIn", {

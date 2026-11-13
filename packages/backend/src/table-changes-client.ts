@@ -80,9 +80,18 @@ export interface TableChangesState<Row> {
 /**
  * How long a re-subscribe after a reconnect waits for the server's `resumed` (or `resync`)
  * before treating the subscription as lost: the server answers in the same flush as its
- * acknowledgement, so only a subscription it no longer holds (or a very slow link) reaches this.
+ * acknowledgement — a re-subscribe it no longer holds with `resync`, since denext's Live client
+ * marks re-subscribes — so only an older server or a very slow link reaches this.
  */
 const RESUME_WAIT_MS = 10_000;
+
+/**
+ * A frame sent again after a reconnect (the drop came just after it was first sent) that already
+ * arrived: numbered at or before the last frame received.
+ */
+function isCopy(frame: TableChangesFrame<unknown>, lastSeq: number): boolean {
+  return frame.again === true && lastSeq !== 0 && frame.seq <= lastSeq;
+}
 
 /** The text key of a row. */
 function keyOf(row: unknown, column: string): string {
@@ -202,15 +211,21 @@ export function useTableChanges<Row = Record<string, unknown>>(
       clearTimeout(resumeTimer);
       resumeTimer = undefined;
     };
+    /** Track the frame's number and answers; false for a copy that already arrived. */
+    const admitFrame = (frame: TableChangesFrame<Row>): boolean => {
+      if (isCopy(frame, lastSeq)) return false;
+      const gap = lastSeq !== 0 && frame.seq !== lastSeq + 1;
+      lastSeq = frame.seq;
+      if (frame.resumed || frame.resync) settleResume();
+      if (frame.resync || gap) markStale();
+      return true;
+    };
     const unsubscribe = subscribeChannel(
       REALTIME_CHANNEL_ID,
       key,
       (value) => {
         const frame = value as TableChangesFrame<Row>;
-        const gap = lastSeq !== 0 && frame.seq !== lastSeq + 1;
-        lastSeq = frame.seq;
-        if (frame.resumed || frame.resync) settleResume();
-        if (frame.resync || gap) markStale();
+        if (!admitFrame(frame)) return;
         const wanted = callbacks.current.events;
         const changes = (frame.changes ?? []).filter((change) =>
           !wanted || wanted.includes(change.op)

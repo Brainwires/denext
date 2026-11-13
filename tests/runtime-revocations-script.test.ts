@@ -4,23 +4,32 @@
 // Every process is faked: no keychain, host or GitHub is touched.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
+  canonicalEntries,
+  canonicalEntriesText,
+  checkedOutPins,
   entryFromFlags,
   KEYCHAIN_SERVICE,
   KEYS_MODULE,
   main,
   minSequenceIn,
   parseArgs,
+  pinImpact,
+  publishedExpiryWarning,
   readSignedList,
   type RevocationsDeps,
   RSYNC_ROOT_ENV,
   type RunResult,
   withMinSequence,
 } from "../scripts/runtime-revocations.ts";
-import { REVOCATION_FLOOR } from "../scripts/release.ts";
+import { REVOCATION_FLOOR, warnRevocationExpiry } from "../scripts/release.ts";
 import {
+  decideRevocation,
   freshRevocationList,
+  REVOCATION_MAX_BYTES,
+  RevocationListError,
+  type RuntimeRevocation,
   type RuntimeRevocationList,
   signRevocationList,
   verifyRevocationDocument,
@@ -231,7 +240,13 @@ Deno.test("add appends (or replaces) an entry above the published sequence; resi
     // `sign` takes a hand-edited entries file.
     const edited = join(dir, "edited.json");
     await Deno.writeTextFile(edited, JSON.stringify({ revoked: [] }));
-    await main(["sign", edited, "--out", out, "--no-publish"], f.deps);
+    // It replaces the published entries wholesale: leaving one out (un-revoking it) needs --force.
+    await assertRejects(
+      () => main(["sign", edited, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "cli 3.0.0-denext.3, which the entries file leaves out",
+    );
+    await main(["sign", edited, "--out", out, "--no-publish", "--force"], f.deps);
     assertEquals(
       (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
         now: NOW.getTime(),
@@ -404,6 +419,216 @@ Deno.test("floor raises the compiled-in minimum sequence to the published list's
   }
 });
 
+/** The repository's entries file: the list a maintainer signs. */
+const COMMITTED = fromFileUrl(new URL("../security/runtime-revocations.json", import.meta.url));
+
+Deno.test("canonical: one byte form for the same entries; malformed, unknown and duplicate entries refused", async () => {
+  const f = await fake();
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = join(dir, "entries.json");
+    const a = {
+      fixedIn: "denext 9",
+      reason: "r",
+      version: "3.0.0-rc.2",
+      component: "desktop",
+      targets: ["z-target", "a-target", "z-target"],
+      extra: "dropped",
+    };
+    const b = { component: "cli", version: "3.0.0-denext.1", reason: "r" };
+    const c = { component: "cli", version: "3.0.0-denext.10", reason: "r" };
+    const d = { component: "cli", version: "3.0.0-rc.6", reason: "r" };
+    await Deno.writeTextFile(file, JSON.stringify([a, b, d, c]));
+    await assertRejects(() => main(["canonical", file, "--check"], f.deps), Error, "canonical");
+    await main(["canonical", file], f.deps);
+    const text = await Deno.readTextFile(file);
+    // cli before desktop, the newest first (denext.N above every rc), fields in a fixed order.
+    assertEquals(JSON.parse(text).revoked, [
+      { component: "cli", version: "3.0.0-denext.10", reason: "r" },
+      { component: "cli", version: "3.0.0-denext.1", reason: "r" },
+      { component: "cli", version: "3.0.0-rc.6", reason: "r" },
+      {
+        component: "desktop",
+        version: "3.0.0-rc.2",
+        targets: ["a-target", "z-target"],
+        reason: "r",
+        fixedIn: "denext 9",
+      },
+    ]);
+    assertEquals(Object.keys(JSON.parse(text).revoked[3]), [
+      "component",
+      "version",
+      "targets",
+      "reason",
+      "fixedIn",
+    ]);
+    assertEquals(canonicalEntriesText(canonicalEntries({ revoked: [c, d, a, b] })), text);
+    await main(["canonical", file, "--check"], f.deps);
+    assertStringIncludes(f.logged.at(-1)!, "is in canonical form");
+    const refused: Array<[unknown, string]> = [
+      [{}, "expected a list"],
+      [[{ component: "cli", reason: "r" }], "no version"],
+      [[{ component: "cli", version: "1" }], "no reason"],
+      [[{ component: "cli", version: "1", reason: "r", advisory: "http://x" }], "bad advisory"],
+      [[{ component: "browser", version: "1", reason: "r" }], "cli or desktop"],
+      [[b, { ...b, reason: "again" }], "listed twice"],
+    ];
+    for (const [raw, msg] of refused) assertThrowsMessage(() => canonicalEntries(raw), msg);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** The published advisories each committed entry must cite, by version (fork GHSAs). */
+function committedAdvisory(e: RuntimeRevocation): string {
+  const n = /^3\.0\.0-denext\.(\d+)$/.exec(e.version)?.[1];
+  const denext = n === undefined ? 0 : Number(n);
+  if (denext === 8) return "GHSA-v7wx-2v39-pxcf";
+  if (e.component === "desktop") return "GHSA-fp5v-5vcj-35wj";
+  return denext >= 3 ? "GHSA-6p3v-hr2g-w4hx" : "GHSA-qr84-w8xw-f7r4";
+}
+
+Deno.test("the committed list: canonical, every release through 3.0.0-denext.8, and no pin loses its footing", async () => {
+  const text = await Deno.readTextFile(COMMITTED);
+  const entries = canonicalEntries(JSON.parse(text), COMMITTED);
+  assertEquals(canonicalEntriesText(entries), text, "`deno task revocations canonical` leaves it");
+  // Both components of every released runtime before 3.0.0-denext.12 (no 9-11 were released).
+  const versions = [
+    ...Array.from({ length: 22 }, (_, i) => `2.9.7-denext.${i + 1}`),
+    ...Array.from({ length: 6 }, (_, i) => `3.0.0-rc.${i + 1}`),
+    ...[1, 2, 3, 5, 6, 7, 8].map((n) => `3.0.0-denext.${n}`),
+  ];
+  for (const component of ["cli", "desktop"] as const) {
+    assertEquals(
+      entries.filter((e) => e.component === component).map((e) => e.version).sort(),
+      [...versions].sort(),
+      component,
+    );
+  }
+  for (const e of entries) {
+    assertEquals(e.targets, undefined, `${e.version}: every target`);
+    assertEquals(e.fixedIn, "denext 4.13.0 (runtime 3.0.0-denext.12)");
+    assertEquals(
+      e.advisory,
+      `https://github.com/Brainwires/deno/security/advisories/${committedAdvisory(e)}`,
+      `${e.component} ${e.version}`,
+    );
+  }
+  // The checked-out pins and their rollbacks stay runnable: none is revoked.
+  const pins = checkedOutPins();
+  const impact = pinImpact(entries, pins);
+  assert(impact.ok, impact.lines.join("\n"));
+  for (const line of impact.lines) assert(!line.includes("is revoked"), line);
+  const list = { ...freshRevocationList(entries, NOW) };
+  for (const p of pins) {
+    assertEquals(decideRevocation(list, [{ ...p, triple: "x86_64-unknown-linux-gnu" }]).hit, null);
+  }
+  // The released denexts that read the list (4.11.8 and later): 4.13.x keep running their pin;
+  // 4.11.8-4.12.0 (pins 3.0.0-denext.7 / .8, rollbacks .6 / .7) warn, with no fallback — the fix
+  // is `denext upgrade`.
+  const released: Array<[string, string, string, boolean]> = [
+    ["4.13.1", "3.0.0-denext.13", "3.0.0-denext.12", true],
+    ["4.13.0", "3.0.0-denext.12", "3.0.0-denext.8", true],
+    ["4.12.0", "3.0.0-denext.8", "3.0.0-denext.7", false],
+    ["4.11.13", "3.0.0-denext.7", "3.0.0-denext.6", false],
+  ];
+  for (const [denext, version, rollback, runs] of released) {
+    for (const component of ["cli", "desktop"] as const) {
+      const d = decideRevocation(list, [{ component, version, rollback, triple: undefined }]);
+      assertEquals(d.hit === null, runs, `denext ${denext} ${component}`);
+      assertEquals(d.useRollback, false, `denext ${denext} ${component}: no revoked fallback`);
+    }
+  }
+});
+
+Deno.test("sign: the committed list signed with a test key — the shipped verifier takes it, and refuses it tampered, expired or replayed", async () => {
+  const f = await withKey();
+  const dir = await Deno.makeTempDir();
+  try {
+    const out = join(dir, "signed.json");
+    // Nothing is published for this key: the first signing skips the published-entries check.
+    await main(["sign", COMMITTED, "--out", out, "--no-publish", "--force"], f.deps);
+    assertStringIncludes(f.logged.join("\n"), "70 revoked; the checked-out pins:");
+    assert(!f.logged.some((l) => l.includes("WARNING")), f.logged.join("\n"));
+    assertEquals(f.web, [], "--no-publish publishes nothing");
+    const text = await Deno.readTextFile(out);
+    assert(new TextEncoder().encode(text).byteLength < REVOCATION_MAX_BYTES / 2, "room to grow");
+    const now = NOW.getTime();
+    const list = (await verifyRevocationDocument(text, [f.pub], { now }))!;
+    assertEquals(list.revoked, canonicalEntries(JSON.parse(await Deno.readTextFile(COMMITTED))));
+    assertEquals(list.sequence, now / 1000);
+    // Not under the compiled-in keys: the test key signs nothing a user would take.
+    await refusedAs(text, [], { now }, "signature");
+    // Tampered: one revocation dropped, or the signature's bytes changed.
+    const envelope = JSON.parse(text);
+    const payload = JSON.parse(envelope.signed);
+    const dropped = JSON.stringify({ ...payload, revoked: payload.revoked.slice(1) });
+    await refusedAs(
+      JSON.stringify({ ...envelope, signed: dropped }),
+      [f.pub],
+      { now },
+      "signature",
+    );
+    const sig = envelope.signature as string;
+    const flipped = (sig[0] === "A" ? "B" : "A") + sig.slice(1);
+    await refusedAs(
+      JSON.stringify({ ...envelope, signature: flipped }),
+      [f.pub],
+      { now },
+      "signature",
+    );
+    // Expired at its expiresAt; replayed below a sequence already seen.
+    await refusedAs(text, [f.pub], { now: Date.parse(list.expiresAt) }, "expired");
+    await refusedAs(text, [f.pub], { now, minSequence: list.sequence + 1 }, "replayed");
+    // And a re-sign of the same file is a fresh, higher sequence the old one can't replay.
+    f.published.text = text;
+    const later = { ...f.deps, now: () => new Date(now + 3600_000) };
+    await main(["sign", COMMITTED, "--out", out, "--no-publish"], later);
+    const next = (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+      now: now + 3600_000,
+      minSequence: list.sequence,
+    }))!;
+    assert(next.sequence > list.sequence);
+    await refusedAs(text, [f.pub], { now: now + 3600_000, minSequence: next.sequence }, "replayed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("pinImpact: a revoked pin rolls back, or warns when its rollback is revoked or absent", () => {
+  const e = (component: "cli" | "desktop", version: string): RuntimeRevocation => ({
+    component,
+    version,
+    reason: "r",
+  });
+  const pins = [
+    { component: "cli" as const, version: "b", rollback: "a" },
+    { component: "desktop" as const, version: "b", rollback: null },
+  ];
+  assertEquals(pinImpact([e("cli", "a")], pins), {
+    ok: true,
+    lines: ["  cli pin b: not revoked (its rollback a is revoked)", "  desktop pin b: not revoked"],
+  });
+  const one = pinImpact([e("cli", "b")], pins);
+  assertEquals(one.ok, false);
+  assertStringIncludes(one.lines[0], "denext runs its rollback a");
+  const none = pinImpact([e("cli", "b"), e("cli", "a"), e("desktop", "b")], pins);
+  assertStringIncludes(none.lines[0], "so is its rollback (a)");
+  assertStringIncludes(none.lines[1], "so is its rollback (none)");
+});
+
+/** `text` is refused by the shipped verifier with `code`. */
+async function refusedAs(
+  text: string,
+  keys: string[],
+  options: { now: number; minSequence?: number },
+  code: string,
+): Promise<void> {
+  const err = await assertRejects(() => verifyRevocationDocument(text, keys, options));
+  assert(err instanceof RevocationListError, String(err));
+  assertEquals(err.code, code);
+}
+
 /** `fn` throws an error whose message includes `text`. */
 function assertThrowsMessage(fn: () => unknown, text: string): void {
   try {
@@ -413,3 +638,89 @@ function assertThrowsMessage(fn: () => unknown, text: string): void {
   }
   throw new Error("did not throw");
 }
+
+Deno.test("expiry: the release gate warns before the published list lapses, never throws", async () => {
+  const DAY = 86_400_000;
+  const f = await withKey();
+  // No key compiled in: nothing to keep fresh.
+  assertEquals(await publishedExpiryWarning({ ...f.deps, keys: [] }), null);
+  // Nothing readable (offline, or none published).
+  assertStringIncludes((await publishedExpiryWarning(f.deps))!, "list could be read");
+  // Signed 5 days ago: 16 days left, quiet.
+  const at = (daysAgo: number) => freshRevocationList([], new Date(NOW.getTime() - daysAgo * DAY));
+  await publishedWith(f, at(5));
+  assertEquals(await publishedExpiryWarning(f.deps), null);
+  await main(["expiry"], f.deps);
+  assertEquals(f.logged.at(-1), "the published list is not near expiry");
+  // Signed 15 days ago: 6 days left, inside the 10-day margin.
+  const due = at(15);
+  await publishedWith(f, due);
+  const soon = (await publishedExpiryWarning(f.deps))!;
+  assertStringIncludes(soon, `list #${due.sequence} expires ${due.expiresAt} (in 6 days)`);
+  assertStringIncludes(soon, "deno task revocations resign");
+  await main(["expiry"], f.deps);
+  assertStringIncludes(f.logged.at(-1)!, "warning — the published revoked-runtimes list");
+  // Signed 22 days ago: lapsed.
+  const lapsed = at(22);
+  await publishedWith(f, lapsed);
+  assertStringIncludes(
+    (await publishedExpiryWarning(f.deps))!,
+    `list #${lapsed.sequence} EXPIRED at ${lapsed.expiresAt}`,
+  );
+  // A list signed by a key this checkout doesn't carry: reported, not thrown.
+  f.published.text = f.published.text!.replace(/"signature":"[^"]+"/, '"signature":"AAAA"');
+  assertStringIncludes((await publishedExpiryWarning(f.deps))!, "could not be verified");
+  // The release step prints the warning and carries on.
+  const warned: string[] = [];
+  assertEquals(await warnRevocationExpiry(() => Promise.resolve("x"), (l) => warned.push(l)), "x");
+  assertEquals(warned, ["0b. revoked-runtimes list: warning — x"]);
+  assertEquals(
+    await warnRevocationExpiry(() => Promise.reject(new Error("boom")), (l) => warned.push(l)),
+    "could not check its expiry (Error: boom)",
+  );
+  assertEquals(
+    await warnRevocationExpiry(() => Promise.resolve(null), (l) => warned.push(l)),
+    null,
+  );
+  assertEquals(warned.length, 2);
+});
+
+Deno.test("sign: a published list that can't be read or verified is refused unless --force", async () => {
+  const f = await withKey();
+  const dir = await Deno.makeTempDir();
+  try {
+    const out = join(dir, "list.json");
+    const entries = join(dir, "entries.json");
+    await Deno.writeTextFile(entries, JSON.stringify({ revoked: [] }));
+    // Unreachable (offline, or nothing published): nothing shows what the file would un-revoke.
+    f.published.text = null;
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "no published list could be read, so nothing shows the entries file keeps every published",
+    );
+    // Published, but not verifiable under the compiled-in keys (here: not JSON at all).
+    f.published.text = "<html>maintenance</html>";
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "the published list could not be verified",
+    );
+    await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
+    // --force signs anyway, and says the check was skipped.
+    await main(["sign", entries, "--out", out, "--no-publish", "--force"], f.deps);
+    assert(
+      f.logged.some((l) => l.includes("without the published-entries check")),
+      f.logged.join("\n"),
+    );
+    assertEquals(
+      (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+        now: NOW.getTime(),
+      }))
+        ?.revoked,
+      [],
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

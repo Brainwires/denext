@@ -52,13 +52,14 @@ export default {
 
 A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 
-| Field       | Default | What it does                                                                                                                                                                             |
-| ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `public`    | `false` | Downloads need no signature and no `authorize` call; their URLs are stable and cacheable. Uploads, deletes and listings still go through `authorize`.                                    |
-| `maxBytes`  | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                  |
-| `mime`      | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes. |
-| `authorize` | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                |
-| `versioned` | off     | Object versioning ([below](#object-versioning)): `true` keeps overwritten and deleted objects as noncurrent versions; `false` suspends it.                                               |
+| Field               | Default | What it does                                                                                                                                                                                                       |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `public`            | `false` | Downloads need no signature and no `authorize` call; their URLs are stable and cacheable. Uploads, deletes and listings still go through `authorize`.                                                              |
+| `maxBytes`          | 50 MiB  | The largest object accepted. Checked when an upload is signed, on the declared length, and on the bytes as they stream.                                                                                            |
+| `mime`              | any     | Allowed content types, exact (`application/pdf`) or `type/*`. A declared raster image (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF) must also start with that format's magic bytes.                           |
+| `authorize`         | deny    | `({ session, identity, op, key, bucket, request }) => boolean`. Only `true` allows. With no `authorize`, every operation is denied except downloads from a public bucket.                                          |
+| `versioned`         | off     | Object versioning ([below](#object-versioning)): `true` keeps overwritten and deleted objects as noncurrent versions; `false` suspends it.                                                                         |
+| `requireUploadSize` | `false` | `createSignedUploadUrl` without `size` is refused (`bad_request`), so every signed upload URL pins its exact size. The plugin's own sign route always sends one; Supabase's `/object/upload/sign` is not affected. |
 
 `op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
 copy is `download` on the source and `upload` on the destination, a move adds `delete` on the
@@ -818,7 +819,8 @@ missed changes are coalesced and re-read once, when they return. When the gap ca
 older than the retention, more than `replay.maxChangesPerTable` (10 000 by default) changes of the table, the
 database listener was lost meanwhile, the reconnect reached another instance (no sticky
 sessions), or the viewer came back with other claims than they left with (a changed role, team or
-tenant; a refreshed token is the same claims) — `stale` turns true and `onResync` runs, as before.
+tenant; a refreshed token is the same claims) — the server says so at once, `stale` turns true and
+`onResync` runs.
 
 ### How it works
 
@@ -882,9 +884,13 @@ tenant; a refreshed token is the same claims) — `stale` turns true and `onResy
    re-read as the subscriber through the same tracked-key rules as live changes, numbered on from
    the frames before the drop. A position the journal no longer covers, or a journaled listener
    loss, or a reconnect re-authorized under other claims (the frames kept for it were read under
-   the old ones, and are dropped), is `{ resync: true }` instead; a reconnect answered by neither
-   within 10 seconds (the subscription was dropped, or the socket reached another instance) marks
-   the hook `stale`. Every frame is published under a digest of the grant (role and claims) it was
+   the old ones, and are dropped), is `{ resync: true }` instead. The browser marks a subscription
+   it re-sends after a reconnect, so one the instance no longer holds (dropped, or the socket
+   reached another instance) is answered `{ resync: true }` at once; with an older denext, which
+   sends no mark, a reconnect answered by neither within 10 seconds marks the hook `stale`. The
+   frames handed to the Live hub in the second before a drop are sent again on the return, ahead
+   of `resumed`, numbered as the first time and marked `again: true`: one the hub had not fanned
+   out yet when the connection closed then still arrives, and the hook drops a copy of one it has. Every frame is published under a digest of the grant (role and claims) it was
    read as, and every subscriber is admitted under the grant it has, so the Live hub — on any
    instance, behind a shared channel transport too — never sends a frame read under other claims
    than the subscriber's; one it drops that way is a sequence gap, which the hook answers with
@@ -1510,8 +1516,8 @@ const res = await fetch("/functions/v1/hello", { method: "POST", body: JSON.stri
 - **`EdgeRuntime.waitUntil(promise)`** is accepted: the worker stays up, so the work finishes.
 - **Errors** come back in Supabase's relay shape, `{ code, message }`: `404 NOT_FOUND`,
   `401 UNAUTHORIZED`, `503 BOOT_ERROR` (the module failed to load, or exports no handler),
-  `500 WORKER_ERROR` (the handler threw), `504 WORKER_TIMEOUT` (past `timeoutMs`) and `413` for a
-  body over the cap.
+  `500 WORKER_ERROR` (the handler threw), `504 WORKER_TIMEOUT` (past `timeoutMs`), `546
+  WORKER_LIMIT` (the worker went over `memoryMb`) and `413` for a body over the cap.
 
 ### Isolation
 
@@ -1547,13 +1553,21 @@ There is nothing to `download` or `deploy`: the functions ship inside the app, w
 | `verifyJwt`    | `true`            | Require a valid caller before a function runs.                                                        |
 | `timeoutMs`    | 150 000           | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
 | `maxBodyBytes` | 20 MiB            | The largest request body passed to a function.                                                        |
+| `memoryMb`     | none              | Each function worker's heap cap in megabytes (runtime 3.0.0-rc.2+; needs `"worker-options"`, below).  |
 | `env`          | `{}`              | Variables every function reads from `Deno.env`, over the process's own.                               |
 | `url`          | see above         | The URL functions read as `SUPABASE_URL` (default: `canonicalOrigin`, else the server's own address). |
-| `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`.                                |
+| `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`, `memoryMb`.                    |
 
 A function's worker acknowledges each abort. One that does not within a second (busy in synchronous
 code, such as a `while (true) {}`) is terminated and replaced: the requests it was still serving
 get `504`, and the next call starts on a fresh worker.
+
+`memoryMb` caps each function worker's JavaScript heap (`new Worker(…, { deno: { memoryMb } })`,
+denext's Deno from runtime 3.0.0-rc.2), for every function or one (`functions: { report: {
+memoryMb: 256 } }`). A worker over it is terminated: the requests it was serving get `546
+WORKER_LIMIT`, as on Supabase, and the next call starts a fresh worker. Memory outside the heap
+(`ArrayBuffer`s, native code) is not counted. Like `permissions`, it needs `"unstable":
+["worker-options"]` in `deno.json`.
 
 ## The admin endpoint
 

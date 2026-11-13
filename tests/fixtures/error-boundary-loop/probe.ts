@@ -1,6 +1,8 @@
 // Worker probe for tests/error-boundary-fallback-throw.test.ts: renders one scenario on the
 // client reconciler and posts what it rendered. Run in a Worker so a render that loops forever
 // (a boundary re-catching its own fallback's throw) can be terminated by the test's timeout.
+// It posts `{ type: "ready" }` once this module (and the reconciler graph it imports, which the
+// Worker type-checks) has loaded, so the test's render limit counts only the render.
 
 import "../../helpers/class-runtime.ts";
 import { h } from "../../../src/jsx/jsx-runtime.ts";
@@ -69,5 +71,6 @@ function run(scenario: Scenario): Record<string, unknown> {
 }
 
 self.onmessage = (e: MessageEvent<Scenario>) => {
-  self.postMessage(run(e.data));
+  self.postMessage({ type: "result", data: run(e.data) });
 };
+self.postMessage({ type: "ready" });

@@ -15,6 +15,8 @@ import {
 } from "../src/build/deno-version.ts";
 import {
   bakedLimitsNotice,
+  compiledLimits,
+  compiledLimitsKey,
   compileLimitFlags,
   configTextLimits,
   configuredLimitFlags,
@@ -41,6 +43,7 @@ import { entrySource } from "../src/build/compile-app.ts";
 import { standaloneVerb } from "../src/standalone/mod.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 import { inChild } from "./helpers/isolated.ts";
+import { withoutHeapSize } from "./helpers/heap-flags.ts";
 import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -149,6 +152,37 @@ Deno.test("resource limits: inserted after `run` of a `deno run` command only", 
   assertEquals(withLimitFlags(["deno", "serve", "main.ts"], ["--max-time=5"]), null);
   assertEquals(withLimitFlags(["deno", "task", "start"], ["--max-time=5"]), null);
   assertEquals(withLimitFlags(["node", "run", "x"], ["--max-time=5"]), null);
+});
+
+Deno.test("compiledLimits: compile.limits in place of start.limits; false bakes none", () => {
+  const start = { limits: { memory: "512m" } };
+  assertEquals(compiledLimits({ start }), { memory: "512m" });
+  assertEquals(compiledLimits({ start, compile: { limits: { cpuSeconds: 60 } } }), {
+    cpuSeconds: 60,
+  });
+  assertEquals(compiledLimits({ start, compile: { limits: false } }), undefined);
+  assertEquals(compiledLimits({ compile: {} }), undefined);
+  assertEquals(compiledLimits(undefined), undefined);
+});
+
+Deno.test("compiled limits: the job / db notice names compile.limits when that is what is baked", () => {
+  const start = { limits: { memory: "512m" } };
+  assertEquals(compiledLimitsKey({ start }), "start.limits");
+  assertEquals(compiledLimitsKey({ compile: { limits: { cpuSeconds: 60 } } }), "compile.limits");
+  assertEquals(compiledLimitsKey({ compile: { limits: false } }), "start.limits");
+  assertEquals(compiledLimitsKey(undefined), "start.limits");
+  const notice = bakedLimitsNotice("app", "job", ["--max-cpu-time=60"], "compile.limits")!;
+  assertStringIncludes(notice, "enforces the compile.limits it was compiled with");
+  assert(!notice.includes("start.limits"), notice);
+  assertStringIncludes(notice, "`compile: { limits: false }`");
+  // The generated entry hands the key to the binary only when it is not the default.
+  const entry = (from: "compile.limits" | "start.limits") =>
+    entrySource("file:///p/.denext/compile/main.ts", "file:///p/", false, ["--max-time=60"], from);
+  assertStringIncludes(
+    entry("compile.limits"),
+    'limitsBaked: ["--max-time=60"], limitsLifted, limitsFrom: "compile.limits" });',
+  );
+  assert(!entry("start.limits").includes("limitsFrom"));
 });
 
 Deno.test("resource limits: a compiled executable gets them baked in, off the toolchain a warning", () => {
@@ -582,8 +616,10 @@ const reran = await maybeReexecForLimits({
   warn: (m) => console.error(m),
 });
 if (!reran) {
+  // Past 512 MB of heap no limit is in force: exit 99 then, not after eating the host's memory.
   const a: unknown[] = [];
-  for (;;) a.push(new Array(1e5).fill({ x: Math.random() }));
+  while (Deno.memoryUsage().heapUsed < 512 << 20) a.push(new Array(1e5).fill({ x: Math.random() }));
+  Deno.exit(99);
 }
 `;
 
@@ -601,6 +637,8 @@ Deno.test({
       // The hop: started as the toolchain re-exec starts its child (the limits as data).
       const handOff = hopLimits(LIMIT_HOPS.toolchain, runtime.deno, configured);
       assertEquals(handOff.flags, []);
+      // Without the heap size the Windows test pass puts in DENO_V8_FLAGS: V8 takes it over
+      // --max-memory, and the hog then grew to gigabytes before it exited 137.
       const result = await new Deno.Command(Deno.execPath(), {
         args: [
           "run",
@@ -611,7 +649,8 @@ Deno.test({
           script,
           out,
         ],
-        env: handOff.env,
+        clearEnv: true,
+        env: withoutHeapSize({ ...Deno.env.toObject(), ...handOff.env }),
         stdout: "null",
         stderr: "piped",
       }).output();

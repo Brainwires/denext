@@ -54,7 +54,12 @@ import {
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
 import { tlsCompileFlags } from "./start-tls-deploy.ts";
-import { compileLimitFlags } from "./resource-limits.ts";
+import {
+  compiledLimits,
+  type CompiledLimitsKey,
+  compiledLimitsKey,
+  compileLimitFlags,
+} from "./resource-limits.ts";
 import {
   carryNpmrc,
   type CompileLock,
@@ -457,7 +462,8 @@ function standaloneSpecifier(entryUrl: string): string {
 /**
  * The generated entry module's source. `idleTrimBaked` tells the binary its idle trim is baked in,
  * so a `DENEXT_IDLE_TRIM=0` when it runs can still hold it off (src/build/idle-trim.ts);
- * `limitsBaked` names the `start.limits` flags baked in. With them, the module lifts the limits
+ * `limitsBaked` names the limit flags baked in (`compile.limits`, else `start.limits`;
+ * `limitsFrom` says which, for the notice). With them, the module lifts the limits
  * for `job` and `db` with `Deno.disarmResourceLimits(import.meta)` (denext's Deno from
  * 3.0.0-denext.8, which takes only the main module's own `import.meta`, while it evaluates, hence
  * here and not in `runStandalone`); on an older runtime, which has no such function, those verbs keep running
@@ -468,12 +474,14 @@ export function entrySource(
   projectUrl: string,
   idleTrimBaked = false,
   limitsBaked: readonly string[] = [],
+  limitsFrom: CompiledLimitsKey = "start.limits",
 ): string {
   const root = relativeSpecifier(entryUrl, projectUrl) ?? projectUrl;
   const lift = limitsBaked.length > 0;
   const fields = [
     ...(idleTrimBaked ? ["idleTrimBaked: true"] : []),
     ...(lift ? [`limitsBaked: ${JSON.stringify(limitsBaked)}`, "limitsLifted"] : []),
+    ...(lift && limitsFrom !== "start.limits" ? [`limitsFrom: ${JSON.stringify(limitsFrom)}`] : []),
   ];
   const options = fields.length > 0 ? `, Deno.args, { ${fields.join(", ")} }` : "";
   const specifier = JSON.stringify(standaloneSpecifier(entryUrl));
@@ -825,16 +833,22 @@ export async function compileApp(
     configOff: paths.config?.start?.idleTrim === false,
     env: readEnv,
   });
-  // `start.limits`, baked in (src/build/resource-limits.ts): denort enforces them on every run of
-  // the binary, `job` and `db` included, and takes no flag or variable to lift them.
+  // `compile.limits` (else `start.limits`), baked in (src/build/resource-limits.ts): denort
+  // enforces them on every run of the binary; the entry lifts them for `job` and `db`.
   const limitFlags = compileLimitFlags(
-    paths.config?.start?.limits,
+    compiledLimits(paths.config),
     options.deno ? undefined : toolchainVersion(),
     options.warn,
   );
   await Deno.writeTextFile(
     entry,
-    entrySource(entryUrl, toFileUrl(paths.projectDir + "/").href, trimFlags.length > 0, limitFlags),
+    entrySource(
+      entryUrl,
+      toFileUrl(paths.projectDir + "/").href,
+      trimFlags.length > 0,
+      limitFlags,
+      compiledLimitsKey(paths.config),
+    ),
   );
   const { file: config, lock } = await writeCompileConfig(paths, dir, entryUrl);
   const { included, skipped } = await embeddedPaths(paths, compile);

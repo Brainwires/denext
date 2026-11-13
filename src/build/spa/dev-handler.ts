@@ -21,7 +21,7 @@ import {
   newScriptNonce,
   prepareSpaPartytown,
   spaPartytownLib,
-  stampWorkerNonce,
+  stampWorkerNonceBody,
 } from "./script-workers.ts";
 import { spaDevReloadScript } from "./dev-reload-script.ts";
 import {
@@ -80,8 +80,10 @@ async function serveClientAsset(
   return new Response("// not found", { status: 404, headers: jsHeaders });
 }
 
-function htmlResponse(request: Request, html: string, status = 200): Response {
-  return new Response(request.method === "HEAD" ? null : html, { status, headers: htmlHeaders });
+function htmlResponse(request: Request, html: BodyInit, status = 200): Response {
+  const head = request.method === "HEAD";
+  if (head && html instanceof ReadableStream) void html.cancel(); // streamed: nothing reads it
+  return new Response(head ? null : html, { status, headers: htmlHeaders });
 }
 
 /** React Native mode's embedded fonts (`reactNative.fonts`), resolved on each request. */
@@ -117,7 +119,7 @@ const FONT_TYPES: Readonly<Record<string, string>> = {
 async function serveShell(
   st: SpaDevState,
   request: Request,
-  stamp: (html: string) => string,
+  stamp: (html: string) => BodyInit,
 ): Promise<Response> {
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
   const rnStyleSheet = reactNativeOptions(st.paths.config) !== null;
@@ -250,7 +252,7 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
  */
 function devScriptWorkers(st: SpaDevState): {
   serve(request: Request, url: URL): Promise<Response | null>;
-  stamp(): Promise<(html: string) => string>;
+  stamp(): Promise<(html: string) => BodyInit>;
 } {
   const dir = join(st.paths.outDir, "partytown");
   const lib = spaPartytownLib(st.paths.config);
@@ -269,7 +271,7 @@ function devScriptWorkers(st: SpaDevState): {
     },
     async stamp() {
       return (await on())
-        ? (html) => stampWorkerNonce(html, lib, newScriptNonce())
+        ? (html) => stampWorkerNonceBody(html, lib, newScriptNonce())
         : (html) => html;
     },
   };
@@ -323,7 +325,7 @@ async function serveFile(
   request: Request,
   url: URL,
   prefix: string,
-  stamp: (html: string) => string,
+  stamp: (html: string) => BodyInit,
 ): Promise<Response> {
   const client = url.pathname.startsWith(prefix);
   const font = client ? fontFor(await devFonts(st), url.pathname, prefix) : undefined;

@@ -22,7 +22,11 @@ import {
 } from "./document.ts";
 import { type CspSetting, resolveStreamingCsp } from "./csp.ts";
 import { streamLateStyleSheets } from "./late-style-sheets.ts";
-import { resumePageHolesFlightStream, resumePageHolesStream } from "./render-page.ts";
+import {
+  raisesAccessSignal,
+  resumePageHolesFlightStream,
+  resumePageHolesStream,
+} from "./render-page.ts";
 import { absoluteUrl, stableBaseUrl, warnNoStableOrigin } from "./absolute-url.ts";
 import { augmentMetadataConventions } from "./augment-metadata.ts";
 import { documentPublicEnv } from "../runtime/public-env.ts";
@@ -79,9 +83,24 @@ export function navData(pr: PageRequest): HydrationData {
   };
 }
 
+/**
+ * The route's client entry, if it has one. A route that renders as one client bundle (no Flight)
+ * gets none for a raised access signal (`x-denext-signal`): its bundle renders the page, so run
+ * on a soft navigation it would paint the page back over the signal's `not-found.tsx` /
+ * `forbidden.tsx` / `unauthorized.tsx`. That render is sent as markup alone, which the client
+ * swaps in.
+ *
+ * @param pr The page request.
+ * @returns The entry's URL, or `undefined`.
+ */
+export function clientEntryOf(pr: PageRequest): string | undefined {
+  const entry = pr.state.app.config.clientEntryFor?.(pr.page.route);
+  return entry && !pr.useFlight && raisesAccessSignal(pr.state.request) ? undefined : entry;
+}
+
 /** The hydration island's data — only for a route with a client entry. */
 function hydrationFor(pr: PageRequest): HydrationData | undefined {
-  return pr.state.app.config.clientEntryFor?.(pr.page.route) ? navData(pr) : undefined;
+  return clientEntryOf(pr) ? navData(pr) : undefined;
 }
 
 /**
@@ -92,7 +111,7 @@ export function documentOptions(pr: PageRequest) {
   const { config } = pr.state.app;
   return {
     hydration: hydrationFor(pr),
-    clientEntry: config.clientEntryFor?.(pr.page.route),
+    clientEntry: clientEntryOf(pr),
     deferredEntry: config.flightBootEntry,
     styles: config.styleHrefsFor?.(pr.page.route),
     devScript: config.devScript,

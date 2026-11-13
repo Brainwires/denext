@@ -84,7 +84,7 @@ export async function sameToken(a: string, b: string): Promise<boolean> {
 }
 
 /** The request's body as text, or `null` past {@linkcode MAX_BODY_BYTES}. */
-async function boundedText(request: Request): Promise<string | null> {
+export async function boundedText(request: Request): Promise<string | null> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (declared > MAX_BODY_BYTES) {
     await request.body?.cancel();

@@ -98,7 +98,7 @@ a broad read is unavoidable.
 
 ### Symlinks and allow scopes
 
-As of the runtime denext pins (`3.0.0-denext.17`):
+As of the runtime denext pins:
 
 - **Allow scopes hold on the path an access reaches.** With `--allow-read=./data`, reading
   `./data/link` where the link points outside `./data` needs the target allowed as well (by its own

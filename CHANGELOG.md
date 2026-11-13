@@ -8,6 +8,240 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.17.0] - 2026-11-13
+
+### Added
+
+- **Desktop: `getWindows()` reports each window's title.** The `title` the Window menu shows (as
+  opened, then the page's `document.title` or `setWindowTitle`) is in every entry of `getWindows()`
+  and the `windows` capability's `list`.
+- **examples/companion: Loopy is a voice assistant.** Loopy is redrawn (two crossed wire clips with a
+  bead head and 13 moods) and talks back over a Realtime speech API on WebRTC: hold Space, click
+  Loopy, or press a global shortcut to talk; the transcripts show in its bubble, its mouth follows
+  its voice and the model picks its mood. It can search the web, drive a visible browser (asking
+  before any write, form post or connection) and remember past conversations. The API key lives in
+  the OS keychain behind the voice backend, never readable by the page.
+- **examples/companion: the packaged Loopy hears you.** It turns on `desktop.capabilities.microphone`
+  (with its own macOS usage text) and builds with CEF on Linux (`desktop.backend: { linux: "cef" }`),
+  whose system WebView has no WebRTC. A refused microphone names the fix: the OS's privacy settings
+  (on Windows, the switch `appCapabilities().microphoneAccessReason` reports) or the packaged app.
+- **Fresh partial navigation: view transitions, head merging and back / forward.** Under an
+  element with `f-view-transition`, a partial swap runs inside `document.startViewTransition` where
+  the browser has it; an answer's `<meta>` elements (by `name`, `property`, `http-equiv` or
+  `itemprop`) are updated or added and its new stylesheets loaded before the regions swap; and
+  browser back / forward between partial-navigation entries restores each region as the entry
+  left it (an `append` / `prepend` history included) instead of re-rendering the whole page.
+  `denext migrate` no longer lists `f-view-transition` for review.
+- **`denext/preact/compat`: Preact's remaining `react-dom` helpers.** `createFactory`,
+  `findDOMNode` (a mounted class instance's first DOM node), `isFragment`, `isMemo` and
+  `unmountComponentAtNode`; `render(vnode, parent, callback)` / `hydrate(vnode, parent, callback)`
+  call `callback` once the DOM is updated and keep one root per container (a second `render`
+  re-renders it), and `flushSync(fn, arg)` passes `arg` to `fn`.
+- **`denext/preact/jsx-runtime`: Deno's precompiled JSX.** `jsxTemplate`, `jsxAttr` and
+  `jsxEscape`, with Preact's serialization (and its `options.attr` hook), so a project with
+  `"jsx": "precompile"` and `jsxImportSource: "preact"` runs on denext. A template is parsed once
+  into elements, so it renders on the server and mounts in the browser with its event handlers,
+  refs and keys (each still serializes as Preact's empty attribute). Unlike Preact, `jsxEscape`
+  returns a new array instead of escaping the caller's in place, so rendering the same array
+  twice does not escape its text twice.
+- **`denext ui`'s Cron page manages the OS-scheduler entries.** A new "OS scheduler" section shows
+  which scheduled jobs `denext job install` has handed to launchd, a systemd timer, the crontab or
+  Task Scheduler (and any stale entry), with Install / Uninstall buttons that first preview every
+  file and command the dry run would write and run; plain forms, refused under `--read-only` and
+  not read under `--offline`. The `/api/config/cron` twin adds `osScheduler` and takes the same
+  `os-install` / `os-uninstall` intents. `denext job install --status [--json]` lists this
+  project's installed entries without changing anything, and `--json` now carries the warning an
+  install prints when its entries run the fallback command.
+- **Desktop: a will-navigate hook.** `runDesktop({ onWillNavigate })`, `onWillNavigate(fn)` on its
+  result and an extension's `host.onWillNavigate(fn)` see the top-level navigations pages start in
+  every window (`url`, `window`, `kind`, `initiator`; not back / forward, reloads, sub-frames,
+  popups or the runtime's own) before the navigation guard, and may refuse one
+  (`preventDefault()`) or load it in place (`allow()`). It fires on a Deno Desktop runtime that
+  dispatches the event (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`); elsewhere
+  the static policy decides alone. Runtime 3.0.0-denext.20 and later.
+  While a hook is subscribed, CEF and WebView2 cancel each navigation and start it again as a new
+  history entry (WebView2 as a GET, so a form POST loses its body), and WebKitGTK decides at the
+  response.
+- **Desktop: every bridge handler knows who called.** A capability or extension handler gets
+  `ctx.caller`: the window's `origin`, the calling `frame` (`kind` `"main"` / `"sub"` /
+  `"unknown"`, its own `origin`, and whether the runtime `verified` it) and the `window` id, so a
+  privileged method can refuse a subframe. The frame is verified on a Deno Desktop runtime that
+  marks each request with it (`Deno.desktop.marksFrames`, runtime 3.0.0-denext.20 and later, under
+  CEF and WKWebView), and only for a call over its in-memory connection: over the loopback
+  connection the page sets its own headers, so a frame header there is never trusted. Elsewhere it
+  is the page's own report, as on WebView2 and WebKitGTK, where `verified` is always `false`.
+- **Native passkeys: the step-up of a pending native sign-in, and list / delete.** A passkey
+  finishes an id_token sign-in that owes a second factor: `{ mfa_token }` at
+  `/native/passkey/authenticate/options` and `/native/passkey/authenticate` answers the native
+  tokens (a sign-in whose first factor was a passkey still takes a code). `GET /native/passkeys`
+  and `DELETE /native/passkeys/:id` list and remove the bearer's passkeys.
+- **Content collections: element overrides for `.md` entries.** `<Content entry={post} components={{
+  a: SiteLink, code: Code }} />` now renders a `.md` body as elements with the named ones replaced,
+  as `denext/markdown`'s `<Markdown components>` does; before, `components` reached only `.mdx`
+  entries.
+- **`@denext/backend`: `requireUploadSize` per bucket.** A bucket with `requireUploadSize: true`
+  refuses a `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed
+  upload URL pins its exact size. The plugin's own sign route always sends one, and Supabase's
+  `/object/upload/sign` is unaffected. Off by default: size-less signed uploads stay allowed.
+- **`@denext/backend`: a heap cap for Edge Functions.** `functions: { memoryMb }` (or a function's
+  own) caps each function worker's JavaScript heap on runtime 3.0.0-rc.2 and later; a worker over
+  it is terminated and its requests answer `546 WORKER_LIMIT`, as on Supabase. Needs
+  `"unstable": ["worker-options"]` in `deno.json`.
+- **A per-job timeout.** `defineJob({ timeoutMs })` fails an attempt that runs longer with an
+  `Error` whose `name` is `"JobTimeoutError"` and aborts the handler's `signal` with it; with
+  `retry`, each attempt has its own limit and a timed-out one is retried. Synchronous work is not
+  preempted.
+- **`compile.limits`: a compiled binary's own resource limits.** `compile: { limits: { memory,
+  cpuSeconds, deadlineSeconds } }` bakes these into a `denext build --compile` executable in place
+  of `start.limits`; `compile: { limits: false }` bakes none. The notice the binary prints when its
+  `job` or `db` runs under baked limits names the key they came from and points at
+  `compile: { limits: false }`.
+- **`safeFetch({ userAgent })`.** A string replaces the default `User-Agent: denext` and `false`
+  sends none; a `User-Agent` in `headers` still wins, and an illegal value is a `TypeError`
+  (runtime 3.0.0-denext.20's `Deno.createHttpClient({ userAgent })` values, on every runtime, as
+  `safeFetch` writes its own request). `makePinnedFetch` takes the same option.
+- **Cookie sessions for server-side fetches and `denext/testing`.** `safeFetch({ cookieJar })`
+  stores each hop's `Set-Cookie` (redirects included) and sends the matching cookies, an explicit
+  `Cookie` header bypassing it; `runtimeCookieJar()` from `denext/server` returns the runtime's
+  RFC 6265bis `Deno.CookieJar` on denext's Deno with `--unstable-cookies` (else `null`). An OAuth
+  sign-in's back-channel calls (token, keys, userinfo) share one such jar when the server process
+  has it. The jar is opt-in: denext does not pass the flag to `dev` or `start`, so add
+  `--unstable-cookies` (or `"unstable": ["cookies"]` in `deno.json`) to turn it on; without it
+  those calls carry no cookies, as before. `createTestClient(handler, { cookieJar })` and
+  `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules; the
+  default name-keyed jar is unchanged.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.21.** It reports navigation
+  events and marks frames (`Deno.desktop.navigationEvents`, `Deno.desktop.marksFrames`), so
+  `onWillNavigate` is called and a bridge caller's frame is verified under CEF and WKWebView,
+  and its built-in lifecycle-script host grants open port 443 only. It also carries
+  3.0.0-denext.18's work and: terminals on Windows (`Deno.openPty` and node-pty on ConPTY), an app-wide application menu
+  (`Deno.desktop.setApplicationMenu`), V8 15.6.75.57 with 19 V8 security fixes, CEF 156.0.28
+  (Chromium 156.0.8078.88; not yet the fix for the exploited CVE-2026-125350, so keep
+  `desktop.app.allowedNavigationOrigins` minimal), Node's `process.report`, `NODE_V8_COVERAGE`,
+  trace event files, `node --permission` mapped onto Deno's permissions, ML-DSA / ML-KEM keys,
+  `"node"` in deno.json to pick the Node.js major `process.version` reports, `--trace-exit`,
+  `--deterministic`, native addons built from source in the lifecycle-script jail, `deno add`'s
+  supply-chain checks over the dependencies it brings in, and an inherited descriptor needing the
+  permission its kind implies. The [runtime reference](https://denext.dev/docs/runtime-reference)
+  lists each change.
+- **`deno task revocations sign` refuses when it can't read the published list** (maintainers).
+  The check that refuses an entries file leaving out a published revocation needs the published
+  list; when it can't be fetched or verified, `sign` now stops with the reason instead of signing
+  without the check. `--force` signs anyway and says the check was skipped.
+- **A SPA's per-response shell stamp can stream through the runtime's `HTMLRewriter`
+  (opt-in).** With `nextScriptWorkers`, `denext dev` and `denext start` put a fresh nonce on the
+  shell's scripts, its Partytown boot tag and its `spa.csp` policy. `DENEXT_HTML_REWRITER=1`,
+  under denext's Deno with `--unstable-html-rewriter` (or `"unstable": ["html-rewriter"]`), makes
+  that a streaming `HTMLRewriter` transform; the string path stays the default everywhere, the
+  flag alone included. Both write the same bytes. It is opt-in because it is slower on today's
+  runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through the
+  rewriter (first chunk at 1.4 ms), a 17 KB shell with 22 scripts 48 µs against 6.5 ms. A stamped
+  `<script>` now carries `nonce` as its last attribute, the way `HTMLRewriter` writes it, where it
+  came first before.
+- **The SPA shell stamp rewrites each stamped tag as `HTMLRewriter` writes it.** On both paths a
+  `<script>` the stamp changes keeps its attributes as written but joined by single spaces (extra
+  spaces and line breaks between them are dropped), and a `<script ... />` is written with `/`
+  before `>`. Tooling that hashes or snapshots the served shell's bytes sees the new spacing.
+- **The SPA shell stamp lists the nonce in every `Content-Security-Policy` `<meta>`.** A shell with
+  several policy `<meta>` tags gets `'nonce-…'` in each one's `script-src`, where only the first
+  was stamped before (a browser enforces every policy, so a later one refused the stamped scripts).
+- **`denext doctor` warns before the revoked-runtimes list expires.** Once fewer than 7 days
+  remain, `doctor` and `toolchain status` say when the list lapses: after that denext ignores it
+  until it is re-signed, so a revocation would stop reaching anyone.
+- **`@denext/graphql`: a schema object it can't trace reloads in `denext dev`.** One built in
+  `denext.config.ts` itself, or imported through an import-map alias, now reloads by re-importing
+  the config on an edit under the directory of any project module the config reaches, instead of
+  needing a dev-server restart.
+- **Lifecycle-script jail: `@discordjs/opus`, `argon2` (before 0.28), `bcrypt` 5 and `libxmljs`
+  are in the built-in exception list**, as the GitHub release host their package.json declares
+  (`knownPackages: ["github.com"]`). From runtime 3.0.0-denext.20 the runtime allows that host's
+  redirect targets with it; on earlier runtimes denext writes `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com` as the package's `net` list. `bcrypt` 6 still needs none.
+
+### Fixed
+
+- **Desktop: macOS `.dmg` installers are signed, notarized and stapled.** `denext desktop package`
+  notarized and stapled the `.app`, then wrapped it in a `.dmg` it never signed, while its last line
+  said "signed + notarized + stapled — ready to distribute": Gatekeeper refused the image
+  (`spctl -t open` → "no usable signature") and `xcrun stapler validate` failed on it. The `.dmg`
+  is now code-signed with the app's Developer ID identity (secure timestamp) and notarized and
+  stapled with its own ticket, beside the `.app`'s (stapled first, so the installers hold the
+  stapled app) and a signed `.pkg`'s; the installers are submitted together, and every ticket is
+  validated. The last line names what each artifact is (`.app signed + notarized + stapled; .dmg
+  unsigned`, …) and says "ready to distribute" only when all are. An identity of `-` counts as
+  ad-hoc, and the package script now takes an App Store Connect API key (`DENEXT_NOTARY_KEY` +
+  `DENEXT_NOTARY_KEY_ID` [+ `DENEXT_NOTARY_ISSUER`]) as well as `DENEXT_NOTARY_PROFILE`. Existing
+  apps adopt it with `denext desktop package --regenerate-scripts`; until they do, `denext desktop
+  package`, `denext desktop doctor` and `denext doctor` warn that the script ships its `.dmg`
+  un-notarized.
+- **Fresh partial navigation: an answer from another origin is never applied**
+  ([GHSA-w737-gq2w-763w](https://github.com/Brainwires/denext/security/advisories/GHSA-w737-gq2w-763w)).
+  A partial request whose redirect landed on another origin is now loaded as a full page instead of
+  having its `<Partial>` regions and head tags applied, as App Router navigation already does.
+- **Docs: runtime gates, the API reference and a few reference rows.** The docs describe a
+  runtime gate by the capability that detects it (`Deno.desktop.navigationEvents`,
+  `Deno.desktop.marksFrames`, a runtime that passes on a declared host's redirects) rather than a
+  release number. The `ctx.caller` example no longer refuses every call where frames are unmarked
+  (WebView2, WebKitGTK), and `onWillNavigate` lists what it doesn't report and how CEF, WebView2
+  and WebKitGTK deliver it (also in KNOWN-LIMITATIONS). The API reference carries this release's
+  exports. The auth routes table lists `GET /native/passkeys` and `DELETE /native/passkeys/:id`,
+  the environment page `DENEXT_HTML_REWRITER`, the Live page `ctx.resubscribe`, and the jobs page
+  says the timeout error is an `Error` named `"JobTimeoutError"` (there is no class).
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` on a one-bundle route renders
+  the file.** On a route that renders as one client bundle (a page or layout that calls a hook
+  itself), the soft navigation that renders the signal's `not-found.tsx` / `forbidden.tsx` /
+  `unauthorized.tsx` answered with the route's bundle, which rendered the page again, so the page
+  stayed as it was. The server now sends that render as markup without the route's entry, and the
+  file shows under the layouts.
+- **Realtime: a reconnect the server no longer holds is told to re-read at once (`@denext/backend`).**
+  The Live client now marks a channel subscription it re-sends after a reconnect, and a channel's
+  `authorize` sees it as `ctx.resubscribe`. A `useTableChanges` subscription swept meanwhile, or
+  whose socket reached another instance, is answered `resync` straight away instead of going
+  `stale` only after 10 seconds of silence.
+- **Realtime: a frame the Live hub had not sent when the connection dropped still arrives
+  (`@denext/backend`).** The frames handed to the hub in the second before a drop are sent again
+  on the return, ahead of `resumed`, numbered as before and marked `again: true`;
+  `useTableChanges` drops a copy of one it has. Before, a frame caught in the hub's coalescing
+  window was lost, and the gap made the hook `stale`. At most 16 are kept per subscription, and a quiet
+  subscription lets go of them after that second instead of holding them until its next frame. A
+  copy that no longer fits the channel's payload cap is replaced, with the copies behind it, by one
+  `resync`.
+- **Desktop: a sidecar's `spawnSelf` child under `deno run` gets `desktop.denoFlags`.** Under
+  `deno run desktop.ts`, a module sidecar's children are started with the `desktop.denoFlags` that
+  `deno run` takes, after the run's own flags; on a Deno that leaves `process.execArgv` empty they
+  also get the unstable features the app runs with (`--unstable-kv`, `-cron`, `-net`,
+  `-broadcast-channel`, `-webgpu`).
+- **Desktop: the export folder follows the `outDir` passed to `runDesktop`, and nothing else.**
+  `denext desktop run` / `build` / `package` and `denext doctor` read the desktop entry's syntax
+  tree, so an `outDir` in a comment, a string or another object no longer decides where the UI is
+  exported; the options may also be a top-level `const`. Migration: only an `outDir` written in the
+  `runDesktop(…)` call's own object literal (or that top-level `const`'s) is read now. One that
+  reaches `runDesktop` through a spread (`runDesktop({ ...options })`) or through a helper in the
+  entry that calls `runDesktop` with its own argument is no longer seen, so `run` / `build` export to `out/`
+  while the app serves its own folder (a blank window), and `denext doctor` no longer flags it for
+  packaging. Write `outDir` in the call itself, or drop it and serve `out/`.
+- **Markdown: a link or image URL keeps its balanced parentheses.** `[x](https://e.com/a_(b))`
+  linked to `https://e.com/a_(b` with a stray `)` after it; `denext/markdown` and content
+  collections now nest parentheses in a destination as CommonMark does (`\(` / `\)` escape one).
+- **An install log explains `Requires ffi access`.** A dependency's lifecycle script stopped by the
+  jail while loading a native addon (typically an install check that loads the package's own
+  prebuilt addon) now reports it and says to leave the package unapproved (out of
+  `allowScripts`), since no jail exception grants it: before runtime 3.0.0-denext.1, or where the
+  OS can't confine the script, a jailed script can't load it.
+- **React Native mode: `LayoutAnimation` animates frames, not scale.** A view the commit resized
+  plays its width and height from the old size to the new one, so its content lays out at each
+  size instead of being drawn stretched (a page container's background or border no longer
+  stretches), and a moved view is translated from its old place to where that first frame lays it
+  out, as React Native animates a view's frame.
+
+### Documentation
+
+- **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
+  and the known limitations say that packaging embeds the file a `../` path names.
+
 ## [4.16.0] - 2026-11-11
 
 ### Added
@@ -22,9 +256,10 @@ and this project adheres to
   runtime only while the main window is open.
 - **Desktop: a hook for the app's second launch.** With `desktop.app.singleInstance`,
   `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })`, an extension's
-  `host.onSecondInstance(fn)` and a capability's static `onSecondInstance` hook hear every later
-  launch; without a handler, one with no window showing reopens as a Dock click does. Deep links
-  and opened files keep their routing.
+  `host.onSecondInstance(fn)`, a capability's static `onSecondInstance` hook, and
+  `onSecondInstance(fn)` on `runDesktop()`'s result hear every later launch; without a handler,
+  one with no window showing reopens as a Dock click does. Deep links and opened files keep their
+  routing.
 - **Desktop: a quit guard can wait for the user.** While a `host.confirm` box opened by an
   `onBeforeQuit` guard is on screen, the guards' 5-second deadline stops counting, and it goes on
   when the box closes. A session end (a logout, a shutdown) keeps its bound: its deadline never
@@ -21789,7 +22024,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.17.0...development
+[4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0

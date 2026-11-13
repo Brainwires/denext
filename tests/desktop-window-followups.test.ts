@@ -605,6 +605,13 @@ Deno.test("titles: a page's document.title and setTitle name its window in the m
   const router = s.registry!.router;
   await router.methods.pageTitle.handler({ title: "Report.txt" }, ctx(w.id));
   assert(windowSubmenu(main).map(brief).includes(`denext:window:focus:${w.id}:Report.txt`));
+  // The windows capability's list (getWindows) reports the label too.
+  const windowsCap = s.capabilities.find((c) => c.name === "windows")!;
+  const listed = await windowsCap.methods.list.handler({}, ctx("main")) as {
+    id: string;
+    title?: string;
+  }[];
+  assertEquals(listed.find((x) => x.id === w.id)?.title, "Report.txt");
   await router.methods.setTitle.handler({ title: "Renamed" }, ctx(w.id));
   assert(windowSubmenu(main).map(brief).includes(`denext:window:focus:${w.id}:Renamed`));
   assertEquals(s.registry!.get(w.id)?.title, "Renamed");

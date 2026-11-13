@@ -20,6 +20,7 @@ import {
   startNativeSession,
   verifyNativeAccessToken,
 } from "../src/server/auth/native.ts";
+import { issueNativeMfaToken, newNativeMfaPending } from "../src/server/auth/native-mfa.ts";
 import type { AuthAdapter } from "../src/server/auth/adapter.ts";
 import type { AuthConfig, AuthPasskeyConfig } from "../src/server/auth/types.ts";
 import { decodeBase32 } from "@std/encoding/base32";
@@ -476,4 +477,146 @@ Deno.test("native passkeys: a vanished owner and a refusing signIn callback are 
   } finally {
     a.adapter.getUser = getUser;
   }
+});
+
+// ---- the step-up of a pending native sign-in, and the list / delete rows --------------------
+
+/** A native request with any method: no cookie, no Origin unless given. */
+async function send(
+  a: App,
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const request = new Request(`${ORIGIN}/auth${path}`, { method, headers });
+  const res = await runWithContext(
+    createRequestContext(request),
+    () => handleAuthRequest(request, a.config),
+  );
+  assert(res, `${method} ${path} was claimed`);
+  return res;
+}
+
+/** A pending id_token sign-in of the user (what `/native/google` answers a user owing a factor). */
+async function pendingToken(a: App, amr?: string[], enroll = false): Promise<string> {
+  return await issueNativeMfaToken(
+    resolveNative(a.config)!,
+    newNativeMfaPending({ id: a.userId, email: EMAIL }, "google", false, enroll, amr),
+  );
+}
+
+Deno.test("native passkeys: a passkey finishes a pending native sign-in (step-up)", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  assertEquals((await registerNative(a, auth)).status, 200);
+  const token = await pendingToken(a);
+  const optionsRes = await post(a, "/native/passkey/authenticate/options", { mfa_token: token });
+  assertEquals(optionsRes.status, 200, await optionsRes.clone().text());
+  const options = await optionsRes.json();
+  assertEquals(options.allowCredentials.length, 1, "the pending user's passkey is offered");
+  assert(options.mfa_token.startsWith("nmf_") && options.mfa_token !== token, "a fresh token");
+  // The presented token is spent.
+  const spent = await post(a, "/native/passkey/authenticate/options", { mfa_token: token });
+  assertEquals(spent.status, 400);
+  const res = await post(a, "/native/passkey/authenticate", {
+    credential: await auth.assert(options, { origin: APP_ORIGIN }),
+    ceremonyId: options.ceremonyId,
+    mfa_token: options.mfa_token,
+  });
+  assertEquals(res.status, 200, await res.clone().text());
+  const tokens = await res.json();
+  const session = await verifyNativeAccessToken(a.config, tokens.access_token);
+  assertEquals(session?.user.id, a.userId);
+  assertEquals(session?.amr, ["ext", "hwk", "mfa"]);
+});
+
+Deno.test("native passkeys: a step-up takes only the pending user's passkey", async () => {
+  const a = await app();
+  const mine = await Authenticator.create();
+  assertEquals((await registerNative(a, mine)).status, 200);
+  // Another user's registered passkey.
+  const eve = await a.adapter.createUser({
+    email: "eve@example.com",
+    emailVerified: Math.floor(Date.now() / 1000),
+  });
+  const theirs = await Authenticator.create();
+  const eveHeaders = await bearer(a, 0, eve.id);
+  const regOptions = await (await post(a, "/native/passkey/register/options", {}, eveHeaders))
+    .json();
+  assertEquals(
+    (await post(a, "/native/passkey/register", {
+      credential: await theirs.register(regOptions, { origin: APP_ORIGIN }),
+      ceremonyId: regOptions.ceremonyId,
+    }, eveHeaders)).status,
+    200,
+  );
+  const options = await (await post(a, "/native/passkey/authenticate/options", {
+    mfa_token: await pendingToken(a),
+  })).json();
+  const refused = await post(a, "/native/passkey/authenticate", {
+    credential: await theirs.assert(options, { origin: APP_ORIGIN }),
+    ceremonyId: options.ceremonyId,
+    mfa_token: options.mfa_token,
+  });
+  assertEquals(refused.status, 401);
+  const body = await refused.json();
+  assertEquals(body.error, "invalid passkey");
+  assertEquals(body.attempts_left, 4);
+  assert(body.mfa_token.startsWith("nmf_"), "the sign-in goes on with a fresh token");
+  // A usernameless ceremony can't finish a step-up either.
+  const signin = await (await post(a, "/native/passkey/authenticate/options", {})).json();
+  const swapped = await post(a, "/native/passkey/authenticate", {
+    credential: await mine.assert(signin, { origin: APP_ORIGIN }),
+    ceremonyId: signin.ceremonyId,
+    mfa_token: body.mfa_token,
+  });
+  assertEquals(swapped.status, 401);
+  assertEquals((await swapped.json()).attempts_left, 3);
+});
+
+Deno.test("native passkeys: a passkey-first or enrolling sign-in needs a code", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  assertEquals((await registerNative(a, auth)).status, 200);
+  for (const token of [await pendingToken(a, ["hwk"]), await pendingToken(a, undefined, true)]) {
+    const res = await post(a, "/native/passkey/authenticate/options", { mfa_token: token });
+    assertEquals(res.status, 403);
+    const body = await res.json();
+    assertEquals(body.error, "code_required");
+    assert(body.mfa_token.startsWith("nmf_"), "a fresh token for /native/mfa");
+  }
+  assertEquals(
+    (await post(a, "/native/passkey/authenticate/options", { mfa_token: "nmf_forged" })).status,
+    400,
+  );
+});
+
+Deno.test("native passkeys: list and delete the bearer's passkeys", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  assertEquals((await registerNative(a, auth)).status, 200);
+  assertEquals((await send(a, "GET", "/native/passkeys")).status, 401);
+  const listed = await send(a, "GET", "/native/passkeys", await bearer(a, 3600));
+  assertEquals(listed.status, 200, "listing needs no recent sign-in");
+  const { passkeys } = await listed.json();
+  assertEquals(passkeys.length, 1);
+  assertEquals(passkeys[0].name, "Pixel");
+  assertEquals(passkeys[0].publicKey, undefined, "no key material");
+  const id = encodeURIComponent(passkeys[0].id);
+  // Deleting needs a recent sign-in, and only the owner's id is found.
+  const stale = await send(a, "DELETE", `/native/passkeys/${id}`, await bearer(a, 3600));
+  assertEquals(stale.status, 403);
+  assertEquals(await stale.json(), { error: "reauth_required" });
+  const eve = await a.adapter.createUser({ email: "eve@example.com" });
+  const foreign = await send(a, "DELETE", `/native/passkeys/${id}`, await bearer(a, 0, eve.id));
+  assertEquals(foreign.status, 404);
+  const deleted = await send(a, "DELETE", `/native/passkeys/${id}`, await bearer(a));
+  assertEquals(deleted.status, 200);
+  assertEquals(await a.adapter.listPasskeys!(a.userId), []);
+  // A foreign origin is refused here as on every native row.
+  const evil = await send(a, "GET", "/native/passkeys", {
+    ...await bearer(a),
+    origin: "https://evil.test",
+  });
+  assertEquals(evil.status, 403);
 });

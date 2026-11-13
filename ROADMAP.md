@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.16.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.17.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -72,23 +72,9 @@ KNOWN-LIMITATIONS entry)
 
 Not blocking 5.0; each item says why.
 
-## Supply chain (lifecycle-script jail)
-
-- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
-  `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
-  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
-  _Why 5.x: Low, and only legacy package versions hit it (`bcrypt` 5 already has advice)._
-- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
-  (and where the OS can't confine) a jailed install check can't load the package's own native
-  addon; say to leave the package unapproved. _Why 5.x: diagnostics only, and narrower once 5.0
-  drops runtimes older than denext.1._
-
 ## Deno Desktop
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
-    parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
-    command line. _Why 5.x: Low, the CLI-dev path only._
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path. _Why 5.x: needs a runtime launch-time path grant._
@@ -97,10 +83,6 @@ Not blocking 5.0; each item says why.
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
   plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
 - **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
-- **Native passkey rows:** a step-up of a pending native sign-in, and list / delete. _Why 5.x: a
-  fixable gap on a new surface._
-- **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
-  `NEEDED` check). _Why 5.x: coverage work, no known failure._
 - **The AppImage non-exchange swap fallback window** (a documented risk). _Why 5.x: Low._
 - **WKWebView passkey refusal latency** (laufey). _Why 5.x: slow, not wrong._
 
@@ -115,25 +97,16 @@ Not blocking 5.0; each item says why.
 
 ## Backend (`@denext/backend`)
 
-Low findings of the 4.8 backend audit (realtime and storage):
-
-- **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
-  detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
-  so the server answers one that recreated the subscription with an explicit `resync`.
-  _Why 5.x: Low, latency only._
 - **`@prisma/adapter-mssql` against a live SQL Server** (or a CI service container). _Why 5.x: a
   test gap on an adapter that is wired and unit-tested._
 
 ## Framework compatibility surfaces
 
-- **`@denext/graphql` reloads only a schema it can trace.** _Why 5.x: dev-server restart works._
-- **Fresh partial navigation:** `f-view-transition`, region history replay and the rest listed in
-  KNOWN-LIMITATIONS. _Why 5.x: fixable gaps, none blocking._
-- **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,
-  `unmountComponentAtNode`, callbacks, the precompile JSX helpers and render-to-string streaming
-  (the parity gate lists them). _Why 5.x: small, independent gaps._
-- **One-bundle (iso) routes keep the page on an action signal.** _Why 5.x: documented in
-  KNOWN-LIMITATIONS._
+- **Fresh partial navigation:** the gaps left in KNOWN-LIMITATIONS (merging an answer's
+  `<script>` / `<style>` into the head, history across reloads). _Why 5.x: fixable gaps, none
+  blocking._
+- **Preact compat:** render-to-string streaming (the parity gate lists it). _Why 5.x: a small,
+  independent gap._
 
 ## Build toolchain: waiting on `deno bundle`
 
@@ -157,9 +130,6 @@ seeded fallback. No Deno has the hook below yet.
 
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
   11-24); 5.0 only if it ships after that._
-- **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by
-  design or document it. _Why 5.x: no user impact._
-- **spa-dev-self-write's 700 ms settles** (a test). _Why 5.x: test flake._
 - **expo-app's zod / decode-uri-component highs** (example only; fixed by Expo SDK 58). _Why 5.x:
   upstream._
 

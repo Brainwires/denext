@@ -46,9 +46,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   renders the page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, which
   the server renders for the current URL. Next picks the file nearest the calling component
   (for a client component in a layout, the parent segment's). On a route that renders as one
-  client bundle (a page or layout that calls a hook itself, the compatibility path) the bundle
-  re-renders the page, so the page stays as it was; an async `startTransition` callback that
-  rejects with one leaves it unhandled, as any rejection.
+  client bundle (a page or layout that calls a hook itself, the compatibility path) the file
+  renders as server markup under the layouts, without the route's bundle, so the layouts' client
+  state starts over and their client parts are inert until the next navigation. An async
+  `startTransition` callback that rejects with one leaves it unhandled, as any rejection.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 
@@ -176,9 +177,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **`@denext/openapi` describes only what a validator can export** (else `{}` / `unknown`); a
   custom middleware's responses appear only as `default` until it is tagged with
   `documentsErrors`.
-- **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
-  `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
-  dev-server restart after an edit (a module-path `schema` always reloads). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 
 ### Gleam and Lustre (`denext/gleam`)
 
@@ -225,9 +223,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
-  pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
-  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server). Planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
@@ -399,11 +394,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** partial navigation swaps the `<Partial>` regions without Fresh's View Transitions
-  wrapper (`f-view-transition`) and takes only the answer's `<title>` from its head; browser
-  back / forward re-renders the whole page (a region's `append` / `prepend` history is not
-  replayed). `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not
-  run; `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** partial navigation merges only the `<title>`, `<meta>` and stylesheet `<link>`
+  elements of an answer's head (no `<script>` or `<style>`, and nothing the page has is
+  removed). Browser back / forward to an entry partial navigation made before a reload fetches
+  it and replaces its regions, and back past a whole-page navigation re-renders that page, so an
+  `append` / `prepend` history is replayed only between entries of the same page load and page.
+  `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not run;
+  `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
@@ -413,13 +410,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
-  its `signal` / `computed` / `effect` (and hook forms) take no options argument.
-  `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
-  `unmountComponentAtNode`, and its `render` / `hydrate` / `flushSync` take no callback;
-  `denext/preact/jsx-runtime` lacks Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`,
-  `jsxEscape`), so `"jsx": "precompile"` needs `react-jsx`. (The parity gate lists each in
-  `tests/fixtures/react-parity-known-gaps.json`.) Of Preact's `options` hooks denext calls
-  `vnode`, `event` and `useDebugValue` (for elements the Preact entry points create); `diffed`,
+  its `signal` / `computed` / `effect` (and hook forms) take no options argument (the parity
+  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
+  `attr` (for elements the Preact entry points create); `diffed`,
   `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
   so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
   a server render, and a production build compiles its boundary support in only when the app's
@@ -574,9 +567,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
-- **`LayoutAnimation` resizes by scaling** (FLIP: a resized view's content is drawn stretched
-  while the animation plays, where React Native lays it out at each size), takes the next DOM
-  change as the commit, and skips pages over 3,000 elements. Snap props are CSS scroll snap.
+- **`LayoutAnimation`** takes the next DOM change as the commit, skips pages over 3,000 elements,
+  and moves a view by a transform from its old place to where the first frame lays it out (a view
+  whose place depends on a resizing ancestor can differ slightly mid-way from React Native's
+  straight-line frame). Snap props are CSS scroll snap.
 - **`adjustsFontSizeToFit` needs a box to overflow** (`numberOfLines` or a fixed size).
   `ellipsizeMode="head"` / `"middle"` work on one plain-text line only, and `onTextLayout`'s font
   metrics are estimated from the font size. An `Image` with `crossOrigin` / `referrerPolicy` is
@@ -629,8 +623,29 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 Under denext's pinned runtime; what the stock runtime lacks is in
 [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime).
 
+- **Packaging embeds what a path names, even outside the project.** A sidecar's `run.exec` or
+  `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
+  embedded like one inside it. The config that names it is code the build already runs, so it is
+  not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **A bridge handler's `ctx.caller.frame` is verified only on CEF and WKWebView.** A runtime that
+  marks frames (`Deno.desktop.marksFrames`) does so only where the engine says which frame made
+  the request: CEF, and macOS's WKWebView where WebKit reports the frame. WebView2 (Windows) and
+  WebKitGTK (Linux) don't, so there, and everywhere on a runtime without `marksFrames`,
+  `verified` is `false` and `kind` is the page's own report. A check that requires `verified`
+  refuses every call on those engines; fall back to the page's report there, or build with
+  `desktop.backend: "cef"` ([details](https://denext.dev/docs/desktop#desktop-extension-caller)).
+- **`onWillNavigate` needs a runtime that reports navigation events, and engines deliver it
+  differently.** On a runtime without `Deno.desktop.navigationEvents` (`runtimeHasNavigationEvents()`
+  is `false`) it is never called. Where it runs it does not see back / forward, reloads,
+  sub-frames, popups, `about:blank` / `about:srcdoc` or the runtime's own navigation. CEF and
+  WebView2 can't hold a navigation, so while a hook is subscribed each one is cancelled and started
+  again as a new history entry once decided: WebView2 restarts it as a GET (a form POST loses its
+  body); CEF keeps a same-origin POST's method and body and loads a cross-origin one by URL.
+  WKWebView holds the navigation. WebKitGTK (2.40 and later) decides at the response, after the
+  request was sent, reports every `kind` as `"other"` with no `initiator`, and reports back /
+  forward and reloads too.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app
@@ -654,9 +669,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
-- **Terminals (`pty`) need runtime 3.0.0-denext.12 or later** (`Deno.openPty`); under an older runtime
-  every call rejects `unsupported`. The pinned runtime (3.0.0-denext.17) has no terminals on Windows
-  yet: its `Deno.openPty` throws `NotSupported` there. On Windows the terminal is a ConPTY, whose output carries its
+- **Terminals (`pty`) need a runtime with `Deno.openPty`**; under one without it every call rejects
+  `unsupported`, as it does on Windows under a runtime whose `Deno.openPty` throws `NotSupported`
+  there (`error.data.reason` says why). On Windows (10 1809 and later) the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
   with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
   folder on Linux only.
@@ -728,8 +743,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.17). Chrome's
-  fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
+- **The pinned runtime's CEF backend is on Chromium 156.0.8078.88** (CEF 156.0.28), which does not
+  yet carry the fix for the exploited CVE-2026-125350. Chrome's fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
@@ -791,8 +806,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own code cannot. An unscoped write grant could change a binary that is not signed, and with
   unscoped read and write the app could symlink a folder above the program's before the runtime
   first writes it and race a spawn the same way. Under
-  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
-  the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
+  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets the
+  permissions the app holds unscoped, `desktop.denoFlags` and the unstable features with an API of
+  their own (`kv`, `cron`, `net`, `broadcast-channel`, `webgpu`), but no scoped grants, `--config`
+  or other `--unstable-*` flags given on the command line.
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
   writes through `/usr/bin/security`, which any program of the same user can read back) an app
   without a provisioning profile that grants a keychain access group keeps its items in the login

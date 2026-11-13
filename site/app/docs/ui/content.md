@@ -1041,6 +1041,31 @@ the page reads and clears it by running `denext job --history --json` and
 states. A store set in code is not offered as the on/off toggle, because the page never rewrites a
 call expression in your config.
 
+### OS scheduler
+
+A schedule fires only while a denext server runs. The **OS scheduler** section shows which scheduled
+jobs [`denext job install`](/docs/jobs#os-scheduler) has handed to the operating system's scheduler
+for the logged-in user (launchd, a systemd timer, the crontab, or Task Scheduler): each job is
+**installed**, **not installed**, or, for an entry whose job is no longer scheduled, **stale** (the
+next install removes it). It is read by `denext job install --status --json`, run in the project
+like every other child here, since listing the entries imports the project's jobs and runs the
+scheduler's programs.
+
+Install and Uninstall take two steps. The first press runs the command with `--dry-run` and shows
+what it would do: one line per entry installed or removed, every file it would write, in full, and
+every scheduler command it would run. Nothing changes until you press the confirm button on that
+review, which runs the command for real. A schedule the scheduler can't express stops it with
+nothing changed, and the page shows the command's own reasons. When the entries would run the
+current Deno on denext's CLI module (no `denext` binary in `~/.denext/bin`), the review says so.
+Both buttons are refused under `--read-only`. Under `--offline` the section is not read at all,
+because reaching the scheduler means starting programs, which `--offline` keeps its children from
+doing. The `--system` scope (which needs root or an administrator) stays on the command line.
+
+The `/api/config/cron` twin carries the status as `osScheduler`, and takes the same two steps as a
+POST with `intent: "os-install"` or `"os-uninstall"`: without `confirm` it answers
+`{ ok, applied: false, … }` with the dry run's report and `steps`, and with `confirm: true` it
+applies and answers `{ ok, applied: true, … }` with the command's report.
+
 ## Project commands
 
 `/commands` lists every verb available in this project — built-ins, verbs a plugin
@@ -1219,21 +1244,21 @@ the browser and a machine client exercise identical code:
 Every answer carries `ok`. Beyond that the payload is the panel's own — a JSON twin
 describes what its panel does, it does not flatten every panel into one shape:
 
-| Twin                   | A read answers                                                                        | A mutation answers                                                                               |
-| ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                    |
-| `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                    |
-| `/api/config/cron`     | `{ ok, jobs, schedules, configScheduled, denoCron }`                                  | `{ ok, applied, diff, scheduledJobs }` — the diff-then-confirm envelope                          |
-| `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                            |
-| `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                  |
-| `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |
-| `/api/docker`          | `{ ok, mode, files, model, base }`                                                    | `{ ok, mode, files, written, refused }`; a compose edit `{ ok, applied, model, warnings, diff }` |
-| `/api/commands`        | `{ ok, timedOut, error?, commands }`                                                  | `{ ok, verb, code, output }`                                                                     |
-| `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                     |
-| `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                               |
-| `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                  |
-| `/api/services`        | `{ ok, dir, files, snapshot }` — the last status snapshot, or `null`                  | — (read-only)                                                                                    |
-| `/api/database/…`      | the child's reply: `{ ok, tables }`, `{ ok, rows, next?, statement }`, …              | `{ ok, statement, applied, affected? }` — `applied: false` for the preview                       |
+| Twin                   | A read answers                                                                        | A mutation answers                                                                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/config`          | `{ ok, file, form, keys, schema? }`                                                   | `{ ok, applied, diff }` (a write adds `file`)                                                                                                                                               |
+| `/api/config/next`     | `{ ok, … }` the read next.config view                                                 | — (read-only)                                                                                                                                                                               |
+| `/api/config/cron`     | `{ ok, jobs, schedules, configScheduled, denoCron, history, osScheduler }`            | `{ ok, applied, diff, scheduledJobs }` — the diff-then-confirm envelope; `intent: "os-install"` / `"os-uninstall"` answers `{ ok, applied, backend, installed, removed, warnings, steps? }` |
+| `/api/plugins`         | `{ ok, installed, catalog, config, jsr }`                                             | `{ ok, applied, diff, name, op, command, bailed, … }`                                                                                                                                       |
+| `/api/plugins/options` | `{ ok, name, callee, values, codeKeys, schema }` (`{ ok, plugins }` with no `?name=`) | `{ ok, applied, diff, values }`                                                                                                                                                             |
+| `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                                                                                                                        |
+| `/api/docker`          | `{ ok, mode, files, model, base }`                                                    | `{ ok, mode, files, written, refused }`; a compose edit `{ ok, applied, model, warnings, diff }`                                                                                            |
+| `/api/commands`        | `{ ok, timedOut, error?, commands }`                                                  | `{ ok, verb, code, output }`                                                                                                                                                                |
+| `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                                                                                                                |
+| `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                                                                                                                          |
+| `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                                                                                                             |
+| `/api/services`        | `{ ok, dir, files, snapshot }` — the last status snapshot, or `null`                  | — (read-only)                                                                                                                                                                               |
+| `/api/database/…`      | the child's reply: `{ ok, tables }`, `{ ok, rows, next?, statement }`, …              | `{ ok, statement, applied, affected? }` — `applied: false` for the preview                                                                                                                  |
 
 So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that
 splice a file answer: `/api/config`, `/api/plugins`, `/api/plugins/options`, and a compose

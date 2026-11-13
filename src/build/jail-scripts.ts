@@ -38,6 +38,7 @@ import { stripAnsi } from "./explain/parse.ts";
 import { npmWorkspaceOf, workspaceOf } from "./workspace-imports.ts";
 import { npmrcValue } from "./npmrc-supply-chain.ts";
 import {
+  declaredHostRedirects,
   JAIL_SCRIPT_EXCEPTIONS,
   type JailExceptionEntry,
   type JailPackageException,
@@ -77,6 +78,13 @@ export function jailHostListsSupported(
  */
 export const JAIL_HARDENED_RELEASE = "3.0.0-denext.1";
 
+/**
+ * The first release of denext's Deno that allows a declared download host's redirect targets with
+ * it (a declared `github.com` reaches the hosts GitHub hands a release download to; the
+ * runtime's `DECLARED_HOST_REDIRECTS`). Before it denext lists those hosts under the entry's `net`.
+ */
+export const JAIL_DECLARED_REDIRECTS_RELEASE = "3.0.0-denext.19";
+
 /** What a release of denext's Deno takes and reports for the lifecycle-script jail. */
 export interface JailRuntime {
   /** The jail is on unless the project opts out ({@linkcode JAIL_DEFAULT_RELEASE}). */
@@ -90,6 +98,8 @@ export interface JailRuntime {
   readonly writeRoots: boolean;
   /** A declared download host needs `jailScripts.knownPackages` (denext.1, item 124). */
   readonly knownPackages: boolean;
+  /** A declared host's redirect targets come with it. */
+  readonly declaredRedirects: boolean;
   /** `deno info --json` carries `lifecycleJail` (denext.1, item 124). */
   readonly confinementInfo: boolean;
   /** package.json's `"deno"` object holds the settings when there is no deno.json (denext.1, item 125). */
@@ -119,6 +129,7 @@ export function jailRuntime(
     hostLists: rc6,
     writeRoots: rc6,
     knownPackages: hardened,
+    declaredRedirects: atLeast(version, JAIL_DECLARED_REDIRECTS_RELEASE),
     confinementInfo: hardened,
     packageJsonHome: hardened,
   };
@@ -792,10 +803,11 @@ export function entryException(
   const cache = runtime.hostLists ? entry.cache : undefined;
   const write = [...new Set([...entry.exception.write ?? [], ...rootWrites(entry, version)])];
   const env = [...new Set([...entry.exception.env ?? [], ...cache ? [cache.env] : []])].sort();
+  const redirects = redirectHosts(entry, runtime);
   const net = !entry.exception.net
-    ? undefined
+    ? (redirects.length ? redirects : undefined)
     : runtime.hostLists && entry.hosts?.length
-    ? [...new Set(entry.hosts)].sort()
+    ? [...new Set([...entry.hosts, ...redirects])].sort()
     : true;
   return {
     ...(env.length ? { env } : {}),
@@ -803,6 +815,16 @@ export function entryException(
     ...(net !== undefined ? { net } : {}),
     ...(runtime.writeRoots && entry.cache ? { executables: true } : {}),
   };
+}
+
+/**
+ * The hosts the entry's declared download hosts redirect to, as a `net` list on a runtime that
+ * needs `knownPackages` for a declared host but doesn't allow its redirect targets with it
+ * (3.0.0-denext.1 up to {@linkcode JAIL_DECLARED_REDIRECTS_RELEASE}); empty elsewhere.
+ */
+function redirectHosts(entry: JailExceptionEntry, runtime: JailRuntime): string[] {
+  if (!runtime.knownPackages || runtime.declaredRedirects) return [];
+  return [...new Set((entry.declaredHosts ?? []).flatMap(declaredHostRedirects))].sort();
 }
 
 /**
@@ -1275,7 +1297,7 @@ export async function applyJailExceptions(
 }
 
 /** What a jail stopped, read from the failure's output. */
-export type JailSign = "net" | "write" | "npm" | "deno";
+export type JailSign = "net" | "write" | "ffi" | "npm" | "deno";
 
 /** One dependency's lifecycle script that failed in an install log. */
 export interface JailFailure {
@@ -1311,6 +1333,7 @@ const CLAMP_SIGNS: readonly [JailSign, RegExp][] = [
   ["deno", /deno subcommand is not allowed in a jailed npm lifecycle script/],
   ["net", /Requires (?:net|import) access|NotCapable[^\n]*\bnet\b/],
   ["write", /Requires write access|NotCapable[^\n]*\bwrite\b/],
+  ["ffi", /Requires ffi access|NotCapable[^\n]*\bffi\b/],
 ];
 
 /**
@@ -1359,7 +1382,7 @@ function hostsIn(block: string, os: typeof Deno.build.os): string[] {
 function signsIn(block: string, os: typeof Deno.build.os): JailSign[] {
   const table = os === "windows" ? CLAMP_SIGNS : [...CLAMP_SIGNS, ...OS_SIGNS];
   const found = new Set(table.filter(([, re]) => re.test(block)).map(([sign]) => sign));
-  return (["npm", "deno", "net", "write"] as const).filter((sign) => found.has(sign));
+  return (["npm", "deno", "net", "write", "ffi"] as const).filter((sign) => found.has(sign));
 }
 
 /**
@@ -1417,9 +1440,29 @@ function stoppedText(sign: JailSign): string {
     ? "the network"
     : sign === "write"
     ? "a write outside node_modules"
+    : sign === "ffi"
+    ? "loading a native addon"
     : sign === "npm"
     ? "a real npm / npx"
     : "an installing deno subcommand";
+}
+
+/**
+ * The advice for a script stopped loading a native addon (`Requires ffi access`): typically an
+ * install check that loads the package's own prebuilt addon. A jailed script can't, on a runtime
+ * before {@linkcode JAIL_HARDENED_RELEASE} or where the OS can't confine it, and no exception
+ * grants it: the fix is to leave the package's script unapproved.
+ */
+function ffiAdvice(name: string, version: string | null | undefined, home: JailHome): string {
+  const old = typeof version === "string" && isDenextReleaseVersion(version) &&
+    compareDenoVersions(version, JAIL_HARDENED_RELEASE) < 0;
+  const where = old
+    ? `on runtime ${version} (before ${JAIL_HARDENED_RELEASE})`
+    : "before runtime " + JAIL_HARDENED_RELEASE + ", or where the OS can't confine the script";
+  return `  the script loads ${name}'s own native addon, which a jailed script can't do ${where}, ` +
+    `and no exception grants it: leave ${name} unapproved (out of "allowScripts" in ` +
+    `${homeName(home)}) so the install skips the script; the addon itself still loads when ` +
+    "the app runs";
 }
 
 /** The advice for a package outside denext's reviewed list: no grant to paste. */
@@ -1459,6 +1502,31 @@ function unreviewedAdvice(
 }
 
 /**
+ * One failure's fix: the paste-ready exception for a reviewed package, the review advice for any
+ * other, and the addon advice when the jail stopped a native addon (which no exception fixes, so
+ * a failure stopped only there gets that advice alone).
+ */
+function fixLines(
+  f: JailFailure,
+  name: string,
+  version: string | null | undefined,
+  own: JailPackageException | undefined,
+  home: JailHome,
+): string[] {
+  const ffi = f.signs.includes("ffi") ? [ffiAdvice(name, version, home)] : [];
+  if (ffi.length > 0 && f.signs.length === 1) return ffi;
+  const exception = suggestedException(f, version, own);
+  if (!exception) return [...ffi, ...unreviewedAdvice(f, name, version, home)];
+  const grant = JSON.stringify(exception);
+  return [
+    ...ffi,
+    `  fix: ${
+      homeName(home)
+    } "supplyChain": { "jailScripts": { "packages": { ${name}: ${grant} } } }`,
+  ];
+}
+
+/**
  * Explain an install log's failed lifecycle scripts as jail failures: which package, what the
  * jail stopped, and the exception to add (or why none helps). A paste-ready exception is given
  * only for a package in denext's reviewed list ({@linkcode JAIL_SCRIPT_EXCEPTIONS}) and never
@@ -1491,16 +1559,7 @@ export function explainJailFailures(
     );
     if (f.entry) out.push(`  ${f.entry.reason}`);
     const own = Object.hasOwn(existing, f.name) ? existing[f.name] : undefined;
-    const exception = suggestedException(f, version, own);
-    if (exception) {
-      out.push(
-        `  fix: ${homeName(home)} "supplyChain": { "jailScripts": { "packages": { ${name}: ${
-          JSON.stringify(exception)
-        } } } }`,
-      );
-    } else {
-      out.push(...unreviewedAdvice(f, name, version, home));
-    }
+    out.push(...fixLines(f, name, version, own, home));
     if (f.entry?.caveat) out.push(`  ${f.entry.caveat}`);
   }
   return out;

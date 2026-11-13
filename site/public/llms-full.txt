@@ -399,7 +399,8 @@ emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, fro
 default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
 `passkeysSupported()`) sign in usernameless or complete a pending second factor; a native app
-(with `native`) uses `/auth/native/passkey/*`, and `passkeys.androidApps: [{ packageName,
+(with `native`) uses `/auth/native/passkey/*` (`{ mfa_token }` there finishes a pending native sign-in;
+`GET` / `DELETE /auth/native/passkeys[/:id]` list and remove the bearer's), and `passkeys.androidApps: [{ packageName,
 sha256CertFingerprints }]` accepts its `android:apk-key-hash:` origin (serve the same object as
 `appLinks.android` for the `get_login_creds` assetlinks statement). An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
@@ -432,6 +433,12 @@ back, never unlimited), believed only from a trusted proxy — a peer in `rateLi
 (CIDRs, e.g. Cloudflare's ranges), or with none listed a loopback/private peer under
 `trustForwardedHeaders` (any other peer is keyed as itself) — and `rateLimitLocalAddresses: true`
 counts such a peer as itself.
+
+Outbound calls: `safeFetch(url, { userAgent: "x/1" | false, cookieJar })` from `denext/server`
+(`User-Agent: denext` by default, a header in `headers` wins; `cookieJar` stores each hop's
+`Set-Cookie`); `runtimeCookieJar()` is the runtime's `Deno.CookieJar` (denext's Deno with
+`--unstable-cookies`, else `null`; `using jar = runtimeCookieJar()`), and in tests
+`createTestClient(handler, { cookieJar })` / `new CookieJar(store)` from `denext/testing`.
 
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
@@ -476,7 +483,8 @@ holder exits).
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
-next fires, an editor with a shape builder, and run history when `jobs.history` is on),
+next fires, an editor with a shape builder, run history when `jobs.history` is on, and the
+OS-scheduler entries of `denext job install` with a previewed Install / Uninstall),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files (with the self-hosted stack's toggles) plus in-place `docker-compose.yml`
 editing, a Desktop panel that composes the
@@ -678,14 +686,15 @@ icon from the first frame), `openWindow({ url, overlay, focusable: false, … })
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
 `setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
-windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
+windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
+`{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
 (`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
 decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
-`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
+`runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `app.onSecondInstance(fn)` on its result / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and
 `lastSession()`, `desktop.menu.window.reopenClosed: "list"` lists the closed windows by `document.title`,
 `windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
@@ -703,7 +712,13 @@ session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s res
 included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
 other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
 is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
-3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. With no tray host (stock GNOME)
+3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
+`ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
+subframe from a privileged method; `kind` is `verified` only where the runtime marks frames
+(`Deno.desktop.marksFrames`) and the engine says which frame called (CEF, macOS's WKWebView), else
+it is the page's own report (always on WebView2 and WebKitGTK, and on a runtime without
+`marksFrames`), so requiring `verified` refuses every call there: refuse a `verified` non-main frame or an unverified `"sub"`, or use
+`desktop.backend: "cef"` where it matters. With no tray host (stock GNOME)
 `createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
 reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` (`"basic"` — obfuscated,
 not OS-protected — for an ad-hoc signed macOS CEF build; a team-signed one keeps its key in its own
@@ -765,8 +780,17 @@ packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS
 origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origin: a top-level
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
-(exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.17 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+(exact origins, such as an identity provider that signs in inside the window). To decide in code,
+`runDesktop({ onWillNavigate: (e) => … })` (also `onWillNavigate(fn)` on its result and `host.onWillNavigate(fn)`)
+sees the top-level navigations a page starts first (`e.url`, `e.window`, `e.kind`, `e.initiator`; not
+back / forward, reloads, sub-frames, popups, `about:blank` or the runtime's own):
+`e.preventDefault()` refuses it, `e.allow()` loads it in place (a refusal wins; decide synchronously); it fires
+only on a runtime that reports navigation events (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`);
+on one that doesn't the hook is never called. While it is subscribed, CEF and WebView2 cancel each navigation and start it again
+as a new history entry (WebView2 as a GET, so a form POST loses its body; CEF keeps a same-origin POST);
+WebKitGTK decides at the response (the request already sent; `kind` `"other"`, no `initiator`, back /
+forward and reloads included). `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext toolchain status` names it) and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -894,7 +918,8 @@ Docs: https://denext.dev/docs/react-native
 
 **File storage (the `@denext/backend` plugin):** `plugins: [backend({ storage: { driver:
 s3({ region, bucket, endpoint? }) | fs({ dir }), buckets: { avatars: { public?, maxBytes?, mime?,
-authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm). Server:
+requireUploadSize?, authorize: ({ session, op, key }) => boolean } } } })]` (S3 / R2 / MinIO via SigV4, zero npm;
+`requireUploadSize: true` refuses a signed upload URL without `size`). Server:
 `storage.bucket(n).createSignedUploadUrl / createSignedUrl(key, { transform }) / upload(key, body,
 { upsert?, cacheControl?, metadata? }) / download / info / exists / copy / move / listFolder / list /
 remove` and `storage.createBucket / updateBucket / deleteBucket / emptyBucket` from
@@ -920,7 +945,9 @@ WebAuthn factors, passkeys, SAML SSO, the OAuth 2.1 server (`oauthServer`), admi
 Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` (a Supabase
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
-valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`.
+valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`;
+`functions: { memoryMb }` caps each worker's heap (runtime 3.0.0-rc.2+, `"unstable": ["worker-options"]`;
+over it: `546 WORKER_LIMIT`).
 With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
 server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
 inside `vault.withKey(fn)` and `denext db push`), `queues: {}` (pgmq's SQL API + `pgmq_public`, no extension; `queue(name).send/read`,
@@ -1048,7 +1075,8 @@ and a schedule never fires on startup nor overlaps a still-running instance of t
 14 days); the Cron page of `denext ui` shows it. `jobs: { history: { store } }` takes any
 `JobHistoryStore` — `postgresJobHistoryStore({ url })` shares one history across replicas.
 `defineJob({ retry: { attempts, backoff } })`
-re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`).
+re-runs a failed task (exponential from 1 s by default; the handler's context has `attempt`), and
+`timeoutMs` fails an attempt that runs longer (its `signal` aborts; synchronous work isn't preempted).
 
 ```ts
 // jobs/cleanup.ts
@@ -1077,7 +1105,8 @@ or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
 `start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
 (runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
 the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
-into a compiled binary, which takes no flag to change them: `./app` and `./app start` serve under
+into a compiled binary (`compile: { limits }` gives it its own, same shape; `compile: { limits: false }`
+bakes none), which takes no flag to change them: `./app` and `./app start` serve under
 them, and from denext's Deno 3.0.0-denext.8 its `job` / `db` lift them (the generated main module's
 `Deno.disarmResourceLimits(import.meta)`, which nothing else can call), while on an older runtime
 those verbs run under them and print a notice; never `dev` or tests; not applied on stock Deno, with
@@ -1309,7 +1338,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.17 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -1726,7 +1755,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.16.0"` — The denext framework version.
+- `VERSION: "4.17.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2017,6 +2046,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
 - `interface FcmConfig` — FCM HTTP v1 credentials.
 - `interface FcmServiceAccount` — The fields of a Firebase service-account JSON key that FCM needs.
+- `interface FetchCookieJar` — A cookie jar a fetch session stores responses' cookies in and reads requests' cookies from: the shape of the runtime's Deno.CookieJar (any object with these two methods works).
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
 - `interface FlightBigInt` — A serialized bigint (JSON has no integer type wide enough; the digits travel as text).
 - `interface FlightBoundary` — A client-side error boundary: a segment's error.tsx (a "use client" component) around its children, so a render throw AFTER hydration swaps in the fallback on the client the way Next does. Emitted only when the boundary's fallback is a client reference; a server-only fallback stays transparent (the boundary lives on the server alone).
@@ -2443,6 +2473,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RouteRegistry` — The manifest + loader a request can reflect over (see RequestContext.routes).
 - `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
 - `runJob(name: string, payload?: unknown, opts?: { trigger?: "schedule" | "manual"; signal?: AbortSignal }): Promise<unknown>` — Run a job by name and return its handler's result. Throws if no such job is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.
+- `runtimeCookieJar(): RuntimeCookieJar | null` — A new runtime cookie jar (Deno.CookieJar), or null where the process has none (stock Deno, or denext's Deno without --unstable-cookies). Dispose of it (using) when the session ends: it holds a runtime resource.
+- `interface RuntimeCookieJar extends FetchCookieJar, Disposable` — The runtime's jar, as runtimeCookieJar hands it out.
 - `safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<Response>` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
 - `class SafeFetchError extends Error` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
 - `type SafeFetchErrorCode = "unsupported-protocol" | "host-not-allowed" | "blocked-address" | "dns" | "network" | "bad-response" | "too-many-redirects"` — Error codes surfaced by safeFetch.
@@ -2887,7 +2919,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Component<P> = (props: P & { children?: VNodeChildren }) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `interface ConformanceReport` — The full report from probeApp.
 - `interface ContractContext` — Where the cases run: Deno.TestContext fits, or any { step } that runs a named case.
-- `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).
+- `class CookieJar` — A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires). By default it keys cookies by name alone; constructed over a TestCookieStore (new CookieJar(new Deno.CookieJar()), or createTestClient(handler, { cookieJar })) it applies the store's rules instead: host, Path, expiry, Secure and the cookie prefixes, as a browser does.
 - `createTestApp(projectDir: string, options?: TestAppOptions): Promise<TestApp>` — Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.
 - `createTestClient(handler: TestHandler, options?: TestClientOptions): TestClient` — Create a cookie-aware, no-JS test client over a request handler.
 - `fireEvent: FireEvent` — Dispatch DOM events at rendered elements (bubbling), each wrapped in act.
@@ -2914,6 +2946,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TestAppOptions` — What createTestApp starts beside the request handler. Every field defaults to true; pass false to leave that part out.
 - `interface TestClient` — A cookie-aware, no-JS test driver over a request handler.
 - `interface TestClientOptions` — Options for createTestClient.
+- `interface TestCookieStore extends FetchCookieJar` — A URL-aware cookie store a CookieJar can delegate to: the runtime's Deno.CookieJar (denext's Deno with --unstable-cookies; runtimeCookieJar() from denext/server), or any object with these methods.
 - `interface TestElement` — The read-only shape of a rendered element that query helpers return.
 - `interface TestForm` — A <form> parsed out of rendered HTML, ready to TestClient.submit.
 - `type TestHandler = (request: Request) => Response | Promise<Response>` — A handler under test: anything that maps a Request to a Response.
@@ -3008,6 +3041,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopBuildFlagOptions` — Options for desktopBuildFlags.
 - `desktopBuildFlags(config: unknown, os: DesktopOs, options?: DesktopBuildFlagOptions): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it) — or, on a runtime that expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (3.0.0-denext.8, dataScope) in an app with desktop.app.identifier, --allow-write scoped to those folders (and any absolute extraPermissions.write path) unless a write has no token (a picked path, $DOCUMENTS); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (the pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. - with desktop.permissions: "strict" on such a runtime (and desktop.app.identifier), --allow-read scoped to the app's folders and the declared reads, and --allow-env to DESKTOP_STRICT_RUNTIME_ENV and the declared variables. Strict mode never falls back to the unscoped grants: when it cannot be honoured (strictPermissionsProblem) this throws (unless options.strictFallback), and a read or variable entry it cannot scope always throws. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
 - `interface DesktopBundleOptions` — What buildDesktopBundle builds.
+- `interface DesktopCaller` — The sender of a bridge call (DesktopCapCtx.caller).
+- `interface DesktopCallerFrame` — The frame a bridge call came from (DesktopCaller.frame).
 - `interface DesktopCapability` — A desktop capability: a name (its address on the bridge — an extension's name is its cap name), a set of methods, and the event names it may DesktopCapCtx.emit. Built-ins live in ./caps; user extensions are authored with defineDesktopExtension.
 - `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
 - `interface DesktopCapCtx` — The context a capability handler runs with: a scoped DesktopCapCtx.emit for its declared events, the OS app-support directory (which survives relaunch, unlike browser storage — see the desktop storage note), the running OS, the app window (Deno's BrowserWindow when the runtime exposes it), and an AbortSignal that fires when the handler's timeout elapses.
@@ -3031,6 +3066,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DesktopInstallerFormat = (typeof DESKTOP_INSTALLER_FORMATS)[keyof typeof DESKTOP_INSTALLER_FORMATS][number]` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: readonly string[], add?: readonly string[]): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
+- `desktopMacosArtifact(path: string, kind: DesktopMacosArtifactKind, signature: DesktopMacosSignature): DesktopMacosArtifact` — A record for an artifact nothing has notarized yet.
+- `interface DesktopMacosArtifact` — A packaged artifact and what was done to it.
+- `type DesktopMacosArtifactKind = "app" | "dmg" | "pkg"` — What a packaged macOS artifact is.
+- `interface DesktopMacosDistributeDeps` — What the distribution steps run commands through (tests stub it).
+- `desktopMacosDistributionNote(artifacts: readonly DesktopMacosArtifact[]): string` — The closing line of scripts/package-macos.ts: what each kind of artifact is, then whether the set is ready to distribute.
+- `type DesktopMacosSignature = "developer-id" | "ad-hoc" | "unsigned"` — How an artifact is signed: a Developer ID identity, ad-hoc (an .app only), or not at all.
 - `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged. The device entitlements need a runtime that enforces the launch file's grant: with either capability on and any other runtime, packaging is refused here, before the build.
 - `interface DesktopMacosSigning` — What desktop.macos resolves to for one packaging run.
 - `interface DesktopMacosSigningOptions` — Options for desktopMacosSigning.
@@ -3038,8 +3079,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMenuSettings` — desktop.menu, resolved.
 - `interface DesktopMsiProbe` — Seams for desktopMsiProblem.
 - `desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>` — Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).
+- `type DesktopNavigationKind = "link" | "script" | "redirect" | "window-open" | "other"` — How a top-level navigation started. "window-open" is reserved: popups (window.open, target="_blank") keep their own rule and the runtime does not report them.
 - `interface DesktopNewWindowContext` — What runDesktop({ newWindow }) receives: the windows open now.
 - `type DesktopNewWindowHandler = (ctx: DesktopNewWindowContext) => DesktopOpenWindowOptions | undefined` — How desktop.ts supplies the window New Window opens (runDesktop({ newWindow })): the open options (url and key at least; a key already open is a validation error), or undefined to open nothing. Without it New Window opens desktop.menu.window.newWindow with the suggested key.
+- `desktopNotarizeMacos(artifacts: readonly DesktopMacosArtifact[], credentials: NotaryCredentials | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact[]>` — Notarize and staple each Developer-ID-signed artifact with credentials (a keychain profile or an App Store Connect API key), one submission per artifact, all submitted at once. Without credentials, or for an ad-hoc / unsigned artifact, the record comes back unchanged.
+- `desktopNotaryCredentials(): NotaryCredentials | undefined` — The notary credentials in the environment: DENEXT_NOTARY_PROFILE (a keychain profile), else an App Store Connect API key (DENEXT_NOTARY_KEY + DENEXT_NOTARY_KEY_ID, with DENEXT_NOTARY_ISSUER for a team key) — what denext build --compile --sign reads too.
 - `desktopNpmArgs(entryUrl: string): Promise<string[]>` — desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.
 - `interface DesktopOpenWindowOptions` — The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).
 - `desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>` — Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).
@@ -3068,6 +3112,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopSecureStore` — An extension's own secrets in the OS credential store: the store the pages reach as secureStore (the runtime's Keychain store on macOS, the Secret Service on Linux, the PasswordVault on Windows), under a namespace of the extension's own: <app identifier>/ext/<name>, <name> being the capability's name. A page can never read or write it, nor can another extension; the extension cannot reach the pages' items either. Keys and values are the page API's: a key must not start with - or hold a control character (a validation DesktopCapError), a value is any string.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
 - `interface DesktopSessionWindow` — A keyed window that was open at the last exit (WindowStore.lastSession).
+- `desktopSignMacosDmg(dmg: string, identity: string | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact>` — Code-sign a .dmg with the Developer ID identity the .app was signed with: a secure timestamp, no Hardened Runtime (that applies to executables), then a strict verify. Without an identity (or the ad-hoc one) the image stays unsigned: an ad-hoc signature on a disk image means nothing to Gatekeeper.
 - `desktopSignWindows(files: readonly string[], deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).
 - `interface DesktopSignWindowsDeps` — What desktopSignWindows runs commands and reads settings through (tests stub them).
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
@@ -3091,6 +3136,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: "msi" | "deb" | "rpm", version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
+- `interface DesktopWillNavigateEvent` — A top-level navigation about to happen (DesktopWillNavigateHandler).
+- `type DesktopWillNavigateHandler = (event: DesktopWillNavigateEvent) => void` — A will-navigate hook: decide synchronously (a returned promise is not waited for).
 - `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
 - `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
@@ -3143,6 +3190,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).
 - `interface RunDesktopOptions` — Options for runDesktop (and createDesktopHandler): where to serve the static export from, an optional loopback reverse proxy and request escape hatch, the signed self-updater, the enabled capability bridge, the app-support directory, and whether the loopback OAuth endpoint is enabled. The generated desktop.ts entry spreads resolveDesktopCapabilities into it.
 - `runDesktopPackageMain(main: () => Promise<void>): Promise<void>` — Run a package script's main, printing a desktop.permissions: "strict" refusal (DesktopStrictPermissionsError) as its one-line message and exiting 1. Any other error keeps its stack.
+- `runtimeHasNavigationEvents(desktop?: unknown): boolean` — Whether the running runtime dispatches "willnavigate" on its windows: Deno.desktop .navigationEvents === true. Feature-detected; the stock runtime, a denext runtime without the hook and the Deno CLI answer false.
 - `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
 - `interface SidecarDefinition` — One sidecar. Data-only fields can live in desktop.sidecars (denext.config.ts); probe, bootstrap and secrets as functions only in runDesktop({ sidecars }), which also overrides a config entry of the same name field by field.
 - `interface SidecarExit` — How one run of a sidecar ended.

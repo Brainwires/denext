@@ -22,7 +22,7 @@
 import { dirname, join, toFileUrl } from "@std/path";
 import { h } from "@denext/denext/jsx-runtime";
 import type { CollectionConfig, ContentConfig, StandardSchemaV1 } from "./config.ts";
-import { type MarkdownOptions, renderMarkdown } from "./markdown.ts";
+import { markdownElements, type MarkdownOptions, renderMarkdown } from "./markdown.ts";
 
 /**
  * Registration seam: the generated `.denext/content.ts` augments this with `config: typeof
@@ -178,8 +178,11 @@ export function clearContentCache(): void {
 /** What {@linkcode renderContent} / {@linkcode Content} accept beyond the entry. */
 export interface RenderContentOptions {
   /**
-   * MDX only: components made available to the document (`{ h1: MyHeading, Callout }`),
-   * as `MDXContent`'s `components` prop. Ignored for `.md`.
+   * Components for the document's elements (`{ h1: MyHeading, a: SiteLink }`). For `.mdx`, they
+   * are `MDXContent`'s `components` prop (custom names such as `Callout` too); for `.md`, they
+   * replace the elements they name as `denext/markdown`'s `<Markdown components>` does (a `code`
+   * override also gets `inline` and a fence's `lang`), and the body renders as elements instead of
+   * an HTML string.
    */
   readonly components?: Record<string, unknown>;
   /**
@@ -231,7 +234,7 @@ async function mdxComponent(
  * ```
  *
  * @param entry An entry from {@linkcode getCollection} / {@linkcode getEntry}.
- * @param options MDX `components`; the `.md` renderer's `markdown` options.
+ * @param options Element `components`; the `.md` renderer's `markdown` options.
  * @returns The rendered element (a `<div>` of HTML for `.md`; the MDX component for `.mdx`).
  * @throws When the entry has no Markdown body (a data collection) — render `data` yourself.
  */
@@ -244,7 +247,11 @@ export async function renderContent(
     return h(MDXContent as never, { components: options.components ?? {} });
   }
   if (entry.format === "md" && entry.body !== undefined) {
-    const html = renderMarkdown(entry.body, options.markdown ?? entry.markdown);
+    const md = options.markdown ?? entry.markdown;
+    if (options.components !== undefined && Object.keys(options.components).length > 0) {
+      return h("div", null, markdownElements(entry.body, options.components, md) as never);
+    }
+    const html = renderMarkdown(entry.body, md);
     return h("div", { dangerouslySetInnerHTML: { __html: html } });
   }
   throw new Error(

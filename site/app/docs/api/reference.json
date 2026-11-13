@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.16.0\"",
+          "signature": "VERSION: \"4.17.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14490,6 +14490,12 @@
               "name": "peerId",
               "signature": "peerId: string",
               "doc": "The connection's stable peer id."
+            },
+            {
+              "kind": "property",
+              "name": "resubscribe",
+              "signature": "resubscribe?: boolean",
+              "doc": "`true` when the browser re-sends a subscription the server acknowledged before, after its\nLive connection came back (a reconnect); absent on a first subscribe and on a re-authorization\nwhen the TTL runs out. A channel keeping per-key state can answer one it no longer holds."
             }
           ]
         },
@@ -14979,6 +14985,12 @@
               "name": "sign",
               "signature": "sign?: boolean | CompileSignConfig",
               "doc": "Code-sign the binary after the compile (`denext build --compile --sign` asks for it once).\nA macOS target is signed with `codesign` (the Hardened Runtime, a secure timestamp and the\nJIT entitlement V8 needs) as `DENEXT_CODESIGN_IDENTITY`, then notarized when notary\ncredentials are set; a Windows target is Authenticode-signed with `signtool` (Windows) or\n`osslsigncode` (macOS / Linux) with `DENEXT_WINDOWS_CERT`. Credentials come from the\nenvironment only. Without them a configured `sign` warns and leaves the binary unsigned,\nwhere `--sign` fails."
+            },
+            {
+              "kind": "property",
+              "name": "limits",
+              "signature": "limits?: StartLimits | false",
+              "doc": "The resource limits baked into the executable, in place of {@link StartConfig.limits}\n(`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno from runtime 3.0.0-rc.2).\nOmitted, the binary takes `start.limits`; `false` bakes none, so a binary built from an app\nwith `start.limits` (for `denext start` and the Docker image) runs unlimited. The binary\nenforces them on `./app` and `./app start`, and lifts them for `job` and `db` as it does\n`start.limits` (runtime 3.0.0-denext.8). Same shape and checks as `start.limits`."
             }
           ]
         },
@@ -18994,6 +19006,32 @@
           ]
         },
         {
+          "name": "FetchCookieJar",
+          "slug": "FetchCookieJar",
+          "kind": "interface",
+          "signature": "interface FetchCookieJar",
+          "doc": "A cookie jar a fetch session stores responses' cookies in and reads requests' cookies from: the shape of the runtime's Deno.CookieJar (any object with these two methods works).",
+          "docFull": "A cookie jar a fetch session stores responses' cookies in and reads requests' cookies from:\nthe shape of the runtime's `Deno.CookieJar` (any object with these two methods works).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "getCookieString",
+              "signature": "getCookieString(url: string | URL): string | null",
+              "doc": "The `Cookie` header value for a request to `url`, or `null` when no cookie matches."
+            },
+            {
+              "kind": "method",
+              "name": "setCookie",
+              "signature": "setCookie(setCookie: string, url: string | URL): void",
+              "doc": "Store one `Set-Cookie` value as received from `url`. A cookie the jar refuses may throw;\nthe callers drop it, as a browser does."
+            }
+          ]
+        },
+        {
           "name": "FlightActionRef",
           "slug": "FlightActionRef",
           "kind": "interface",
@@ -22272,6 +22310,12 @@
               "name": "retry",
               "signature": "retry?: JobRetry",
               "doc": "Retry a failed run: the handler runs again after the backoff, up to `attempts` more times,\nand the run settles with the last attempt's outcome. Every attempt is one row in the run\nhistory (`jobs.history`). A scheduled run that is still retrying counts as running, so the\nnext matching minute does not start a second copy. A retry wait ends early, with the last\nerror, when the run's signal aborts (shutdown)."
+            },
+            {
+              "kind": "property",
+              "name": "timeoutMs",
+              "signature": "timeoutMs?: number",
+              "doc": "The longest one attempt may run, in milliseconds (a whole number, at most 2^31-1). Past it\nthe attempt fails with an `Error` whose `name` is `\"JobTimeoutError\"` (check `err.name`; there\nis no class to import), message `job \"<name>\" timed out after <n> ms`, and the\nhandler's `signal` aborts with that error, so an `await` on a `fetch` or a query that takes\nthe signal stops; with `retry`, the next attempt follows as after any failure. The handler\nitself is not preempted: synchronous work runs on until it returns, so check\n`signal.aborted` in a long loop. Default: no limit."
             }
           ]
         },
@@ -31745,6 +31789,59 @@
           "denextOnly": true
         },
         {
+          "name": "runtimeCookieJar",
+          "slug": "runtimeCookieJar-fn",
+          "kind": "function",
+          "signature": "runtimeCookieJar(): RuntimeCookieJar | null",
+          "doc": "A new runtime cookie jar (Deno.CookieJar), or null where the process has none (stock Deno, or denext's Deno without --unstable-cookies). Dispose of it (using) when the session ends: it holds a runtime resource.",
+          "docFull": "A new runtime cookie jar (`Deno.CookieJar`), or `null` where the process has none (stock Deno,\nor denext's Deno without `--unstable-cookies`). Dispose of it (`using`) when the session ends:\nit holds a runtime resource.",
+          "params": [],
+          "returns": "The jar, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "RuntimeCookieJar",
+          "slug": "RuntimeCookieJar-iface",
+          "kind": "interface",
+          "signature": "interface RuntimeCookieJar extends FetchCookieJar, Disposable",
+          "doc": "The runtime's jar, as runtimeCookieJar hands it out.",
+          "docFull": "The runtime's jar, as {@linkcode runtimeCookieJar} hands it out.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "getCookies",
+              "signature": "getCookies(url?: string | URL): { name: string; value: string }[]",
+              "doc": "The cookies sent to `url`, or every cookie with no URL."
+            },
+            {
+              "kind": "method",
+              "name": "clear",
+              "signature": "clear(): void",
+              "doc": "Remove every cookie."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): void",
+              "doc": "Release the jar."
+            }
+          ],
+          "extends": [
+            {
+              "type": "FetchCookieJar",
+              "ref": "denext-server/FetchCookieJar"
+            },
+            {
+              "type": "Disposable"
+            }
+          ]
+        },
+        {
           "name": "safeFetch",
           "slug": "safeFetch",
           "kind": "variable",
@@ -31877,6 +31974,18 @@
               "name": "signal",
               "signature": "signal?: AbortSignal",
               "doc": "Caller abort signal, combined with the timeout."
+            },
+            {
+              "kind": "property",
+              "name": "userAgent",
+              "signature": "userAgent?: string | false | null",
+              "doc": "The `User-Agent` sent when `headers` sets none: a string replaces the default (`denext`),\n`false` (or `null`) sends none. A `User-Agent` in `headers` still wins. The same values as\nthe runtime's `Deno.createHttpClient({ userAgent })` where it has that option; `safeFetch`\nwrites its own request, so the option works on every runtime. A string with a character a header value\ncan't hold, or any other value, is a `TypeError` and nothing is sent."
+            },
+            {
+              "kind": "property",
+              "name": "cookieJar",
+              "signature": "cookieJar?: FetchCookieJar",
+              "doc": "A cookie session: each hop's request carries the jar's cookies for its URL (unless `headers`\nsets a `Cookie`), and every response's `Set-Cookie`, each redirect hop's included, is stored\nin it (a cookie the jar refuses is dropped). Pass the runtime's `Deno.CookieJar` (denext's Deno\nwith `--unstable-cookies`; `runtimeCookieJar()`), or any object with `getCookieString(url)` and\n`setCookie(setCookie, url)`. The jar decides which host and path a cookie goes to."
             }
           ]
         },
@@ -42702,24 +42811,40 @@
           "slug": "CookieJar",
           "kind": "class",
           "signature": "class CookieJar",
-          "doc": "A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires).",
-          "docFull": "A cookie jar: stores cookies set by responses and replays them on later\nrequests, honoring deletions (`Max-Age=0` / a past `Expires`).",
+          "doc": "A cookie jar: stores cookies set by responses and replays them on later requests, honoring deletions (Max-Age=0 / a past Expires). By default it keys cookies by name alone; constructed over a TestCookieStore (new CookieJar(new Deno.CookieJar()), or createTestClient(handler, { cookieJar })) it applies the store's rules instead: host, Path, expiry, Secure and the cookie prefixes, as a browser does.",
+          "docFull": "A cookie jar: stores cookies set by responses and replays them on later\nrequests, honoring deletions (`Max-Age=0` / a past `Expires`). By default it keys cookies by\nname alone; constructed over a {@linkcode TestCookieStore} (`new CookieJar(new\nDeno.CookieJar())`, or `createTestClient(handler, { cookieJar })`) it applies the store's rules\ninstead: host, `Path`, expiry, `Secure` and the cookie prefixes, as a browser does.",
           "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true,
           "members": [
             {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(store?: TestCookieStore | null, url?: string)",
+              "doc": "Create a jar: name-keyed, or over a URL-aware store.",
+              "params": [
+                {
+                  "name": "store",
+                  "doc": "A URL-aware store to keep the cookies in (none: the name-keyed jar)."
+                },
+                {
+                  "name": "url",
+                  "doc": "The URL a request or cookie without one is taken to be for (the client's origin)."
+                }
+              ]
+            },
+            {
               "kind": "method",
               "name": "absorb",
-              "signature": "absorb(headers: Headers): void",
-              "doc": "Absorb every `Set-Cookie` from a response's headers."
+              "signature": "absorb(headers: Headers, url?: string): void",
+              "doc": "Absorb every `Set-Cookie` from a response's headers (from `url`, for a store)."
             },
             {
               "kind": "method",
               "name": "header",
-              "signature": "header(): string | null",
-              "doc": "The `Cookie` header value for the current jar, or `null` if empty."
+              "signature": "header(url?: string): string | null",
+              "doc": "The `Cookie` header value for the current jar (for `url`, with a store), or `null`."
             },
             {
               "kind": "method",
@@ -42731,7 +42856,7 @@
               "kind": "method",
               "name": "set",
               "signature": "set(name: string, value: string): void",
-              "doc": "Set a cookie directly (e.g. to seed a test)."
+              "doc": "Set a cookie directly (e.g. to seed a test); with a store, for the jar's URL and `/`."
             },
             {
               "kind": "method",
@@ -43589,6 +43714,44 @@
               "name": "maxRedirects",
               "signature": "maxRedirects?: number",
               "doc": "Max redirects to follow when `followRedirects` is on. Default `10`."
+            },
+            {
+              "kind": "property",
+              "name": "cookieJar",
+              "signature": "cookieJar?: TestCookieStore",
+              "doc": "A URL-aware cookie store for the client's {@linkcode CookieJar}: pass `new Deno.CookieJar()`\n(denext's Deno with `--unstable-cookies`) to apply the browser's cookie rules (host, `Path`,\nexpiry, `Secure`, prefixes). Default: the name-keyed jar."
+            }
+          ]
+        },
+        {
+          "name": "TestCookieStore",
+          "slug": "TestCookieStore",
+          "kind": "interface",
+          "signature": "interface TestCookieStore extends FetchCookieJar",
+          "doc": "A URL-aware cookie store a CookieJar can delegate to: the runtime's Deno.CookieJar (denext's Deno with --unstable-cookies; runtimeCookieJar() from denext/server), or any object with these methods.",
+          "docFull": "A URL-aware cookie store a {@linkcode CookieJar} can delegate to: the runtime's\n`Deno.CookieJar` (denext's Deno with `--unstable-cookies`; `runtimeCookieJar()` from\n`denext/server`), or any object with these methods.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "getCookies",
+              "signature": "getCookies(url?: string | URL): { name: string; value: string }[]",
+              "doc": "The cookies sent to `url`, or every cookie with no URL."
+            },
+            {
+              "kind": "method",
+              "name": "clear",
+              "signature": "clear(): void",
+              "doc": "Remove every cookie."
+            }
+          ],
+          "extends": [
+            {
+              "type": "FetchCookieJar",
+              "ref": "denext-server/FetchCookieJar"
             }
           ]
         },
@@ -45842,6 +46005,70 @@
           ]
         },
         {
+          "name": "DesktopCaller",
+          "slug": "DesktopCaller",
+          "kind": "interface",
+          "signature": "interface DesktopCaller",
+          "doc": "The sender of a bridge call (DesktopCapCtx.caller).",
+          "docFull": "The sender of a bridge call ({@linkcode DesktopCapCtx.caller}).\n\nThe bridge answers only the app's own pages (the per-launch token, and under denext's pinned\nruntime the memory transport with an `Origin` equal to the app origin), so `origin` is that\norigin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made\nthe call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop\nruntime that publishes `Deno.desktop.marksFrames`, under CEF or WKWebView, and only over its\nin-memory connection: WebView2 and WebKitGTK don't say which frame called, and over loopback\nthe page sets its own headers), else as the calling page reported it (`verified: false`: a\nsubframe that holds the token can claim to be the main frame), and `\"unknown\"` when neither said.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "origin",
+              "signature": "readonly origin: string",
+              "doc": "The origin of the calling window's page (the app origin, or the loopback origin)."
+            },
+            {
+              "kind": "property",
+              "name": "frame",
+              "signature": "readonly frame: DesktopCallerFrame",
+              "doc": "The frame that made the call."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string",
+              "doc": "The calling window's id ({@linkcode DesktopCapCtx.windowId})."
+            }
+          ]
+        },
+        {
+          "name": "DesktopCallerFrame",
+          "slug": "DesktopCallerFrame",
+          "kind": "interface",
+          "signature": "interface DesktopCallerFrame",
+          "doc": "The frame a bridge call came from (DesktopCaller.frame).",
+          "docFull": "The frame a bridge call came from ({@linkcode DesktopCaller.frame}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: \"main\" | \"sub\" | \"unknown\"",
+              "doc": "`\"main\"` (the top-level page), `\"sub\"` (a frame inside it) or `\"unknown\"`."
+            },
+            {
+              "kind": "property",
+              "name": "origin",
+              "signature": "readonly origin: string",
+              "doc": "The frame's own origin (the request's `Origin`, else the window's origin)."
+            },
+            {
+              "kind": "property",
+              "name": "verified",
+              "signature": "readonly verified: boolean",
+              "doc": "Whether the runtime told `kind`, rather than the calling page."
+            }
+          ]
+        },
+        {
           "name": "DesktopCapability",
           "slug": "DesktopCapability",
           "kind": "interface",
@@ -45994,6 +46221,12 @@
               "name": "windowId",
               "signature": "readonly windowId?: string",
               "doc": "Which of the app's windows the call came from: `\"main\"` (the window the app started with, and\nany page that cannot say), `\"panel\"` (the tray panel) or the id `openWindow` returned.\n{@linkcode DesktopCapCtx.window} is that window. The bridge always sets it; absent (a context\nbuilt by hand, in a test) means `\"main\"`."
+            },
+            {
+              "kind": "property",
+              "name": "caller",
+              "signature": "readonly caller?: DesktopCaller",
+              "doc": "Who called: the window's origin, the calling frame (main or sub, with its own origin) and the\nwindow id, so a privileged handler can check the sender as well as the gate does. The bridge\nalways sets it; absent (a context built by hand, in a test) means nothing is known. See\n{@linkcode DesktopCaller}."
             },
             {
               "kind": "property",
@@ -46413,7 +46646,7 @@
           "kind": "interface",
           "signature": "interface DesktopExtensionHost",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `onSecondInstance` hears the app launched again, and `windows()` lists the open windows\nnow. Each subscription returns its unsubscribe.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)\nevery top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46490,6 +46723,12 @@
               "name": "onSecondInstance",
               "signature": "onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void",
               "doc": "Call `fn` on every later launch of the app while it runs, forwarded by the single-instance\nlock (`desktop.app.singleInstance`), with the launch's `args` (after the executable) and `cwd`.\nIt runs after `runDesktop({ onSecondInstance })` opened its window, if any; the deep links and\nfiles the launch carried still reach the pages' `onDeepLink` / `onOpenFile`. A throw or a\nrejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onWillNavigate",
+              "signature": "onWillNavigate(fn: DesktopWillNavigateHandler): () => void",
+              "doc": "Call `fn` before every top-level navigation of every window, ahead of the navigation guard\n(`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`\n(`\"link\"`, `\"script\"`, `\"redirect\"`, `\"window-open\"`, `\"other\"`) and the `initiator` when the\nengine says: `event.preventDefault()` refuses it, `event.allow()` loads it in place although\nthe guard would send it to the browser (a refusal wins). Decide synchronously; a throw is\nlogged and decides nothing. Never called on a runtime without the hook (one that publishes no\n`Deno.desktop.navigationEvents`). Returns the unsubscribe."
             },
             {
               "kind": "method",
@@ -46646,6 +46885,136 @@
               "doc": "Whether the formats were asked for (`--format` or `desktop.installers.<os>`) rather than the\ndefaults: an asked-for format whose tool is missing fails the run instead of being skipped."
             }
           ]
+        },
+        {
+          "name": "desktopMacosArtifact",
+          "slug": "desktopMacosArtifact-fn",
+          "kind": "function",
+          "signature": "desktopMacosArtifact(path: string, kind: DesktopMacosArtifactKind, signature: DesktopMacosSignature): DesktopMacosArtifact",
+          "doc": "A record for an artifact nothing has notarized yet.",
+          "docFull": "A record for an artifact nothing has notarized yet.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The artifact."
+            },
+            {
+              "name": "kind",
+              "doc": "app, dmg or pkg."
+            },
+            {
+              "name": "signature",
+              "doc": "How it is signed."
+            }
+          ],
+          "returns": "The record.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosArtifact",
+          "slug": "DesktopMacosArtifact-iface",
+          "kind": "interface",
+          "signature": "interface DesktopMacosArtifact",
+          "doc": "A packaged artifact and what was done to it.",
+          "docFull": "A packaged artifact and what was done to it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "The artifact's path."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: DesktopMacosArtifactKind",
+              "doc": "An `.app`, a `.dmg` or a `.pkg`."
+            },
+            {
+              "kind": "property",
+              "name": "signature",
+              "signature": "readonly signature: DesktopMacosSignature",
+              "doc": "How it is signed."
+            },
+            {
+              "kind": "property",
+              "name": "notarized",
+              "signature": "readonly notarized: boolean",
+              "doc": "Accepted by the notary service."
+            },
+            {
+              "kind": "property",
+              "name": "stapled",
+              "signature": "readonly stapled: boolean",
+              "doc": "Its ticket stapled (and validated)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMacosArtifactKind",
+          "slug": "DesktopMacosArtifactKind",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosArtifactKind = \"app\" | \"dmg\" | \"pkg\"",
+          "doc": "What a packaged macOS artifact is.",
+          "docFull": "What a packaged macOS artifact is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosDistributeDeps",
+          "slug": "DesktopMacosDistributeDeps",
+          "kind": "interface",
+          "signature": "interface DesktopMacosDistributeDeps",
+          "doc": "What the distribution steps run commands through (tests stub it).",
+          "docFull": "What the distribution steps run commands through (tests stub it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "run",
+              "signature": "readonly run?: (cmd: string[]) => Promise<void>",
+              "doc": "Runs a command, throwing on a non-zero exit (default {@linkcode desktopRun})."
+            }
+          ]
+        },
+        {
+          "name": "desktopMacosDistributionNote",
+          "slug": "desktopMacosDistributionNote",
+          "kind": "function",
+          "signature": "desktopMacosDistributionNote(artifacts: readonly DesktopMacosArtifact[]): string",
+          "doc": "The closing line of scripts/package-macos.ts: what each kind of artifact is, then whether the set is ready to distribute.",
+          "docFull": "The closing line of `scripts/package-macos.ts`: what each kind of artifact is, then whether\nthe set is ready to distribute.",
+          "params": [
+            {
+              "name": "artifacts",
+              "doc": "What the run produced."
+            }
+          ],
+          "returns": "The line (indented, in parentheses).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosSignature",
+          "slug": "DesktopMacosSignature",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosSignature = \"developer-id\" | \"ad-hoc\" | \"unsigned\"",
+          "doc": "How an artifact is signed: a Developer ID identity, ad-hoc (an .app only), or not at all.",
+          "docFull": "How an artifact is signed: a Developer ID identity, ad-hoc (an .app only), or not at all.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "desktopMacosSigning",
@@ -46830,6 +47199,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopNavigationKind",
+          "slug": "DesktopNavigationKind",
+          "kind": "typeAlias",
+          "signature": "type DesktopNavigationKind = \"link\" | \"script\" | \"redirect\" | \"window-open\" | \"other\"",
+          "doc": "How a top-level navigation started. \"window-open\" is reserved: popups (window.open, target=\"_blank\") keep their own rule and the runtime does not report them.",
+          "docFull": "How a top-level navigation started. `\"window-open\"` is reserved: popups (`window.open`,\n`target=\"_blank\"`) keep their own rule and the runtime does not report them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopNewWindowContext",
           "slug": "DesktopNewWindowContext",
           "kind": "interface",
@@ -46870,6 +47251,43 @@
           "docFull": "How `desktop.ts` supplies the window New Window opens (`runDesktop({ newWindow })`): the open\noptions (`url` and `key` at least; a key already open is a `validation` error), or `undefined`\nto open nothing. Without it New Window opens `desktop.menu.window.newWindow` with the suggested\nkey.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopNotarizeMacos",
+          "slug": "desktopNotarizeMacos",
+          "kind": "function",
+          "signature": "desktopNotarizeMacos(artifacts: readonly DesktopMacosArtifact[], credentials: NotaryCredentials | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact[]>",
+          "doc": "Notarize and staple each Developer-ID-signed artifact with credentials (a keychain profile or an App Store Connect API key), one submission per artifact, all submitted at once. Without credentials, or for an ad-hoc / unsigned artifact, the record comes back unchanged.",
+          "docFull": "Notarize and staple each Developer-ID-signed artifact with `credentials` (a keychain profile or\nan App Store Connect API key), one submission per artifact, all submitted at once. Without\ncredentials, or for an ad-hoc / unsigned artifact, the record comes back unchanged.\n\nCall it for the .app before building its installers, so the .dmg and .pkg hold the stapled .app.",
+          "params": [
+            {
+              "name": "artifacts",
+              "doc": "The artifacts."
+            },
+            {
+              "name": "credentials",
+              "doc": "The notary credentials, or undefined for none."
+            },
+            {
+              "name": "deps",
+              "doc": "The command runner."
+            }
+          ],
+          "returns": "The records, in order, with what was done.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopNotaryCredentials",
+          "slug": "desktopNotaryCredentials",
+          "kind": "function",
+          "signature": "desktopNotaryCredentials(): NotaryCredentials | undefined",
+          "doc": "The notary credentials in the environment: DENEXT_NOTARY_PROFILE (a keychain profile), else an App Store Connect API key (DENEXT_NOTARY_KEY + DENEXT_NOTARY_KEY_ID, with DENEXT_NOTARY_ISSUER for a team key) — what denext build --compile --sign reads too.",
+          "docFull": "The notary credentials in the environment: `DENEXT_NOTARY_PROFILE` (a keychain profile), else\nan App Store Connect API key (`DENEXT_NOTARY_KEY` + `DENEXT_NOTARY_KEY_ID`, with\n`DENEXT_NOTARY_ISSUER` for a team key) — what `denext build --compile --sign` reads too.",
+          "params": [],
+          "returns": "The credentials, or undefined when none are set.",
           "examples": [],
           "denextOnly": true
         },
@@ -47612,6 +48030,12 @@
             },
             {
               "kind": "method",
+              "name": "onWillNavigate",
+              "signature": "onWillNavigate(fn: DesktopWillNavigateHandler): () => void",
+              "doc": "Call `fn` before every top-level navigation of every window, as\n{@linkcode RunDesktopOptions.onWillNavigate} is (after it). Returns the unsubscribe; never\ncalled on a runtime without the hook (or in a sidecar's child)."
+            },
+            {
+              "kind": "method",
               "name": "emit",
               "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
               "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
@@ -47829,6 +48253,31 @@
               "doc": "Its last saved bounds, if any."
             }
           ]
+        },
+        {
+          "name": "desktopSignMacosDmg",
+          "slug": "desktopSignMacosDmg",
+          "kind": "function",
+          "signature": "desktopSignMacosDmg(dmg: string, identity: string | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact>",
+          "doc": "Code-sign a .dmg with the Developer ID identity the .app was signed with: a secure timestamp, no Hardened Runtime (that applies to executables), then a strict verify. Without an identity (or the ad-hoc one) the image stays unsigned: an ad-hoc signature on a disk image means nothing to Gatekeeper.",
+          "docFull": "Code-sign a .dmg with the Developer ID identity the .app was signed with: a secure timestamp,\nno Hardened Runtime (that applies to executables), then a strict verify. Without an identity\n(or the ad-hoc one) the image stays unsigned: an ad-hoc signature on a disk image means nothing\nto Gatekeeper.",
+          "params": [
+            {
+              "name": "dmg",
+              "doc": "The disk image."
+            },
+            {
+              "name": "identity",
+              "doc": "DENEXT_CODESIGN_IDENTITY."
+            },
+            {
+              "name": "deps",
+              "doc": "The command runner."
+            }
+          ],
+          "returns": "The image's record.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "desktopSignWindows",
@@ -48587,6 +49036,74 @@
             }
           ],
           "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWillNavigateEvent",
+          "slug": "DesktopWillNavigateEvent",
+          "kind": "interface",
+          "signature": "interface DesktopWillNavigateEvent",
+          "doc": "A top-level navigation about to happen (DesktopWillNavigateHandler).",
+          "docFull": "A top-level navigation about to happen ({@linkcode DesktopWillNavigateHandler}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "Where the window is going."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string",
+              "doc": "The window's id (`\"main\"`, `\"panel\"` or the id `windows.open` returned)."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: DesktopNavigationKind",
+              "doc": "How it started."
+            },
+            {
+              "kind": "property",
+              "name": "initiator",
+              "signature": "readonly initiator?: string",
+              "doc": "The URL of the document that started it, when the engine says."
+            },
+            {
+              "kind": "property",
+              "name": "defaultPrevented",
+              "signature": "readonly defaultPrevented: boolean",
+              "doc": "Whether a handler refused it."
+            },
+            {
+              "kind": "method",
+              "name": "preventDefault",
+              "signature": "preventDefault(): void",
+              "doc": "Refuse it: nothing loads and nothing opens in the browser. Wins over {@linkcode allow}."
+            },
+            {
+              "kind": "method",
+              "name": "allow",
+              "signature": "allow(): void",
+              "doc": "Load it in the window, even where the navigation guard would send it to the browser."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWillNavigateHandler",
+          "slug": "DesktopWillNavigateHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopWillNavigateHandler = (event: DesktopWillNavigateEvent) => void",
+          "doc": "A will-navigate hook: decide synchronously (a returned promise is not waited for).",
+          "docFull": "A will-navigate hook: decide synchronously (a returned promise is not waited for).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -50130,6 +50647,12 @@
             },
             {
               "kind": "property",
+              "name": "denoFlags",
+              "signature": "readonly denoFlags: string[]",
+              "doc": "`desktop.denoFlags`, checked: under `deno run desktop.ts`, a module sidecar's children are\nstarted with those `deno run` takes."
+            },
+            {
+              "kind": "property",
               "name": "extensionSecureStore",
               "signature": "readonly extensionSecureStore?: (name: string) => DesktopSecureStore",
               "doc": "Each capability's own secure store by capability name (`ctx.secureStore` / `host.secureStore`,\n`<identifier>/ext/<name>`), when the `secureStore` capability is enabled; `runDesktop` hands it\nto the bridge."
@@ -50341,6 +50864,12 @@
             },
             {
               "kind": "property",
+              "name": "onWillNavigate",
+              "signature": "onWillNavigate?: DesktopWillNavigateHandler",
+              "doc": "Called before every top-level navigation of every window, ahead of the navigation guard\n(`desktop.app.origin`, `desktop.app.allowedNavigationOrigins`): `event.preventDefault()`\nrefuses it (nothing loads, nothing opens in the browser), `event.allow()` loads it in place\nalthough the guard would send it to the browser (a refusal wins). `event` carries the `url`,\nthe `window` id, the `kind` (`\"link\"`, `\"script\"`, `\"redirect\"`, `\"window-open\"`, `\"other\"`)\nand the `initiator` when the engine says. Decide synchronously; a throw is logged and decides\nnothing. Never called on a runtime without the hook (one that publishes no\n`Deno.desktop.navigationEvents`)."
+            },
+            {
+              "kind": "property",
               "name": "onWindowMenuItem",
               "signature": "onWindowMenuItem?: DesktopWindowMenuItemHandler",
               "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from\nruntime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only\nwhile the main window is open. A throw or a rejection is logged."
@@ -50374,6 +50903,12 @@
               "name": "configSidecars",
               "signature": "configSidecars?: readonly SidecarDefinition[]",
               "doc": "`desktop.sidecars` from the config (from {@link resolveDesktopCapabilities}); {@link sidecars}\nis laid over it."
+            },
+            {
+              "kind": "property",
+              "name": "denoFlags",
+              "signature": "denoFlags?: readonly string[]",
+              "doc": "`desktop.denoFlags` (from {@link resolveDesktopCapabilities}): under `deno run desktop.ts`, a\nmodule sidecar's `spawnSelf` / `childCommand` children are started with those `deno run` takes,\nafter the run's own flags. A packaged app's build took them already."
             }
           ]
         },
@@ -50391,6 +50926,23 @@
             }
           ],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "runtimeHasNavigationEvents",
+          "slug": "runtimeHasNavigationEvents",
+          "kind": "function",
+          "signature": "runtimeHasNavigationEvents(desktop?: unknown): boolean",
+          "doc": "Whether the running runtime dispatches \"willnavigate\" on its windows: Deno.desktop .navigationEvents === true. Feature-detected; the stock runtime, a denext runtime without the hook and the Deno CLI answer false.",
+          "docFull": "Whether the running runtime dispatches `\"willnavigate\"` on its windows: `Deno.desktop\n.navigationEvents === true`. Feature-detected; the stock runtime, a denext runtime without the\nhook and the Deno CLI answer `false`.",
+          "params": [
+            {
+              "name": "desktop",
+              "doc": "Deno.desktop (default: the running runtime's)."
+            }
+          ],
+          "returns": "Whether the hook can fire.",
           "examples": [],
           "denextOnly": true
         },
@@ -53797,6 +54349,12 @@
               "name": "key",
               "signature": "readonly key?: string",
               "doc": "The key it was opened with (`openWindow({ key })`), if any."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "Its title, if it has one: as opened (`openWindow({ title })`) or configured, then as its page\nlast reported it (`document.title`) or set it (`setWindowTitle`). The Window menu's label."
             }
           ]
         },
@@ -54004,7 +54562,7 @@
           "doc": "The app's open windows.",
           "docFull": "The app's open windows.",
           "params": [],
-          "returns": "Each window's id, kind and visibility.",
+          "returns": "Each window's id, kind, visibility, key and title.",
           "examples": [],
           "denextOnly": true
         },
@@ -76756,6 +77314,12 @@
               "name": "peerId",
               "signature": "peerId: string",
               "doc": "The connection's stable peer id."
+            },
+            {
+              "kind": "property",
+              "name": "resubscribe",
+              "signature": "resubscribe?: boolean",
+              "doc": "`true` when the browser re-sends a subscription the server acknowledged before, after its\nLive connection came back (a reconnect); absent on a first subscribe and on a re-authorization\nwhen the TTL runs out. A channel keeping per-key state can answer one it no longer holds."
             }
           ]
         },

@@ -927,10 +927,14 @@ Deno.test({
       );
       const back = hub.conn(a);
       assert((await hub.subscribe(back, "listed", { key })).ok);
-      await until(() => back.frames.length === 2, 5_000, "resumed + the replay");
-      assertEquals(back.frames[0].resumed, true);
-      assertEquals(back.frames[0].seq, all.frames.at(-1)!.seq + 1, "numbered on");
-      const replayed = back.frames[1].changes!.map((c) => [c.op, c.key]);
+      // Frames sent in the second before the drop come again first (`again`), numbered as then:
+      // the browser drops those it has, as this does.
+      const last = all.frames.at(-1)!.seq;
+      const seen = () => back.frames.filter((f) => !(f.again && f.seq <= last));
+      await until(() => seen().length === 2, 5_000, "resumed + the replay");
+      assertEquals(seen()[0].resumed, true);
+      assertEquals(seen()[0].seq, last + 1, "numbered on");
+      const replayed = seen()[1].changes!.map((c) => [c.op, c.key]);
       assertEquals(replayed.sort(), [
         ["delete", "10"],
         ["delete", "2"],

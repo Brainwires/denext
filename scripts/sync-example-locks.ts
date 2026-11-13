@@ -135,6 +135,26 @@ function collectLinkedLocks(dir: string, depth: number, found: string[]): void {
 }
 
 /**
+ * A lock's text as Deno prints it: `JSON.stringify` with two-space indentation, except that the
+ * `os` and `cpu` lists of an npm package go on one line (`"os": ["darwin", "ios"]`, Deno's
+ * lockfile printer). Printed any other way, the next Deno run that writes the lock reformats
+ * every such list, and `regen` then expands them again: a rewrite loop on a tracked file.
+ *
+ * @param lock The parsed lock.
+ * @returns Its text, with a trailing newline.
+ */
+export function printLock(lock: unknown): string {
+  // A key can't occur inside a JSON string unescaped, so this matches only the lists themselves.
+  return JSON.stringify(lock, null, 2).replace(
+    /"(os|cpu)": \[([^\]]*)\]/g,
+    (_, key: string, items: string) =>
+      `"${key}": [${
+        (JSON.parse(`[${items}]`) as string[]).map((i) => JSON.stringify(i)).join(", ")
+      }]`,
+  ) + "\n";
+}
+
+/**
  * Rewrite the `workspace.links` of every lock {@linkcode linkedLockFiles} finds.
  *
  * @param root The repository root.
@@ -148,7 +168,7 @@ export function syncExampleLocks(root: string = ROOT): string[] {
     const before = Deno.readTextFileSync(path);
     const lock = JSON.parse(before) as Lock;
     lock.workspace!.links = links;
-    const after = JSON.stringify(lock, null, 2) + "\n";
+    const after = printLock(lock);
     if (after !== before) {
       Deno.writeTextFileSync(path, after);
       changed.push(rel);

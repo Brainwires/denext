@@ -18,6 +18,7 @@ import {
   type LaunchPolicyProblem,
   launchPolicyProblems,
   staleBackendPackageScripts,
+  staleNotarizePackageScripts,
   stalePackageScripts,
 } from "../../build/desktop-launch-policy.ts";
 import { readStaticConfig } from "../../build/config-static.ts";
@@ -49,6 +50,7 @@ export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProb
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
     await staleBackendPackageScripts(dir),
+    await staleNotarizePackageScripts(dir),
   );
 }
 

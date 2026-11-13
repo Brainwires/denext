@@ -70,6 +70,12 @@ export interface ChannelContext {
   cookie: string;
   /** The connection's stable peer id. */
   peerId: string;
+  /**
+   * `true` when the browser re-sends a subscription the server acknowledged before, after its
+   * Live connection came back (a reconnect); absent on a first subscribe and on a re-authorization
+   * when the TTL runs out. A channel keeping per-key state can answer one it no longer holds.
+   */
+  resubscribe?: boolean;
 }
 
 /** The definition passed to {@link createChannel}. */

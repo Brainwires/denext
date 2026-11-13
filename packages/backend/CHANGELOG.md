@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **`requireUploadSize` per bucket.** `buckets: { docs: { requireUploadSize: true } }` refuses a
+  `createSignedUploadUrl` call without `size` (`bad_request`, 400), so every signed upload URL the
+  server API mints for that bucket pins its exact size. The `POST /_denext/storage/sign` route
+  always carries one, and Supabase's `/storage/v1/object/upload/sign` is unaffected. Off by default:
+  size-less signed uploads stay allowed.
+- **`memoryMb` for Edge Functions.** `functions: { memoryMb: 128 }`, or one function's
+  `functions: { functions: { report: { memoryMb: 256 } } }`, caps each function worker's
+  JavaScript heap (`new Worker(…, { deno: { memoryMb } })`, runtime 3.0.0-rc.2 and later). A worker
+  over it is terminated: the requests it was serving answer `546 WORKER_LIMIT`, and the next call
+  starts a fresh one. Like `permissions`, it needs `"unstable": ["worker-options"]` in `deno.json`;
+  the plugin refuses to start without it.
+
 ### Changed
 
 - **An idle webhooks deliverer wakes rarely.** Under `delivery: "auto"` the background
@@ -15,6 +29,16 @@
 
 ### Fixed
 
+- **Realtime: a re-subscribe the server no longer holds is answered `resync` at once.** With a
+  denext whose Live client marks re-subscribes, a `useTableChanges` subscription swept meanwhile,
+  or whose socket reached another instance, gets `resync` straight away instead of going `stale`
+  after 10 seconds of silence.
+- **Realtime: a frame caught in the Live hub's window at a drop still arrives.** The frames handed
+  to the hub in the second before a drop are sent again on the return, ahead of `resumed`,
+  numbered as before and marked `again: true`; `useTableChanges` drops a copy of one it has. At most 16 are kept per subscription, and a quiet
+  subscription lets go of them after that second instead of holding them until its next frame. A
+  copy that no longer fits the channel's payload cap is replaced, with the copies behind it, by one
+  `resync`.
 - **`db({ as })` takes a request identity only with a Supabase role.** `anon`, `authenticated`
   or `service_role`; any other role is a `TypeError` (from `identityScope()` too) before a
   statement runs, and `isRequestIdentity()` answers `false` for it.

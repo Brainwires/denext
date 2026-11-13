@@ -740,8 +740,11 @@ export default {
   --password "app-specific-password"   # from appleid.apple.com`}
       </Code>
       <p>
-        Then set the profile name; the script submits the bundle, waits for the result, and staples
-        the ticket:
+        Then set the profile name (or, instead of a profile, an App Store Connect API key:{" "}
+        <code>DENEXT_NOTARY_KEY</code> with the <code>.p8</code> path,{" "}
+        <code>DENEXT_NOTARY_KEY_ID</code>, and <code>DENEXT_NOTARY_ISSUER</code>{" "}
+        for a team key); the script submits the bundle, waits for the result, and staples the
+        ticket:
       </p>
       <Code lang="bash">
         {`export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
@@ -749,8 +752,31 @@ export DENEXT_NOTARY_PROFILE="denext-notary"
 denext task desktop:package --arch universal`}
       </Code>
       <p>
-        The resulting <code>.app</code> (and <code>.dmg</code>) in <code>dist/</code>{" "}
-        is signed, notarized, and stapled — ready to distribute.
+        Each artifact in <code>dist/</code> gets its own ticket. The <code>.app</code>{" "}
+        is notarized and stapled first, so the installers hold the stapled app (it keeps its ticket
+        when a user copies it out of the disk image). Then the <code>.dmg</code>{" "}
+        is code-signed with the same identity (with a secure timestamp), and it and a signed{" "}
+        <code>.pkg</code>{" "}
+        are notarized and stapled too, submitted together: a disk image is code of its own to
+        Gatekeeper, which refuses an unsigned one (<code>source=no usable signature</code> from{" "}
+        <code>spctl -a -t open --context context:primary-signature</code>) whatever app it holds.
+        Every stapled ticket is checked with <code>xcrun stapler validate</code>.
+      </p>
+      <p>
+        The script&apos;s last line names what each kind of artifact is, and says{" "}
+        <em>ready to distribute</em> only when every one is signed, notarized and stapled:
+      </p>
+      <Code lang="text">
+        {`  (.app signed + notarized + stapled; .dmg signed + notarized + stapled — ready to distribute)
+  (.app signed, NOT notarized; .dmg signed, NOT notarized — set DENEXT_NOTARY_PROFILE …)
+  (.app ad-hoc signed; .dmg unsigned — not distributable; see the macOS distribution doc)`}
+      </Code>
+      <p>
+        Without an identity (or with the ad-hoc <code>-</code>) the <code>.dmg</code>{" "}
+        is left unsigned. A packaging script written before an installer was notarized on its own
+        adopts this with <code>denext desktop package --regenerate-scripts</code>; until then{" "}
+        <code>denext desktop package</code>, <code>denext desktop doctor</code> and{" "}
+        <code>denext doctor</code> warn that it ships its <code>.dmg</code> un-notarized.
       </p>
 
       <h2>Linux</h2>
@@ -1073,9 +1099,12 @@ denext desktop package --target-os windows --format msi,zip`}
           {" "}
           — what MDM tools and <code>installer -pkg</code> deploy). Set{" "}
           <code>DENEXT_INSTALLER_IDENTITY</code> to a <em>Developer ID Installer</em>{" "}
-          identity to sign the <code>.pkg</code>; with <code>DENEXT_NOTARY_PROFILE</code>{" "}
-          it is notarized and stapled like the app. Without one the <code>.pkg</code>{" "}
-          is unsigned, which Gatekeeper and MDM reject.
+          identity to sign the{" "}
+          <code>.pkg</code>; with notary credentials it is notarized and stapled like the app (see
+          {" "}
+          <a href="#notarization">Notarization</a>), as is the{" "}
+          <code>.dmg</code>, which is code-signed with the app&apos;s identity. Without one the{" "}
+          <code>.pkg</code> is unsigned, which Gatekeeper and MDM reject.
         </li>
         <li>
           <strong>Linux</strong> — <code>tar.gz</code>, <code>deb</code>{" "}
@@ -2504,8 +2533,7 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         could have planted it). A write over one the runtime&apos;s store finds in its way reads its
         value first: one it can&apos;t read fails the write and stays where it is. An older runtime
         (or the stock one) keeps the <code>security</code>{" "}
-        path. Under the pinned runtime (3.0.0-denext.17; from 3.0.0-denext.16 the runtime reads the
-        capability list denext writes into{" "}
+        path. Under the pinned runtime (which reads the capability list denext writes into{" "}
         <code>.deno-desktop/app.json</code>) the capability bakes no{" "}
         <code>--allow-sys</code>; an older runtime needs an unscoped one for its store. It bakes
         {" "}
@@ -2652,12 +2680,10 @@ desktop: {
         inherited. A shell is still full trust: what is typed into it runs as the user, so enable
         {" "}
         <code>pty</code>{" "}
-        only in an app whose page you trust with that. On Windows the pinned runtime
-        (3.0.0-denext.17) has no terminals yet: opening one rejects with <code>unsupported</code>
-        {" "}
-        (<code>error.data.reason</code>{" "}
-        says why). Once it does, the terminal is a ConPTY, whose output carries its own VT sequences
-        even for plain text.
+        only in an app whose page you trust with that. On Windows (10 1809 and later) the terminal
+        is a ConPTY, whose output carries its own VT sequences even for plain text; under a runtime
+        without terminals on Windows, opening one rejects with <code>unsupported</code>{" "}
+        (<code>error.data.reason</code> says why).
       </Callout>
 
       <h3 id="desktop-system-stats">System stats</h3>
@@ -3090,7 +3116,7 @@ settings.onClosed(() => console.log("closed"));
 await settings.setBounds({ x: 100, y: 100 });
 
 await windowHandle("main").show(); // the window the app started with
-console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, …]`}
+console.log(await getWindows());   // [{ id: "main", kind: "main", visible, title? }, …]`}
       </Code>
       <p>
         From <code>desktop.ts</code>, <code>runDesktop()</code> resolves with{" "}
@@ -4016,7 +4042,10 @@ const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
         </code>) is resolved from the folder of the entry that calls{" "}
         <code>resolveDesktopCapabilities</code> (the project root for{" "}
         <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
-        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded. A
+        path that leaves the project (<code>"../shared/scanner.ts"</code>) is embedded as well:
+        packaging takes the file the path names, wherever it is, so keep what the app should carry
+        inside the project:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -4076,6 +4105,47 @@ desktop: {
   extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
 },`}
       </Code>
+
+      <h3 id="desktop-extension-caller">Who called: ctx.caller</h3>
+      <p>
+        Every handler gets <code>ctx.caller</code>: <code>origin</code>{" "}
+        (the calling window&apos;s origin: the app origin, or the loopback origin under the stock
+        runtime), <code>frame</code> (<code>kind</code> <code>"main"</code> for the top-level page,
+        {" "}
+        <code>"sub"</code> for a frame inside it, or <code>"unknown"</code>; <code>origin</code>
+        {" "}
+        the frame&apos;s own; <code>verified</code>) and <code>window</code> (the window id, as{" "}
+        <code>ctx.windowId</code>). A privileged method can refuse anything but the main frame. The
+        frame is <code>verified</code>{" "}
+        when the runtime marks each request with it (one that publishes{" "}
+        <code>Deno.desktop.marksFrames</code>); otherwise it is what the page reported, which a
+        same-origin frame holding the token could misstate. The runtime marks frames only where the
+        engine says which frame made a request: CEF, and macOS&apos;s WKWebView where WebKit reports
+        the frame. WebView2 (Windows) and WebKitGTK (Linux) don&apos;t, so there, and everywhere on
+        a runtime without <code>marksFrames</code>, <code>verified</code> is always{" "}
+        <code>false</code>{" "}
+        and a check that requires it refuses every call. Refuse a verified subframe, and where the
+        frame is unverified fall back to the page&apos;s report:
+      </p>
+      <Code lang="ts">
+        {`wipe: {
+  handler: (_args, ctx) => {
+    const frame = ctx.caller?.frame;
+    // Verified: the runtime said which frame called. Unverified (WebView2, WebKitGTK, a runtime
+    // without marksFrames): the page's own report, so refuse what it says is a subframe.
+    const subframe = frame?.verified ? frame.kind !== "main" : frame?.kind === "sub";
+    if (subframe) {
+      throw new DesktopCapError("forbidden", "only the app's own page may wipe", { status: 403 });
+    }
+    return wipeEverything();
+  },
+},`}
+      </Code>
+      <p>
+        Where a method must never answer an unverified caller, require <code>verified</code>{" "}
+        and build with <code>desktop.backend: "cef"</code>{" "}
+        (CEF marks frames on every OS), or decide per platform with <code>Deno.build.os</code>.
+      </p>
 
       <h3 id="desktop-extension-events">Events no page call started</h3>
       <p>
@@ -4400,8 +4470,11 @@ export default defineDesktopExtension({
           <code>desktop.ts</code>, which packaging compiles;{" "}
           <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
           <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
-          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
-          <code>--allow-run</code> and a broad{" "}
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). A path that leaves the project (
+          <code>"../tools/server"</code>, and likewise a{" "}
+          <code>run.module</code>) embeds that file too, wherever it is: packaging does not confine
+          it to the project. Such a program is baked an unscoped <code>--allow-run</code>{" "}
+          and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
           machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
           <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,
@@ -4572,8 +4645,12 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           the child is <code>deno run</code>{" "}
           with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
           <code>--unstable-*</code>,{" "}
-          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
-          the app holds unscoped on an older one. An unmodified{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or on an older one
+          the permissions the app holds unscoped and the unstable features it can be seen to run
+          with (<code>--unstable-kv</code>, <code>-cron</code>, <code>-net</code>,{" "}
+          <code>-broadcast-channel</code>, <code>-webgpu</code>); either way followed by the{" "}
+          <code>desktop.denoFlags</code> that <code>deno run</code> takes (all but{" "}
+          <code>--exclude-unused-npm</code>) and the run did not give already. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.
@@ -4871,6 +4948,61 @@ export default {
           <code>desktop.app.allowedNavigationOrigins</code> (exact origins, written to{" "}
           <code>app.json</code>). On Linux (WebKitGTK) the refused request has already been sent
           when the window stops it; nothing it returns is shown or run.
+        </li>
+        <li>
+          To decide in code, pass <code>runDesktop({"{ onWillNavigate }"})</code>{" "}
+          (or subscribe later with <code>onWillNavigate(fn)</code> on its result, or{" "}
+          <code>host.onWillNavigate(fn)</code>{" "}
+          in an extension). It sees the top-level navigations pages start (links, scripts, forms,
+          server redirects) in every window before the static policy: <code>event.url</code>,{" "}
+          <code>event.window</code>, <code>event.kind</code> (<code>"link"</code>,{" "}
+          <code>"script"</code>, <code>"redirect"</code>, <code>"other"</code>;{" "}
+          <code>"window-open"</code>{" "}
+          is reserved, as popups keep their own rule and are not reported) and{" "}
+          <code>event.initiator</code> when the engine says. <code>event.preventDefault()</code>
+          {" "}
+          refuses it (nothing loads, nothing opens in the browser); <code>event.allow()</code>{" "}
+          loads it in the window although the policy would send it to the browser. A refusal wins;
+          decide synchronously (a returned promise is not waited for), and a throw is logged and
+          decides nothing. The hook needs a Deno Desktop runtime that dispatches the event (one that
+          publishes <code>Deno.desktop.navigationEvents</code>;{" "}
+          <code>
+            runtimeHasNavigationEvents()
+          </code>{" "}
+          from <code>denext/desktop</code>{" "}
+          tells); on any other the static policy decides alone and the hook is never called.
+          <Code lang="ts">
+            {`await runDesktop({
+  importMetaUrl: import.meta.url,
+  onWillNavigate: (event) => {
+    const url = new URL(event.url);
+    if (event.kind === "script" && url.protocol === "http:") event.preventDefault();
+    if (url.origin === "https://login.example.com") event.allow();
+  },
+});`}
+          </Code>
+          It is not called for back / forward, reloads, sub-frames, popups (<code>
+            window.open
+          </code>, <code>target="_blank"</code>), <code>about:blank</code> /{" "}
+          <code>about:srcdoc</code>{" "}
+          or the runtime&apos;s own navigation. How the engine waits for the answer differs:
+          <ul>
+            <li>
+              WKWebView (macOS) holds the navigation until the hook has decided.
+            </li>
+            <li>
+              CEF and WebView2 can&apos;t hold one, so while a hook is subscribed each navigation is
+              cancelled and started again once it may load, as a new history entry. WebView2 starts
+              it again as a GET of its URL, so a form POST arrives without its body; CEF keeps a
+              same-origin POST&apos;s method and body and loads a cross-origin one by URL.
+            </li>
+            <li>
+              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides at the
+              response: the request has already been sent, every <code>kind</code> is{" "}
+              <code>"other"</code> with no{" "}
+              <code>initiator</code>, and back / forward and reloads are reported too.
+            </li>
+          </ul>
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}
