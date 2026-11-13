@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.17.0] - 2026-11-13
+
 ### Added
 
 - **Desktop: `getWindows()` reports each window's title.** The `title` the Window menu shows (as
@@ -22022,7 +22024,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.17.0...development
+[4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0

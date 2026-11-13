@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.16.0\"",
+          "signature": "VERSION: \"4.17.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -46010,7 +46010,7 @@
           "kind": "interface",
           "signature": "interface DesktopCaller",
           "doc": "The sender of a bridge call (DesktopCapCtx.caller).",
-          "docFull": "The sender of a bridge call ({@linkcode DesktopCapCtx.caller}).\n\nThe bridge answers only the app's own pages (the per-launch token, and under denext's pinned\nruntime the memory transport with an `Origin` equal to the app origin), so `origin` is that\norigin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made\nthe call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop\nruntime that publishes `Deno.desktop.marksFrames`, under CEF or WKWebView; WebView2 and\nWebKitGTK don't say which frame called), else as the calling page reported it (`verified: false`: a subframe\nthat holds the token can claim to be the main frame), and `\"unknown\"` when neither said.",
+          "docFull": "The sender of a bridge call ({@linkcode DesktopCapCtx.caller}).\n\nThe bridge answers only the app's own pages (the per-launch token, and under denext's pinned\nruntime the memory transport with an `Origin` equal to the app origin), so `origin` is that\norigin. `frame.kind` says whether the main frame or a subframe (a same-origin `<iframe>`) made\nthe call: told by the runtime when it marks frames (`frame.verified: true`, on a Deno Desktop\nruntime that publishes `Deno.desktop.marksFrames`, under CEF or WKWebView, and only over its\nin-memory connection: WebView2 and WebKitGTK don't say which frame called, and over loopback\nthe page sets its own headers), else as the calling page reported it (`verified: false`: a\nsubframe that holds the token can claim to be the main frame), and `\"unknown\"` when neither said.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46887,6 +46887,136 @@
           ]
         },
         {
+          "name": "desktopMacosArtifact",
+          "slug": "desktopMacosArtifact-fn",
+          "kind": "function",
+          "signature": "desktopMacosArtifact(path: string, kind: DesktopMacosArtifactKind, signature: DesktopMacosSignature): DesktopMacosArtifact",
+          "doc": "A record for an artifact nothing has notarized yet.",
+          "docFull": "A record for an artifact nothing has notarized yet.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The artifact."
+            },
+            {
+              "name": "kind",
+              "doc": "app, dmg or pkg."
+            },
+            {
+              "name": "signature",
+              "doc": "How it is signed."
+            }
+          ],
+          "returns": "The record.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosArtifact",
+          "slug": "DesktopMacosArtifact-iface",
+          "kind": "interface",
+          "signature": "interface DesktopMacosArtifact",
+          "doc": "A packaged artifact and what was done to it.",
+          "docFull": "A packaged artifact and what was done to it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "The artifact's path."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: DesktopMacosArtifactKind",
+              "doc": "An `.app`, a `.dmg` or a `.pkg`."
+            },
+            {
+              "kind": "property",
+              "name": "signature",
+              "signature": "readonly signature: DesktopMacosSignature",
+              "doc": "How it is signed."
+            },
+            {
+              "kind": "property",
+              "name": "notarized",
+              "signature": "readonly notarized: boolean",
+              "doc": "Accepted by the notary service."
+            },
+            {
+              "kind": "property",
+              "name": "stapled",
+              "signature": "readonly stapled: boolean",
+              "doc": "Its ticket stapled (and validated)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMacosArtifactKind",
+          "slug": "DesktopMacosArtifactKind",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosArtifactKind = \"app\" | \"dmg\" | \"pkg\"",
+          "doc": "What a packaged macOS artifact is.",
+          "docFull": "What a packaged macOS artifact is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosDistributeDeps",
+          "slug": "DesktopMacosDistributeDeps",
+          "kind": "interface",
+          "signature": "interface DesktopMacosDistributeDeps",
+          "doc": "What the distribution steps run commands through (tests stub it).",
+          "docFull": "What the distribution steps run commands through (tests stub it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "run",
+              "signature": "readonly run?: (cmd: string[]) => Promise<void>",
+              "doc": "Runs a command, throwing on a non-zero exit (default {@linkcode desktopRun})."
+            }
+          ]
+        },
+        {
+          "name": "desktopMacosDistributionNote",
+          "slug": "desktopMacosDistributionNote",
+          "kind": "function",
+          "signature": "desktopMacosDistributionNote(artifacts: readonly DesktopMacosArtifact[]): string",
+          "doc": "The closing line of scripts/package-macos.ts: what each kind of artifact is, then whether the set is ready to distribute.",
+          "docFull": "The closing line of `scripts/package-macos.ts`: what each kind of artifact is, then whether\nthe set is ready to distribute.",
+          "params": [
+            {
+              "name": "artifacts",
+              "doc": "What the run produced."
+            }
+          ],
+          "returns": "The line (indented, in parentheses).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosSignature",
+          "slug": "DesktopMacosSignature",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosSignature = \"developer-id\" | \"ad-hoc\" | \"unsigned\"",
+          "doc": "How an artifact is signed: a Developer ID identity, ad-hoc (an .app only), or not at all.",
+          "docFull": "How an artifact is signed: a Developer ID identity, ad-hoc (an .app only), or not at all.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopMacosSigning",
           "slug": "desktopMacosSigning-fn",
           "kind": "function",
@@ -47121,6 +47251,43 @@
           "docFull": "How `desktop.ts` supplies the window New Window opens (`runDesktop({ newWindow })`): the open\noptions (`url` and `key` at least; a key already open is a `validation` error), or `undefined`\nto open nothing. Without it New Window opens `desktop.menu.window.newWindow` with the suggested\nkey.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopNotarizeMacos",
+          "slug": "desktopNotarizeMacos",
+          "kind": "function",
+          "signature": "desktopNotarizeMacos(artifacts: readonly DesktopMacosArtifact[], credentials: NotaryCredentials | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact[]>",
+          "doc": "Notarize and staple each Developer-ID-signed artifact with credentials (a keychain profile or an App Store Connect API key), one submission per artifact, all submitted at once. Without credentials, or for an ad-hoc / unsigned artifact, the record comes back unchanged.",
+          "docFull": "Notarize and staple each Developer-ID-signed artifact with `credentials` (a keychain profile or\nan App Store Connect API key), one submission per artifact, all submitted at once. Without\ncredentials, or for an ad-hoc / unsigned artifact, the record comes back unchanged.\n\nCall it for the .app before building its installers, so the .dmg and .pkg hold the stapled .app.",
+          "params": [
+            {
+              "name": "artifacts",
+              "doc": "The artifacts."
+            },
+            {
+              "name": "credentials",
+              "doc": "The notary credentials, or undefined for none."
+            },
+            {
+              "name": "deps",
+              "doc": "The command runner."
+            }
+          ],
+          "returns": "The records, in order, with what was done.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopNotaryCredentials",
+          "slug": "desktopNotaryCredentials",
+          "kind": "function",
+          "signature": "desktopNotaryCredentials(): NotaryCredentials | undefined",
+          "doc": "The notary credentials in the environment: DENEXT_NOTARY_PROFILE (a keychain profile), else an App Store Connect API key (DENEXT_NOTARY_KEY + DENEXT_NOTARY_KEY_ID, with DENEXT_NOTARY_ISSUER for a team key) — what denext build --compile --sign reads too.",
+          "docFull": "The notary credentials in the environment: `DENEXT_NOTARY_PROFILE` (a keychain profile), else\nan App Store Connect API key (`DENEXT_NOTARY_KEY` + `DENEXT_NOTARY_KEY_ID`, with\n`DENEXT_NOTARY_ISSUER` for a team key) — what `denext build --compile --sign` reads too.",
+          "params": [],
+          "returns": "The credentials, or undefined when none are set.",
           "examples": [],
           "denextOnly": true
         },
@@ -48086,6 +48253,31 @@
               "doc": "Its last saved bounds, if any."
             }
           ]
+        },
+        {
+          "name": "desktopSignMacosDmg",
+          "slug": "desktopSignMacosDmg",
+          "kind": "function",
+          "signature": "desktopSignMacosDmg(dmg: string, identity: string | undefined, deps?: DesktopMacosDistributeDeps): Promise<DesktopMacosArtifact>",
+          "doc": "Code-sign a .dmg with the Developer ID identity the .app was signed with: a secure timestamp, no Hardened Runtime (that applies to executables), then a strict verify. Without an identity (or the ad-hoc one) the image stays unsigned: an ad-hoc signature on a disk image means nothing to Gatekeeper.",
+          "docFull": "Code-sign a .dmg with the Developer ID identity the .app was signed with: a secure timestamp,\nno Hardened Runtime (that applies to executables), then a strict verify. Without an identity\n(or the ad-hoc one) the image stays unsigned: an ad-hoc signature on a disk image means nothing\nto Gatekeeper.",
+          "params": [
+            {
+              "name": "dmg",
+              "doc": "The disk image."
+            },
+            {
+              "name": "identity",
+              "doc": "DENEXT_CODESIGN_IDENTITY."
+            },
+            {
+              "name": "deps",
+              "doc": "The command runner."
+            }
+          ],
+          "returns": "The image's record.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "desktopSignWindows",
