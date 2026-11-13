@@ -618,10 +618,7 @@ async function moveStatic(
       }
     }
     if (await exists(to)) {
-      plan.wont.push({
-        item: `static/${rel}`,
-        reason: `public/${rel} already exists; merge them by hand`,
-      });
+      await mergeExisting(plan, from, to, `static/${rel}`, to.slice(dir.length + 1));
       continue;
     }
     await mfs.mkdir(dirname(to), { recursive: true });
@@ -629,6 +626,58 @@ async function moveStatic(
   }
   await removeEmptyDirs(join(dir, "static"));
   return tailwind;
+}
+
+/** Line-based files whose entries add up (`robots.txt` rules, `ads.txt` sellers): merged. */
+const APPENDABLE = /(?:^|\/)(?:robots|humans|ads|app-ads|security)\.txt$/;
+
+/** Whether two files hold the same bytes. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [x, y] = await Promise.all([Deno.readFile(a), Deno.readFile(b)]).catch(() => [null, null]);
+  if (!x || !y || x.length !== y.length) return false;
+  return x.every((v, i) => v === y[i]);
+}
+
+/**
+ * `existing` plus the lines of `incoming` it lacks, or null when it already has them all (the
+ * line order of each is kept; `incoming`'s new lines go after a blank line).
+ */
+export function appendMissingLines(existing: string, incoming: string): string | null {
+  const have = new Set(existing.split(/\r?\n/).map((l) => l.trimEnd()));
+  const extra = incoming.split(/\r?\n/).filter((l) => l.trim() !== "" && !have.has(l.trimEnd()));
+  if (extra.length === 0) return null;
+  const base = existing.endsWith("\n") ? existing : existing + "\n";
+  return `${base}\n${extra.join("\n")}\n`;
+}
+
+/**
+ * A `static/` file whose `public/` path is taken: an identical copy is dropped, a line-based file
+ * that adds up (`robots.txt`, …) gets the missing lines appended; anything else is a real
+ * conflict, left in `static/` and reported.
+ */
+async function mergeExisting(
+  plan: Plan,
+  from: string,
+  to: string,
+  item: string,
+  target: string,
+): Promise<void> {
+  if (await sameBytes(from, to)) {
+    await mfs.remove(from);
+    return;
+  }
+  if (APPENDABLE.test(target)) {
+    const merged = appendMissingLines(await mfs.readTextFile(to), await mfs.readTextFile(from));
+    if (merged !== null) await mfs.writeTextFile(to, merged);
+    await mfs.remove(from);
+    plan.review.push({ item, reason: `merged into ${target} (its missing lines appended)` });
+    return;
+  }
+  plan.wont.push({
+    item,
+    reason: `${target} already exists with different content; ${item} was left in place: ` +
+      "keep one of them",
+  });
 }
 
 /** Remove `abs` and its subdirectories when they hold no files. */
@@ -679,14 +728,23 @@ async function carryClientEntry(plan: Plan): Promise<string[]> {
     const { css, rest } = splitClientEntry(plan.dir, source);
     if (rest) {
       const target = join(plan.dir, "instrumentation-client.ts");
-      if (await exists(target)) {
+      const existing = await mfs.readTextFile(target).catch(() => null);
+      const merged = existing === null ? rest : appendModule(existing, rest);
+      if (merged === null) {
         plan.wont.push({
           item: name,
-          reason: "instrumentation-client.ts exists; merge client.ts's code into it by hand",
+          reason: "instrumentation-client.ts exists and declares a name client.ts's code " +
+            "declares too; merge client.ts's code into it by hand",
         });
         return css;
       }
-      await mfs.writeTextFile(target, rest);
+      if (existing !== null) {
+        plan.review.push({
+          item: name,
+          reason: "its code was appended to the existing instrumentation-client.ts",
+        });
+      }
+      await mfs.writeTextFile(target, merged);
     }
     await mfs.remove(path);
     return css;
@@ -699,6 +757,33 @@ function otherVitePlugins(source: string): string[] {
   const block = /plugins\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}?/.exec(source)?.[1] ?? "";
   const names = [...block.matchAll(/([A-Za-z_$][\w$.]*)\s*\(/g)].map((m) => m[1]);
   return names.filter((n) => n !== "fresh" && n !== "tailwindcss" && n !== "tailwind");
+}
+
+/** The top-level names a module declares or imports (the ones a second module could clash with). */
+function topLevelNames(source: string): Set<string> {
+  const names = new Set<string>();
+  const decl =
+    /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function\*?|class)\s+([A-Za-z_$][\w$]*)/gm;
+  for (const m of source.matchAll(decl)) names.add(m[1]);
+  for (const m of source.matchAll(/^import\s+([^"';]+?)\s+from\s/gm)) {
+    for (const part of m[1].replace(/[{}*]/g, ",").split(",")) {
+      const local = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (local && /^[A-Za-z_$][\w$]*$/.test(local) && local !== "type") names.add(local);
+    }
+  }
+  return names;
+}
+
+/**
+ * `extra` appended to the module `existing` (ES imports may appear anywhere at the top level), or
+ * null when they declare a name in common, which would not compile.
+ */
+export function appendModule(existing: string, extra: string): string | null {
+  if (existing.includes(extra.trim())) return existing;
+  const have = topLevelNames(existing);
+  for (const name of topLevelNames(extra)) if (have.has(name)) return null;
+  const base = existing.endsWith("\n") ? existing : existing + "\n";
+  return `${base}\n// From client.ts (the Fresh app's Vite client entry):\n${extra}`;
 }
 
 /** Remove `vite.config.*` (denext builds the app), reporting the plugins it ran. */
@@ -981,14 +1066,22 @@ async function writableGen(path: string): Promise<boolean> {
   return current === null || current.includes("generated by `denext migrate`");
 }
 
-/** Write the planned files; one the user wrote is left alone (and reported). */
+/** A file's text without the migration's generated-file header (for comparing contents). */
+function withoutGenHeader(text: string): string {
+  return text.replace(FRESH_GEN_HEADER, "").replace(/\r\n/g, "\n").trim();
+}
+
+/** Write the planned files; one the user wrote is left alone (and reported, unless the same). */
 async function writeGenerated(plan: Plan, written: string[]): Promise<void> {
   for (const g of plan.gen) {
     const path = join(plan.dir, g.path);
     if (!(await writableGen(path))) {
+      const current = await mfs.readTextFile(path).catch(() => "");
+      if (withoutGenHeader(current) === withoutGenHeader(g.source)) continue; // already what we'd write
       plan.wont.push({
         item: g.path,
-        reason: "exists and was not generated by migrate; left as is",
+        reason: "exists with different content and was not generated by migrate; left as is " +
+          "(move it aside and re-run migrate to see what it generates)",
       });
       continue;
     }

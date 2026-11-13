@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`denext migrate --from fresh` merges files that already exist.** A `static/` file identical to
+  the `public/` file at its path is dropped, a `robots.txt` / `humans.txt` / `ads.txt` /
+  `app-ads.txt` / `security.txt` gets the lines it lacks appended, `client.ts`'s code is appended
+  to an existing `instrumentation-client.ts` unless the two declare the same name, and a generated
+  file the app already has with the same content is no longer reported. Only a file that really
+  differs is left in place and reported.
 - **`preact-render-to-string/jsx` and `/stream-node`.** `denext/preact/render-to-string/jsx`
   writes the pretty-printed, JSX-like markup snapshot tests compare against (`render`, the default
   export, and `shallowRender`, with the `/jsx` entry's options), and

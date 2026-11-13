@@ -71,11 +71,14 @@ denext task dev
   alone also gets `import "@preact/signals"`, so a signal prop arrives live.
 - **`static/` moves to `public/`.** A stylesheet there holding the Tailwind directive moves to
   `assets/` instead, and becomes `tailwind: { input, output }` in `denext.config.ts`, compiled to
-  its old `public/` path. A file already in `public/` is left in place and reported.
+  its old `public/` path. Where `public/` already has the file, an identical copy is dropped and a
+  line-based file whose entries add up (`robots.txt`, `humans.txt`, `ads.txt`, `app-ads.txt`,
+  `security.txt`) gets the lines it lacks appended; a file that differs otherwise stays in
+  `static/` and is reported, the one real conflict to settle by hand.
 - **A Fresh 2 Vite app's `client.ts`**: its stylesheet imports go to the root layout (a Tailwind
   input among them is compiled to a `.gen.css` beside it, which the layout imports), and the rest
   of its code moves to `instrumentation-client.ts`, which denext runs in the browser before the
-  page hydrates. A Tailwind v3 stylesheet needs `npx @tailwindcss/upgrade` first (denext compiles
+  page hydrates (appended to one the app already has, unless the two declare the same name). A Tailwind v3 stylesheet needs `npx @tailwindcss/upgrade` first (denext compiles
   Tailwind v4).
 - **Removed**: `fresh.gen.ts`, a Fresh `dev.ts`, `vite.config.*`, `client.ts`, and for Fresh 1.x
   `main.ts` and `fresh.config.ts`. Fresh 2's `main.ts` stays: `middleware.ts` runs it.
@@ -213,12 +216,13 @@ picks a file path by `PROD` needs the development branch (`migrate --check` list
 Each finding names the files it was found in. **Won't migrate** means denext does not run it;
 **review** means it migrates but needs a look.
 
-| Won't migrate                                          | What to do                                                                                          |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `app.islands()` in `main.ts`                           | Move the components to `islands/` (or a `(_islands)` folder): islands are the `"use client"` files. |
-| Vite plugins other than Fresh's and Tailwind's         | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
-| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside) | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
-| A `static/` or generated file that already exists      | Merge it by hand.                                                                                   |
+| Won't migrate                                                              | What to do                                                                                          |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `app.islands()` in `main.ts`                                               | Move the components to `islands/` (or a `(_islands)` folder): islands are the `"use client"` files. |
+| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
+| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                     | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
+| A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own).                 |
+| A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                                 |
 
 | Review                                                         | What to do                                                                                                                                                 |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
