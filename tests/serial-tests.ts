@@ -17,6 +17,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/auth-example.test.ts",
   // Sets and restores DENEXT_BOOT_DDL around each case (the revocation-list boot check).
   "tests/auth-revocation-boot.test.ts",
+  "tests/backend-functions-heap-flag.test.ts",
   "tests/backend-identity.test.ts",
   "tests/backend-postgres.test.ts",
   "tests/backend-supabase-functions.test.ts",

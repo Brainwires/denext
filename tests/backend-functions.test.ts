@@ -18,6 +18,7 @@ import {
   discoverFunctions,
   FunctionHost,
   functionsDir,
+  heapFlagWarning,
   resolveFunctions,
   serveFunctions,
 } from "../packages/backend/src/functions.ts";
@@ -500,6 +501,20 @@ Deno.test("functions: permissions need Deno's worker options in deno.json", asyn
     resetPlugins();
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("functions heapFlagWarning: a DENO_V8_FLAGS heap size against memoryMb", () => {
+  const capped = resolveFunctions({ memoryMb: 64, functions: { a: { memoryMb: 32 }, b: {} } });
+  const warning = heapFlagWarning(capped, "--stack-size=900 --max_old_space_size=4096");
+  assertStringIncludes(warning ?? "", "--max_old_space_size=4096 in DENO_V8_FLAGS overrides");
+  assertStringIncludes(warning ?? "", "functions.memoryMb, functions.functions.a.memoryMb");
+  assertStringIncludes(warning ?? "", "Drop the flag");
+  const one = resolveFunctions({ functions: { a: { memoryMb: 32 } } });
+  assertStringIncludes(heapFlagWarning(one, "--max-heap-size=512") ?? "", "functions.functions.a");
+  // No cap, no flag, or another V8 flag: nothing to say.
+  assertEquals(heapFlagWarning(resolveFunctions({}), "--max-old-space-size=4096"), null);
+  assertEquals(heapFlagWarning(capped, undefined), null);
+  assertEquals(heapFlagWarning(capped, "--stack-size=900,--max-semi-space-size=64"), null);
 });
 
 Deno.test({
