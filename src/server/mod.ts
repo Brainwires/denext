@@ -443,7 +443,7 @@ export type {
   RequestContext,
   RouteRegistry,
 } from "./request-context.ts";
-export type { RenderScope } from "../runtime/render-scope.ts";
+export type { RenderScope, SettledHeadCallback } from "../runtime/render-scope.ts";
 // Scheduled/background jobs: define one in `jobs/<name>.ts`, schedule it via `scheduledJobs`
 // in denext.config.ts or a per-job `schedule`, and/or run it on demand (`runJob` / `denext job`).
 export {

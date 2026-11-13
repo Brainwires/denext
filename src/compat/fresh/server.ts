@@ -54,6 +54,7 @@ import {
 } from "./plugins.ts";
 
 export type { FreshModule } from "./context.ts";
+export type { FreshPlugin, PluginRenderFunctionResult, PluginRenderResult } from "./plugins.ts";
 
 /** A `_middleware` file. */
 export interface FreshMiddlewareEntry {
