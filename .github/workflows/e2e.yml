@@ -21,11 +21,61 @@ permissions:
   contents: read
 
 jobs:
+  # Picks each Linux job's runner (scripts/ci/pick-linux-runners.ts): biscuits' Linux pools
+  # (RUNNER_LINUX_X64, RUNNER_LINUX_X64_DOCKER) share one set of job containers, so the jobs that
+  # most need them (first in PICK_JOBS) take that capacity's free slots and the rest run on
+  # ubuntu-latest at once instead of queueing behind each other; ubuntu-latest on a fork's pull
+  # request, or when DENEXT_POOL_HEALTH is stale or marks a pool down. It runs on GitHub's image (it
+  # must not wait in the queue it shortens), and its pick step never fails: on any error a Linux job whose
+  # pick is empty takes its repository variable (each runs `if: !cancelled()`).
+  linux-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+      contents: read
+    outputs:
+      migration_beds: ${{ steps.pick.outputs.migration_beds }}
+      timer_stress: ${{ steps.pick.outputs.timer_stress }}
+      job_install: ${{ steps.pick.outputs.job_install }}
+      hosted: ${{ steps.pick.outputs.hosted }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/pick-linux-runners.ts
+            scripts/ci/pick-windows-runner.ts
+          sparse-checkout-cone-mode: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
+      # The script bounds its API calls (60 s) and prints its own fallback on an API error; a crash
+      # before it prints leaves the outputs empty, which the jobs read as "the variable".
+      - name: Pick
+        id: pick
+        env:
+          PICK_JOBS: ${{ inputs.job == 'all' && 'migration_beds timer_stress job_install' || inputs.job == 'migration-beds' && 'migration_beds' || inputs.job == 'timer-stress' && 'timer_stress' || inputs.job == 'job-install' && 'job_install' || '' }}
+          PICK_RUNNER_X64: ${{ vars.RUNNER_LINUX_X64 }}
+          PICK_RUNNER_DOCKER: ${{ vars.RUNNER_LINUX_X64_DOCKER }}
+          PICK_RUNNER_2204: ${{ vars.RUNNER_LINUX_X64_2204 }}
+          PICK_SHARED_SLOTS: ${{ vars.RUNNER_LINUX_X64_SHARED_SLOTS }}
+          PICK_HEALTH: ${{ vars.DENEXT_POOL_HEALTH }}
+          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+          # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
+          # each later one waits a little so it counts the jobs an earlier one queued on the pools.
+          PICK_DELAY: ${{ github.event_name == 'workflow_dispatch' && '60' || '0' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+        run: |
+          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-linux-runners.ts >> "$GITHUB_OUTPUT" ||
+            echo "::warning::the Linux runner pick failed: every Linux job takes its repository variable"
+
   e2e:
     if: inputs.job == 'all' || inputs.job == 'e2e'
     # Stays on GitHub's image: its 1M-row scroll perf test needs more CPU than a pool container's 4.
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -97,8 +147,9 @@ jobs:
   # Add a bed: a new `tests/migration-bed/<app>.test.ts` describing the app as data and
   # calling `runBed` (see _bed.ts); bump a pin deliberately and say why in the commit.
   migration-beds:
-    if: inputs.job == 'all' || inputs.job == 'migration-beds'
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() && (inputs.job == 'all' || inputs.job == 'migration-beds') }}
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.migration_beds || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Above one bed's summed step deadlines (~55 min for a full stall) so the harness's own
     # `[killed after …]` diagnostics print instead of the runner cutting the job first.
     timeout-minutes: 120
@@ -147,11 +198,14 @@ jobs:
   # than once in a while on CI. The job summary lists each run's seed; replay a failed one with
   # `deno task test:stress --seed <seed>`.
   timer-stress:
-    if: inputs.job == 'all' || inputs.job == 'timer-stress'
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() && (inputs.job == 'all' || inputs.job == 'timer-stress') }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.timer_stress || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -219,7 +273,7 @@ jobs:
   # no cron daemon to fire it) the test says what it skipped in a notice.
   job-install:
     name: job-install (${{ matrix.label }})
-    if: inputs.job == 'all' || inputs.job == 'job-install'
+    if: ${{ !cancelled() && (inputs.job == 'all' || inputs.job == 'job-install') }}
     strategy:
       fail-fast: false
       matrix:
@@ -229,7 +283,10 @@ jobs:
           - { os: windows-latest, label: windows, backend: schtasks }
     # Each entry runs on the self-hosted runner its repository variable names (RUNNER_LINUX_X64,
     # RUNNER_MACOS_ARM, RUNNER_WINDOWS_X64: a label, or a JSON array), else its GitHub image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # The Linux entry takes RUNNER_LINUX_X64 only while biscuits' shared Linux capacity has a free
+    # slot, else ubuntu-latest (the linux-runner job picks).
+    needs: linux-runner
+    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')) || needs.linux-runner.outputs.job_install || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
     timeout-minutes: 30
     defaults:
       run:

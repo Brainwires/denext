@@ -71,6 +71,7 @@ const WORKFLOWS: FilteredWorkflow[] = [
       // the jobs' own steps
       "scripts/ci/desktop-*.ts",
       "scripts/ci/pick-windows-runner.ts",
+      "scripts/ci/pick-linux-runners.ts",
       "tests/integration/scaffold.test.ts",
       "tests/install-ps1.test.ts",
       {
@@ -97,6 +98,7 @@ const WORKFLOWS: FilteredWorkflow[] = [
       "examples/desktop-kitchen-sink/e2e/window-test.ts",
       "scripts/ci/desktop-window-summary.ts",
       "scripts/ci/pick-windows-runner.ts",
+      "scripts/ci/pick-linux-runners.ts",
       "src/cli/commands/desktop*.ts",
       "src/cli/commands/serve.ts",
       "src/cli/commands/patch.ts",
