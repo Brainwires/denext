@@ -24,7 +24,7 @@ and this project adheres to
   `setBounds` per frame at most) and hides it while the element is detached, hidden or out of
   view. `desktop.webViews.limit` caps the views per window (default 8, up to 32) and
   `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
-  whether the engine hosts them (the CEF backend first; laufey API 58, runtime 3.0.0-denext.22); on
+  whether the engine hosts them (CEF, WKWebView, WebView2 and WebKitGTK; a runtime with laufey API 58); on
   an older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
   `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
