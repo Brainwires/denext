@@ -394,20 +394,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** partial navigation merges only the `<title>`, `<meta>` and stylesheet `<link>`
-  elements of an answer's head (no `<script>` or `<style>`, and nothing the page has is
-  removed). Browser back / forward to an entry partial navigation made before a reload fetches
-  it and replaces its regions, and back past a whole-page navigation re-renders that page, so an
-  `append` / `prepend` history is replayed only between entries of the same page load and page.
-  `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not run;
-  `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
-  `public/` still answer first. `csp({ useNonce: true })` leaves out `'unsafe-inline'` (denext
-  allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
-  true under `denext start`, where the source runs in place rather than from Vite's build output.
-  `denext migrate --check` lists each one it finds
+  `public/` still answer first. `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** Preact's `options` hooks receive denext's elements (`type`, `props`, `key`), not
   Preact's internal vnodes, and `_diff` / `__b`, `_catchError` / `__e`, `_hook` / `__h` and

@@ -47,6 +47,14 @@ class El {
     return this.attrs.type ?? "submit";
   }
   form: El | null = null;
+  /** A `<script>` / `<style>` body. */
+  textContent = "";
+  /** A `<style>`'s sheet: its rules apply unless the page's policy blocked the text. */
+  get sheet(): { cssRules: unknown[] } | null {
+    return this.tagName === "style"
+      ? { cssRules: this.textContent ? [this.textContent] : [] }
+      : null;
+  }
 }
 
 /** A stand-in `<form>` (the code checks `instanceof HTMLFormElement`). */
@@ -272,6 +280,10 @@ export interface PartialHistoryReport {
   claims: unknown[];
   /** The partial requests made. */
   fetched: string[];
+  /** The `<script>` / `<style>` bodies in the head after the merges: `tag body` per element. */
+  bodies: string[];
+  /** Where each pop scrolled to (`x,y`). */
+  scrolls: string[];
 }
 
 /** Drive the head merge, the view transition and back / forward through a fake browser. */
@@ -285,6 +297,8 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
     steps: [],
     claims: [],
     fetched: [],
+    bodies: [],
+    scrolls: [],
   };
   const listeners: { type: string; fn: Listener; capture: boolean }[] = [];
   const loc = { href: ORIGIN + "/", origin: ORIGIN, pathname: "/", search: "", hash: "" };
@@ -293,6 +307,7 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
     new El("meta", { name: "description", content: "old" }),
     new El("meta", { charset: "utf-8" }),
     new El("link", { rel: "stylesheet", href: "/a.css" }),
+    Object.assign(new El("style", { id: "own" }), { textContent: ".own{}" }),
   ];
   let transitions = 0;
   g.document = {
@@ -312,11 +327,13 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
   };
   g.location = loc;
   const states: unknown[] = [];
+  const pushes: unknown[] = [];
   const fakeHistory = {
     state: null as unknown,
     pushState: (state: unknown, _t: string, url: string) => {
       fakeHistory.state = state;
       states.push(state);
+      pushes.push(state);
       loc.href = new URL(url, loc.href).href;
     },
     replaceState: (state: unknown, _t: string, url: string) => {
@@ -326,7 +343,9 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
     },
   };
   g.history = fakeHistory;
-  g.scrollTo = () => {};
+  g.scrollX = 0;
+  g.scrollY = 0;
+  g.scrollTo = (o: { left: number; top: number }) => report.scrolls.push(`${o.left},${o.top}`);
 
   const meta = (attrs: Record<string, string>) => h("meta", attrs);
   const trees: Record<string, VNode> = {
@@ -338,9 +357,14 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
         h("link", { key: "4", rel: "stylesheet", href: "/a.css" }),
         h("link", { key: "5", rel: "stylesheet", href: "/b.css", crossOrigin: "anonymous" }),
         h("link", { key: "6", rel: "icon", href: "/icon.png" }),
+        h("script", { key: "7", type: "application/ld+json" }, '{"@type":"Recipe"}'),
+        h("script", { key: "8" }, "alert(1)"), // executable: never merged
+        h("style", { key: "9", dangerouslySetInnerHTML: { __html: ".added{}" } }),
+        h("style", { key: "10", id: "own" }, ".theirs{}"), // an id: the page's own is kept
       ]),
       h("body", { key: "b" }, [
         h("svg", { key: "s" }, h("meta", { name: "in-svg", content: "x" })),
+        h("style", { key: "bs" }, ".in-body{}"), // outside the head: not merged
         h(Partial, { key: "p", name: "list" }, "styled"),
       ]),
     ]),
@@ -380,6 +404,8 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
   report.head = headChildren.map((c) =>
     [c.tagName, ...Object.entries(c.attrs).map(([k, v]) => `${k}=${v}`)].join(" ")
   );
+  report.bodies = headChildren.filter((c) => c.tagName === "script" || c.tagName === "style")
+    .map((c) => `${c.tagName} ${c.textContent}`);
   await click(new El("button", { type: "button", "f-partial": "/parts/plain" }, nav));
   report.transitions.push(transitions);
 
@@ -392,11 +418,17 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
     await settle();
     report.steps.push(text());
   };
+  g.scrollY = 120; // the first entry was scrolled when the link left it
   await follow("/?page=2", "/parts/two");
+  g.scrollY = 340;
   await follow("/?page=3", "/parts/three");
-  const page2 = states[states.length - 2];
-  const page3 = states[states.length - 1];
-  const first = states.find((s) => s !== page2 && s !== page3);
+  const [page2, page3] = pushes;
+  /** The state recorded last for an entry (the push that left it wrote its scroll position). */
+  const lastOf = (id: unknown) =>
+    [...states].reverse().find((s) => (s as Record<string, unknown>).denextFreshEntry === id);
+  const entry = (s: unknown) => (s as Record<string, unknown>).denextFreshEntry;
+  const first = lastOf(entry(states.find((s) => entry(s) !== entry(page2))));
+  report.scrolls.length = 0;
   const pop = async (href: string, state: unknown) => {
     loc.href = ORIGIN + href;
     fakeHistory.state = state;
@@ -405,13 +437,13 @@ export async function runPartialHistoryScenarios(): Promise<PartialHistoryReport
     await settle();
     report.steps.push(text());
   };
-  await pop("/?page=2", page2); // back
+  await pop("/?page=2", lastOf(entry(page2))); // back
   await pop("/", first); // back
   await pop("/?page=3", page3); // forward
   // A stack layout claiming after: it answers what this declines.
   g.__dnxPop = (href: string) => `next:${new URL(href).search}`;
   await pop("/#top", null);
-  // An entry this page load holds no record of: fetched, its regions replaced.
-  await pop("/?page=9", { denextFreshEntry: "gone" });
+  // An entry this page load holds no record of: fetched, its regions applied in their modes.
+  await pop("/?page=9", { denextFreshEntry: "gone", denextFreshScroll: { x: 0, y: 55 } });
   return report;
 }

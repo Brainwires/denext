@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **Fresh partial navigation merges `<script>` and `<style>` and keeps scroll positions, as Fresh
+  does.** A data `<script>` in the answer's head (JSON-LD, …) is added or updated by type and `id`
+  (never an executable one), a `<style>` without an `id` is added (through a constructed style
+  sheet when the page's policy does not cover its text), each history entry keeps its scroll
+  position for back / forward, and an entry made before a reload applies the refetched regions in
+  their own modes, as Fresh's `popstate` handler does, instead of replacing them.
 - **Fresh's `new App({ basePath })`, `csp({ useNonce: true })` and `import.meta.env.PROD`
   behave as in Fresh.** The generated `middleware.ts` mounts every route under the `App`'s
   `basePath` (a path outside it renders the not-found page with a 404; `ctx.url` stays the full

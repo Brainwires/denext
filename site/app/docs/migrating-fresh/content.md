@@ -158,17 +158,25 @@ form), and a full-page navigation renders each region with the new page's childr
 Before the regions swap, the answer's head is merged into the page's, as Fresh does: its
 `<title>`, each `<meta>` (matched by `name`, `property`, `http-equiv` or `itemprop`; a `charset`
 is left alone) updated or added, and each stylesheet `<link>` the page lacks added and waited for
-(up to three seconds) so the new regions never paint unstyled. `<script>` and `<style>` elements
-are not merged, and nothing the page already has is removed. Under an element with
+(up to three seconds) so the new regions never paint unstyled. From the answer's `<head>`, a data
+`<script>` (JSON-LD and other non-executable types) is added, or updated when the page has one of
+the same type and `id` (without an `id`, the same content); an executable `<script>` is not
+merged, so it never runs twice. A `<style>` without an `id` is added (one with an `id` is the
+page's own and stays as it is); when the page's Content-Security-Policy, hashed for the document
+it was served with, does not cover its text, its rules apply through a constructed style sheet.
+Nothing the page already has is removed, as in Fresh. Under an element with
 `f-view-transition` (`<body f-client-nav f-view-transition>`), the swap runs inside
 `document.startViewTransition` where the browser has it, so `view-transition-name` styles
 animate it; elsewhere, and in browsers without the API, it swaps at once.
 
 Browser back and forward between the entries partial navigation made show each region as that
 entry left it, with no request: an `append` or `prepend` history is restored, not refetched or
-appended twice. An entry made before a reload is fetched as a partial request and its regions
-are replaced with the answer's (whatever their `mode`); an entry from a whole-page navigation,
-or one whose page has been re-rendered since, renders the whole page as before.
+appended twice. Each entry keeps its scroll position, as Fresh's history state does: a link's
+navigation starts the new entry at the top, and back / forward scrolls to where the entry was
+left. An entry made before a reload is fetched as a partial request and its regions applied in
+their own modes, as Fresh's `popstate` handler does (an answer with no partials renders the
+whole page); an entry from a whole-page navigation, or one whose page has been re-rendered
+since, renders that page as its URL's, as the document load Fresh makes there does.
 
 The mode is Fresh's `mode` prop (`<Partial name="cart" mode="append">`; the type is `PartialMode`
 from `denext/fresh/partial`). `applyPartialTree(tree)` from the same module applies the regions of

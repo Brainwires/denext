@@ -34,8 +34,14 @@ Deno.test("partial navigation: buttons, links and forms fetch and swap their reg
   ]);
   // A link pushes its href; a form replaces the entry with its action, as Fresh does.
   assertEquals(r.pushed, ["http://app.test/?page=2"]);
-  // The first swap marks the entry it shows (same URL), so back / forward can find it again.
-  assertEquals(r.replaced, ["http://app.test/", "http://app.test/search", "http://app.test/"]);
+  // The first swap marks the entry it shows (same URL), so back / forward can find it again; the
+  // link's push records the scroll position of the entry it leaves first, as Fresh does.
+  assertEquals(r.replaced, [
+    "http://app.test/",
+    "http://app.test/",
+    "http://app.test/search",
+    "http://app.test/",
+  ]);
   assertEquals(
     r.assigned,
     ["http://app.test/landed", "https://other.example/landed"],
@@ -56,13 +62,19 @@ Deno.test("partial navigation: head merge, view transitions and back / forward",
   // The answer's head merged into the page's: a <meta> updated by name and one added by
   // property; the charset, an existing stylesheet, a non-stylesheet link and an <svg>'s content
   // left alone; the new stylesheet added (and waited for) before the region swapped.
+  // As Fresh's applyPartials: a data <script> is added (an executable one never is), a <style>
+  // without an id added (one with an id is the page's own), one in the body ignored.
   assertEquals(r.head, [
     "meta name=description content=new",
     "meta charset=utf-8",
     "link rel=stylesheet href=/a.css",
+    "style id=own",
     "meta property=og:title content=Styled",
     "link rel=stylesheet href=/b.css crossorigin=anonymous",
+    "script type=application/ld+json",
+    "style",
   ]);
+  assertEquals(r.bodies, ["style .own{}", 'script {"@type":"Recipe"}', "style .added{}"]);
   assertEquals([r.whileLoading, r.afterLoad], ["one", "styled"]);
   // Under f-view-transition the swap ran in document.startViewTransition; elsewhere not.
   assertEquals(r.transitions, [1, 1]);
@@ -73,8 +85,12 @@ Deno.test("partial navigation: head merge, view transitions and back / forward",
     "one", // back to the first entry
     "one+two+three", // forward
     "one+two+three", // a pop that is not partial navigation's: left to the next claim
-    "fetched", // an entry with no record here: fetched, its region replaced (not appended)
+    // An entry with no record here (after a reload): fetched, and its region applied in its own
+    // mode, as Fresh's popstate handler applies the answer.
+    "one+two+threefetched",
   ]);
+  // Each claimed pop scrolls to where its entry was left (Fresh's state.scrollX / scrollY).
+  assertEquals(r.scrolls, ["0,340", "0,120", "0,0", "0,55"]);
   assertEquals(r.claims, [true, true, true, "next:", true]);
   assertEquals(r.fetched, [
     "/parts/styled?fresh-partial=true",
