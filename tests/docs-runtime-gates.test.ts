@@ -5,24 +5,41 @@
 // what detects them and what happens without them; the `ctx.caller` example must not refuse every
 // call where the runtime can't mark frames. The generated API reference must carry the 4.17
 // exports, and a few reference rows must exist.
+//
+// The CHANGELOG checks read every section, never just `[Unreleased]`: a release commit folds
+// `[Unreleased]` into the version's section and leaves it empty, so a check bound to it fails on
+// the release commit and every commit after (4.17.0's did). The last test runs them against a
+// CHANGELOG rolled the way `deno task release` rolls it.
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
+import { foldPrereleases, groupByHeading, splitSections } from "../scripts/release.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const read = (path: string): Promise<string> => Deno.readTextFile(join(ROOT, path));
 
-/** The CHANGELOG's `[Unreleased]` section. */
-function unreleasedOf(changelog: string): string {
-  const start = changelog.indexOf("## [Unreleased]");
-  return changelog.slice(start, changelog.indexOf("\n## [", start + 1));
+/** Every top-level entry (a `- ` bullet with its continuation lines) in every CHANGELOG section. */
+function changelogEntries(changelog: string): string[] {
+  return splitSections(changelog).flatMap(([, body]) => [...groupByHeading(body).values()].flat());
 }
 
-/** The text a reader learns the runtime gates from (the CHANGELOG only above its first release). */
+/** CHANGELOG lines that gate on 3.0.0-denext.19, which was tagged but never published. */
+function changelogGateOffenders(changelog: string): string[] {
+  return changelog.split("\n").filter((line) => /3\.0\.0-denext\.19\b/.test(line))
+    .map((line) => `CHANGELOG.md: ${line.trim()}`);
+}
+
+/** The will-navigate entry names the release that shipped it, in whichever section holds it. */
+function changelogNamesNavigationRelease(changelog: string): boolean {
+  const entries = changelogEntries(changelog).filter((e) =>
+    e.startsWith("- **Desktop: a will-navigate hook.**")
+  );
+  return entries.length === 1 && entries[0].includes("Runtime 3.0.0-denext.20 and later");
+}
+
+/** The text a reader learns the runtime gates from (the CHANGELOG is checked on its own). */
 async function publicTexts(): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const changelog = await read("CHANGELOG.md");
-  out.set("CHANGELOG.md [Unreleased]", unreleasedOf(changelog));
   for (
     const path of [
       "AGENTS.md",
@@ -44,11 +61,9 @@ async function publicTexts(): Promise<Map<string, string>> {
 }
 
 Deno.test("docs: runtime gates name a capability, not a release that was never published", async () => {
-  const offenders: string[] = [];
+  const offenders = changelogGateOffenders(await read("CHANGELOG.md"));
   for (const [path, text] of await publicTexts()) {
-    const pattern = path.startsWith("CHANGELOG")
-      ? /3\.0\.0-denext\.19\b/
-      : /(?<!2\.9\.7-)\bdenext\.(?:19|20)\b/; // 2.9.7-denext.N is an older line
+    const pattern = /(?<!2\.9\.7-)\bdenext\.(?:19|20)\b/; // 2.9.7-denext.N is an older line
     for (const line of text.split("\n")) {
       if (pattern.test(line) && !line.includes("JAIL_DECLARED_REDIRECTS_RELEASE")) {
         offenders.push(`${path}: ${line.trim()}`);
@@ -74,8 +89,26 @@ Deno.test("docs: onWillNavigate and a verified ctx.caller say what detects them"
   assert(limits.includes("`onWillNavigate` needs a runtime that reports navigation events"));
   assert(limits.includes("`ctx.caller.frame` is verified only on CEF and WKWebView"));
   // The CHANGELOG is the dated record: it names the release.
-  const unreleased = unreleasedOf(changelog);
-  assert(unreleased.includes("Runtime 3.0.0-denext.20 and later"));
+  assert(changelogNamesNavigationRelease(changelog));
+});
+
+Deno.test("docs: the CHANGELOG checks hold on a release commit (an empty [Unreleased])", async () => {
+  const changelog = await read("CHANGELOG.md");
+  const marker = "## [Unreleased]";
+  const date = "2099-01-01";
+  const rolled = {
+    // A stable release folds [Unreleased] (and the rc sections) into the version's section.
+    stable: foldPrereleases(changelog, "99.0.0", date),
+    // A prerelease puts its header right under [Unreleased].
+    prerelease: changelog.replace(marker, `${marker}\n\n## [99.0.0-rc.1] - ${date}`),
+  };
+  for (const [kind, text] of Object.entries(rolled)) {
+    const unreleased = splitSections(text).find(([h]) => h === marker);
+    assert(unreleased, `${kind}: keeps an [Unreleased] header`);
+    assertEquals(unreleased[1].trim(), "", `${kind}: [Unreleased] is empty`);
+    assertEquals(changelogGateOffenders(text), [], kind);
+    assert(changelogNamesNavigationRelease(text), kind);
+  }
 });
 
 Deno.test("docs: the ctx.caller example works where frames are not marked", async () => {
