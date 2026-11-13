@@ -1568,6 +1568,9 @@ memoryMb: 256 } }`). A worker over it is terminated: the requests it was serving
 WORKER_LIMIT`, as on Supabase, and the next call starts a fresh worker. Memory outside the heap
 (`ArrayBuffer`s, native code) is not counted. Like `permissions`, it needs `"unstable":
 ["worker-options"]` in `deno.json`.
+A heap size in `DENO_V8_FLAGS` (`--max-old-space-size` / `--max-heap-size`, either spelling)
+overrides `memoryMb`: V8 takes it over a worker's own heap cap, so every worker gets the flag's size.
+The plugin warns once at startup when both are set; drop the flag and rely on `memoryMb`.
 
 ## The admin endpoint
 

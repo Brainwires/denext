@@ -967,6 +967,36 @@ function workerOptionUsers(config: ResolvedFunctions): string[] {
   return config.memoryMb === undefined ? named : ["functions.memoryMb", ...named];
 }
 
+/** A heap-size V8 flag in a `DENO_V8_FLAGS` value, either spelling (`-` or `_`). */
+const HEAP_SIZE_FLAG = /^--max[-_](old[-_]space|heap)[-_]size(=|$)/;
+
+/**
+ * The warning that a heap size in `DENO_V8_FLAGS` overrides the configured worker heap caps — V8
+ * takes it over an isolate's own resource constraints, so each worker's cap is raised to the
+ * flag's size — or `null` when no cap is set or no such flag is present.
+ *
+ * @param config The resolved options.
+ * @param v8Flags The process's `DENO_V8_FLAGS` (comma- or space-separated).
+ * @returns The warning, or `null`.
+ */
+export function heapFlagWarning(
+  config: ResolvedFunctions,
+  v8Flags: string | undefined,
+): string | null {
+  const caps = Object.entries(config.functions)
+    .filter(([, f]) => f.memoryMb !== undefined)
+    .map(([name]) => `functions.functions.${name}.memoryMb`);
+  if (config.memoryMb !== undefined) caps.unshift("functions.memoryMb");
+  const flags = (v8Flags ?? "").split(/[,\s]+/).filter((f) => HEAP_SIZE_FLAG.test(f));
+  if (caps.length === 0 || flags.length === 0) return null;
+  return `[denext] backend(): ${flags.join(", ")} in DENO_V8_FLAGS overrides ${caps.join(", ")}: ` +
+    "V8 takes a heap-size flag over a worker's own heap cap, so each function's cap is raised to " +
+    "the flag's size. Drop the flag and rely on memoryMb, or drop memoryMb.";
+}
+
+/** The heap-flag warnings said already (once each per process). */
+const warnedHeapFlags = new Set<string>();
+
 /**
  * Wire Edge Functions into the plugin: the request handler, and under `denext dev` a watcher
  * that restarts the workers when a file in the functions directory changes.
@@ -981,6 +1011,11 @@ export async function setupFunctions(ctx: PluginContext, config: ResolvedFunctio
       `backend(): ${needing.join(", ")} set permissions or memoryMb, which need Deno's ` +
         `worker options: add "unstable": ["worker-options"] to deno.json`,
     );
+  }
+  const heapWarning = heapFlagWarning(config, readProcessEnv("DENO_V8_FLAGS"));
+  if (heapWarning && !warnedHeapFlags.has(heapWarning)) {
+    warnedHeapFlags.add(heapWarning);
+    console.warn(heapWarning);
   }
   const dir = await functionsDir(ctx.projectRoot, config.dir);
   const dev = ctx.mode === "dev";

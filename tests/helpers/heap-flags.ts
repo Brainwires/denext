@@ -5,8 +5,7 @@
 // (`heapEnv`), and a child allocating without end then grows to gigabytes before anything stops
 // it, starving every other test on the host.
 
-/** The V8 flags that set a heap size, either spelling. */
-const HEAP_SIZE_FLAG = /^--max[-_](old[-_]space|heap)[-_]size(=|$)/;
+import { HEAP_SIZE_FLAG } from "../../src/build/heap-flags.ts";
 
 /**
  * `env` without the heap sizes in its `DENO_V8_FLAGS` (the variable dropped when nothing else is

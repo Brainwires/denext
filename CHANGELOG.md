@@ -108,6 +108,13 @@ and this project adheres to
   those calls carry no cookies, as before. `createTestClient(handler, { cookieJar })` and
   `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules; the
   default name-keyed jar is unchanged.
+- **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
+  `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
+  the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.
+  `denext start` now warns once when the process that serves runs with `--max-memory` and such a
+  flag, naming the flag, the cap and the fix (drop the flag and rely on the cap), and `denext dev`
+  warns that it will override `start.limits.memory` in production. @denext/backend warns the same
+  way for Edge Functions' `memoryMb`.
 
 ### Changed
 

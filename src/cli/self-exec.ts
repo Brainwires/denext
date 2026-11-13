@@ -17,6 +17,8 @@ import {
   supportsLimitsWhy,
 } from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
+import { findHeapFlags, type HeapCapWhen, heapFlagWarning } from "../build/heap-flags.ts";
+import { readEnv as readProcessEnv } from "../build/idle-trim.ts";
 import { runToExit } from "../build/exited-output.ts";
 import {
   REVOCATION_NOTICED_ENV,
@@ -515,6 +517,8 @@ export interface RunCommandLine {
   script?: string;
   /** Its {@linkcode RESOLUTION_FLAGS}, verbatim and in order, each with its value. */
   readonly resolution: string[];
+  /** The values of its `--v8-flags` (each a comma-separated V8 flag list), in order. */
+  readonly v8Flags: string[];
 }
 
 /** The name a `--flag[=value]` token sets (`--lock=x` → `--lock`). */
@@ -528,7 +532,9 @@ function runFlagTokens(argv: readonly string[], i: number): string[] {
   const next = argv[i + 1];
   const takesNext = SEPARATE_VALUE_FLAGS.has(argv[i]) && next !== undefined &&
     !next.startsWith("-");
-  return takesNext ? [argv[i], next] : [argv[i]];
+  // `--v8-flags <list>`: its value is V8 flags, which start with `--` themselves.
+  const v8List = argv[i] === "--v8-flags" && next?.startsWith("--") === true;
+  return takesNext || v8List ? [argv[i], next] : [argv[i]];
 }
 
 /** Record what one runtime flag (its {@linkcode runFlagTokens}) says about resolution. */
@@ -538,6 +544,7 @@ function applyRunFlag(tokens: readonly string[], out: RunCommandLine): void {
   else if (name === "--config" || name === "-c") {
     out.config = tokens[1] ?? (tokens[0].slice(name.length + 1) || undefined);
   } else if (RESOLUTION_FLAGS.has(name)) out.resolution.push(...tokens);
+  else if (name === "--v8-flags") out.v8Flags.push(tokens[1] ?? tokens[0].slice(name.length + 1));
 }
 
 /**
@@ -548,7 +555,7 @@ function applyRunFlag(tokens: readonly string[], out: RunCommandLine): void {
  * @returns What it said; empty when it is not a `deno run`.
  */
 export function parseRunCommandLine(argv: readonly string[]): RunCommandLine {
-  const out: RunCommandLine = { noConfig: false, resolution: [] };
+  const out: RunCommandLine = { noConfig: false, resolution: [], v8Flags: [] };
   const run = argv.indexOf("run");
   for (let i = run + 1; run !== -1 && i < argv.length; i++) {
     if (!argv[i].startsWith("-")) {
@@ -645,6 +652,30 @@ export async function ownCommandLine(): Promise<string[] | null> {
     }
   } catch { /* no permission, no ps */ }
   return null;
+}
+
+/**
+ * The warning that this process's heap-size V8 flags override configured heap caps
+ * (src/build/heap-flags.ts): from its own `DENO_V8_FLAGS` and its own command line's
+ * `--v8-flags` — a re-run child inherits the variable but not an outer process's flags, so only
+ * the process that runs the verb can tell. The command line is read only when a cap is configured.
+ *
+ * @param caps The configured caps, named (`memoryCap` in src/build/heap-flags.ts).
+ * @param when Whether the caps apply to this process or only in production.
+ * @param readArgv Reads the command line (tests pass a fake).
+ * @param readEnv Reads a variable (tests pass a fake).
+ * @returns The warning, or `null`.
+ */
+export async function heapFlagNotice(
+  caps: readonly string[],
+  when: HeapCapWhen,
+  readArgv: () => Promise<string[] | null> = ownCommandLine,
+  readEnv: (name: string) => string | undefined = readProcessEnv,
+): Promise<string | null> {
+  if (caps.length === 0) return null;
+  const argv = await readArgv();
+  const v8Flags = argv ? parseRunCommandLine(argv).v8Flags : [];
+  return heapFlagWarning(findHeapFlags(readEnv("DENO_V8_FLAGS"), v8Flags), caps, when);
 }
 
 /**
