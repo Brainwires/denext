@@ -712,3 +712,20 @@ Deno.test("createMiddlewareRunner fails closed when no handler is exported", () 
     true,
   );
 });
+
+Deno.test("rewrite(path) keeps the request's query string; a destination's own query wins", async () => {
+  for (
+    const [dest, from, want] of [
+      ["/home", "http://localhost/a?x=1&y=2", "http://localhost/home?x=1&y=2"],
+      ["/home?z=3", "http://localhost/a?x=1", "http://localhost/home?z=3"],
+      ["/home?", "http://localhost/a?x=1", "http://localhost/home?"],
+      ["sibling", "http://localhost/a/b?q=1", "http://localhost/a/sibling?q=1"],
+      ["https://other.example/p", "http://localhost/a?q=1", "https://other.example/p?q=1"],
+    ] as const
+  ) {
+    const run = composeMiddleware([{ handler: () => rewrite(dest) }])!;
+    const outcome = await run(new Request(from));
+    if (outcome.type !== "rewrite") throw new Error("expected a rewrite");
+    assertEquals(outcome.url, want, dest);
+  }
+});

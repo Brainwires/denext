@@ -498,7 +498,7 @@ function finish(
   const internal = entries.get(fr)?.internal;
   if (internal) return rewrite(internal, init);
   // Under `new App({ basePath })`, the app/ tree serves the path below it.
-  if (fr.base) return rewrite(`${fr.path}${fr.ctx.url.search}`, init);
+  if (fr.base) return rewrite(fr.path!, init);
   return next(init);
 }
 
