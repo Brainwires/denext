@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **Fresh conformance beds and a Fresh comparison page.** The migration beds now run
+  `denext migrate` on the two apps `@fresh/init` scaffolds (Vite with Tailwind, and Fresh's own
+  builder) and on Deno SaaSKit (a Fresh 1.x app with five plugins), besides Fresh's own website,
+  and assert that nothing is left as won't-migrate (`wontMigrate: []` on a bed; `serve: false`
+  stops a bed after the build). Fresh's website migrates with no hand edit. A migrated Fresh 1.x
+  app's imports of `$fresh/src/server/defines.ts`, `/types.ts` and `src/runtime/utils.ts` resolve
+  to `denext/fresh`. The new [Fresh and denext](https://denext.dev/docs/fresh-vs-denext) page
+  lists what Fresh does, where each part lives on denext, and what denext adds.
 - **`viteBuildPlugin` runs Vite plugins' build hooks.** From `denext/plugin-kit/vite-emitter`
   (and `denext/plugin-kit`): `configResolved`, `buildStart`, `generateBundle`, `writeBundle` and
   `closeBundle` in Rollup's order, with `this.emitFile`, for plugins given directly, as a Vite
