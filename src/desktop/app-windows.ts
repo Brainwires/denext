@@ -75,7 +75,10 @@ export interface DesktopWindowRef {
   show(): void;
   /** Hide it. */
   hide(): void;
-  /** Bring it to the front and focus it. */
+  /**
+   * Bring it to the front and focus it. On macOS it activates the app without changing the
+   * activation policy: how an accessory (tray) app shows its window with no Dock icon.
+   */
   focus(): void;
   /** Close it for good (the app quits once its last window is gone, unless kept alive). */
   close(): void;

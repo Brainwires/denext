@@ -434,8 +434,12 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
 /**
  * Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `"regular"` (a
  * Dock icon and a menu bar), `"accessory"` (neither: a menu-bar app or a desktop companion) or
- * `"prohibited"`. Switching to regular also brings the app to the front, so a tray app can show a
- * Dock icon only while it has a full window open. `desktop.app.activationPolicy` (or
+ * `"prohibited"`. Switching to regular also brings the app to the front. A tray app should stay
+ * accessory for good and bring its windows up with `focusWindow()` / a window ref's `focus()`,
+ * which activate it without changing the policy: on macOS an app installed under /Applications
+ * that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on
+ * quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it
+ * gets none. `desktop.app.activationPolicy` (or
  * `desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6
  * (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
  * `"accessory"` show / hide the Dock icon as {@linkcode setDockVisible} does.
@@ -448,11 +452,9 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
  * @example
  * ```ts
  * import { setActivationPolicy } from "denext/desktop/app";
- * import { openWindow } from "denext/desktop/window";
  *
- * await setActivationPolicy("regular"); // a Dock icon while the window is open
- * const win = await openWindow({ url: "/library" });
- * win.onClosed(() => void setActivationPolicy("accessory"));
+ * // The user turned "Show in Dock" on in the settings: a regular app from now on.
+ * await setActivationPolicy("regular");
  * ```
  */
 export async function setActivationPolicy(policy: ActivationPolicy): Promise<boolean> {

@@ -237,6 +237,16 @@ and this project adheres to
 
 ### Documentation
 
+- **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains
+  why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
+  recent apps (an unpinned app installed under /Applications gets a recents tile whenever its
+  running tile goes away, on quit or on switching back to `"accessory"`, with no opt-out; one
+  installed anywhere else gets none), and the pattern that avoids it: stay
+  `"accessory"` and bring windows up with `focusWindow()` / a window ref's `focus()`, which activate
+  the app without changing the policy. Laufey's macOS `focus()` also orders the window in front of
+  other apps' windows when the activation is declined, on both backends, from the runtime that
+  carries laufey's `MacFocusWindow`. `setActivationPolicy`'s docs no longer suggest switching to
+  regular while a window is open.
 - **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
   and the known limitations say that packaging embeds the file a `../` path names.
 - **Desktop: native title options.** `desktop.window.titleVisibility: "hidden"` hides the title

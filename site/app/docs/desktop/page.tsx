@@ -3792,10 +3792,12 @@ await bounce({ critical: true }); // until the app is focused`}
         <li>
           <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
           <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
-          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
-          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
-          only while it has a full window open, which also brings it to the front. Windows and Linux
-          have no policy: there <code>"regular"</code>{" "}
+          <code>app.setActivationPolicy</code>): a tray app is <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar) and should stay so while its windows open and close (see{" "}
+          <a href="#desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</a>).
+          Switching to <code>"regular"</code>{" "}
+          also brings the app to the front. Windows and Linux have no policy: there{" "}
+          <code>"regular"</code>{" "}
           shows the main window&apos;s taskbar entry and the others hide it, as{" "}
           <code>"accessory"</code> hides it at launch. <code>desktop.app.activationPolicy</code> (or
           {" "}
@@ -3810,6 +3812,40 @@ await bounce({ critical: true }); // until the app is focused`}
           hiding the Dock icon once the backend starts.
         </li>
       </ul>
+      <h3 id="desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</h3>
+      <p>
+        On macOS an app that is installed under <code>/Applications</code>{" "}
+        (at any depth) and not kept in the Dock gets a tile in the Dock&apos;s recent-apps section
+        (with &ldquo;Show suggested and recent apps in Dock&rdquo; on) whenever its running Dock
+        tile goes away: when it quits, and also when a <code>"regular"</code> app switches back to
+        {" "}
+        <code>"accessory"</code>. A tray app that becomes regular while its window is open therefore
+        lands in the recents, and comes back there after the user removes it; macOS has no opt-out.
+        An app that is accessory from launch to quit never has a running tile, so it never appears
+        there. The Dock records only apps under <code>/Applications</code>: one run from{" "}
+        <code>~/Applications</code>, its Application Support folder or anywhere else gets the
+        running tile and Cmd-Tab while regular and leaves no recents entry. Apple documents none of
+        this, so an app that may be installed under <code>/Applications</code>{" "}
+        follows the pattern below.
+      </p>
+      <p>
+        So keep a tray app accessory for good:{" "}
+        <code>desktop.app.activationPolicy: "accessory"</code> and no{" "}
+        <code>setActivationPolicy("regular")</code>. Bring its window up with the window ref&apos;s
+        {" "}
+        <code>focus()</code> (<code>app.windows.byKey(key)?.focus()</code>, after{" "}
+        <code>windows.open</code> for a new one) in <code>desktop.ts</code>, or{" "}
+        <code>focusWindow()</code> from <code>denext/desktop/window</code>{" "}
+        in a page: on macOS it activates the app ignoring other apps (the cooperative activation of
+        recent macOS versions often leaves an accessory app&apos;s window behind the active app),
+        makes the window key and orders it in front, without changing the activation policy. Where
+        the runtime&apos;s focus only activates the app, the window still comes up and takes the
+        keyboard when macOS grants the activation. An accessory app has no menu bar: the editing
+        shortcuts (Cmd+C, Cmd+V, Cmd+X, Cmd+A, Cmd+Z) and Cmd+Q still work through the host&apos;s
+        built-in menu while the app sets none of its own, but nothing closes the window on Cmd+W, so
+        handle it in the page (a <code>keydown</code> with <code>metaKey</code> calling{" "}
+        <code>closeWindow()</code>).
+      </p>
       <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
       <p>
         A tray-first app (a menu-bar app) wants its icon before any page loads and never removed by
@@ -3888,9 +3924,11 @@ tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Cont
         <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
         to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
         {" "}
-        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
-        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
-        no <code>onMenuItem</code> in{" "}
+        <code>onClosed()</code>) and their <code>focus()</code>{" "}
+        to bring one to the front without a Dock icon (<a href="#desktop-tray-dock-recents">
+          above
+        </a>). denext warns once when a menu item is chosen with no window showing and no{" "}
+        <code>onMenuItem</code> in{" "}
         <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
         app gets no icon, its main window is shown instead, and it is no longer kept alive by the
         tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
