@@ -394,7 +394,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** a Fresh 1.x plugin's render hook gets the page's HTML once it has rendered, but
+- **Fresh:** a Fresh 2 app's other Vite plugins run their build hooks (`configResolved`,
+  `buildStart`, `generateBundle`, `writeBundle`, `closeBundle`) through `viteBuildPlugin`, not
+  their module-graph hooks (`resolveId`, `load`, `transform`, `renderChunk`) or
+  `transformIndexHtml`: denext bundles with esbuild. A Fresh 1.x plugin's render hook gets the page's HTML once it has rendered, but
   the `htmlText` it returns does not replace the page (denext writes its own render); a sync
   `render` hook runs once the page has rendered rather than around it, and an async hook that
   keeps module-level state between its start and its result sees concurrent requests'

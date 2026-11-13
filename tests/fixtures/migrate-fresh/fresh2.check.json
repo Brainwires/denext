@@ -109,14 +109,13 @@
     {
       "path": "vite.config.ts",
       "action": "delete"
-    }
-  ],
-  "wontMigrate": [
+    },
     {
-      "item": "vite.config.ts: inspect()",
-      "reason": "a Vite plugin; denext builds the app without Vite. Port what it does (a build step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)"
+      "path": "vite.plugins.ts",
+      "action": "create"
     }
   ],
+  "wontMigrate": [],
   "review": [
     {
       "item": "routes/lang/[[lang]].tsx",
@@ -125,6 +124,10 @@
     {
       "item": "routes/raw.ts",
       "reason": "its URL pattern /@:version/:path* has no app/ folder equivalent: middleware.ts answers it with the route's handler"
+    },
+    {
+      "item": "vite.config.ts: inspect()",
+      "reason": "moved to vite.plugins.ts, which viteBuildPlugin runs at build: configResolved, buildStart, generateBundle, writeBundle and closeBundle (with this.emitFile); resolveId / load / transform / renderChunk / transformIndexHtml are not run, and dev-server hooks have no denext counterpart"
     },
     {
       "item": "import.meta.env",

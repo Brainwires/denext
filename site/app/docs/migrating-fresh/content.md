@@ -94,6 +94,12 @@ denext task dev
   `islandSpecifiers`. A Fresh 1.x `fresh.config.ts`'s `staticDir` is carried, and its
   `router.basePath` and `router.trailingSlash` become `basePath` and `trailingSlash` in
   `denext.config.ts`. An option set to something computed is reported by name.
+- **Other Vite plugins** (not Fresh's or Tailwind's) move, with the Vite config's own code, to
+  `vite.plugins.ts`, which `viteBuildPlugin` in `denext.config.ts` runs at build: their
+  `configResolved`, `buildStart`, `generateBundle`, `writeBundle` and `closeBundle` hooks, with
+  `this.emitFile` publishing files at the site root (`rollup-plugin-visualizer`, a license or
+  sitemap emitter). Their `transform` / `load` / `resolveId` hooks are not run, since denext
+  bundles with esbuild ([plugins](/docs/plugins)).
 - **Removed**: `fresh.gen.ts`, a Fresh `dev.ts`, `vite.config.*`, `client.ts`, and for Fresh 1.x
   `main.ts` (and `fresh.config.ts` when it has no plugin but Tailwind's). Fresh 2's `main.ts`
   stays: `middleware.ts` runs it. A Fresh 1.x `fresh.config.ts` with plugins stays too, minus
@@ -276,7 +282,6 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 
 | Won't migrate                                                              | What to do                                                                          |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).           |
 | A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own). |
 | A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                 |
 
@@ -288,6 +293,7 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 | `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; a file-location pick by `PROD` is reduced to the source location (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |
 | `Deno.env` in an island                                        | An island runs in the browser: pass the value as a prop, or use `publicEnv()` (a literal `FRESH_PUBLIC_*` read is rewritten for you).                                           |
 | A Tailwind v3 stylesheet (Fresh 1.x)                           | Run `npx @tailwindcss/upgrade`.                                                                                                                                                 |
+| A Vite plugin moved to `vite.plugins.ts`                       | Its build hooks run through `viteBuildPlugin`; one that works through `transform` / `load` / `resolveId` needs an esbuild or denext plugin instead.                             |
 | A Fresh 1.x plugin from outside the project                    | Its routes, middleware and render hooks run; vendor it into the project for the islands it declares to hydrate.                                                                 |
 | Preact's internal `options` hooks (`__e`, `__h`, `__`)         | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                                        |
 

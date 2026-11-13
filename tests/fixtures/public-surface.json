@@ -447,7 +447,9 @@
     "ViteEmitterContext:interface",
     "ViteEmitterDenextPlugin:interface",
     "ViteEmitterSetupContext:interface",
+    "VitePluginInput:typeAlias",
     "VitePluginLike:interface",
+    "VitePluginObject:interface",
     "apiDefinitionOf:function",
     "bufferedRequest:function",
     "buildAppCss:function",
@@ -479,16 +481,23 @@
     "tapChannelAuthorized:function",
     "toBase64Url:function",
     "verifyOrigin:function",
+    "viteBuildPlugin:function",
     "viteEmitterPlugin:function"
   ],
   "denext/plugin-kit/vite-emitter": [
     "GenerateBundleHook:typeAlias",
+    "VITE_BUILD_HOOKS:variable",
+    "VITE_UNSUPPORTED_HOOKS:variable",
     "ViteEmittedFile:interface",
     "ViteEmitterBuildContext:interface",
     "ViteEmitterContext:interface",
     "ViteEmitterDenextPlugin:interface",
     "ViteEmitterSetupContext:interface",
+    "VitePluginInput:typeAlias",
     "VitePluginLike:interface",
+    "VitePluginObject:interface",
+    "flattenVitePlugins:function",
+    "viteBuildPlugin:function",
     "viteEmitterPlugin:function"
   ],
   "denext/ui-kit": [
@@ -6602,12 +6611,19 @@
     "FreshPageOptions:interface",
     "FreshRouteEntry:interface",
     "appOf:function",
+    "belowBasePath:function",
     "freshAppPage:function",
     "freshLayout:function",
     "freshMiddleware:function",
     "freshNotFound:function",
     "freshPage:function",
     "freshRouteHandler:function"
+  ],
+  "denext/fresh/plugins": [
+    "FreshPluginsOptions:interface",
+    "bundlePluginEntrypoints:function",
+    "entrypointRunner:function",
+    "freshPlugins:function"
   ],
   "denext/preact": [
     "AnyComponent:typeAlias",
@@ -6843,6 +6859,17 @@
     "renderToString:function",
     "renderToStringAsync:function"
   ],
+  "denext/preact/render-to-string/jsx": [
+    "Options:interface",
+    "default:function",
+    "render:function",
+    "shallowRender:function"
+  ],
+  "denext/preact/render-to-string/stream-node": [
+    "PipeableStream:interface",
+    "RenderToPipeableStreamOptions:interface",
+    "renderToPipeableStream:function"
+  ],
   "denext/preact-iso": [
     "ErrorBoundary:function",
     "ErrorBoundaryProps:interface",
@@ -6866,23 +6893,32 @@
   ],
   "denext/signals": [
     "Computation:interface",
+    "DisposableLike:interface",
     "EffectDispose:typeAlias",
+    "EffectOptions:interface",
     "For:function",
     "ForProps:interface",
+    "Model:typeAlias",
+    "ModelConstructor:typeAlias",
+    "ModelFactory:typeAlias",
     "ReadonlySignal:interface",
     "Show:function",
     "ShowProps:interface",
     "Signal:class",
+    "SignalOptions:interface",
     "action:function",
     "batch:function",
     "computed:function",
+    "createModel:function",
     "effect:function",
     "signal:function",
     "untracked:function",
     "useComputed:function",
     "useLiveSignal:function",
+    "useModel:function",
     "useSignal:function",
-    "useSignalEffect:function"
+    "useSignalEffect:function",
+    "useSignalRef:function"
   ],
   "denext/build/next-compat": [
     "AssetLoader:typeAlias",

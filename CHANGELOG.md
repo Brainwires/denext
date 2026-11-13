@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **`viteBuildPlugin` runs Vite plugins' build hooks.** From `denext/plugin-kit/vite-emitter`
+  (and `denext/plugin-kit`): `configResolved`, `buildStart`, `generateBundle`, `writeBundle` and
+  `closeBundle` in Rollup's order, with `this.emitFile`, for plugins given directly, as a Vite
+  config or module, or through a loader called at build; `apply: "serve"` plugins are skipped,
+  `enforce` order is kept, and the module-graph hooks it cannot run are named in a warning.
+  `denext migrate --from fresh` moves a Vite config's other plugins to `vite.plugins.ts` and runs
+  them through it instead of reporting them.
 - **Fresh 1.x plugins run.** A `fresh.config.ts` with plugins stays (Fresh's Tailwind plugin
   removed), and `denext/fresh/server` runs their `routes` (sorted with the file routes),
   `middlewares` (by directory, like `_middleware` files) and `render` / `renderAsync` hooks (an

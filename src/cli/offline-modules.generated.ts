@@ -28,6 +28,7 @@ import "../compat/empty.ts";
 import "../compat/fresh/env.ts";
 import "../compat/fresh/mod.ts";
 import "../compat/fresh/partial.ts";
+import "../compat/fresh/plugin-build.ts";
 import "../compat/fresh/runtime.ts";
 import "../compat/fresh/server.ts";
 import "../compat/next-auth/adapters.ts";

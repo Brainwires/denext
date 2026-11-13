@@ -26,7 +26,7 @@ import { DENEXT_EXCLUDE } from "./dep-age.ts";
 import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
-import { pluginCalls, skipToken } from "./fresh-config-read.ts";
+import { pluginCalls, skipToken, vitePluginsModule } from "./fresh-config-read.ts";
 import { planFreshConfig } from "./fresh-plugins-migrate.ts";
 import { type FreshLayout, ignoredByFresh, readFreshLayout, VITE_CONFIGS } from "./fresh-layout.ts";
 import {
@@ -307,6 +307,8 @@ interface Plan {
   main: string | null;
   /** The Fresh 1.x `fresh.config.ts` (absolute) whose plugins run, once known. */
   config: string | null;
+  /** The app's other Vite plugins moved to `vite.plugins.ts`. */
+  vitePlugins?: boolean;
   roles: Roles;
   gen: GenFile[];
   mwRoutes: MiddlewareRouteSpec[];
@@ -882,12 +884,6 @@ async function carryClientEntry(plan: Plan): Promise<string[]> {
   return [];
 }
 
-/** The Vite plugins a `vite.config.*` registers (`name(`), minus Fresh's and Tailwind's. */
-function otherVitePlugins(source: string): string[] {
-  const names = pluginCalls(source).map((c) => c.name);
-  return names.filter((n) => n !== "fresh" && n !== "tailwindcss" && n !== "tailwind");
-}
-
 /** The top-level names a module declares or imports (the ones a second module could clash with). */
 function topLevelNames(source: string): Set<string> {
   const names = new Set<string>();
@@ -915,21 +911,53 @@ export function appendModule(existing: string, extra: string): string | null {
   return `${base}\n// From client.ts (the Fresh app's Vite client entry):\n${extra}`;
 }
 
-/** Remove `vite.config.*` (denext builds the app), reporting the plugins it ran. */
+/** Where a Fresh 2 app's other Vite plugins move (`viteBuildPlugin` loads it). */
+const VITE_PLUGINS_MODULE = "vite.plugins.ts";
+
+/**
+ * Remove `vite.config.*` (denext builds the app). Its other plugins (not Fresh's or Tailwind's)
+ * move, with the config's own code, to `vite.plugins.ts`, which `viteBuildPlugin` in
+ * `denext.config.ts` runs at build.
+ */
 async function dropViteConfig(plan: Plan): Promise<void> {
   for (const name of VITE_CONFIGS) {
     const path = join(plan.dir, name);
     const source = await mfs.readTextFile(path).catch(() => null);
     if (source === null) continue;
-    for (const plugin of otherVitePlugins(source)) {
-      plan.wont.push({
-        item: `${name}: ${plugin}()`,
-        reason: "a Vite plugin; denext builds the app without Vite. Port what it does (a build " +
-          "step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)",
-      });
+    const others = pluginCalls(source).map((c) => c.name).filter((n) =>
+      n !== "fresh" && n !== "tailwindcss" && n !== "tailwind"
+    );
+    const module = others.length ? vitePluginsModule(source) : null;
+    if (module) {
+      await carryVitePlugins(
+        plan,
+        `${name}: ${others.map((n) => `${n}()`).join(", ")}`,
+        module,
+      );
     }
     await mfs.remove(path);
   }
+}
+
+/** Write the app's other Vite plugins to `vite.plugins.ts` (see {@link dropViteConfig}). */
+async function carryVitePlugins(plan: Plan, item: string, module: string): Promise<void> {
+  const target = join(plan.dir, VITE_PLUGINS_MODULE);
+  if (await exists(target)) {
+    plan.wont.push({
+      item,
+      reason: `${VITE_PLUGINS_MODULE} exists; move the Vite plugins into it by hand`,
+    });
+    return;
+  }
+  await mfs.writeTextFile(target, module);
+  plan.vitePlugins = true;
+  plan.review.push({
+    item,
+    reason: `moved to ${VITE_PLUGINS_MODULE}, which viteBuildPlugin runs at build: ` +
+      "configResolved, buildStart, generateBundle, writeBundle and closeBundle (with " +
+      "this.emitFile); resolveId / load / transform / renderChunk / transformIndexHtml are not " +
+      "run, and dev-server hooks have no denext counterpart",
+  });
 }
 
 /**
@@ -1089,6 +1117,7 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "denext/fresh/env": sub("fresh/env"),
     "denext/fresh/server": sub("fresh/server"),
     "denext/fresh/plugins": sub("fresh/plugins"),
+    "denext/plugin-kit/vite-emitter": sub("plugin-kit/vite-emitter"),
     "fresh": sub("fresh"),
     "fresh/runtime": sub("fresh/runtime"),
     "@fresh/core": sub("fresh"),
@@ -1282,25 +1311,9 @@ export async function transformFreshApp(
   plan.mwRoutes.sort((a, b) => freshMatchOrder(a, b));
   planLayouts(plan);
 
-  for (const option of layout.unread) {
-    plan.review.push({
-      item: option,
-      reason: option.includes("checkImports")
-        ? "Vite-time import checks are not carried: denext's own build refuses a server-only " +
-          "module in client code"
-        : "set to something migrate cannot read without running it; carry it by hand",
-    });
-  }
-  const registered = await planRegisteredIslands(plan, detection, sourcesBefore);
-  const carried = v1 ? await carryFreshConfig(plan) : { config: null, islands: [] };
-  plan.config = carried.config;
-  // The kept config's other `$fresh/plugins/*` imports (twind) stay on the Fresh they came with.
-  const freshBase = importsOf(detection.config)["$fresh/"];
-  if (plan.config && freshBase) registered.overrides["$fresh/plugins/"] = `${freshBase}plugins/`;
-  const islands = await markIslands(dir, layout, scan.localIslands, [
-    ...registered.local,
-    ...carried.islands,
-  ]);
+  reportUnreadOptions(plan);
+  const registered = await planCodeIslands(plan, detection, sourcesBefore);
+  const islands = await markIslands(dir, layout, scan.localIslands, registered.local);
   const envFiles = await rewriteEnv(dir, sourcesBefore);
   const importOverrides = { ...await planPartials(plan, sourcesBefore), ...registered.overrides };
   const staticTailwind = await moveStatic(plan);
@@ -1334,23 +1347,7 @@ export async function transformFreshApp(
   });
   await writeGenerated(plan, written);
   await scanFindings(plan, new Set(islands), sourcesBefore);
-  if (envFiles.length > 0) {
-    plan.review.push({
-      item: "import.meta.env",
-      reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
-        "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
-        "variables are not in it: read Deno.env). A PROD / DEV test choosing between two " +
-        "import.meta.url-relative locations was reduced to the source location, which denext " +
-        `runs from under dev and start alike (${envFiles.join(", ")})`,
-    });
-  }
-  if (tailwind && staticTailwind && v1) {
-    plan.review.push({
-      item: tailwind.input,
-      reason: "denext compiles Tailwind v4; a Tailwind v3 stylesheet and tailwind.config.ts " +
-        "need `npx @tailwindcss/upgrade` first",
-    });
-  }
+  reportEnvAndTailwind(plan, envFiles, tailwind && staticTailwind ? tailwind : null);
   return {
     version: detection.version,
     pages: plan.pages,
@@ -1362,16 +1359,87 @@ export async function transformFreshApp(
     wontMigrate: plan.wont,
     review: plan.review,
     importOverrides,
-    configEntries: configEntriesOf(layout, plan.config !== null),
-    configImports: plan.config ? [`import { freshPlugins } from "denext/fresh/plugins";`] : [],
+    configEntries: configEntriesOf(layout, plan),
+    configImports: configImportsOf(plan),
   };
 }
 
+/** The imports the generated `denext.config.ts` entries need. */
+function configImportsOf(plan: Plan): string[] {
+  return [
+    ...(plan.config ? [`import { freshPlugins } from "denext/fresh/plugins";`] : []),
+    ...(plan.vitePlugins
+      ? [`import { viteBuildPlugin } from "denext/plugin-kit/vite-emitter";`]
+      : []),
+  ];
+}
+
+/** Report each Fresh option migrate could not read (or carry). */
+function reportUnreadOptions(plan: Plan): void {
+  for (const option of plan.layout.unread) {
+    plan.review.push({
+      item: option,
+      reason: option.includes("checkImports")
+        ? "Vite-time import checks are not carried: denext's own build refuses a server-only " +
+          "module in client code"
+        : "set to something migrate cannot read without running it; carry it by hand",
+    });
+  }
+}
+
+/**
+ * The islands registered outside `islands/`: in code (`app.island()`, `registerIsland()`,
+ * `islandSpecifiers`) and by a Fresh 1.x config's local plugins, whose config is kept (`plan.config`).
+ */
+async function planCodeIslands(
+  plan: Plan,
+  detection: FreshDetection,
+  sources: string[],
+): Promise<{ local: string[]; overrides: Record<string, string> }> {
+  const registered = await planRegisteredIslands(plan, detection, sources);
+  const carried = plan.v1 ? await carryFreshConfig(plan) : { config: null, islands: [] };
+  plan.config = carried.config;
+  // The kept config's other `$fresh/plugins/*` imports (twind) stay on the Fresh they came with.
+  const freshBase = importsOf(detection.config)["$fresh/"];
+  if (plan.config && freshBase) registered.overrides["$fresh/plugins/"] = `${freshBase}plugins/`;
+  return { local: [...registered.local, ...carried.islands], overrides: registered.overrides };
+}
+
+/** The review items for the env rewrite and a Fresh 1.x Tailwind v3 stylesheet. */
+function reportEnvAndTailwind(
+  plan: Plan,
+  envFiles: string[],
+  staticTailwind: { input: string } | null,
+): void {
+  if (envFiles.length > 0) {
+    plan.review.push({
+      item: "import.meta.env",
+      reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
+        "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
+        "variables are not in it: read Deno.env). A PROD / DEV test choosing between two " +
+        "import.meta.url-relative locations was reduced to the source location, which denext " +
+        `runs from under dev and start alike (${envFiles.join(", ")})`,
+    });
+  }
+  if (staticTailwind && plan.v1) {
+    plan.review.push({
+      item: staticTailwind.input,
+      reason: "denext compiles Tailwind v4; a Tailwind v3 stylesheet and tailwind.config.ts " +
+        "need `npx @tailwindcss/upgrade` first",
+    });
+  }
+}
+
 /** The `denext.config.ts` entries a Fresh app's options carry (1.x `router`). */
-function configEntriesOf(layout: FreshLayout, plugins: boolean): string[] {
+function configEntriesOf(layout: FreshLayout, plan: Plan): string[] {
   const out: string[] = [];
-  // Bundles the client entrypoints of fresh.config.ts's plugins.
-  if (plugins) out.push("plugins: [freshPlugins()],");
+  // freshPlugins() bundles fresh.config.ts's plugins' client entrypoints; viteBuildPlugin runs
+  // the app's other Vite plugins' build hooks.
+  const plugins = [
+    ...(plan.config ? ["freshPlugins()"] : []),
+    ...(plan.vitePlugins ? [`viteBuildPlugin(() => import("./${VITE_PLUGINS_MODULE}"))`] : []),
+  ];
+  if (plugins.length) out.push(`plugins: [${plugins.join(", ")}],`);
   if (layout.basePath) out.push(`basePath: ${JSON.stringify(layout.basePath)},`);
   if (layout.trailingSlash !== undefined) out.push(`trailingSlash: ${layout.trailingSlash},`);
   return out;
