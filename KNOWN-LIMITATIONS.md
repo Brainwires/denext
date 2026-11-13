@@ -57,6 +57,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
+- **WebRTC is data channels only:** `RTCPeerConnection` has no media tracks (`addTrack()`,
+  `addTransceiver()`, `getSenders()` and the rest are empty or throw `NotSupportedError`), and no
+  `certificates` / `RTCPeerConnection.generateCertificate()` (each connection makes its own ECDSA
+  P-256 certificate). The `RTCDtlsTransport` / `RTCIceTransport` objects and the legacy callback
+  signatures are not provided, and `setConfiguration()` records a new configuration but does not
+  gather again.
+- **WebRTC ICE is UDP only:** remote TCP candidates and mDNS `.local` candidates are accepted and
+  skipped. A browser that hides its addresses behind mDNS is still reached, as a peer-reflexive
+  candidate once its checks arrive. Local host candidates are literal addresses, which is why they
+  need `--allow-sys=networkInterfaces`. TURN over TCP or TLS gives relay candidates only (no
+  server-reflexive candidate from such a server).
+- **WebRTC engine:** the protocol stack (ICE, DTLS 1.2, SCTP) is webrtc-rs's `rtc`, pre-1.0 and not
+  externally audited. Its parsers are exposed to any peer that completes ICE. A panic inside the
+  engine aborts a release build. Firefox has not been tested as a peer.
 - **Won't: esbuild compiled to wasm** (`@denext/esbuild`). It would remove the npm download but runs
   several times slower on every compat build and dev session; the build runs the toolchain's esbuild
   binary instead.
