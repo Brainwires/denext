@@ -97,5 +97,6 @@ React is open to it.
 `denext migrate --check` previews the move without writing anything: what changes, what migrates
 but needs a look, and anything that does not migrate. `denext migrate` then generates denext's
 side around your modules. The migration beds run it on Fresh's own website, the two apps
-`@fresh/init` scaffolds, and Deno SaaSKit (a Fresh 1.x app with five plugins), then build,
-serve and click through each one; nothing in them is left unmigrated.
+`@fresh/init` scaffolds, Deno's Node.js compatibility test viewer (a Fresh 2 app on Vite with
+Tailwind and Deno KV) and Deno SaaSKit (a Fresh 1.x app with five plugins), then build, serve and
+click through each one; nothing in them is left unmigrated.

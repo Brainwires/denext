@@ -12,9 +12,10 @@ and this project adheres to
 
 - **Fresh conformance beds and a Fresh comparison page.** The migration beds now run
   `denext migrate` on the two apps `@fresh/init` scaffolds (Vite with Tailwind, and Fresh's own
-  builder) and on Deno SaaSKit (a Fresh 1.x app with five plugins), besides Fresh's own website,
-  and assert that nothing is left as won't-migrate (`wontMigrate: []` on a bed; `serve: false`
-  stops a bed after the build). Fresh's website migrates with no hand edit. A migrated Fresh 1.x
+  builder), on Deno's node_test_viewer (stable Fresh 2 with Vite, Tailwind 4 and Deno KV) and on
+  Deno SaaSKit (a Fresh 1.x app with five plugins), besides Fresh's own website, and each is
+  built, served and hydrated with nothing left as won't-migrate (`wontMigrate: []` on a bed;
+  `serve: false` stops a bed after the build). Fresh's website migrates with no hand edit. A migrated Fresh 1.x
   app's imports of `$fresh/src/server/defines.ts`, `/types.ts` and `src/runtime/utils.ts` resolve
   to `denext/fresh`. The new [Fresh and denext](https://denext.dev/docs/fresh-vs-denext) page
   lists what Fresh does, where each part lives on denext, and what denext adds.
@@ -72,7 +73,8 @@ and this project adheres to
   export, and `shallowRender`, with the `/jsx` entry's options), and
   `denext/preact/render-to-string/stream-node` has `renderToPipeableStream` (`pipe`, `abort`,
   `onShellReady`, `onAllReady`, `onError`). `denext migrate` maps both specifiers there for Fresh and
-  Preact apps instead of reporting them.
+  Preact apps instead of reporting them, and the parity gate checks both against
+  preact-render-to-string's own surface.
 - **`createModel`, `useModel` and `useSignalRef` in `denext/signals`, and Preact Signals' options.**
   `createModel(factory)` builds models whose functions are actions and whose effects
   `[Symbol.dispose]()` disposes (an effect created in `untracked()` stays the caller's; a nested
@@ -253,6 +255,20 @@ and this project adheres to
 
 ### Fixed
 
+- **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
+  `start`, `build` and every other verb that runs project code ran it with the flags of the
+  config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so
+  an app with `"unstable": ["kv"]` that opens Deno KV failed with `Deno.openKv is not a
+  function`. Each re-run child (the toolchain re-exec, a pinned denext's child, the CSS /
+  module-config re-exec, the limits re-run) now gets `--unstable-<name>` for each entry, and a
+  last gate re-runs a process that still lacks one once with them.
+- **A middleware `rewrite(path)` keeps the request's query string.** `rewrite("/home")` on
+  `/a?x=1` serves `/home?x=1`; a destination with its own `?query` is served as written.
+- **A component from a package that bundles its own Preact gets its context.** Real Preact calls
+  a component whose `contextType` is one of its contexts (its `Context.Consumer`) with the
+  context's value as the second argument; denext now passes the context's default value there,
+  so a JSR icon set importing `npm:preact` (SaaSKit's `@preact-icons`) renders instead of
+  throwing.
 - **Desktop: a reloaded page no longer gets the events of the page before it.** denext's own
   one-shot events (menu, tray, Dock and shortcut signals, focus and blur, a close request, the
   windows opening and closing, system-stats samples) are sent with `retain: false`, so a reloaded
