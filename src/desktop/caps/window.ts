@@ -139,6 +139,8 @@ interface BrowserWindowLike {
   setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
   setSkipTaskbar?(skip: boolean): void;
   setTitleBarStyle?(style: string): boolean;
+  setTitleVisibility?(visibility: string): boolean;
+  setToolbarStyle?(style: string): boolean;
   setWindowButtonPosition?(position: { x: number; y: number } | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
@@ -369,6 +371,9 @@ async function reportedCapabilities(
     displayEvents: false,
     titleBarHidden: false,
     titleBarHiddenInset: false,
+    // Reported by the runtime's windowCapabilities() where it has the setters; false before.
+    titleVisibility: false,
+    toolbarStyle: false,
     windowButtonPosition: false,
     mica: false,
     acrylic: false,
@@ -976,8 +981,70 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
         return { applied: applied === true };
       },
     },
+    setTitleVisibility: { handler: (args) => setTitleVisibility(s, args) },
+    setToolbarStyle: { handler: (args) => setToolbarStyle(s, args) },
     setBackdrop: { handler: (args) => setBackdrop(s, args) },
   };
+}
+
+/** The runtime's own `windowCapabilities()` report, or `{}` (an older runtime, or it threw). */
+function runtimeCapabilities(s: WindowState): Record<string, unknown> {
+  try {
+    return (s.api?.windowCapabilities?.() as Record<string, unknown> | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Why the title could not be hidden: the OS / session, else the window itself. */
+function titleVisibilityReason(s: WindowState): string {
+  if (runtimeCapabilities(s).titleVisibility === true) {
+    return "it has no title bar to change (a frameless window)";
+  }
+  if (Deno.build.os === "linux") {
+    return "on Linux only a title bar GTK draws itself (client-side decorations, such as GNOME " +
+      "on Wayland) can hide its title; here the window manager draws the title bars (server-side " +
+      "decorations), or the backend is CEF, which draws Chromium's own";
+  }
+  return "this OS and backend have no title visibility";
+}
+
+/** `setTitleVisibility`: hide or show the title text, keeping the native title bar. */
+function setTitleVisibility(s: WindowState, args: unknown): null {
+  const visibility = argsOf(args).visibility;
+  if (visibility !== "visible" && visibility !== "hidden") {
+    throw invalid('visibility must be "visible" or "hidden"');
+  }
+  const what = visibility === "hidden" ? "hide its title" : "show its title";
+  if (call(s, "setTitleVisibility", what, visibility) !== true) {
+    throw unsupported(what, titleVisibilityReason(s));
+  }
+  return null;
+}
+
+/** The toolbar styles `setToolbarStyle` takes. */
+const TOOLBAR_STYLE_NAMES = new Set(["automatic", "unified", "unifiedCompact", "expanded"]);
+
+/** `setToolbarStyle`: an empty macOS toolbar in this style lays the title bar out. */
+function setToolbarStyle(s: WindowState, args: unknown): null {
+  const style = argsOf(args).style;
+  if (typeof style !== "string" || !TOOLBAR_STYLE_NAMES.has(style)) {
+    throw invalid('style must be "automatic", "unified", "unifiedCompact" or "expanded"');
+  }
+  const what = "take a toolbar style";
+  if (call(s, "setToolbarStyle", what, style) === true) return null;
+  if (runtimeCapabilities(s).toolbarStyle !== true) {
+    throw unsupported(
+      what,
+      Deno.build.os === "darwin"
+        ? "toolbar styles need macOS 11 or later"
+        : "toolbar styles are macOS only",
+    );
+  }
+  throw invalid(
+    `the window's title bar can't take the "${style}" toolbar style: the "hidden" title bar has ` +
+      'no toolbar (use "hiddenInset" for that look), and a frameless window has no title bar',
+  );
 }
 
 /** The always-on-top levels (Electron's names), lowest first. */

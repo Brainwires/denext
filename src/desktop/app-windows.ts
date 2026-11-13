@@ -121,6 +121,16 @@ export interface DesktopOpenWindowOptions {
    * `null` keeps the OS's place. A frameless window has none.
    */
   readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
+  /**
+   * Whether the native title bar draws the title text: default `desktop.window.titleVisibility`,
+   * as the main window gets it. `"hidden"` keeps the title bar, its buttons and its drag area.
+   */
+  readonly titleVisibility?: "visible" | "hidden";
+  /**
+   * The macOS toolbar style that lays the title bar out: default `desktop.window.toolbarStyle`, as
+   * the main window gets it. Refused with the `"hidden"` title bar and on a frameless window.
+   */
+  readonly toolbarStyle?: "automatic" | "unified" | "unifiedCompact" | "expanded";
   /** Screen x of the top-left corner. */
   readonly x?: number;
   /** Screen y of the top-left corner. */
@@ -684,15 +694,23 @@ function onSecondInstance(st: SetupState, raw: Event): void {
   for (const fn of [...st.secondInstanceHandlers]) callSecondInstanceListener(st, fn, event);
 }
 
-/** What opened windows take from the main window's settings: the title bar and its buttons. */
+/**
+ * What opened windows take from the main window's settings: the title bar, its title visibility,
+ * its toolbar style and its buttons.
+ */
 function inheritedChrome(
   w: DesktopWindowSettings | undefined,
-): Pick<DesktopWindowSettings, "titleBar" | "windowButtonPosition"> {
+): Pick<
+  DesktopWindowSettings,
+  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle"
+> {
   return {
     ...(w?.titleBar !== undefined ? { titleBar: w.titleBar } : {}),
     ...(w?.windowButtonPosition !== undefined
       ? { windowButtonPosition: w.windowButtonPosition }
       : {}),
+    ...(w?.titleVisibility !== undefined ? { titleVisibility: w.titleVisibility } : {}),
+    ...(w?.toolbarStyle !== undefined ? { toolbarStyle: w.toolbarStyle } : {}),
   };
 }
 

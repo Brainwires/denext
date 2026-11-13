@@ -202,12 +202,35 @@ export interface WindowCapabilities {
   readonly activationPolicy: boolean;
   /** {@linkcode onWindowFocus} / {@linkcode onWindowBlur} fire. */
   readonly focusEvents: boolean;
+  /**
+   * {@linkcode setTitleVisibility} can hide the title text and keep the native title bar: macOS,
+   * Windows, and Linux only where GTK draws the title bars (client-side decorations, such as GNOME
+   * on Wayland); not under a window manager's decorations, not on the CEF backend on Linux, and
+   * not on a runtime without it.
+   */
+  readonly titleVisibility: boolean;
+  /** {@linkcode setToolbarStyle} works (macOS 11 and later). */
+  readonly toolbarStyle: boolean;
   /** Any other key the runtime reports. */
   readonly [key: string]: boolean | string | null;
 }
 
 /** A title bar style: `"hidden"` draws the page under a transparent title bar. */
 export type TitleBarStyle = "default" | "hidden" | "hiddenInset";
+
+/**
+ * Whether the native title bar draws the title text: `"hidden"` keeps the title bar, its buttons
+ * and its drag area, and the title still names the window in the Dock / taskbar, the Window menu,
+ * Mission Control and alt-tab.
+ */
+export type TitleVisibility = "visible" | "hidden";
+
+/**
+ * How an (empty) toolbar lays the macOS title bar out: `"unified"` one tall bar with the title
+ * left-aligned (Finder, Safari), `"unifiedCompact"` the same, shorter, `"expanded"` the title on its
+ * own row; `"automatic"` no toolbar.
+ */
+export type ToolbarStyle = "automatic" | "unified" | "unifiedCompact" | "expanded";
 
 /** A window button, as GTK's decoration layout names them. */
 export type TitleBarButton = "close" | "minimize" | "maximize" | "appmenu" | "menu" | "icon";
@@ -621,6 +644,43 @@ export function onWindowBlur(handler: () => void): () => void {
  */
 export async function setTitleBarStyle(style: TitleBarStyle): Promise<boolean> {
   return await applied("setTitleBarStyle", { style });
+}
+
+/**
+ * Hide the title text (or show it again) while the native title bar, its buttons and its drag area
+ * stay; the title still names the window in the Dock / taskbar, the Window menu, Mission Control
+ * and alt-tab. Each OS does it natively: macOS, Windows, and Linux only where GTK draws the title
+ * bar itself (client-side decorations). Under the `"hidden"` / `"hiddenInset"` title bar styles
+ * the title is never drawn; the choice applies again under `"default"`.
+ *
+ * @example
+ * ```ts
+ * import { setTitleVisibility, windowCapabilities } from "denext/desktop/window";
+ * if ((await windowCapabilities()).titleVisibility) await setTitleVisibility("hidden");
+ * ```
+ *
+ * @param visibility `"hidden"` or `"visible"`.
+ * @returns Resolves once applied; rejects `unsupported` (with the reason) where this OS, title bar
+ *   or runtime can't: a window manager's decorations on Linux, a frameless window, the CEF backend
+ *   on Linux.
+ */
+export async function setTitleVisibility(visibility: TitleVisibility): Promise<void> {
+  await act("setTitleVisibility", { visibility });
+}
+
+/**
+ * Lay the macOS title bar out with an empty toolbar in this style (macOS 11 and later;
+ * `"automatic"` removes it). Under the `"hiddenInset"` title bar style it sets the inset toolbar's
+ * style (`"unifiedCompact"`: a shorter inset). While it is not `"automatic"`,
+ * {@linkcode setTitleBarStyle}`("hidden")` answers `false`.
+ *
+ * @param style The toolbar style.
+ * @returns Resolves once applied; rejects `invalid` under the `"hidden"` title bar style for any
+ *   style but `"automatic"` (it has no toolbar: use `"hiddenInset"`), and `unsupported` (with the
+ *   reason) off macOS, on a frameless window and on a runtime without it.
+ */
+export async function setToolbarStyle(style: ToolbarStyle): Promise<void> {
+  await act("setToolbarStyle", { style });
 }
 
 /**
@@ -1235,6 +1295,17 @@ export interface OpenWindowOptions {
    * `null` keeps the OS's place. Elsewhere the runtime has no such buttons and ignores it.
    */
   readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
+  /**
+   * Whether the native title bar draws the title text: default `desktop.window.titleVisibility`,
+   * as the main window gets it. Where the OS can't hide it ({@linkcode setTitleVisibility}) the
+   * title stays.
+   */
+  readonly titleVisibility?: TitleVisibility;
+  /**
+   * The macOS toolbar style: default `desktop.window.toolbarStyle`, as the main window gets it.
+   * Rejected `invalid` with the `"hidden"` title bar and on a frameless window; ignored off macOS.
+   */
+  readonly toolbarStyle?: ToolbarStyle;
   /** Screen x of the top-left corner (see the module docs for the units). */
   readonly x?: number;
   /** Screen y. */

@@ -54,11 +54,16 @@ import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
   applyTitleBarStyle,
+  applyTitleOptions,
   applyWindowButtonPosition,
   applyWindowOverlaySettings,
   type DesktopTitleBarStyle,
+  type DesktopTitleVisibility,
+  type DesktopToolbarStyle,
   type DesktopWindowSettings,
   TITLE_BARS,
+  titleOptionsProblem,
+  titleOptionValuesProblem,
   WINDOW_LEVELS,
   windowButtonPositionOf,
   windowButtonPositionProblem,
@@ -196,6 +201,16 @@ export interface WindowRegistryOptions {
    * (`desktop.window.windowButtonPosition`).
    */
   readonly windowButtonPosition?: DesktopWindowButtonPosition;
+  /**
+   * The title visibility opened windows take unless their own `titleVisibility` says
+   * (`desktop.window.titleVisibility`).
+   */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /**
+   * The macOS toolbar style opened windows take unless their own `toolbarStyle` says
+   * (`desktop.window.toolbarStyle`).
+   */
+  readonly toolbarStyle?: DesktopToolbarStyle;
   /** A window's title changed (its page reported or set one): the menus' labels follow. */
   readonly onTitleChanged?: (id: string, title: string) => void;
 }
@@ -361,6 +376,10 @@ export interface OpenWindowSettings {
   readonly titleBar?: DesktopTitleBarStyle;
   /** The traffic lights' position (default the registry's); `null` keeps the OS's. */
   readonly windowButtonPosition?: DesktopWindowButtonPosition | null;
+  /** The title visibility (default the registry's, `desktop.window.titleVisibility`). */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /** The macOS toolbar style (default the registry's, `desktop.window.toolbarStyle`). */
+  readonly toolbarStyle?: DesktopToolbarStyle;
 }
 
 /** `alwaysOnTop`: a boolean or a level. */
@@ -421,15 +440,57 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
 /** The title bar style and the traffic lights' position of a window to open, checked. */
 function chromeSettings(
   a: Record<string, unknown>,
-): Pick<OpenWindowSettings, "titleBar" | "windowButtonPosition"> {
+): Pick<
+  OpenWindowSettings,
+  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle"
+> {
   if (a.titleBar !== undefined && !TITLE_BARS.includes(a.titleBar as DesktopTitleBarStyle)) {
     throw invalid(`titleBar must be one of ${TITLE_BARS.join(", ")}`);
   }
+  const values = titleOptionValuesProblem(a);
+  if (values !== null) throw invalid(`${values[0]} ${values[1]}`);
   const buttons = buttonPositionOf(a.windowButtonPosition);
   return {
     ...(a.titleBar !== undefined ? { titleBar: a.titleBar as DesktopTitleBarStyle } : {}),
     ...(buttons !== undefined ? { windowButtonPosition: buttons } : {}),
+    ...(a.titleVisibility !== undefined
+      ? { titleVisibility: a.titleVisibility as DesktopTitleVisibility }
+      : {}),
+    ...(a.toolbarStyle !== undefined
+      ? { toolbarStyle: a.toolbarStyle as DesktopToolbarStyle }
+      : {}),
   };
+}
+
+/**
+ * A window's title options as it will get them (its own, else the registry's, as the main window
+ * gets them), refused with `invalid` when they can't be shown together: a frameless window has no
+ * title bar, and the `"hidden"` title bar has no toolbar. Checked before the window is created.
+ */
+function effectiveTitleOptions(
+  st: RegistryState,
+  settings: OpenWindowSettings,
+): Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle"> {
+  const own = definedTitleOptions(settings);
+  const effective = definedTitleOptions({ ...definedTitleOptions(st.options), ...own });
+  // A frameless window ignores the inherited title options (it has no title bar); only its own are
+  // an error.
+  const problem = titleOptionsProblem(
+    settings.frameless === true ? { frameless: true, ...own } : effective,
+  );
+  if (problem !== null) throw invalid(`${problem[0]} ${problem[1]}`);
+  return effective;
+}
+
+/** The title options `o` sets (its undefined ones left out, so a spread doesn't erase others). */
+function definedTitleOptions(
+  o: Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle">,
+): Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle"> {
+  const out: Record<string, unknown> = {};
+  for (const key of ["titleBar", "titleVisibility", "toolbarStyle"] as const) {
+    if (o[key] !== undefined) out[key] = o[key];
+  }
+  return out as Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle">;
 }
 
 /** `windowButtonPosition`: `{ x, y }`, or `null` for the OS's place. */
@@ -880,13 +941,17 @@ function afterCreation(settings: OpenWindowSettings): DesktopWindowSettings {
 
 /**
  * Style an opened window's title bar as the main window's: `desktop.titleBar` (or the window's
- * own), then `desktop.window.windowButtonPosition` (or the window's own; `null` opts out), after
- * the style since a style change puts the buttons back. A frameless window has neither.
+ * own), its title visibility and toolbar style (`desktop.window.titleVisibility` /
+ * `toolbarStyle`, or the window's own), then `desktop.window.windowButtonPosition` (or the
+ * window's own; `null` opts out), after the style since a style change puts the buttons back. A
+ * frameless window has none of them.
  */
 function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWindowSettings) {
   if (settings.frameless === true) return;
-  const titleBar = settings.titleBar ?? st.options.titleBar;
-  if (titleBar !== undefined) applyTitleBarStyle(window, titleBar, st.warn);
+  const title = effectiveTitleOptions(st, settings);
+  if (title.titleBar !== undefined) applyTitleBarStyle(window, title.titleBar, st.warn);
+  // The title visibility and toolbar style compose with the style, so after it.
+  applyTitleOptions(window, title, st.warn);
   const buttons = settings.windowButtonPosition === undefined
     ? st.options.windowButtonPosition
     : settings.windowButtonPosition;
@@ -896,6 +961,8 @@ function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWi
 /** Open a window from checked settings. */
 function open(st: RegistryState, args: unknown): RegisteredWindow {
   const checked = openWindowSettings(args);
+  // Refuse title options that can't be shown together before anything opens.
+  effectiveTitleOptions(st, checked);
   const Ctor = checkCanOpen(st, checked);
   const settings = restoredGeometry(st, checked);
   const window = new Ctor(creationOptions(settings));

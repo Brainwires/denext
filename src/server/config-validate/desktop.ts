@@ -20,7 +20,12 @@ import {
   strictPermissionsSidecarError,
 } from "../../desktop/permissions-mode.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
-import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
+import {
+  type DesktopTitleBarStyle,
+  type DesktopToolbarStyle,
+  desktopWindowKeyProblem,
+  titleOptionsProblem,
+} from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
@@ -256,7 +261,8 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
 
 /**
  * `desktop.window`: optional width/height and defaultWidth/defaultHeight (≥ 1), title, and the flags (resizable, show, frameless,
- * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
+ * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity,
+ * titleVisibility, toolbarStyle.
  */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
@@ -270,6 +276,20 @@ function validateDesktopWindow(win: unknown, fail: Fail): void {
   }
   const problem = desktopWindowKeyProblem(w);
   if (problem) fail(`desktop.${problem[0]}`, problem[1]);
+}
+
+/**
+ * `desktop.window.toolbarStyle` against `desktop.titleBar`: the `"hidden"` title bar has no
+ * toolbar (the frameless combinations are `desktop.window`'s own, checked with its keys).
+ */
+function validateDesktopTitleOptions(d: Record<string, unknown>, fail: Fail): void {
+  if (!isPlainObject(d.window)) return;
+  const w = d.window as Record<string, unknown>;
+  const problem = titleOptionsProblem({
+    titleBar: d.titleBar as DesktopTitleBarStyle | undefined,
+    toolbarStyle: w.toolbarStyle as DesktopToolbarStyle | undefined,
+  });
+  if (problem) fail(`desktop.window.${problem[0]}`, problem[1]);
 }
 
 /** `desktop.tray`: an icon path in the export, optional texts, a menu and a panel. */
@@ -286,6 +306,7 @@ function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void 
   const menu = desktopMenuProblem(d.menu);
   if (menu) fail(`desktop.${menu[0]}`, menu[1]);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
+  validateDesktopTitleOptions(d, fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);
   validateDesktopSize(d.maxSize, "desktop.maxSize", fail);

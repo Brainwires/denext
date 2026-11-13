@@ -1911,6 +1911,30 @@ export interface DesktopWindowConfig {
    * runtime (ignored with a warning before).
    */
   windowButtonPosition?: DesktopWindowButtonPosition;
+  /**
+   * Whether the native title bar draws the title text (default `"visible"`). `"hidden"` keeps the
+   * OS's title bar, its buttons and its drag area and draws no text; the window's title still names
+   * it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. Each OS does it natively:
+   * macOS, Windows, and Linux only where GTK draws the title bar itself (client-side decorations,
+   * such as GNOME on Wayland); under a window manager's decorations (KDE Plasma, X11 window
+   * managers) it is not applied, and `windowCapabilities().titleVisibility` is `false`. Windows
+   * opened with `windows.open` / `openWindow` take it too, unless their own `titleVisibility`
+   * says. Not for a frameless window (it has no title bar). Needs a Deno Desktop runtime with
+   * `BrowserWindow.setTitleVisibility` (ignored with a warning before).
+   */
+  titleVisibility?: "visible" | "hidden";
+  /**
+   * The macOS toolbar style that lays the title bar out (default `"automatic"`: no toolbar). An
+   * empty toolbar in that style is attached: `"unified"` is one tall bar with the title
+   * left-aligned (Finder, Safari), `"unifiedCompact"` the same, shorter, and `"expanded"` puts the
+   * title on its own row. With `desktop.titleBar: "hiddenInset"` it sets the inset toolbar's style
+   * (`"unifiedCompact"`: a shorter inset); `desktop.titleBar: "hidden"` has no toolbar, so any
+   * style but `"automatic"` is an error there (use `"hiddenInset"`), as it is on a frameless
+   * window. macOS 11 and later; ignored on Windows and Linux (`windowCapabilities().toolbarStyle`
+   * is `false`). Windows opened with `windows.open` / `openWindow` take it too, unless their own
+   * `toolbarStyle` says.
+   */
+  toolbarStyle?: "automatic" | "unified" | "unifiedCompact" | "expanded";
   /** The window title (defaults to the page's `<title>`). */
   title?: string;
   /** Whether the user can resize the window (default `true`). */

@@ -793,6 +793,13 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Traffic lights where the page wants them** — `desktop.window.windowButtonPosition` (and a
   window's own option) places the macOS window buttons under a hidden title bar; ignored on
   Windows and Linux. — `src/desktop/window-config.ts`.
+- **Native title options** — `desktop.window.titleVisibility: "hidden"` hides the title text and
+  keeps the OS's title bar, buttons and drag area (macOS, Windows, and Linux where GTK draws the
+  title bar; refused, never faked, under a window manager's decorations), and
+  `desktop.window.toolbarStyle` lays the macOS title bar out with a unified / compact / expanded
+  toolbar; per window in `openWindow`, and `setTitleVisibility` / `setToolbarStyle` from a page,
+  feature-detected through `windowCapabilities()`. — `src/desktop/window-config.ts`,
+  `src/desktop/caps/window.ts`.
 - **Linux desktop entry and AppStream metadata** — `desktop.linux.desktopEntry` (categories,
   keywords, `GenericName`, `StartupWMClass`, `MimeType`) goes into every `.desktop` file the
   packages carry, the bundle's own entry is rewritten with the app's name and icon, and the

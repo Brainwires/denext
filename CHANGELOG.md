@@ -239,6 +239,22 @@ and this project adheres to
 
 - **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
   and the known limitations say that packaging embeds the file a `../` path names.
+- **Desktop: native title options.** `desktop.window.titleVisibility: "hidden"` hides the title
+  text and keeps the OS's own title bar, its buttons and its drag area; the window's title still
+  names it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS
+  (`NSWindow.titleVisibility`) and Windows (`SetWindowThemeAttribute`, caption buttons kept, with or
+  without Mica) hide it on every backend; on Linux only a title bar GTK draws itself (client-side
+  decorations) can, and under a window manager's decorations the title stays and the capability
+  says so. `desktop.window.toolbarStyle: "unified" | "unifiedCompact" | "expanded"` lays the macOS
+  title bar out with an empty toolbar (macOS 11+), the title left-aligned like Finder for
+  `"unified"`; with `desktop.titleBar: "hiddenInset"` it sets the inset's style, and with
+  `"hidden"` (no toolbar) it is a config error. Windows opened with `windows.open` / `openWindow`
+  inherit both unless their own options say; a page changes its window's with
+  `setTitleVisibility` / `setToolbarStyle` from `denext/desktop/window`, which reject
+  `unsupported` with the reason, and feature-detects them with `windowCapabilities()`
+  (`titleVisibility`, `toolbarStyle`). Needs a runtime on laufey API 57 (runtime
+  3.0.0-denext.22); an older runtime reports both capabilities `false`, skips the config values
+  with a warning and rejects the setters.
 
 ## [4.16.0] - 2026-11-11
 
