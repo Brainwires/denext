@@ -711,14 +711,7 @@ export function applyDesktopWindowSettings(
 ): void {
   if (typeof window !== "object" || window === null || !settings) return;
   const win = window as ConfigurableWindow;
-  if (settings.minSize) {
-    const { width, height } = settings.minSize;
-    tryCall(win, "setMinimumSize", "minSize", warn, width, height);
-  }
-  if (settings.maxSize) {
-    const { width, height } = settings.maxSize;
-    tryCall(win, "setMaximumSize", "maxSize", warn, width, height);
-  }
+  applySizeLimits(win, settings, warn);
   if (settings.width !== undefined || settings.height !== undefined) applySize(win, settings, warn);
   if (settings.title !== undefined) tryCall(win, "setTitle", "window.title", warn, settings.title);
   if (settings.resizable !== undefined) {
@@ -731,6 +724,32 @@ export function applyDesktopWindowSettings(
   }
   if (settings.backdrop !== undefined) applyBackdrop(win, settings.backdrop, warn);
   applyOverlaySettings(win, settings, warn);
+}
+
+/**
+ * Apply a window's size limits (the adopted one, or one `openWindow` made): `minSize` with
+ * `setMinimumSize`, `maxSize` with `setMaximumSize`. A runtime without them (the stock one) is a
+ * warning; nothing throws.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param limits The smallest and largest sizes, either optional.
+ * @param warn Where warnings go.
+ */
+export function applySizeLimits(
+  win: unknown,
+  limits: Pick<DesktopWindowSettings, "minSize" | "maxSize">,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null) return;
+  const w = win as ConfigurableWindow;
+  if (limits.minSize) {
+    const { width, height } = limits.minSize;
+    tryCall(w, "setMinimumSize", "minSize", warn, width, height);
+  }
+  if (limits.maxSize) {
+    const { width, height } = limits.maxSize;
+    tryCall(w, "setMaximumSize", "maxSize", warn, width, height);
+  }
 }
 
 /**

@@ -134,6 +134,14 @@ export interface DesktopOpenWindowOptions {
    * the main window gets it. Refused with the `"hidden"` title bar and on a frameless window.
    */
   readonly toolbarStyle?: "automatic" | "unified" | "unifiedCompact" | "expanded";
+  /**
+   * The smallest size the user can resize it to, in CSS pixels: default `desktop.minSize`, as the
+   * main window gets it. Each side 1 to 10000; refused `validation` when larger than the
+   * `maxSize` it ends up with (its own or the inherited one).
+   */
+  readonly minSize?: { readonly width: number; readonly height: number };
+  /** The largest size the user can resize it to: default `desktop.maxSize`, as the main window gets it. */
+  readonly maxSize?: { readonly width: number; readonly height: number };
   /** Screen x of the top-left corner. */
   readonly x?: number;
   /** Screen y of the top-left corner. */
@@ -699,13 +707,13 @@ function onSecondInstance(st: SetupState, raw: Event): void {
 
 /**
  * What opened windows take from the main window's settings: the title bar, its title visibility,
- * its toolbar style and its buttons.
+ * its toolbar style, its buttons and the size limits (`desktop.minSize` / `desktop.maxSize`).
  */
 function inheritedChrome(
   w: DesktopWindowSettings | undefined,
 ): Pick<
   DesktopWindowSettings,
-  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle"
+  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle" | "minSize" | "maxSize"
 > {
   return {
     ...(w?.titleBar !== undefined ? { titleBar: w.titleBar } : {}),
@@ -714,6 +722,8 @@ function inheritedChrome(
       : {}),
     ...(w?.titleVisibility !== undefined ? { titleVisibility: w.titleVisibility } : {}),
     ...(w?.toolbarStyle !== undefined ? { toolbarStyle: w.toolbarStyle } : {}),
+    ...(w?.minSize !== undefined ? { minSize: w.minSize } : {}),
+    ...(w?.maxSize !== undefined ? { maxSize: w.maxSize } : {}),
   };
 }
 

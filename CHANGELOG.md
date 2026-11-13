@@ -108,6 +108,11 @@ and this project adheres to
   those calls carry no cookies, as before. `createTestClient(handler, { cookieJar })` and
   `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules; the
   default name-keyed jar is unchanged.
+- **Size limits on opened desktop windows.** `windows.open` / `host.openWindow` and a page's
+  `openWindow` take `minSize` / `maxSize` (`{ width, height }` in CSS pixels), and a window that
+  sets neither inherits `desktop.minSize` / `desktop.maxSize` as the main window gets them, the way
+  it inherits `desktop.titleBar`. A minimum larger than the maximum the window ends up with (its own
+  or the inherited one) is refused `validation` before the window opens.
 
 ### Changed
 

@@ -3098,7 +3098,12 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         window&apos;s own <code>windowButtonPosition</code> overrides it (<code>null</code>{" "}
         keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
         moves them later from a page. It is applied after the title bar style, needs denext&apos;s
-        pinned runtime, and is ignored on Windows and Linux.
+        pinned runtime, and is ignored on Windows and Linux. The size limits follow it too:{" "}
+        <code>desktop.minSize</code> / <code>desktop.maxSize</code>{" "}
+        bound every opened window as they bound the main window, a window&apos;s own{" "}
+        <code>minSize</code> / <code>maxSize</code> (<code>{"{ width, height }"}</code>{" "}
+        in CSS pixels) overrides each, and a minimum larger than the maximum the window ends up with
+        is refused <code>validation</code> before it opens.
       </p>
       <h3 id="desktop-title-options">Native title options</h3>
       <p>

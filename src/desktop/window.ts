@@ -1315,6 +1315,17 @@ export interface OpenWindowOptions {
    * Rejected `invalid` with the `"hidden"` title bar and on a frameless window; ignored off macOS.
    */
   readonly toolbarStyle?: ToolbarStyle;
+  /**
+   * The smallest size the user can resize it to, in CSS pixels: default `desktop.minSize`, as the
+   * main window gets it (as {@linkcode setMinimumWindowSize} sets it later). Rejected `validation`
+   * when larger than the `maxSize` it ends up with (its own or the inherited one).
+   */
+  readonly minSize?: { readonly width: number; readonly height: number };
+  /**
+   * The largest size the user can resize it to: default `desktop.maxSize`, as the main window gets
+   * it ({@linkcode setMaximumWindowSize}).
+   */
+  readonly maxSize?: { readonly width: number; readonly height: number };
   /** Screen x of the top-left corner (see the module docs for the units). */
   readonly x?: number;
   /** Screen y. */
