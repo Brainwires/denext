@@ -867,6 +867,46 @@ Deno.test("exec launcher: the program gets PORT, the hello line on stdin, and en
   }
 });
 
+Deno.test({
+  name:
+    "exec launcher: run.bootstrapFd hands the hello line on that descriptor, stdin stays open and empty",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    // fd 3 is closed below fd 4: the program reads its line from 4, then echoes whatever stdin
+    // carries (nothing) until the stop ends it.
+    const script = 'read -r line <&4; echo "fd4 $line"; [ -e /dev/fd/3 ] && echo "fd3 open"; ' +
+      'cat; echo "stdin closed"';
+    const definition: SidecarDefinition = {
+      name: "fdprog",
+      run: { exec: "sh", bootstrapFd: 4 },
+      args: ["-c", script],
+    };
+    const ctx = realCtx(definition, { port: 4321 });
+    const inst = await execSidecarLauncher({ program: "sh" })(ctx);
+    assert(typeof inst.pid === "number");
+    await until(() => ctx.lines.some((l) => l.startsWith("stdout:fd4 ")));
+    const hello = JSON.parse(ctx.lines[0].slice("stdout:fd4 ".length));
+    assertEquals(hello, {
+      name: "fdprog",
+      port: 4321,
+      bootstrap: { hello: "world" },
+      secrets: { TOKEN: "s3cret" },
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals(ctx.lines, [ctx.lines[0]], "nothing came on stdin and fd 3 is not open");
+    await inst.stop(5000);
+    const exit = await inst.exited;
+    assert(exit.code !== undefined || exit.signal !== undefined);
+    await assertRejects(
+      () =>
+        execSidecarLauncher({ program: "/nonexistent/denext-sidecar" })(
+          realCtx({ name: "gone", run: { exec: "/nonexistent/denext-sidecar", bootstrapFd: 3 } }),
+        ),
+      Deno.errors.NotFound,
+    );
+  },
+});
+
 Deno.test("exec launcher: killExecSidecars ends every running program at once", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-exec-" });
   const script = join(dir, "sleep.ts");

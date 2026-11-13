@@ -10,6 +10,29 @@ and this project adheres to
 
 ### Added
 
+- **`run.exclude` for a bundled Node backend sidecar.** Next to `nodeModules` / `external`,
+  `exclude` takes package names or globs (`"@anthropic-ai/claude-code-*"`; `*` stays within one name
+  segment) that are never inlined nor copied, and need not be installed: a dependency the app must
+  not ship, such as an SDK's per-platform binary package. At run time `require()` / `import()` of
+  one throws `MODULE_NOT_FOUND`, and a static import binds a stand-in that throws the same error
+  only when it is used; a copied package's dependency that matches stays behind. The bundle report
+  lists what was excluded, and a name both in `external` and `exclude` is a config error.
+- **Sidecar addons signed before they are archived.** The packages a bundled Node backend copies
+  whole travel in an archive that `codesign`, `notarytool` and `signtool` never look inside, so
+  nothing in it was signed with the app. The package scripts now sign that native code first: for
+  macOS with `DENEXT_CODESIGN_IDENTITY`, every Mach-O (found by its header: `pty.node`,
+  `spawn-helper`, a `.dylib`; every slice of a universal file) and code bundle in the copies,
+  innermost first, with the identity, the Hardened Runtime and a secure timestamp, keeping their
+  entitlements, then verified, so the unpacked addons load as the team's own code even with
+  `disable-library-validation` off; without an identity only unsigned code, ad-hoc. For Windows with
+  `DENEXT_WINDOWS_CERT` (and no `--no-sign`), every PE file there is Authenticode-signed.
+  `denext desktop run` / `dev` leave them as installed.
+- **`run: { exec, bootstrapFd }` for a program sidecar.** The first line
+  (`{"name","port","bootstrap","secrets"}`) goes to that file descriptor (3 to 9), a pipe written
+  once and closed, instead of stdin, which still stays open for the app's lifetime: what an Electron
+  backend reads with `--bootstrap-fd 3`. Such a program is spawned through `node:child_process`,
+  since `Deno.Command` passes no further descriptors.
+
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
   `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
   the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.

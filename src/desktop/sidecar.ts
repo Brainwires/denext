@@ -71,6 +71,15 @@ export type SidecarRun =
     /** Packages copied whole rather than bundled (they read their own files at run time). */
     readonly external?: readonly string[];
     /**
+     * Packages never bundled nor copied, by name or glob (`*` matches within one name segment:
+     * `"@anthropic-ai/claude-code-*"`, `"@img/sharp-*"`): a dependency the app must not ship, such
+     * as a per-platform binary package. Nothing the backend imports of them is resolved at
+     * packaging; at run time `require()` / `import()` of one throws `MODULE_NOT_FOUND` (what an
+     * optional dependency's `try { require(...) }` expects), and a static import binds a stand-in
+     * that throws only once it is used. A dependency of a copied package that matches stays behind.
+     */
+    readonly exclude?: readonly string[];
+    /**
      * Further entry modules the sidecar starts itself (worker scripts), bundled beside the main one
      * under the same relative paths. Relative to the module's folder.
      */
@@ -79,6 +88,13 @@ export type SidecarRun =
   | {
     /** The program to spawn. */
     readonly exec: string;
+    /**
+     * Hand the program its first line (`{"name","port","bootstrap","secrets"}`) on this file
+     * descriptor (3 to 9: a pipe written once, then closed) instead of stdin, which then carries
+     * nothing but stays open as long as the app runs. What an Electron app's backend reads with
+     * `--bootstrap-fd 3`.
+     */
+    readonly bootstrapFd?: number;
   };
 
 /** What makes a sidecar ready: every check given must pass. Without any it is ready once started. */
@@ -392,8 +408,46 @@ function msField(obj: Record<string, unknown>, prefix: string, key: string): Che
 /** The problem with an exec sidecar's `run`, or `null`. */
 function execRunError(run: Record<string, unknown>): string | null {
   if (typeof run.exec !== "string" || run.exec === "") return "run.exec must be a program path";
-  const extra = Object.keys(run).find((k) => k !== "exec");
-  return extra ? `run.${extra} is not an option of an exec sidecar` : null;
+  const extra = Object.keys(run).find((k) => k !== "exec" && k !== "bootstrapFd");
+  if (extra) return `run.${extra} is not an option of an exec sidecar`;
+  const fd = run.bootstrapFd;
+  return fd === undefined || (typeof fd === "number" && Number.isInteger(fd) && fd >= 3 && fd <= 9)
+    ? null
+    : "run.bootstrapFd must be a file descriptor from 3 to 9";
+}
+
+/** A package name or a glob of one: `name`, `@scope/name`, `*` within a segment. */
+const PACKAGE_PATTERN_RE = /^(@[A-Za-z0-9*._~-]+\/)?[A-Za-z0-9*._~-]+$/;
+
+/**
+ * Whether package `name` matches one of `patterns` (a package name, or a glob whose `*` matches
+ * any run of characters but `/`).
+ *
+ * @param name A package name (`@scope/pkg` or `pkg`).
+ * @param patterns The `run.exclude` entries.
+ * @returns Whether it is excluded.
+ */
+export function packageExcluded(name: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => {
+    if (!p.includes("*")) return p === name;
+    // The pattern's characters are a package name's (validated): only `.` needs escaping.
+    const source = p.replaceAll(".", "\\.").replaceAll("*", "[^/]*");
+    return new RegExp("^" + source + "$").test(name);
+  });
+}
+
+/** The problem with `run.exclude`, or `null`. */
+function excludeError(run: Record<string, unknown>): string | null {
+  const exclude = run.exclude;
+  if (exclude === undefined) return null;
+  if (!isStringArray(exclude)) return "run.exclude must be a string array";
+  const bad = exclude.find((p) => !PACKAGE_PATTERN_RE.test(p) || /^(@\*\/)?\*+$/.test(p));
+  if (bad !== undefined) {
+    return `run.exclude: "${bad}" is not a package name or a glob of one ("@scope/name-*")`;
+  }
+  const external = isStringArray(run.external) ? run.external : [];
+  const both = external.find((name) => packageExcluded(name, exclude));
+  return both === undefined ? null : `run.exclude excludes "${both}", which run.external copies`;
 }
 
 /** The problem with a module sidecar's `run`, or `null`. */
@@ -401,7 +455,7 @@ function moduleRunError(run: Record<string, unknown>): string | null {
   const bundled = run.nodeModules !== undefined;
   return first([
     () => typeof run.module === "string" && run.module !== "" ? null : "run.module must be a path",
-    () => unknownOption(run, "run", ["module", "nodeModules", "external", "entries"]),
+    () => unknownOption(run, "run", ["module", "nodeModules", "external", "exclude", "entries"]),
     () =>
       !bundled || (typeof run.nodeModules === "string" && run.nodeModules !== "")
         ? null
@@ -414,10 +468,12 @@ function moduleRunError(run: Record<string, unknown>): string | null {
       run.entries === undefined || isStringArray(run.entries)
         ? null
         : "run.entries must be a string array",
+    () => excludeError(run),
     () =>
-      bundled || (run.external === undefined && run.entries === undefined)
+      bundled ||
+        (run.external === undefined && run.entries === undefined && run.exclude === undefined)
         ? null
-        : "run.external and run.entries need run.nodeModules (they shape the bundle)",
+        : "run.external, run.exclude and run.entries need run.nodeModules (they shape the bundle)",
   ]);
 }
 

@@ -595,7 +595,10 @@ export async function desktopLaunchBuildPlan(
     denoFlags: input.denoFlags,
     runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
-      ...await desktopIncludeArgs(scriptUrl, input.os, input.appEntry ?? input.entry),
+      // Run unsigned, as the app itself is here: a bundled sidecar's addons are left as installed.
+      ...await desktopIncludeArgs(scriptUrl, input.os, input.appEntry ?? input.entry, {
+        signNativeCode: false,
+      }),
       ...await desktopNpmArgs(scriptUrl),
       // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
       "--backend",

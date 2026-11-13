@@ -4684,7 +4684,19 @@ export default defineDesktopExtension({
           <code>external</code>) travel as one archive beside it and are unpacked into the
           app&apos;s cache folder on the sidecar&apos;s first start, once per version, where the
           backend&apos;s own <code>createRequire(import.meta.url)</code> finds them too.{" "}
-          <code>node:sea</code> answers <code>isSea() === false</code>.
+          <code>node:sea</code> answers <code>isSea() === false</code>. Packages listed in{" "}
+          <code>exclude</code> (names, or globs whose <code>*</code> stays within one name segment:
+          {" "}
+          <code>"@anthropic-ai/claude-code-*"</code>) are neither inlined nor copied, and need not
+          be installed: a dependency the app must not ship, such as an SDK&apos;s per-platform
+          binary package. At run time <code>require()</code> or <code>import()</code> of one throws
+          {" "}
+          <code>MODULE_NOT_FOUND</code> (what an optional dependency&apos;s{" "}
+          <code>try {"{ require(…) }"}</code>{" "}
+          expects), and a static import binds a stand-in that throws the same error only when it is
+          used, so the backend starts and fails only on the path that needs the package. A copied
+          package&apos;s dependency that matches stays behind too. A name both in{" "}
+          <code>external</code> and <code>exclude</code> is a config error.
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
@@ -4730,7 +4742,18 @@ export default defineDesktopExtension({
           loads or runs in turn. The program gets the sidecar&apos;s variables, and one JSON line on
           stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
-          as the app runs, so a program that exits on end-of-file never outlives it.
+          as the app runs, so a program that exits on end-of-file never outlives it. With{" "}
+          <code>run: {"{ exec, bootstrapFd: 3 }"}</code>{" "}
+          (3 to 9) the line goes to that file descriptor instead, a pipe written once and then
+          closed, as an Electron app hands its backend{" "}
+          <code>--bootstrap-fd 3</code>; stdin then carries nothing but still stays open.{" "}
+          <code>Deno.Command</code>{" "}
+          passes no descriptor beyond stdin, stdout and stderr, so such a program is spawned through
+          {" "}
+          <code>node:child_process</code> (its <code>stdio</code> array), under the same{" "}
+          <code>--allow-run</code>{" "}
+          grant. On Windows the pipe is passed the way Node passes extra stdio, which a Node or
+          libuv program reads as that descriptor; any other program there should read stdin.
         </li>
       </ul>
       <Code lang="ts">
@@ -4743,6 +4766,7 @@ desktop: {
       module: "apps/server/dist/main.mjs",
       nodeModules: "apps/server/node_modules",
       external: ["playwright-core"], // loaded with require() at run time, or reads its own files
+      exclude: ["@anthropic-ai/claude-code-*"], // never shipped: not bundled, not copied
     },
     args: ["--port", "{port}"],
     env: { MODE: "desktop" },
@@ -4767,6 +4791,53 @@ desktop: {
         {" "}
         holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
       </p>
+      <p>
+        The archive of copied packages is data to <code>codesign</code>, <code>notarytool</code> and
+        {" "}
+        <code>signtool</code>: nothing inside it is signed or checked when the app is. So the
+        package scripts sign the native code in it before it is archived, with the credentials that
+        sign the app. For a macOS package with{" "}
+        <code>DENEXT_CODESIGN_IDENTITY</code>, every Mach-O file in the copied packages (found by
+        its header, whatever its name: <code>pty.node</code>, <code>spawn-helper</code>, a prebuilt
+        {" "}
+        <code>.dylib</code>; a universal file in every slice) and every code bundle there is signed
+        innermost first with that identity, the Hardened Runtime and a secure timestamp, keeping the
+        entitlements it already carries, then verified. The unpacked addons then load as the app
+        team&apos;s own code, even when <code>DENEXT_ENTITLEMENTS</code> turns{" "}
+        <code>disable-library-validation</code>{" "}
+        off. Without an identity, code that carries no signature at all is signed ad-hoc (Apple
+        silicon runs no unsigned code) and a vendor&apos;s signature is kept. For a Windows package
+        with <code>DENEXT_WINDOWS_CERT</code> (or{" "}
+        <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>) and no{" "}
+        <code>--no-sign</code>, every PE file there (<code>.node</code>, <code>.dll</code>,{" "}
+        <code>.exe</code>) is Authenticode-signed like the bundle&apos;s own.{" "}
+        <code>denext desktop run</code> and <code>dev</code>{" "}
+        leave them as installed. The packages copied are the ones installed in{" "}
+        <code>nodeModules</code>: build each architecture from a <code>node_modules</code>{" "}
+        that holds its addons (a universal build needs universal addons, or both architectures&apos;
+        prebuilds).
+      </p>
+      <Code lang="ts">
+        {`// a program that reads its bootstrap from fd 3 (Electron's --bootstrap-fd 3)
+sidecars: [{
+  name: "server",
+  run: { exec: "./bin/server", bootstrapFd: 3 },
+  args: ["--bootstrap-fd", "3", "--port", "{port}"],
+  port: "auto",
+  secrets: { TOKEN: "$random" },
+  bootstrap: { mode: "desktop" },
+}]
+
+// in the program (Node): one JSON line, then end of file
+import { readFileSync } from "node:fs";
+const { port, bootstrap, secrets } = JSON.parse(readFileSync(3, "utf8"));
+
+// or, without bootstrapFd, the first line of stdin (keep reading it: its end is the app's)
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+const hello = JSON.parse(await new Promise((r) => lines.once("line", r)));
+lines.on("close", () => process.exit(0));`}
+      </Code>
       <p>
         An <code>"auto"</code>{" "}
         port is picked by binding a free loopback port and releasing it, so another process can take

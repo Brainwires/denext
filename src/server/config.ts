@@ -1460,7 +1460,8 @@ export interface DesktopSidecarConfig {
 
 /**
  * {@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with
- * `nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.
+ * `nodeModules`, `external`, `exclude` and `entries` for a Node backend) or `exec` (a program,
+ * with `bootstrapFd`), not both.
  */
 export interface DesktopSidecarRunConfig {
   /** The module, relative to the project. */
@@ -1469,10 +1470,21 @@ export interface DesktopSidecarRunConfig {
   nodeModules?: string;
   /** Packages copied whole rather than bundled (loaded with `require()` at run time). */
   external?: string[];
+  /**
+   * Packages never bundled nor copied, by name or glob (`"@anthropic-ai/claude-code-*"`; `*`
+   * stays within one name segment): `require()` / `import()` of one throws `MODULE_NOT_FOUND` at
+   * run time, a static import throws only once used.
+   */
+  exclude?: string[];
   /** Further entry modules it starts itself (worker scripts), relative to the module. */
   entries?: string[];
   /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
   exec?: string;
+  /**
+   * A program's first line (`{"name","port","bootstrap","secrets"}`) on this file descriptor, 3 to
+   * 9 (a pipe written once, then closed), instead of stdin.
+   */
+  bootstrapFd?: number;
 }
 
 /** {@link DesktopSidecarConfig.loginShellEnv} with options. */

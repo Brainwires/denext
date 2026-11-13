@@ -9,7 +9,10 @@
 // listed in `run.external` (packages that read their own files at run time). Those are copied whole
 // into `.deno-desktop/sidecars/<name>/node_modules/` with their dependencies (a pnpm layout is
 // followed through its links) and loaded with `require()`, which resolves from the bundle's folder.
-// Prebuilt addons for other operating systems (`prebuilds/<os>-<arch>/`) are left out.
+// Prebuilt addons for other operating systems (`prebuilds/<os>-<arch>/`) are left out. Packages
+// matching `run.exclude` are neither: an import of one becomes a stand-in that throws
+// `MODULE_NOT_FOUND` when it is reached, and a copied package's dependency that matches stays
+// behind.
 //
 // `node:sea` (Node's single-executable API, which Deno lacks) resolves to a stub whose `isSea()` is
 // `false`: a sidecar is never a single executable.
@@ -21,12 +24,18 @@ import * as esbuild from "./esbuild/mod.ts";
 import { builtinModules } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import {
+  packageExcluded,
   SIDECAR_BUNDLE_DIR,
   SIDECAR_BUNDLE_MAIN,
   type SidecarDefinition,
 } from "../desktop/sidecar.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { packSidecarModules } from "../desktop/sidecar-modules.ts";
+import {
+  type SidecarSigningDeps,
+  type SidecarSigningReport,
+  signSidecarNativeCode,
+} from "./desktop-sidecar-sign.ts";
 
 /** What {@linkcode bundleDesktopSidecar} wrote. */
 export interface SidecarBundleReport {
@@ -39,6 +48,10 @@ export interface SidecarBundleReport {
   readonly copied: readonly string[];
   /** The copied packages that hold a native addon. */
   readonly natives: readonly string[];
+  /** The packages `run.exclude` kept out (imported by the bundle, or a copied package's dependency). */
+  readonly excluded: readonly string[];
+  /** How the copied packages' native code was signed (see `desktop-sidecar-sign.ts`). */
+  readonly signing: SidecarSigningReport;
   /** Total bytes written. */
   readonly bytes: number;
   /** Problems worth reading (a missing dependency, a version conflict, a missing `ffi` grant). */
@@ -276,12 +289,13 @@ async function dependenciesToCopy(
   name: string,
   root: string,
   copied: ReadonlyMap<string, string>,
+  exclusion: Exclusion,
   warnings: string[],
 ): Promise<Array<[string, string]>> {
   const { required, optional } = await dependencyNames(root);
   const out: Array<[string, string]> = [];
   for (const dep of [...required, ...optional]) {
-    if (copied.has(dep)) continue;
+    if (copied.has(dep) || excludes(exclusion, dep)) continue;
     const found = await findPackage(dirname(root), dep) ?? await findPackage(root, dep);
     if (found) out.push([dep, found]);
     else if (required.includes(dep)) warnings.push(`${name} needs ${dep}, which is not installed`);
@@ -289,9 +303,23 @@ async function dependenciesToCopy(
   return out;
 }
 
+/** `run.exclude`'s patterns and the package names they kept out so far. */
+interface Exclusion {
+  readonly patterns: readonly string[];
+  readonly hits: Set<string>;
+}
+
+/** Whether package `name` is excluded (recorded when it is). */
+function excludes(exclusion: Exclusion, name: string): boolean {
+  if (!packageExcluded(name, exclusion.patterns)) return false;
+  exclusion.hits.add(name);
+  return true;
+}
+
 /**
  * Copy each package in `roots` and its dependencies (as installed, a pnpm layout followed through
- * its links) into `<out>/node_modules/`, flat. Returns the names copied and the bytes.
+ * its links) into `<out>/node_modules/`, flat, but none `exclusion` names. Returns the names copied
+ * and the bytes.
  */
 async function copyPackages(
   roots: ReadonlyMap<string, string>,
@@ -299,6 +327,7 @@ async function copyPackages(
   platform: string,
   warnings: string[],
   bundled: ReadonlySet<string> = new Set(),
+  exclusion: Exclusion = { patterns: [], hits: new Set() },
 ): Promise<{ names: string[]; bytes: number }> {
   const copied = new Map<string, string>();
   for (const name of bundled) copied.set(name, "(bundled)");
@@ -313,10 +342,10 @@ async function copyPackages(
       }
       continue;
     }
-    if (!await supportsPlatform(root, platform)) continue;
+    if (excludes(exclusion, name) || !await supportsPlatform(root, platform)) continue;
     copied.set(name, root);
     bytes += await copyTree(root, join(out, "node_modules", name), platform);
-    queue.push(...await dependenciesToCopy(name, root, copied, warnings));
+    queue.push(...await dependenciesToCopy(name, root, copied, exclusion, warnings));
   }
   return { names: [...copied.keys()].filter((n) => !bundled.has(n)), bytes };
 }
@@ -357,12 +386,15 @@ interface BundledRun {
   readonly module: string;
   readonly nodeModules?: string;
   readonly external?: readonly string[];
+  readonly exclude?: readonly string[];
   readonly entries?: readonly string[];
 }
 
 /** What one bundling run collects: the packages to copy (name → folder) and the native ones. */
 interface BundleState {
+  readonly name: string;
   readonly external: ReadonlySet<string>;
+  readonly exclusion: Exclusion;
   readonly toCopy: Map<string, string>;
   readonly natives: Set<string>;
   readonly nativeCache: Map<string, Promise<boolean>>;
@@ -392,7 +424,9 @@ async function seedCopies(
 /** The native and `external` packages among the backend's runtime dependencies in `nodeModules`. */
 async function seedInstalled(state: BundleState, nodeModules: string): Promise<void> {
   const deps = await runtimeDependencies(dirname(nodeModules));
-  for (const [name, root] of await installedPackages(nodeModules)) {
+  const installed = (await installedPackages(nodeModules))
+    .filter(([name]) => !excludes(state.exclusion, name));
+  for (const [name, root] of installed) {
     const external = state.external.has(name);
     if (!external && deps !== undefined && !deps.has(name)) continue;
     const native = !external && await isNativePackage(root);
@@ -432,6 +466,7 @@ async function resolveBare(
   if (args.pluginData?.denextSidecar === true || isBuiltin(args.path)) return undefined;
   if (isAbsolute(args.path)) return undefined;
   const name = packageNameOf(args.path);
+  if (excludes(state.exclusion, name)) return excludedImport(args);
   const resolved = await build.resolve(args.path, {
     kind: args.kind,
     resolveDir: args.resolveDir,
@@ -472,6 +507,48 @@ module.exports = typeof d === "function" || (typeof d === "object" && d !== null
 `;
 }
 
+/** An import of an excluded package: a stand-in (see {@linkcode excludedStub}), never resolved. */
+function excludedImport(args: esbuild.OnResolveArgs): esbuild.OnResolveResult {
+  // `require.resolve()` is left to run time, where it fails as in Node.
+  if (args.kind === "require-resolve") return { path: args.path, external: true };
+  // A static import binds at load: its stand-in throws only once used. `require()` / `import()`
+  // throw when they run, as for a package that is not installed.
+  const namespace = args.kind === "import-statement" ? "denext-excluded-lazy" : "denext-excluded";
+  return { path: args.path, namespace };
+}
+
+/**
+ * The stand-in for an excluded package. `lazy` (a static import): its module loads, and any use of
+ * it (a call, a named export, a property) throws; without, loading it throws. Either way the error
+ * is Node's for a missing package (`code: "MODULE_NOT_FOUND"`) and says why.
+ */
+function excludedStub(specifier: string, sidecar: string, lazy: boolean): string {
+  const message = `Cannot find module '${specifier}': sidecar "${sidecar}" excludes ` +
+    `${packageNameOf(specifier)} (run.exclude)`;
+  const fail = `const fail = () => {
+  const err = new Error(${JSON.stringify(message)});
+  err.code = "MODULE_NOT_FOUND";
+  throw err;
+};
+`;
+  if (!lazy) {
+    return `${fail}fail();
+module.exports = {};
+`;
+  }
+  // The interop object a static import reads named exports from inherits from the stand-in's
+  // prototype: a name it lacks lands in this trap.
+  return `${fail}const quiet = (k) => typeof k === "symbol" || k === "__esModule" || k === "then";
+const proto = new Proxy({}, { get: (_t, k) => (quiet(k) ? undefined : fail()) });
+module.exports = new Proxy(function () {}, {
+  get: (_t, k) => (quiet(k) ? undefined : fail()),
+  getPrototypeOf: () => proto,
+  apply: fail,
+  construct: fail,
+});
+`;
+}
+
 /** The bundler plugin: `node:sea` stubbed, native and `external` packages left to `require`. */
 function sidecarPlugin(state: BundleState): esbuild.Plugin {
   return {
@@ -487,6 +564,13 @@ function sidecarPlugin(state: BundleState): esbuild.Plugin {
         contents: requireStub(args.path),
         loader: "js",
       }));
+      for (const lazy of [false, true]) {
+        const namespace = lazy ? "denext-excluded-lazy" : "denext-excluded";
+        build.onLoad({ filter: /.*/, namespace }, (args) => ({
+          contents: excludedStub(args.path, state.name, lazy),
+          loader: "js",
+        }));
+      }
     },
   };
 }
@@ -581,6 +665,12 @@ export interface BundleSidecarOptions {
    * (default `.`): the app loads the bundle from `.deno-desktop/sidecars/<name>/` beside it.
    */
   readonly entryDir?: string;
+  /**
+   * Sign the copied packages' native code for the target OS before it is archived (`true`, or the
+   * signing dependencies for tests): what packaging does. Default `false` (`denext desktop run` /
+   * `dev`, which run the app unsigned).
+   */
+  readonly sign?: boolean | SidecarSigningDeps;
 }
 
 /** The bundles' folder, relative to the project: {@linkcode SIDECAR_BUNDLE_DIR} beside the entry. */
@@ -607,7 +697,9 @@ export async function bundleDesktopSidecar(
   const relDir = `${bundleRoot(options.entryDir)}/${def.name}`;
   const out = join(projectDir, ...relDir.split("/"));
   const state: BundleState = {
+    name: def.name,
     external: new Set(run.external ?? []),
+    exclusion: { patterns: run.exclude ?? [], hits: new Set() },
     toCopy: new Map(),
     natives: new Set(),
     nativeCache: new Map(),
@@ -635,9 +727,17 @@ export async function bundleDesktopSidecar(
     platform,
     state.warnings,
     new Set(bundled),
+    state.exclusion,
   );
   const names = [...bundled, ...copied.names];
-  if (names.length > 0) await packSidecarModules(stage, out);
+  let signing: SidecarSigningReport = { how: "none", signed: [] };
+  if (names.length > 0) {
+    if (options.sign) {
+      const os = options.os ?? (Deno.build.os as DesktopOs);
+      signing = await signSidecarNativeCode(stage, os, options.sign === true ? {} : options.sign);
+    }
+    await packSidecarModules(stage, out);
+  }
   await Deno.remove(stage, { recursive: true }).catch(() => {});
   if (state.natives.size > 0 && options.ffiGranted !== true) {
     state.warnings.push(
@@ -650,6 +750,8 @@ export async function bundleDesktopSidecar(
     dir: relDir,
     copied: names,
     natives: [...state.natives],
+    excluded: [...state.exclusion.hits].sort(),
+    signing,
     bytes: await bundleBytes(out),
     warnings: state.warnings,
   };
@@ -674,6 +776,17 @@ async function tidyBundleDir(
   }
 }
 
+/** The line a bundled sidecar is printed as: its folder, size, copies, exclusions and signing. */
+function reportLine(report: SidecarBundleReport): string {
+  const mb = (report.bytes / 1024 / 1024).toFixed(1);
+  const parts = [`${mb} MB`];
+  if (report.copied.length) parts.push(`copied ${report.copied.join(", ")}`);
+  if (report.excluded.length) parts.push(`excluded ${report.excluded.join(", ")}`);
+  const signed = report.signing.signed.length;
+  if (signed) parts.push(`signed ${signed} native file(s), ${report.signing.how}`);
+  return `  sidecar ${report.name}: bundled into ${report.dir} (${parts.join("; ")})`;
+}
+
 /** Whether `ffi` is granted to the sidecar or app-wide. */
 function ffiGranted(def: SidecarDefinition, config: unknown): boolean {
   const extra = (config as { desktop?: { extraPermissions?: { ffi?: unknown } } } | undefined)
@@ -690,6 +803,8 @@ function ffiGranted(def: SidecarDefinition, config: unknown): boolean {
  * @param os The OS packaged for (default: the host's).
  * @param entryDir The folder of the entry that calls `runDesktop`, relative to the project (default
  *   `.`; `denext desktop run --entry app/desktop.ts` → `app`): the bundles go beside it.
+ * @param options `sign`: sign the copied native code ({@linkcode BundleSidecarOptions.sign}; default
+ *   `true`, what the package scripts get).
  * @returns The reports.
  */
 export async function bundleDesktopSidecars(
@@ -697,6 +812,7 @@ export async function bundleDesktopSidecars(
   config: unknown,
   os?: DesktopOs,
   entryDir?: string,
+  options: { readonly sign?: boolean | SidecarSigningDeps } = {},
 ): Promise<SidecarBundleReport[]> {
   const sidecars = ((config as { desktop?: { sidecars?: unknown } } | undefined)?.desktop
     ?.sidecars ?? []) as SidecarDefinition[];
@@ -711,12 +827,9 @@ export async function bundleDesktopSidecars(
       ...(os ? { os } : {}),
       ffiGranted: ffiGranted(def, config),
       ...(entryDir === undefined ? {} : { entryDir }),
+      sign: options.sign ?? true,
     });
-    const mb = (report.bytes / 1024 / 1024).toFixed(1);
-    console.log(
-      `  sidecar ${def.name}: bundled into ${report.dir} (${mb} MB` +
-        (report.copied.length ? `; copied ${report.copied.join(", ")}` : "") + ")",
-    );
+    console.log(reportLine(report));
     for (const w of report.warnings) console.warn(`  ⚠ sidecar ${def.name}: ${w}`);
     reports.push(report);
   }

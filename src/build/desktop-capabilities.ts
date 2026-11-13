@@ -1876,6 +1876,9 @@ function configExtensionPaths(config: unknown): string[] {
  * @param appEntry The entry that calls `runDesktop`, relative to the project (default `desktop.ts`;
  *   `denext desktop run` / `dev --entry`): a relative extension module and a sidecar's module,
  *   program or bundle are resolved from its folder, as the app resolves them.
+ * @param options `signNativeCode: false` leaves a bundled sidecar's copied native addons as
+ *   installed (`denext desktop run` / `dev`); by default they are signed for the target OS with the
+ *   package script's credentials before they are archived (see `desktop-sidecar-sign.ts`).
  * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
  * argv.
  */
@@ -1883,6 +1886,7 @@ export async function desktopIncludeArgs(
   entryUrl: string,
   os?: DesktopOs,
   appEntry?: string,
+  options: { readonly signNativeCode?: boolean } = {},
 ): Promise<string[]> {
   // No config → no extensions to embed; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
@@ -1895,7 +1899,7 @@ export async function desktopIncludeArgs(
   const local = projectUrl.protocol === "file:";
   const importMap = local ? await desktopImportMapArgsFor(fromFileUrl(projectUrl)) : [];
   const sidecars = local
-    ? await desktopSidecarIncludeArgs(fromFileUrl(projectUrl), config, os, appEntry)
+    ? await desktopSidecarIncludeArgs(fromFileUrl(projectUrl), config, os, appEntry, options)
     : [];
   return [...includes, ...sidecars, ...importMap];
 }
@@ -1916,6 +1920,7 @@ const SIDECAR_BUNDLER = "./desktop-sidecar-bundle.ts";
  * @param config The project config.
  * @param os The OS packaged for (default: the host's).
  * @param appEntry The entry that calls `runDesktop`, relative to the project (default `desktop.ts`).
+ * @param options `signNativeCode` (default `true`): sign a bundle's copied native code.
  * @returns The args.
  */
 export async function desktopSidecarIncludeArgs(
@@ -1923,6 +1928,7 @@ export async function desktopSidecarIncludeArgs(
   config: unknown,
   os?: DesktopOs,
   appEntry = "desktop.ts",
+  options: { readonly signNativeCode?: boolean } = {},
 ): Promise<string[]> {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   const sidecars = configSidecars(cfg);
@@ -1934,6 +1940,7 @@ export async function desktopSidecarIncludeArgs(
       config: unknown,
       os?: DesktopOs,
       entryDir?: string,
+      options?: { sign?: boolean },
     ): Promise<Array<{ dir: string }>>;
   };
   // A Node backend's bundle is loaded from `.deno-desktop/sidecars/<name>/` beside the entry.
@@ -1942,7 +1949,8 @@ export async function desktopSidecarIncludeArgs(
     projectDir,
     config,
     os,
-    ...(entryDir === "." ? [] : [entryDir]),
+    entryDir === "." ? undefined : entryDir,
+    { sign: options.signNativeCode ?? true },
   );
   const args = reports.flatMap((r) => ["--include", r.dir]);
   // Each as written for an entry at the project root; else the file the app resolves it to.
