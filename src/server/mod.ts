@@ -340,6 +340,7 @@ export {
   type DesktopTrayPanelConfig,
   type DesktopUiUpdateConfig,
   type DesktopUpdateConfig,
+  type DesktopWebViewsConfig,
   type DesktopWindowButtonPosition,
   type DesktopWindowConfig,
   type DesktopWindowLevel,

@@ -72,6 +72,7 @@ import {
 } from "../desktop/app-windows.ts";
 import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
 import type { DesktopAppMenuItemHandler, DesktopAppMenusApi } from "../desktop/app-menus.ts";
+import type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 import type {
   DesktopNewWindowHandler,
   DesktopWindowMenuItemHandler,
@@ -134,6 +135,21 @@ export type {
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
 } from "../desktop/menu-config.ts";
+/** `desktop.webViews` as resolved ({@linkcode RunDesktopOptions.webViews}). */
+export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
+/**
+ * The embedded web views `DesktopWindowRef.createWebView` opens (the same handle a page gets from
+ * `createWebView` in `denext/desktop/window`).
+ */
+export type {
+  CreateWebViewOptions,
+  WebViewBounds,
+  WebViewEventMap,
+  WebViewHandle,
+  WebViewLoadState,
+  WebViewPermissions,
+  WebViewState,
+} from "../desktop/webview.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
@@ -727,6 +743,12 @@ export interface RunDesktopOptions {
    * backend adds to the application menu (New Window, Reopen Closed Window, the open windows).
    */
   configMenu?: DesktopMenuSettings;
+  /**
+   * `desktop.webViews` as `resolveDesktopCapabilities` resolved it: how many embedded web views a
+   * window hosts at once (default 8) and the origins they may load (default any `http:` /
+   * `https:` origin but the app's own).
+   */
+  webViews?: DesktopWebViewSettings;
   /**
    * What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),
    * or `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a
@@ -1844,6 +1866,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
     ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
+    // A web view's DevTools open where the app's do: `desktop.inspectable: true`, or a dev run.
+    webViews: {
+      ...(options.webViews ?? { limit: 8, allowedOrigins: null }),
+      devTools: options.webViews?.devTools === true || devDecision.proxy,
+    },
+    // A web view never loads the app: its configured origin or the dev server it proxies.
+    appOrigins: () => [options.appOrigin, devUrl].filter((o): o is string => typeof o === "string"),
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),

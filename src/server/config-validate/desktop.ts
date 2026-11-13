@@ -27,6 +27,7 @@ import {
   titleOptionsProblem,
 } from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
+import { webViewsConfigProblem } from "../../desktop/webview-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
 import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
@@ -333,7 +334,10 @@ function validateDesktopTray(tray: unknown, fail: Fail): void {
   if (problem) fail(`desktop.${problem[0]}`, problem[1]);
 }
 
-/** The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload. */
+/**
+ * The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload,
+ * webViews.
+ */
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
   validateDesktopTray(d.tray, fail);
@@ -355,6 +359,8 @@ function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void 
   if (d.preload !== undefined && (typeof d.preload !== "string" || d.preload === "")) {
     fail("desktop.preload", "must be a module path");
   }
+  const webViews = webViewsConfigProblem(d.webViews);
+  if (webViews) fail(`desktop.${webViews[0]}`, webViews[1]);
 }
 
 /**

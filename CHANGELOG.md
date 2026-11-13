@@ -32,7 +32,31 @@ and this project adheres to
   once and closed, instead of stdin, which still stays open for the app's lifetime: what an Electron
   backend reads with `--bootstrap-fd 3`. Such a program is spawned through `node:child_process`,
   since `Deno.Command` passes no further descriptors.
-
+- **Desktop: embedded web views.** `createWebView(options)` from `denext/desktop/window` places
+  another site's page in a native view inside the app's window, above the page, at bounds the page
+  sets (CSS pixels of the page viewport); `desktop.ts` gets the same call as
+  `win.createWebView(options)` on a window handle. The handle navigates, goes back / forward,
+  reloads, stops, takes the keyboard focus, reports its `state()`, `capture()`s what it shows as a
+  `Blob`, `evaluate()`s a script in an isolated world, and fires `title`, `url`, `load`, `console`,
+  `focus-change`, `new-window`, `find-result`, `context-menu` and `closed`. Views stack above the
+  page and among themselves (`raise()`, `lower()`, `setZOrder(n)`, `state().zOrder`);
+  `capture({ format: "jpeg", scale: 1 })` makes the snapshot an `<img>` stands in for while an HTML
+  overlay is up; `setZoom` / `getZoom`, `find` / `stopFind`, `print()` and `openDevTools()`
+  (`not_allowed` unless the app's DevTools are on: a dev run or `desktop.inspectable: true`);
+  `contextMenu: "app"` suppresses the engine's menu, and `permissions` also takes
+  `{ prompts, clipboardRead, clipboardWrite }`. A view never gets the desktop bridge, the app's
+  storage (named `partition`s, `"ephemeral:"` ones in memory) or the window's navigation guard; it
+  loads `http:` / `https:` only and never the app's own origin, with popup, download and
+  permission-prompt policies; it closes with its window. `attachWebView(view, element)` keeps a
+  view on an element through resizes, scrolling, window resizes and display scale changes (one
+  `setBounds` per frame at most), fits it to the element's visible part (cut to the viewport and
+  its scroll containers; `clip: false` keeps the whole box) and hides it while the element is
+  detached, hidden or out of view. `desktop.webViews.limit` caps the views per window (default 8, up to
+  32) and `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
+  whether the engine hosts them and which features work (each `false` where the engine or runtime
+  lacks it, and its call rejects `unsupported`). Web views need runtime 3.0.0-denext.23 (laufey
+  API 58): CEF and WKWebView on macOS first, WebView2 and WebKitGTK as each engine lands; under an
+  older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
   `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
   the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.

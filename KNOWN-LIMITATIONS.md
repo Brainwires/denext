@@ -653,6 +653,17 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   is `false` and `setTitleVisibility("hidden")` rejects `unsupported`. denext never switches a
   window to client-side decorations to fake it. `desktop.window.toolbarStyle` is macOS-only
   (macOS 11 and later) and has no equivalent on Windows or Linux.
+- **Embedded web views draw above the page and come engine by engine.** A view from
+  `createWebView` is a native view: no HTML can be drawn over it (hide it, or show a `capture()`
+  snapshot in its place, while a menu or dialog overlaps it), and the page's own key listeners
+  don't hear keys typed into it. A view can't be cropped: `attachWebView` fits it to the visible
+  part of a partly scrolled-away element by resizing it, so the page inside lays out at that size.
+  `desktop.webViews.allowedOrigins` checks `createWebView` and
+  `navigate`, not the links the user follows inside the view (those are held to `http:` /
+  `https:` only). A reload of the window's page can't reach the views it had open (they stay until
+  closed or the window closes). Web views need an engine that hosts them —
+  `webViewCapabilities().supported` says; elsewhere `createWebView` rejects `unsupported` — and
+  WKWebView keeps a named partition only on macOS 14 and later (in memory before).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

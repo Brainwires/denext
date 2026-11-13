@@ -21,6 +21,8 @@
  * - `titleBarPreferences`: the user changed their title bar settings — the page reads
  *   `titleBarPreferences` (runtime 2.9.7-denext.12).
  * - `focus` / `blur`: the window gained or lost the keyboard focus (every runtime).
+ * - `webview` `{ id, event, detail }`: an event of one of the page's embedded web views
+ *   (`./webview.ts` has the web view methods and their checks).
  *
  * Overlay windows (a desktop companion, a HUD): the opacity, click-through
  * (`setIgnoreMouseEvents`), a click-catching hit region (`setHitRegion`), every-workspace
@@ -61,6 +63,9 @@ import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import { applyWindowLevel, DEFAULT_VIBRANCY } from "../window-config.ts";
+import type { CreateWebViewOptions, WebViewHandle } from "../webview.ts";
+import type { DesktopWebViewSettings } from "../webview-config.ts";
+import { createWebViewHost, type WebViewHost } from "./webview.ts";
 
 /** How long a guarded close may go unacknowledged before a repeated close request wins. */
 export const UNRESPONSIVE_MS = 5_000;
@@ -88,6 +93,7 @@ export const WINDOW_EVENTS: readonly string[] = [
   "titleBarPreferences",
   "focus",
   "blur",
+  "webview",
 ];
 
 /** The window state events the runtime fires (each becomes a `state` signal). */
@@ -154,6 +160,9 @@ interface BrowserWindowLike {
     y?: number;
   }): Promise<{ outcome?: unknown; target?: unknown; reason?: unknown }>;
 }
+
+/** The window as the web view host sees it (`createWebView` on the runtime that has web views). */
+type WebViewHostWindow = Parameters<typeof createWebViewHost>[0]["window"];
 
 /** One file of a drop, as the page takes it. */
 interface DroppedFile {
@@ -234,6 +243,15 @@ export interface WindowControllerOptions {
    * becomes the layer surface's margins, so `setPosition` is reported. Default: not one.
    */
   readonly overlay?: boolean;
+  /** `desktop.webViews` as resolved (default: 8 web views per window, any http(s) origin). */
+  readonly webViews?: () => DesktopWebViewSettings;
+  /**
+   * The app's own origins, which a web view never loads: `desktop.app.origin` and the origin the
+   * app's pages are served from.
+   */
+  readonly appOrigins?: () => readonly string[];
+  /** The runtime's `Deno.WebView` class (tests; default the runtime's). */
+  readonly webViewClass?: unknown;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -249,6 +267,13 @@ export interface WindowController {
   install(): void;
   /** Accept one drop (the event handler's path; exported for tests). */
   acceptDrop(detail: unknown): Promise<void>;
+  /**
+   * Open a web view in this window for `desktop.ts` (`win.createWebView`): the page's checks and
+   * the same per-window limit.
+   */
+  createWebView(options: CreateWebViewOptions): Promise<WebViewHandle>;
+  /** The window closed for good: its web views are gone. */
+  windowClosed(): void;
 }
 
 /** Why a window feature is missing when nothing more specific is known. */
@@ -537,6 +562,8 @@ interface WindowState {
   guardQuitOnly: boolean;
   pending: { id: string; at: number; acked: boolean; reason: CloseReason } | undefined;
   installed: boolean;
+  /** The window's embedded web views. */
+  readonly webViews: WebViewHost;
 }
 
 /** Why a guarded window is asked to close. */
@@ -1275,13 +1302,15 @@ function installWindowEvents(s: WindowState): void {
  * @returns The controller.
  */
 export function createWindowController(options: WindowControllerOptions): WindowController {
+  const win = typeof options.window === "object" && options.window !== null
+    ? options.window as BrowserWindowLike
+    : undefined;
+  const emit = (event: string, data: unknown) => options.emit("window", event, data);
   const s: WindowState = {
     options,
-    win: typeof options.window === "object" && options.window !== null
-      ? options.window as BrowserWindowLike
-      : undefined,
+    win,
     api: options.api,
-    emit: (event, data) => options.emit("window", event, data),
+    emit,
     exit: options.exit ?? Deno.exit,
     picked: options.picked ?? new PickedPaths(),
     resolve: options.resolveDropped ?? resolveDropped,
@@ -1291,6 +1320,14 @@ export function createWindowController(options: WindowControllerOptions): Window
     guardQuitOnly: false,
     pending: undefined,
     installed: false,
+    webViews: createWebViewHost({
+      window: win as WebViewHostWindow | undefined,
+      api: options.api as { webViewCapabilities?(): unknown } | undefined,
+      ...(options.webViews ? { settings: options.webViews } : {}),
+      ...(options.appOrigins ? { appOrigins: options.appOrigins } : {}),
+      webViewClass: options.webViewClass ?? (Deno as unknown as { WebView?: unknown }).WebView,
+      emit,
+    }),
   };
   const capability: DesktopCapability = {
     name: "window",
@@ -1308,11 +1345,14 @@ export function createWindowController(options: WindowControllerOptions): Window
       ...windowLookMethods(s),
       ...windowOverlayMethods(s),
       ...windowCloseAndDragMethods(s),
+      ...s.webViews.methods,
     },
   };
   return {
     capability,
     acceptDrop: (detail) => acceptDrop(s, detail),
+    createWebView: (opts) => s.webViews.create(opts),
+    windowClosed: () => s.webViews.windowClosed(),
     interceptClose: (event) => interceptClose(s, event),
     install: () => installWindowEvents(s),
   };
