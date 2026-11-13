@@ -164,6 +164,42 @@ published_digest() {
   fi
 }
 
+# A private folder (mode 0700) to download and verify in, under the user's cache
+# (`$XDG_CACHE_HOME/denext`, else `~/.cache/denext`) rather than /tmp: the GitHub CLI from the
+# snap store has a private /tmp and could not open an archive there to verify it. Only when that
+# folder cannot be made does it fall back to the system temp folder. The caller removes it on exit.
+install_tmpdir() {
+  cache="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+  case "$cache" in
+    /*)
+      if mkdir -p "$cache/denext" 2>/dev/null &&
+        dir="$(mktemp -d "$cache/denext/install-XXXXXX" 2>/dev/null)"; then
+        chmod 700 "$dir"
+        echo "$dir"
+        return 0
+      fi
+      ;;
+  esac
+  dir="$(mktemp -d)"
+  chmod 700 "$dir"
+  echo "$dir"
+}
+
+# Whether `gh` is the snap store's: found as `.../snap/bin/gh`, or resolving into /snap/.
+gh_is_snap() {
+  gh_path="$(command -v gh 2>/dev/null)" || return 1
+  case "$gh_path" in */snap/bin/gh) return 0 ;; esac
+  gh_real="$(readlink -f "$gh_path" 2>/dev/null || echo "$gh_path")"
+  case "$gh_real" in /snap/*) return 0 ;; esac
+  return 1
+}
+
+# Whether gh's output says it could not open the file it was given (not a failed verification).
+gh_cannot_open() {
+  case "$1" in *"open local artifact"* | *"no such file or directory"*) return 0 ;; esac
+  return 1
+}
+
 # The checksum proves the archive is the one the release lists, not that the release is
 # denext's: whoever can replace a release's files can replace SHA256SUMS too. Every archive also
 # carries a build-provenance attestation (Sigstore, signed by GitHub for publish.yml on this
@@ -183,10 +219,21 @@ verify_attestation() {
     echo "  verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)"
     return 0
   fi
-  if gh attestation verify "$1" --repo "$REPO" \
-    --signer-workflow "$REPO/.github/workflows/publish.yml" >/dev/null 2>&1; then
+  if gh_out="$(gh attestation verify "$1" --repo "$REPO" \
+    --signer-workflow "$REPO/.github/workflows/publish.yml" 2>&1)"; then
     echo "denext: build attestation verified (built by $REPO's publish workflow)"
     return 0
+  fi
+  if gh_is_snap && gh_cannot_open "$gh_out"; then
+    # Not a missing attestation: the snap's confinement hides the downloaded file from gh.
+    echo "denext: the GitHub CLI here is a snap ($(command -v gh)), and snap confinement means it" >&2
+    echo "  cannot read the downloaded archive ($1), so its build attestation was not verified." >&2
+    if [ "${DENEXT_INSECURE:-}" != "1" ]; then
+      echo "  Not installing. Point XDG_CACHE_HOME at a folder under your home directory (the" >&2
+      echo "  installer downloads into \$XDG_CACHE_HOME/denext), or install gh from apt or" >&2
+      echo "  https://github.com/cli/cli/releases instead of the snap, then run this again." >&2
+      exit 1
+    fi
   fi
   if [ "${DENEXT_INSECURE:-}" = "1" ]; then
     echo "denext: WARNING — the build attestation of $ASSET could not be verified; installing on" >&2
@@ -253,7 +300,7 @@ main() {
   }
 
   ASSET="denext-$TARGET.tar.gz"
-  TMP="$(mktemp -d)"
+  TMP="$(install_tmpdir)"
   trap 'rm -rf "$TMP"' EXIT
 
   if [ -n "${DENEXT_ARTIFACTS:-}" ]; then

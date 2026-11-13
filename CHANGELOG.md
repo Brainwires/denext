@@ -177,6 +177,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`install.sh` verifies with a snap-packaged GitHub CLI.** The installer downloaded into a
+  `mktemp` folder under `/tmp`, which the snap store's `gh` (Ubuntu's `/snap/bin/gh`) cannot see
+  from its private `/tmp`, so `gh attestation verify` failed to open the archive and nothing was
+  installed. It now downloads and verifies in a private folder (mode 0700) under
+  `${XDG_CACHE_HOME:-$HOME/.cache}/denext/install-XXXXXX`, removed on exit, and only falls back to
+  the system temp folder when that cannot be made. If a snap `gh` still cannot open the file, the
+  installer says so and what to do, and installs nothing (`DENEXT_INSECURE=1` remains the only way
+  past an unverified attestation). The checksum check is unchanged; `install.ps1` downloads into
+  the user's own temp folder and needed no change.
 - **Desktop: a page's event stream recovers from a connection that died silently.** The bridge
   client never watched the runtime's 15-second heartbeat, so after a sleep and wake, a stalled
   socket or a relay hiccup that left the connection open but dead, the page got no more

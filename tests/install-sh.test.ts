@@ -86,7 +86,16 @@ const GH_STUB = `#!/bin/sh
 echo "$*" >> "$STUB_LOG.gh"
 case "$1 $2" in
   "auth status") [ -n "$STUB_GH_AUTH" ] || exit 1; exit 0 ;;
-  "attestation verify") [ "$STUB_GH_VERIFY" = "ok" ] && exit 0
+  "attestation verify")
+    # Where the archive is, whether it is there, and its folder's mode, as gh sees them.
+    d="\$(dirname "$3")"
+    echo "$3 \$([ -f "$3" ] && echo present || echo missing) \$(ls -ld "$d" | cut -c1-10)" >> "$STUB_LOG.ghfile"
+    # A snap-confined gh has a private /tmp: an archive outside $HOME is not there for it.
+    if [ "$STUB_GH_VERIFY" = "private-tmp" ]; then
+      case "$3" in "$HOME"/*) exit 0 ;; esac
+      echo "failed to get open local artifact: open $3: no such file or directory" >&2; exit 1
+    fi
+    [ "$STUB_GH_VERIFY" = "ok" ] && exit 0
     echo "no attestations found" >&2; exit 1 ;;
 esac
 exit 2
@@ -113,6 +122,8 @@ interface Run {
   progress: string[];
   /** Every invocation of the stub `gh`, in order. */
   gh: string[];
+  /** For each `gh attestation verify`: the archive's path, `present` / `missing`, its folder's mode. */
+  ghFile: string[];
 }
 
 /** A local "release" the stub curl serves, and a run of the script against it. */
@@ -194,6 +205,7 @@ class Release {
     await Deno.writeTextFile(`${this.log}.denext`, "");
     await Deno.writeTextFile(`${this.log}.progress`, "");
     await Deno.writeTextFile(`${this.log}.gh`, "");
+    await Deno.writeTextFile(`${this.log}.ghfile`, "");
     // `script` runs the installer on a pseudo-terminal (stdout and stderr both a TTY).
     const [cmd, cmdArgs] = !opts.tty
       ? ["sh", [SCRIPT, ...args]]
@@ -227,6 +239,7 @@ class Release {
       calls: (await Deno.readTextFile(`${this.log}.denext`)).split("\n").filter(Boolean),
       progress: (await Deno.readTextFile(`${this.log}.progress`)).split("\n").filter(Boolean),
       gh: (await Deno.readTextFile(`${this.log}.gh`)).split("\n").filter(Boolean),
+      ghFile: (await Deno.readTextFile(`${this.log}.ghfile`)).split("\n").filter(Boolean),
     };
   }
 
@@ -540,6 +553,104 @@ Deno.test("install.sh: a signed-in gh must verify the archive's build attestatio
     await r.remove();
   }
 });
+
+/** The `install-*` folders left under `dir` (none once the installer has exited). */
+async function installDirsLeft(dir: string): Promise<string[]> {
+  const left: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) if (e.name.startsWith("install-")) left.push(e.name);
+  } catch {
+    // no folder at all
+  }
+  return left;
+}
+
+Deno.test(
+  "install.sh: the archive is fetched and verified in a private folder under the user's cache, removed after",
+  {
+    ignore: NO_SH,
+  },
+  async () => {
+    const r = await Release.create();
+    try {
+      // A snap-confined gh (Ubuntu's /snap/bin/gh) cannot read /tmp; a folder under $HOME it can.
+      const ok = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "private-tmp" });
+      assertEquals(ok.code, 0, ok.stderr);
+      assertStringIncludes(ok.stdout, "build attestation verified");
+      assertEquals(ok.ghFile.length, 1, ok.ghFile.join("\n"));
+      const [path, state, mode] = ok.ghFile[0].split(" ");
+      const cache = join(r.dir, ".cache", "denext");
+      assert(path.startsWith(`${cache}/install-`), path);
+      assertEquals(path.slice(path.lastIndexOf("/") + 1), ASSET);
+      assertEquals(state, "present");
+      assertEquals(mode, "drwx------");
+      assertEquals(await installDirsLeft(cache), [], "the folder is removed on exit");
+
+      // XDG_CACHE_HOME is the cache when it is set; a failed install cleans up too.
+      await Deno.remove(r.install, { recursive: true });
+      const xdg = join(r.dir, "xdg");
+      const bad = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no", XDG_CACHE_HOME: xdg });
+      assertEquals(bad.code, 1);
+      assert(bad.ghFile[0]?.startsWith(`${join(xdg, "denext")}/install-`), bad.ghFile.join("\n"));
+      assertEquals(await installDirsLeft(join(xdg, "denext")), []);
+      assertEquals(await r.installed(), false);
+    } finally {
+      await r.remove();
+    }
+  },
+);
+
+Deno.test(
+  "install.sh: a snap-confined gh that cannot open the archive is named, and nothing installs",
+  {
+    ignore: NO_SH,
+  },
+  async () => {
+    const r = await Release.create();
+    try {
+      // gh from the snap store, as /snap/bin/gh is found on PATH; the cache folder is unusable
+      // (a file where it would go), so the archive lands in the system temp folder instead.
+      const snapBin = join(r.dir, "snap", "bin");
+      await Deno.mkdir(snapBin, { recursive: true });
+      await Deno.rename(join(r.stubs, "gh"), join(snapBin, "gh"));
+      await Deno.writeTextFile(join(r.dir, "not-a-folder"), "");
+      const tmp = await Deno.makeTempDir({ prefix: "denext_install_systmp_" });
+      try {
+        const run = await r.run(
+          {
+            STUB_GH_AUTH: "1",
+            STUB_GH_VERIFY: "private-tmp",
+            XDG_CACHE_HOME: join(r.dir, "not-a-folder"),
+            TMPDIR: tmp,
+          },
+          [snapBin],
+        );
+        assertEquals(run.code, 1, run.stdout);
+        assertStringIncludes(run.stderr, "snap");
+        assertStringIncludes(run.stderr, "cannot read");
+        assertEquals(await r.installed(), false);
+        assertEquals(await installDirsLeft(tmp), []);
+        // DENEXT_INSECURE=1 is still the only way past it.
+        const forced = await r.run(
+          {
+            STUB_GH_AUTH: "1",
+            STUB_GH_VERIFY: "private-tmp",
+            XDG_CACHE_HOME: join(r.dir, "not-a-folder"),
+            TMPDIR: tmp,
+            DENEXT_INSECURE: "1",
+          },
+          [snapBin],
+        );
+        assertEquals(forced.code, 0, forced.stderr);
+        assertStringIncludes(forced.stderr, "could not be verified");
+      } finally {
+        await Deno.remove(tmp, { recursive: true });
+      }
+    } finally {
+      await r.remove();
+    }
+  },
+);
 
 Deno.test("publish.yml: the release attests every archive's build provenance", async () => {
   const workflow = await Deno.readTextFile(WORKFLOW);
