@@ -59,7 +59,7 @@ and this project adheres to
   detached, hidden or out of view. `desktop.webViews.limit` caps the views per window (default 8, up to
   32) and `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
   whether the engine hosts them and which features work (each `false` where the engine or runtime
-  lacks it, and its call rejects `unsupported`). Web views need runtime 3.0.0-denext.23 (laufey
+  lacks it, and its call rejects `unsupported`). Web views need runtime 3.0.0-denext.22 (laufey
   API 58): CEF and WKWebView on macOS first, WebView2 and WebKitGTK as each engine lands; under an
   older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
@@ -145,6 +145,12 @@ and this project adheres to
   `process.connected`, `channel`, `send` or `disconnect`, and now neither does the sidecar, so a
   library that tells a fork from a main program by them sees a main program. Its
   `globalThis.location` stays `undefined` too, as before.
+- **A sidecar's children get the same globals.** A `spawnSelf` / `childCommand` child, which a
+  runtime may run as a headless worker, had that worker's `WorkerLocation` (origin `"null"`, from
+  which a library such as PostHog built `nullnull/…` URLs) and a worker's `process.connected` /
+  `channel`, which throw. Its `globalThis.location` is now `undefined`, and the four IPC properties
+  follow Node's rules for a child: kept when it has an IPC channel (`spawnSelf` starts it with
+  `"ipc"`), all `undefined` when it has none.
 
 ### Documentation
 

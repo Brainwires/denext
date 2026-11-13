@@ -529,6 +529,82 @@ for (const selfForkAuthorized of [false, true]) {
   assert(!/true: sidecar server: spawnSelf\(\)/.test(text), text);
 });
 
+/** A child's module that prints the globals a Node child program would see. */
+const GLOBALS_MODULE = `import process from "node:process";
+const seen = { location: typeof globalThis.location };
+for (const k of ["connected", "channel", "send", "disconnect"]) {
+  try { seen[k] = typeof process[k]; } catch (e) { seen[k] = "throws"; }
+}
+console.log("GLOBALS " + JSON.stringify(seen));
+Deno.exit(0); // a worker would keep the process alive
+`;
+
+/**
+ * Run `runSidecarChild` without an IPC channel in a fresh Deno, on its main thread (the Deno CLI's
+ * child) or in a worker (a runtime that runs the child as a headless worker, whose location is a
+ * `WorkerLocation`); resolves the globals its module saw.
+ */
+async function childGlobals(where: "main" | "worker"): Promise<Record<string, string>> {
+  const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-child-globals-" });
+  try {
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "");
+    await Deno.writeTextFile(join(dir, "mod.mjs"), GLOBALS_MODULE);
+    const run = `const { runSidecarChild } = await import(${
+      JSON.stringify(import.meta.resolve("../src/desktop/sidecar-child.ts"))
+    });
+await runSidecarChild(
+  { name: "g", definition: { name: "g", run: { module: "./mod.mjs" } }, args: [] },
+  { importMetaUrl: ${JSON.stringify(new URL(`file://${join(dir, "desktop.ts")}`).href)} },
+);
+`;
+    await Deno.writeTextFile(join(dir, "run.mjs"), run);
+    await Deno.writeTextFile(
+      join(dir, "main.mjs"),
+      where === "main"
+        ? 'await import("./run.mjs");\n'
+        : 'new Worker(new URL("./run.mjs", import.meta.url), { type: "module" });\n',
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--config",
+        fromFileUrl(new URL("../deno.json", import.meta.url)),
+        join(dir, "main.mjs"),
+      ],
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+      signal: AbortSignal.timeout(60_000), // a hung child fails the test instead of hanging it
+    }).output();
+    const text = new TextDecoder().decode(out.stdout);
+    const line = text.split("\n").find((l) => l.startsWith("GLOBALS "));
+    assert(line, text + new TextDecoder().decode(out.stderr));
+    return JSON.parse(line.slice("GLOBALS ".length));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+const NO_IPC = {
+  location: "undefined",
+  connected: "undefined",
+  channel: "undefined",
+  send: "undefined",
+  disconnect: "undefined",
+};
+
+Deno.test("runSidecarChild: without IPC the child's module sees Node's main-program globals (main thread)", async () => {
+  // A location would make a library resolve URLs against it (PostHog: "nullnull/…" from a worker's
+  // blob:null origin); Node's child has none.
+  assertEquals(await childGlobals("main"), NO_IPC);
+});
+
+Deno.test("runSidecarChild: without IPC the child's module sees Node's main-program globals (worker)", async () => {
+  // A worker's process.connected / channel throw and its location is a WorkerLocation.
+  assertEquals(await childGlobals("worker"), NO_IPC);
+});
+
 // ── a real module sidecar and its child ──────────────────────────────────────────────────────
 
 const FIXTURE = new URL("./fixtures/sidecar-child/", import.meta.url);
@@ -570,6 +646,8 @@ Deno.test({
         marker: null, // removed, so a grandchild does not inherit it
         secrets: [], // never handed to a child
         grandchild: "function",
+        location: "undefined", // as Node's child program
+        ipc: [true, "object", "function", "function"], // spawnSelf starts it with "ipc"
       });
     } finally {
       await inst.stop(0);
