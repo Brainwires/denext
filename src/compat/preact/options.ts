@@ -115,6 +115,20 @@ export function eventProps(type: VNodeType, props: VProps | null): VProps | null
  * @returns The same element.
  */
 export function createdVNode(vnode: VNode): VNode {
+  elementHook?.(vnode);
   options.vnode?.(vnode);
   return vnode;
+}
+
+/** An internal hook run before `options.vnode` (Fresh's `csp({ useNonce })` sets one). */
+let elementHook: ((vnode: VNode) => void) | null = null;
+
+/**
+ * Set the internal element hook {@link createdVNode} runs before `options.vnode`, which an app's
+ * own `options.vnode` cannot replace.
+ *
+ * @param hook The hook, or null.
+ */
+export function setElementHook(hook: ((vnode: VNode) => void) | null): void {
+  elementHook = hook;
 }

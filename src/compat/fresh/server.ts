@@ -389,7 +389,7 @@ async function codeErrorResult(
   rc: RequestContext | undefined,
 ): Promise<MiddlewareResult | null> {
   const status = error instanceof HttpError ? error.status : 500;
-  const route = status === 404 ? null : errorRouteFor(builder, fr.ctx.url.pathname);
+  const route = status === 404 ? null : errorRouteFor(builder, fr.path ?? fr.ctx.url.pathname);
   if (!route) return null;
   if (!(error instanceof HttpError)) console.error(error);
   fr.ctx.error = error;
@@ -398,7 +398,7 @@ async function codeErrorResult(
   const rendered = out instanceof Response; // `ctx.render(<jsx />)`: the outcome is set
   if (!spec.appRoute || (!rendered && typeof route.component !== "function")) return null;
   const outcome = fr.outcome;
-  adoptCodePage(fr, spec, "app:error", fr.ctx.url.pathname, routeModule(route));
+  adoptCodePage(fr, spec, "app:error", fr.path ?? fr.ctx.url.pathname, routeModule(route));
   fr.outcome = rendered ? outcome : { kind: "page", data: pageData(out) };
   return finish(fr, continueResponse(fr, status), rc);
 }
@@ -451,7 +451,30 @@ function finish(
   const init = [...headers.keys()].length > 0 ? { headers } : undefined;
   const internal = entries.get(fr)?.internal;
   if (internal) return rewrite(internal, init);
+  // Under `new App({ basePath })`, the app/ tree serves the path below it.
+  if (fr.base) return rewrite(`${fr.path}${fr.ctx.url.search}`, init);
   return next(init);
+}
+
+/** Where a request outside the app's `basePath` goes: a path no page has (the not-found page). */
+const OUTSIDE_BASE_PATH = "/__denext_fresh_outside_base_path";
+
+/**
+ * The path below `base` (`/` for `base` itself), or null for a path outside it, as Fresh mounts
+ * every route under `new App({ basePath })`.
+ *
+ * @param pathname The request path.
+ * @param base The base path (no trailing slash).
+ * @returns The path routes match, or null.
+ */
+export function belowBasePath(pathname: string, base: string): string | null {
+  if (pathname === base || pathname === `${base}/`) return "/";
+  return pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : null;
+}
+
+/** The app's `basePath` without a trailing slash (`""`: none). */
+function basePathOf(builder: App<unknown> | null): string {
+  return (builder?.config.basePath ?? "").replace(/\/+$/, "");
 }
 
 /** The route entry each request matched (for the rewrite to an internal page). */
@@ -477,7 +500,15 @@ async function runFresh(app: FreshAppSpec, request: Request): Promise<Middleware
   const fr = createFreshRequest(request, app.v1 === true);
   fr.dispatched = true;
   const builder = appOf(app.main);
-  const pathname = fr.ctx.url.pathname;
+  const base = basePathOf(builder);
+  const pathname = base ? belowBasePath(fr.ctx.url.pathname, base) : fr.ctx.url.pathname;
+  // Outside the app's basePath nothing matches, as in Fresh: the not-found page answers.
+  if (pathname === null) return rewrite(OUTSIDE_BASE_PATH);
+  fr.path = pathname;
+  if (base) {
+    fr.base = base;
+    (fr.ctx.config as { basePath: string }).basePath = base;
+  }
   const appRoute = matchAppRoute(builder, request.method.toUpperCase(), pathname);
   const matched = appRoute
     ? null
@@ -779,7 +810,7 @@ export function freshLayout(
       return await renderComponent(mod.default, fr.ctx, v1, { Component: () => children });
     }
     const builder = appOf(opts.main);
-    const code = codeLayouts(builder, fr.ctx.url.pathname, match);
+    const code = codeLayouts(builder, fr.path ?? fr.ctx.url.pathname, match);
     const children = await wrapIn(code.layouts, props.children, fr.ctx, v1);
     const wrapper = mod.default ?? builder?._appWrapper;
     if (wrapper === undefined || match?.skipApp || code.skipApp) return children;

@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **Fresh's `new App({ basePath })`, `csp({ useNonce: true })` and `import.meta.env.PROD`
+  behave as in Fresh.** The generated `middleware.ts` mounts every route under the `App`'s
+  `basePath` (a path outside it renders the not-found page with a 404; `ctx.url` stays the full
+  URL). `useNonce` mints a nonce per request, lists it in `script-src` / `style-src` in place of
+  `'unsafe-inline'`, and gives it to each `<script>` / `<style>` element the page creates through
+  Preact's entry points. `denext migrate` reduces a `PROD` / `DEV` choice between Vite's bundle
+  location and the source location to the source one, which denext runs from under `dev` and
+  `start`; Fresh's own website now migrates with no hand edit.
 - **Islands a Fresh app registers in code migrate in place.** `app.island(fileOrUrl, exportName,
   Component)` and `app.islands(…)` in `main.ts`, `builder.registerIsland()` in `dev.ts` and
   `fresh({ islandSpecifiers })` each make their module a `"use client"` one where it is; a package

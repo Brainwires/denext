@@ -26,7 +26,7 @@ import { DENEXT_EXCLUDE } from "./dep-age.ts";
 import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
-import { pluginCalls } from "./fresh-config-read.ts";
+import { pluginCalls, skipToken } from "./fresh-config-read.ts";
 import { type FreshLayout, ignoredByFresh, readFreshLayout, VITE_CONFIGS } from "./fresh-layout.ts";
 import {
   islandWrapperPath,
@@ -600,10 +600,84 @@ function withLeadingImport(source: string, line: string): string {
  * when there is nothing to rewrite.
  */
 export function rewriteEnvReads(source: string): string | null {
-  const next = source.replace(META_ENV, ENV_ID)
+  const next = rewriteModePathPicks(source).replace(META_ENV, ENV_ID)
     .replace(PUBLIC_ENV_READ, (_m, _q, a, b) => `${ENV_ID}.${a ?? b}`);
   if (next === source) return null;
   return new RegExp(`\\b${ENV_ID}\\b`).test(source) ? next : withLeadingImport(next, ENV_IMPORT);
+}
+
+/** A Vite mode test: `import.meta.env.PROD` / `.DEV` (also cast, also negated). */
+const MODE_TEST =
+  /(!\s*)?(?:\(\s*import\.meta(?:\s+as\s+[\w$.<>[\], ]+)?\s*\)\.env|\bimport\.meta\.env)\.(PROD|DEV)\s*\?/g;
+
+/** A file location relative to the module (what moves when Vite bundles the server). */
+const MODULE_RELATIVE = /\bimport\.meta\.(?:url|dirname|filename|resolve)\b/;
+
+/** A bracket's effect on the nesting depth (+1 opening, -1 closing, 0 for anything else). */
+function bracketDelta(ch: string): number {
+  if ("([{".includes(ch)) return 1;
+  return ")]}".includes(ch) ? -1 : 0;
+}
+
+/**
+ * The end of a ternary operand starting at `from`: the first top-level `stop` character (a
+ * closing bracket of the enclosing group counts when it is a stop), or -1. A `\0` stop also
+ * accepts the end of the source.
+ */
+function operandEnd(source: string, from: number, stop: string): number {
+  let depth = 0;
+  for (let i = from; i < source.length; i++) {
+    const skipped = skipToken(source, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const ch = source[i];
+    const delta = bracketDelta(ch);
+    if (depth === 0 && (delta < 0 || stop.includes(ch))) return stop.includes(ch) ? i : -1;
+    depth += delta;
+  }
+  return stop.includes("\0") ? source.length : -1;
+}
+
+/**
+ * A Vite app's build-output path pick — `import.meta.env.PROD ? new URL(built, import.meta.url)
+ * : new URL(source, import.meta.url)`, which picks the file's location by whether the server
+ * runs from Vite's bundle — reduced to the source branch: denext runs the module in place under
+ * `denext dev` and `denext start` alike, so that branch is right in both. A ternary whose two
+ * branches are not both module-relative locations is left alone.
+ *
+ * @param source A module's source.
+ * @returns The source with each such pick reduced.
+ */
+export function rewriteModePathPicks(source: string): string {
+  let out = source;
+  for (let guard = 0; guard < 100; guard++) {
+    const next = reduceOnePick(out);
+    if (next === out) return out;
+    out = next;
+  }
+  return out;
+}
+
+/** Reduce the first build-output path pick in `source` (see {@link rewriteModePathPicks}). */
+function reduceOnePick(source: string): string {
+  for (const m of source.matchAll(MODE_TEST)) {
+    const thenStart = m.index + m[0].length;
+    const colon = operandEnd(source, thenStart, ":");
+    if (colon < 0) continue;
+    const elseEnd = operandEnd(source, colon + 1, ";,)]}\0");
+    if (elseEnd < 0) continue;
+    const whenTrue = source.slice(thenStart, colon).trim();
+    const whenFalse = source.slice(colon + 1, elseEnd).trim();
+    if (!MODULE_RELATIVE.test(whenTrue) || !MODULE_RELATIVE.test(whenFalse)) continue;
+    // The development (source-location) branch: PROD's false one, DEV's true one.
+    const devIsTrue = (m[2] === "DEV") !== Boolean(m[1]);
+    const kept = devIsTrue ? whenTrue : whenFalse;
+    const trailing = source.slice(colon + 1, elseEnd).match(/\s*$/)?.[0] ?? "";
+    return source.slice(0, m.index) + kept + trailing + source.slice(elseEnd);
+  }
+  return source;
 }
 
 /** Rewrite the env reads of the app's sources (not Vite's config); the files changed. */
@@ -940,12 +1014,6 @@ const SOURCE_RULES: SourceRule[] = [
       "FRESH_PUBLIC_* read was rewritten to denext/fresh/env); pass the value as a prop, or use " +
       "publicEnv() from denext",
   },
-  {
-    re: /new\s+App\s*\(\s*\{[^}]*basePath/,
-    only: "main",
-    item: "main.ts: basePath",
-    reason: "set `basePath` in denext.config.ts; the App option is not applied",
-  },
 ];
 
 /** The project's source files the findings scan reads (generated and vendored trees skipped). */
@@ -1260,9 +1328,9 @@ export async function transformFreshApp(
       item: "import.meta.env",
       reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
         "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
-        "variables are not in it: read Deno.env). PROD is true under `denext start`, where " +
-        "your source runs in place, not from Vite's build output: check code that picks a " +
-        `file path by it (${envFiles.join(", ")})`,
+        "variables are not in it: read Deno.env). A PROD / DEV test choosing between two " +
+        "import.meta.url-relative locations was reduced to the source location, which denext " +
+        `runs from under dev and start alike (${envFiles.join(", ")})`,
     });
   }
   if (tailwind && staticTailwind && v1) {

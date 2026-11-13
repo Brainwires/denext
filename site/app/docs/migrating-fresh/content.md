@@ -195,6 +195,12 @@ Fresh 2's `main.ts` stays, and the generated files run what it registers:
 migration reads the calls and makes each module a `"use client"` one in place, and the `App`
 records the registrations.
 
+`new App({ basePath: "/docs" })` mounts every route under it, as Fresh does: `/docs` is the
+`/` route, `/docs/intro` the `/intro` route, `app.use("/admin", …)` covers `/docs/admin`, and a
+path outside it (`/`, `/intro`) renders the not-found page with a 404. `ctx.url` keeps the full
+URL and `ctx.config.basePath` holds the value. (denext's own `basePath` in `denext.config.ts`,
+which a Fresh 1.x `router.basePath` becomes, also moves `/_denext/` assets under it.)
+
 ---
 
 ## 6. `csp()`
@@ -202,8 +208,12 @@ records the registrations.
 Fresh's `csp()` middleware adjusts the policy denext sends. For a page denext renders, its
 directives merge into denext's own (strict, hash-based) policy: a `*-src` directive adds its
 sources to denext's, so the page's own scripts and styles keep working (`'unsafe-inline'` from
-Fresh's defaults is left out, as is every `'unsafe-inline'` with `useNonce`); any other directive
-replaces denext's or is added (`frame-ancestors 'none'`, `upgrade-insecure-requests`, …).
+Fresh's defaults is left out); any other directive replaces denext's or is added
+(`frame-ancestors 'none'`, `upgrade-insecure-requests`, …). `useNonce: true` works as in Fresh:
+each request gets a fresh nonce, `script-src` and `style-src` list `'nonce-…'` in place of
+`'unsafe-inline'`, and every `<script>` and `<style>` element the page creates without a `nonce`
+(through Preact's JSX runtime, `h` or `createElement`, which a migrated app's JSX compiles to)
+carries it.
 `reportOnly` sends the merged policy as `Content-Security-Policy-Report-Only` as well, while the
 page keeps denext's own policy enforced (Fresh's directives are only reported), and
 `reportTo` adds the `report-to` / `report-uri` directives and the `Reporting-Endpoints` header. A
@@ -222,8 +232,10 @@ variables (named `FRESH_PUBLIC_*`, `DENEXT_PUBLIC_*` or `NEXT_PUBLIC_*`), on the
 the browser, where they come from the page's public-env island (a production build ships the
 ones its client code names). **A server-only variable is never in it**: read those with
 `Deno.env.get()` in server code. `PROD` is true under `denext start` and `DEV` under
-`denext dev`; your source runs in place under both, not from Vite's build output, so code that
-picks a file path by `PROD` needs the development branch (`migrate --check` lists the files).
+`denext dev`, as under Fresh's `deno task start` and `vite`. Your source runs in place under
+both, not from Vite's bundle, so a `PROD` / `DEV` test that picks between Vite's bundle location
+and the source location (`import.meta.env.PROD ? new URL(built, import.meta.url) : new URL(src,
+import.meta.url)`) is reduced to the source location by the migration.
 
 ---
 
@@ -239,16 +251,15 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 | A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own).     |
 | A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                     |
 
-| Review                                                         | What to do                                                                                                                                                 |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A `fresh({ … })` option (or island) set to a computed value    | Write it as a literal and re-run `denext migrate`.                                                                                                         |
-| An inline `<script dangerouslySetInnerHTML>`                   | denext's default CSP runs no inline script: move the code to a file under `public/` or into `instrumentation-client.ts`, or allow it in `csp.scriptSrc`.   |
-| A WebSocket upgrade (`ctx.upgrade()`, `Deno.upgradeWebSocket`) | Works under `denext start` / `dev`, not on every deploy target; [Live channels](/docs/live) are portable.                                                  |
-| `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; check code that picks a file path by `PROD` (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |
-| `Deno.env` in an island                                        | An island runs in the browser: pass the value as a prop, or use `publicEnv()` (a literal `FRESH_PUBLIC_*` read is rewritten for you).                      |
-| `new App({ basePath })`                                        | Set `basePath` in `denext.config.ts`; the `App` option is not applied.                                                                                     |
-| A Tailwind v3 stylesheet (Fresh 1.x)                           | Run `npx @tailwindcss/upgrade`.                                                                                                                            |
-| Preact's internal `options` hooks (`__b`, `__e`, `__h`, `__`)  | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                   |
+| Review                                                         | What to do                                                                                                                                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `fresh({ … })` option (or island) set to a computed value    | Write it as a literal and re-run `denext migrate`.                                                                                                                              |
+| An inline `<script dangerouslySetInnerHTML>`                   | denext's default CSP runs no inline script: move the code to a file under `public/` or into `instrumentation-client.ts`, or allow it in `csp.scriptSrc`.                        |
+| A WebSocket upgrade (`ctx.upgrade()`, `Deno.upgradeWebSocket`) | Works under `denext start` / `dev`, not on every deploy target; [Live channels](/docs/live) are portable.                                                                       |
+| `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; a file-location pick by `PROD` is reduced to the source location (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |
+| `Deno.env` in an island                                        | An island runs in the browser: pass the value as a prop, or use `publicEnv()` (a literal `FRESH_PUBLIC_*` read is rewritten for you).                                           |
+| A Tailwind v3 stylesheet (Fresh 1.x)                           | Run `npx @tailwindcss/upgrade`.                                                                                                                                                 |
+| Preact's internal `options` hooks (`__b`, `__e`, `__h`, `__`)  | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                                        |
 
 The list of what denext does not do for a Fresh app is also in
 [Known limitations](/docs/limitations).
@@ -273,5 +284,6 @@ migrates Fresh's own website (`www/` in the Fresh repository, a Fresh 2 app on V
 `_error` page that renders 404s, a docs route reading Markdown from the repository, handler-only
 routes, a form POST, Partials and nine islands using `@preact/signals`). It builds and serves the
 result, fetches every route with JavaScript off, and in a headless browser hydrates and clicks an
-island and swaps a `<Partial>` region from an `f-partial` button. The one hand fix is the one
-`migrate --check` reports: the docs route picks a file path by `import.meta.env.PROD`.
+island and swaps a `<Partial>` region from an `f-partial` button. It needs no hand edit: the
+docs route's `import.meta.env.PROD` file-location pick is reduced to the source location by the
+migration.

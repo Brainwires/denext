@@ -17,7 +17,7 @@ interface LiteralValue {
  * The index of the last character of the string, comment or regular expression literal starting
  * at `i`, or `i` itself for any other character.
  */
-function skipToken(source: string, i: number): number {
+export function skipToken(source: string, i: number): number {
   const ch = source[i];
   if (ch === '"' || ch === "'" || ch === "`") return skipString(source, i);
   if (ch !== "/") return i;

@@ -128,7 +128,7 @@
     },
     {
       "item": "import.meta.env",
-      "reason": "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only variables are not in it: read Deno.env). PROD is true under `denext start`, where your source runs in place, not from Vite's build output: check code that picks a file path by it (components/Env.tsx)"
+      "reason": "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only variables are not in it: read Deno.env). A PROD / DEV test choosing between two import.meta.url-relative locations was reduced to the source location, which denext runs from under dev and start alike (components/Env.tsx)"
     }
   ],
   "dependencies": {

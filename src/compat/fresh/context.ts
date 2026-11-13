@@ -55,6 +55,13 @@ export interface FreshRequest {
   outcome?: FreshOutcome;
   /** The generated `middleware.ts` ran for this request. */
   dispatched: boolean;
+  /**
+   * The path routes match against: the URL's path, below `new App({ basePath })` when the app
+   * sets one (`/docs/x` for `/base/docs/x`).
+   */
+  path?: string;
+  /** The app's `basePath`, when it sets one (the request continues at {@link path}). */
+  base?: string;
 }
 
 /** A Fresh route / layout / middleware module, as the generated files import it. */
