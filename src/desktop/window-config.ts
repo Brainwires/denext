@@ -90,8 +90,11 @@ export interface DesktopWindowSettings {
 export interface DesktopAppSettings {
   /** Keep running with no window (`desktop.app.keepAlive`; unset: on with a tray). */
   readonly keepAlive?: boolean;
-  /** Show the macOS Dock icon (`desktop.app.dock`, default `true`). */
-  readonly dock?: boolean;
+  /**
+   * Show the macOS Dock icon (`desktop.app.dock`, default `true`); `"while-window-open"`: an
+   * accessory app whose Dock helper holds the icon while a window shows (macOS).
+   */
+  readonly dock?: boolean | "while-window-open";
   /** The macOS activation policy at launch (`desktop.app.activationPolicy`). */
   readonly activationPolicy?: "regular" | "accessory";
   /** Reopen the keyed windows of the last session at launch (`desktop.app.restoreWindows`). */
@@ -438,14 +441,20 @@ export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings 
   };
   const out: {
     keepAlive?: boolean;
-    dock?: boolean;
+    dock?: boolean | "while-window-open";
     restoreWindows?: boolean;
     maxWindows?: number;
   } = {};
-  for (const key of ["keepAlive", "dock", "restoreWindows"] as const) {
+  for (const key of ["keepAlive", "restoreWindows"] as const) {
     if (a[key] === undefined) continue;
     if (typeof a[key] !== "boolean") throw bad(`app.${key}`, "must be a boolean");
     out[key] = a[key] as boolean;
+  }
+  if (a.dock !== undefined) {
+    if (typeof a.dock !== "boolean" && a.dock !== "while-window-open") {
+      throw bad("app.dock", 'must be a boolean or "while-window-open"');
+    }
+    out.dock = a.dock;
   }
   if (a.maxWindows !== undefined) {
     const problem = maxWindowsProblem(a.maxWindows);

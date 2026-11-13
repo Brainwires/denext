@@ -41,6 +41,7 @@ import {
 } from "../desktop/app-origin.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
+import { addMacosDockHelper } from "./desktop-dock-helper.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
@@ -140,7 +141,8 @@ export type DesktopActivationPolicy = "regular" | "accessory";
 
 /**
  * The activation policy the app starts in (`desktop.app.activationPolicy`), else `"accessory"`
- * when `desktop.app.dock` is `false`, else `undefined` (the runtime's default, a Dock icon).
+ * when `desktop.app.dock` is `false` or `"while-window-open"` (the app stays accessory; its Dock
+ * helper holds the icon), else `undefined` (the runtime's default, a Dock icon). macOS only.
  *
  * @param config The project config.
  * @returns The policy, or `undefined`.
@@ -149,7 +151,7 @@ export function desktopActivationPolicy(config: unknown): DesktopActivationPolic
   const app = appBlock(config);
   const policy = app?.activationPolicy;
   if (policy === "regular" || policy === "accessory") return policy;
-  return app?.dock === false ? "accessory" : undefined;
+  return app?.dock === false || app?.dock === "while-window-open" ? "accessory" : undefined;
 }
 
 /** The activation policy for a macOS launch of a runtime that reads it, else `undefined`. */
@@ -545,8 +547,9 @@ export interface LaufeyLaunchWriteOptions {
  * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like
  * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
  * `NSUserActivityTypes`, and marks an `"accessory"` app `LSUIElement` (no Dock tile at launch;
- * {@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed
- * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The
+ * {@linkcode withActivationPolicy}), and with `desktop.app.dock: "while-window-open"` builds the Dock
+ * helper into `Contents/Helpers` ({@linkcode addMacosDockHelper}). On macOS call it BEFORE
+ * code-signing: these files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The
  * microphone or camera on a runtime that does not enforce the grant is refused
  * ({@linkcode assertMediaCaptureRuntime}) before anything is written.
  *
@@ -579,17 +582,19 @@ export async function writeLaufeyLaunchConfig(
         `refuses every passkey ceremony (invalid_rp): ${PASSKEY_RP_IDS_FIX}.`,
     );
   }
-  const replaced = new URL("../", entryUrl).protocol === "file:"
-    ? denoJsonMediaCaptureProblem(
-      await readProjectDenoJson(fromFileUrl(new URL("../", entryUrl))),
-      launch.mediaCapture,
-    )
-    : null;
+  const isFile = new URL("../", entryUrl).protocol === "file:";
+  const denoJson = isFile ? await readProjectDenoJson(fromFileUrl(new URL("../", entryUrl))) : null;
+  const replaced = isFile ? denoJsonMediaCaptureProblem(denoJson, launch.mediaCapture) : null;
   if (replaced) console.warn(`  denext: WARNING: ${replaced} — ${DENO_JSON_MEDIA_CAPTURE_FIX}.`);
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
-  if (os === "darwin") await writeMacBundleKeys(config, bundle, launch);
+  if (os === "darwin") {
+    await writeMacBundleKeys(config, bundle, launch);
+    // desktop.app.dock "while-window-open": the Dock helper, signed with the bundle after this.
+    const helper = await addMacosDockHelper(config, bundle, denoJson ?? undefined);
+    if (helper) console.log(`  denext: built the Dock helper ${helper}`);
+  }
   return path;
 }
 

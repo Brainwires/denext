@@ -47,6 +47,24 @@ and this project adheres to
   (`titleVisibility`, `toolbarStyle`). Needs a runtime on laufey API 57 (runtime
   3.0.0-denext.22); an older runtime reports both capabilities `false`, skips the config values
   with a warning and rejects the setters.
+- **Desktop: a macOS tray app with a Dock icon only while a window is open.**
+  `desktop.app.dock: "while-window-open"` keeps the app accessory from launch to quit, and gives it
+  a Dock icon and a Cmd-Tab entry while one of its windows (not the tray panel, not an overlay) is
+  showing, without ever leaving a tile in the Dock's recent apps. macOS adds a recents tile when an
+  app's running tile goes away (on quit, or on switching back to accessory), but only for an app
+  under `/Applications`, so packaging (`denext desktop package`) builds a small helper app into
+  `Contents/Helpers/<Name>.app` (clang, the app's architectures, name, icon and version; signed and
+  notarized with the app), the app copies it into its data folder (again whenever the bundled copy
+  differs) and opens it through LaunchServices while a window shows. Clicking the helper's Dock icon
+  or switching to it with Cmd-Tab brings the app's window to the front; its Quit (the Dock menu,
+  Cmd-Q while it is in front) closes the app's windows as their close buttons would and never quits
+  the app, so a tray app keeps running until its own Quit (an app that is not kept alive quits with
+  its last window, as ever). The two talk over a loopback connection the helper proves with a
+  per-launch token, which it reads from a file in the app's 0700 data folder. The packaged app gets
+  `--allow-run=/usr/bin/open` and the write of `<data>/dock-helper`. Where the helper cannot run
+  (`denext desktop run` / `dev` builds, a failed copy or launch) the app keeps the accessory
+  behaviour; on Windows and Linux the value is `true`. Needs `desktop.app.identifier`, and not with
+  `desktop.permissions: "strict"` or `activationPolicy: "regular"`.
 
 ### Documentation
 
@@ -54,9 +72,10 @@ and this project adheres to
   why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
   recent apps (an unpinned app installed under /Applications gets a recents tile whenever its
   running tile goes away, on quit or on switching back to `"accessory"`, with no opt-out; one
-  installed anywhere else gets none), and the pattern that avoids it: stay
-  `"accessory"` and bring windows up with `focusWindow()` / a window ref's `focus()`, which activate
-  the app without changing the policy. Laufey's macOS `focus()` also orders the window in front of
+  installed anywhere else gets none), and how to avoid it: `desktop.app.dock: "while-window-open"`
+  (above) for a Dock icon while a window shows, and in every case staying `"accessory"` and
+  bringing windows up with `focusWindow()` / a window ref's `focus()`, which activate the app
+  without changing the policy. Laufey's macOS `focus()` also orders the window in front of
   other apps' windows when the activation is declined, on both backends, from the runtime that
   carries laufey's `MacFocusWindow`. `setActivationPolicy`'s docs no longer suggest switching to
   regular while a window is open.

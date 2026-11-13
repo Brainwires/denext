@@ -3831,7 +3831,9 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
           <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
           <code>app.setActivationPolicy</code>): a tray app is <code>"accessory"</code>{" "}
-          (no Dock icon, no menu bar) and should stay so while its windows open and close (see{" "}
+          (no Dock icon, no menu bar); for a Dock icon only while its window is open, use{" "}
+          <code>desktop.app.dock: "while-window-open"</code>, never a switch to{" "}
+          <code>"regular"</code> and back (see{" "}
           <a href="#desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</a>).
           Switching to <code>"regular"</code>{" "}
           also brings the app to the front. Windows and Linux have no policy: there{" "}
@@ -3853,22 +3855,97 @@ await bounce({ critical: true }); // until the app is focused`}
       <h3 id="desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</h3>
       <p>
         On macOS an app that is installed under <code>/Applications</code>{" "}
-        (at any depth) and not kept in the Dock gets a tile in the Dock&apos;s recent-apps section
-        (with &ldquo;Show suggested and recent apps in Dock&rdquo; on) whenever its running Dock
-        tile goes away: when it quits, and also when a <code>"regular"</code> app switches back to
-        {" "}
+        (at any depth, nested helper apps included) and not kept in the Dock gets a tile in the
+        Dock&apos;s recent-apps section (with &ldquo;Show suggested and recent apps in Dock&rdquo;
+        on) whenever its running Dock tile goes away: when it quits, and also when a{" "}
+        <code>"regular"</code> app switches back to{" "}
         <code>"accessory"</code>. A tray app that becomes regular while its window is open therefore
         lands in the recents, and comes back there after the user removes it; macOS has no opt-out.
         An app that is accessory from launch to quit never has a running tile, so it never appears
         there. The Dock records only apps under <code>/Applications</code>: one run from{" "}
         <code>~/Applications</code>, its Application Support folder or anywhere else gets the
         running tile and Cmd-Tab while regular and leaves no recents entry. Apple documents none of
-        this, so an app that may be installed under <code>/Applications</code>{" "}
-        follows the pattern below.
+        this, so a tray app that may be installed under <code>/Applications</code>{" "}
+        never turns regular itself.
       </p>
       <p>
-        So keep a tray app accessory for good:{" "}
-        <code>desktop.app.activationPolicy: "accessory"</code> and no{" "}
+        For a Dock icon while a window is open, <code>desktop.app.dock: "while-window-open"</code>
+        {" "}
+        gives a tray app a Dock icon and a Cmd-Tab entry exactly while one of its windows is showing
+        (not the tray panel, not an overlay; a minimized window counts), and never a recents tile:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: {
+      name: "Fleet",
+      identifier: "dev.example.fleet",
+      keepAlive: true,
+      dock: "while-window-open", // accessory, with a Dock icon while a window shows
+    },
+    tray: { icon: "/tray.png", menu: [{ id: "open", label: "Open Fleet" }] },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          The app itself stays <code>"accessory"</code> from launch to quit.{" "}
+          <code>denext desktop package</code> builds a small helper app into{" "}
+          <code>Contents/Helpers/&lt;Name&gt;.app</code>{" "}
+          (compiled with clang from the Xcode Command Line Tools for the app&apos;s architectures,
+          with the app&apos;s name, icon and version, and its own identifier,{" "}
+          <code>&lt;identifier&gt;.dock</code>), signed with the app&apos;s identity and notarized
+          with it. While a window shows, the app copies it into its data folder (
+          <code>
+            ~/Library/Application Support/&lt;identifier&gt;/dock-helper/&lt;Name&gt;.app
+          </code>, again whenever the bundled copy&apos;s files differ) and opens it through
+          LaunchServices: a regular app with no window of its own, which holds the Dock icon. The
+          copy is outside{" "}
+          <code>/Applications</code>, so the Dock records no recents tile for it either. Its baked
+          grants are the write of that folder and the run of <code>/usr/bin/open</code>{" "}
+          (the copy itself is never a run grant: Deno denies writes to a program it may run and to
+          the folders above it, so the app could not keep the copy up to date).
+        </li>
+        <li>
+          Clicking the helper&apos;s Dock icon, or switching to it with Cmd-Tab, brings the
+          app&apos;s key window to the front (un-minimized). The helper&apos;s Quit (its Dock menu,
+          Cmd-Q while it is in front, or a <code>quit</code>{" "}
+          Apple event) never quits the app: it closes the app&apos;s windows as their close buttons
+          would (a page that guards its close is asked; the tray panel and overlays stay), so the
+          icon goes and a tray app keeps running. An app that is not kept alive quits with its last
+          window, as it always does. Only the app&apos;s own Quit (its tray menu,{" "}
+          <code>quitApp()</code>) and the end of the OS session quit it; <code>onBeforeQuit</code>
+          {" "}
+          guards never see the Dock&apos;s Quit. Closing the last window takes the icon away;
+          quitting the app ends the helper with it. Launched on its own (Spotlight, a tile the user
+          kept in the Dock) the helper opens the app instead, which reopens its window as a Dock
+          click would.
+        </li>
+        <li>
+          The app and the helper talk over a loopback connection: before opening the helper the app
+          writes the port, a fresh token and its process id to a file beside the copy (the folder is
+          the user&apos;s own, 0700), and takes only the connection that presents that token. The
+          helper leaves when the connection closes, so it never outlives the app. The helper&apos;s
+          windows list in the Dock menu and App Exposé is empty, and the menu bar stays the
+          accessory app&apos;s (none): handle Cmd+W in the page (a <code>keydown</code> with{" "}
+          <code>metaKey</code> calling <code>closeWindow()</code>).
+        </li>
+        <li>
+          Where the helper cannot run (a <code>denext desktop run</code> / <code>dev</code>{" "}
+          build has none; the copy or the launch failed; it kept crashing) the app warns once and
+          keeps the accessory behaviour: its windows, with no Dock icon. It needs{" "}
+          <code>desktop.app.identifier</code>, and cannot be combined with{" "}
+          <code>desktop.permissions: "strict"</code>{" "}
+          (the app reads the helper from its own bundle) or{" "}
+          <code>activationPolicy: "regular"</code>. On Windows and Linux, where a window&apos;s
+          taskbar entry already lasts as long as the window, the value means <code>true</code>.
+        </li>
+      </ul>
+      <p>
+        With or without the helper, keep a tray app accessory for good:{" "}
+        <code>desktop.app.activationPolicy: "accessory"</code> (or <code>dock: false</code> /{" "}
+        <code>"while-window-open"</code>) and no{" "}
         <code>setActivationPolicy("regular")</code>. Bring its window up with the window ref&apos;s
         {" "}
         <code>focus()</code> (<code>app.windows.byKey(key)?.focus()</code>, after{" "}
@@ -3962,10 +4039,10 @@ tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Cont
         <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
         to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
         {" "}
-        <code>onClosed()</code>) and their <code>focus()</code>{" "}
-        to bring one to the front without a Dock icon (<a href="#desktop-tray-dock-recents">
-          above
-        </a>). denext warns once when a menu item is chosen with no window showing and no{" "}
+        <code>onClosed()</code>) and their <code>focus()</code> to bring one to the front, and{" "}
+        <code>desktop.app.dock: "while-window-open"</code>{" "}
+        for a Dock icon while a window shows (<a href="#desktop-tray-dock-recents">above</a>).
+        denext warns once when a menu item is chosen with no window showing and no{" "}
         <code>onMenuItem</code> in{" "}
         <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
         app gets no icon, its main window is shown instead, and it is no longer kept alive by the

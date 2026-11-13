@@ -130,6 +130,8 @@ export interface RegisteredWindow {
   readonly capabilities: ReadonlySet<string> | null;
   /** Whether its documents can read the token (the runtime has bindings). */
   readonly bound: boolean;
+  /** It was created as a layer-shell overlay (absent: not). */
+  readonly overlay?: boolean;
   /** The app-chosen key it was opened with, if any. */
   readonly key?: string;
   /** The app path it shows (as opened, or last navigated to through the windows API). */
@@ -724,6 +726,7 @@ function register(
     controller,
     capabilities,
     bound,
+    ...(overlay ? { overlay: true } : {}),
     ...(key !== undefined ? { key } : {}),
     url,
     ...(title !== undefined ? { title } : {}),
