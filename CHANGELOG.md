@@ -115,6 +115,20 @@ and this project adheres to
   flag, naming the flag, the cap and the fix (drop the flag and rely on the cap), and `denext dev`
   warns that it will override `start.limits.memory` in production. @denext/backend warns the same
   way for Edge Functions' `memoryMb`.
+- **Size limits on opened desktop windows.** `windows.open` / `host.openWindow` and a page's
+  `openWindow` take `minSize` / `maxSize` (`{ width, height }` in CSS pixels), and a window that
+  sets neither inherits `desktop.minSize` / `desktop.maxSize` as the main window gets them, the way
+  it inherits `desktop.titleBar`. A minimum larger than the maximum the window ends up with (its own
+  or the inherited one) is refused `validation` before the window opens.
+- **The desktop backend hears notification clicks.** `runDesktop({ onNotificationClick })`,
+  `onNotificationClick(fn)` on what `runDesktop` resolves with and an extension's
+  `host.onNotificationClick(fn)` are called with `{ tag, action, data, launch }` for every click the
+  runtime reports on one of the app's notifications: the pages' (which still reach
+  `onLocalNotificationTapped` / the web `Notification`) and the ones the backend posted itself
+  through `Deno.desktop.notifications`, which nothing heard before. The click that launched the app
+  reaches every hook, however late it subscribes. One dispatcher reads the runtime's launch clicks
+  and listens once for the `notifications` capability and the hooks. Never called without denext's
+  pinned runtime or in a sidecar's child.
 
 ### Changed
 

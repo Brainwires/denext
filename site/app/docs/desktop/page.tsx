@@ -3098,7 +3098,12 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         window&apos;s own <code>windowButtonPosition</code> overrides it (<code>null</code>{" "}
         keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
         moves them later from a page. It is applied after the title bar style, needs denext&apos;s
-        pinned runtime, and is ignored on Windows and Linux.
+        pinned runtime, and is ignored on Windows and Linux. The size limits follow it too:{" "}
+        <code>desktop.minSize</code> / <code>desktop.maxSize</code>{" "}
+        bound every opened window as they bound the main window, a window&apos;s own{" "}
+        <code>minSize</code> / <code>maxSize</code> (<code>{"{ width, height }"}</code>{" "}
+        in CSS pixels) overrides each, and a minimum larger than the maximum the window ends up with
+        is refused <code>validation</code> before it opens.
       </p>
       <h3 id="desktop-title-options">Native title options</h3>
       <p>
@@ -3632,6 +3637,39 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           groups only for these two calls; the OS does not group them.
         </li>
       </ul>
+      <p id="desktop-notification-click">
+        The backend hears the clicks too. <code>runDesktop({"{ onNotificationClick }"})</code>,{" "}
+        <code>app.onNotificationClick(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with, and an extension&apos;s <code>host.onNotificationClick(fn)</code>{" "}
+        (each but the first returns the unsubscribe) are called for every click the runtime reports
+        on one of the app&apos;s notifications, whatever posted it:{" "}
+        <code>scheduleNotification</code> or a page&apos;s <code>new Notification(…)</code>{" "}
+        (the page still gets those clicks as above) and, which nothing else hears, a notification
+        the backend posted itself through <code>Deno.desktop.notifications</code>. Each gets{" "}
+        <code>{"{ tag, action, data, launch }"}</code>: the notification&apos;s tag, the action
+        button (<code>null</code> for the notification itself), the <code>data</code>{" "}
+        it was posted with and whether it is the click that launched the app. The launch click
+        reaches every hook, on a microtask after it subscribes, however late, ahead of any later
+        click. A throw or a rejection is logged. As with the page&apos;s clicks, treat{" "}
+        <code>data</code>{" "}
+        as untrusted. Without denext&apos;s pinned runtime (and in a sidecar&apos;s child) none of
+        these is ever called.
+      </p>
+      <Code lang="ts">
+        {`const app = await runDesktop({
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  onNotificationClick: ({ tag, action, launch }) => {
+    if (tag === "sync-failed" && action === "retry") void retrySync();
+  },
+});
+// Elsewhere in the backend, a notification only it knows about:
+await Deno.desktop.notifications.schedule({
+  title: "Sync failed",
+  at: Date.now(),
+  tag: "sync-failed",
+  actions: [{ action: "retry", title: "Retry" }],
+});`}
+      </Code>
       <h3 id="desktop-web-notification">The web Notification API</h3>
       <p>
         A webview has no working <code>Notification</code>{" "}

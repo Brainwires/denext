@@ -1984,6 +1984,8 @@
     "DesktopNavigationKind:typeAlias",
     "DesktopNewWindowContext:interface",
     "DesktopNewWindowHandler:typeAlias",
+    "DesktopNotificationClick:interface",
+    "DesktopNotificationClickListener:typeAlias",
     "DesktopOpenWindowOptions:interface",
     "DesktopOs:typeAlias",
     "DesktopPackageArgSpec:interface",

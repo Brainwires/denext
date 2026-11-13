@@ -669,7 +669,7 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 `runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
-buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`);
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
 `deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
 on macOS and Windows (on Linux, what denext posted this run). `context-menu`
@@ -691,7 +691,7 @@ windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/des
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
-(`width` > saved > default), opened windows take `desktop.titleBar`, `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), `desktop.window.titleVisibility: "hidden"` (no title text, the native title bar kept; Linux only under client-side decorations) and `desktop.window.toolbarStyle` (macOS `"unified"` / `"unifiedCompact"` / `"expanded"`; not with `titleBar: "hidden"`), a Dock click with no window
+(`width` > saved > default), opened windows take `desktop.titleBar`, `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), `desktop.window.titleVisibility: "hidden"` (no title text, the native title bar kept; Linux only under client-side decorations) and `desktop.window.toolbarStyle` (macOS `"unified"` / `"unifiedCompact"` / `"expanded"`; not with `titleBar: "hidden"`) and `desktop.minSize` / `maxSize` (their own `minSize` / `maxSize` override), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
 decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
 `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `app.onSecondInstance(fn)` on its result / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and

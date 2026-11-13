@@ -53,6 +53,7 @@ import { isAppPath } from "./tray-config.ts";
 import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/config.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
+  applySizeLimits,
   applyTitleBarStyle,
   applyTitleOptions,
   applyWindowButtonPosition,
@@ -61,6 +62,7 @@ import {
   type DesktopTitleVisibility,
   type DesktopToolbarStyle,
   type DesktopWindowSettings,
+  type DesktopWindowSize,
   TITLE_BARS,
   titleOptionsProblem,
   titleOptionValuesProblem,
@@ -211,6 +213,10 @@ export interface WindowRegistryOptions {
    * (`desktop.window.toolbarStyle`).
    */
   readonly toolbarStyle?: DesktopToolbarStyle;
+  /** The smallest size opened windows take unless their own `minSize` says (`desktop.minSize`). */
+  readonly minSize?: DesktopWindowSize;
+  /** The largest size opened windows take unless their own `maxSize` says (`desktop.maxSize`). */
+  readonly maxSize?: DesktopWindowSize;
   /** A window's title changed (its page reported or set one): the menus' labels follow. */
   readonly onTitleChanged?: (id: string, title: string) => void;
 }
@@ -380,6 +386,10 @@ export interface OpenWindowSettings {
   readonly titleVisibility?: DesktopTitleVisibility;
   /** The macOS toolbar style (default the registry's, `desktop.window.toolbarStyle`). */
   readonly toolbarStyle?: DesktopToolbarStyle;
+  /** The smallest size (default the registry's, `desktop.minSize`). */
+  readonly minSize?: DesktopWindowSize;
+  /** The largest size (default the registry's, `desktop.maxSize`). */
+  readonly maxSize?: DesktopWindowSize;
 }
 
 /** `alwaysOnTop`: a boolean or a level. */
@@ -422,6 +432,7 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
   const keyProblem = a.key === undefined ? null : windowKeyProblem(a.key);
   if (keyProblem !== null) throw invalid(keyProblem);
   const restoreBounds = optBool(a, "restoreBounds");
+  const limits = sizeLimitSettings(a);
   return {
     url: a.url,
     ...(a.title !== undefined ? { title: a.title as string } : {}),
@@ -434,7 +445,61 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
     ...(a.key !== undefined ? { key: a.key as string } : {}),
     ...(restoreBounds !== undefined ? { restoreBounds } : {}),
     ...chrome,
+    ...limits,
   };
+}
+
+/** A window's `minSize` / `maxSize` option: `{ width, height }` in CSS pixels, checked and rounded. */
+function sizeLimitOf(value: unknown, key: string): DesktopWindowSize | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) {
+    throw invalid(`${key} must be { width, height }`);
+  }
+  const { width, height } = value as Record<string, unknown>;
+  const side = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 1 && n <= 10000;
+  if (!side(width) || !side(height)) {
+    throw invalid(`${key} must be { width, height }, each a number from 1 to 10000`);
+  }
+  return { width: Math.round(width as number), height: Math.round(height as number) };
+}
+
+/** Why `minSize` can't go with `maxSize` (larger on a side), or `null`. */
+function sizeLimitsProblem(
+  o: Pick<DesktopWindowSettings, "minSize" | "maxSize">,
+): string | null {
+  const { minSize: min, maxSize: max } = o;
+  return min && max && (min.width > max.width || min.height > max.height)
+    ? "minSize is larger than maxSize"
+    : null;
+}
+
+/** The size limits of a window to open, checked (its own `minSize` no larger than its `maxSize`). */
+function sizeLimitSettings(
+  a: Record<string, unknown>,
+): Pick<OpenWindowSettings, "minSize" | "maxSize"> {
+  const minSize = sizeLimitOf(a.minSize, "minSize");
+  const maxSize = sizeLimitOf(a.maxSize, "maxSize");
+  const limits = { ...(minSize ? { minSize } : {}), ...(maxSize ? { maxSize } : {}) };
+  const problem = sizeLimitsProblem(limits);
+  if (problem !== null) throw invalid(problem);
+  return limits;
+}
+
+/**
+ * A window's size limits as it will get them: each its own, else the registry's (`desktop.minSize`
+ * / `desktop.maxSize`, as the main window gets them), refused with `invalid` when the minimum ends
+ * up larger than the maximum. Checked before the window is created.
+ */
+function effectiveSizeLimits(
+  st: RegistryState,
+  settings: OpenWindowSettings,
+): Pick<DesktopWindowSettings, "minSize" | "maxSize"> {
+  const minSize = settings.minSize ?? st.options.minSize;
+  const maxSize = settings.maxSize ?? st.options.maxSize;
+  const limits = { ...(minSize ? { minSize } : {}), ...(maxSize ? { maxSize } : {}) };
+  const problem = sizeLimitsProblem(limits);
+  if (problem !== null) throw invalid(`${problem} (with the inherited desktop.minSize / maxSize)`);
+  return limits;
 }
 
 /** The title bar style and the traffic lights' position of a window to open, checked. */
@@ -961,8 +1026,10 @@ function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWi
 /** Open a window from checked settings. */
 function open(st: RegistryState, args: unknown): RegisteredWindow {
   const checked = openWindowSettings(args);
-  // Refuse title options that can't be shown together before anything opens.
+  // Refuse title options that can't be shown together, and size limits that cross, before anything
+  // opens.
   effectiveTitleOptions(st, checked);
+  const limits = effectiveSizeLimits(st, checked);
   const Ctor = checkCanOpen(st, checked);
   const settings = restoredGeometry(st, checked);
   const window = new Ctor(creationOptions(settings));
@@ -985,6 +1052,8 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     if (interceptClose(st, id, event)) return;
     closed(st, id);
   });
+  // The limits first: the OS fits the window into them, and the frame follows from there.
+  applySizeLimits(window, limits, st.warn);
   followFrame(st, entry, settings.url);
   applyChrome(st, window, settings);
   applyWindowOverlaySettings(window, afterCreation(settings));

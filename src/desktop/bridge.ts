@@ -72,6 +72,7 @@ import type {
 } from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
 import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
+import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -170,6 +171,12 @@ export interface DesktopBridgeOptions {
   readonly onSecondInstance?: (
     fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>,
   ) => () => void;
+  /**
+   * Subscribe to the clicks on the app's notifications: what
+   * {@link DesktopExtensionHost.onNotificationClick} delegates to. Without it (no desktop runtime,
+   * a test) a subscription is kept by nobody.
+   */
+  readonly onNotificationClick?: (fn: DesktopNotificationClickListener) => () => void;
 }
 
 /**
@@ -576,6 +583,7 @@ export function createDesktopBridge(
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
+    onNotificationClick: (fn) => options.onNotificationClick?.(fn) ?? (() => {}),
     onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
