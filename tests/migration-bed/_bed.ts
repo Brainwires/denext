@@ -127,6 +127,11 @@ export interface Bed {
   files?: BedFile[];
   /** `flagged` dependencies the bed tolerates (native deps the app does not exercise). */
   allowFlagged?: string[];
+  /**
+   * For a Fresh app: the items `migrate` may report as won't-migrate (`[]`: nothing lost, every
+   * file, option and plugin carried). Unchecked when absent.
+   */
+  wontMigrate?: string[];
   /** Routes to render-assert. */
   routes: BedRoute[];
   /** A page to hydrate (and navigate from) in headless Chromium. */
@@ -337,6 +342,16 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       assertEquals(flagged, [], "migrate flagged dependencies the bed does not tolerate");
       assertEquals(report.denoJsonExists, false, "the clone must not already carry a deno.json");
       if (bed.start) assertStartPermissions(app, bed.start);
+      if (bed.wontMigrate) {
+        const fresh = report.fresh as { wontMigrate?: { item: string }[] } | undefined;
+        assertEquals(
+          (fresh?.wontMigrate ?? []).map((w) => w.item),
+          bed.wontMigrate,
+          `migrate left more to the user than the bed allows: ${
+            JSON.stringify(fresh?.wontMigrate)
+          }`,
+        );
+      }
       if (bed.files) await assertMigratedFiles(app, bed.files);
     });
     // Every later step resolves under a one-day hold, `jsr:@denext/*` excluded (_dep-age.ts):
