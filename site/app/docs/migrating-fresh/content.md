@@ -82,7 +82,8 @@ denext task dev
 - **`deno.json` is merged, not replaced.** `fresh`, `fresh/runtime`, `@fresh/core`,
   `@fresh/core/runtime`, `$fresh/server.ts` and `$fresh/runtime.ts` map to `denext/fresh` and
   `denext/fresh/runtime`; `preact`, `preact/hooks`, `preact/compat`, `preact/jsx-runtime` and
-  `preact/jsx-dev-runtime` to the matching `denext/preact` modules; `@preact/signals`, `@preact/signals/utils` and
+  `preact/jsx-dev-runtime` to the matching `denext/preact` modules (and `preact-render-to-string`,
+  `/stream`, `/jsx` and `/stream-node` to `denext/preact/render-to-string` and its subpaths); `@preact/signals`, `@preact/signals/utils` and
   `@preact/signals-core` to [`denext/signals`](/docs/signals). Fresh's, Vite's and Preact's own
   packages are dropped; the `dev` / `build` / `start` tasks run denext (Fresh's `preview`,
   `update` and `manifest` are removed); `nodeModulesDir` is `"auto"`; JSX compiles with
@@ -212,15 +213,12 @@ picks a file path by `PROD` needs the development branch (`migrate --check` list
 Each finding names the files it was found in. **Won't migrate** means denext does not run it;
 **review** means it migrates but needs a look.
 
-| Won't migrate                                                                                            | What to do                                                                                          |
-| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.islands()` in `main.ts`                                                                             | Move the components to `islands/` (or a `(_islands)` folder): islands are the `"use client"` files. |
-| Vite plugins other than Fresh's and Tailwind's                                                           | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
-| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                                                   | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
-| `preact-render-to-string/jsx`, `/stream-node`                                                            | Use `denext/preact/render-to-string` (`preact-render-to-string` itself maps there).                 |
-| `useSignalRef` / `createModel` from `@preact/signals`                                                    | Not in `denext/signals`.                                                                            |
-| Preact's `options.diffed` / `unmount` / `debounceRendering` / `requestAnimationFrame` and internal hooks | denext never calls them ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)). |
-| A `static/` or generated file that already exists                                                        | Merge it by hand.                                                                                   |
+| Won't migrate                                          | What to do                                                                                          |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `app.islands()` in `main.ts`                           | Move the components to `islands/` (or a `(_islands)` folder): islands are the `"use client"` files. |
+| Vite plugins other than Fresh's and Tailwind's         | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
+| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside) | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
+| A `static/` or generated file that already exists      | Merge it by hand.                                                                                   |
 
 | Review                                                         | What to do                                                                                                                                                 |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -231,6 +229,7 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 | `Deno.env` in an island                                        | An island runs in the browser: pass the value as a prop, or use `publicEnv()` (a literal `FRESH_PUBLIC_*` read is rewritten for you).                      |
 | `new App({ basePath })`                                        | Set `basePath` in `denext.config.ts`; the `App` option is not applied.                                                                                     |
 | A Tailwind v3 stylesheet (Fresh 1.x)                           | Run `npx @tailwindcss/upgrade`.                                                                                                                            |
+| Preact's internal `options` hooks (`__b`, `__e`, `__h`, `__`)  | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                   |
 
 The list of what denext does not do for a Fresh app is also in
 [Known limitations](/docs/limitations).

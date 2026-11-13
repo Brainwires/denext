@@ -10,6 +10,25 @@ and this project adheres to
 
 ### Added
 
+- **`preact-render-to-string/jsx` and `/stream-node`.** `denext/preact/render-to-string/jsx`
+  writes the pretty-printed, JSX-like markup snapshot tests compare against (`render`, the default
+  export, and `shallowRender`, with the `/jsx` entry's options), and
+  `denext/preact/render-to-string/stream-node` has `renderToPipeableStream` (`pipe`, `abort`,
+  `onShellReady`, `onAllReady`, `onError`). `denext migrate` maps both specifiers there for Fresh and
+  Preact apps instead of reporting them.
+- **`createModel`, `useModel` and `useSignalRef` in `denext/signals`, and Preact Signals' options.**
+  `createModel(factory)` builds models whose functions are actions and whose effects
+  `[Symbol.dispose]()` disposes (an effect created in `untracked()` stays the caller's; a nested
+  model's effects are its parent's too); `useModel` keeps one per component; `useSignalRef` is a
+  signal usable as a `ref`. `signal`, `computed`, `useSignal` and `useComputed` take `{ name,
+  watched, unwatched }`, `effect` and `useSignalEffect` take `{ name }`. A computed or effect
+  created inside `untracked()` now tracks its own reads, as in Preact.
+- **Preact's `options` hooks are called.** The reconciler calls `options._render` / `__r` before
+  each component renders, `diffed` for each vnode a commit rendered or changed (children first,
+  DOM in place), `_commit` / `__c` once per commit, `unmount` for each removed vnode (parent
+  first), and schedules an update's render through `debounceRendering` and the `useEffect` flush
+  through `requestAnimationFrame` when an app sets them. Without a Preact entry loaded, each call
+  site is one null check.
 - **`run.exclude` for a bundled Node backend sidecar.** Next to `nodeModules` / `external`,
   `exclude` takes package names or globs (`"@anthropic-ai/claude-code-*"`; `*` stays within one name
   segment) that are never inlined nor copied, and need not be installed: a dependency the app must

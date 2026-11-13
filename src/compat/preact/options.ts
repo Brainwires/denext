@@ -1,6 +1,6 @@
 /**
  * Preact's `options` hook object on denext, shared by `denext/preact`, `denext/preact/compat`,
- * `denext/preact/hooks` and `denext/preact/jsx-runtime`. denext calls the hooks it can honour:
+ * `denext/preact/hooks` and `denext/preact/jsx-runtime`. denext calls the hooks where Preact does:
  *
  * - `vnode(vnode)` — after each element the Preact entry points create (`h`, `createElement`,
  *   `cloneElement`, the Preact JSX runtime).
@@ -9,31 +9,43 @@
  * - `useDebugValue(value)` — from `useDebugValue` in `denext/preact/hooks`.
  * - `attr(name, value)` — from `jsxAttr` in `denext/preact/jsx-runtime` (precompiled JSX); a
  *   returned string replaces the attribute's HTML.
+ * - `_render` / `__r(vnode)` — before each component renders, in the browser.
+ * - `diffed(vnode)` — for each component, element and text node a commit rendered or changed,
+ *   once its DOM is in place, children before their parent (before layout effects run).
+ * - `_commit` / `__c(rootVNode, [])` — once per commit, after its layout effects.
+ * - `unmount(vnode)` — for each component, element and text node removed, parent first, before
+ *   its cleanups run.
+ * - `debounceRendering(cb)` — schedules the render a state update needs (default: a microtask).
+ * - `requestAnimationFrame(cb)` — schedules the `useEffect` flush after a commit (default: a task).
  *
- * The rest are never called: denext's reconciler does not run Preact's diff, so `diffed`,
- * `unmount`, `requestAnimationFrame`, `debounceRendering`, `__suspenseDidResolve`,
- * `_addHookName` and Preact's mangled internal hooks (`__b`, `__r`, `__c`, `__e`, `__h`, …) can
- * be set but have no effect. The vnode passed to `vnode` is denext's element (`type`, `props`,
- * `key`; the `ref` is in `props`), not Preact's internal shape.
+ * The vnode each hook gets is denext's element (`type`, `props`, `key`; the `ref` is in
+ * `props`), not Preact's internal shape (`_children`, `_component`, `_dom`), so a tool that walks
+ * Preact's internals (the `preact/devtools` bridge) finds nothing to read; `_diff` / `__b`,
+ * `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `_addHookName` and
+ * `__suspenseDidResolve` can be set but are not called.
  *
  * @module
  */
 
 import type { VNode, VNodeType, VProps } from "../../jsx/types.ts";
+import {
+  type PreactOptionHooks,
+  setPreactOptions,
+} from "../../client/fiber/preact-options-seam.ts";
 
 /** Preact's `options` hooks (`import { options } from "preact"`). */
 export interface Options {
   /** Called with each element the Preact entry points create. */
   vnode?(vnode: VNode): void;
-  /** Never called on denext (no unmount hook in its reconciler). */
+  /** Called with each vnode removed from the tree, parent first. */
   unmount?(vnode: VNode): void;
-  /** Never called on denext (no per-vnode diff hook in its reconciler). */
+  /** Called with each vnode a commit rendered or changed, once its DOM is in place. */
   diffed?(vnode: VNode): void;
   /** Called with each DOM event before the handler runs; a returned value replaces the event. */
   event?(e: Event): unknown;
-  /** Never called on denext (its scheduler runs effects). */
+  /** Schedules the `useEffect` flush after a commit (default: a task). */
   requestAnimationFrame?(callback: () => void): void;
-  /** Never called on denext (its scheduler batches renders). */
+  /** Schedules the render a state update needs (default: a microtask). */
   debounceRendering?(cb: () => void): void;
   /** Called by `useDebugValue` from `denext/preact/hooks`. */
   useDebugValue?(value: string | number): void;
@@ -43,12 +55,19 @@ export interface Options {
   __suspenseDidResolve?(vnode: VNode, cb: () => void): void;
   /** Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML. */
   attr?(name: string, value: unknown): string | void;
-  /** Preact's internal hooks may be set; denext never calls them. */
+  /** Before each component renders (mangled `__r`). */
+  _render?(vnode: VNode): void;
+  /** After each commit (mangled `__c`), with the root vnode and an empty commit queue. */
+  _commit?(vnode: VNode, commitQueue: unknown[]): void;
+  /** Preact's other internal hooks may be set; denext does not call them. */
   [hook: string]: unknown;
 }
 
 /** The one `options` object every Preact entry point shares. */
 export const options: Options = {};
+
+// The reconciler reads the render, diff, commit, unmount and scheduling hooks off this object.
+setPreactOptions(options as PreactOptionHooks);
 
 /** Each handler's event-hook wrapper, so a re-render keeps the same function. */
 const wrapped = new WeakMap<(e: Event) => unknown, (e: Event) => unknown>();

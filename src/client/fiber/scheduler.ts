@@ -3,6 +3,7 @@
 // watchdog, done-callbacks). The render entry points it drives live above it and are
 // injected once through `setFlushHandlers` so the module graph stays acyclic.
 
+import { preactOptions } from "./preact-options-seam.ts";
 import { activeRoots, rootHandleOf } from "./state.ts";
 import { componentDisplayName } from "../../runtime/react-brands.ts";
 import { setTransitionHost } from "../../runtime/hooks.ts";
@@ -183,7 +184,8 @@ let syncScheduled = false;
 export function scheduleSyncFlush(): void {
   if (syncScheduled) return;
   syncScheduled = true;
-  queueMicrotask(() => {
+  // Preact's `options.debounceRendering` schedules an update's render when an app set it.
+  (preactOptions?.debounceRendering ?? queueMicrotask)(() => {
     syncScheduled = false;
     // An urgent (sync) update interrupts any in-flight transition render: abandon
     // its off-DOM work-in-progress (nothing committed, nothing to roll back) and

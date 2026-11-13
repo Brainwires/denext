@@ -20,54 +20,6 @@
   },
   "gaps": [
     {
-      "specifier": "@preact/signals",
-      "symbol": "computed",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "createModel",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "effect",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "signal",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "useComputed",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "useModel",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "useSignal",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
-      "specifier": "@preact/signals",
-      "symbol": "useSignalEffect",
-      "category": "ARITY_MISMATCH",
-      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
-    },
-    {
       "specifier": "preact/compat",
       "symbol": "StrictMode",
       "category": "ARITY_MISMATCH",

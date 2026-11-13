@@ -1,8 +1,11 @@
 /**
  * `denext/signals` — Preact Signals' API (`@preact/signals`, `@preact/signals-core` and
  * `@preact/signals/utils`) on denext: `signal`, `computed`, `effect`, `batch`, `untracked`,
- * `action`, the `Signal` class, the component hooks (`useSignal`, `useComputed`,
- * `useSignalEffect`, `useLiveSignal`) and the `Show` / `For` helpers.
+ * `action`, `createModel`, the `Signal` class, the component hooks (`useSignal`, `useComputed`,
+ * `useSignalEffect`, `useLiveSignal`, `useSignalRef`, `useModel`) and the `Show` / `For` helpers.
+ * `signal` / `computed` / `useSignal` / `useComputed` take Preact's `SignalOptions` (`name`, and
+ * the `watched` / `unwatched` callbacks run when the signal gains its first subscriber and loses
+ * its last), `effect` / `useSignalEffect` its `EffectOptions` (`name`).
  *
  * A component re-renders when a signal its render read changes, as with Preact: reading
  * `count.value` while rendering subscribes that component (on the client; a server render reads
@@ -50,6 +53,8 @@ let batchDepth = 0;
 const pendingEffects = new Set<EffectImpl>();
 /** Components queued to re-render at the end of the batch. */
 const pendingRenders = new Set<Fiber>();
+/** The effects a {@link createModel} factory creates while it runs (the model disposes them). */
+let capturedEffects: EffectImpl[] | undefined;
 
 /** Re-render a component whose render read a changed signal (a forced render: no hook changed). */
 function rerender(fiber: Fiber): void {
@@ -97,6 +102,12 @@ export class Signal<T = unknown> {
   _targets: Set<Computation> = new Set();
   /** @internal The components whose render read this signal. */
   _renders: Set<Fiber> | undefined = undefined;
+  /** @internal Called when the signal gains its first subscriber. */
+  _watched: ((this: Signal<T>) => void) | undefined;
+  /** @internal Called when the signal loses its last subscriber. */
+  _unwatched: ((this: Signal<T>) => void) | undefined;
+  /** The signal's name (`SignalOptions.name`), for debugging tools. */
+  name: string | undefined;
   /** The Preact Signals brand (`Symbol.for("preact-signals")`). */
   declare readonly brand: symbol;
   // A signal is element-shaped (see below), so it type-checks as a JSX child.
@@ -113,9 +124,13 @@ export class Signal<T = unknown> {
    * Create a signal.
    *
    * @param value The initial value.
+   * @param options Its name and its `watched` / `unwatched` callbacks.
    */
-  constructor(value?: T) {
+  constructor(value?: T, options?: SignalOptions<T>) {
     this._value = value as T;
+    this._watched = options?.watched;
+    this._unwatched = options?.unwatched;
+    this.name = options?.name;
   }
 
   /** The value; reading subscribes, assigning notifies. */
@@ -171,11 +186,36 @@ export class Signal<T = unknown> {
     if (untrackedDepth > 0) return;
     if (evaluating !== null) {
       evaluating._sources.set(this as Signal<unknown>, this._version);
-      this._targets.add(evaluating);
+      if (!this._targets.has(evaluating)) {
+        const first = !this._watchedNow();
+        this._targets.add(evaluating);
+        if (first) this._fireWatch(this._watched);
+      }
       return;
     }
     const fiber = currentFiber;
-    if (fiber !== null) (this._renders ??= new Set()).add(fiber);
+    if (fiber === null) return;
+    const renders = this._renders ??= new Set();
+    if (renders.has(fiber)) return;
+    const first = !this._watchedNow();
+    renders.add(fiber);
+    if (first) this._fireWatch(this._watched);
+  }
+
+  /** @internal Whether anything subscribes to the signal. */
+  _watchedNow(): boolean {
+    return this._targets.size > 0 || (this._renders?.size ?? 0) > 0;
+  }
+
+  /** @internal Run a `watched` / `unwatched` callback, reading nothing reactively. */
+  _fireWatch(fn: ((this: Signal<T>) => void) | undefined): void {
+    if (fn) untracked(() => fn.call(this));
+  }
+
+  /** @internal Drop a computation's subscription (`unwatched` once nothing is left). */
+  _untarget(target: Computation): void {
+    if (!this._targets.delete(target)) return;
+    if (!this._watchedNow()) this._fireWatch(this._unwatched);
   }
 
   /** @internal Tell every reader the value changed. */
@@ -187,6 +227,7 @@ export class Signal<T = unknown> {
       if (hasBit(fiber, UnmountedBit)) renders.delete(fiber);
       else pendingRenders.add(fiber);
     }
+    if (!this._watchedNow()) this._fireWatch(this._unwatched);
   }
 }
 
@@ -211,6 +252,22 @@ Object.defineProperties(Signal.prototype, {
   },
 });
 
+/** The options of {@link signal}, {@link computed}, {@link useSignal} and {@link useComputed}. */
+export interface SignalOptions<T = unknown> {
+  /** Called (untracked) when the signal gains its first subscriber. */
+  watched?: (this: Signal<T>) => void;
+  /** Called (untracked) when the signal loses its last subscriber. */
+  unwatched?: (this: Signal<T>) => void;
+  /** A name for debugging tools. */
+  name?: string;
+}
+
+/** The options of {@link effect} and {@link useSignalEffect}. */
+export interface EffectOptions {
+  /** A name for debugging tools. */
+  name?: string;
+}
+
 /** A signal that can be read but not written. */
 export interface ReadonlySignal<T = unknown> {
   /** The value; reading subscribes. */
@@ -227,37 +284,48 @@ export interface ReadonlySignal<T = unknown> {
   toJSON(): T;
   /** The Preact Signals brand. */
   readonly brand: symbol;
+  /** The signal's name (`SignalOptions.name`). */
+  readonly name?: string;
 }
 
 /**
  * Create a signal.
  *
  * @param value The initial value.
+ * @param options Its name and its `watched` / `unwatched` callbacks.
  * @returns The signal.
  */
-export function signal<T>(value: T): Signal<T>;
+export function signal<T>(value: T, options?: SignalOptions<T>): Signal<T>;
 /**
  * Create a signal holding `undefined`.
  *
  * @returns The signal.
  */
 export function signal<T = undefined>(): Signal<T | undefined>;
-export function signal<T>(value?: T): Signal<T> {
-  return new Signal<T>(value);
+export function signal<T>(value?: T, options?: SignalOptions<T>): Signal<T> {
+  return new Signal<T>(value, options);
 }
 
 // ── Computations ─────────────────────────────────────────────────────────────
 
 /** Evaluate `fn` with `computation` collecting its reads as the new source set. */
 function evaluate<R>(computation: Computation, fn: () => R): R {
-  for (const source of computation._sources.keys()) source._targets.delete(computation);
+  const previous = [...computation._sources.keys()];
   computation._sources.clear();
   const prev = evaluating;
+  const prevUntracked = untrackedDepth;
   evaluating = computation;
+  // A computation tracks its own reads even when it runs inside `untracked()` (as in Preact).
+  untrackedDepth = 0;
   try {
     return fn();
   } finally {
     evaluating = prev;
+    untrackedDepth = prevUntracked;
+    // A source this run no longer read drops the computation (its `unwatched` may fire).
+    for (const source of previous) {
+      if (!computation._sources.has(source)) source._untarget(computation);
+    }
   }
 }
 
@@ -277,8 +345,8 @@ class ComputedImpl<T> extends Signal<T> implements Computation {
   _dirty = true;
   _initialized = false;
 
-  constructor(fn: () => T) {
-    super(undefined);
+  constructor(fn: () => T, options?: SignalOptions<T>) {
+    super(undefined, options);
     this._fn = fn;
   }
 
@@ -321,10 +389,11 @@ class ComputedImpl<T> extends Signal<T> implements Computation {
  * changed.
  *
  * @param fn Computes the value.
+ * @param options Its name and its `watched` / `unwatched` callbacks.
  * @returns A read-only signal.
  */
-export function computed<T>(fn: () => T): ReadonlySignal<T> {
-  return new ComputedImpl(fn) as unknown as ReadonlySignal<T>;
+export function computed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T> {
+  return new ComputedImpl(fn, options) as unknown as ReadonlySignal<T>;
 }
 
 /** An effect's implementation: re-runs after a signal it read changed. */
@@ -333,9 +402,12 @@ class EffectImpl implements Computation {
   _fn: () => unknown;
   _cleanup: (() => void) | undefined = undefined;
   _disposed = false;
+  name: string | undefined;
 
-  constructor(fn: () => unknown) {
+  constructor(fn: () => unknown, options?: EffectOptions) {
     this._fn = fn;
+    this.name = options?.name;
+    capturedEffects?.push(this);
   }
 
   _run(): void {
@@ -361,7 +433,7 @@ class EffectImpl implements Computation {
   _dispose(): void {
     this._disposed = true;
     pendingEffects.delete(this);
-    for (const source of this._sources.keys()) source._targets.delete(this);
+    for (const source of this._sources.keys()) source._untarget(this);
     this._sources.clear();
     this._runCleanup();
   }
@@ -375,11 +447,17 @@ export type EffectDispose = (() => void) & { [Symbol.dispose](): void };
  * before the next run and on dispose.
  *
  * @param fn The effect.
+ * @param options Its name.
  * @returns Its dispose function.
  */
-export function effect(fn: () => unknown): EffectDispose {
-  const e = new EffectImpl(fn);
-  batch(() => e._run());
+export function effect(fn: () => unknown, options?: EffectOptions): EffectDispose {
+  const e = new EffectImpl(fn, options);
+  try {
+    batch(() => e._run());
+  } catch (err) {
+    e._dispose();
+    throw err;
+  }
   const dispose = (() => e._dispose()) as EffectDispose;
   dispose[Symbol.dispose] = dispose;
   return dispose;
@@ -409,13 +487,17 @@ export function batch<T>(fn: () => T): T {
  */
 export function untracked<T>(fn: () => T): T {
   const prev = evaluating;
+  const prevCaptured = capturedEffects;
   evaluating = null;
+  // Inside a model factory, an untracked callback's effects are not the model's (Preact's rule).
+  capturedEffects = undefined;
   untrackedDepth++;
   try {
     return fn();
   } finally {
     untrackedDepth--;
     evaluating = prev;
+    capturedEffects = prevCaptured;
   }
 }
 
@@ -427,7 +509,104 @@ export function untracked<T>(fn: () => T): T {
  * @returns The wrapped action.
  */
 export function action<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
-  return (...args: A) => batch(() => untracked(() => fn(...args)));
+  return function actionWrapper(this: unknown, ...args: A) {
+    return batch(() => untracked(() => fn.apply(this, args)));
+  };
+}
+
+// ── createModel ──────────────────────────────────────────────────────────────
+
+/** Something `using` / `[Symbol.dispose]()` disposes. */
+export interface DisposableLike {
+  /** Dispose it. */
+  [Symbol.dispose](): void;
+}
+
+/** A model: signals, actions and nested objects of them, with `[Symbol.dispose]`. */
+export type Model<TModel> = TModel & DisposableLike;
+
+/** The factory {@link createModel} takes. */
+export type ModelFactory<TModel, TFactoryArgs extends unknown[] = []> = (
+  ...args: TFactoryArgs
+) => TModel;
+
+/** What {@link createModel} returns: `new` it (or call it) to build a model. */
+export type ModelConstructor<TModel, TFactoryArgs extends unknown[] = []> = new (
+  ...args: TFactoryArgs
+) => Model<TModel>;
+
+/** Whether a model property is a plain nested object to walk (not a signal, not seen yet). */
+function nestedModel(val: unknown, visited: object[]): val is Record<string, unknown> {
+  return typeof val === "object" && val !== null && !("brand" in val) && !visited.includes(val);
+}
+
+/** Wrap the functions one prototype level of `value` defines (`obj`) in {@link action}. */
+function wrapLevel(
+  value: Record<string, unknown>,
+  obj: object,
+  seen: Record<string, boolean>,
+  visited: object[],
+): void {
+  const descs = Object.getOwnPropertyDescriptors(obj);
+  for (const key in descs) {
+    if (seen[key]) continue;
+    seen[key] = true;
+    const val = descs[key].value;
+    if (typeof val === "function") {
+      if (key !== "constructor") value[key] = action(val as (...args: unknown[]) => unknown);
+    } else if (obj === value && nestedModel(val, visited)) wrapInAction(val, visited);
+  }
+}
+
+/** Wrap a model's functions (and its nested plain objects' functions) in {@link action}. */
+function wrapInAction(value: Record<string, unknown>, visited: object[]): void {
+  visited.push(value);
+  // Built-ins (a Map, a Date, an array) keep their prototypes' methods as they are.
+  const walkPrototypes = Object.prototype.toString.call(value) === "[object Object]";
+  const seen: Record<string, boolean> = Object.create(null);
+  let obj: object | null = value;
+  while (obj && obj !== Object.prototype) {
+    wrapLevel(value, obj, seen, visited);
+    obj = walkPrototypes ? Object.getPrototypeOf(obj) : null;
+  }
+}
+
+/**
+ * A model constructor (`@preact/signals-core`'s `createModel`): each `new Model(...args)` (or
+ * call) runs `factory`, wraps its functions in {@link action}, and owns the effects the factory
+ * created (outside an {@link untracked} callback); `model[Symbol.dispose]()` disposes them.
+ *
+ * @param factory Builds the model's signals and actions.
+ * @returns The constructor.
+ */
+export function createModel<TModel, TFactoryArgs extends unknown[] = []>(
+  factory: ModelFactory<TModel, TFactoryArgs>,
+): ModelConstructor<TModel, TFactoryArgs> {
+  return function SignalModel(...args: TFactoryArgs): Model<TModel> {
+    const parent = capturedEffects;
+    capturedEffects = [];
+    let owned: EffectImpl[] | undefined;
+    let model: Model<TModel>;
+    try {
+      model = factory(...args) as Model<TModel>;
+    } catch (err) {
+      const effects = capturedEffects;
+      capturedEffects = parent;
+      batch(() => {
+        for (const e of effects ?? []) e._dispose();
+      });
+      throw err;
+    }
+    owned = capturedEffects;
+    // A nested model's effects are its parent model's too.
+    capturedEffects = parent && owned ? parent.concat(owned) : parent;
+    wrapInAction(model as unknown as Record<string, unknown>, []);
+    (model as DisposableLike)[Symbol.dispose] = action(function disposeModel() {
+      for (const e of owned ?? []) e._dispose();
+      owned = undefined;
+    });
+    return model;
+  } as unknown as ModelConstructor<TModel, TFactoryArgs>;
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
@@ -436,29 +615,31 @@ export function action<A extends unknown[], R>(fn: (...args: A) => R): (...args:
  * A signal owned by the component (created once, kept across renders).
  *
  * @param value The initial value.
+ * @param options Its name and its `watched` / `unwatched` callbacks.
  * @returns The component's signal.
  */
-export function useSignal<T>(value: T): Signal<T>;
+export function useSignal<T>(value: T, options?: SignalOptions<T>): Signal<T>;
 /**
  * A component-owned signal holding `undefined`.
  *
  * @returns The component's signal.
  */
 export function useSignal<T = undefined>(): Signal<T | undefined>;
-export function useSignal<T>(value?: T): Signal<T> {
-  return useMemo(() => new Signal<T>(value), []);
+export function useSignal<T>(value?: T, options?: SignalOptions<T>): Signal<T> {
+  return useMemo(() => new Signal<T>(value, options), []);
 }
 
 /**
  * A computed signal owned by the component; `fn` is always the latest render's.
  *
  * @param fn Computes the value.
+ * @param options Its name and its `watched` / `unwatched` callbacks.
  * @returns The component's computed signal.
  */
-export function useComputed<T>(fn: () => T): ReadonlySignal<T> {
+export function useComputed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T> {
   const latest = useRef(fn);
   latest.current = fn;
-  return useMemo(() => computed(() => latest.current()), []);
+  return useMemo(() => computed(() => latest.current(), options), []);
 }
 
 /**
@@ -466,11 +647,52 @@ export function useComputed<T>(fn: () => T): ReadonlySignal<T> {
  * always the latest render's.
  *
  * @param fn The effect.
+ * @param options Its name.
  */
-export function useSignalEffect(fn: () => unknown): void {
+export function useSignalEffect(fn: () => unknown, options?: EffectOptions): void {
   const latest = useRef(fn);
   latest.current = fn;
-  useEffect(() => effect(() => latest.current()), []);
+  useEffect(() => effect(() => latest.current(), options), []);
+}
+
+/**
+ * A component-owned signal that is also a ref (`@preact/signals/utils`'s `useSignalRef`):
+ * `ref.current` reads and writes `ref.value`, so `<div ref={ref} />` sets the signal and a
+ * component that read `ref.value` re-renders.
+ *
+ * @param value The initial value.
+ * @returns The signal, with `current`.
+ */
+export function useSignalRef<T>(value: T): Signal<T> & { current: T } {
+  const ref = useSignal(value) as Signal<T> & { current: T };
+  if (!("current" in ref)) Object.defineProperty(ref, "current", SIGNAL_REF);
+  return ref;
+}
+
+/** `current` on a {@link useSignalRef} signal: its value. */
+const SIGNAL_REF: PropertyDescriptor = {
+  configurable: true,
+  get(this: Signal<unknown>) {
+    return this.value;
+  },
+  set(this: Signal<unknown>, v: unknown) {
+    this.value = v;
+  },
+};
+
+/**
+ * A model owned by the component (`@preact/signals`' `useModel`): built once from a
+ * {@link createModel} constructor (or a function returning a model), disposed on unmount.
+ *
+ * @param factory The model constructor, or a function returning a model.
+ * @returns The component's model.
+ */
+export function useModel<TModel>(
+  factory: ModelConstructor<TModel, []> | (() => Model<TModel>),
+): Model<TModel> {
+  const inst = useMemo(() => (factory as () => Model<TModel>)(), []);
+  useEffect(() => () => inst[Symbol.dispose](), [inst]);
+  return inst;
 }
 
 /**

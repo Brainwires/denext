@@ -4,6 +4,7 @@
 
 import { devHydrationActive } from "./fiber-utils.ts";
 import { devtoolsHooks } from "./devtools-seam.ts";
+import { preactRenderHook } from "./preact-options-seam.ts";
 import {
   clientDispatcher,
   currentFiber,
@@ -435,6 +436,8 @@ export function renderComponent(inst: Fiber): VNode | null {
   // otherwise, so the hot path is one null check).
   const profT0 = devtoolsHooks?.profiler ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
+  // Preact's `options._render` (a Preact / Fresh app's `denext/preact` installs it).
+  preactRenderHook()?.(inst.vnode);
   try {
     // Before the class branch: a class is a `useId` level of its own too (its id scope), as
     // every server renderer counts it.

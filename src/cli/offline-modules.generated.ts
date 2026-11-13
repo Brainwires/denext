@@ -163,6 +163,8 @@ import "../compat/preact/hooks.ts";
 import "../compat/preact/iso.ts";
 import "../compat/preact/jsx-runtime.ts";
 import "../compat/preact/mod.ts";
+import "../compat/preact/render-to-string-jsx.ts";
+import "../compat/preact/render-to-string-stream-node.ts";
 import "../compat/preact/render-to-string.ts";
 import "../compat/preact/signals.ts";
 import "../compat/react-compiler-runtime.ts";

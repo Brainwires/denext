@@ -1,6 +1,7 @@
 // Commit phase: the ordered mutation / placement / effect phases of commitRoot,
 // deletion, Offscreen visibility, profilers and the passive-effect queue.
 
+import { preactCommitHook, preactOptions } from "./preact-options-seam.ts";
 import type { RootHandle } from "./state.ts";
 import {
   collectEffects,
@@ -233,6 +234,23 @@ function commitLayoutEffects(effects: Fiber[]): void {
   if (pendingPassive.length > 0) schedulePassiveFlush();
 }
 
+/** A fiber Preact has a vnode for: a component, an element or a text node. */
+function isPreactVNodeFiber(f: Fiber): boolean {
+  return f.tag === "component" || f.tag === "host" || f.tag === "text";
+}
+
+/**
+ * Call `diffed` for each fiber of the commit that rendered or changed, post-order (a vnode's
+ * children before it, as Preact's diff finishes them), descending only into touched subtrees.
+ */
+function reportDiffed(f: Fiber, diffed: (vnode: unknown) => void): void {
+  if (f.subtreeFlags !== NoFlags) {
+    for (let c = f.child; c !== null; c = c.sibling) reportDiffed(c, diffed);
+  }
+  const touched = (f.bits & DidRenderBit) !== 0 || f.flags !== NoFlags;
+  if (touched && isPreactVNodeFiber(f)) diffed(f.vnode);
+}
+
 let commits = 0;
 
 /**
@@ -259,6 +277,9 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   const layoutFibers: Fiber[] = [];
   const parked: Fiber[] = [];
   collectEffects(wipRoot, layoutFibers, parked);
+  // Preact's `options.diffed`: each vnode this commit rendered or changed, child before parent.
+  const diffed = preactOptions?.diffed;
+  if (diffed) reportDiffed(wipRoot, diffed);
   clearCommittedFlags(wipRoot);
   // 4c. Offscreen visibility: hide the primary portion of a boundary that re-suspended
   //     urgently (display:none, kept mounted so its state survives), and restore it on
@@ -267,6 +288,8 @@ export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
   // Effects under a hidden <Activity> are parked (mounted on reveal) by its gated runtime.
   if (parked.length > 0) getActivitySupport()!.park(parked);
   commitLayoutEffects(layoutFibers);
+  // Preact's `options._commit`, once per commit.
+  preactCommitHook()?.(wipRoot.vnode, []);
   // 5b. Profiler onRender.
   profilerCommit?.(wipRoot);
   // 6. DevTools.
@@ -516,7 +539,18 @@ let passiveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushingPassive = false;
 
 function schedulePassiveFlush(): void {
-  passiveTimer ??= setTimeout(() => {
+  if (passiveTimer !== undefined) return;
+  // Preact's `options.requestAnimationFrame` schedules the `useEffect` flush when an app set it.
+  const raf = preactOptions?.requestAnimationFrame;
+  if (raf) {
+    passiveTimer = -1 as unknown as ReturnType<typeof setTimeout>;
+    raf(() => {
+      passiveTimer = undefined;
+      flushPassiveEffects();
+    });
+    return;
+  }
+  passiveTimer = setTimeout(() => {
     passiveTimer = undefined;
     flushPassiveEffects();
   }, 0);
@@ -531,7 +565,8 @@ export function hasPendingPassiveEffects(): boolean {
 export function flushPassiveEffects(): void {
   if (flushingPassive) return;
   // Flushed now (flushSync, act, the next render): the scheduled task has nothing left to do.
-  clearTimeout(passiveTimer);
+  // (A `requestAnimationFrame`-scheduled flush, marked -1, finds the queue empty.)
+  if ((passiveTimer as unknown) !== -1) clearTimeout(passiveTimer);
   passiveTimer = undefined;
   if (pendingPassive.length === 0) return;
   flushingPassive = true;
@@ -624,6 +659,9 @@ function detachFiber(f: Fiber): void {
 }
 
 export function commitDeletion(fiber: Fiber): void {
+  // Preact's `options.unmount`: each removed vnode, before its children.
+  const unmount = preactOptions?.unmount;
+  if (unmount && isPreactVNodeFiber(fiber)) unmount(fiber.vnode);
   fiber.lanes = NoLane;
   if (fiber.alternate) fiber.alternate.lanes = NoLane;
   // Drop any not-yet-run passive effects so the scheduled flush never runs an

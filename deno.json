@@ -295,6 +295,8 @@
     "./preact/compat": "./src/compat/preact/compat.ts",
     "./preact/jsx-runtime": "./src/compat/preact/jsx-runtime.ts",
     "./preact/render-to-string": "./src/compat/preact/render-to-string.ts",
+    "./preact/render-to-string/jsx": "./src/compat/preact/render-to-string-jsx.ts",
+    "./preact/render-to-string/stream-node": "./src/compat/preact/render-to-string-stream-node.ts",
     "./preact-iso": "./src/compat/preact/iso.ts",
     "./signals": "./src/compat/preact/signals.ts",
     "./build/next-compat": "./src/build/next-compat-public.ts",
