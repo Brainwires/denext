@@ -135,10 +135,11 @@ jobs:
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
         # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13"
+          check-latest: false
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -540,10 +541,11 @@ jobs:
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
         # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13"
+          check-latest: false
 
       - name: Use this runner's job services (our pool; GitHub's image uses the services above)
         if: runner.environment == 'self-hosted'
@@ -863,10 +865,11 @@ jobs:
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
         # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13"
+          check-latest: false
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -988,10 +991,11 @@ jobs:
           deno-version: "2.9.6" # bootstraps the toolchain step below (see the header: what runs on what)
 
       - name: Set up a JDK
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13"
+          check-latest: false
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -1052,10 +1056,11 @@ jobs:
       - name: Set up a JDK
         # The Android halves of the native templates are compiled with javac and run with java
         # (tests/_jdk.ts). Under CI those tests never skip: without a JDK they fail.
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13"
+          check-latest: false
 
       - name: Cache Deno dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
