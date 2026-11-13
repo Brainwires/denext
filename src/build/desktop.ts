@@ -142,7 +142,7 @@ export type {
 export type { DesktopBridge } from "../desktop/bridge.ts";
 /** The retained-event replay buffer reached through {@linkcode DesktopBridge}'s `events` (re-exported
  * so that public member does not reference a private type). */
-export type { DesktopEventLog } from "../desktop/bridge-events.ts";
+export type { DesktopEventAppendOptions, DesktopEventLog } from "../desktop/bridge-events.ts";
 
 // The desktop native-extension authoring API is served from `denext/desktop` (this module).
 export {

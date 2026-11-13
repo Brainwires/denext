@@ -3,9 +3,10 @@
 // is ever created on the machine running the tests: the main window is hidden when the windows
 // are set up, a window opened later is created with `show: false`, nothing (a page's `show` /
 // `focus`, the Dock's reopen, a `desktop.ts` ref) can show or focus one, the Dock gets no icon or
-// bounce, and `desktop run --headless` launches with the switch and the accessory policy.
+// bounce, and `desktop run --headless` launches with the switch and the accessory policy (its
+// flag check is in tests/cli-desktop-coverage.test.ts).
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   DESKTOP_HEADLESS_ENV,
   desktopHeadless,
@@ -17,8 +18,6 @@ import {
 import { setUpDesktopWindows } from "../src/desktop/app-windows.ts";
 import type { DesktopCapCtx } from "../src/desktop/extension.ts";
 import { DESKTOP_RUNTIME_ENV } from "../src/build/desktop-runtime-env.ts";
-import { desktopCommand } from "../src/cli/commands/desktop.ts";
-import type { CommandContext } from "../src/cli/command.ts";
 
 /** A fake `BrowserWindow` recording every call that could put it on screen. */
 class FakeWin extends EventTarget {
@@ -203,44 +202,9 @@ Deno.test("setUpDesktopWindows without headless still shows what it is asked to"
   assertEquals(main.calls, ["show", "focus"]);
 });
 
-/** Run `denext desktop <positionals>` in `dir` with `flags`; its exit code and stderr. */
-async function runVerb(positionals: string[], dir: string, flags: Record<string, unknown>) {
-  const errs: string[] = [];
-  const prevErr = console.error;
-  const prevExit = Deno.exit;
-  let code = 0;
-  console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
-  (Deno as { exit: (c?: number) => never }).exit = ((c?: number) => {
-    code = c ?? 0;
-    throw new Error("__exit__");
-  }) as never;
-  try {
-    await desktopCommand.run({
-      positionals,
-      flags,
-      global: { cwd: dir },
-      rest: [],
-    } as unknown as CommandContext);
-  } catch (e) {
-    if (!String(e).includes("__exit__")) throw e;
-  } finally {
-    console.error = prevErr;
-    (Deno as { exit: typeof prevExit }).exit = prevExit;
-  }
-  return { code, err: errs.join("\n") };
-}
-
-Deno.test("denext desktop --headless: run only; the launch env carries the switch and the accessory policy", async () => {
+Deno.test("desktopHeadlessLaunchEnv: the switch and the accessory policy", () => {
   assertEquals(desktopHeadlessLaunchEnv(), {
     DENEXT_DESKTOP_HEADLESS: "1",
     LAUFEY_ACTIVATION_POLICY: "accessory",
   });
-  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_headless_" });
-  try {
-    const out = await runVerb(["build"], dir, { headless: true });
-    assertEquals(out.code, 1);
-    assertStringIncludes(out.err, "--headless applies to `denext desktop run` only");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
 });
