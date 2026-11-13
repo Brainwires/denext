@@ -16,15 +16,23 @@ and this project adheres to
   `win.createWebView(options)` on a window handle. The handle navigates, goes back / forward,
   reloads, stops, takes the keyboard focus, reports its `state()`, `capture()`s what it shows as a
   `Blob`, `evaluate()`s a script in an isolated world, and fires `title`, `url`, `load`, `console`,
-  `focus-change`, `new-window` and `closed`. A view never gets the desktop bridge, the app's
+  `focus-change`, `new-window`, `find-result`, `context-menu` and `closed`. Views stack above the
+  page and among themselves (`raise()`, `lower()`, `setZOrder(n)`, `state().zOrder`);
+  `capture({ format: "jpeg", scale: 1 })` makes the snapshot an `<img>` stands in for while an HTML
+  overlay is up; `setZoom` / `getZoom`, `find` / `stopFind`, `print()` and `openDevTools()`
+  (`not_allowed` unless the app's DevTools are on: a dev run or `desktop.inspectable: true`);
+  `contextMenu: "app"` suppresses the engine's menu, and `permissions` also takes
+  `{ prompts, clipboardRead, clipboardWrite }`. A view never gets the desktop bridge, the app's
   storage (named `partition`s, `"ephemeral:"` ones in memory) or the window's navigation guard; it
   loads `http:` / `https:` only and never the app's own origin, with popup, download and
   permission-prompt policies; it closes with its window. `attachWebView(view, element)` keeps a
   view on an element through resizes, scrolling, window resizes and display scale changes (one
-  `setBounds` per frame at most) and hides it while the element is detached, hidden or out of
-  view. `desktop.webViews.limit` caps the views per window (default 8, up to 32) and
+  `setBounds` per frame at most), fits it to the element's visible part (cut to the viewport and
+  its scroll containers; `clip: false` keeps the whole box) and hides it while the element is
+  detached, hidden or out of view. `desktop.webViews.limit` caps the views per window (default 8, up to 32) and
   `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
-  whether the engine hosts them (CEF and WKWebView on macOS, WebView2 and WebKitGTK as each engine lands; laufey API 58, runtime 3.0.0-denext.23); on
+  whether the engine hosts them and which features work (each `false` where the engine or runtime
+  lacks it, and its call rejects `unsupported`) (CEF and WKWebView on macOS, WebView2 and WebKitGTK as each engine lands; laufey API 58, runtime 3.0.0-denext.23); on
   an older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
   `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or

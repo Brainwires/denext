@@ -15,8 +15,14 @@
  */
 
 import { base64ToBytes } from "../mobile/base64.ts";
+import { clippingAncestors, type ClipStyle, visiblePart } from "../mobile/native-view-geometry.ts";
 import { desktopError, desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
-import { fireWebViewListeners, webViewHandle, type WebViewListeners } from "./webview-handle.ts";
+import {
+  definedOnly,
+  fireWebViewListeners,
+  webViewHandle,
+  type WebViewListeners,
+} from "./webview-handle.ts";
 
 /** The capability every call goes to. */
 const CAP = "window";
@@ -61,11 +67,28 @@ export interface CreateWebViewOptions {
   downloads?: "deny" | "ask" | "browser";
   /**
    * The camera / microphone / geolocation / notification prompts: `"deny"` (default) refuses them
-   * without a prompt, `"ask"` asks the user.
+   * without a prompt, `"ask"` asks the user. The object form also sets the clipboard: `prompts`
+   * (default `"deny"`) is the string form's choice, `clipboardRead` (default `false`) lets the
+   * site read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture.
    */
-  permissions?: "deny" | "ask";
+  permissions?: "deny" | "ask" | WebViewPermissions;
+  /**
+   * The context menu: `"native"` (default) is the engine's own; `"app"` suppresses it so the page
+   * draws its own from the `context-menu` event (which fires in both modes).
+   */
+  contextMenu?: "native" | "app";
   /** Replaces the engine's user agent string for this view. */
   userAgent?: string;
+}
+
+/** The object form of {@linkcode CreateWebViewOptions.permissions}. */
+export interface WebViewPermissions {
+  /** Camera / microphone / geolocation / notification prompts (default `"deny"`). */
+  prompts?: "deny" | "ask";
+  /** Whether the site may read the clipboard (default `false`). */
+  clipboardRead?: boolean;
+  /** Whether the site may write the clipboard on a user gesture (default `true`). */
+  clipboardWrite?: boolean;
 }
 
 /** A web view's last load state. */
@@ -90,6 +113,21 @@ export interface WebViewEventMap {
   "focus-change": { focused: boolean };
   /** A popup was refused (only with `allowPopups: "deny"`). */
   "new-window": { url: string; disposition: "popup" | "tab" };
+  /** A {@linkcode WebViewHandle.find} search's matches (`activeMatch` 1-based, `0` = none). */
+  "find-result": { matches: number; activeMatch: number };
+  /**
+   * A context menu was asked for (right click, the menu key), in both `contextMenu` modes: where
+   * (CSS pixels from the view's top-left) and what is under the pointer.
+   */
+  "context-menu": {
+    x: number;
+    y: number;
+    linkUrl?: string;
+    imageUrl?: string;
+    selectionText?: string;
+    isEditable: boolean;
+    mediaType?: "image" | "video" | "audio" | "canvas" | "plugin";
+  };
   /** The view closed (its `close()`, or its window closed). Nothing follows it. */
   closed: Record<string, never>;
 }
@@ -106,6 +144,8 @@ export interface WebViewState {
   canGoBack: boolean;
   /** Whether `forward()` has somewhere to go. */
   canGoForward: boolean;
+  /** Its stacking order among the window's views (higher is above; equal: newer above). */
+  zOrder: number;
 }
 
 /** An engine that hosts web views. */
@@ -121,6 +161,20 @@ export interface WebViewCapabilities {
   capture: boolean;
   /** Whether {@linkcode WebViewHandle.evaluate} works. */
   evaluate: boolean;
+  /** Whether `raise` / `lower` / `setZOrder` work. */
+  zOrder: boolean;
+  /** Whether `setZoom` / `getZoom` work. */
+  zoom: boolean;
+  /** Whether `find` / `stopFind` work. */
+  find: boolean;
+  /** Whether `openDevTools` works (it is still refused unless the app's DevTools are on). */
+  devTools: boolean;
+  /** Whether `contextMenu: "app"` and the `context-menu` event work. */
+  contextMenu: boolean;
+  /** Whether `print` works. */
+  print: boolean;
+  /** Whether the `clipboardRead` / `clipboardWrite` permissions apply. */
+  clipboard: boolean;
 }
 
 /** A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`). */
@@ -145,14 +199,41 @@ export interface WebViewHandle {
   focus(): Promise<void>;
   /** Its URL, title, load state and history. */
   state(): Promise<WebViewState>;
-  /** What the view shows now, at device pixels (PNG by default; JPEG `quality` 0..100). */
-  capture(opts?: { format?: "png" | "jpeg"; quality?: number }): Promise<Blob>;
+  /**
+   * What the view shows now: PNG by default (JPEG `quality` 0..100), at device pixels unless
+   * `scale` (output pixels per CSS pixel, up to 4) says.
+   */
+  capture(opts?: { format?: "png" | "jpeg"; quality?: number; scale?: number }): Promise<Blob>;
   /**
    * Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise
    * completion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects
    * `error`, a value JSON can't hold rejects `not_serializable`.
    */
   evaluate<T = unknown>(script: string): Promise<T>;
+  /** Put it above the window's other views. */
+  raise(): Promise<void>;
+  /** Put it below the window's other views (still above the page). */
+  lower(): Promise<void>;
+  /** Set its stacking order (an integer; higher is above, equal keeps creation order). */
+  setZOrder(n: number): Promise<void>;
+  /** Zoom its page (0.25 to 5; 1 is 100%). */
+  setZoom(factor: number): Promise<void>;
+  /** Its page's zoom factor. */
+  getZoom(): Promise<number>;
+  /**
+   * Find `text` in its page (repeating the same text moves to the next match); results come as
+   * `find-result`.
+   */
+  find(text: string, opts?: { forward?: boolean; matchCase?: boolean }): Promise<void>;
+  /** End the find (its highlights go). */
+  stopFind(): Promise<void>;
+  /**
+   * Open the engine's DevTools for the view: rejects `not_allowed` unless the app's DevTools are
+   * on (`denext desktop dev`, or `desktop.inspectable: true`).
+   */
+  openDevTools(): Promise<void>;
+  /** Show the OS print dialog for its page. */
+  print(): Promise<void>;
   /** Listen to one of its events; returns the unsubscribe. */
   on<K extends keyof WebViewEventMap>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void;
   /** Close it (`closed` fires; the handle's calls reject `closed` after). */
@@ -167,6 +248,8 @@ const EVENT_NAMES: ReadonlySet<string> = new Set([
   "console",
   "focus-change",
   "new-window",
+  "find-result",
+  "context-menu",
   "closed",
 ]);
 
@@ -268,10 +351,11 @@ function handleOf(v: ViewState): WebViewHandle {
   return webViewHandle(v.id, v, {
     call: (method, args) => viewCall(v, method, args),
     capture: async (opts) => {
-      const out = await viewCall<{ base64?: unknown; type?: unknown }>(v, "capture", {
-        ...(opts.format !== undefined ? { format: opts.format } : {}),
-        ...(opts.quality !== undefined ? { quality: opts.quality } : {}),
-      });
+      const out = await viewCall<{ base64?: unknown; type?: unknown }>(
+        v,
+        "capture",
+        definedOnly(opts),
+      );
       const bytes = base64ToBytes(typeof out?.base64 === "string" ? out.base64 : "");
       return new Blob([bytes], { type: typeof out?.type === "string" ? out.type : "image/png" });
     },
@@ -349,8 +433,10 @@ export async function createWebView(opts: CreateWebViewOptions): Promise<WebView
 }
 
 /**
- * Whether this window can host web views, on which engine, and whether `capture` / `evaluate`
- * work. On a runtime without web views it resolves `supported: false`.
+ * Whether this window can host web views, on which engine, and which of their features work
+ * (`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,
+ * `clipboard`). On a runtime without web views it resolves `supported: false` and every feature
+ * `false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.
  *
  * @returns The capabilities. Off desktop it rejects `unavailable`.
  */
@@ -362,11 +448,19 @@ export async function webViewCapabilities(): Promise<WebViewCapabilities> {
       e === "cef" || e === "wkwebview" || e === "webview2" || e === "webkitgtk"
     )
     : [];
+  const flag = (key: string) => supported && raw?.[key] === true;
   return {
     supported,
     engines: supported ? engines : [],
-    capture: supported && raw?.capture === true,
-    evaluate: supported && raw?.evaluate === true,
+    capture: flag("capture"),
+    evaluate: flag("evaluate"),
+    zOrder: flag("zOrder"),
+    zoom: flag("zoom"),
+    find: flag("find"),
+    devTools: flag("devTools"),
+    contextMenu: flag("contextMenu"),
+    print: flag("print"),
+    clipboard: flag("clipboard"),
   };
 }
 
@@ -383,6 +477,8 @@ export interface WebViewAnchor {
   };
   /** `false` once it is out of the document. */
   readonly isConnected?: boolean;
+  /** Its parent element (walked for the scroll containers that clip it). */
+  readonly parentElement?: WebViewAnchor | null;
 }
 
 /** Options for {@linkcode attachWebView}. */
@@ -393,6 +489,14 @@ export interface AttachWebViewOptions {
    * document, `display: none` or zero-sized.
    */
   readonly hideWhenOutOfView?: boolean;
+  /**
+   * Fit the view to the part of the element that is visible: inside the viewport and inside every
+   * ancestor that clips its overflow (a scroll container) (default `true`). A native view can't
+   * be cropped, so a partly scrolled-away element gets a smaller view whose page lays out at that
+   * size (it is resized, not cut). `false` keeps the whole element box, and the view then draws
+   * over whatever is outside the scroll container (a toolbar, the window's other content).
+   */
+  readonly clip?: boolean;
 }
 
 /** The browser globals {@linkcode attachWebView} uses, each feature-detected. */
@@ -412,6 +516,7 @@ interface LayoutGlobals {
   devicePixelRatio?: number;
   innerWidth?: number;
   innerHeight?: number;
+  getComputedStyle?: (el: unknown) => ClipStyle;
 }
 
 /** The element's rectangle as bounds, or `null` while it shows nothing (detached, hidden, empty). */
@@ -420,6 +525,21 @@ function anchorBounds(element: WebViewAnchor): WebViewBounds | null {
   const r = element.getBoundingClientRect();
   if (!(r.width > 0) || !(r.height > 0)) return null;
   return { x: r.left, y: r.top, width: r.width, height: r.height };
+}
+
+/** `b` cut to the viewport and to every ancestor of `element` that clips; `null`: nothing left. */
+function clippedBounds(
+  g: LayoutGlobals,
+  element: WebViewAnchor,
+  b: WebViewBounds,
+): WebViewBounds | null {
+  const viewport = typeof g.innerWidth === "number" && typeof g.innerHeight === "number"
+    ? { x: 0, y: 0, width: g.innerWidth, height: g.innerHeight }
+    : b;
+  const styleOf = g.getComputedStyle;
+  const clippers = styleOf ? clippingAncestors(element, (el) => styleOf(el)) : [];
+  const out = visiblePart(b, clippers, viewport);
+  return out ? { x: out.x, y: out.y, width: out.width, height: out.height } : null;
 }
 
 /** Whether `b` lies entirely outside the viewport (unknown viewport size: never). */
@@ -436,6 +556,7 @@ interface Attachment {
   readonly handle: WebViewHandle;
   readonly element: WebViewAnchor;
   readonly hideOutOfView: boolean;
+  readonly clip: boolean;
   stopped: boolean;
   frame?: number;
   inFlight: boolean;
@@ -466,7 +587,7 @@ function shownBounds(a: Attachment): WebViewBounds | null {
   const b = anchorBounds(a.element);
   if (b === null) return null;
   if (a.hideOutOfView && (!a.intersecting || outsideViewport(a.g, b))) return null;
-  return b;
+  return a.clip ? clippedBounds(a.g, a.element, b) : b;
 }
 
 /** Send what changed: the bounds (when shown and moved), then the visibility (when it flips). */
@@ -508,11 +629,13 @@ async function flush(a: Attachment): Promise<void> {
  * scrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per
  * animation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the
  * element is out of the document, `display: none`, zero-sized or out of view, and shown again when
- * it is back — so the attachment owns the view's visibility while attached.
+ * it is back — so the attachment owns the view's visibility while attached. The view only ever
+ * covers the element's visible part: its box cut to the viewport and to the scroll containers
+ * around it (`clip: false` keeps the whole box).
  *
  * @param handle The view ({@linkcode createWebView}).
  * @param element The placeholder element the view should cover.
- * @param options `hideWhenOutOfView`.
+ * @param options `hideWhenOutOfView`, `clip`.
  * @returns A function that stops following (the view stays as it is, open). It also stops when the
  *   view closes.
  */
@@ -527,6 +650,7 @@ export function attachWebView(
     handle,
     element,
     hideOutOfView: options.hideWhenOutOfView !== false,
+    clip: options.clip !== false,
     stopped: false,
     inFlight: false,
     dirty: false,

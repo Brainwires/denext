@@ -131,6 +131,7 @@ export type {
   WebViewEventMap,
   WebViewHandle,
   WebViewLoadState,
+  WebViewPermissions,
   WebViewState,
 } from "../desktop/webview.ts";
 
@@ -1840,7 +1841,11 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
     ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
-    ...(options.webViews ? { webViews: options.webViews } : {}),
+    // A web view's DevTools open where the app's do: `desktop.inspectable: true`, or a dev run.
+    webViews: {
+      ...(options.webViews ?? { limit: 8, allowedOrigins: null }),
+      devTools: options.webViews?.devTools === true || devDecision.proxy,
+    },
     // A web view never loads the app: its configured origin or the dev server it proxies.
     appOrigins: () => [options.appOrigin, devUrl].filter((o): o is string => typeof o === "string"),
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),

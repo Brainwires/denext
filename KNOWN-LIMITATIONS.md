@@ -656,7 +656,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Embedded web views draw above the page and come engine by engine.** A view from
   `createWebView` is a native view: no HTML can be drawn over it (hide it, or show a `capture()`
   snapshot in its place, while a menu or dialog overlaps it), and the page's own key listeners
-  don't hear keys typed into it. `desktop.webViews.allowedOrigins` checks `createWebView` and
+  don't hear keys typed into it. A view can't be cropped: `attachWebView` fits it to the visible
+  part of a partly scrolled-away element by resizing it, so the page inside lays out at that size.
+  `desktop.webViews.allowedOrigins` checks `createWebView` and
   `navigate`, not the links the user follows inside the view (those are held to `http:` /
   `https:` only). A reload of the window's page can't reach the views it had open (they stay until
   closed or the window closes). Web views need an engine that hosts them —

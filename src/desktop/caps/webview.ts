@@ -56,6 +56,8 @@ const WEBVIEW_EVENTS: readonly (keyof WebViewEventMap)[] = [
   "console",
   "focus-change",
   "new-window",
+  "find-result",
+  "context-menu",
   "closed",
 ];
 
@@ -80,11 +82,13 @@ const ERROR_CODES: Readonly<Record<string, string>> = {
   failed: "failed",
   error: "error",
   not_serializable: "not_serializable",
+  not_allowed: "not_allowed",
 };
 /** Each code's HTTP status (the page reads the envelope at any status). */
 const STATUS: Readonly<Record<string, number>> = {
   unsupported: 501,
   not_allowed_url: 403,
+  not_allowed: 403,
   limit: 429,
   closed: 410,
   failed: 500,
@@ -103,13 +107,43 @@ interface RuntimeWebView extends EventTarget {
   stop(): void;
   focus(): void;
   state(): unknown;
-  capture(options?: { format?: "png" | "jpeg"; quality?: number }): Promise<Uint8Array>;
+  capture(
+    options?: { format?: "png" | "jpeg"; quality?: number; scale?: number },
+  ): Promise<Uint8Array>;
   evaluate(script: string): Promise<unknown>;
   close(): void;
+  // The stacking, zoom, find, DevTools and print members (a runtime with each capability).
+  raise?(): boolean;
+  lower?(): boolean;
+  setZOrder?(n: number): boolean;
+  setZoom?(factor: number): boolean;
+  getZoom?(): number;
+  find?(text: string, options?: { forward?: boolean; matchCase?: boolean }): boolean;
+  stopFind?(): boolean;
+  openDevTools?(): void;
+  print?(): boolean;
 }
 
 /** The runtime's web view options (`BrowserWindow.prototype.createWebView`'s argument). */
-type RuntimeWebViewOptions = CreateWebViewOptions;
+interface RuntimeWebViewOptions extends Omit<CreateWebViewOptions, "permissions"> {
+  permissions?: "deny" | "ask";
+  clipboardRead?: boolean;
+  clipboardWrite?: boolean;
+}
+
+/**
+ * The optional features: each the runtime's capability flag and the `Deno.WebView` members it
+ * needs (none: an option, not a method).
+ */
+const FEATURES: ReadonlyArray<readonly [keyof WebViewCapabilities, readonly string[]]> = [
+  ["zOrder", ["raise", "lower", "setZOrder"]],
+  ["zoom", ["setZoom", "getZoom"]],
+  ["find", ["find", "stopFind"]],
+  ["devTools", ["openDevTools"]],
+  ["contextMenu", []],
+  ["print", ["print"]],
+  ["clipboard", []],
+];
 
 /** The window and app API members the web views need (each feature-detected). */
 export interface WebViewHostOptions {
@@ -123,6 +157,8 @@ export interface WebViewHostOptions {
   readonly appOrigins?: () => readonly string[];
   /** Push a `window` event to this window's page. */
   readonly emit: (event: string, data: unknown) => void;
+  /** The runtime's `Deno.WebView` class (its prototype shows which members exist). */
+  readonly webViewClass?: unknown;
 }
 
 /** Who made a view: the page drives only its own. */
@@ -250,11 +286,43 @@ function userAgentOf(value: unknown): string {
 function policiesOf(o: Record<string, unknown>): Partial<RuntimeWebViewOptions> {
   const allowPopups = oneOf(o.allowPopups, "allowPopups", ["deny", "same-view", "browser"]);
   const downloads = oneOf(o.downloads, "downloads", ["deny", "ask", "browser"]);
-  const permissions = oneOf(o.permissions, "permissions", ["deny", "ask"]);
+  const contextMenu = oneOf(o.contextMenu, "contextMenu", ["native", "app"]);
   return {
     ...(allowPopups ? { allowPopups } : {}),
     ...(downloads ? { downloads } : {}),
-    ...(permissions ? { permissions } : {}),
+    ...permissionsOf(o.permissions),
+    ...(contextMenu ? { contextMenu } : {}),
+  };
+}
+
+/** An optional boolean field of `o`. */
+function optBool(o: Record<string, unknown>, key: string, name: string): boolean | undefined {
+  if (o[key] === undefined) return undefined;
+  if (typeof o[key] !== "boolean") throw invalid(`${name} must be a boolean`);
+  return o[key] as boolean;
+}
+
+/**
+ * `permissions` as the runtime takes it: the string form as it is; the object form's `prompts`
+ * (default `"deny"`), `clipboardRead` and `clipboardWrite` as the runtime's three options.
+ */
+function permissionsOf(raw: unknown): Partial<RuntimeWebViewOptions> {
+  if (raw === undefined) return {};
+  if (typeof raw === "string") {
+    return { permissions: oneOf(raw, "permissions", ["deny", "ask"]) };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw invalid(
+      'permissions must be "deny", "ask" or { prompts?, clipboardRead?, clipboardWrite? }',
+    );
+  }
+  const p = raw as Record<string, unknown>;
+  const read = optBool(p, "clipboardRead", "permissions.clipboardRead");
+  const write = optBool(p, "clipboardWrite", "permissions.clipboardWrite");
+  return {
+    permissions: oneOf(p.prompts, "permissions.prompts", ["deny", "ask"]) ?? "deny",
+    ...(read !== undefined ? { clipboardRead: read } : {}),
+    ...(write !== undefined ? { clipboardWrite: write } : {}),
   };
 }
 
@@ -351,14 +419,35 @@ function capabilitiesOf(h: HostState): WebViewCapabilities {
   const caps = runtimeCapabilities(h);
   const supported = caps?.supported === true &&
     typeof h.options.window?.createWebView === "function";
-  if (!supported) return { supported: false, engines: [], capture: false, evaluate: false };
-  const engine = caps.engine;
-  return {
-    supported: true,
-    engines: typeof engine === "string" && ENGINES.has(engine) ? [engine as WebViewEngine] : [],
-    capture: caps.capture === true,
-    evaluate: caps.evaluate === true,
+  const out: WebViewCapabilities = {
+    supported,
+    engines: [],
+    capture: supported && caps.capture === true,
+    evaluate: supported && caps.evaluate === true,
+    zOrder: false,
+    zoom: false,
+    find: false,
+    devTools: false,
+    contextMenu: false,
+    print: false,
+    clipboard: false,
   };
+  if (!supported) return out;
+  const engine = caps.engine;
+  if (typeof engine === "string" && ENGINES.has(engine)) out.engines = [engine as WebViewEngine];
+  return { ...out, ...featuresOf(h, caps) };
+}
+
+/** Each optional feature: the runtime reports it and `Deno.WebView` has its members. */
+function featuresOf(h: HostState, caps: Record<string, unknown>): Record<string, boolean> {
+  const proto = (h.options.webViewClass as { prototype?: Record<string, unknown> } | undefined)
+    ?.prototype;
+  return Object.fromEntries(
+    FEATURES.map(([key, members]) => [
+      key,
+      caps[key] === true && members.every((m) => typeof proto?.[m] === "function"),
+    ]),
+  );
 }
 
 /** A runtime event's detail as JSON-safe data (a JSON string parsed; anything else `{}`). */
@@ -489,19 +578,29 @@ async function runAsync<T>(
   }
 }
 
+/** Whether `v` is a finite number in `min..max`. */
+function inRange(v: unknown, min: number, max: number): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
+}
+
 /** `capture`'s options, checked. */
 function captureOptionsOf(
   a: Record<string, unknown>,
-): { format: "png" | "jpeg"; quality?: number } {
+): { format: "png" | "jpeg"; quality?: number; scale?: number } {
   const format = oneOf(a.format, "format", ["png", "jpeg"]) ?? "png";
-  if (a.quality === undefined) return { format };
-  if (
-    typeof a.quality !== "number" || !Number.isFinite(a.quality) || a.quality < 0 ||
-    a.quality > 100
-  ) {
+  const q = a.quality;
+  if (q !== undefined && !inRange(q, 0, 100)) {
     throw invalid("quality must be a number from 0 to 100");
   }
-  return { format, quality: Math.round(a.quality) };
+  const scale = a.scale;
+  if (scale !== undefined && (!inRange(scale, 0, 4) || scale === 0)) {
+    throw invalid("scale must be a number above 0, at most 4 (output pixels per CSS pixel)");
+  }
+  return {
+    format,
+    ...(q !== undefined ? { quality: Math.round(q) } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+  };
 }
 
 /** `navigate`: the same URL checks as a create. */
@@ -537,6 +636,63 @@ function close(h: HostState, entry: Entry): null {
 
 /** One `webViewCall` method: its checks, then the runtime call. */
 type ViewMethod = (h: HostState, entry: Entry, a: Record<string, unknown>) => unknown;
+
+/** The runtime view's optional member `name`, or `unsupported` (a runtime without it). */
+function member(entry: Entry, name: string, what: string): (...args: unknown[]) => unknown {
+  const fn = (entry.view as unknown as Record<string, unknown>)[name];
+  if (typeof fn !== "function") {
+    throw fail("unsupported", `this Deno Desktop runtime's web views can't ${what} (no ${name})`);
+  }
+  return fn as (...args: unknown[]) => unknown;
+}
+
+/**
+ * An optional feature's method: `args` checked into the runtime call's arguments, then the call;
+ * the runtime's `false` (the engine can't) is `unsupported`.
+ */
+function feature(
+  name: string,
+  what: string,
+  args: (a: Record<string, unknown>) => unknown[],
+): ViewMethod {
+  return (_h, entry, a) => {
+    const callArgs = args(a);
+    const fn = member(entry, name, what);
+    if (run(entry, what, (v) => fn.apply(v, callArgs)) === false) {
+      throw fail("unsupported", `this web view's engine can't ${what}`);
+    }
+    return null;
+  };
+}
+
+/** A 32-bit integer argument. */
+function int32(value: unknown, name: string): number {
+  if (!Number.isInteger(value) || (value as number) < -(2 ** 31) || (value as number) >= 2 ** 31) {
+    throw invalid(`${name} must be a 32-bit integer`);
+  }
+  return value as number;
+}
+
+/** A zoom factor (0.25 to 5). */
+function zoomFactor(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0.25 || value > 5) {
+    throw invalid("factor must be a number from 0.25 to 5");
+  }
+  return value;
+}
+
+/** `find`'s arguments: non-empty text (bounded) and its two flags. */
+function findArgs(a: Record<string, unknown>): unknown[] {
+  if (typeof a.text !== "string" || a.text === "" || a.text.length > 4096) {
+    throw invalid("text must be a string of 1 to 4096 characters");
+  }
+  const forward = optBool(a, "forward", "forward");
+  const matchCase = optBool(a, "matchCase", "matchCase");
+  return [a.text, {
+    forward: forward ?? true,
+    matchCase: matchCase ?? false,
+  }];
+}
 
 /** A method with no arguments and no result. */
 const simple = (what: string, fn: (v: RuntimeWebView) => void): ViewMethod => (_h, entry) => {
@@ -580,6 +736,30 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
   }),
   evaluate: async (_h, entry, a) => ({ value: await evaluate(entry, a.script) }),
   close: (h, entry) => close(h, entry),
+  raise: feature("raise", "come to the front", () => []),
+  lower: feature("lower", "go to the back", () => []),
+  setZOrder: feature("setZOrder", "take a stacking order", (a) => [int32(a.zOrder, "zOrder")]),
+  setZoom: feature("setZoom", "zoom", (a) => [zoomFactor(a.factor)]),
+  getZoom: (_h, entry) => {
+    const fn = member(entry, "getZoom", "report its zoom");
+    const factor = run(entry, "report its zoom", (v) => fn.call(v));
+    return { factor: typeof factor === "number" && Number.isFinite(factor) ? factor : 1 };
+  },
+  find: feature("find", "find in its page", findArgs),
+  stopFind: feature("stopFind", "stop finding", () => []),
+  openDevTools: (h, entry) => {
+    if (!settingsOf(h).devTools) {
+      throw fail(
+        "not_allowed",
+        "a web view's DevTools open only where the app's are on (denext desktop dev, or " +
+          "desktop.inspectable: true)",
+      );
+    }
+    const fn = member(entry, "openDevTools", "open its DevTools");
+    run(entry, "open its DevTools", (v) => fn.call(v));
+    return null;
+  },
+  print: feature("print", "print", () => []),
 };
 
 /** One `webViewCall` method on `entry`. */

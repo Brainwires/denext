@@ -250,6 +250,8 @@ export interface WindowControllerOptions {
    * app's pages are served from.
    */
   readonly appOrigins?: () => readonly string[];
+  /** The runtime's `Deno.WebView` class (tests; default the runtime's). */
+  readonly webViewClass?: unknown;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -1323,6 +1325,7 @@ export function createWindowController(options: WindowControllerOptions): Window
       api: options.api as { webViewCapabilities?(): unknown } | undefined,
       ...(options.webViews ? { settings: options.webViews } : {}),
       ...(options.appOrigins ? { appOrigins: options.appOrigins } : {}),
+      webViewClass: options.webViewClass ?? (Deno as unknown as { WebView?: unknown }).WebView,
       emit,
     }),
   };

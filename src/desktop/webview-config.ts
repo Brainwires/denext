@@ -24,6 +24,11 @@ export interface DesktopWebViewSettings {
   readonly limit: number;
   /** The exact origins a web view may load (`null`: any `http:` / `https:` origin). */
   readonly allowedOrigins: readonly string[] | null;
+  /**
+   * Whether a web view's DevTools may open: `desktop.inspectable: true`, or a dev run
+   * (`runDesktop` turns it on under `denext desktop dev`). Off otherwise.
+   */
+  readonly devTools?: boolean;
 }
 
 /** The settings with nothing configured. */
@@ -93,9 +98,11 @@ export function resolveDesktopWebViewSettings(desktop: unknown): DesktopWebViewS
   const value = (desktop as { webViews?: unknown } | null | undefined)?.webViews;
   const problem = webViewsConfigProblem(value);
   if (problem) throw new Error(`desktop: desktop.${problem[0]} ${problem[1]}`);
-  if (value === undefined) return DEFAULT_WEBVIEW_SETTINGS;
+  const devTools = (desktop as { inspectable?: unknown } | null | undefined)?.inspectable === true;
+  if (value === undefined) return { ...DEFAULT_WEBVIEW_SETTINGS, devTools };
   const v = value as { limit?: number; allowedOrigins?: unknown[] };
   return {
+    devTools,
     limit: v.limit ?? DEFAULT_WEBVIEW_LIMIT,
     allowedOrigins: v.allowedOrigins
       ? [...new Set(v.allowedOrigins.map((o) => webViewOriginOf(o)!))]

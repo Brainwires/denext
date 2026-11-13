@@ -98,6 +98,7 @@ class FakeWebView extends EventTarget {
       load: "complete",
       canGoBack: true,
       canGoForward: false,
+      zOrder: 2,
       visible: true,
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     };
@@ -110,6 +111,43 @@ class FakeWebView extends EventTarget {
     if (script === "throw") return Promise.reject(new FakeWebViewError("error", "boom"));
     this.#rec("evaluate", script);
     return Promise.resolve(script === "undef" ? undefined : { n: 1 });
+  }
+  /** What the optional members answer (`false`: the engine can't). */
+  answer = true;
+  raise() {
+    this.#rec("raise");
+    return this.answer;
+  }
+  lower() {
+    this.#rec("lower");
+    return this.answer;
+  }
+  setZOrder(n: number) {
+    this.#rec("setZOrder", n);
+    return this.answer;
+  }
+  setZoom(f: number) {
+    this.#rec("setZoom", f);
+    return this.answer;
+  }
+  getZoom() {
+    this.#rec("getZoom");
+    return 1.5;
+  }
+  find(text: string, o: unknown) {
+    this.#rec("find", [text, o]);
+    return this.answer;
+  }
+  stopFind() {
+    this.#rec("stopFind");
+    return this.answer;
+  }
+  openDevTools() {
+    this.#rec("openDevTools");
+  }
+  print() {
+    this.#rec("print");
+    return this.answer;
   }
   close() {
     this.#rec("close");
@@ -144,6 +182,8 @@ function controller(opts: {
   limit?: number;
   allowedOrigins?: string[] | null;
   appOrigins?: string[];
+  devTools?: boolean;
+  webViewClass?: unknown;
 } = {}) {
   const { win, made } = fakeWindow(opts.old);
   const emits: Array<{ cap: string; event: string; data: unknown }> = [];
@@ -155,7 +195,12 @@ function controller(opts: {
     api,
     emit: (cap, event, data) => void emits.push({ cap, event, data }),
     exit: () => {},
-    webViews: () => ({ limit: opts.limit ?? 8, allowedOrigins: opts.allowedOrigins ?? null }),
+    webViews: () => ({
+      limit: opts.limit ?? 8,
+      allowedOrigins: opts.allowedOrigins ?? null,
+      devTools: opts.devTools ?? false,
+    }),
+    webViewClass: "webViewClass" in opts ? opts.webViewClass : FakeWebView,
     appOrigins: () => opts.appOrigins ?? ["http://127.0.0.1:65304"],
   });
   const call = async (method: string, args: unknown) =>
@@ -170,6 +215,41 @@ const CAPS = {
   evaluate: true,
   persistentPartitions: true,
   permissionPrompts: true,
+  zOrder: true,
+  zoom: true,
+  find: true,
+  devTools: true,
+  contextMenu: true,
+  print: true,
+  clipboard: true,
+};
+/** Every feature on. */
+const ALL_ON = {
+  supported: true,
+  engines: ["cef"],
+  capture: true,
+  evaluate: true,
+  zOrder: true,
+  zoom: true,
+  find: true,
+  devTools: true,
+  contextMenu: true,
+  print: true,
+  clipboard: true,
+};
+/** What an older runtime (or no engine) answers. */
+const NONE = {
+  supported: false,
+  engines: [],
+  capture: false,
+  evaluate: false,
+  zOrder: false,
+  zoom: false,
+  find: false,
+  devTools: false,
+  contextMenu: false,
+  print: false,
+  clipboard: false,
 };
 const BOUNDS = { x: 10, y: 20, width: 300, height: 200 };
 
@@ -189,13 +269,29 @@ async function rejection(fn: () => unknown): Promise<DesktopCapError> {
 // ---------------------------------------------------------------------------------------------
 
 Deno.test("web views backend: capabilities from the runtime, supported: false on an older one", async () => {
-  assertEquals(await controller({ caps: CAPS }).call("webViewCapabilities", {}), {
-    supported: true,
-    engines: ["cef"],
-    capture: true,
-    evaluate: true,
-  });
-  const none = { supported: false, engines: [], capture: false, evaluate: false };
+  assertEquals(await controller({ caps: CAPS }).call("webViewCapabilities", {}), ALL_ON);
+  const none = NONE;
+  // A runtime that reports a feature but lacks its Deno.WebView members: false.
+  class Bare extends EventTarget {}
+  assertEquals(
+    await controller({ caps: CAPS, webViewClass: Bare }).call("webViewCapabilities", {}),
+    {
+      ...ALL_ON,
+      zOrder: false,
+      zoom: false,
+      find: false,
+      devTools: false,
+      print: false,
+    },
+  );
+  // The engine without a feature: false.
+  assertEquals(
+    await controller({ caps: { ...CAPS, zoom: false, clipboard: undefined } }).call(
+      "webViewCapabilities",
+      {},
+    ) as { zoom: boolean; clipboard: boolean },
+    { ...ALL_ON, zoom: false, clipboard: false },
+  );
   // No Deno.desktop.webViewCapabilities, or no BrowserWindow.createWebView, or the engine says no.
   assertEquals(await controller().call("webViewCapabilities", {}), none);
   assertEquals(await controller({ caps: CAPS, old: true }).call("webViewCapabilities", {}), none);
@@ -356,6 +452,7 @@ Deno.test("web views backend: webViewCall drives the runtime view, results shape
     load: "complete",
     canGoBack: true,
     canGoForward: false,
+    zOrder: 2,
   });
   assertEquals(await run("capture", { format: "jpeg", quality: 80.4 }), {
     base64: "iVBORw==",
@@ -640,12 +737,7 @@ Deno.test("web views page: off desktop every call rejects unavailable, without a
 
 Deno.test("web views page: capabilities and create on the wire; an older runtime says supported: false", async () => {
   await inDesktop(async (rt) => {
-    assertEquals(await webViewCapabilities(), {
-      supported: true,
-      engines: ["cef"],
-      capture: true,
-      evaluate: true,
-    });
+    assertEquals(await webViewCapabilities(), ALL_ON);
     const view = await createWebView({ url: "https://a.example", bounds: BOUNDS, partition: "p1" });
     assertEquals(typeof view.id, "string");
     assertEquals(rt.calls.map((c) => [c.method, c.args]), [
@@ -654,12 +746,7 @@ Deno.test("web views page: capabilities and create on the wire; an older runtime
     ]);
   });
   await inDesktop(async () => {
-    assertEquals(await webViewCapabilities(), {
-      supported: false,
-      engines: [],
-      capture: false,
-      evaluate: false,
-    });
+    assertEquals(await webViewCapabilities(), NONE);
     const err = await assertRejects(() =>
       createWebView({ url: "https://a.example", bounds: BOUNDS })
     );
@@ -682,6 +769,7 @@ Deno.test("web views page: the handle's calls, capture as a Blob, evaluate's val
       load: "complete",
       canGoBack: true,
       canGoForward: false,
+      zOrder: 2,
     });
     const blob = await view.capture();
     assertEquals([blob.type, blob.size], ["image/png", 4]);
@@ -951,7 +1039,7 @@ Deno.test("attachWebView: stops when the view closes; hideWhenOutOfView: false k
   await withGlobals(layout.globals, async () => {
     const { handle, calls, fireClosed, closedFns } = fakeHandle();
     const el = anchor({ left: 10, top: 900, width: 300, height: 200 });
-    attachWebView(handle, el, { hideWhenOutOfView: false });
+    attachWebView(handle, el, { hideWhenOutOfView: false, clip: false });
     await layout.frame();
     assertEquals(calls, ["bounds:10,900,300,200", "visible:true"]);
     fireClosed();
@@ -997,12 +1085,16 @@ Deno.test("desktop.webViews: validated in the config and at launch", () => {
   ) {
     assertEquals(webViewsConfigProblem(value)?.[0], field, JSON.stringify(value));
   }
-  assertEquals(resolveDesktopWebViewSettings({}), { limit: 8, allowedOrigins: null });
+  assertEquals(resolveDesktopWebViewSettings({}), {
+    limit: 8,
+    allowedOrigins: null,
+    devTools: false,
+  });
   assertEquals(
     resolveDesktopWebViewSettings({
       webViews: { limit: 3, allowedOrigins: ["HTTPS://Docs.Example:443/", "https://docs.example"] },
     }),
-    { limit: 3, allowedOrigins: ["https://docs.example"] },
+    { devTools: false, limit: 3, allowedOrigins: ["https://docs.example"] },
   );
   let threw = "";
   try {
@@ -1025,4 +1117,293 @@ Deno.test("desktop.webViews: validated in the config and at launch", () => {
     errorOf({ allowedOrigins: ["ftp://a.example"] }),
     "desktop.webViews.allowedOrigins[0]",
   );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Stacking, snapshots, zoom, find, DevTools, context menu, print, clipboard
+// ---------------------------------------------------------------------------------------------
+
+Deno.test("web views backend: contextMenu and the widened permissions map onto the runtime's options", async () => {
+  const { call, made } = controller({ caps: CAPS });
+  const create = (extra: Record<string, unknown>) =>
+    call("webViewCreate", { options: { url: "https://a.example", bounds: BOUNDS, ...extra } });
+  await create({ permissions: "ask", contextMenu: "app" });
+  await create({ permissions: {} });
+  await create({ permissions: { prompts: "ask", clipboardRead: true, clipboardWrite: false } });
+  await create({});
+  const picked = made.map((v) => {
+    const { permissions, clipboardRead, clipboardWrite, contextMenu } = v.options;
+    return { permissions, clipboardRead, clipboardWrite, contextMenu };
+  });
+  assertEquals(picked, [
+    { permissions: "ask", clipboardRead: undefined, clipboardWrite: undefined, contextMenu: "app" },
+    {
+      permissions: "deny",
+      clipboardRead: undefined,
+      clipboardWrite: undefined,
+      contextMenu: undefined,
+    },
+    { permissions: "ask", clipboardRead: true, clipboardWrite: false, contextMenu: undefined },
+    {
+      permissions: undefined,
+      clipboardRead: undefined,
+      clipboardWrite: undefined,
+      contextMenu: undefined,
+    },
+  ]);
+  for (
+    const [extra, field] of [
+      [{ contextMenu: "none" }, "contextMenu"],
+      [{ permissions: "allow" }, "permissions"],
+      [{ permissions: ["ask"] }, "permissions"],
+      [{ permissions: { prompts: "yes" } }, "permissions.prompts"],
+      [{ permissions: { clipboardRead: "yes" } }, "permissions.clipboardRead"],
+      [{ permissions: { clipboardWrite: 1 } }, "permissions.clipboardWrite"],
+    ] as const
+  ) {
+    const err = await rejection(() => create(extra));
+    assertEquals(err.code, "validation", field);
+    assertStringIncludes(err.message, field);
+  }
+  assertEquals(made.length, 4);
+});
+
+Deno.test("web views backend: stacking, zoom, find, print and capture scale reach the runtime, checked", async () => {
+  const { call, made } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  const v = made[0];
+  const run = (method: string, args?: unknown) => call("webViewCall", { id, method, args });
+  assertEquals(await run("raise"), null);
+  assertEquals(await run("lower"), null);
+  assertEquals(await run("setZOrder", { zOrder: -3 }), null);
+  assertEquals(await run("setZoom", { factor: 1.25 }), null);
+  assertEquals(await run("getZoom"), { factor: 1.5 });
+  assertEquals(await run("find", { text: "cat" }), null);
+  assertEquals(await run("find", { text: "cat", forward: false, matchCase: true }), null);
+  assertEquals(await run("stopFind"), null);
+  assertEquals(await run("print"), null);
+  assertEquals(await run("capture", { format: "jpeg", scale: 1 }), {
+    base64: "iVBORw==",
+    type: "image/jpeg",
+  });
+  assertEquals(v.calls, [
+    ["raise", undefined],
+    ["lower", undefined],
+    ["setZOrder", -3],
+    ["setZoom", 1.25],
+    ["getZoom", undefined],
+    ["find", ["cat", { forward: true, matchCase: false }]],
+    ["find", ["cat", { forward: false, matchCase: true }]],
+    ["stopFind", undefined],
+    ["print", undefined],
+    ["capture", { format: "jpeg", scale: 1 }],
+  ]);
+  for (
+    const [method, args] of [
+      ["setZOrder", { zOrder: 1.5 }],
+      ["setZOrder", { zOrder: 2 ** 31 }],
+      ["setZoom", { factor: 0.2 }],
+      ["setZoom", { factor: 6 }],
+      ["find", { text: "" }],
+      ["find", { text: "x", forward: "yes" }],
+      ["capture", { scale: 0 }],
+      ["capture", { scale: 4.5 }],
+    ] as const
+  ) {
+    assertEquals((await rejection(() => run(method, args))).code, "validation", method);
+  }
+  assertEquals(v.calls.length, 10);
+  // The engine answering false: unsupported.
+  v.answer = false;
+  for (const method of ["raise", "lower", "stopFind", "print"]) {
+    const err = await rejection(() => run(method));
+    assertEquals([err.code, err.status], ["unsupported", 501], method);
+  }
+  assertEquals((await rejection(() => run("setZoom", { factor: 2 }))).code, "unsupported");
+});
+
+Deno.test("web views backend: a runtime without the members rejects unsupported", async () => {
+  const { call, made } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  for (const name of ["raise", "getZoom", "find", "print", "openDevTools"]) {
+    Object.defineProperty(made[0], name, { value: undefined });
+  }
+  for (
+    const [method, args] of [
+      ["raise", {}],
+      ["getZoom", {}],
+      ["find", { text: "x" }],
+      ["print", {}],
+    ] as const
+  ) {
+    const err = await rejection(() => call("webViewCall", { id, method, args }));
+    assertEquals(err.code, "unsupported", method);
+  }
+  const dev = controller({ caps: CAPS, devTools: true });
+  const out = await dev.call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  Object.defineProperty(dev.made[0], "openDevTools", { value: undefined });
+  assertEquals(
+    (await rejection(() => dev.call("webViewCall", { id: out.id, method: "openDevTools" }))).code,
+    "unsupported",
+  );
+});
+
+Deno.test("web views backend: openDevTools is not_allowed unless the app's DevTools are on", async () => {
+  const off = controller({ caps: CAPS });
+  const a = await off.call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  const err = await rejection(() => off.call("webViewCall", { id: a.id, method: "openDevTools" }));
+  assertEquals([err.code, err.status], ["not_allowed", 403]);
+  assertEquals(off.made[0].calls, []);
+  const on = controller({ caps: CAPS, devTools: true });
+  const b = await on.call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  assertEquals(await on.call("webViewCall", { id: b.id, method: "openDevTools" }), null);
+  assertEquals(on.made[0].calls, [["openDevTools", undefined]]);
+  // The runtime's own refusal maps too.
+  on.made[0].failWith = "not_allowed";
+  assertEquals(
+    (await rejection(() => on.call("webViewCall", { id: b.id, method: "openDevTools" }))).code,
+    "not_allowed",
+  );
+  // desktop.inspectable: true turns it on at launch.
+  assertEquals(resolveDesktopWebViewSettings({ inspectable: true }).devTools, true);
+  assertEquals(resolveDesktopWebViewSettings({}).devTools, false);
+});
+
+Deno.test("web views backend: find-result and context-menu reach the page", async () => {
+  const { call, made, emits } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS, contextMenu: "app" },
+  }) as { id: string };
+  made[0].fire("find-result", { matches: 3, activeMatch: 1 });
+  made[0].fire("context-menu", { x: 5, y: 6, linkUrl: "https://b.example/", isEditable: false });
+  assertEquals(emits.map((e) => e.data), [
+    { id, event: "find-result", detail: { matches: 3, activeMatch: 1 } },
+    {
+      id,
+      event: "context-menu",
+      detail: { x: 5, y: 6, linkUrl: "https://b.example/", isEditable: false },
+    },
+  ]);
+});
+
+Deno.test("web views page: the new handle methods on the wire; desktop.ts's handle too", async () => {
+  await inDesktop(async (rt, ctl) => {
+    const view = await createWebView({
+      url: "https://a.example",
+      bounds: BOUNDS,
+      contextMenu: "app",
+      permissions: { clipboardRead: true },
+    });
+    const finds: unknown[] = [];
+    const menus: unknown[] = [];
+    view.on("find-result", (e) => finds.push(e));
+    view.on("context-menu", (e) => menus.push(e.x));
+    await view.raise();
+    await view.lower();
+    await view.setZOrder(4);
+    await view.setZoom(2);
+    assertEquals(await view.getZoom(), 1.5);
+    await view.find("cat", { matchCase: true });
+    await view.stopFind();
+    await view.print();
+    const blob = await view.capture({ format: "jpeg", scale: 1 });
+    assertEquals(blob.type, "image/jpeg");
+    const err = await assertRejects(() => view.openDevTools());
+    assert(isDesktopBridgeError(err) && err.code === "not_allowed");
+    const wire = rt.calls.filter((c) => c.method === "webViewCall").map((
+      c,
+    ) => (c.args as { method: string; args: unknown }));
+    assertEquals(wire.map((w) => [w.method, w.args]), [
+      ["raise", {}],
+      ["lower", {}],
+      ["setZOrder", { zOrder: 4 }],
+      ["setZoom", { factor: 2 }],
+      ["getZoom", {}],
+      ["find", { text: "cat", matchCase: true }],
+      ["stopFind", {}],
+      ["print", {}],
+      ["capture", { format: "jpeg", scale: 1 }],
+      ["openDevTools", {}],
+    ]);
+    assertEquals(ctl.made[0].options.contextMenu, "app");
+    assertEquals(ctl.made[0].options.clipboardRead, true);
+    ctl.made[0].fire("find-result", { matches: 2, activeMatch: 2 });
+    ctl.made[0].fire("context-menu", { x: 9, y: 1, isEditable: true });
+    await until(() => finds.length === 1 && menus.length === 1);
+    assertEquals(finds, [{ matches: 2, activeMatch: 2 }]);
+    assertEquals(menus, [9]);
+  });
+  const { c, made } = controller({ caps: CAPS, devTools: true });
+  const h = await c.createWebView({ url: "https://a.example", bounds: BOUNDS });
+  await h.setZOrder(1);
+  assertEquals(await h.getZoom(), 1.5);
+  await h.openDevTools();
+  assertEquals((await h.state()).zOrder, 2);
+  assertEquals((await h.capture({ scale: 2 })).type, "image/png");
+  assertEquals(made[0].calls.map((x) => x[0]), [
+    "setZOrder",
+    "getZoom",
+    "openDevTools",
+    "state",
+    "capture",
+  ]);
+});
+
+Deno.test("attachWebView: the bounds are cut to the viewport and to clipping scroll containers", async () => {
+  const layout = fakeLayout();
+  const scroller = {
+    overflow: "auto",
+    getBoundingClientRect: () => ({ left: 0, top: 100, width: 2000, height: 300 }),
+    parentElement: {
+      overflow: "visible",
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+      parentElement: null,
+    },
+  };
+  const globals = {
+    ...layout.globals,
+    getComputedStyle: (el: { overflow: string }) => ({ overflowX: el.overflow, overflowY: "" }),
+  };
+  await withGlobals(globals, async () => {
+    const { handle, calls } = fakeHandle();
+    // Half scrolled out of the top of its scroll container (y 50..250, the container 100..400).
+    const el = Object.assign(anchor({ left: 20, top: 50, width: 300, height: 200 }), {
+      parentElement: scroller,
+    });
+    const detach = attachWebView(handle, el);
+    await layout.frame();
+    assertEquals(calls, ["bounds:20,100,300,150", "visible:true"]);
+    // Past the viewport's right edge too (innerWidth 1000).
+    el.rect = { left: 900, top: 150, width: 300, height: 100 };
+    layout.resizeCbs.forEach((f) => f());
+    await layout.frame();
+    assertEquals(calls.at(-1), "bounds:900,150,100,100");
+    // Scrolled entirely out of the container: nothing left, hidden.
+    el.rect = { left: 20, top: 450, width: 300, height: 100 };
+    layout.resizeCbs.forEach((f) => f());
+    await layout.frame();
+    assertEquals(calls.at(-1), "visible:false");
+    detach();
+    // clip: false keeps the whole box.
+    const raw = fakeHandle();
+    attachWebView(
+      raw.handle,
+      Object.assign(anchor({ left: 20, top: 50, width: 300, height: 200 }), {
+        parentElement: scroller,
+      }),
+      { clip: false },
+    );
+    await layout.frame();
+    assertEquals(raw.calls, ["bounds:20,50,300,200", "visible:true"]);
+  });
 });

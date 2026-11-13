@@ -61,6 +61,7 @@ export {
   type WebViewEventMap,
   type WebViewHandle,
   type WebViewLoadState,
+  type WebViewPermissions,
   type WebViewState,
 } from "./webview.ts";
 

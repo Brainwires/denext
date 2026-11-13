@@ -15,7 +15,7 @@ export interface WebViewOps {
   /** Run `method` with `args` (the wire's names); resolves its result. */
   call(method: string, args: Record<string, unknown>): Promise<unknown>;
   /** `capture` as a Blob. */
-  capture(opts: { format?: "png" | "jpeg"; quality?: number }): Promise<Blob>;
+  capture(opts: { format?: "png" | "jpeg"; quality?: number; scale?: number }): Promise<Blob>;
   /** `evaluate`'s JSON value. */
   evaluate(script: string): Promise<unknown>;
   /** Close the view. */
@@ -57,6 +57,11 @@ export function fireWebViewListeners(
   }
 }
 
+/** `o` without its `undefined` values (a wire argument object). */
+export function definedOnly(o: object | undefined): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(o ?? {}).filter(([, v]) => v !== undefined));
+}
+
 /** A state answer as {@linkcode WebViewState} (the five fields; unknown values defaulted). */
 export function webViewStateOf(raw: unknown): WebViewState {
   const s = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
@@ -67,6 +72,7 @@ export function webViewStateOf(raw: unknown): WebViewState {
     load: load === "loading" || load === "interactive" || load === "failed" ? load : "complete",
     canGoBack: s.canGoBack === true,
     canGoForward: s.canGoForward === true,
+    zOrder: typeof s.zOrder === "number" && Number.isFinite(s.zOrder) ? s.zOrder : 0,
   };
 }
 
@@ -96,6 +102,18 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
     state: async () => webViewStateOf(await ops.call("state", {})),
     capture: (opts) => ops.capture({ ...opts }),
     evaluate: async <T>(script: string) => await ops.evaluate(script) as T,
+    raise: () => act("raise"),
+    lower: () => act("lower"),
+    setZOrder: (n) => act("setZOrder", { zOrder: n }),
+    setZoom: (factor) => act("setZoom", { factor }),
+    getZoom: async () => {
+      const out = await ops.call("getZoom", {}) as { factor?: unknown } | null;
+      return typeof out?.factor === "number" ? out.factor : 1;
+    },
+    find: (text, opts) => act("find", { text, ...definedOnly(opts) }),
+    stopFind: () => act("stopFind"),
+    openDevTools: () => act("openDevTools"),
+    print: () => act("print"),
     on: (event, fn) => addWebViewListener(v, event, fn as (e: unknown) => void),
     close: () => ops.close(),
   };

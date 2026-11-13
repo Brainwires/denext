@@ -673,7 +673,8 @@ is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `
 `share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
 `denext/desktop/window` shares picked / app-folder files). Embedded web views: `createWebView({ url, bounds, partition?, allowPopups?, downloads?, permissions? })`
 from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts another http(s) site in a native view over the page (no bridge, own storage;
-`attachWebView(view, element)` follows an element; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities().supported`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`attachWebView(view, element)` follows an element's visible part; it draws above all HTML, so swap in `capture({ format: "jpeg", scale: 1 })` as an `<img>` + `setVisible(false)` under an overlay;
+`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
 "mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` on runtime
