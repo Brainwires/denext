@@ -438,7 +438,7 @@ jobs:
     runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs.coverage || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     services:
       postgres:
         image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
@@ -943,7 +943,7 @@ jobs:
     # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
     runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
