@@ -187,7 +187,7 @@ Deno.test("providers/google: in the iOS shell the code flow runs and the code is
       hook = Google.useAuthRequest({ iosClientId: "ios-id", webClientId: "web-id" });
       return null;
     });
-    await tick();
+    await until(() => hook[0] !== null);
     const [request] = hook;
     const url = new URL(request!.url!);
     assertEquals(url.searchParams.get("client_id"), "ios-id");
@@ -200,7 +200,7 @@ Deno.test("providers/google: in the iOS shell the code flow runs and the code is
       return Promise.resolve({ url: `dev.app:/oauthredirect?code=G1&state=${request!.state}` });
     };
     await hook[2]();
-    await tick();
+    await until(() => hook[1] !== null);
     const [, response] = hook;
     assertEquals(response?.type, "success");
     if (response?.type === "success") {
@@ -224,10 +224,10 @@ Deno.test("providers/google: a failed exchange is an error response", async () =
       hook = Google.useAuthRequest({ androidClientId: "and-id", redirectUri: "app:/cb" });
       return null;
     });
-    await tick();
+    await until(() => hook[0] !== null);
     session.plugin.start = () => Promise.resolve({ url: `app:/cb?code=X&state=${hook[0]!.state}` });
     await hook[2]();
-    await tick();
+    await until(() => hook[1] !== null);
     const response = hook[1];
     assertEquals(response?.type, "error");
     if (response?.type === "error") assertEquals(response.errorCode, "invalid_client");
