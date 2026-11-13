@@ -19,7 +19,8 @@ export const DESKTOP_DOCK_HELPER_FILES: Readonly<Record<string, string>> = {
 // newline-delimited JSON:
 //   out  {"t":"hello","token":"..."}  first line
 //   out  {"t":"activate"}  the user activated it: bring the app's window to the front
-//   out  {"t":"quit"}      the user chose Quit (the Dock menu, Cmd-Q): quit the app
+//   out  {"t":"quit"}      the user chose Quit (the Dock menu, Cmd-Q, an Apple event): close the
+//                          app's windows (the app keeps running; the helper goes with the windows)
 //   in   {"t":"exit"}      leave now (the app's last window closed); the connection closing (the app
 //                          quit or crashed) does the same
 // Launched otherwise (Spotlight, a tile the user kept in the Dock), or when the app cannot be

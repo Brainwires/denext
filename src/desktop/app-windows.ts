@@ -940,13 +940,10 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
   };
 }
 
-/** The owner `requestQuit` names for the Dock helper's Quit. */
-const DOCK_HELPER_QUIT_OWNER = "dock-helper";
-
 /**
  * `desktop.app.dock: "while-window-open"` on macOS: start the Dock helper's presence over the
- * registry (a Dock icon while a window shows; src/desktop/dock-helper.ts). A failure to start is a
- * warning: the app stays accessory.
+ * registry (a Dock icon while a window shows; src/desktop/dock-helper.ts). The helper's Quit closes
+ * the app's windows and never quits it. A failure to start is a warning: the app stays accessory.
  */
 function installDockHelper(st: SetupState): void {
   const registry = st.registry;
@@ -956,7 +953,13 @@ function installDockHelper(st: SetupState): void {
   startDockHelper({
     windows: () => registry.list(),
     keyWindow: () => registry.keyWindow(),
-    quit: () => void registry.lifecycle.requestQuit(DOCK_HELPER_QUIT_OWNER),
+    // The helper's Quit closes the windows, never the app: each as its close button would, so a
+    // page that guards its close is asked (a synthetic cancelable `close` through the same hook).
+    closeWindow: (id) => {
+      if (!registry.interceptClose(id, new Event("close", { cancelable: true }))) {
+        registry.close(id);
+      }
+    },
     dataDir: st.options.dirs?.data ?? st.options.appSupportDir,
     warn: st.warn,
   }).then(

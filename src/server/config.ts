@@ -1221,8 +1221,10 @@ export interface DesktopConfig {
      * itself stays `"accessory"` from launch to quit; packaging adds a small helper app
      * (`Contents/Helpers`), which the app copies into its data folder and runs while a window
      * (not the tray panel, not an overlay) is showing. Clicking the helper's Dock icon or switching
-     * to it brings the app's window to the front, and its Quit quits the app. Where the helper
-     * cannot run the app keeps the accessory behaviour (windows, no Dock icon). On Windows and
+     * to it brings the app's window to the front, and its Quit closes the app's windows (as their
+     * close buttons would) but never quits the app: only the app's own Quit or the end of the OS
+     * session does. Where the helper cannot run the app keeps the accessory behaviour (windows,
+     * no Dock icon). On Windows and
      * Linux, where a window's taskbar entry already lasts as long as the window, it is `true`.
      * Requires {@link identifier}; not with `activationPolicy: "regular"`.
      */

@@ -3794,8 +3794,14 @@ export default {
         <li>
           Clicking the helper&apos;s Dock icon, or switching to it with Cmd-Tab, brings the
           app&apos;s key window to the front (un-minimized). The helper&apos;s Quit (its Dock menu,
-          or Cmd-Q while it is in front) quits the app, through <code>onBeforeQuit</code>{" "}
-          guards and the pages&apos; close guards. Closing the last window takes the icon away;
+          Cmd-Q while it is in front, or a <code>quit</code>{" "}
+          Apple event) never quits the app: it closes the app&apos;s windows as their close buttons
+          would (a page that guards its close is asked; the tray panel and overlays stay), so the
+          icon goes and a tray app keeps running. An app that is not kept alive quits with its last
+          window, as it always does. Only the app&apos;s own Quit (its tray menu,{" "}
+          <code>quitApp()</code>) and the end of the OS session quit it; <code>onBeforeQuit</code>
+          {" "}
+          guards never see the Dock&apos;s Quit. Closing the last window takes the icon away;
           quitting the app ends the helper with it. Launched on its own (Spotlight, a tile the user
           kept in the Dock) the helper opens the app instead, which reopens its window as a Dock
           click would.

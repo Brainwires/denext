@@ -20,8 +20,10 @@
  * removes the file. Then `{"t":"activate"}` and `{"t":"quit"}` come from the helper and
  * `{"t":"exit"}` goes to it. The helper exits on `exit` or when the connection closes, so it never
  * outlives the app. Activating it (a Dock click, Cmd-Tab) hands the activation back to the app,
- * which brings its key window up; its Quit (the Dock menu, Cmd-Q while it is frontmost) asks the
- * app to quit, through the quit guards. Where the helper cannot be had (not a packaged build, the
+ * which brings its key window up; its Quit (the Dock menu, Cmd-Q while it is frontmost, an Apple
+ * event) closes the app's windows as their close buttons would (each page's close guard is asked)
+ * and never quits the app: the icon goes with the last window, and a tray app keeps running (one
+ * that is not kept alive quits with its last window, as ever). Where the helper cannot be had (not a packaged build, the
  * copy or the launch failed, it kept crashing) the app keeps the accessory behaviour: its windows,
  * no Dock icon.
  *
@@ -448,7 +450,7 @@ export interface DockPresenceOptions {
   ) => Promise<DockHelperChild | undefined>;
   /** The user activated the helper: bring the app's window up. */
   readonly onActivate: () => void;
-  /** The user chose the helper's Quit: quit the app. */
+  /** The user chose the helper's Quit: close the app's windows (never quit the app). */
   readonly onQuit: () => void;
   /** Where warnings go. */
   readonly warn: (message: string) => void;
@@ -602,6 +604,7 @@ export function createDockPresence(o: DockPresenceOptions): DockPresence {
 
 /** The slice of a registered window the presence reads. */
 export interface DockWindow {
+  readonly id: string;
   readonly kind: string;
   readonly overlay?: boolean;
   readonly window: {
@@ -646,14 +649,29 @@ export function focusForDock(key: DockWindow | undefined, windows: readonly Dock
   } catch { /* closing */ }
 }
 
+/**
+ * The helper's Quit: close every window that holds the Dock icon through `close` (which asks the
+ * window's page, as its close button would). The tray panel and overlays stay.
+ *
+ * @param windows The open windows.
+ * @param close Close one window by id.
+ */
+export function closeForDock(windows: readonly DockWindow[], close: (id: string) => void): void {
+  for (const w of windows.filter(holdsDockIcon)) {
+    try {
+      close(w.id);
+    } catch { /* closing already */ }
+  }
+}
+
 /** What {@linkcode startDockHelper} needs. */
 export interface DockHelperStartOptions {
   /** The app's open windows. */
   readonly windows: () => readonly DockWindow[];
   /** The key window. */
   readonly keyWindow: () => DockWindow | undefined;
-  /** Quit the app (through the quit guards). */
-  readonly quit: () => void;
+  /** Close one window as its close button would (its page's close guard is asked). */
+  readonly closeWindow: (id: string) => void;
   /** The app's data folder (`undefined`: none known, no helper). */
   readonly dataDir: string | undefined;
   /** Where warnings go. */
@@ -668,7 +686,7 @@ export interface DockHelperStartOptions {
  * Without a helper (`denext desktop run` / `dev` builds have none) or a data folder: a note, and
  * `undefined` (the accessory behaviour).
  *
- * @param o The windows, the quit, the data folder.
+ * @param o The windows, how to close one, the data folder.
  * @returns The presence, or `undefined`.
  */
 export async function startDockHelper(
@@ -701,7 +719,7 @@ export async function startDockHelper(
       return await launchDockHelper(dirname(dirname(dirname(exe))), onMessage);
     },
     onActivate: () => focusForDock(o.keyWindow(), o.windows()),
-    onQuit: o.quit,
+    onQuit: () => closeForDock(o.windows(), o.closeWindow),
     warn: o.warn,
   });
   presence.sync();

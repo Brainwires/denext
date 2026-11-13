@@ -16,6 +16,13 @@ console.warn = (...args: unknown[]) => {
 };
 const app = await runDesktop({ importMetaUrl: import.meta.url, ...resolved });
 await log(`ready ${Deno.execPath()}`);
+// The windows open, logged whenever the count changes (the helper's Quit closes them from outside).
+let shown = -1;
+setInterval(() => {
+  const n = app.windows.list().filter((w) => w.kind !== "panel" && w.visible).length;
+  if (n !== shown) void log(`probe-windows ${n}`);
+  shown = n;
+}, 250);
 
 let next = 1;
 let busy = false;

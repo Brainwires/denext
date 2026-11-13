@@ -28,6 +28,7 @@ import {
 } from "../src/build/desktop-dock-helper.ts";
 import {
   bundleOfExecutable,
+  closeForDock,
   createDockPresence,
   type DockHelperChild,
   type DockHelperMessage,
@@ -332,7 +333,7 @@ Deno.test("runtime: no helper in the bundle (a run / dev build) keeps the access
     const presence = await startDockHelper({
       windows: () => [],
       keyWindow: () => undefined,
-      quit: () => {},
+      closeWindow: () => {},
       dataDir: join(dir, "data"),
       warn: (m) => warnings.push(m),
       execPath: join(app, "Contents", "MacOS", "laufey_webview"),
@@ -594,12 +595,14 @@ Deno.test("presence: a launch that finishes after the window went away is asked 
 });
 
 /** A registered window for the presence. */
+let nextWindow = 0;
 function dockWindow(
   kind: string,
   o: { visible?: boolean; minimized?: boolean; overlay?: boolean } = {},
 ): DockWindow & { calls: string[] } {
   const calls: string[] = [];
   return {
+    id: `${kind}-${nextWindow++}`,
     kind,
     ...(o.overlay ? { overlay: true } : {}),
     calls,
@@ -627,4 +630,18 @@ Deno.test("presence: which windows hold the Dock icon, and which one an activati
   focusForDock(hidden, [hidden, a]);
   assertEquals(a.calls, ["focus"]);
   assertEquals(hidden.calls, []);
+});
+
+Deno.test("presence: the helper's Quit closes the windows that hold the icon, never the app", () => {
+  const main = dockWindow("main");
+  const hidden = dockWindow("window", { visible: false });
+  const panel = dockWindow("panel");
+  const overlay = dockWindow("window", { overlay: true });
+  const minimized = dockWindow("window", { minimized: true });
+  const closed: string[] = [];
+  closeForDock([main, hidden, panel, overlay, minimized], (id) => {
+    closed.push(id);
+    if (id === main.id) throw new Error("closing already");
+  });
+  assertEquals(closed, [main.id, minimized.id]);
 });

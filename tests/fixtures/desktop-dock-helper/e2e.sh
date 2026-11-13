@@ -5,7 +5,8 @@
 # /Applications, and over three open / close cycles asserts: the app stays accessory; a window open
 # shows the helper's Dock tile, a Foreground app System Events lists by the app's name; a Dock click
 # and a switch to the helper bring the app to the front; closing the window (the third cycle: the
-# helper's Quit, which quits the app) removes the tile and leaves the Dock's recent apps empty.
+# helper's Quit, which closes the windows and leaves the app running) removes the tile and leaves
+# the Dock's recent apps empty; the app's own quit then ends it, still with no recents tile.
 #
 #   deno task desktop:package && bash e2e.sh        (OUT=<dir> for the results; SKIP_PACKAGE=1)
 set -u
@@ -142,13 +143,22 @@ for i in 1 2 3; do
   f=$(front)
   row switch-to "$i" $([ "$f" = "$APP_ID" ] && echo 1 || echo 0) "front=$f"
   if [ "$i" = 3 ]; then
-    # The helper's Quit (the Dock menu's): the app quits.
+    # The helper's Quit (the Dock menu's): the windows close, the app keeps running.
+    zeros=$(grep -c '^probe-windows 0' "$DATA/e2e/state.log")
     osascript -e "tell application id \"$HELPER_ID\" to quit" >>"$LOG" 2>&1
+    for _ in $(seq 1 40); do [ -z "$(helper_pid)" ] && break; sleep 0.25; done
+    sleep 5
+    dock=$(dock_items)
+    r=$(recents)
+    t=$(app_type $APP_ID)
+    row dock-quit "$i" $([ -z "$(helper_pid)" ] && ! echo "$dock" | grep -q "$NAME" && [ "$t" = UIElement ] && [ "$r" = "(none)" ] && [ "$(grep -c '^probe-windows 0' "$DATA/e2e/state.log")" -gt "$zeros" ] && echo 1 || echo 0) \
+      "windows closed=$([ "$(grep -c '^probe-windows 0' "$DATA/e2e/state.log")" -gt "$zeros" ] && echo yes || echo no) helper=$(helper_pid) tile=$(echo "$dock" | grep -q "$NAME" && echo yes || echo no) app=$t recents=$r"
+    # The app's own Quit (a tray app's menu): the app quits.
+    cmd quit
     for _ in $(seq 1 40); do pgrep -f "$APP/Contents/MacOS" >/dev/null || break; sleep 0.25; done
     sleep 5
-    gone=$([ -z "$(pgrep -f "$APP/Contents/MacOS")" ] && [ -z "$(helper_pid)" ] && echo 1 || echo 0)
     r=$(recents)
-    row quit "$i" $([ "$gone" = 1 ] && [ "$r" = "(none)" ] && echo 1 || echo 0) "app and helper gone=$gone recents=$r"
+    row app-quit "$i" $([ -z "$(pgrep -f "$APP/Contents/MacOS")" ] && [ "$r" = "(none)" ] && echo 1 || echo 0) "app gone=$([ -z "$(pgrep -f "$APP/Contents/MacOS")" ] && echo yes || echo no) recents=$r"
   else
     cmd close
     wait_state closed "$i"
