@@ -139,7 +139,7 @@ export function formatOutputs(picks: ReadonlyMap<string, string>): string {
 export type GetJson = (path: string, token: string) => Promise<unknown>;
 
 /** Every item of a paginated list (`key` names the array), up to 10 pages of 100. */
-async function listAll<T>(
+export async function listAll<T>(
   get: GetJson,
   path: string,
   key: string,
@@ -251,16 +251,25 @@ export function fetchJson(apiUrl: string, signal: AbortSignal): GetJson {
   };
 }
 
-if (import.meta.main) {
-  const env = (name: string) => Deno.env.get(name);
-  const input = readInput(env);
-  const picks = await pick(input, {
+/** The {@linkcode PickContext} of a workflow step (`GITHUB_*`, `RUNNER_STATUS_TOKEN`), 60 s bound. */
+export function contextFromEnv(env: (name: string) => string | undefined): PickContext {
+  return {
     repo: env("GITHUB_REPOSITORY") ?? "",
     runId: env("GITHUB_RUN_ID") ?? "",
     token: env("GITHUB_TOKEN") ?? "",
     runnerToken: env("RUNNER_STATUS_TOKEN") || undefined,
     get: fetchJson(env("GITHUB_API_URL") ?? "https://api.github.com", AbortSignal.timeout(60_000)),
-  }, (message) => console.error(`::warning::${message}`));
+  };
+}
+
+if (import.meta.main) {
+  const env = (name: string) => Deno.env.get(name);
+  const input = readInput(env);
+  const picks = await pick(
+    input,
+    contextFromEnv(env),
+    (message) => console.error(`::warning::${message}`),
+  );
   console.log(formatOutputs(picks));
   for (const [key, runsOn] of picks) console.error(`${key}: ${runsOn}`);
 }

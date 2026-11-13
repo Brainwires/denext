@@ -177,9 +177,11 @@ Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno onl
     // --coverage; backend-integration installs the toolchain itself (the test above); cargo-audit
     // runs only scripts/cargo-audit.ts (cargo-audit over the wasm packages' lockfiles), no project
     // code, so it stays on the stock Deno; windows-runner only runs scripts/ci/pick-windows-runner.ts
-    // (which Windows runner the Windows jobs take), no project code either.
+    // (which Windows runner the Windows jobs take), and linux-runner only
+    // scripts/ci/pick-linux-runners.ts (which runner the Linux jobs take), no project code either.
     if (
-      setup === -1 || name === "coverage" || name === "cargo-audit" || name === "windows-runner"
+      setup === -1 || name === "coverage" || name === "cargo-audit" || name === "windows-runner" ||
+      name === "linux-runner"
     ) {
       continue;
     }

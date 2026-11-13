@@ -49,14 +49,71 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
 
 jobs:
+  # Picks each Linux job's runner (scripts/ci/pick-linux-runners.ts): biscuits' Linux pools
+  # (RUNNER_LINUX_X64, RUNNER_LINUX_X64_DOCKER) share one set of job containers, so the jobs that
+  # most need them (first in PICK_JOBS) take that capacity's free slots and the rest run on
+  # ubuntu-latest at once instead of queueing behind each other; ubuntu-latest on a fork's pull
+  # request, or when DENEXT_POOL_HEALTH is stale or marks a pool down. It runs on GitHub's image (it
+  # must not wait in the queue it shortens), and its pick step never fails: on any error a Linux job whose
+  # pick is empty takes its repository variable (each runs `if: !cancelled()`).
+  linux-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+      contents: read
+    outputs:
+      coverage: ${{ steps.pick.outputs.coverage }}
+      backend_integration: ${{ steps.pick.outputs.backend_integration }}
+      check: ${{ steps.pick.outputs.check }}
+      integration: ${{ steps.pick.outputs.integration }}
+      next_compat: ${{ steps.pick.outputs.next_compat }}
+      bundle_budget: ${{ steps.pick.outputs.bundle_budget }}
+      cargo_audit: ${{ steps.pick.outputs.cargo_audit }}
+      hosted: ${{ steps.pick.outputs.hosted }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/pick-linux-runners.ts
+            scripts/ci/pick-windows-runner.ts
+          sparse-checkout-cone-mode: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
+      # The script bounds its API calls (60 s) and prints its own fallback on an API error; a crash
+      # before it prints leaves the outputs empty, which the jobs read as "the variable".
+      - name: Pick
+        id: pick
+        env:
+          PICK_JOBS: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && 'check bundle_budget cargo_audit' || startsWith(github.event_name, 'pull_request') && 'check integration next_compat bundle_budget cargo_audit' || 'coverage:docker backend_integration check integration next_compat bundle_budget cargo_audit' }}
+          PICK_RUNNER_X64: ${{ vars.RUNNER_LINUX_X64 }}
+          PICK_RUNNER_DOCKER: ${{ vars.RUNNER_LINUX_X64_DOCKER }}
+          PICK_RUNNER_2204: ${{ vars.RUNNER_LINUX_X64_2204 }}
+          PICK_SHARED_SLOTS: ${{ vars.RUNNER_LINUX_X64_SHARED_SLOTS }}
+          PICK_HEALTH: ${{ vars.DENEXT_POOL_HEALTH }}
+          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
+          # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
+          # ci.yml picks first (no PICK_DELAY); the others wait so they count the jobs it queued.
+          GITHUB_TOKEN: ${{ github.token }}
+          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
+        run: |
+          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-linux-runners.ts >> "$GITHUB_OUTPUT" ||
+            echo "::warning::the Linux runner pick failed: every Linux job takes its repository variable"
+
   # Fast feedback: formatting, lint, type-check, the unit test suite, and doc
   # coverage. Excludes the heavy build/bundle integration tests (see the
   # `integration` job) so this job stays the short critical path.
   check:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.check || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() }}
     # Every job has a limit (the default is 6 h, held by a stall). Sized from recent green runs:
     # check ≤ 15 min, integration / next-compat ≤ 3, coverage ≤ 52; about 3× / +40 min margin.
     timeout-minutes: 45
@@ -182,10 +239,14 @@ jobs:
   # `integration` job that runs the whole file is skipped on a push, so a bundle regression would
   # otherwise show up only locally. One build: a minute or two.
   bundle-budget:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.bundle_budget || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -219,10 +280,14 @@ jobs:
   # unchanged lockfile stops the release too. cargo-audit is the release's prebuilt binary,
   # SHA-256-pinned and cached; no Rust toolchain is installed. Seconds.
   cargo-audit:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.cargo_audit || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 10
     env:
       CARGO_AUDIT_VERSION: "0.22.2"
@@ -267,12 +332,15 @@ jobs:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
   # Split out so it runs in parallel with `check` instead of extending it.
   integration:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.integration || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -310,12 +378,15 @@ jobs:
   # headless-Chromium e2e suite (dispatched before a release, e2e.yml) — they run on every PR to catch
   # npm-React compat regressions early. Runs in parallel with `check`/`integration`.
   next-compat:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
+    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
+    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
+    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
+    # pull_request_target (a self-hosted runner never takes a fork's code).
+    needs: linux-runner
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.next_compat || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -356,18 +427,21 @@ jobs:
     # Linux: the self-hosted x64 runner RUNNER_LINUX_X64_DOCKER names (the linux-x64-docker pool:
     # the same image, plus the job's OWN rootless Docker daemon on DOCKER_HOST, so
     # tests/integration/stack-ops-docker.test.ts runs instead of skipping), else RUNNER_LINUX_X64,
-    # else ubuntu-latest; always ubuntu-latest on a pull_request (as `check`). On our pools the
-    # `services:` below are skipped (an empty image) and the pool's launcher starts this
-    # job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
+    # else ubuntu-latest; always ubuntu-latest on a pull_request (as `check`). The linux-runner job
+    # picks the docker pool while it and biscuits' shared Linux capacity have a free slot, else
+    # ubuntu-latest (whose Docker runs stack-ops-docker too); the variables when the pick is empty.
+    # On our pools the `services:` below are skipped (an empty image) and the pool's launcher starts
+    # this job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
     # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
     # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
+    needs: linux-runner
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs.coverage || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 90
     services:
       postgres:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -378,7 +452,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       postgis:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'postgis/postgis:17-3.5' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -389,7 +463,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       minio:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -397,7 +471,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: ${{ (startsWith(github.event_name, 'pull_request') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'redis:7-alpine' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -444,7 +518,7 @@ jobs:
           java-version: "21"
 
       - name: Use this runner's job services (our pool; GitHub's image uses the services above)
-        if: ${{ !startsWith(github.event_name, 'pull_request') && vars.RUNNER_LINUX_X64 != '' }}
+        if: runner.environment == 'self-hosted'
         run: bash scripts/ci/job-services-env.sh
 
       - name: Wait for MinIO
@@ -457,7 +531,7 @@ jobs:
 
       - name: Enable logical decoding on the Postgres service (wal_level = logical)
         # GitHub's image only: our pool's job Postgres starts with wal_level = logical.
-        if: ${{ startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '' }}
+        if: runner.environment == 'github-hosted'
         run: |
           pg=${{ job.services.postgres.id }}
           docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
@@ -518,18 +592,20 @@ jobs:
   # was ignored: a green run means each one really ran. Heavy (PRs, `main`, a dispatch).
   backend-integration:
     # Linux: the self-hosted x64 runner RUNNER_LINUX_X64 names, else ubuntu-latest; always
-    # ubuntu-latest on a pull_request (as `check`). Our pool's job containers have no Docker, so
-    # there the `services:` below are skipped (an empty image) and the pool's launcher starts this
-    # job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
+    # ubuntu-latest on a pull_request (as `check`); the linux-runner job picks the pool while
+    # biscuits' shared Linux capacity has a free slot, else ubuntu-latest (the variable when the
+    # pick is empty). Our pool's job containers have no Docker, so there the `services:` below are
+    # skipped (an empty image) and the pool's launcher starts this job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
     # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
     # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    needs: linux-runner
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs.backend_integration || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
     services:
       postgres:
         # Postgres 17 with the pgvector extension available (the vector search tests create it).
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'pgvector/pgvector:pg17' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'backend_integration') || vars.RUNNER_LINUX_X64 == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -542,7 +618,7 @@ jobs:
       postgis:
         # Only tests/backend-rest-supabase-integration.test.ts's GeoJSON case uses this one
         # (`Accept: application/geo+json` needs PostGIS); everything else runs on postgres:17.
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'postgis/postgis:17-3.5' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'backend_integration') || vars.RUNNER_LINUX_X64 == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -555,7 +631,7 @@ jobs:
       minio:
         # MinIO publishes no public images any more (minio/minio and quay.io/minio refuse
         # pulls); Bitnami's legacy build is the same server, and its entrypoint serves /data.
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'backend_integration') || vars.RUNNER_LINUX_X64 == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -563,7 +639,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: ${{ (startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '') && 'redis:7-alpine' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'backend_integration') || vars.RUNNER_LINUX_X64 == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -608,7 +684,7 @@ jobs:
           restore-keys: ${{ runner.os }}-deno-backend-
 
       - name: Use this runner's job services (our pool; GitHub's image uses the services above)
-        if: ${{ !startsWith(github.event_name, 'pull_request') && vars.RUNNER_LINUX_X64 != '' }}
+        if: runner.environment == 'self-hosted'
         run: bash scripts/ci/job-services-env.sh
 
       - name: Wait for MinIO
@@ -621,7 +697,7 @@ jobs:
 
       - name: Enable logical decoding on the Postgres service (wal_level = logical)
         # GitHub's image only: our pool's job Postgres starts with wal_level = logical.
-        if: ${{ startsWith(github.event_name, 'pull_request') || vars.RUNNER_LINUX_X64 == '' }}
+        if: runner.environment == 'github-hosted'
         run: |
           pg=${{ job.services.postgres.id }}
           docker exec "$pg" psql -U postgres -c "alter system set wal_level = logical"
@@ -755,7 +831,8 @@ jobs:
   # fork's pull request. It never fails the run: on any error every job keeps our runner, and a
   # Windows job whose pick is empty falls back to the variable (each runs `if: !cancelled()`).
   windows-runner:
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # GitHub's image: a one-minute pick must not wait in the Linux pools' queue.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read # the repository's queued / running jobs
