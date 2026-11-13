@@ -16,6 +16,9 @@ relative to `import.meta.url` keeps working). The migration writes denext's `app
 edit inside your files is Vite's `import.meta.env` (see
 [Environment variables](/docs/migrating-fresh#7-environment-variables)).
 
+For a side-by-side of what Fresh does, where each part lives on denext and what denext adds, see
+[Fresh and denext](/docs/fresh-vs-denext).
+
 ---
 
 ## 1. Detection

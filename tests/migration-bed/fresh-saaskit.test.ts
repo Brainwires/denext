@@ -7,10 +7,9 @@
 // as Fresh runs them: nothing is left as won't-migrate.
 //
 // Pin: bc8043e (main, 2026-02). `prepare` gives the kv-oauth plugin the GitHub OAuth variables it
-// reads at start (dummy values: `/signin` only builds the authorize redirect). `afterMigrateEdit`
-// applies the review item migrate reports for a Fresh 1.x app on Tailwind v3: denext compiles
-// Tailwind v4, so the stylesheet's `@tailwind` directives become `@import "tailwindcss"` (what
-// `npx @tailwindcss/upgrade` does first) with the v3 config loaded through `@config`.
+// reads at start (dummy values: `/signin` only builds the authorize redirect). `deno install`
+// after migrate installs its npm dependencies, so its Tailwind v3 stylesheet compiles with the
+// app's own `tailwindcss`, as denext does for a v3 app.
 // NETWORK-REQUIRED (GitHub fetch + deno.land / JSR / npm downloads): `deno task test:migration-bed`.
 
 import { join } from "@std/path";
@@ -24,25 +23,21 @@ async function oauthEnv(app: string): Promise<void> {
   );
 }
 
-/** The Tailwind v3 directives → v4's import, keeping the v3 config (`@config`). */
-async function tailwindV4(app: string): Promise<void> {
-  const file = join(app, "assets", "styles.css");
-  const css = await Deno.readTextFile(file);
-  const fixed = `@import "tailwindcss";\n@config "../tailwind.config.ts";\n` +
-    css.replace(/^@tailwind\s+(?:base|components|utilities);\s*$/gm, "");
-  if (fixed.includes("@tailwind ")) throw new Error("fresh-saaskit bed: the stylesheet moved");
-  await Deno.writeTextFile(file, fixed);
-}
-
 const SAASKIT: Bed = {
   name: "fresh-saaskit",
   repo: "https://github.com/denoland/saaskit.git",
   sha: "bc8043e85a1e8ba8d097ce21af3b7b49e7dfc5ad",
   install: [],
   prepare: oauthEnv,
-  afterMigrateEdit: tailwindV4,
+  // The app's npm dependencies installed (`nodeModulesDir: "auto"`), so its Tailwind v3 config
+  // compiles with its own `tailwindcss` (denext picks the compiler by the installed version).
+  afterMigrate: [["$deno", "install"]],
   kind: "fresh",
   wontMigrate: [],
+  // SaaSKit opens Deno KV at start, which needs its `deno.json`'s `"unstable": ["kv"]`; the CLI
+  // under test runs from this checkout and resolves its own config, not the app's (a
+  // JSR-installed CLI's `denext task start` resolves the app's), so the bed stops after the build.
+  serve: false,
   files: [
     // The config stays for its plugins, without Fresh's Tailwind plugin.
     { path: "fresh.config.ts", contains: ["kvOAuthPlugin", "ga4Plugin()"], absent: ["tailwind"] },

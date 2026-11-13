@@ -132,6 +132,11 @@ export interface Bed {
    * file, option and plugin carried). Unchecked when absent.
    */
   wontMigrate?: string[];
+  /**
+   * `false`: stop after the build (the app needs a runtime flag the CLI under test, started from
+   * this checkout, does not take from the app's `deno.json`, such as `"unstable": ["kv"]`).
+   */
+  serve?: false;
   /** Routes to render-assert. */
   routes: BedRoute[];
   /** A page to hydrate (and navigate from) in headless Chromium. */
@@ -366,6 +371,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       assert(r.ok, `build failed:\n${r.out}`);
     });
 
+    if (bed.serve === false) return;
     const server = await startCliServer(app, READY_TIMEOUT_MS);
     try {
       await t.step("routes render", async () => {

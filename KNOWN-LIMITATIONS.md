@@ -410,7 +410,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
   `public/` still answer first. `denext migrate --check` lists each one it finds
-  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
+  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
 - **Preact:** Preact's `options` hooks receive denext's elements (`type`, `props`, `key`), not
   Preact's internal vnodes (`_diff` / `__b` runs as an element is created), and `_catchError` /
   `__e`, `_hook` / `__h` and `_root` / `__` are not called, so `preact/debug` / `preact/devtools` (which read Preact's

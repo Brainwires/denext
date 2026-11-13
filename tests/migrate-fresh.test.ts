@@ -556,6 +556,9 @@ export default defineConfig({ plugins: [kvOAuthPlugin()] });
       "$fresh/plugins/",
       "$fresh/runtime.ts",
       "$fresh/server.ts",
+      "$fresh/src/runtime/utils.ts",
+      "$fresh/src/server/defines.ts",
+      "$fresh/src/server/types.ts",
     ]);
     assertEquals(deno.imports["$fresh/plugins/"], "https://deno.land/x/fresh@1.7.3/plugins/");
     assertEquals(deno.imports["preact/"], undefined);

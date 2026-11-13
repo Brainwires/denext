@@ -32,6 +32,8 @@
 export interface ViteEmitterBuildContext {
   /** The build output directory. */
   readonly outDir: string;
+  /** The project root (absolute), when the build passes it (a plugin build step's context does). */
+  readonly projectRoot?: string;
   /** The resolved project config (`spa.assetsDir` places the synthetic entry chunk). */
   readonly config: { readonly spa?: { readonly assetsDir?: string } };
   /** The client bundle's modules (absolute paths), when the build knows them. */
@@ -320,13 +322,42 @@ function hookFn(plugin: VitePluginObject, name: string) {
 /** The arguments each build hook is called with. */
 function hookArgs(name: string, build: ViteEmitterBuildContext): unknown[] {
   const output = { dir: build.outDir, format: "es" };
-  if (name === "configResolved") {
-    const config = { root: ".", command: "build", mode: "production", isProduction: true };
-    return [{ ...config, build: { outDir: build.outDir } }];
-  }
+  if (name === "configResolved") return [resolvedConfig(build)];
   if (name === "generateBundle") return [output, syntheticBundle(build), true];
   if (name === "writeBundle") return [output, syntheticBundle(build)];
   return [];
+}
+
+/**
+ * The resolved Vite config `configResolved` gets: a production build's fields a build plugin
+ * reads (`root`, `command`, `mode`, `isProduction`, `base`, `publicDir`, `env`, `build`, and Vite
+ * 6's `environments.client` / `environments.ssr` with their `build.outDir`, denext's output
+ * directory, where the server's files are its own sources).
+ */
+function resolvedConfig(build: ViteEmitterBuildContext): Record<string, unknown> {
+  const root = build.projectRoot ?? Deno.cwd();
+  const env = { MODE: "production", DEV: false, PROD: true, SSR: false, BASE_URL: "/" };
+  const buildOptions = { outDir: build.outDir, assetsDir: "assets", ssr: false, sourcemap: false };
+  return {
+    root,
+    base: "/",
+    command: "build",
+    mode: "production",
+    isProduction: true,
+    publicDir: `${root}/public`,
+    env,
+    build: buildOptions,
+    environments: {
+      client: { build: buildOptions },
+      ssr: { build: { ...buildOptions, ssr: true } },
+    },
+    plugins: [],
+    logger: {
+      info: (m: string) => console.log(m),
+      warn: (m: string) => console.warn(m),
+      error: (m: string) => console.error(m),
+    },
+  };
 }
 
 /** Warn once per plugin about the hooks of it denext does not run. */

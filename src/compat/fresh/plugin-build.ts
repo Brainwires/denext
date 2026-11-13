@@ -12,14 +12,7 @@
 
 import { dirname, join, toFileUrl } from "@std/path";
 import type { DenextPlugin, PluginContext } from "../../plugin/mod.ts";
-import { denoExecutable } from "../../build/deno-executable.ts";
-import { runToExit } from "../../build/exited-output.ts";
-import {
-  type FreshPlugin,
-  PLUGIN_SCRIPT_DIR,
-  pluginScriptFile,
-  pluginStateAttr,
-} from "./plugins.ts";
+import { PLUGIN_SCRIPT_DIR, pluginScriptFile, pluginStateAttr } from "./plugins.ts";
 
 /** Options of {@link freshPlugins}. */
 export interface FreshPluginsOptions {
@@ -37,10 +30,56 @@ for (const el of document.querySelectorAll(\`script[data-fresh-plugin-state=\${J
 `;
 }
 
-/** The plugins a Fresh config module default-exports (`defineConfig({ plugins })`). */
-async function configPlugins(path: string): Promise<FreshPlugin[]> {
-  const mod = await import(toFileUrl(path).href) as { default?: { plugins?: FreshPlugin[] } };
-  return mod.default?.plugins ?? [];
+/** A plugin's name and its client entrypoints, as the config module reports them. */
+interface PluginEntrypoints {
+  name: string;
+  entrypoints: Record<string, string>;
+}
+
+/** The module a child Deno runs to report a Fresh config's plugins' entrypoints, as JSON. */
+function reportModule(configUrl: string): string {
+  return `const mod = await import(${JSON.stringify(configUrl)});
+const plugins = mod.default?.plugins ?? [];
+console.log(JSON.stringify(plugins.map((p) => ({ name: p?.name ?? "", entrypoints: p?.entrypoints ?? {} }))));
+Deno.exit(0);
+`;
+}
+
+/** The deno.json beside the Fresh config (its import map, `unstable` and other settings). */
+async function projectConfigArgs(projectRoot: string): Promise<string[]> {
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const path = join(projectRoot, name);
+    if (await Deno.stat(path).then(() => true, () => false)) return ["--config", path];
+  }
+  return [];
+}
+
+/**
+ * The plugins a Fresh config module default-exports (`defineConfig({ plugins })`), with their
+ * entrypoints. The config imports the app's own modules (a plugin's session store opening Deno
+ * KV), so it is read in a child Deno run with the app's own `deno.json`, not in this process.
+ */
+async function configPlugins(projectRoot: string, path: string): Promise<PluginEntrypoints[]> {
+  const report = join(dirname(path), `.denext-fresh-plugins-${crypto.randomUUID()}.ts`);
+  await Deno.writeTextFile(report, reportModule(toFileUrl(path).href));
+  const { denoExecutable } = await import("../../build/deno-executable.ts");
+  try {
+    const out = await new Deno.Command(denoExecutable(), {
+      args: ["run", "-A", ...await projectConfigArgs(projectRoot), report],
+      cwd: projectRoot,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+      signal: AbortSignal.timeout(120_000),
+    }).output();
+    const text = new TextDecoder().decode(out.stdout).trim().split("\n").pop() ?? "";
+    if (!out.success) {
+      throw new Error(`reading ${path} failed:\n${new TextDecoder().decode(out.stderr)}`);
+    }
+    return JSON.parse(text) as PluginEntrypoints[];
+  } finally {
+    await Deno.remove(report).catch(() => {});
+  }
 }
 
 /** Bundle one entrypoint into `outFile` with `deno bundle` (a browser ES module). */
@@ -48,6 +87,9 @@ async function bundleEntrypoint(projectRoot: string, runner: string, outFile: st
   await Deno.mkdir(dirname(outFile), { recursive: true });
   const entry = `${outFile}.entry.ts`;
   await Deno.writeTextFile(entry, runner);
+  // Loaded here, not at the top: `denext.config.ts` imports this module wherever it is read.
+  const { denoExecutable } = await import("../../build/deno-executable.ts");
+  const { runToExit } = await import("../../build/exited-output.ts");
   try {
     const { code, stderr } = await runToExit(denoExecutable(), {
       args: ["bundle", "--platform=browser", "--format=esm", "-o", outFile, entry],
@@ -75,7 +117,7 @@ export async function bundlePluginEntrypoints(
   configPath: string,
 ): Promise<string[]> {
   const written: string[] = [];
-  for (const plugin of await configPlugins(configPath)) {
+  for (const plugin of await configPlugins(projectRoot, configPath)) {
     for (const [name, specifier] of Object.entries(plugin.entrypoints ?? {})) {
       const resolved = /^[a-z][a-z0-9+.-]*:/i.test(specifier)
         ? specifier

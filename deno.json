@@ -420,6 +420,7 @@
     "denext/devtools": "./src/devtools.ts",
     "denext/plugin-kit": "./src/plugin/kit.ts",
     "denext/plugin-kit/vite-emitter": "./src/plugin/vite-emitter.ts",
+    "denext/fresh/plugins": "./src/compat/fresh/plugin-build.ts",
     "denext/remix": "./src/compat/remix/mod.ts",
     "denext/remix/server": "./src/compat/remix/server.ts",
     "denext/live": "./src/live.ts",

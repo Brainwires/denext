@@ -157,3 +157,14 @@ export default defineConfig({ plugins: [fresh(), visualizer({ filename })] });
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("viteBuildPlugin: configResolved gets Vite 6's environments (what Fresh's website's copyDocs reads)", async () => {
+  let seen: unknown;
+  await runBuild(viteBuildPlugin({
+    name: "copy-docs",
+    configResolved(config: { root: string; environments: { ssr: { build: { outDir: string } } } }) {
+      seen = [typeof config.root, config.environments.ssr.build.outDir];
+    },
+  }));
+  assertEquals(seen, ["string", "/out"]);
+});

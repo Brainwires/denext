@@ -1124,6 +1124,11 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "@fresh/core/runtime": sub("fresh/runtime"),
     "$fresh/server.ts": sub("fresh"),
     "$fresh/runtime.ts": sub("fresh/runtime"),
+    // Fresh 1.x's own modules apps import directly (`defineRoute` / `defineLayout` / `defineApp`,
+    // the types).
+    "$fresh/src/server/defines.ts": sub("fresh"),
+    "$fresh/src/server/types.ts": sub("fresh"),
+    "$fresh/src/runtime/utils.ts": sub("fresh/runtime"),
     ...preactAliasImports(sub),
   };
 }
