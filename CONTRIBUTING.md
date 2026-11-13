@@ -244,6 +244,16 @@ deno task coverage:ratchet:update   # raises, adds new files, drops deleted ones
 
 Lowering a number is a hand edit of the baseline, visible in review.
 
+**The coverage gate in CI is sharded.** ci.yml's `coverage-shard` jobs run the suite in 6 parallel
+shards (`deno task test:coverage:shard --shard=<i>/6`; `scripts/ci/coverage-shards.ts` splits the
+test files by their measured coverage time in `scripts/ci/coverage-durations.json`, so each shard
+gets ~9 of the ~53 sequential minutes), and the `coverage` job merges their raw profiles and runs
+the same `coverage:report` as `test:coverage` (threshold, floors, ratchet). The merge refuses a
+missing shard or one that ran other files than its checkout plans. A new test file counts the
+table's mean until the table is refreshed from the shard jobs' logs
+(`deno run --allow-read --allow-write=scripts/ci scripts/ci/coverage-shards.ts --update <logs>`,
+each from `gh run view <run> --log --job <id>`); `coverage-shards.ts --plan 6` prints the split.
+
 If a report is a **genuine false positive**, scope the suppression as narrowly
 as possible — prefer a per-line/file marker over widening config:
 

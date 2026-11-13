@@ -27,8 +27,9 @@ name: CI
 #   - the toolchain, put on PATH by that step: `check`'s `deno check` and unit suite,
 #     `bundle-budget`, `integration`, `next-compat`, `ios-export-router`, `windows-tests`,
 #     `macos-tests` and `windows-resolve`. scripts/test-run.ts runs every pass on the toolchain.
-#   - `coverage`: stock Deno starts scripts/test-run.ts, which under `--coverage` runs every pass
-#     (and `deno coverage`) on the toolchain it resolves the same way.
+#   - `coverage-shard` / `coverage`: stock Deno starts scripts/test-run.ts (a shard) and
+#     scripts/ci/coverage-merge.ts (the merge), which under `--coverage` run every pass, the
+#     re-emit and `deno coverage` on the toolchain they resolve the same way.
 #   - `backend-integration`: the toolchain downloaded from its release URL and SHA-256 (pinned in
 #     its env, kept equal to the pin by tests/deno-toolchain.test.ts).
 #   - Stock Deno stays under test where it is meant to: the suites' `DENEXT_DENO=stock` cases
@@ -63,7 +64,13 @@ jobs:
       actions: read # the repository's queued / running jobs
       contents: read
     outputs:
-      coverage: ${{ steps.pick.outputs.coverage }}
+      coverage_1: ${{ steps.pick.outputs.coverage_1 }}
+      coverage_2: ${{ steps.pick.outputs.coverage_2 }}
+      coverage_3: ${{ steps.pick.outputs.coverage_3 }}
+      coverage_4: ${{ steps.pick.outputs.coverage_4 }}
+      coverage_5: ${{ steps.pick.outputs.coverage_5 }}
+      coverage_6: ${{ steps.pick.outputs.coverage_6 }}
+      coverage_merge: ${{ steps.pick.outputs.coverage_merge }}
       backend_integration: ${{ steps.pick.outputs.backend_integration }}
       check: ${{ steps.pick.outputs.check }}
       integration: ${{ steps.pick.outputs.integration }}
@@ -87,7 +94,7 @@ jobs:
       - name: Pick
         id: pick
         env:
-          PICK_JOBS: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && 'check bundle_budget cargo_audit' || startsWith(github.event_name, 'pull_request') && 'check integration next_compat bundle_budget cargo_audit' || 'coverage:docker backend_integration check integration next_compat bundle_budget cargo_audit' }}
+          PICK_JOBS: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' && 'check bundle_budget cargo_audit' || startsWith(github.event_name, 'pull_request') && 'check integration next_compat bundle_budget cargo_audit' || 'coverage_1:docker coverage_2 coverage_3 coverage_4 coverage_5 coverage_6 backend_integration check integration next_compat bundle_budget cargo_audit coverage_merge' }}
           PICK_RUNNER_X64: ${{ vars.RUNNER_LINUX_X64 }}
           PICK_RUNNER_DOCKER: ${{ vars.RUNNER_LINUX_X64_DOCKER }}
           PICK_RUNNER_2204: ${{ vars.RUNNER_LINUX_X64_2204 }}
@@ -419,29 +426,50 @@ jobs:
         run: deno task test:next-compat
 
   # Coverage floor. Re-runs the unit + integration suites with coverage and fails
-  # if line/branch/function coverage drops below the threshold in `test:coverage`
+  # if line/branch/function coverage drops below the threshold in `coverage:report`
   # (currently 85%). Parallel with the other jobs. The backend-integration suites run here too,
   # against the same service containers as the `backend-integration` job, so the code only a real
   # Postgres / PostGIS / MinIO reaches counts toward the gate instead of being ignored.
-  coverage:
-    # Linux: the self-hosted x64 runner RUNNER_LINUX_X64_DOCKER names (the linux-x64-docker pool:
-    # the same image, plus the job's OWN rootless Docker daemon on DOCKER_HOST, so
-    # tests/integration/stack-ops-docker.test.ts runs instead of skipping), else RUNNER_LINUX_X64,
-    # else ubuntu-latest; always ubuntu-latest on a pull_request (as `check`). The linux-runner job
-    # picks the docker pool while it and biscuits' shared Linux capacity have a free slot, else
-    # ubuntu-latest (whose Docker runs stack-ops-docker too); the variables when the pick is empty.
-    # On our pools the `services:` below are skipped (an empty image) and the pool's launcher starts
-    # this job's own private Postgres 17 + pgvector, Postgres 17 + PostGIS, Redis 7 and MinIO instead
-    # (ops/runners linux/services.sh), reachable from this job only; scripts/ci/job-services-env.sh
-    # points the DENEXT_TEST_* variables at them. On GitHub's image the `services:` run as before.
+  #
+  # Sharded: `coverage-shard` runs the suite in 6 parallel jobs (scripts/ci/coverage-shards.ts
+  # splits the test files by their measured coverage time, scripts/ci/coverage-durations.json, so
+  # the shards finish together; one sequential pass is ~53 min, a shard ~9), each with its own job
+  # services, and `coverage` merges their raw profiles and reports on them exactly as the unsharded
+  # run did (`deno task coverage:merge` → `coverage:report`: the same threshold, includes, excludes,
+  # floors and ratchet). Every shard is its own Linux job, placed by the linux-runner pick
+  # (`coverage_1` … `coverage_6`; shard 1 asks for the docker pool, which takes one job, and runs
+  # tests/integration/stack-ops-docker.test.ts). A shard on GitHub's image starts the `services:`
+  # below, one on our pools gets its launcher's private ones.
+  coverage-shard:
+    name: coverage shard ${{ matrix.shard }}/6
     needs: linux-runner
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs.coverage || (startsWith((vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64), '[') && (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || format('"{0}"', (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) || 'ubuntu-latest'))) }}
+    # Linux: the shard's pick (needs.linux-runner.outputs.coverage_<n>); when the pick is empty,
+    # its fallback variable (shard 1: RUNNER_LINUX_X64_DOCKER, else RUNNER_LINUX_X64; a label or a
+    # JSON array; unset: ubuntu-latest); always ubuntu-latest on a pull_request (as `check`).
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs[format('coverage_{0}', matrix.shard)] || (startsWith(matrix.fallback, '[') && matrix.fallback || format('"{0}"', matrix.fallback || 'ubuntu-latest'))) }}
     # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
-    timeout-minutes: 120
+    # A shard plans ~9 min of tests; 45 leaves room for a loaded pool.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            fallback: ${{ vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64 }}
+          - shard: 2
+            fallback: ${{ vars.RUNNER_LINUX_X64 }}
+          - shard: 3
+            fallback: ${{ vars.RUNNER_LINUX_X64 }}
+          - shard: 4
+            fallback: ${{ vars.RUNNER_LINUX_X64 }}
+          - shard: 5
+            fallback: ${{ vars.RUNNER_LINUX_X64 }}
+          - shard: 6
+            fallback: ${{ vars.RUNNER_LINUX_X64 }}
     services:
       postgres:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'pgvector/pgvector:pg17' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), format('coverage_{0}', matrix.shard)) || matrix.fallback == '') && 'pgvector/pgvector:pg17' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -452,7 +480,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       postgis:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'postgis/postgis:17-3.5' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), format('coverage_{0}', matrix.shard)) || matrix.fallback == '') && 'postgis/postgis:17-3.5' || '' }}
         env:
           POSTGRES_PASSWORD: pw
         ports:
@@ -463,7 +491,7 @@ jobs:
           --health-timeout 5s
           --health-retries 30
       minio:
-        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), format('coverage_{0}', matrix.shard)) || matrix.fallback == '') && 'bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20' || '' }}
         env:
           MINIO_ROOT_USER: dnxtest
           MINIO_ROOT_PASSWORD: dnxtest-secret
@@ -471,7 +499,7 @@ jobs:
           - 9100:9000
       redis:
         # denext's zero-npm Redis client and stores (tests/redis-integration.test.ts).
-        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), 'coverage') || (vars.RUNNER_LINUX_X64_DOCKER || vars.RUNNER_LINUX_X64) == '') && 'redis:7-alpine' || '' }}
+        image: ${{ (startsWith(github.event_name, 'pull_request') || contains(fromJSON(needs.linux-runner.outputs.hosted || '[]'), format('coverage_{0}', matrix.shard)) || matrix.fallback == '') && 'redis:7-alpine' || '' }}
         ports:
           - 6379:6379
         options: >-
@@ -542,12 +570,80 @@ jobs:
           done
           docker exec "$pg" psql -U postgres -tAc "show wal_level" | grep -qx logical
 
-      - name: Coverage (fails under the threshold)
+      - name: Coverage shard ${{ matrix.shard }}/6
         env:
-          NO_COLOR: "1" # plain test names for the grep below
+          NO_COLOR: "1" # plain test names for the merge job's grep
         run: |
           set -o pipefail
-          deno task test:coverage 2>&1 | tee "$RUNNER_TEMP/coverage.txt"
+          mkdir -p coverage
+          deno task test:coverage:shard --shard=${{ matrix.shard }}/6 2>&1 | tee coverage/shard.txt
+
+      # The raw profiles (hundreds of thousands of small JSON files) as one archive: the merge job
+      # reports on all six shards' together.
+      - name: Pack the raw profiles
+        if: ${{ !cancelled() }}
+        run: tar -czf "$RUNNER_TEMP/coverage-shard.tgz" -C coverage profile profile.shard.json shard.txt
+
+      - name: Upload the raw profiles
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage-shard.tgz
+          compression-level: 0 # already gzipped
+          if-no-files-found: error
+          retention-days: 1
+
+  # The coverage gate: the shards' profiles merged and reported on (see `coverage-shard`). Fails when
+  # a shard failed, when a shard is missing or ran other files than this checkout plans
+  # (scripts/ci/coverage-merge.ts), under the threshold, or under a per-file floor or the ratchet.
+  coverage:
+    needs: [linux-runner, coverage-shard]
+    # Linux: what the linux-runner job picks (`coverage_merge`, the x64 pool while biscuits' shared
+    # Linux capacity has a free slot, else ubuntu-latest); the variable RUNNER_LINUX_X64 when the
+    # pick is empty; always ubuntu-latest on a pull_request. It needs no services.
+    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || needs.linux-runner.outputs.coverage_merge || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Heavy: PRs, `main` and a manual dispatch (see the trigger comment at the top).
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
+    timeout-minutes: 30
+    steps:
+      - name: Every shard passed
+        if: needs.coverage-shard.result != 'success'
+        run: |
+          echo "::error::a coverage shard did not pass (${{ needs.coverage-shard.result }}): see the coverage-shard jobs"
+          exit 1
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # runs the merge, which re-emits and reports on the toolchain
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Download the shards' profiles
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-shard-*
+          path: ${{ runner.temp }}/coverage-shards
+
+      - name: Unpack them
+        run: |
+          for d in "$RUNNER_TEMP"/coverage-shards/coverage-shard-*; do
+            n=${d##*-}
+            mkdir -p "coverage/shards/$n"
+            tar -xzf "$d/coverage-shard.tgz" -C "coverage/shards/$n"
+          done
+          cat coverage/shards/*/shard.txt > "$RUNNER_TEMP/coverage.txt"
+
+      - name: Coverage (fails under the threshold)
+        run: deno task coverage:merge
 
       # The lcov report the per-file floors read, kept so a baseline can be raised from a CI run
       # without re-running the suite locally: `gh run download <run> -n coverage-lcov -D coverage`,
@@ -564,9 +660,10 @@ jobs:
       - name: The backend-integration suites ran under coverage (none ignored)
         run: |
           # The files the backend-integration job runs: under coverage, none of their tests may be
-          # ignored either (an ignored one means its service env is not wired into this job). The
+          # ignored either (an ignored one means its service env is not wired into a shard). The
           # Prisma adapter suites self-enable on a `Deno.SQL` with result columns (the toolchain's),
-          # so an ignored one here means the pass ran on a runtime without it.
+          # so an ignored one here means the pass ran on a runtime without it. The shards' logs are
+          # concatenated: each file's lines sit in the log of the one shard that ran it.
           files='backend-rls-integration|backend-rest-integration|backend-rest-supabase-integration|backend-realtime-integration|backend-supabase-realtime-integration|backend-auth-integration|db-admin-integration|db-migrations-integration|postgres-integration|backend-s3-minio|backend-supabase-functions|backend-storage-supabase-integration|backend-storage-rls-integration|backend-supabase-auth|backend-supabase-auth-integration|backend-platform-integration|backend-auth-replicas-integration|backend-rest-reload-integration|doctor-backend|redis-integration|next-auth-adapters-integration|prisma-adapter-postgres-integration|prisma-adapter-sqlite'
           awk -v files="^[.]/tests/($files)[.]test[.]ts$" '
             /^running [0-9]+ tests? from / { current = $NF; next }
