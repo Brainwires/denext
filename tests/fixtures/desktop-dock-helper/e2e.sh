@@ -66,7 +66,7 @@ cmd() {
 }
 wait_state() { # line count
   for _ in $(seq 1 120); do
-    [ "$(grep -cx "$1" "$DATA/e2e/state.log" 2>/dev/null)" -ge "$2" ] && return 0
+    [ "$(grep -c "^$1" "$DATA/e2e/state.log" 2>/dev/null)" -ge "$2" ] && return 0
     sleep 0.25
   done
   log "  timeout waiting for '$1' x$2"
@@ -108,9 +108,8 @@ if [ "$(recents)" != "(none)" ]; then
 fi
 log "recents reset: $(recents)"
 
-open "$APP"
-for _ in $(seq 1 120); do [ -f "$DATA/e2e/state.log" ] && break; sleep 0.5; done
-wait_state ready 1
+open --stdout "$OUT/app.out" --stderr "$OUT/app.err" "$APP"
+for _ in $(seq 1 240); do grep -q "^ready" "$DATA/e2e/state.log" 2>/dev/null && break; sleep 0.25; done
 sleep 2
 t=$(app_type $APP_ID)
 row launch 0 $([ "$t" = UIElement ] && [ -z "$(helper_pid)" ] && echo 1 || echo 0) "app=$t helper=$(helper_pid)"
@@ -167,5 +166,7 @@ row settled 0 $([ "$r" = "(none)" ] && echo 1 || echo 0) "recents=$r"
 defaults read com.apple.dock recent-apps >>"$LOG" 2>&1
 echo "----- state.log" >>"$LOG"
 cat "$DATA/e2e/state.log" >>"$LOG" 2>&1
+echo "----- app stderr" >>"$LOG"
+tail -50 "$OUT/app.err" >>"$LOG" 2>&1
 cat "$SUM"
 [ "$FAILS" = 0 ] || { echo "$FAILS check(s) failed"; exit 1; }

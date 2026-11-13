@@ -35,5 +35,15 @@
       "identifier": "dev.denext.dock-helper-probe"
     }
   },
-  "compile": { "include": [".deno-desktop/app.json"] }
+  "compile": {
+    "include": [
+      ".deno-desktop/app.json"
+    ]
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  }
 }
