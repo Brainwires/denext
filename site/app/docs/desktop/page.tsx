@@ -3469,6 +3469,118 @@ await runDesktop({
   },
 });`}
       </Code>
+      <h4 id="desktop-custom-menus">The app&apos;s own top-level menus</h4>
+      <p>
+        <code>desktop.menu.menus</code> adds top-level menus beside the managed ones, each{" "}
+        <code>{"{ id, label, after?, items }"}</code>. Unlike a page&apos;s{" "}
+        <code>setAppMenu</code>, they never replace the managed menus: with no page menu the bar is
+        the managed one — on macOS the app menu (About, Hide, Hide Others, Show All, Quit) and Edit
+        (the standard editing roles, which the editing shortcuts need), then the custom menus and
+        Window; on Windows and Linux the custom menus and Window, if it has items — and with a page
+        menu they are placed among its submenus. <code>after</code> names the menu one goes after:
+        {" "}
+        <code>"app"</code> (the macOS app menu; elsewhere the start of the bar),{" "}
+        <code>"file"</code>, <code>"edit"</code>, <code>"view"</code> (the default) or{" "}
+        <code>"window"</code> (matched by label, ignoring case and a <code>&amp;</code>{" "}
+        mnemonic). One the bar does not have falls back to the one before it, so <code>"view"</code>
+        {" "}
+        with no View menu is <code>"edit"</code>. Items are{" "}
+        <code>{"{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }"}</code>:{" "}
+        <code>type: "checkbox"</code> toggles <code>checked</code> on a click,{" "}
+        <code>type: "radio"</code> checks itself and unchecks the rest of its <code>group</code>
+        {" "}
+        (by default the radio items of the same submenu without a group); submenus are{" "}
+        <code>{"{ label, items }"}</code>, separators <code>{'{ type: "separator" }'}</code>{" "}
+        and standard items{" "}
+        <code>{"{ role }"}</code>. Item ids are unique across every custom menu (at most 16 menus,
+        500 entries each). A menu shows its checkmarks as checkmarks on every OS: the runtime&apos;s
+        menus have no radio-dot style.
+      </p>
+      <p>
+        At runtime the page (<code>denext/desktop/app</code>) and the backend (what{" "}
+        <code>runDesktop</code>{" "}
+        resolves with, an extension&apos;s host) change them with the same calls:{" "}
+        <code>setMenu(menuId, {"{ label?, after?, items }"})</code>{" "}
+        replaces a menu&apos;s entries, adds a menu (a <code>label</code> is required then) or, with
+        {" "}
+        <code>null</code>, removes one;{" "}
+        <code>setMenuItemState(itemId, {"{ checked?, enabled?, label? }"}, {"{ windowId? }"})</code>
+        {" "}
+        changes one item, app-wide or, with <code>windowId</code> (a page&apos;s own from{" "}
+        <code>currentWindowId()</code>), for that window only. Once the app uses any of this, every
+        app window gets a menu bar of its own built with its state: on macOS the OS menu bar shows
+        the key window&apos;s (the runtime swaps it as windows take the focus), on Windows and Linux
+        each window&apos;s own bar shows its own (no overlay or frameless window gets one there; the
+        tray panel never does). An item&apos;s state for a window is its definition, then the
+        app-wide state, then the state set for that window, so a window with nothing of its own
+        shows the app-wide state. Where the runtime has an app-level menu (<code>
+          appCapabilities().appLevelMenu
+        </code>), macOS shows the app-wide state while no window with a menu is key, with every
+        window closed for one. A checkbox or radio click changes the state where it came from: for
+        the key window when its <code>checked</code>{" "}
+        was set for that window, else app-wide. A window&apos;s state goes when it closes. Until the
+        app uses custom menus or Window-menu items, the menu is set on the main window only, as
+        before.
+      </p>
+      <p id="desktop-window-menu-app-items">
+        <code>setWindowMenuAppItems(items)</code> (a page, for its own window) and{" "}
+        <code>setWindowMenuAppItems(windowId, items)</code>{" "}
+        (the backend, for any window) put a window&apos;s own items in the Window menu, below the
+        window list after a separator (on macOS before Bring All to Front), shown while that window
+        is key: <code>{"{ id, label, checked?, enabled?, accelerator? }"}</code> or{" "}
+        <code>{'{ type: "separator" }'}</code>, at most 64. Each call replaces the list,{" "}
+        <code>null</code>{" "}
+        clears it, and it goes when the window closes — one item per document of an MDI window with
+        a checkmark on the active one, say, then Cascade and Tile with <code>enabled</code>{" "}
+        following the documents.
+      </p>
+      <p>
+        Clicks on both arrive with the key window: in the pages through{" "}
+        <code>onAppMenuItem((id, info) =&gt; …)</code>, whose <code>info</code> carries{" "}
+        <code>kind</code> (<code>"appMenu"</code> for the page&apos;s own items,{" "}
+        <code>"menu"</code>, <code>"windowMenu"</code>), <code>keyWindow</code>{" "}
+        (<code>{"{ id, key? }"}</code> or <code>null</code>), a custom item&apos;s <code>menu</code>
+        {" "}
+        and a checkbox&apos;s or radio item&apos;s new <code>checked</code>{" "}
+        (the menu shows it already) — a custom item&apos;s click reaches every window&apos;s page, a
+        window&apos;s own item only that window&apos;s — and in the backend through{" "}
+        <code>runDesktop({"{ onAppMenuItem: (id, ctx) => … }"})</code> and{" "}
+        <code>host.onAppMenuItem(fn)</code>, once per click each.{" "}
+        <code>appCapabilities().customMenus</code>{" "}
+        says whether the calls work here; without an application menu they reject{" "}
+        <code>unsupported</code>.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default { desktop: { menu: {
+  window: { list: true },
+  menus: [{ id: "view-mode", label: "Layout", after: "view", items: [
+    { id: "free", label: "Free-form", type: "radio", group: "layout", checked: true },
+    { id: "tabs", label: "Tabbed", type: "radio", group: "layout" },
+    { type: "separator" },
+    { id: "toolbar", label: "Show Toolbar", type: "checkbox", checked: true },
+  ] }],
+} } };
+
+// A page: its own layout, and one Window-menu item per document
+import { onAppMenuItem, setMenuItemState, setWindowMenuAppItems } from "denext/desktop/app";
+import { currentWindowId } from "denext/desktop/window";
+
+const me = await currentWindowId();
+await setMenuItemState("tabs", { checked: true }, { windowId: me }); // this window only
+await setWindowMenuAppItems([
+  ...docs.map((d) => ({ id: \`doc:\${d.id}\`, label: d.title, checked: d.id === active })),
+  { type: "separator" },
+  { id: "cascade", label: "Cascade", enabled: docs.length > 1 },
+  { id: "tile-v", label: "Tile Vertically", enabled: docs.length > 1 },
+]);
+onAppMenuItem((id, { kind, keyWindow, checked }) => {
+  if (kind === "menu" && keyWindow?.id !== me) return; // another window's turn
+  if (id === "free" || id === "tabs") setLayout(id);
+  if (id === "toolbar") showToolbar(checked === true);
+  if (id.startsWith("doc:")) activate(id.slice(4));
+});`}
+      </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}

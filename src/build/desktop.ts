@@ -71,6 +71,7 @@ import {
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
 import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type { DesktopAppMenuItemHandler, DesktopAppMenusApi } from "../desktop/app-menus.ts";
 import type {
   DesktopNewWindowHandler,
   DesktopWindowMenuItemHandler,
@@ -118,6 +119,20 @@ export type {
   DesktopWindows,
 };
 export type { DesktopTrayPanelSettings, DesktopTraySettings } from "../desktop/tray-config.ts";
+/** The app's own menus as the backend drives them (`setMenu`, `onAppMenuItem`, …). */
+export type {
+  DesktopAppMenuItemContext,
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+} from "../desktop/app-menus.ts";
+export type {
+  DesktopMenuAnchor,
+  DesktopMenuItemSpec,
+  DesktopMenuItemState,
+  DesktopMenuItemType,
+  DesktopMenuUpdate,
+  DesktopWindowMenuAppItem,
+} from "../desktop/menu-config.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
@@ -765,6 +780,15 @@ export interface RunDesktopOptions {
    */
   onWindowMenuItem?: DesktopWindowMenuItemHandler;
   /**
+   * Called once per click on one of the app's own top-level menus' items (`desktop.menu.menus`,
+   * `setMenu`) or a window's own Window-menu items (`setWindowMenuAppItems`), with the item's `id`
+   * and the context: the key window (`{ id, key? }`, or `null` with none open), the menu, a
+   * checkbox's or radio item's new state, the window a Window-menu item belongs to. The pages hear
+   * the same clicks (`onAppMenuItem` in `denext/desktop/app`); extensions get them too
+   * (`host.onAppMenuItem`). A throw or a rejection is logged.
+   */
+  onAppMenuItem?: DesktopAppMenuItemHandler;
+  /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
    * {@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the
@@ -809,7 +833,7 @@ export interface RunDesktopOptions {
  * `onDesktopEvent(cap, event, …)` in `denext/desktop/client` receives) — the seam OS events (deep
  * links, open-file, …) are emitted through.
  */
-export interface DesktopRuntime {
+export interface DesktopRuntime extends DesktopAppMenusApi {
   /** The adopted initial `Deno.BrowserWindow`, or `undefined` outside the desktop runtime. */
   readonly window: unknown;
   /**
@@ -1822,6 +1846,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
+    ...(options.onAppMenuItem ? { onAppMenuItem: options.onAppMenuItem } : {}),
     ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;
@@ -1860,6 +1885,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       // An extension host's openWindow is desktop.ts's windows.open.
       ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       onWindowMenuItem: (fn: DesktopWindowMenuItemHandler) => windows.onWindowMenuItem(fn),
+      appMenus: windows.appMenus,
       onSecondInstance: (fn) => windows.onSecondInstance(fn),
       onNotificationClick: (fn) => notificationClicks.add(fn),
       dev: devDecision.proxy,
@@ -1938,6 +1964,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     },
     onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn, DESKTOP_TS_OWNER) ?? (() => {}),
     quit: () => windows.lifecycle?.requestQuit(DESKTOP_TS_OWNER) ?? Promise.resolve(false),
+    ...windows.appMenus,
   };
 }
 

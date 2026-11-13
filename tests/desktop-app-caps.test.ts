@@ -723,7 +723,9 @@ Deno.test("app: the application menu's clicks are pulled; ids it does not have a
   click(win, "new");
   click(win, "not-mine");
   assertEquals(emitted, ["app:action"]);
-  assertEquals(await call(cap, "take"), [{ source: "menu", id: "new" }]);
+  assertEquals(await call(cap, "take"), [
+    { source: "menu", id: "new", kind: "appMenu", keyWindow: null },
+  ]);
   assertEquals(await call(cap, "take"), []);
   const caps = await call(cap, "capabilities") as Record<string, boolean>;
   assertEquals([caps.appMenu, caps.accelerators, caps.tray, caps.dockMenu], [
@@ -1399,6 +1401,8 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     icons: false,
     tooltips: false,
     destructive: false,
+    customMenus: false,
+    appLevelMenu: false,
     tray: true,
     trayReason: null,
     trayHost: "unknown",
@@ -1459,7 +1463,9 @@ Deno.test("app: badge text is checked; an empty dock menu clears it; install is 
   await call(cap, "setAppMenu", { menu: [{ id: "n", label: "N" }] });
   win.dispatchEvent(new CustomEvent("menuclick", { detail: undefined }));
   click(win, "n");
-  assertEquals(await call(cap, "take"), [{ source: "menu", id: "n" }]);
+  assertEquals(await call(cap, "take"), [
+    { source: "menu", id: "n", kind: "appMenu", keyWindow: null },
+  ]);
   assertEquals(emitted, ["app:action"]);
 });
 

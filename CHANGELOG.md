@@ -65,6 +65,26 @@ and this project adheres to
   (`denext desktop run` / `dev` builds, a failed copy or launch) the app keeps the accessory
   behaviour; on Windows and Linux the value is `true`. Needs `desktop.app.identifier`, and not with
   `desktop.permissions: "strict"` or `activationPolicy: "regular"`.
+- **Desktop: the app's own top-level menus, per-window menu state and Window-menu items.**
+  `desktop.menu.menus: [{ id, label, after?, items }]` adds menus beside the managed ones (on macOS
+  the app menu, Edit and Window), after `"app"`, `"file"`, `"edit"`, `"view"` (default) or
+  `"window"`; items take `accelerator`, `enabled`, `checked`, `type` (`"checkbox"` toggles,
+  `"radio"` excludes the rest of its `group`), submenus, separators, roles and icons. The page
+  (`denext/desktop/app`) and the backend (`runDesktop`'s result, an extension's host) change them
+  with `setMenu(menuId, { label?, after?, items } | null)` and `setMenuItemState(itemId, { checked?,
+  enabled?, label? }, { windowId? })`: state set for a window shows while it is key, over the
+  app-wide state. `setWindowMenuAppItems` puts a window's own items (one per MDI document, Cascade,
+  Tile) in the Window menu below the window list while it is key, cleared when it closes. Clicks
+  reach the pages' `onAppMenuItem(id, info)` (now with `kind`, `keyWindow`, `menu`, `checked`) and
+  the backend's `runDesktop({ onAppMenuItem })` / `host.onAppMenuItem` with the key window. Once an
+  app uses them every app window gets its own menu bar with its state (on Windows and Linux not an
+  overlay or frameless one); macOS also gets the app-level menu (`Deno.desktop.setApplicationMenu`,
+  runtime 3.0.0-denext.21) with the app-wide state. `appCapabilities()` reports `customMenus` and
+  `appLevelMenu`. No new runtime is needed: the runtime's per-window application menus and
+  checkmarks carry it (radio items show a checkmark, not a dot).
+- **Desktop: the managed macOS menu bar.** With `desktop.menu.window` and no page `setAppMenu`, the
+  bar is now the app menu, Edit and Window: the Window submenu used to be the bar's first submenu,
+  which AppKit shows under the app's name, with the runtime's Edit menu after it.
 
 ### Documentation
 

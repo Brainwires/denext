@@ -21,6 +21,7 @@ import type {
   DesktopWindowRef,
 } from "./app-windows.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
+import type { DesktopAppMenusApi } from "./app-menus.ts";
 import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
 
 export type { StandardSchemaV1 };
@@ -251,10 +252,11 @@ export interface DesktopConfirmOptions {
  * The window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
  * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
- * items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
+ * items, `setMenu` / `setMenuItemState` / `setWindowMenuAppItems` / `onAppMenuItem` drive the app's
+ * own top-level menus and each window's Window-menu items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
  * every top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
  */
-export interface DesktopExtensionHost {
+export interface DesktopExtensionHost extends DesktopAppMenusApi {
   /**
    * Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be
    * one the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.

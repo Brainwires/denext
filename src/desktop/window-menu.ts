@@ -89,7 +89,10 @@ export type DesktopNewWindowHandler = (
 
 /** A menu the backend contributes to the application menu ({@link ./caps/app.ts}). */
 export interface BackendMenu {
-  /** The "Window" submenu's items. */
+  /**
+   * The "Window" submenu's own items (denext's, the app's, the window list), without the macOS
+   * roles: {@linkcode windowSubmenuItems} adds those and a window's own items around them.
+   */
   readonly items: DesktopMenuItem[];
   /** Its item ids. */
   readonly ids: ReadonlySet<string>;
@@ -210,13 +213,11 @@ function denextItems(st: MenuState, items: DesktopMenuItem[], ids: Set<string>):
   if (s.reopenClosed === true || s.reopenClosed === "list") items.push(reopenItems(st, ids));
 }
 
-/** The submenu's items now. */
+/** The submenu's own items now (no macOS roles: {@linkcode windowSubmenuItems} adds them). */
 function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
   const s = st.options.settings;
   const items: DesktopMenuItem[] = [];
   const ids = new Set<string>();
-  const mac = st.os === "darwin";
-  if (mac) items.push({ role: { role: "minimize" } }, { role: { role: "zoom" } }, "separator");
   denextItems(st, items, ids);
   addGroup(
     items,
@@ -227,8 +228,34 @@ function build(st: MenuState): { items: DesktopMenuItem[]; ids: Set<string> } {
     const windows = st.options.registry.list().filter((w) => w.kind !== "panel");
     addGroup(items, ids, windows.map((w) => [FOCUS_PREFIX + w.id, labelOf(w)] as const));
   }
-  if (mac && items.length > 3) items.push("separator", { role: { role: "front" } });
   return { items, ids };
+}
+
+/**
+ * The "Window" submenu as shown: the backend's own items (`body`), then a window's own items
+ * (`extra`, `setWindowMenuAppItems`) after a separator; on macOS between Minimize / Zoom and
+ * Bring All to Front, as the OS's Window menu has them (Bring All to Front only when there is
+ * more than the two roles).
+ *
+ * @param os The running OS.
+ * @param body The backend's items ({@linkcode BackendMenu.items}).
+ * @param extra The key window's own items.
+ * @returns The submenu's entries.
+ */
+export function windowSubmenuItems(
+  os: string,
+  body: readonly DesktopMenuItem[],
+  extra: readonly DesktopMenuItem[] = [],
+): DesktopMenuItem[] {
+  const items: DesktopMenuItem[] = [...body];
+  if (extra.length > 0) {
+    separate(items);
+    items.push(...extra);
+  }
+  if (os !== "darwin") return items;
+  const roles: DesktopMenuItem[] = [{ role: { role: "minimize" } }, { role: { role: "zoom" } }];
+  if (items.length === 0) return roles;
+  return [...roles, "separator", ...items, "separator", { role: { role: "front" } }];
 }
 
 /** Set the submenu from the state now. */
