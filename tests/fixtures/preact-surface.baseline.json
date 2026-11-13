@@ -5,7 +5,7 @@
     "preact-iso": "2.12.2",
     "@preact/signals": "2.11.3"
   },
-  "capturedAt": "2026-10-24T02:23:20.194Z",
+  "capturedAt": "2026-11-13T13:34:28.328Z",
   "surfaces": [
     {
       "specifier": "preact",
@@ -1480,6 +1480,74 @@
             {
               "arity": 3,
               "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        }
+      }
+    },
+    {
+      "specifier": "preact-render-to-string/jsx",
+      "resolved": true,
+      "symbols": {
+        "render": {
+          "name": "render",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "shallowRender": {
+          "name": "shallowRender",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "preact-render-to-string/stream-node",
+      "resolved": true,
+      "symbols": {
+        "renderToPipeableStream": {
+          "name": "renderToPipeableStream",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
               "restParam": false
             }
           ],

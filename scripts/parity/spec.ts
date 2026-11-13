@@ -114,6 +114,8 @@ export const PREACT_SPECIFIERS: ReadonlyArray<readonly [specifier: string, file:
   ["preact/jsx-runtime", "jsx-runtime.ts"],
   ["preact-render-to-string", "render-to-string.ts"],
   ["preact-render-to-string/stream", "render-to-string.ts"],
+  ["preact-render-to-string/jsx", "render-to-string-jsx.ts"],
+  ["preact-render-to-string/stream-node", "render-to-string-stream-node.ts"],
   ["preact-iso", "iso.ts"],
   ["@preact/signals", "signals.ts"],
 ];
