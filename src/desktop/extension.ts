@@ -21,6 +21,7 @@ import type {
   DesktopWindowRef,
 } from "./app-windows.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
+import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
 
 export type { StandardSchemaV1 };
 
@@ -329,6 +330,16 @@ export interface DesktopExtensionHost {
    * rejection is logged. Never called without denext's pinned runtime. Returns the unsubscribe.
    */
   onSecondInstance(fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>): () => void;
+  /**
+   * Call `fn` for every click the runtime reports on one of the app's notifications, with its
+   * `tag`, the `action` button (`null` for the notification itself), its `data` and `launch`:
+   * any tag, including notifications the extension posted itself through
+   * `Deno.desktop.notifications` (the pages still get the clicks on theirs). The click that
+   * launched the app reaches `fn` too (`launch: true`, on a microtask after it subscribed). A throw
+   * or a rejection is logged. Never called without denext's pinned runtime. Returns the
+   * unsubscribe.
+   */
+  onNotificationClick(fn: DesktopNotificationClickListener): () => void;
   /**
    * Call `fn` before every top-level navigation of every window, ahead of the navigation guard
    * (`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`

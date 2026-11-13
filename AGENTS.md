@@ -665,7 +665,7 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 `runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
-buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`);
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
 `deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
 on macOS and Windows (on Linux, what denext posted this run). `context-menu`

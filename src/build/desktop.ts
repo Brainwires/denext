@@ -138,6 +138,15 @@ import {
   type DesktopWillNavigateHandler,
   type WillNavigateHooks,
 } from "../desktop/will-navigate.ts";
+export type {
+  DesktopNotificationClick,
+  DesktopNotificationClickListener,
+} from "../desktop/notification-clicks.ts";
+import {
+  createNotificationClickHooks,
+  type DesktopNotificationClickListener,
+  type NotificationClickHooks,
+} from "../desktop/notification-clicks.ts";
 export {
   defineDesktopExtension,
   type DesktopCaller,
@@ -738,6 +747,15 @@ export interface RunDesktopOptions {
    */
   onWillNavigate?: DesktopWillNavigateHandler;
   /**
+   * Called for every click the runtime reports on one of the app's notifications, whatever posted
+   * it — `scheduleNotification` / a page's `new Notification(…)` (still delivered to the pages as
+   * well) or the backend itself through `Deno.desktop.notifications` — with its `tag`, the
+   * `action` button (`null` for the notification itself), its `data` and `launch`. The click that
+   * launched the app arrives too (`launch: true`), right after `runDesktop` subscribed. A throw or
+   * a rejection is logged. Never called without denext's pinned runtime (or in a sidecar's child).
+   */
+  onNotificationClick?: DesktopNotificationClickListener;
+  /**
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
    * key when it was opened with one), or `null` with no window open. The clicks never reach the
@@ -841,6 +859,15 @@ export interface DesktopRuntime {
    * called on a runtime without the hook (or in a sidecar's child).
    */
   onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
+  /**
+   * Call `fn` for every click on one of the app's notifications, as
+   * {@linkcode RunDesktopOptions.onNotificationClick} is: any tag, the backend's own
+   * `Deno.desktop.notifications` posts included. The click that launched the app reaches `fn` too
+   * (`launch: true`, on a microtask after it subscribed), however late it subscribes. A throw or a
+   * rejection is logged. Returns the unsubscribe; never called without denext's pinned runtime (or
+   * in a sidecar's child).
+   */
+  onNotificationClick(fn: DesktopNotificationClickListener): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -1815,6 +1842,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     if (cap.onSecondInstance) windows.onSecondInstance(cap.onSecondInstance);
   }
   const navigation = desktopNavigationHooks(windows, appWindow, options.onWillNavigate);
+  const notificationClicks = desktopNotificationClickHooks(options.onNotificationClick);
   const bridge = createDesktopBridge(
     capabilities,
     {
@@ -1833,6 +1861,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       onWindowMenuItem: (fn: DesktopWindowMenuItemHandler) => windows.onWindowMenuItem(fn),
       onSecondInstance: (fn) => windows.onSecondInstance(fn),
+      onNotificationClick: (fn) => notificationClicks.add(fn),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
@@ -1900,6 +1929,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onDockReopen: (fn) => windows.onDockReopen(fn),
     onSecondInstance: (fn) => windows.onSecondInstance(fn),
     onWillNavigate: (fn) => navigation.add(fn),
+    onNotificationClick: (fn) => notificationClicks.add(fn),
     trust,
     emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {
@@ -1929,6 +1959,21 @@ function desktopNavigationHooks(
 }
 
 /**
+ * The backend's notification-click hooks over `Deno.desktop`, with
+ * `runDesktop({ onNotificationClick })` subscribed first when given.
+ */
+function desktopNotificationClickHooks(
+  first: DesktopNotificationClickListener | undefined,
+): NotificationClickHooks {
+  const hooks = createNotificationClickHooks(
+    desktopAppApi(),
+    (m) => console.warn(`desktop: ${m}`),
+  );
+  if (first) hooks.add(first);
+  return hooks;
+}
+
+/**
  * When this launch is a child of one of the app's module sidecars ({@linkcode SIDECAR_CHILD_ENV},
  * see `src/desktop/sidecar-child.ts`), run that sidecar's module and return the child's inert
  * runtime; otherwise `undefined` (and the sidecar-child module is never loaded).
@@ -1954,6 +1999,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
   return {
     window: undefined,
     ...noDesktopWindows(),
+    onNotificationClick: () => () => {},
     trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
     emit: () => {},
     sidecar: (name) => {
