@@ -160,12 +160,34 @@ export function invokeComponent(resolved: ResolvedComponentType, props: unknown)
   if ((fn as { prototype?: { isReactComponent?: unknown } }).prototype?.isReactComponent != null) {
     return memoClassElement(fn, props);
   }
-  return resolved.forwardsRef
-    ? (fn as (p: unknown, ref?: unknown) => unknown)(
+  if (resolved.forwardsRef) {
+    return (fn as (p: unknown, ref?: unknown) => unknown)(
       props,
       (props as { ref?: unknown })?.ref ?? null,
-    )
-    : (fn as (p: unknown) => unknown)(props);
+    );
+  }
+  const preactContext = foreignPreactContext(fn);
+  return preactContext === undefined
+    ? (fn as (p: unknown) => unknown)(props)
+    : (fn as (p: unknown, c: unknown) => unknown)(props, preactContext.value);
+}
+
+/**
+ * The value a component from a package that bundles its own copy of Preact expects as its second
+ * argument: real Preact calls a function component whose `contextType` is one of its contexts as
+ * `(props, value)` (a `Context.Consumer` is `(props, value) => props.children(value)`). Such a
+ * package (a JSR icon set importing `npm:preact`) renders its elements on denext, but its
+ * contexts are not denext's, so the consumer gets the context's default value. Undefined for every
+ * other component (Preact's contexts carry a `"__cC<n>"` id, as `_id` or mangled `__c`).
+ */
+function foreignPreactContext(fn: unknown): { value: unknown } | undefined {
+  const ctx = (fn as { contextType?: unknown }).contextType as
+    | { _id?: unknown; __c?: unknown; _defaultValue?: unknown; __?: unknown }
+    | undefined;
+  if (typeof ctx !== "function" && (typeof ctx !== "object" || ctx === null)) return undefined;
+  const id = ctx.__c ?? ctx._id;
+  if (typeof id !== "string" || !id.startsWith("__cC")) return undefined;
+  return { value: "__" in ctx ? ctx.__ : ctx._defaultValue };
 }
 
 /**
