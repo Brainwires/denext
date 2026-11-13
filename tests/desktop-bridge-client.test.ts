@@ -11,6 +11,7 @@ import {
   MAX_RPC_BODY_BYTES,
   resetDesktopBridgeForTesting,
   RPC_PATH,
+  setDesktopStreamTimingForTesting,
   subscribeDesktopEvent,
   TOKEN_HEADER,
 } from "../src/desktop/bridge-client.ts";
@@ -255,4 +256,88 @@ Deno.test("events: a dropped stream reconnects with Last-Event-ID and only gets 
     assertEquals(got, [1, 2]);
     stop();
   });
+});
+
+/** The events requests the page has made so far. */
+const eventRequests = (rt: ReturnType<typeof createFakeDesktopRuntime>) =>
+  rt.requests.filter((r) => r.path === EVENTS_PATH);
+
+Deno.test("events: a stream that goes silent (no heartbeat) is dropped and reconnected with Last-Event-ID", async () => {
+  const rt = createFakeDesktopRuntime({});
+  // The runtime's heartbeat is 15 s; the page gives up after 2.5 of them. Scaled down here.
+  const restoreTiming = setDesktopStreamTimingForTesting({ heartbeatTimeoutMs: 150 });
+  try {
+    await withRuntime(rt, async () => {
+      const got: unknown[] = [];
+      const stop = subscribeDesktopEvent("menu", "click", (d) => got.push(d));
+      await until(() => rt.openStreams() === 1);
+      rt.emit("menu", "click", 1);
+      await until(() => got.length === 1);
+      rt.stallStreams(); // the connection dies without closing
+      rt.emit("menu", "click", 2); // never reaches the stalled stream
+      await until(() => eventRequests(rt).length >= 2, 5000);
+      assertEquals(eventRequests(rt).at(-1)!.headers.get("last-event-id"), "1");
+      await until(() => got.length === 2); // replayed on the new connection
+      assertEquals(rt.stalledStreams(), 0); // the dead one was closed, not leaked
+      rt.emit("menu", "click", 3);
+      await until(() => got.length === 3);
+      assertEquals(got, [1, 2, 3]);
+      stop();
+    });
+  } finally {
+    restoreTiming();
+  }
+});
+
+Deno.test("events: the stream reconnects at once on `online`, and on becoming visible after a long hidden spell", async () => {
+  const rt = createFakeDesktopRuntime({});
+  // A heartbeat timeout far beyond the test, so only the events can reconnect it.
+  const restoreTiming = setDesktopStreamTimingForTesting({
+    heartbeatTimeoutMs: 600_000,
+    hiddenReconnectMs: 50,
+  });
+  const g = globalThis as { document?: unknown };
+  const prevDocument = g.document;
+  const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+  g.document = doc;
+  try {
+    await withRuntime(rt, async () => {
+      const got: unknown[] = [];
+      const stop = subscribeDesktopEvent("menu", "click", (d) => got.push(d));
+      await until(() => rt.openStreams() === 1);
+      rt.emit("menu", "click", 1);
+      await until(() => got.length === 1);
+
+      rt.stallStreams();
+      rt.emit("menu", "click", 2);
+      globalThis.dispatchEvent(new Event("online"));
+      await until(() => got.length === 2);
+      assertEquals(eventRequests(rt).length, 2);
+
+      // A short hidden spell keeps the connection; a long one replaces it.
+      doc.visibilityState = "hidden";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      doc.visibilityState = "visible";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await rt.settled();
+      assertEquals(eventRequests(rt).length, 2);
+
+      rt.stallStreams();
+      rt.emit("menu", "click", 3);
+      doc.visibilityState = "hidden";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((r) => setTimeout(r, 80));
+      doc.visibilityState = "visible";
+      doc.dispatchEvent(new Event("visibilitychange"));
+      await until(() => got.length === 3);
+      assertEquals(eventRequests(rt).length, 3);
+      assertEquals(eventRequests(rt).at(-1)!.headers.get("last-event-id"), "2");
+      assertEquals(got, [1, 2, 3]);
+      stop();
+    });
+  } finally {
+    restoreTiming();
+    if (prevDocument === undefined) delete g.document;
+    else g.document = prevDocument;
+  }
 });

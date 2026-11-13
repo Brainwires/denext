@@ -177,6 +177,13 @@ and this project adheres to
 
 ### Fixed
 
+- **Desktop: a page's event stream recovers from a connection that died silently.** The bridge
+  client never watched the runtime's 15-second heartbeat, so after a sleep and wake, a stalled
+  socket or a relay hiccup that left the connection open but dead, the page got no more
+  `onDesktopEvent` pushes for as long as it stayed open. Nothing read for 2.5 heartbeats now counts
+  as a dead connection: the page drops it and reconnects with backoff, resuming with
+  `Last-Event-ID` and taking its pull queues again as on every connect. It also reconnects at once
+  on `online`, and when it is shown again after being hidden for longer than that.
 - **Desktop: a reloaded page no longer gets the events of the page before it.** denext's own
   one-shot events (menu, tray, Dock and shortcut signals, focus and blur, a close request, the
   windows opening and closing, system-stats samples) are sent with `retain: false`, so a reloaded

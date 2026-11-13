@@ -50,6 +50,13 @@ export interface FakeRuntime {
   settled(ms?: number): Promise<void>;
   /** Close every open event stream from the runtime side (a dropped connection). */
   dropStreams(): void;
+  /**
+   * Stop sending on every open event stream without closing it (a connection that died silently:
+   * sleep, a stalled socket). Its frames, heartbeats included, never arrive; the page has to notice.
+   */
+  stallStreams(): void;
+  /** How many stalled streams the page has not closed yet. */
+  stalledStreams(): number;
   /** Install `__denext` + `fetch`; returns the restore function. */
   install(): () => void;
 }
@@ -76,6 +83,7 @@ export function createFakeDesktopRuntime(
   const requests: FakeRequest[] = [];
   const log: Array<{ id: number; frame: string }> = [];
   const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  const stalled = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const enc = new TextEncoder();
   let nextId = 1;
   let inFlight = 0;
@@ -182,10 +190,11 @@ export function createFakeDesktopRuntime(
       },
       cancel() {
         streams.delete(ctrl);
+        stalled.delete(ctrl);
       },
     });
     req.signal?.addEventListener("abort", () => {
-      if (streams.delete(ctrl)) {
+      if (streams.delete(ctrl) || stalled.delete(ctrl)) {
         try {
           ctrl.close();
         } catch {
@@ -238,6 +247,11 @@ export function createFakeDesktopRuntime(
       }
       streams.clear();
     },
+    stallStreams() {
+      for (const c of streams) stalled.add(c);
+      streams.clear();
+    },
+    stalledStreams: () => stalled.size,
     install() {
       const g = globalThis as { __denext?: unknown };
       const prevDenext = g.__denext;
@@ -253,7 +267,7 @@ export function createFakeDesktopRuntime(
         return handler(req);
       };
       return () => {
-        for (const c of streams) {
+        for (const c of [...streams, ...stalled]) {
           try {
             c.close();
           } catch {
@@ -261,6 +275,7 @@ export function createFakeDesktopRuntime(
           }
         }
         streams.clear();
+        stalled.clear();
         g.__denext = prevDenext;
         globalThis.fetch = prevFetch;
       };
