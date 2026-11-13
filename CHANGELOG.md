@@ -109,6 +109,14 @@ and this project adheres to
   bar is now the app menu, Edit and Window: the Window submenu used to be the bar's first submenu,
   which AppKit shows under the app's name, with the runtime's Edit menu after it.
 
+### Fixed
+
+- **A module sidecar's `process.connected` reads `undefined`.** The worker a `run: { module }`
+  sidecar runs in had set it to `false`; Node's main thread without an IPC channel defines none of
+  `process.connected`, `channel`, `send` or `disconnect`, and now neither does the sidecar, so a
+  library that tells a fork from a main program by them sees a main program. Its
+  `globalThis.location` stays `undefined` too, as before.
+
 ### Documentation
 
 - **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains

@@ -76,9 +76,10 @@ const writer = (sink) => function (chunk, enc, cb) {
 };
 try { process.stdout.write = writer(out); process.stderr.write = writer(err); } catch { /* read-only */ }
 // A sidecar is the main program of its own world, without an IPC channel (as Node's main thread
-// without one): not a worker_threads worker, whose process.connected / channel / send throw.
-for (const [key, value] of [["connected", false], ["channel", undefined], ["send", undefined], ["disconnect", undefined]]) {
-  try { Object.defineProperty(process, key, { value, configurable: true, writable: true }); } catch { /* keep */ }
+// without one, where connected, channel, send and disconnect are all undefined): not a
+// worker_threads worker, whose process.connected / channel / send throw or read false.
+for (const key of ["connected", "channel", "send", "disconnect"]) {
+  try { Object.defineProperty(process, key, { value: undefined, configurable: true, writable: true }); } catch { /* keep */ }
 }
 // Nor does it have a location (Node's main thread has none): a blob: worker's WorkerLocation reads
 // origin "null", and a library that resolves URLs against location.origin + location.pathname

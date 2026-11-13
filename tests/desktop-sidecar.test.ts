@@ -823,6 +823,28 @@ Deno.test("worker launcher: the module sees no globalThis.location (as Node's ma
   }
 });
 
+Deno.test("worker launcher: process.connected and process.channel read undefined (Node's main thread without IPC)", async () => {
+  // Node defines neither without an IPC channel; a library that checks `process.connected === false`
+  // or `typeof process.channel` to detect a fork must see a plain main program.
+  const { dir, entry } = await sidecarModule(
+    'import process from "node:process";\n' +
+      'console.log("ipc " + typeof process.connected + " " + typeof process.channel + " " + typeof process.send + " " + typeof process.disconnect);\n' +
+      "globalThis.denextSidecar.ready();\n",
+  );
+  const ctx = realCtx(def());
+  const inst = await workerSidecarLauncher({ entry })(ctx);
+  try {
+    await until(() => ctx.readySignals === 1);
+    assert(
+      ctx.lines.includes("stdout:ipc undefined undefined undefined undefined"),
+      `the module saw an IPC channel: ${JSON.stringify(ctx.lines)}`,
+    );
+  } finally {
+    await inst.stop(0);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** A program sidecar: echoes its first stdin line, then exits when stdin closes (or on SIGTERM). */
 const PROGRAM = `
 const reader = Deno.stdin.readable.pipeThrough(new TextDecoderStream()).getReader();
