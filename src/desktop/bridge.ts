@@ -65,6 +65,7 @@ import {
 import type { PickedPaths } from "./picked-paths.ts";
 import type { WindowLifecycleHost } from "./window-lifecycle.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
+import type { DesktopAppMenusApi } from "./app-menus.ts";
 import type {
   DesktopOpenWindowOptions,
   DesktopSecondInstanceEvent,
@@ -152,6 +153,12 @@ export interface DesktopBridgeOptions {
    * a subscription is kept by nobody.
    */
   readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
+  /**
+   * The app's own top-level menus and the windows' Window-menu items: what the host's `setMenu`,
+   * `setMenuItemState`, `setWindowMenuAppItems` and `onAppMenuItem` delegate to. Without it (no
+   * desktop runtime, a test) the calls throw `unsupported` and a subscription is kept by nobody.
+   */
+  readonly appMenus?: DesktopAppMenusApi;
   /**
    * Subscribe to every window's top-level navigations: what
    * {@link DesktopExtensionHost.onWillNavigate} delegates to. Without it (no desktop runtime, a
@@ -491,6 +498,22 @@ export function runOnDesktopMainThread(
   return context === undefined ? api.runOnMainThread(fn) : api.runOnMainThread(fn, context);
 }
 
+/** The host's custom-menu calls over `api`, or `unsupported` ones without it. */
+function hostAppMenus(api: DesktopAppMenusApi | undefined): DesktopAppMenusApi {
+  if (api) return api;
+  const none = (): never => {
+    throw new DesktopCapError("unsupported", "the app's menus need the desktop runtime's windows", {
+      status: 501,
+    });
+  };
+  return {
+    setMenu: none,
+    setMenuItemState: none,
+    setWindowMenuAppItems: none,
+    onAppMenuItem: () => () => {},
+  };
+}
+
 /**
  * Create a desktop bridge over the enabled capabilities. Rejects duplicate capability names (an
  * extension colliding with a built-in) at construction.
@@ -582,6 +605,7 @@ export function createDesktopBridge(
     onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn, cap.name),
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
+    ...hostAppMenus(options.appMenus),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
     onNotificationClick: (fn) => options.onNotificationClick?.(fn) ?? (() => {}),
     onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),

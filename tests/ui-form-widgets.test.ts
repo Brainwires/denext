@@ -99,6 +99,8 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     // A deploy adapter's functions (its `name` is a text field).
     "deploy.adapter.deploy",
     "deploy.adapter.prepare",
+    // A custom menu's submenu entries: the item type is recursive, so its second level is JSON.
+    "desktop.menu.menus[].items[].items",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
     "i18n.messages",
     // A job-history store: an object of methods, as opaque as `cache.store`.

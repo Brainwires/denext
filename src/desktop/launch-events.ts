@@ -254,6 +254,11 @@ export interface DesktopAppApi {
   readonly launchNotificationResponses?: readonly DesktopNotificationResponse[];
   /** What menus can do on this backend (runtime 2.9.7-denext.5 and later). */
   menuCapabilities?(): DesktopMenuCapabilities;
+  /**
+   * The app-level application menu, owned by no window (where the runtime has one): macOS shows it
+   * while the key window has no menu of its own; on Windows and Linux it is set on every window.
+   */
+  setApplicationMenu?(menu: DesktopMenuItem[] | null): void;
   /** DevTools control: `enabled` is false when the app launched with DevTools off. */
   readonly devtools?: { readonly enabled?: boolean };
   /** `openurl` / `openfile` / `secondinstance`. */

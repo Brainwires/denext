@@ -167,7 +167,14 @@ Deno.test("window menu: the items, their shortcuts and the platform's roles", ()
     "denext:window:focus:main:workspace",
   ]);
   const mac = setup({ os: "darwin", title: "Qutty" });
-  assertEquals(windowSubmenu(mac.main).map(brief), [
+  // With no page menu the bar is the managed one: AppKit shows the first submenu under the app's
+  // name, so the app menu and Edit come first.
+  assertEquals((mac.main.menus.at(-1) ?? []).map(brief), [
+    "submenu:App",
+    "submenu:Edit",
+    "submenu:Window",
+  ]);
+  assertEquals(windowSubmenuLabelled(mac.main, "window").map(brief), [
     "role:minimize",
     "role:zoom",
     "---",
@@ -305,7 +312,9 @@ Deno.test("window menu: merged into a page's menu, into its own Window submenu; 
   // The page's own items still reach it; the backend's do not.
   main.click("open");
   main.click("denext:window:new");
-  assertEquals(await app.methods.take.handler({}, ctx()), [{ source: "menu", id: "open" }]);
+  assertEquals(await app.methods.take.handler({}, ctx()), [
+    { source: "menu", id: "open", kind: "appMenu", keyWindow: { id: "main", key: "workspace" } },
+  ]);
   assertEquals(s.windows.list().length, 2, "New Window still worked");
 });
 
@@ -380,7 +389,9 @@ Deno.test("window menu: the app-level menu event drives the menu, and the main w
   }, ctx());
   appClick(api, "open");
   main.click("open");
-  assertEquals(await app.methods.take.handler({}, ctx()), [{ source: "menu", id: "open" }]);
+  assertEquals(await app.methods.take.handler({}, ctx()), [
+    { source: "menu", id: "open", kind: "appMenu", keyWindow: { id: "window-1", key: "window-1" } },
+  ]);
 });
 
 Deno.test("window menu: with a non-main window key, its clicks still arrive (app-level event)", () => {

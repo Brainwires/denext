@@ -1275,7 +1275,8 @@ export interface DesktopConfig {
    * submenu of them by title, each reopening its window), `list`
    * (the open windows, each focusing its window) and `items` (the app's own items, whose clicks
    * reach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the
-   * submenu also carries the standard Minimize / Zoom / Bring All to Front items.
+   * submenu also carries the standard Minimize / Zoom / Bring All to Front items. `menus` adds the
+   * app's own top-level menus beside the managed ones (see {@link DesktopMenuConfig.menus}).
    */
   menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
@@ -1802,8 +1803,21 @@ export interface DesktopTrayMenuEntry {
   separator?: boolean;
 }
 
-/** The application menu's standard window items ({@link DesktopConfig.menu}). */
+/** The application menu's standard window items and the app's own menus ({@link DesktopConfig.menu}). */
 export interface DesktopMenuConfig {
+  /**
+   * The app's own top-level menus (at most 16), beside the managed ones (on macOS the app menu,
+   * Edit and Window): each `{ id, label, after?, items }`, placed after the `after` menu (`"app"`,
+   * `"file"`, `"edit"`, `"view"` (default) or `"window"`, matched by label; one the bar does not
+   * have falls back to the one before it). A page's `setAppMenu` keeps them too. Items are
+   * `{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }` (`type` `"checkbox"`
+   * toggles on a click, `"radio"` checks itself and unchecks the rest of its `group`; `icon` a
+   * base64 PNG), submenus `{ label, items }`, separators `{ type: "separator" }` and roles
+   * `{ role }`. Item ids are unique across every menu. Clicks reach the pages' `onAppMenuItem` and
+   * the backend's `runDesktop({ onAppMenuItem })` with the key window; the pages and the backend
+   * change them at runtime with `setMenu` / `setMenuItemState` (app-wide or for one window).
+   */
+  menus?: readonly DesktopCustomMenuConfig[];
   /** The "Window" submenu's items. */
   window?: {
     /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
@@ -1826,6 +1840,58 @@ export interface DesktopMenuConfig {
      */
     items?: readonly DesktopWindowMenuItemConfig[];
   };
+}
+
+/** One of the app's own top-level menus ({@link DesktopMenuConfig.menus}). */
+export interface DesktopCustomMenuConfig {
+  /** Its id (unique, at most 64 characters): what `setMenu(id, …)` names. */
+  id: string;
+  /** The label in the menu bar. */
+  label: string;
+  /** The standard menu it goes after (default `"view"`). */
+  after?: "app" | "file" | "edit" | "view" | "window";
+  /** Its entries (at most 500, submenus included, nested at most 8 deep). */
+  items: readonly DesktopCustomMenuItemConfig[];
+}
+
+/** One entry of a custom menu ({@link DesktopCustomMenuConfig.items}). */
+export interface DesktopCustomMenuItemConfig {
+  /** What a click reports (unique across every custom menu, at most 128 characters); items need one. */
+  id?: string;
+  /** The label (items and submenus). */
+  label?: string;
+  /** The keyboard shortcut (`"CommandOrControl+Shift+K"`). */
+  accelerator?: string;
+  /** Selectable (default `true`). */
+  enabled?: boolean;
+  /** A checkmark (a checkbox's or radio item's initial state). */
+  checked?: boolean;
+  /** `"normal"` (default), `"checkbox"`, `"radio"`, `"separator"` or `"submenu"` (default with `items`). */
+  type?: "normal" | "checkbox" | "radio" | "separator" | "submenu";
+  /** A radio item's group (default: the radio items of the same submenu without one). */
+  group?: string;
+  /** A submenu's entries. */
+  items?: readonly DesktopCustomMenuItemConfig[];
+  /** A PNG as base64 (drawn where the backend draws menu icons). */
+  icon?: string;
+  /** A standard item the OS handles (`"copy"`, `"toggleFullScreen"`, …). */
+  role?:
+    | "about"
+    | "hide"
+    | "hideOthers"
+    | "unhide"
+    | "quit"
+    | "undo"
+    | "redo"
+    | "cut"
+    | "copy"
+    | "paste"
+    | "selectAll"
+    | "minimize"
+    | "zoom"
+    | "close"
+    | "front"
+    | "toggleFullScreen";
 }
 
 /** One of the app's own items in the backend's "Window" submenu ({@link DesktopMenuConfig.window}). */

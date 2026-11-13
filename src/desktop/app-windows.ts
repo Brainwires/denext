@@ -21,7 +21,7 @@ import {
   type DockLike,
 } from "./caps/app.ts";
 import { createWindowController } from "./caps/window.ts";
-import type { DesktopCapability } from "./extension.ts";
+import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import type { DesktopAppApi } from "./launch-events.ts";
 import type { DesktopAppDirs } from "./app-dirs.ts";
 import type { PickedPaths } from "./picked-paths.ts";
@@ -54,6 +54,11 @@ import {
   type WindowMenu,
 } from "./window-menu.ts";
 import type { DesktopMenuSettings } from "./menu-config.ts";
+import type {
+  DesktopAppMenuItemContext,
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+} from "./app-menus.ts";
 import type { SessionWindow } from "./window-store.ts";
 import {
   applyDesktopWindowSettings,
@@ -293,6 +298,8 @@ export interface DesktopWindowsOptions {
   readonly onDockReopen?: DesktopDockReopenHandler;
   /** `desktop.ts`'s handler of the app's own Window-menu items (`runDesktop({ onWindowMenuItem })`). */
   readonly onWindowMenuItem?: DesktopWindowMenuItemHandler;
+  /** `desktop.ts`'s handler of the custom menus' clicks (`runDesktop({ onAppMenuItem })`). */
+  readonly onAppMenuItem?: DesktopAppMenuItemHandler;
   /** `desktop.ts`'s second launch (`runDesktop({ onSecondInstance })`). */
   readonly onSecondInstance?: DesktopSecondInstanceHandler;
   /** End the process (default `Deno.exit`). */
@@ -372,6 +379,8 @@ export interface DesktopWindowsSetup {
    * extension host's `onWindowMenuItem`. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
+  /** The custom menus and the windows' own Window-menu items, as `desktop.ts` and extensions drive them. */
+  readonly appMenus: DesktopAppMenusApi;
   /**
    * Call `fn` on every second launch of the app (`Deno.desktop`'s `"secondinstance"`), after what
    * `runDesktop({ onSecondInstance })` opens: an extension host's `onSecondInstance`, or a
@@ -401,6 +410,8 @@ interface SetupState {
   readonly closedHandlers: Map<string, Set<() => void>>;
   /** The extensions' handlers of the app's own Window-menu items. */
   readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
+  /** The extensions' handlers of the custom menus' clicks. */
+  readonly appMenuHandlers: Set<DesktopAppMenuItemHandler>;
   /** The extensions' second-launch subscribers. */
   readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
   /** The Dock helper's presence (`desktop.app.dock: "while-window-open"`, macOS), once started. */
@@ -787,12 +798,12 @@ function adoptMain(st: SetupState, registry: WindowRegistry, win: RegistryWindow
   });
 }
 
-/** Call `fn` for a Window-menu item; a throw or a rejection is a warning. */
-function callMenuItemHandler(
+/** Call `fn` for a menu item; a throw or a rejection is a warning. */
+function callMenuItemHandler<C>(
   st: SetupState,
-  fn: DesktopWindowMenuItemHandler,
+  fn: (id: string, ctx: C) => void | Promise<void>,
   id: string,
-  ctx: Parameters<DesktopWindowMenuItemHandler>[1],
+  ctx: C,
 ): void {
   const failed = (err: unknown) =>
     st.warn(`the Window menu item "${id}" failed: ${err instanceof Error ? err.message : err}`);
@@ -826,6 +837,48 @@ function windowMenuItemChosen(st: SetupState, registry: WindowRegistry, id: stri
     );
   }
   for (const fn of handlers) callMenuItemHandler(st, fn, id, ctx);
+}
+
+/**
+ * A custom menu's item or a window's own Window-menu item was chosen: hand it, once, to
+ * `desktop.ts`'s handler and to every extension's (the pages hear of it from the `app` capability).
+ */
+function appMenuItemChosen(st: SetupState, id: string, ctx: DesktopAppMenuItemContext): void {
+  const first = st.options.onAppMenuItem;
+  for (const fn of [...(first ? [first] : []), ...st.appMenuHandlers]) {
+    callMenuItemHandler(st, fn, id, ctx);
+  }
+}
+
+/** The custom menus' calls for `desktop.ts` and extensions (over the `app` controller). */
+function appMenusApi(st: SetupState): DesktopAppMenusApi {
+  const app = (): AppController => {
+    if (st.app) return st.app;
+    throw new DesktopCapError("unsupported", "the app has no window to set a menu on", {
+      status: 501,
+    });
+  };
+  return {
+    setMenu: (menuId, menu) => app().setMenu(menuId, menu),
+    setMenuItemState: (itemId, state, options) =>
+      app().setMenuItemState(itemId, state, options?.windowId),
+    setWindowMenuAppItems: (windowId, items) => app().setWindowMenuAppItems(windowId, items),
+    onAppMenuItem: (fn) => {
+      st.appMenuHandlers.add(fn);
+      return () => void st.appMenuHandlers.delete(fn);
+    },
+  };
+}
+
+/**
+ * The windows that get their own menu bar once the app uses custom menus: every app window (the
+ * tray panel never); on Windows and Linux, where the bar is drawn in the window, not an overlay or
+ * a frameless one.
+ */
+function menuWindows(st: SetupState, registry: WindowRegistry) {
+  return registry.list().filter((w) =>
+    w.kind !== "panel" && (st.os === "darwin" || (w.overlay !== true && w.frameless !== true))
+  );
 }
 
 /** The window menu (`desktop.menu.window`, `runDesktop({ newWindow })`), when either is set. */
@@ -864,6 +917,11 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     os: st.os,
     windows: () => st.registry?.list().map((w) => w.id) ?? ["main"],
     ...(o.runtimeVersion !== undefined ? { runtimeVersion: o.runtimeVersion } : {}),
+    ...(o.menuSettings?.menus ? { menus: o.menuSettings.menus } : {}),
+    menuWindows: () => menuWindows(st, registry),
+    hasWindow: (id) => registry.get(id) !== undefined,
+    keyWindow: () => registry.keyWindow(),
+    onMenuItem: (id, ctx) => appMenuItemChosen(st, id, ctx),
   });
   st.app = app;
   st.menu = createMenu(st, registry, app);
@@ -888,6 +946,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     hasTray: options.wantsTray,
     closedHandlers: new Map(),
     menuItemHandlers: new Set(),
+    appMenuHandlers: new Set(),
     secondInstanceHandlers: new Set(),
   };
   const win = typeof options.window === "object" && options.window !== null
@@ -920,6 +979,8 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     install: () => {
       st.app?.install();
       st.registry?.lifecycle.install();
+      // Each window gets its own menu bar once the app uses custom menus (the main one first).
+      st.registry?.lifecycle.onWindowOpened((info) => st.app?.windowOpened(info.id));
       st.menu?.install();
       installDockHelper(st);
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
@@ -964,6 +1025,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.menuItemHandlers.add(fn);
       return () => void st.menuItemHandlers.delete(fn);
     },
+    appMenus: appMenusApi(st),
     onSecondInstance: (fn) => {
       st.secondInstanceHandlers.add(fn);
       return () => void st.secondInstanceHandlers.delete(fn);
@@ -1040,7 +1102,7 @@ function screensOf(api: DesktopAppApi | undefined): readonly PlacementScreen[] {
  *
  * @returns `windows`, `setDockVisible` and the activation policy for such a `DesktopRuntime`.
  */
-export function noDesktopWindows(): {
+export function noDesktopWindows(): DesktopAppMenusApi & {
   windows: DesktopWindows;
   setDockVisible(visible: boolean): boolean;
   setActivationPolicy(policy: ActivationPolicy): boolean;
@@ -1066,5 +1128,14 @@ export function noDesktopWindows(): {
     onDockReopen: () => () => {},
     onSecondInstance: () => () => {},
     onWillNavigate: () => () => {},
+    setMenu: noMenus,
+    setMenuItemState: noMenus,
+    setWindowMenuAppItems: noMenus,
+    onAppMenuItem: () => () => {},
   };
+}
+
+/** A menu call in a launch with no windows. */
+function noMenus(): never {
+  throw new Error("desktop: this launch has no windows (a sidecar's child)");
 }

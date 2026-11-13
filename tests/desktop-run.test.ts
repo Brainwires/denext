@@ -412,7 +412,11 @@ Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, th
     assertEquals(hostWindows().map((w) => w.key), ["workspace", "notes"]);
     // The Window menu (desktop.menu.window) is on the main window; New Window opens desktop.ts's window.
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
-    assertEquals(menu.map((e) => e.submenu.label), ["Window"]);
+    // On macOS the managed app menu and Edit come first (AppKit's first submenu is the app menu).
+    assertEquals(
+      menu.map((e) => e.submenu.label),
+      Deno.build.os === "darwin" ? ["App", "Edit", "Window"] : ["Window"],
+    );
     // A real click: the window's "menuclick", then (from laufey API 55) Deno.desktop's. Which one
     // denext hears depends on the runtime running the test; exactly one New Window either way.
     const click = { detail: { id: "denext:window:new" } };
@@ -597,7 +601,8 @@ Deno.test("runDesktop (pinned runtime): the app's own Window-menu items reach de
     const main = FakeMenuWindow.all[0];
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
     // (The submenu also carries the macOS roles when the test runs on a Mac.)
-    const items = menu[0].submenu.items.filter((e) => typeof e === "object" && e && "item" in e);
+    const windowMenu = menu.find((e) => e.submenu.label === "Window")!;
+    const items = windowMenu.submenu.items.filter((e) => typeof e === "object" && e && "item" in e);
     assertEquals(items, [{
       item: {
         id: "denext:window:item:end",

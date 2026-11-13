@@ -19,26 +19,7 @@
 import { base64ToBytes } from "../../mobile/base64.ts";
 import { DesktopCapError } from "../extension.ts";
 import type { DesktopMenuItem } from "../launch-events.ts";
-
-/** The standard items the runtime's menus know (case-insensitive there; spelled like Electron here). */
-const MENU_ROLES = [
-  "about",
-  "hide",
-  "hideOthers",
-  "unhide",
-  "quit",
-  "undo",
-  "redo",
-  "cut",
-  "copy",
-  "paste",
-  "selectAll",
-  "minimize",
-  "zoom",
-  "close",
-  "front",
-  "toggleFullScreen",
-] as const;
+import { MENU_ROLES } from "../menu-config.ts";
 
 /** The deepest submenu nesting accepted. */
 const MAX_DEPTH = 8;

@@ -32,9 +32,27 @@ const TRAY_EVENTS = new Set<string>([
   "mouseleave",
 ]);
 
+/** The key window a menu click reports (`null` with no app window open). */
+export type AppMenuKeyWindow = { readonly id: string; readonly key?: string } | null;
+
+/** What an application-menu click carries besides the item's id. */
+export interface AppMenuClickInfo {
+  /** The page's own item (`setAppMenu`), a custom menu's (`setMenu`), or a window's own Window-menu item. */
+  readonly kind: "appMenu" | "menu" | "windowMenu";
+  /** The key window when the item was chosen. */
+  readonly keyWindow: AppMenuKeyWindow;
+  /** A custom item's top-level menu id. */
+  readonly menu?: string;
+  /** A checkbox's or radio item's state after the click. */
+  readonly checked?: boolean;
+  /** The window a Window-menu item belongs to. */
+  readonly windowId?: string;
+}
+
 /** One click, as the runtime queues it. */
 export type AppActionEvent =
-  | { readonly source: "menu" | "dock"; readonly id: string }
+  | ({ readonly source: "menu"; readonly id: string } & AppMenuClickInfo)
+  | { readonly source: "dock"; readonly id: string }
   | {
     readonly source: "tray";
     readonly tray: string;
@@ -45,6 +63,16 @@ export type AppActionEvent =
   | { readonly source: "trayMenu"; readonly tray: string; readonly id: string }
   | { readonly source: "dockReopen"; readonly hasVisibleWindows: boolean };
 
+/** A queued tray event, checked. */
+function parseTray(a: Record<string, unknown>, tray: string): AppActionEvent {
+  return {
+    source: "tray",
+    tray,
+    event: TRAY_EVENTS.has(a.event as string) ? a.event as TrayActionEvent : "click",
+    detail: parseTrayMouseDetail(a.detail),
+  };
+}
+
 /** One queued click, checked. */
 function parse(raw: unknown): AppActionEvent | undefined {
   const a = (raw ?? {}) as Record<string, unknown>;
@@ -52,15 +80,11 @@ function parse(raw: unknown): AppActionEvent | undefined {
   const tray = typeof a.tray === "string" ? a.tray : undefined;
   switch (a.source) {
     case "menu":
+      return id === undefined ? undefined : { source: "menu", id, ...menuClickInfo(a) };
     case "dock":
-      return id === undefined ? undefined : { source: a.source, id };
+      return id === undefined ? undefined : { source: "dock", id };
     case "tray":
-      return tray === undefined ? undefined : {
-        source: "tray",
-        tray,
-        event: TRAY_EVENTS.has(a.event as string) ? a.event as TrayActionEvent : "click",
-        detail: parseTrayMouseDetail(a.detail),
-      };
+      return tray === undefined ? undefined : parseTray(a, tray);
     case "trayMenu":
       return tray === undefined || id === undefined ? undefined : { source: "trayMenu", tray, id };
     case "dockReopen":
@@ -68,6 +92,22 @@ function parse(raw: unknown): AppActionEvent | undefined {
     default:
       return undefined;
   }
+}
+
+/** The context of a menu click, checked (an older runtime's click: a page item, no key window). */
+function menuClickInfo(a: Record<string, unknown>): AppMenuClickInfo {
+  const kind = a.kind === "menu" || a.kind === "windowMenu" ? a.kind : "appMenu";
+  const k = a.keyWindow as Record<string, unknown> | null | undefined;
+  const keyWindow = k && typeof k.id === "string"
+    ? { id: k.id, ...(typeof k.key === "string" ? { key: k.key } : {}) }
+    : null;
+  return {
+    kind,
+    keyWindow,
+    ...(typeof a.menu === "string" ? { menu: a.menu } : {}),
+    ...(typeof a.checked === "boolean" ? { checked: a.checked } : {}),
+    ...(typeof a.windowId === "string" ? { windowId: a.windowId } : {}),
+  };
 }
 
 /** Call `listener` with each click of the app's menus and tray icons. Returns the unsubscribe. */

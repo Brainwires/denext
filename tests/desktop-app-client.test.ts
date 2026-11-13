@@ -15,6 +15,9 @@ import {
   setAppMenu,
   setBadge,
   setLaunchAtLogin,
+  setMenu,
+  setMenuItemState,
+  setWindowMenuAppItems,
   shortcutCapabilities,
   unregisterAllShortcuts,
   unregisterShortcut,
@@ -100,6 +103,82 @@ Deno.test("setAppMenu: submenus, roles, accelerators on the wire; onAppMenuItem 
       true,
       false,
       false,
+    ]);
+  });
+});
+
+Deno.test("custom menus: setMenu / setMenuItemState / setWindowMenuAppItems on the wire; clicks carry their context", async () => {
+  const queued: unknown[] = [];
+  await inDesktop({
+    app: {
+      setMenu: () => null,
+      setMenuItemState: () => null,
+      setWindowMenuAppItems: () => null,
+      take: () => queued.splice(0),
+    },
+  }, async (rt) => {
+    await setMenu("layout", {
+      label: "Layout",
+      after: "view",
+      items: [{ id: "free", label: "Free-form", type: "radio", group: "layout", checked: true }],
+    });
+    await setMenu("layout", null);
+    await setMenuItemState("free", { checked: true });
+    await setMenuItemState("free", { enabled: false }, { windowId: "window-2" });
+    await setWindowMenuAppItems([{ id: "doc:1", label: "Notes", checked: true }, {
+      type: "separator",
+    }]);
+    await setWindowMenuAppItems(null);
+    assertEquals(rt.calls.map((c) => [c.method, c.args]), [
+      ["setMenu", {
+        menuId: "layout",
+        menu: {
+          label: "Layout",
+          after: "view",
+          items: [{
+            id: "free",
+            label: "Free-form",
+            type: "radio",
+            group: "layout",
+            checked: true,
+          }],
+        },
+      }],
+      ["setMenu", { menuId: "layout", menu: null }],
+      ["setMenuItemState", { itemId: "free", state: { checked: true } }],
+      ["setMenuItemState", { itemId: "free", state: { enabled: false }, windowId: "window-2" }],
+      ["setWindowMenuAppItems", {
+        items: [{ id: "doc:1", label: "Notes", checked: true }, { type: "separator" }],
+      }],
+      ["setWindowMenuAppItems", { items: null }],
+    ]);
+    const seen: unknown[] = [];
+    const stop = onAppMenuItem((id, info) => seen.push([id, info]));
+    queued.push(
+      {
+        source: "menu",
+        id: "free",
+        kind: "menu",
+        keyWindow: { id: "window-2", key: "doc" },
+        menu: "layout",
+        checked: true,
+      },
+      { source: "menu", id: "doc:1", kind: "windowMenu", keyWindow: null, windowId: "main" },
+      // An older runtime's click: a page item, no key window; junk context is dropped.
+      { source: "menu", id: "open", kind: "bogus", keyWindow: { id: 3 }, checked: "yes" },
+    );
+    rt.emit("app", "action", null);
+    await until(() => seen.length === 3);
+    stop();
+    assertEquals(seen, [
+      ["free", {
+        kind: "menu",
+        keyWindow: { id: "window-2", key: "doc" },
+        menu: "layout",
+        checked: true,
+      }],
+      ["doc:1", { kind: "windowMenu", keyWindow: null, windowId: "main" }],
+      ["open", { kind: "appMenu", keyWindow: null }],
     ]);
   });
 });

@@ -310,6 +310,8 @@ export {
   type DesktopBackendConfig,
   type DesktopCapabilitiesConfig,
   type DesktopConfig,
+  type DesktopCustomMenuConfig,
+  type DesktopCustomMenuItemConfig,
   type DesktopEntitlementValue,
   type DesktopExtraPermissions,
   type DesktopFsConfig,

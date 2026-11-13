@@ -132,6 +132,8 @@ export interface RegisteredWindow {
   readonly bound: boolean;
   /** It was created as a layer-shell overlay (absent: not). */
   readonly overlay?: boolean;
+  /** It was opened frameless (absent: not): no menu bar of its own on Windows and Linux. */
+  readonly frameless?: boolean;
   /** The app-chosen key it was opened with, if any. */
   readonly key?: string;
   /** The app path it shows (as opened, or last navigated to through the windows API). */
@@ -712,6 +714,7 @@ function register(
   key?: string,
   url = "/",
   title?: string,
+  frameless = false,
 ): RegisteredWindow {
   if (st.windows.has(id)) throw new Error(`desktop: a window "${id}" is registered already`);
   const token = (st.options.newToken ?? (() => crypto.randomUUID()))();
@@ -727,6 +730,7 @@ function register(
     capabilities,
     bound,
     ...(overlay ? { overlay: true } : {}),
+    ...(frameless ? { frameless: true } : {}),
     ...(key !== undefined ? { key } : {}),
     url,
     ...(title !== undefined ? { title } : {}),
@@ -1050,6 +1054,7 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     settings.key,
     settings.url,
     settings.title,
+    settings.frameless === true,
   );
   window.addEventListener("close", (event) => {
     if (interceptClose(st, id, event)) return;
