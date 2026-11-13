@@ -811,7 +811,9 @@ export interface DesktopRuntime {
    * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
    * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
    * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
-   * app to the front. On Windows and Linux `"regular"` shows the main window's taskbar entry and
+   * app to the front. A tray app stays accessory and shows its window with the window's
+   * `focus()`: one that was ever regular gets a tile in the Dock's recent apps once its running
+   * tile goes away. On Windows and Linux `"regular"` shows the main window's taskbar entry and
    * the others hide it (as `"accessory"` does at launch), where the runtime can. Returns whether it
    * applied.
    */

@@ -544,6 +544,46 @@ Deno.test("setup: an accessory policy hides the Dock icon at launch; desktop.ts 
   assertEquals(headless.getActivationPolicy(), null);
 });
 
+Deno.test("setup: an accessory app opens and focuses its windows without touching the policy", () => {
+  // A tray app that turns regular to show a window lands in the Dock's recent apps once it goes
+  // back to accessory (or quits), so opening and focusing must never go through the policy: the
+  // runtime's focus() activates the app ignoring other apps on its own.
+  class Focusable extends Win {
+    static made: Focusable[] = [];
+    constructor(options?: Record<string, unknown>) {
+      super(options);
+      Focusable.made.push(this);
+    }
+    focus() {
+      this.calls.push("focus");
+    }
+  }
+  const dock = new FakeDock();
+  const main = new Focusable();
+  const s = setUpDesktopWindows({
+    window: main,
+    BrowserWindow: Focusable,
+    dock,
+    os: "darwin",
+    emit: () => {},
+    exit: () => {},
+    wantsTray: true,
+    appSettings: { activationPolicy: "accessory", keepAlive: true },
+    windowSettings: { key: "fleet" },
+  });
+  // The launch's hide is the only Dock change.
+  assertEquals(dock.visible, [false]);
+  s.windows.byKey("fleet")?.focus();
+  const opened = s.windows.open({ url: "/library", key: "library" });
+  opened.show();
+  opened.focus();
+  s.windows.byKey("library")?.focus();
+  assertEquals(main.calls.filter((c) => c === "focus"), ["focus"]);
+  assertEquals(Focusable.made.at(-1)?.calls.filter((c) => c === "focus"), ["focus", "focus"]);
+  assertEquals(dock.policies, [], "never regular");
+  assertEquals(dock.visible, [false]);
+});
+
 Deno.test("setup: on Windows and Linux the activation policy is the main window's taskbar entry", () => {
   // Live test (Windows 11 Arm64): an accessory tray app's library window opened with no taskbar
   // entry: "accessory" hid it at launch, and setActivationPolicy("regular") answered false there.

@@ -411,7 +411,15 @@ export async function hideWindow(): Promise<void> {
   await act("hide");
 }
 
-/** Bring the window to the front and focus it. @returns Once requested. */
+/**
+ * Bring the window to the front and focus it. On macOS this activates the app ignoring other apps
+ * and never changes its activation policy, so an accessory (tray) app's window comes to the front
+ * with no Dock icon; a tray app uses it instead of `setActivationPolicy("regular")`, which would
+ * put the app in the Dock's recent apps once it went back to accessory or quit. Where the runtime
+ * only activates the app, the window comes up when macOS grants the activation.
+ *
+ * @returns Once requested.
+ */
 export async function focusWindow(): Promise<void> {
   await act("focus");
 }
