@@ -20,7 +20,8 @@ edit inside your files is Vite's `import.meta.env` (see
 
 ## 1. Detection
 
-`denext migrate` takes the Fresh path when the project has a `routes/` directory and one of:
+`denext migrate` takes the Fresh path when the project has a routes directory (`routes/`, or the
+`routeDir` its Vite config's `fresh({ … })` names) and one of:
 
 - a `deno.json` / `deno.jsonc` that maps `fresh` or `@fresh/core` (Fresh 2);
 - a `deno.json` that maps `$fresh/` (Fresh 1.x);
@@ -67,7 +68,13 @@ denext task dev
   browser (see [Partials](/docs/migrating-fresh#4-partials)). `deno.json` points `fresh/runtime`,
   `@fresh/core/runtime` and `$fresh/runtime.ts` at it.
 - **Islands** (`islands/` and the routes' `(_islands)` folders) get `"use client"` at the top, so
-  each stays its own hydration boundary. An island that imports `@preact/signals` for its types
+  each stays its own hydration boundary. So do the modules the app registers as islands in code,
+  where they are: `app.island(fileOrUrl, exportName, Component)` and `app.islands(…)` in
+  `main.ts`, `builder.registerIsland(specifier)` in a Fresh `dev.ts`, and `fresh({
+  islandSpecifiers })` (a path, a string, `import.meta.resolve("…")` or
+  `new URL("…", import.meta.url)`). A package module (`jsr:`, `npm:`, or a name `deno.json` maps)
+  gets a `"use client"` re-export under `app/_fresh/islands/`, and `deno.json` points the name the
+  app imports it by at that re-export. An island that imports `@preact/signals` for its types
   alone also gets `import "@preact/signals"`, so a signal prop arrives live.
 - **`static/` moves to `public/`.** A stylesheet there holding the Tailwind directive moves to
   `assets/` instead, and becomes `tailwind: { input, output }` in `denext.config.ts`, compiled to
@@ -80,6 +87,13 @@ denext task dev
   of its code moves to `instrumentation-client.ts`, which denext runs in the browser before the
   page hydrates (appended to one the app already has, unless the two declare the same name). A Tailwind v3 stylesheet needs `npx @tailwindcss/upgrade` first (denext compiles
   Tailwind v4).
+- **`fresh({ … })` options** in the Vite config are carried: `routeDir`, `islandsDir`,
+  `staticDir` (each directory moves to `public/`; where two have the same file, the earlier one
+  wins, as Fresh serves it), `serverEntry` (the `main.ts` that `middleware.ts` runs),
+  `clientEntry`, `ignore` (the routes and islands it matches are skipped) and
+  `islandSpecifiers`. A Fresh 1.x `fresh.config.ts`'s `staticDir` is carried, and its
+  `router.basePath` and `router.trailingSlash` become `basePath` and `trailingSlash` in
+  `denext.config.ts`. An option set to something computed is reported by name.
 - **Removed**: `fresh.gen.ts`, a Fresh `dev.ts`, `vite.config.*`, `client.ts`, and for Fresh 1.x
   `main.ts` and `fresh.config.ts`. Fresh 2's `main.ts` stays: `middleware.ts` runs it.
 - **`deno.json` is merged, not replaced.** `fresh`, `fresh/runtime`, `@fresh/core`,
@@ -177,7 +191,9 @@ Fresh 2's `main.ts` stays, and the generated files run what it registers:
 | `app.mountApp(path, other)`                               | The other app's middleware, routes, layouts and error handlers, under `path`.                                                                                                      |
 | `app.fsRoutes()`, `app.listen()`                          | Nothing to do: denext serves `app/`.                                                                                                                                               |
 
-`app.islands()` is not run: islands are the `"use client"` files.
+`app.island(fileOrUrl, exportName, Component)` and `app.islands(…)` register islands: the
+migration reads the calls and makes each module a `"use client"` one in place, and the `App`
+records the registrations.
 
 ---
 
@@ -216,17 +232,16 @@ picks a file path by `PROD` needs the development branch (`migrate --check` list
 Each finding names the files it was found in. **Won't migrate** means denext does not run it;
 **review** means it migrates but needs a look.
 
-| Won't migrate                                                              | What to do                                                                                          |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.islands()` in `main.ts`                                               | Move the components to `islands/` (or a `(_islands)` folder): islands are the `"use client"` files. |
-| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).                           |
-| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                     | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin.             |
-| A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own).                 |
-| A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                                 |
+| Won't migrate                                                              | What to do                                                                              |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).               |
+| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                     | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin. |
+| A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own).     |
+| A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                     |
 
 | Review                                                         | What to do                                                                                                                                                 |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fresh({ … })` options in `vite.config`                        | Not carried: the migration reads `routes/`, `islands/` and `client.ts` at their default places.                                                            |
+| A `fresh({ … })` option (or island) set to a computed value    | Write it as a literal and re-run `denext migrate`.                                                                                                         |
 | An inline `<script dangerouslySetInnerHTML>`                   | denext's default CSP runs no inline script: move the code to a file under `public/` or into `instrumentation-client.ts`, or allow it in `csp.scriptSrc`.   |
 | A WebSocket upgrade (`ctx.upgrade()`, `Deno.upgradeWebSocket`) | Works under `denext start` / `dev`, not on every deploy target; [Live channels](/docs/live) are portable.                                                  |
 | `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; check code that picks a file path by `PROD` (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |

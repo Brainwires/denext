@@ -76,10 +76,24 @@ export interface AppErrorRoute {
 
 /** Something an app registered that denext does not run, for the migration report. */
 export interface AppIgnored {
-  /** The method called (`islands`). */
+  /** The method called. */
   call: string;
   /** Its path argument, when it took one. */
   path?: string;
+}
+
+/**
+ * An island registered in code (`app.island(fileOrUrl, exportName, Component)`, `app.islands(…)`).
+ * `denext migrate` read the call and made the module a `"use client"` one, so the component
+ * renders as an island wherever a page uses it; the record is kept for tools.
+ */
+export interface AppIsland {
+  /** The module's path or URL. */
+  specifier: string;
+  /** The export, when named. */
+  exportName?: string;
+  /** The component, when given. */
+  component?: unknown;
 }
 
 /** Where the most recently constructed apps are kept, so `middleware.ts` finds an unexported one. */
@@ -150,6 +164,8 @@ export class App<State = Record<string, unknown>> {
   _notFound: AppRouteObject | undefined = undefined;
   /** @internal Calls denext does not run. */
   readonly _ignored: AppIgnored[] = [];
+  /** @internal Islands registered in code. */
+  readonly _islands: AppIsland[] = [];
   /** The app's configuration. */
   readonly config: { root: string; basePath: string; mode: "development" | "production" };
 
@@ -323,14 +339,38 @@ export class App<State = Record<string, unknown>> {
     for (const r of app._pages) this._pages.push({ ...r, pattern: joinPath(path, r.pattern) });
     for (const l of app._layouts) this._layouts.push({ ...l, path: joinPath(path, l.path) });
     for (const e of app._errors) this._errors.push({ ...e, path: joinPath(path, e.path) });
+    this._islands.push(...app._islands);
     if (app._appWrapper !== undefined) this._appWrapper = app._appWrapper;
     if (app._notFound !== undefined) this._notFound = app._notFound;
     return this;
   }
 
-  /** Not run on denext (islands are the `"use client"` files); listed in the migration report. */
-  islands(..._args: unknown[]): this {
-    this._ignored.push({ call: "islands" });
+  /**
+   * Register an island in code (Fresh 2's `app.island(filePathOrUrl, exportName, Component)`).
+   * `denext migrate` read the call and marked the module `"use client"`, which is what makes it
+   * an island on denext; this records the registration.
+   *
+   * @param specifier The module's path or URL.
+   * @param exportName The export.
+   * @param component The component.
+   * @returns The app.
+   */
+  island(specifier: string | URL, exportName?: string, component?: unknown): this {
+    this._islands.push({ specifier: String(specifier), exportName, component });
+    return this;
+  }
+
+  /**
+   * Register island modules in code (each argument a path or URL, or an array of them); see
+   * {@link island}.
+   *
+   * @param specifiers The modules.
+   * @returns The app.
+   */
+  islands(...specifiers: unknown[]): this {
+    for (const s of specifiers.flat()) {
+      if (typeof s === "string" || s instanceof URL) this._islands.push({ specifier: String(s) });
+    }
     return this;
   }
 

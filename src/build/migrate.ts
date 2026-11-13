@@ -2183,12 +2183,13 @@ function freshConfigSource(fresh: FreshMigrateInfo): string {
         JSON.stringify(fresh.tailwind.output)
       } },\n`
     : "";
+  const carried = fresh.configEntries.map((line) => `  ${line}\n`).join("");
   return `${GEN_MARKER}
 import type { DenextConfig } from "denext/server";
 
 // A Fresh ${fresh.version}.x app on denext: its routes run through middleware.ts and app/.
 export default {
-${tailwind}} satisfies DenextConfig;
+${tailwind}${carried}} satisfies DenextConfig;
 `;
 }
 

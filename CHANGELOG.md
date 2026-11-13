@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **Islands a Fresh app registers in code migrate in place.** `app.island(fileOrUrl, exportName,
+  Component)` and `app.islands(…)` in `main.ts`, `builder.registerIsland()` in `dev.ts` and
+  `fresh({ islandSpecifiers })` each make their module a `"use client"` one where it is; a package
+  module gets a `"use client"` re-export under `app/_fresh/islands/` that `deno.json` points the
+  app at. `App` records `island()` / `islands()` instead of ignoring them.
+- **`fresh({ … })` options carry over.** `routeDir`, `islandsDir`, `staticDir` (several, the
+  earlier one winning a shared path), `serverEntry`, `clientEntry`, `ignore` and
+  `islandSpecifiers` are read from the Vite config and applied by the migration; a Fresh 1.x
+  `fresh.config.ts`'s `staticDir`, `router.basePath` and `router.trailingSlash` too (the last two
+  as `basePath` / `trailingSlash` in `denext.config.ts`). A client entry's stylesheets now resolve
+  relative to the entry.
 - **`denext migrate --from fresh` merges files that already exist.** A `static/` file identical to
   the `public/` file at its path is dropped, a `robots.txt` / `humans.txt` / `ads.txt` /
   `app-ads.txt` / `security.txt` gets the lines it lacks appended, `client.ts`'s code is appended
