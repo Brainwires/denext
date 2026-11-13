@@ -800,6 +800,13 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   toolbar; per window in `openWindow`, and `setTitleVisibility` / `setToolbarStyle` from a page,
   feature-detected through `windowCapabilities()`. — `src/desktop/window-config.ts`,
   `src/desktop/caps/window.ts`.
+- **Embedded web views** — `createWebView` (page) / `win.createWebView` (`desktop.ts`) put another
+  site in a native view inside the window, isolated from the bridge, the app's storage and its
+  navigation guard (named or ephemeral partitions; popup, download and permission policies;
+  http(s) only, never the app's origin, an optional `desktop.webViews.allowedOrigins`, a
+  per-window `limit`), with navigation, `state`, `capture` (a `Blob`), isolated `evaluate` and its
+  events; `attachWebView` glues one to an element and hides it while the element is out of view.
+  Gated by `webViewCapabilities()`. — `src/desktop/webview.ts`, `src/desktop/caps/webview.ts`.
 - **Linux desktop entry and AppStream metadata** — `desktop.linux.desktopEntry` (categories,
   keywords, `GenericName`, `StartupWMClass`, `MimeType`) goes into every `.desktop` file the
   packages carry, the bundle's own entry is rewritten with the app's name and icon, and the

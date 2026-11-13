@@ -55,6 +55,8 @@ import {
 } from "./window-menu.ts";
 import type { DesktopMenuSettings } from "./menu-config.ts";
 import type { SessionWindow } from "./window-store.ts";
+import type { CreateWebViewOptions, WebViewHandle } from "./webview.ts";
+import type { DesktopWebViewSettings } from "./webview-config.ts";
 import {
   applyDesktopWindowSettings,
   type DesktopAppSettings,
@@ -94,6 +96,19 @@ export interface DesktopWindowRef {
    * handler added after it closed is never called. Returns the unsubscribe.
    */
   onClosed(handler: () => void): () => void;
+  /**
+   * Open an embedded web view of another site inside this window, above its page (the page's
+   * `createWebView` from `denext/desktop/window`, owned by `desktop.ts`): the same checks
+   * (`http:` / `https:` only, never the app's own origin, `desktop.webViews.allowedOrigins`) and
+   * the same per-window `desktop.webViews.limit`, shared with the views its pages made. The view
+   * closes with the window; its events reach this handle only, never the page.
+   *
+   * @param options The URL, where it sits (CSS pixels of the window's page viewport) and its
+   *   policies.
+   * @returns Its handle (`capture` resolves a `Blob`). Rejects with a `DesktopCapError`:
+   *   `unsupported` on a runtime without web views, `not_allowed_url`, `limit`, `validation`.
+   */
+  createWebView(options: CreateWebViewOptions): Promise<WebViewHandle>;
 }
 
 /** The options of a window `desktop.ts` or a page opens (`openWindow` in `denext/desktop/window`). */
@@ -283,6 +298,13 @@ export interface DesktopWindowsOptions {
   readonly picked?: PickedPaths;
   /** The app's own folders (drag-out). */
   readonly dirs?: DesktopAppDirs;
+  /** `desktop.webViews` as resolved (default: 8 per window, any http(s) origin). */
+  readonly webViews?: DesktopWebViewSettings;
+  /**
+   * The app's own origins besides the one its pages load from (`desktop.app.origin`, a dev
+   * server's): a web view never loads them.
+   */
+  readonly appOrigins?: () => readonly string[];
   /** The app support folder (the window store's home; none: frames kept for this launch only). */
   readonly appSupportDir?: string;
   /** `desktop.menu` as resolved (the standard window items). */
@@ -480,6 +502,15 @@ function startsAccessory(st: SetupState): boolean {
     (app?.dock === "while-window-open" && st.os === "darwin");
 }
 
+/** The app's own origins: the one its pages load from, and the configured / dev ones. */
+function appOrigins(st: SetupState): string[] {
+  const out = [...(st.options.appOrigins?.() ?? [])];
+  try {
+    out.push(new URL(st.appUrl("/")).origin);
+  } catch { /* no app URL yet */ }
+  return out;
+}
+
 /** A registered window as `desktop.ts` sees it. */
 function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
   const w = entry.window;
@@ -511,6 +542,7 @@ function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
         return null; // closing, or no position here
       }
     },
+    createWebView: (options) => entry.controller.createWebView(options),
     onClosed: (handler) => {
       if (st.registry?.get(entry.id)?.window !== w) return () => {};
       let set = st.closedHandlers.get(entry.id);
@@ -754,7 +786,8 @@ function createRegistry(st: SetupState): WindowRegistry {
     keepAlive: () => keepAliveOf(st),
     ...inheritedChrome(o.windowSettings),
     onTitleChanged: () => st.menu?.refresh(),
-    onClosed: (id) => {
+    onClosed: (id, entry) => {
+      entry.controller.windowClosed();
       st.app?.windowClosed(id);
       runClosedHandlers(st, id);
     },
@@ -767,6 +800,8 @@ function createRegistry(st: SetupState): WindowRegistry {
         emit: (cap, event, data) => o.emit(cap, event, data, id),
         closed,
         wayBack: () => st.app?.hasTray() === true,
+        ...(o.webViews ? { webViews: () => o.webViews! } : {}),
+        appOrigins: () => appOrigins(st),
         ...(o.picked ? { picked: o.picked } : {}),
         ...(o.dirs ? { dirs: o.dirs } : {}),
       }),

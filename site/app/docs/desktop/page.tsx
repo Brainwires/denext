@@ -2816,7 +2816,9 @@ if (folder) {
         <code>denext/desktop/window</code>{" "}
         is the page&apos;s control over its own window: maximize, minimize, fullscreen and their
         events, size and size limits, the displays, the title bar, a backdrop, a cancelable close,
-        quitting, and files dragged in and out. It needs no <code>denext desktop add</code>{" "}
+        quitting, files dragged in and out, and <a href="#desktop-web-views">embedded web views</a>
+        {" "}
+        of other sites. It needs no <code>denext desktop add</code>{" "}
         (the runtime registers it for every app). The basics (size, position, title, show / hide)
         work on every runtime; the rest needs denext&apos;s pinned runtime and otherwise rejects
         {" "}
@@ -3537,6 +3539,175 @@ const { outcome } = await shareFromWindow({
   title: "Q3 report",
   files: [{ directory: "documents", path: "reports/q3.pdf" }],
 });`}
+      </Code>
+
+      <h3 id="desktop-web-views">Embedded web views</h3>
+      <p>
+        <code>createWebView</code> from <code>denext/desktop/window</code>{" "}
+        places another site&apos;s page inside the app&apos;s window: a native browser view of its
+        own, above the page, at a rectangle the page chooses (CSS pixels from the top-left of the
+        window&apos;s page viewport). Use it for what an <code>&lt;iframe&gt;</code>{" "}
+        can&apos;t do: a site that refuses to be framed, its own cookies and history, a screenshot
+        of it, a script run in it. The view belongs to the window that created it and closes with
+        it; a reload or navigation of the window&apos;s page does not close it.{" "}
+        <code>desktop.ts</code> gets the same call on a window handle,{" "}
+        <code>windows.get("main")!.createWebView(…)</code> (or a window from{" "}
+        <code>windows.open</code>), for a view the backend owns: its events reach that handle only,
+        and the page cannot drive it.
+      </p>
+      <Code lang="ts">
+        {`import {
+  attachWebView,
+  createWebView,
+  webViewCapabilities,
+} from "denext/desktop/window";
+
+const caps = await webViewCapabilities();
+if (caps.supported) {
+  const tile = document.querySelector("#docs-tile")!;
+  const view = await createWebView({
+    url: "https://docs.example/start",
+    bounds: { x: 0, y: 0, width: 0, height: 0 }, // attachWebView sets them
+    partition: "ephemeral:docs", // in memory, gone when the app exits
+    allowPopups: "deny",
+  });
+  const detach = attachWebView(view, tile); // follows the tile; returns the detach
+  view.on("title", ({ title }) => (tile.title = title));
+  view.on("new-window", ({ url }) => console.log("blocked popup", url));
+  view.on("closed", () => detach());
+  // later, when the tile unmounts:
+  await view.close();
+} else {
+  // the iframe path
+}`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Isolation.</strong>{" "}
+          The view never gets the desktop bridge (no token, no binding, no app scheme), its storage
+          is never the app&apos;s, and its navigations never reach the window&apos;s navigation
+          guard (<code>onWillNavigate</code>). It only loads <code>http:</code> and{" "}
+          <code>https:</code>: <code>createWebView</code> and <code>navigate</code> reject{" "}
+          <code>not_allowed_url</code> for any other scheme and for the app&apos;s own origin (its
+          {" "}
+          <code>desktop.app.origin</code>, the loopback origin its pages are served from, the dev
+          server), and inside the view a navigation to another scheme is cancelled.{" "}
+          <code>evaluate</code> and <code>capture</code>{" "}
+          are the page&apos;s; nothing in the view can reach them.
+        </li>
+        <li>
+          <strong>Partitions.</strong> <code>partition</code> names the view&apos;s storage (default
+          {" "}
+          <code>"webview:default"</code>; 1 to 64 letters, digits, <code>.</code>, <code>_</code>,
+          {" "}
+          <code>:</code> or{" "}
+          <code>-</code>, starting with a letter or digit). Views with the same partition share
+          cookies and storage. <code>"ephemeral"</code>, or a name starting with{" "}
+          <code>"ephemeral:"</code>, is kept in memory and gone when the app exits; any other name
+          is persistent, stored apart from the app&apos;s own data. Where the engine can&apos;t keep
+          a named store (WKWebView before macOS 14) a persistent name is served in memory.
+        </li>
+        <li>
+          <strong>Popups, downloads and permissions.</strong> <code>allowPopups</code> —{" "}
+          <code>"same-view"</code> (default) loads a popup&apos;s URL in this view,{" "}
+          <code>"browser"</code> opens it in the system browser, <code>"deny"</code>{" "}
+          opens nothing and fires <code>new-window</code> <code>{`{ url, disposition }`}</code>{" "}
+          (<code>"popup"</code> when the page asked for window features, else <code>"tab"</code>).
+          {" "}
+          <code>downloads</code> — <code>"deny"</code> (default) cancels them, <code>"ask"</code>
+          {" "}
+          shows the OS save panel, <code>"browser"</code> hands the URL to the system browser.{" "}
+          <code>permissions</code> — <code>"deny"</code>{" "}
+          (default) refuses camera, microphone, location and notification requests without a prompt,
+          {" "}
+          <code>"ask"</code> asks the user, naming the site. <code>userAgent</code>{" "}
+          replaces the engine&apos;s user agent for this view.
+        </li>
+        <li>
+          <strong>Events.</strong> <code>view.on(event, fn)</code> returns the unsubscribe:{" "}
+          <code>title</code>, <code>url</code> (with <code>canGoBack</code> /{" "}
+          <code>canGoForward</code>), <code>load</code> (<code>"loading"</code> →{" "}
+          <code>"interactive"</code> → <code>"complete"</code>, or <code>"failed"</code> with an
+          {" "}
+          <code>error.code</code> of <code>"network"</code>, <code>"dns"</code>, <code>"tls"</code>,
+          {" "}
+          <code>"blocked"</code>, <code>"aborted"</code> or <code>"failed"</code>),{" "}
+          <code>console</code>, <code>focus-change</code>, <code>new-window</code> and{" "}
+          <code>closed</code>, which comes once, last.
+        </li>
+        <li>
+          <strong>It draws above the page.</strong>{" "}
+          The native view covers every bit of HTML under its rectangle, menus and dialogs included.
+          Before an HTML menu, dialog or popover overlaps it, call <code>setVisible(false)</code>
+          {" "}
+          — or, for a seamless look, <code>capture()</code> it into an <code>&lt;img&gt;</code>{" "}
+          over the placeholder, then hide the view; show it again when the overlay closes. A tile
+          drag or resize can use the same snapshot.
+        </li>
+        <li>
+          <strong>Focus.</strong> <code>view.focus()</code> moves the keyboard into the view. When
+          {" "}
+          <code>focus-change</code> reports <code>focused: false</code>{" "}
+          the keyboard has left it (a click outside, or Tab past its end): focus the next element of
+          the page yourself. Global shortcuts and app-menu accelerators still fire while the view
+          has the focus; the page&apos;s own <code>keydown</code> listeners do not.
+        </li>
+        <li>
+          <strong>Lifecycle.</strong> <code>close()</code>{" "}
+          when the tile unmounts; views also close with their window. After <code>closed</code>{" "}
+          every call on the handle rejects{" "}
+          <code>closed</code>. A view outlives a reload of the window&apos;s page, which can&apos;t
+          reach it again, so close views before reloading.
+        </li>
+        <li>
+          <strong>
+            <code>attachWebView(view, element, options?)</code>
+          </strong>{" "}
+          keeps the view on the element&apos;s border box: it follows resizes, scrolling in any
+          scroller, window resizes and display scale changes, with at most one{" "}
+          <code>setBounds</code>{" "}
+          per animation frame, only when the rectangle changed. It hides the view while the element
+          is out of the document,{" "}
+          <code>display: none</code>, zero-sized or out of view (scrolled away, clipped by a
+          scroller; <code>hideWhenOutOfView: false</code>{" "}
+          keeps it shown there) and shows it again when it is back, so it owns the view&apos;s
+          visibility while attached. The function it returns stops following and leaves the view
+          open; it also stops when the view closes.
+        </li>
+        <li>
+          <strong>Limits and gating.</strong> A window hosts at most{" "}
+          <code>desktop.webViews.limit</code> views (default 8, up to 32, the page&apos;s and{" "}
+          <code>desktop.ts</code>&apos;s together); one more rejects <code>limit</code>.{" "}
+          <code>desktop.webViews.allowedOrigins</code> (exact origins) narrows what{" "}
+          <code>createWebView</code> and <code>navigate</code>{" "}
+          accept. Web views need a Deno Desktop runtime and engine that host them:{" "}
+          <code>webViewCapabilities()</code> answers <code>supported</code>, the engine, and whether
+          {" "}
+          <code>capture</code> and <code>evaluate</code> work. On a runtime without them it answers
+          {" "}
+          <code>supported: false</code> and <code>createWebView</code> rejects{" "}
+          <code>unsupported</code>: keep an iframe path behind that check.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    webViews: {
+      limit: 4, // per window (default 8, at most 32)
+      allowedOrigins: ["https://docs.example", "https://status.example"],
+    },
+  },
+};`}
+      </Code>
+      <Code lang="ts">
+        {`// desktop.ts: a view the backend owns
+const app = await runDesktop({ /* … */ });
+const view = await app.windows.get("main")!.createWebView({
+  url: "https://status.example",
+  bounds: { x: 0, y: 48, width: 400, height: 300 },
+});
+view.on("load", ({ state }) => console.log("status page", state));
+const png = await view.capture(); // a Blob`}
       </Code>
 
       <h2 id="desktop-notifications">Notifications and menus</h2>

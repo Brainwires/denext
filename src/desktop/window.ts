@@ -3,8 +3,9 @@
  * minimize, fullscreen and their events, size and size limits, the displays, the title bar and
  * backdrop, the user's title bar preferences ({@linkcode getTitleBarPreferences}), a cancelable
  * close that knows whether the app is quitting, quitting ({@linkcode onBeforeQuit}), files dragged
- * in ({@linkcode onFileDrop}) and out ({@linkcode startFileDrag}), and the OS share sheet
- * ({@linkcode shareFromWindow}).
+ * in ({@linkcode onFileDrop}) and out ({@linkcode startFileDrag}), the OS share sheet
+ * ({@linkcode shareFromWindow}), and embedded web views of other sites ({@linkcode createWebView},
+ * {@linkcode attachWebView}).
  *
  * Each call goes through the desktop runtime's `window` capability, which `runDesktop` registers
  * for every app (no `denext desktop add` needed). The basics (size, position, title, show / hide)
@@ -45,6 +46,23 @@ export {
   type DesktopErrorCode,
   isDesktopBridgeError,
 } from "./bridge-client.ts";
+
+// Embedded web views: another site's page in a native view inside this window.
+export {
+  attachWebView,
+  type AttachWebViewOptions,
+  createWebView,
+  type CreateWebViewOptions,
+  type WebViewAnchor,
+  type WebViewBounds,
+  type WebViewCapabilities,
+  webViewCapabilities,
+  type WebViewEngine,
+  type WebViewEventMap,
+  type WebViewHandle,
+  type WebViewLoadState,
+  type WebViewState,
+} from "./webview.ts";
 
 /** The capability every call goes to. */
 const CAP = "window";

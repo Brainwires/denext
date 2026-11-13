@@ -10,6 +10,22 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: embedded web views.** `createWebView(options)` from `denext/desktop/window` places
+  another site's page in a native view inside the app's window, above the page, at bounds the page
+  sets (CSS pixels of the page viewport); `desktop.ts` gets the same call as
+  `win.createWebView(options)` on a window handle. The handle navigates, goes back / forward,
+  reloads, stops, takes the keyboard focus, reports its `state()`, `capture()`s what it shows as a
+  `Blob`, `evaluate()`s a script in an isolated world, and fires `title`, `url`, `load`, `console`,
+  `focus-change`, `new-window` and `closed`. A view never gets the desktop bridge, the app's
+  storage (named `partition`s, `"ephemeral:"` ones in memory) or the window's navigation guard; it
+  loads `http:` / `https:` only and never the app's own origin, with popup, download and
+  permission-prompt policies; it closes with its window. `attachWebView(view, element)` keeps a
+  view on an element through resizes, scrolling, window resizes and display scale changes (one
+  `setBounds` per frame at most) and hides it while the element is detached, hidden or out of
+  view. `desktop.webViews.limit` caps the views per window (default 8, up to 32) and
+  `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
+  whether the engine hosts them (the CEF backend first; laufey API 58, runtime 3.0.0-denext.22); on
+  an older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
 - **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
   `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
   the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.

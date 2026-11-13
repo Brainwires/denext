@@ -1338,6 +1338,13 @@ export interface DesktopConfig {
   /** The largest window size the user can resize to. Needs denext's pinned runtime. */
   maxSize?: DesktopSize;
   /**
+   * Embedded web views (`createWebView` from `denext/desktop/window`, `win.createWebView` in
+   * `desktop.ts`): native views of other sites inside a window, above its page. This sets how many
+   * one window hosts at once and, optionally, the only origins they may load. Web views need a
+   * Deno Desktop runtime and engine that host them (`webViewCapabilities().supported`).
+   */
+  webViews?: DesktopWebViewsConfig;
+  /**
    * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
    * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
    * the capability catalog can't see: the desktop updater's feed host (`net`) and data dir
@@ -1737,6 +1744,25 @@ export interface DesktopUiUpdateConfig {
   publicKey: string;
   /** The export's target; default the OS the app runs on. */
   platform?: "macos" | "windows" | "linux";
+}
+
+/** `desktop.webViews`: the embedded web views a window may host. */
+export interface DesktopWebViewsConfig {
+  /**
+   * The most web views one window hosts at once (default 8), counting the page's and
+   * `desktop.ts`'s together; one more rejects `limit`.
+   *
+   * @minimum 1
+   * @maximum 32
+   */
+  limit?: number;
+  /**
+   * The exact origins (`"https://docs.example"`: scheme, host and port, no path) a web view may
+   * load through `createWebView` and `navigate`; any other rejects `not_allowed_url`. Unset: any
+   * `http:` / `https:` origin. The app's own origin is refused either way. Links the user follows
+   * inside the view are not checked against it (only their scheme is: `http:` / `https:`).
+   */
+  allowedOrigins?: string[];
 }
 
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */
