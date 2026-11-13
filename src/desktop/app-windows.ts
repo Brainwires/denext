@@ -46,6 +46,7 @@ import {
   type WindowRegistry,
 } from "./window-registry.ts";
 import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
+import { type DockPresence, startDockHelper } from "./dock-helper.ts";
 import {
   createWindowMenu,
   type DesktopNewWindowHandler,
@@ -381,6 +382,8 @@ interface SetupState {
   readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
   /** The extensions' second-launch subscribers. */
   readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
+  /** The Dock helper's presence (`desktop.app.dock: "while-window-open"`, macOS), once started. */
+  dockPresence?: DockPresence;
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -444,13 +447,16 @@ function getPolicy(st: SetupState): ActivationPolicy | null {
 }
 
 /**
- * Whether the app starts with no Dock icon: `desktop.app.activationPolicy: "accessory"` or
- * `desktop.app.dock: false`. From runtime `3.0.0-denext.6` the launch file already started it so;
- * applying it again here covers an older runtime (where the icon shows until now).
+ * Whether the app starts with no Dock icon: `desktop.app.activationPolicy: "accessory"`,
+ * `desktop.app.dock: false`, or (macOS only: elsewhere a window's taskbar entry already lasts as
+ * long as the window) `dock: "while-window-open"`. From runtime `3.0.0-denext.6` the launch file
+ * already started it so; applying it again here covers an older runtime (where the icon shows until
+ * now).
  */
 function startsAccessory(st: SetupState): boolean {
   const app = st.options.appSettings;
-  return app?.activationPolicy === "accessory" || app?.dock === false;
+  return app?.activationPolicy === "accessory" || app?.dock === false ||
+    (app?.dock === "while-window-open" && st.os === "darwin");
 }
 
 /** A registered window as `desktop.ts` sees it. */
@@ -709,7 +715,11 @@ function createRegistry(st: SetupState): WindowRegistry {
     warn: st.warn,
     onQuitWorkChanged: () => applyKeepAlive(st),
     appUrl: (path) => st.appUrl(path),
-    emit: o.emit,
+    emit: (cap, event, data, target) => {
+      o.emit(cap, event, data, target);
+      // A window opened, closed or took the focus: the Dock helper follows at once (it also polls).
+      if (cap === "windows") st.dockPresence?.sync();
+    },
     keepAlive: () => keepAliveOf(st),
     ...inheritedChrome(o.windowSettings),
     onTitleChanged: () => st.menu?.refresh(),
@@ -880,6 +890,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.app?.install();
       st.registry?.lifecycle.install();
       st.menu?.install();
+      installDockHelper(st);
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
       // `Deno.desktop` of the pinned runtime only (none outside it, or before launch events).
       if (typeof options.api?.addEventListener === "function") {
@@ -927,6 +938,34 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       return () => void st.secondInstanceHandlers.delete(fn);
     },
   };
+}
+
+/** The owner `requestQuit` names for the Dock helper's Quit. */
+const DOCK_HELPER_QUIT_OWNER = "dock-helper";
+
+/**
+ * `desktop.app.dock: "while-window-open"` on macOS: start the Dock helper's presence over the
+ * registry (a Dock icon while a window shows; src/desktop/dock-helper.ts). A failure to start is a
+ * warning: the app stays accessory.
+ */
+function installDockHelper(st: SetupState): void {
+  const registry = st.registry;
+  if (st.os !== "darwin" || st.options.appSettings?.dock !== "while-window-open" || !registry) {
+    return;
+  }
+  startDockHelper({
+    windows: () => registry.list(),
+    keyWindow: () => registry.keyWindow(),
+    quit: () => void registry.lifecycle.requestQuit(DOCK_HELPER_QUIT_OWNER),
+    dataDir: st.options.dirs?.data ?? st.options.appSupportDir,
+    warn: st.warn,
+  }).then(
+    (presence) => {
+      st.dockPresence = presence;
+    },
+    (err) =>
+      st.warn(`the Dock helper could not start: ${err instanceof Error ? err.message : err}`),
+  );
 }
 
 /** Whether the runtime makes overlay main windows and tray panels (`3.0.0-denext.7`+). */

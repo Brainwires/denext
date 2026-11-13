@@ -79,6 +79,13 @@ function validateDesktopPermissions(desktop: Record<string, unknown>, fail: Fail
   }
   const conflict = strictPermissionsSidecarError(desktop.sidecars);
   if (conflict) fail("desktop.permissions", conflict);
+  if ((desktop.app as { dock?: unknown } | undefined)?.dock === "while-window-open") {
+    fail(
+      "desktop.permissions",
+      '"strict" cannot be used with desktop.app.dock "while-window-open": the app reads its Dock ' +
+        "helper from its own bundle, whose install path is only known at run time",
+    );
+  }
 }
 
 /** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */
@@ -188,11 +195,12 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  for (const key of ["singleInstance", "keepAlive", "dock", "restoreWindows"]) {
+  for (const key of ["singleInstance", "keepAlive", "restoreWindows"]) {
     if (a[key] !== undefined && typeof a[key] !== "boolean") {
       fail(`desktop.app.${key}`, "must be a boolean");
     }
   }
+  validateDock(a, fail);
   if (a.maxWindows !== undefined) {
     const problem = maxWindowsProblem(a.maxWindows);
     if (problem) fail("desktop.app.maxWindows", problem);
@@ -202,6 +210,25 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   }
   validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/**
+ * `desktop.app.dock`: a boolean or `"while-window-open"`, which needs `desktop.app.identifier` (the
+ * helper is copied into the app's data folder, a path the runtime knows by the identifier).
+ */
+function validateDock(a: Record<string, unknown>, fail: Fail): void {
+  const dock = a.dock;
+  if (dock === undefined || typeof dock === "boolean") return;
+  if (dock !== "while-window-open") {
+    fail("desktop.app.dock", 'must be a boolean or "while-window-open"');
+  }
+  if (typeof a.identifier !== "string" || a.identifier.trim() === "") {
+    fail(
+      "desktop.app.dock",
+      'is "while-window-open", which needs desktop.app.identifier (the app copies its Dock ' +
+        "helper into the data folder named by it)",
+    );
+  }
 }
 
 /** `desktop.app.activationPolicy`: `"regular"` or `"accessory"`, and not regular with no Dock. */
@@ -215,6 +242,13 @@ function validateActivationPolicy(a: Record<string, unknown>, fail: Fail): void 
     fail(
       "desktop.app.activationPolicy",
       'is "regular" (a Dock icon) but desktop.app.dock is false: drop one of them',
+    );
+  }
+  if (policy === "regular" && a.dock === "while-window-open") {
+    fail(
+      "desktop.app.activationPolicy",
+      'is "regular" (a Dock icon for good) but desktop.app.dock is "while-window-open" (an ' +
+        "accessory app with a Dock icon while a window shows): drop one of them",
     );
   }
 }

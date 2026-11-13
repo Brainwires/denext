@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Added
 
+- **Desktop: a macOS tray app with a Dock icon only while a window is open.**
+  `desktop.app.dock: "while-window-open"` keeps the app accessory from launch to quit, and gives it
+  a Dock icon and a Cmd-Tab entry while one of its windows (not the tray panel, not an overlay) is
+  showing, without ever leaving a tile in the Dock's recent apps. macOS adds a recents tile when an
+  app's running tile goes away (on quit, or on switching back to accessory), but only for an app
+  under `/Applications`, so packaging (`denext desktop package`) builds a small helper app into
+  `Contents/Helpers/<Name>.app` (clang, the app's architectures, name, icon and version; signed and
+  notarized with the app), the app copies it into its data folder (again whenever the bundled copy
+  differs) and runs it as a child while a window shows. Clicking the helper's Dock icon or switching
+  to it with Cmd-Tab brings the app's window to the front; its Quit quits the app through the quit
+  guards. They talk over the child's stdin / stdout pipes only. Where the helper cannot run
+  (`denext desktop run` / `dev` builds, a failed copy or launch) the app keeps the accessory
+  behaviour; on Windows and Linux the value is `true`. Needs `desktop.app.identifier`, and not with
+  `desktop.permissions: "strict"` or `activationPolicy: "regular"`.
 - **Desktop: `getWindows()` reports each window's title.** The `title` the Window menu shows (as
   opened, then the page's `document.title` or `setWindowTitle`) is in every entry of `getWindows()`
   and the `windows` capability's `list`.

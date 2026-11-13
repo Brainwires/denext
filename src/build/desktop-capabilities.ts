@@ -12,6 +12,7 @@
 // present is left as the user wrote it.
 
 import { createHash } from "node:crypto";
+import { parse as parseJsonc } from "@std/jsonc";
 import { basename, fromFileUrl, isAbsolute, join } from "@std/path";
 import {
   dirname as posixDirname,
@@ -43,6 +44,7 @@ import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { dockHelperGrants } from "./desktop-dock-helper.ts";
 import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
 import { DESKTOP_STRICT_RUNTIME_ENV } from "./desktop-runtime-env.ts";
 import {
@@ -1503,6 +1505,32 @@ function sidecarProgramBake(
     : { cacheScope: true, integrityDir, entry: options.entry, appEntry: options.appEntry };
 }
 
+/**
+ * The Dock helper's grants (`desktop.app.dock: "while-window-open"` on macOS,
+ * {@linkcode dockHelperGrants}): `run` for its copy in the data folder, `write` for the folder it is
+ * copied into. Only on a runtime that expands `$DENO_DESKTOP_DATA` ({@linkcode folderScope}); on
+ * another the helper cannot be run and the app keeps the accessory behaviour.
+ */
+function dockHelperPermissionSet(
+  cfg: DesktopFlagConfig,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions,
+): DesktopPermissionSet {
+  if (!folderScope(cfg, options)) return {};
+  return dockHelperGrants(cfg, os, projectDenoJsonSync(options.projectDir)) ?? {};
+}
+
+/** The project's deno.json (else deno.jsonc), parsed, or `undefined`. */
+function projectDenoJsonSync(dir: string | undefined): unknown {
+  if (dir === undefined) return undefined;
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    try {
+      return parseJsonc(Deno.readTextFileSync(join(dir, name)));
+    } catch { /* not this one */ }
+  }
+  return undefined;
+}
+
 /** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
 function hasIdentifier(cfg: DesktopFlagConfig): boolean {
   const identifier = cfg.desktop?.app?.identifier;
@@ -1681,18 +1709,22 @@ export function desktopBuildFlags(
   options: DesktopBuildFlagOptions = {},
 ): string[] {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
-  // `desktop.extraPermissions` and what the sidecars need, baked the same way.
+  // `desktop.extraPermissions`, what the sidecars need and the Dock helper's copy, baked the same
+  // way.
   const bake = sidecarProgramBake(cfg, os, options);
   const extra = mergePermissionSets(
-    checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
-    sidecarPermissionSet(
-      configSidecars(cfg),
-      os,
-      bake.cacheScope,
-      bake.integrityDir,
-      bake.entry,
-      bake.appEntry,
+    mergePermissionSets(
+      checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
+      sidecarPermissionSet(
+        configSidecars(cfg),
+        os,
+        bake.cacheScope,
+        bake.integrityDir,
+        bake.entry,
+        bake.appEntry,
+      ),
     ),
+    dockHelperPermissionSet(cfg, os, options),
   );
   const capFlags = capabilityFlags(cfg, os, options);
 

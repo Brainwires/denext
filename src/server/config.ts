@@ -1215,14 +1215,24 @@ export interface DesktopConfig {
      * once it starts, so it shows briefly at launch. On Windows and Linux
      * the app's windows are kept off the taskbar instead where the runtime can
      * (`setSkipTaskbar`); a `focusable: false` window is always off it.
+     *
+     * `"while-window-open"` (macOS, packaged apps): a tray app with a Dock icon and a Cmd-Tab entry
+     * only while one of its windows is showing, and never a tile in the Dock's recent apps. The app
+     * itself stays `"accessory"` from launch to quit; packaging adds a small helper app
+     * (`Contents/Helpers`), which the app copies into its data folder and runs while a window
+     * (not the tray panel, not an overlay) is showing. Clicking the helper's Dock icon or switching
+     * to it brings the app's window to the front, and its Quit quits the app. Where the helper
+     * cannot run the app keeps the accessory behaviour (windows, no Dock icon). On Windows and
+     * Linux, where a window's taskbar entry already lasts as long as the window, it is `true`.
+     * Requires {@link identifier}; not with `activationPolicy: "regular"`.
      */
-    dock?: boolean;
+    dock?: boolean | "while-window-open";
     /**
      * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
      * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
      * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
      * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
-     * `desktop.app.dock: false` implies `"accessory"`. Switch it while the app runs with
+     * `desktop.app.dock: false` or `"while-window-open"` implies `"accessory"`. Switch it while the app runs with
      * `setActivationPolicy` (`denext/desktop/app`, or `DesktopRuntime.setActivationPolicy` in
      * `desktop.ts`). On an older runtime `dock: false` still hides the icon, once the backend
      * starts. Windows and Linux have no policy.
