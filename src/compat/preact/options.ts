@@ -9,6 +9,8 @@
  * - `useDebugValue(value)` — from `useDebugValue` in `denext/preact/hooks`.
  * - `attr(name, value)` — from `jsxAttr` in `denext/preact/jsx-runtime` (precompiled JSX); a
  *   returned string replaces the attribute's HTML.
+ * - `_diff` / `__b(vnode)` — as each element is created through those entry points, after
+ *   `vnode` (denext has no per-vnode diff to call it before).
  * - `_render` / `__r(vnode)` — before each component renders, in the browser.
  * - `diffed(vnode)` — for each component, element and text node a commit rendered or changed,
  *   once its DOM is in place, children before their parent (before layout effects run).
@@ -20,9 +22,9 @@
  *
  * The vnode each hook gets is denext's element (`type`, `props`, `key`; the `ref` is in
  * `props`), not Preact's internal shape (`_children`, `_component`, `_dom`), so a tool that walks
- * Preact's internals (the `preact/devtools` bridge) finds nothing to read; `_diff` / `__b`,
- * `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `_addHookName` and
- * `__suspenseDidResolve` can be set but are not called.
+ * Preact's internals (the `preact/devtools` bridge) finds nothing to read; `_catchError` / `__e`,
+ * `_hook` / `__h`, `_root` / `__`, `_addHookName` and `__suspenseDidResolve` can be set but are
+ * not called.
  *
  * @module
  */
@@ -117,6 +119,11 @@ export function eventProps(type: VNodeType, props: VProps | null): VProps | null
 export function createdVNode(vnode: VNode): VNode {
   elementHook?.(vnode);
   options.vnode?.(vnode);
+  // Preact's `_diff` (mangled `__b`) runs before a vnode is diffed; denext has no per-vnode diff,
+  // so it runs as the element is created, before any render reads its props (what class-name
+  // rewriters such as Fresh's twind plugin rely on).
+  const diff = (options.__b ?? options._diff) as ((v: VNode) => void) | undefined;
+  diff?.(vnode);
   return vnode;
 }
 

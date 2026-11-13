@@ -68,12 +68,12 @@ export interface SourceRule {
 /** The Preact patterns denext does not run as Preact does (shared by both migrators). */
 export const PREACT_SOURCE_RULES: readonly SourceRule[] = [
   {
-    re: /\boptions\s*\.\s*(?:_diff|__b|_catchError|__e|_hook|__h|_root|__)\s*=/,
+    re: /\boptions\s*\.\s*(?:_catchError|__e|_hook|__h|_root|__)\s*=/,
     item: "preact internal options hooks",
     reason: "denext calls options._render / __r, diffed, _commit / __c, unmount, " +
       "debounceRendering and requestAnimationFrame with its own elements (type, props, key), " +
-      "not Preact's internal vnodes; _diff / __b, _catchError / __e, _hook / __h and _root / __ " +
-      "are not called",
+      "not Preact's internal vnodes (_diff / __b runs as an element is created); _catchError / " +
+      "__e, _hook / __h and _root / __ are not called",
   },
 ];
 

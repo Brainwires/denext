@@ -16,6 +16,7 @@ import {
   beginServerInsertCollection,
   escapeHtml,
   flushServerInsertedHTML,
+  flushSettledHead,
   type HeadCollector,
 } from "./render-to-string.ts";
 import { hostAttrs, renderHostHtml, reportHoleError } from "./render-shared.ts";
@@ -498,6 +499,7 @@ export async function renderShell(
     if (signal !== undefined) throw new InlineBoundarySignal(signal);
     const holes = new Set<PendingHole>();
     const shell = renderer.boundaries.expand(rendered, holes, head);
+    await flushSettledHead(sink.settled, head, shell);
     return { shell, holes };
   } finally {
     sink.end();

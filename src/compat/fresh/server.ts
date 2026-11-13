@@ -44,6 +44,14 @@ import {
 import { HttpError } from "./http-error.ts";
 import type { LayoutConfig, RouteConfig } from "./types.ts";
 import type { Component } from "../../jsx/types.ts";
+import { freshMatchOrder } from "../../build/fresh-codegen.ts";
+import {
+  type FreshPlugin,
+  isSpecialPluginRoute,
+  pluginMiddlewareEntries,
+  pluginRoutePattern,
+  runPluginRenderHooks,
+} from "./plugins.ts";
 
 export type { FreshModule } from "./context.ts";
 
@@ -106,9 +114,12 @@ export interface FreshAppSpec {
   routes: FreshRouteEntry[];
   /**
    * The internal path of the generated page that renders what `main.ts` registered in code: an
-   * `app.route()` page, a handler's `ctx.render()` / `page()`, an `app.onError()` component.
+   * `app.route()` page, a handler's `ctx.render()` / `page()`, an `app.onError()` component (and
+   * a Fresh 1.x plugin's route component).
    */
   appRoute?: string;
+  /** The Fresh 1.x plugins (`fresh.config.ts`): their routes and middleware run here. */
+  plugins?: FreshPlugin[];
 }
 
 type AnyFn = (...args: unknown[]) => unknown;
@@ -188,12 +199,46 @@ function wrapping(
   return { layouts, skipApp };
 }
 
-/** The first file route matching `pathname`, with its parameters. */
+/** Each spec's routes with its plugins' routes merged in, in Fresh's match order. */
+const mergedRoutes = new WeakMap<FreshAppSpec, FreshRouteEntry[]>();
+
+/** Fresh's special file names a plugin route may take; denext renders the app's own files. */
+let warnedSpecial = false;
+
+/** A spec's file routes and its plugins' routes, in match order (computed once). */
+function routesOf(spec: FreshAppSpec): FreshRouteEntry[] {
+  if (!spec.plugins?.length) return spec.routes;
+  let routes = mergedRoutes.get(spec);
+  if (routes) return routes;
+  const fromPlugins: FreshRouteEntry[] = [];
+  for (const plugin of spec.plugins) {
+    for (const r of plugin.routes ?? []) {
+      if (isSpecialPluginRoute(r.path)) {
+        if (!warnedSpecial) {
+          warnedSpecial = true;
+          console.warn(
+            `denext/fresh: plugin ${plugin.name}'s route ${r.path} is one of Fresh's special ` +
+              "files; denext renders the app's own (routes/_app, _404, _500), so it is skipped",
+          );
+        }
+        continue;
+      }
+      const pattern = pluginRoutePattern(r.path);
+      const mod: FreshModule = { default: r.component, handler: r.handler };
+      fromPlugins.push(codeEntry(spec, `app:plugin:${plugin.name}:${r.path}`, pattern, mod));
+    }
+  }
+  routes = [...spec.routes, ...fromPlugins].sort(freshMatchOrder);
+  mergedRoutes.set(spec, routes);
+  return routes;
+}
+
+/** The first file (or plugin) route matching `pathname`, with its parameters. */
 function matchRoute(
   spec: FreshAppSpec,
   pathname: string,
 ): { entry: FreshRouteEntry; params: Record<string, string> } | null {
-  for (const entry of spec.routes) {
+  for (const entry of routesOf(spec)) {
     const params = matchPattern(entry.pattern, pathname);
     if (params) return { entry, params };
   }
@@ -585,11 +630,24 @@ function chainFor(
   for (const m of builder?._middlewares ?? []) {
     if (underPattern(pathname, m.path)) fns.push(...(m.fns as AnyFn[]));
   }
-  const files = entry
+  const files = entry && !entry.id.startsWith("app:plugin:")
     ? entry.middlewares.map((i) => app.middlewares[i])
     : app.middlewares.filter((m) => m.prefix !== null && underPrefix(pathname, m.prefix));
-  for (const m of files) fns.push(...middlewareFns(m.mod));
+  // Fresh sorts a plugin's middleware with the `_middleware` files by directory: the outer ones
+  // first, a file before a plugin's at the same depth.
+  const layered = [
+    ...files.map((m) => ({ depth: depthOf(m.id), fns: middlewareFns(m.mod) })),
+    ...pluginMiddlewareEntries(app.plugins ?? [])
+      .filter((m) => underPrefix(pathname, m.prefix))
+      .map((m) => ({ depth: depthOf(m.prefix), fns: m.fns as AnyFn[] })),
+  ];
+  for (const layer of layered.sort((a, b) => a.depth - b.depth)) fns.push(...layer.fns);
   return fns;
+}
+
+/** A directory's depth (`""` and `/` are 0, `admin/users` is 2). */
+function depthOf(dir: string): number {
+  return dir.split("/").filter(Boolean).length;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
@@ -752,6 +810,8 @@ export interface FreshLayoutOptions extends FreshFileOptions {
   app?: boolean;
   /** The `main.ts` module (Fresh 2), for its `app.appWrapper()` and `app.layout()`. */
   main?: unknown;
+  /** The Fresh 1.x plugins (`fresh.config.ts`), whose render hooks run for each page. */
+  plugins?: FreshPlugin[];
 }
 
 /** The `app.layout()` layouts wrapping this request's page, and whether they skip the wrapper. */
@@ -809,6 +869,7 @@ export function freshLayout(
       const children = props.children;
       return await renderComponent(mod.default, fr.ctx, v1, { Component: () => children });
     }
+    if (opts.plugins?.length) runPluginRenderHooks(opts.plugins);
     const builder = appOf(opts.main);
     const code = codeLayouts(builder, fr.path ?? fr.ctx.url.pathname, match);
     const children = await wrapIn(code.layouts, props.children, fr.ctx, v1);

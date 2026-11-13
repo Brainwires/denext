@@ -27,6 +27,7 @@ import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
 import { pluginCalls, skipToken } from "./fresh-config-read.ts";
+import { planFreshConfig } from "./fresh-plugins-migrate.ts";
 import { type FreshLayout, ignoredByFresh, readFreshLayout, VITE_CONFIGS } from "./fresh-layout.ts";
 import {
   islandWrapperPath,
@@ -46,6 +47,7 @@ import {
   FRESH_PARTIAL_SHIM,
   FRESH_RUNTIME_SHIM,
   type FreshFile,
+  freshMatchOrder,
   freshPattern,
   importPath,
   internalFolder,
@@ -94,6 +96,8 @@ export interface FreshMigrateInfo {
   importOverrides: Record<string, string>;
   /** `denext.config.ts` entries carried from the app's Fresh options (`basePath: "/app"`, …). */
   configEntries: string[];
+  /** The imports those entries need. */
+  configImports: string[];
 }
 
 /** The Fresh app `dir` holds, or null. */
@@ -233,33 +237,7 @@ function handlerMethods(source: string): string[] {
   return named.length > 0 ? named : METHODS.filter((m) => m !== "HEAD");
 }
 
-/**
- * A specificity key per path segment, for Fresh's match order: a static segment before a
- * partial one before a parameter; a segment that may be empty (a catch-all, an optional
- * parameter) after the path ending there (`/docs` before `/docs/:slug*`).
- */
-function segmentScore(segment: string): number {
-  if (segment.startsWith(":") && segment.endsWith("*")) return -3;
-  if (segment.startsWith("{")) return -2;
-  if (segment.startsWith(":")) return 2;
-  if (segment.includes(":")) return 3;
-  return 4;
-}
-
-/** Order routes as Fresh matches them: more specific segments first. */
-function byMatchOrder(a: { pattern: string }, b: { pattern: string }): number {
-  const sa = a.pattern.split("/").filter(Boolean).map(segmentScore);
-  const sb = b.pattern.split("/").filter(Boolean).map(segmentScore);
-  for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
-    // A path that ends here sorts between a real segment and one that may be empty.
-    const x = sa[i] ?? -1;
-    const y = sb[i] ?? -1;
-    if (x !== y) return y - x;
-  }
-  return a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0;
-}
-
-export { byMatchOrder as freshMatchOrder, handlerMethods as freshHandlerMethods };
+export { freshMatchOrder, handlerMethods as freshHandlerMethods };
 
 // ── The plan ─────────────────────────────────────────────────────────────────
 
@@ -327,6 +305,8 @@ interface Plan {
   v1: boolean;
   /** The Fresh 2 `main.ts` (absolute), once known. */
   main: string | null;
+  /** The Fresh 1.x `fresh.config.ts` (absolute) whose plugins run, once known. */
+  config: string | null;
   roles: Roles;
   gen: GenFile[];
   mwRoutes: MiddlewareRouteSpec[];
@@ -445,12 +425,21 @@ function rootLayout(plan: Plan, css: string[]): GenFile {
   const target = abs(plan, file);
   const { app, rootLayout: layout } = plan.roles;
   if (!app && !layout) {
-    return { path: file, source: bareRootLayoutSource(target, css, plan.main) };
+    return { path: file, source: bareRootLayoutSource(target, css, plan.main, plan.config) };
   }
   if (app && !layout) {
     return {
       path: file,
-      source: layoutSource(target, app, abs(plan, app.path), plan.v1, true, css, plan.main),
+      source: layoutSource(
+        target,
+        app,
+        abs(plan, app.path),
+        plan.v1,
+        true,
+        css,
+        plan.main,
+        plan.config,
+      ),
     };
   }
   return { path: file, source: composedRootSource(plan, target, css) };
@@ -459,9 +448,10 @@ function rootLayout(plan: Plan, css: string[]): GenFile {
 /** The root layout's `App` wrapper line (the `_app` file and / or `main.ts`), if any. */
 function appWrapperLine(plan: Plan): string[] {
   const { app } = plan.roles;
-  if (!app && !plan.main) return [];
+  if (!app && !plan.main && !plan.config) return [];
   const opts = ['id: "_app"', "app: true", ...(plan.v1 ? ["v1: true"] : [])];
   if (plan.main) opts.push("main");
+  if (plan.config) opts.push("plugins: freshConfig.default?.plugins");
   return [`const App = freshLayout(${app ? "app" : "{}"}, { ${opts.join(", ")} });`];
 }
 
@@ -479,6 +469,7 @@ function composedRootSource(plan: Plan, target: string, css: string[]): string {
     `import * as layout from "${rel(layout!.path)}";`,
     ...(app ? [`import * as app from "${rel(app.path)}";`] : []),
     ...(plan.main ? [`import * as main from "${importPath(target, plan.main)}";`] : []),
+    ...(plan.config ? [`import * as freshConfig from "${importPath(target, plan.config)}";`] : []),
     "",
     `const Layout = freshLayout(layout, { id: ""${v1} });`,
     ...wrapper,
@@ -941,21 +932,31 @@ async function dropViteConfig(plan: Plan): Promise<void> {
   }
 }
 
-/** Report a Fresh 1.x `fresh.config.ts`'s plugins, then remove it (denext.config.ts replaces it). */
-async function dropFreshConfig(plan: Plan): Promise<void> {
+/**
+ * A Fresh 1.x `fresh.config.ts`: kept when it has plugins other than Tailwind's (which denext's
+ * Tailwind build replaces), which `denext/fresh/server` then runs; removed otherwise.
+ *
+ * @returns The kept config (absolute), and the island modules its local plugins declare.
+ */
+async function carryFreshConfig(plan: Plan): Promise<{ config: string | null; islands: string[] }> {
   const path = join(plan.dir, "fresh.config.ts");
   const source = await mfs.readTextFile(path).catch(() => null);
-  if (source === null) return;
-  const block = /plugins\s*:\s*\[([\s\S]*?)\]/.exec(source)?.[1] ?? "";
-  for (const m of block.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
-    if (m[1] === "tailwind") continue;
-    plan.wont.push({
-      item: `fresh.config.ts: ${m[1]}()`,
-      reason: "a Fresh plugin; denext does not run Fresh plugins. Port what it adds (routes, " +
-        "middleware, islands, styles) to the app or to a denext plugin",
+  if (source === null) return { config: null, islands: [] };
+  const kept = await planFreshConfig(plan.dir, source);
+  if (kept.source === null) {
+    await mfs.remove(path);
+    return { config: null, islands: [] };
+  }
+  if (kept.source !== source) await mfs.writeTextFile(path, kept.source);
+  for (const r of kept.remote) {
+    plan.review.push({
+      item: `fresh.config.ts: ${r.name}()`,
+      reason: `a plugin from ${r.specifier}: its routes, middleware and render hooks run; ` +
+        "islands it declares are not read from outside the project, so they render without " +
+        "hydrating (vendor the plugin into the project to have them hydrate)",
     });
   }
-  await mfs.remove(path);
+  return { config: path, islands: kept.islands };
 }
 
 /** Remove Fresh's own entry and generated files; Fresh 2's `main.ts` stays (middleware.ts runs it). */
@@ -1087,6 +1088,7 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "denext/fresh/partial": sub("fresh/partial"),
     "denext/fresh/env": sub("fresh/env"),
     "denext/fresh/server": sub("fresh/server"),
+    "denext/fresh/plugins": sub("fresh/plugins"),
     "fresh": sub("fresh"),
     "fresh/runtime": sub("fresh/runtime"),
     "@fresh/core": sub("fresh"),
@@ -1264,6 +1266,7 @@ export async function transformFreshApp(
     dir,
     v1,
     main: null,
+    config: null,
     roles: rolesOf(scan.files, findings),
     gen: [],
     mwRoutes: [],
@@ -1276,7 +1279,7 @@ export async function transformFreshApp(
   };
   const sourcesBefore = await sourceFiles(dir, layout);
   for (const route of plan.roles.routes) planRoute(plan, route);
-  plan.mwRoutes.sort((a, b) => byMatchOrder(a, b));
+  plan.mwRoutes.sort((a, b) => freshMatchOrder(a, b));
   planLayouts(plan);
 
   for (const option of layout.unread) {
@@ -1289,18 +1292,25 @@ export async function transformFreshApp(
     });
   }
   const registered = await planRegisteredIslands(plan, detection, sourcesBefore);
-  const islands = await markIslands(dir, layout, scan.localIslands, registered.local);
+  const carried = v1 ? await carryFreshConfig(plan) : { config: null, islands: [] };
+  plan.config = carried.config;
+  // The kept config's other `$fresh/plugins/*` imports (twind) stay on the Fresh they came with.
+  const freshBase = importsOf(detection.config)["$fresh/"];
+  if (plan.config && freshBase) registered.overrides["$fresh/plugins/"] = `${freshBase}plugins/`;
+  const islands = await markIslands(dir, layout, scan.localIslands, [
+    ...registered.local,
+    ...carried.islands,
+  ]);
   const envFiles = await rewriteEnv(dir, sourcesBefore);
   const importOverrides = { ...await planPartials(plan, sourcesBefore), ...registered.overrides };
   const staticTailwind = await moveStatic(plan);
   const clientCss = await carryClientEntry(plan);
   await dropViteConfig(plan);
-  if (v1) await dropFreshConfig(plan);
   const main = await dropFreshEntries(plan);
   plan.main = main;
   const mainSource = main ? await mfs.readTextFile(main).catch(() => null) : null;
   planNotFound(plan, mainSource);
-  const appRoute = main ? planAppRoutePage(plan) : undefined;
+  const appRoute = main || plan.config ? planAppRoutePage(plan) : undefined;
 
   const { tailwind, css } = await layoutStylesheets(dir, clientCss, staticTailwind);
   plan.gen.unshift(rootLayout(plan, css));
@@ -1319,6 +1329,7 @@ export async function transformFreshApp(
       layouts: plan.roles.layouts.map((l) => ({ file: l, abs: abs(plan, l.path) })),
       routes: plan.mwRoutes,
       appRoute,
+      config: plan.config,
     }),
   });
   await writeGenerated(plan, written);
@@ -1351,13 +1362,16 @@ export async function transformFreshApp(
     wontMigrate: plan.wont,
     review: plan.review,
     importOverrides,
-    configEntries: configEntriesOf(layout),
+    configEntries: configEntriesOf(layout, plan.config !== null),
+    configImports: plan.config ? [`import { freshPlugins } from "denext/fresh/plugins";`] : [],
   };
 }
 
 /** The `denext.config.ts` entries a Fresh app's options carry (1.x `router`). */
-function configEntriesOf(layout: FreshLayout): string[] {
+function configEntriesOf(layout: FreshLayout, plugins: boolean): string[] {
   const out: string[] = [];
+  // Bundles the client entrypoints of fresh.config.ts's plugins.
+  if (plugins) out.push("plugins: [freshPlugins()],");
   if (layout.basePath) out.push(`basePath: ${JSON.stringify(layout.basePath)},`);
   if (layout.trailingSlash !== undefined) out.push(`trailingSlash: ${layout.trailingSlash},`);
   return out;

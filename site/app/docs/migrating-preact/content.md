@@ -78,19 +78,20 @@ denext task dev
 denext calls the hooks at the points Preact's diff does. Each one receives denext's element, not
 Preact's internal vnode.
 
-| Hook                                                                                            | On denext                                                                                                                                          |
-| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `options.vnode(vnode)`                                                                          | Called for each element `h`, `createElement`, `cloneElement` (from `denext/preact` and `denext/preact/compat`) and Preact's JSX runtime create.    |
-| `options.event(e)`                                                                              | Called before each handler of an intrinsic element those create; a returned value is passed to the handler in the event's place.                   |
-| `options.attr(name, value)`                                                                     | Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML.                                                                  |
-| `options.useDebugValue(value)`                                                                  | Called by `useDebugValue` from `denext/preact/hooks`, with the formatted value.                                                                    |
-| `options._render(vnode)` (mangled `__r`)                                                        | Called before each component renders in the browser.                                                                                               |
-| `options.diffed(vnode)`                                                                         | Called for each component, element and text node a commit rendered or changed, once its DOM is in place, children first, before layout effects.    |
-| `options._commit(vnode, queue)` (mangled `__c`)                                                 | Called once per commit, after its layout effects, with the root element and an empty queue.                                                        |
-| `options.unmount(vnode)`                                                                        | Called for each component, element and text node removed, parent first; the effect cleanups follow, children first (React's order).                |
-| `options.debounceRendering(cb)`                                                                 | Schedules the render a state update needs (by default a microtask, as in Preact).                                                                  |
-| `options.requestAnimationFrame(cb)`                                                             | Schedules the `useEffect` flush after a commit (`preact/test-utils`-style synchronous flushing works).                                             |
-| `_diff` / `__b`, `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `__suspenseDidResolve` | Not called (a no-op); `preact/debug` and `preact/devtools` map to an empty module, since the devtools bridge reads Preact's internal vnode fields. |
+| Hook                                                                           | On denext                                                                                                                                          |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `options.vnode(vnode)`                                                         | Called for each element `h`, `createElement`, `cloneElement` (from `denext/preact` and `denext/preact/compat`) and Preact's JSX runtime create.    |
+| `options.event(e)`                                                             | Called before each handler of an intrinsic element those create; a returned value is passed to the handler in the event's place.                   |
+| `options.attr(name, value)`                                                    | Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML.                                                                  |
+| `options.useDebugValue(value)`                                                 | Called by `useDebugValue` from `denext/preact/hooks`, with the formatted value.                                                                    |
+| `options._render(vnode)` (mangled `__r`)                                       | Called before each component renders in the browser.                                                                                               |
+| `options.diffed(vnode)`                                                        | Called for each component, element and text node a commit rendered or changed, once its DOM is in place, children first, before layout effects.    |
+| `options._commit(vnode, queue)` (mangled `__c`)                                | Called once per commit, after its layout effects, with the root element and an empty queue.                                                        |
+| `options.unmount(vnode)`                                                       | Called for each component, element and text node removed, parent first; the effect cleanups follow, children first (React's order).                |
+| `options.debounceRendering(cb)`                                                | Schedules the render a state update needs (by default a microtask, as in Preact).                                                                  |
+| `options.requestAnimationFrame(cb)`                                            | Schedules the `useEffect` flush after a commit (`preact/test-utils`-style synchronous flushing works).                                             |
+| `options._diff(vnode)` (mangled `__b`)                                         | Called as each element is created through those entry points, after `options.vnode` (denext has no per-vnode diff to run it before).               |
+| `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `__suspenseDidResolve` | Not called (a no-op); `preact/debug` and `preact/devtools` map to an empty module, since the devtools bridge reads Preact's internal vnode fields. |
 
 The element every hook receives is denext's (`type`, `props`, `key`, with the `ref` in `props`),
 not Preact's internal vnode (`_children`, `_component`, `_dom`). Elements denext's own components
@@ -167,12 +168,12 @@ found in.
 | ---------------------------------------------------- | ---------------------------------------- |
 | preact-cli's `preact.config.js` (its webpack config) | Port what it adds to `denext.config.ts`. |
 
-| Review                                                        | What to do                                                                                                                                         |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preact-router`, `wouter-preact`                              | They run on the aliases; check the navigation and redirects.                                                                                       |
-| Preact's internal `options` hooks (`__b`, `__e`, `__h`, `__`) | Not called; the other hooks get denext's elements (see [the `options` hooks](#preacts-options-hooks)).                                             |
-| preset-vite's `prerender`                                     | denext's SPA mode renders in the browser and does not prerender. For HTML at build time, move the pages to the App Router and run `denext export`. |
-| `wmr.config.mjs`                                              | WMR plugins are not run; port them to `denext.config.ts`.                                                                                          |
+| Review                                                 | What to do                                                                                                                                         |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preact-router`, `wouter-preact`                       | They run on the aliases; check the navigation and redirects.                                                                                       |
+| Preact's internal `options` hooks (`__e`, `__h`, `__`) | Not called; the other hooks get denext's elements (see [the `options` hooks](#preacts-options-hooks)).                                             |
+| preset-vite's `prerender`                              | denext's SPA mode renders in the browser and does not prerender. For HTML at build time, move the pages to the App Router and run `denext export`. |
+| `wmr.config.mjs`                                       | WMR plugins are not run; port them to `denext.config.ts`.                                                                                          |
 
 The same list is in [Known limitations](/docs/limitations).
 

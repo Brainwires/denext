@@ -154,3 +154,20 @@ Deno.test("options.requestAnimationFrame schedules the useEffect flush", async (
     assertEquals(ran, ["effect"]);
   });
 });
+
+Deno.test("options._diff / __b runs as an element is created, before it renders (twind's class rewrite)", async () => {
+  const el = container();
+  await withOptions({
+    __b: (v: unknown) => {
+      const node = v as { type?: unknown; props?: Record<string, unknown> };
+      if (typeof node.type === "string" && typeof node.props?.class === "string") {
+        node.props.class = `tw-${node.props.class}`;
+      }
+    },
+  }, async () => {
+    await act(() => {
+      render(h("p", { class: "red" }, "x"), el);
+    });
+  });
+  assertEquals(el.innerHTML, '<p class="tw-red">x</p>');
+});

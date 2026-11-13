@@ -322,3 +322,33 @@ Deno.test("fresh-islands: registrations, import-map resolution and export names"
     assertEquals(await packageExportNames(dir, "./missing.ts"), null);
   });
 });
+
+Deno.test("migrate: a Fresh 1.x plugin's islands become client modules; a remote plugin is reviewed", async () => {
+  await withTree({
+    "deno.json": { imports: { "$fresh/": "https://deno.land/x/fresh@1.7.3/" } },
+    "fresh.config.ts": `import { defineConfig } from "$fresh/server.ts";
+import tailwind from "$fresh/plugins/tailwind.ts";
+import twind from "$fresh/plugins/twind.ts";
+import { chartPlugin } from "./plugins/chart/mod.ts";
+import { seo } from "https://deno.land/x/fresh_seo@1.0.0/mod.ts";
+export default defineConfig({ plugins: [tailwind(), twind(twindConfig), chartPlugin(), seo({ x: 1 })] });
+`,
+    "plugins/chart/mod.ts": `export function chartPlugin() {
+  return { name: "chart", islands: { baseLocation: import.meta.url, paths: ["./islands/Chart.tsx"] } };
+}
+`,
+    "plugins/chart/islands/Chart.tsx": "export default function Chart() { return <canvas />; }\n",
+    "routes/index.tsx": "export default function Home() { return <p>home</p>; }\n",
+  }, async (dir) => {
+    const r = await migrateProject(dir, { denextLocalPath: REPO, from: "fresh" });
+    const f = r.fresh!;
+    assert((await read(dir, "plugins/chart/islands/Chart.tsx")).startsWith('"use client";'));
+    const config = await read(dir, "fresh.config.ts");
+    assert(!config.includes("tailwind"), config);
+    assertStringIncludes(config, "plugins: [twind(twindConfig), chartPlugin(), seo({ x: 1 })]");
+    assertEquals(f.review.filter((x) => x.item.startsWith("fresh.config.ts:")).map((x) => x.item), [
+      "fresh.config.ts: seo()",
+    ]);
+    assertEquals(f.wontMigrate.filter((x) => x.item.startsWith("fresh.config.ts")), []);
+  });
+});

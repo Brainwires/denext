@@ -35,6 +35,7 @@ import {
   beginServerInsertCollection,
   escapeHtml,
   flushServerInsertedHTML,
+  flushSettledHead,
   type HeadCollector,
   type ProviderScope,
 } from "./render-to-string.ts";
@@ -294,6 +295,7 @@ export async function prerenderToShellFlight(
   try {
     const dual = await renderer.resolveChildren(node, []);
     flushServerInsertedHTML(sink.inserted, options.head ?? null);
+    await flushSettledHead(sink.settled, options.head ?? null, dual.html);
     let flight = dual.flight;
     if (Array.isArray(flight) && flight.length === 1) flight = flight[0];
     return {

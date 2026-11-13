@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **Fresh 1.x plugins run.** A `fresh.config.ts` with plugins stays (Fresh's Tailwind plugin
+  removed), and `denext/fresh/server` runs their `routes` (sorted with the file routes),
+  `middlewares` (by directory, like `_middleware` files) and `render` / `renderAsync` hooks (an
+  async hook starts before the page renders and resumes with its HTML; `styles` and `links` go
+  into the head). `freshPlugins()` from the new `denext/fresh/plugins` bundles each plugin's
+  `entrypoints` into `public/_fresh-plugins/`, which a page whose hook returned `scripts` loads.
+  `denext migrate` marks the islands a local plugin declares `"use client"` and keeps
+  `$fresh/plugins/` mapped to the app's Fresh release. Preact's `options._diff` / `__b` is called
+  as an element is created (what twind's plugin hooks).
+- **`onRenderSettled`**: an internal settled-render head hook every document renderer awaits
+  after the tree renders, with its HTML (what Fresh's render hooks run through).
 - **Fresh partial navigation merges `<script>` and `<style>` and keeps scroll positions, as Fresh
   does.** A data `<script>` in the answer's head (JSON-LD, …) is added or updated by type and `id`
   (never an executable one), a `<style>` without an `id` is added (through a constructed style

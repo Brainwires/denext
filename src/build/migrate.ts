@@ -2152,7 +2152,8 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
   });
   await mfs.writeTextFile(configPath, JSON.stringify(merged, null, 2) + "\n");
   written.unshift(configPath);
-  await ensureGitignore(dir, [".denext/", "out/", "_fresh/"], written);
+  const pluginOut = fresh.configImports.length ? ["public/_fresh-plugins/"] : [];
+  await ensureGitignore(dir, [".denext/", "out/", "_fresh/", ...pluginOut], written);
   await ensureVscodeDeno(dir, written);
   const configExists = !(await writeIfWritable(
     join(dir, "denext.config.ts"),
@@ -2184,9 +2185,10 @@ function freshConfigSource(fresh: FreshMigrateInfo): string {
       } },\n`
     : "";
   const carried = fresh.configEntries.map((line) => `  ${line}\n`).join("");
+  const imports = fresh.configImports.map((line) => `${line}\n`).join("");
   return `${GEN_MARKER}
 import type { DenextConfig } from "denext/server";
-
+${imports}
 // A Fresh ${fresh.version}.x app on denext: its routes run through middleware.ts and app/.
 export default {
 ${tailwind}${carried}} satisfies DenextConfig;

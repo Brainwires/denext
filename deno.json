@@ -290,6 +290,7 @@
     "./fresh/partial": "./src/compat/fresh/partial.ts",
     "./fresh/env": "./src/compat/fresh/env.ts",
     "./fresh/server": "./src/compat/fresh/server.ts",
+    "./fresh/plugins": "./src/compat/fresh/plugin-build.ts",
     "./preact": "./src/compat/preact/mod.ts",
     "./preact/hooks": "./src/compat/preact/hooks.ts",
     "./preact/compat": "./src/compat/preact/compat.ts",

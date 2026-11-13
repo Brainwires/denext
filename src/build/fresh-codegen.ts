@@ -187,6 +187,22 @@ function mainImport(file: string, main: string | null): { line: string; option: 
 }
 
 /**
+ * The Fresh 1.x `fresh.config.ts` import of a generated file and the option passing its plugins
+ * (none without one).
+ */
+function pluginsImport(
+  file: string,
+  config: string | null,
+): { line: string; option: string[] } {
+  return config
+    ? {
+      line: `import * as freshConfig from "${importPath(file, config)}";\n`,
+      option: ["plugins: freshConfig.default?.plugins"],
+    }
+    : { line: "", option: [] };
+}
+
+/**
  * A generated `layout.tsx` for a `_layout` (or, with `app`, the root: the `_app` wrapper, and
  * `main.ts`'s app wrapper and layouts when it has `main`).
  */
@@ -198,16 +214,17 @@ export function layoutSource(
   app: boolean,
   cssImports: string[],
   main: string | null = null,
+  config: string | null = null,
 ): string {
   const css = cssImports.map((c) => `import "${importPath(file, c)}";\n`).join("");
   const m = mainImport(file, app ? main : null);
+  const p = pluginsImport(file, app ? config : null);
+  const opts = app ? ["app: true", ...m.option, ...p.option] : [];
   return `${FRESH_GEN_HEADER}// The Fresh ${app ? "app wrapper" : "layout"} routes/${layout.id}.
 ${css}import { freshLayout } from "denext/fresh/server";
 import * as layout from "${importPath(file, abs)}";
-${m.line}
-export default freshLayout(layout, ${
-    optionsLiteral(app ? "_app" : layout.dir, v1, app ? ["app: true", ...m.option] : [])
-  });
+${m.line}${p.line}
+export default freshLayout(layout, ${optionsLiteral(app ? "_app" : layout.dir, v1, opts)});
 `;
 }
 
@@ -219,14 +236,17 @@ export function bareRootLayoutSource(
   file: string,
   cssImports: string[],
   main: string | null = null,
+  config: string | null = null,
 ): string {
   const css = cssImports.map((c) => `import "${importPath(file, c)}";\n`).join("");
-  if (main) {
-    return `${FRESH_GEN_HEADER}// The app has no routes/_app: main.ts's app wrapper and layouts, if any.
+  if (main || config) {
+    const m = mainImport(file, main);
+    const p = pluginsImport(file, config);
+    const opts = ['id: "_app"', "app: true", ...m.option, ...p.option].join(", ");
+    return `${FRESH_GEN_HEADER}// The app has no routes/_app: main.ts's app wrapper and layouts, the plugins' hooks.
 ${css}import { freshLayout } from "denext/fresh/server";
-import * as main from "${importPath(file, main)}";
-
-export default freshLayout({}, { id: "_app", app: true, main });
+${m.line}${p.line}
+export default freshLayout({}, { ${opts} });
 `;
   }
   return `${FRESH_GEN_HEADER}// The app has no routes/_app: denext renders the document around the pages.
@@ -344,12 +364,16 @@ export interface MiddlewareSpec {
   routes: MiddlewareRouteSpec[];
   /** The URL of the page that renders what `main.ts` registers in code, when generated. */
   appRoute?: string;
+  /** The Fresh 1.x `fresh.config.ts` (absolute) whose plugins run, when it has some. */
+  config?: string | null;
 }
 
 /** The source of the generated root `middleware.ts`. */
 export function middlewareSource(file: string, spec: MiddlewareSpec): string {
   const imports = [`import { freshMiddleware } from "denext/fresh/server";`];
   if (spec.main) imports.push(`import * as main from "${importPath(file, spec.main)}";`);
+  const plugins = pluginsImport(file, spec.config ?? null);
+  if (plugins.line) imports.push(plugins.line.trimEnd());
   spec.middlewares.forEach((m, i) =>
     imports.push(`import * as mw${i} from "${importPath(file, m.abs)}";`)
   );
@@ -372,8 +396,8 @@ ${imports.join("\n")}
 
 export default freshMiddleware({
 ${spec.v1 ? "  v1: true,\n" : ""}${spec.main ? "  main,\n" : ""}${
-    spec.appRoute ? `  appRoute: ${JSON.stringify(spec.appRoute)},\n` : ""
-  }  middlewares: [
+    plugins.option.map((o) => `  ${o},\n`).join("")
+  }${spec.appRoute ? `  appRoute: ${JSON.stringify(spec.appRoute)},\n` : ""}  middlewares: [
 ${mws}  ],
   layouts: [
 ${layouts}  ],
@@ -399,4 +423,30 @@ function routeLine(r: MiddlewareRouteSpec, i: number): string {
     ...(r.inMiddleware ? ["inMiddleware: true"] : []),
   ];
   return `    { ${fields.join(", ")} },\n`;
+}
+
+/**
+ * A specificity key per path segment, for Fresh's match order: a static segment before a
+ * partial one before a parameter; a segment that may be empty (a catch-all, an optional
+ * parameter) after the path ending there (`/docs` before `/docs/:slug*`).
+ */
+function segmentScore(segment: string): number {
+  if (segment.startsWith(":") && segment.endsWith("*")) return -3;
+  if (segment.startsWith("{")) return -2;
+  if (segment.startsWith(":")) return 2;
+  if (segment.includes(":")) return 3;
+  return 4;
+}
+
+/** Order routes as Fresh matches them: more specific segments first. */
+export function freshMatchOrder(a: { pattern: string }, b: { pattern: string }): number {
+  const sa = a.pattern.split("/").filter(Boolean).map(segmentScore);
+  const sb = b.pattern.split("/").filter(Boolean).map(segmentScore);
+  for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
+    // A path that ends here sorts between a real segment and one that may be empty.
+    const x = sa[i] ?? -1;
+    const y = sb[i] ?? -1;
+    if (x !== y) return y - x;
+  }
+  return a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0;
 }

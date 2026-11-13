@@ -5,7 +5,7 @@
 // intrinsic elements, and correct HTML escaping. Hooks resolve through a
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
-import { renderScope } from "../runtime/render-scope.ts";
+import { renderScope, type SettledHeadCallback } from "../runtime/render-scope.ts";
 import { ssrStateSlot } from "./render-phase.ts";
 import { invokeFunctionComponent, serverOwnerStack } from "./server-owner.ts";
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
@@ -375,13 +375,45 @@ export interface HeadCollector {
  */
 export function beginServerInsertCollection(): {
   inserted: Array<() => VNodeChildren>;
+  settled: SettledHeadCallback[];
   end: () => void;
 } {
   const inserted: Array<() => VNodeChildren> = [];
+  const settled: SettledHeadCallback[] = [];
   const scope = renderScope();
   const prev = scope.insertSink;
+  const prevSettled = scope.settledSink;
   scope.insertSink = (cb) => inserted.push(cb);
-  return { inserted, end: () => void (scope.insertSink = prev) };
+  scope.settledSink = (cb) => settled.push(cb);
+  return {
+    inserted,
+    settled,
+    end: () => {
+      scope.insertSink = prev;
+      scope.settledSink = prevSettled;
+    },
+  };
+}
+
+/**
+ * Run the collected settled-render callbacks (`onRenderSettled`) with the rendered HTML, await
+ * each, and place their markup into `head.serverInserted` (after the `useServerInsertedHTML`
+ * markup). No-op without callbacks or a head collector.
+ *
+ * @param settled The callbacks.
+ * @param head The head collector.
+ * @param html The tree's rendered HTML (the shell's, on a streaming path).
+ */
+export async function flushSettledHead(
+  settled: SettledHeadCallback[],
+  head: HeadCollector | null,
+  html: string,
+): Promise<void> {
+  if (settled.length === 0 || !head) return;
+  for (const cb of settled.splice(0)) {
+    const frag = renderToStringSync(await cb(html), {});
+    if (frag) (head.serverInserted ??= []).push(frag);
+  }
 }
 
 /**
@@ -603,7 +635,9 @@ export async function renderToString(
     const pending = renderChildrenInto(node, ctx);
     if (isThenable(pending)) await pending;
     flushServerInsertedHTML(sink.inserted, ctx.head);
-    return ctx.out.join("");
+    const html = ctx.out.join("");
+    await flushSettledHead(sink.settled, ctx.head, html);
+    return html;
   } finally {
     setDispatcher(prev);
     sink.end();

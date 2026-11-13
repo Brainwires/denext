@@ -518,9 +518,18 @@ Deno.test("migrate: a Fresh 1.x app — (req, ctx) handlers, fresh.gen.ts / main
       1,
       1,
     ]);
-    for (const gone of ["fresh.gen.ts", "main.ts", "dev.ts", "fresh.config.ts", "static"]) {
+    for (const gone of ["fresh.gen.ts", "main.ts", "dev.ts", "static"]) {
       assertEquals(await exists(dir, gone), false, `${gone} should be gone`);
     }
+    // fresh.config.ts stays for its kvOAuthPlugin (which denext/fresh/server runs), without
+    // Fresh's Tailwind plugin (denext compiles Tailwind).
+    assertEquals(
+      await read(dir, "fresh.config.ts"),
+      `import { defineConfig } from "$fresh/server.ts";
+import { kvOAuthPlugin } from "./plugins/kv_oauth.ts";
+export default defineConfig({ plugins: [kvOAuthPlugin()] });
+`,
+    );
     assertEquals(await read(dir, "assets/styles.css"), "@tailwind base;\n@tailwind utilities;\n");
     assertEquals(f.tailwind, { input: "./assets/styles.css", output: "./public/styles.css" });
     assertStringIncludes(await read(dir, "app/page.tsx"), `{ id: "index", v1: true, error }`);
@@ -535,15 +544,24 @@ Deno.test("migrate: a Fresh 1.x app — (req, ctx) handlers, fresh.gen.ts / main
     const mw = await read(dir, "middleware.ts");
     assertStringIncludes(mw, "  v1: true,\n");
     assertEquals(mw.includes("import * as main"), false);
+    assertStringIncludes(mw, `import * as freshConfig from "./fresh.config.ts";`);
+    assertStringIncludes(mw, "  plugins: freshConfig.default?.plugins,\n");
+    assertStringIncludes(
+      await read(dir, "app/layout.tsx"),
+      "plugins: freshConfig.default?.plugins",
+    );
+    assertStringIncludes(await read(dir, "denext.config.ts"), "plugins: [freshPlugins()],");
     const deno = JSON.parse(await read(dir, "deno.json"));
     assertEquals(Object.keys(deno.imports).filter((k) => k.startsWith("$fresh/")).sort(), [
+      "$fresh/plugins/",
       "$fresh/runtime.ts",
       "$fresh/server.ts",
     ]);
+    assertEquals(deno.imports["$fresh/plugins/"], "https://deno.land/x/fresh@1.7.3/plugins/");
     assertEquals(deno.imports["preact/"], undefined);
     assertEquals(deno.imports["$std/"], "https://deno.land/std@0.216.0/");
     assertEquals(deno.tasks.preview, undefined);
-    assert(f.wontMigrate.some((w) => w.item === "fresh.config.ts: kvOAuthPlugin()"));
+    assert(!f.wontMigrate.some((w) => w.item.startsWith("fresh.config.ts")));
     assert(f.review.some((w) => w.item === "./assets/styles.css"));
   });
 });

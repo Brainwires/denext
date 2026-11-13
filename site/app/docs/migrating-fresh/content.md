@@ -95,7 +95,9 @@ denext task dev
   `router.basePath` and `router.trailingSlash` become `basePath` and `trailingSlash` in
   `denext.config.ts`. An option set to something computed is reported by name.
 - **Removed**: `fresh.gen.ts`, a Fresh `dev.ts`, `vite.config.*`, `client.ts`, and for Fresh 1.x
-  `main.ts` and `fresh.config.ts`. Fresh 2's `main.ts` stays: `middleware.ts` runs it.
+  `main.ts` (and `fresh.config.ts` when it has no plugin but Tailwind's). Fresh 2's `main.ts`
+  stays: `middleware.ts` runs it. A Fresh 1.x `fresh.config.ts` with plugins stays too, minus
+  Fresh's Tailwind plugin: see [Fresh plugins](/docs/migrating-fresh#fresh-plugins).
 - **`deno.json` is merged, not replaced.** `fresh`, `fresh/runtime`, `@fresh/core`,
   `@fresh/core/runtime`, `$fresh/server.ts` and `$fresh/runtime.ts` map to `denext/fresh` and
   `denext/fresh/runtime`; `preact`, `preact/hooks`, `preact/compat`, `preact/jsx-runtime` and
@@ -209,6 +211,26 @@ path outside it (`/`, `/intro`) renders the not-found page with a 404. `ctx.url`
 URL and `ctx.config.basePath` holds the value. (denext's own `basePath` in `denext.config.ts`,
 which a Fresh 1.x `router.basePath` becomes, also moves `/_denext/` assets under it.)
 
+### Fresh plugins
+
+A Fresh 1.x `fresh.config.ts`'s plugins run on denext, as Fresh's server runs them. The
+generated `middleware.ts` and root layout import the config, and `denext/fresh/server`:
+
+| Plugin field                               | On denext                                                                                                                                                                                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routes`                                   | Answered like file routes at `routes<path>` (`/oauth/signin`, `blog/[slug]`), sorted with them; a page component renders at `app/fresh-app-route/page.tsx`.                                                                         |
+| `middlewares`                              | Run like a `_middleware` file in the directory `path` names, outer directories first (a file's before a plugin's at the same depth).                                                                                                |
+| `render` / `renderAsync`                   | Run for each page render: an async hook starts before the page renders and `await ctx.renderAsync()` resolves with the page's HTML once it has rendered; a sync hook runs then. The result's `styles` and `links` go into the head. |
+| `scripts` and `entrypoints`                | `freshPlugins()` in `denext.config.ts` bundles each entrypoint into `public/_fresh-plugins/` at dev startup and build; a page that returned `scripts` loads it, which calls its default export once per `state`.                    |
+| `islands`                                  | `denext migrate` marks the modules a local plugin names (`baseLocation: import.meta.url`) `"use client"`.                                                                                                                           |
+| `buildStart`, `buildEnd`, `configResolved` | Not called: they hook Fresh's own build, which denext replaces.                                                                                                                                                                     |
+
+Fresh's official plugins under `$fresh/plugins/` (twind, among them) keep importing from the
+Fresh release the app used: `deno.json` keeps a `$fresh/plugins/` entry pointing there. Fresh's
+Tailwind plugin is removed, since denext compiles Tailwind itself. A Fresh 2 plugin is a function
+that takes the `App` and calls its builder methods (`app.use()`, `app.get()`, `app.island()`):
+`main.ts` runs it, so it needs nothing more.
+
 ---
 
 ## 6. `csp()`
@@ -252,12 +274,11 @@ import.meta.url)`) is reduced to the source location by the migration.
 Each finding names the files it was found in. **Won't migrate** means denext does not run it;
 **review** means it migrates but needs a look.
 
-| Won't migrate                                                              | What to do                                                                              |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).               |
-| Fresh 1.x `fresh.config.ts` plugins (Tailwind's aside)                     | Port what they add (routes, middleware, islands, styles) to the app or a denext plugin. |
-| A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own).     |
-| A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                     |
+| Won't migrate                                                              | What to do                                                                          |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Vite plugins other than Fresh's and Tailwind's                             | Port what they do to `denext.config.ts` (`plugins`, `viteEmitterPlugin`).           |
+| A `static/` file that differs from the `public/` file at its path          | Keep one of them (identical files and `robots.txt`-style files merge on their own). |
+| A generated file (`app/…`, `middleware.ts`) the app has with other content | Move it aside and re-run `denext migrate` to see what it generates.                 |
 
 | Review                                                         | What to do                                                                                                                                                                      |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -267,7 +288,8 @@ Each finding names the files it was found in. **Won't migrate** means denext doe
 | `import.meta.env` (Vite)                                       | Rewritten to `denext/fresh/env`; a file-location pick by `PROD` is reduced to the source location (see [Environment variables](/docs/migrating-fresh#7-environment-variables)). |
 | `Deno.env` in an island                                        | An island runs in the browser: pass the value as a prop, or use `publicEnv()` (a literal `FRESH_PUBLIC_*` read is rewritten for you).                                           |
 | A Tailwind v3 stylesheet (Fresh 1.x)                           | Run `npx @tailwindcss/upgrade`.                                                                                                                                                 |
-| Preact's internal `options` hooks (`__b`, `__e`, `__h`, `__`)  | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                                        |
+| A Fresh 1.x plugin from outside the project                    | Its routes, middleware and render hooks run; vendor it into the project for the islands it declares to hydrate.                                                                 |
+| Preact's internal `options` hooks (`__e`, `__h`, `__`)         | Not called; the others get denext's elements ([Preact's `options` hooks](/docs/migrating-preact#preacts-options-hooks)).                                                        |
 
 The list of what denext does not do for a Fresh app is also in
 [Known limitations](/docs/limitations).

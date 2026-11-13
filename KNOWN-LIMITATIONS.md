@@ -394,15 +394,23 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** a Fresh 1.x plugin's render hook gets the page's HTML once it has rendered, but
+  the `htmlText` it returns does not replace the page (denext writes its own render); a sync
+  `render` hook runs once the page has rendered rather than around it, and an async hook that
+  keeps module-level state between its start and its result sees concurrent requests'
+  renders interleave. A plugin route named after one of Fresh's special files (`_app`, `_404`,
+  `_500`, `_layout`, `_middleware`) is skipped with a warning, `buildStart` / `buildEnd` /
+  `configResolved` are not called, and the islands a plugin from outside the project declares
+  are not read (they render without hydrating). Partial navigation never runs an executable
+  `<script>` from the answer's head (Fresh does not either). `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
   `public/` still answer first. `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** Preact's `options` hooks receive denext's elements (`type`, `props`, `key`), not
-  Preact's internal vnodes, and `_diff` / `__b`, `_catchError` / `__e`, `_hook` / `__h` and
-  `_root` / `__` are not called, so `preact/debug` / `preact/devtools` (which read Preact's
+  Preact's internal vnodes (`_diff` / `__b` runs as an element is created), and `_catchError` /
+  `__e`, `_hook` / `__h` and `_root` / `__` are not called, so `preact/debug` / `preact/devtools` (which read Preact's
   internal vnode fields) are empty modules; `options.unmount` sees the removed vnodes parent
   first, but their effect cleanups keep React's child-first order. `useErrorBoundary` never catches during
   a server render, and a production build compiles its boundary support in only when the app's
