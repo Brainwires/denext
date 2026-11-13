@@ -130,6 +130,7 @@ export type {
   DesktopMenuItemSpec,
   DesktopMenuItemState,
   DesktopMenuItemType,
+  DesktopMenuSpec,
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
 } from "../desktop/menu-config.ts";

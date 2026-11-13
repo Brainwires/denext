@@ -216,7 +216,8 @@ Deno.test("onAppAction: menu, dock, tray and tray-menu clicks are parsed; malfor
     await until(() => got.length === 5);
     await new Promise((r) => setTimeout(r, 10));
     assertEquals(got, [
-      { source: "menu", id: "prefs" },
+      // An older runtime's menu click: a page item, no key window.
+      { source: "menu", id: "prefs", kind: "appMenu", keyWindow: null },
       { source: "dock", id: "new-window" },
       { source: "tray", tray: "main", event: "doubleClick", detail: null },
       { source: "tray", tray: "main", event: "click", detail: null },
