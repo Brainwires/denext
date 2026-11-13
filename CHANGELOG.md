@@ -10,6 +10,61 @@ and this project adheres to
 
 ### Added
 
+- **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
+  `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
+  the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.
+  `denext start` now warns once when the process that serves runs with `--max-memory` and such a
+  flag, naming the flag, the cap and the fix (drop the flag and rely on the cap), and `denext dev`
+  warns that it will override `start.limits.memory` in production. @denext/backend warns the same
+  way for Edge Functions' `memoryMb`.
+- **Size limits on opened desktop windows.** `windows.open` / `host.openWindow` and a page's
+  `openWindow` take `minSize` / `maxSize` (`{ width, height }` in CSS pixels), and a window that
+  sets neither inherits `desktop.minSize` / `desktop.maxSize` as the main window gets them, the way
+  it inherits `desktop.titleBar`. A minimum larger than the maximum the window ends up with (its own
+  or the inherited one) is refused `validation` before the window opens.
+- **The desktop backend hears notification clicks.** `runDesktop({ onNotificationClick })`,
+  `onNotificationClick(fn)` on what `runDesktop` resolves with and an extension's
+  `host.onNotificationClick(fn)` are called with `{ tag, action, data, launch }` for every click the
+  runtime reports on one of the app's notifications: the pages' (which still reach
+  `onLocalNotificationTapped` / the web `Notification`) and the ones the backend posted itself
+  through `Deno.desktop.notifications`, which nothing heard before. The click that launched the app
+  reaches every hook, however late it subscribes. One dispatcher reads the runtime's launch clicks
+  and listens once for the `notifications` capability and the hooks. Never called without denext's
+  pinned runtime or in a sidecar's child.
+- **Desktop: native title options.** `desktop.window.titleVisibility: "hidden"` hides the title
+  text and keeps the OS's own title bar, its buttons and its drag area; the window's title still
+  names it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS
+  (`NSWindow.titleVisibility`) and Windows (`SetWindowThemeAttribute`, caption buttons kept, with or
+  without Mica) hide it on every backend; on Linux only a title bar GTK draws itself (client-side
+  decorations) can, and under a window manager's decorations the title stays and the capability
+  says so. `desktop.window.toolbarStyle: "unified" | "unifiedCompact" | "expanded"` lays the macOS
+  title bar out with an empty toolbar (macOS 11+), the title left-aligned like Finder for
+  `"unified"`; with `desktop.titleBar: "hiddenInset"` it sets the inset's style, and with
+  `"hidden"` (no toolbar) it is a config error. Windows opened with `windows.open` / `openWindow`
+  inherit both unless their own options say; a page changes its window's with
+  `setTitleVisibility` / `setToolbarStyle` from `denext/desktop/window`, which reject
+  `unsupported` with the reason, and feature-detects them with `windowCapabilities()`
+  (`titleVisibility`, `toolbarStyle`). Needs a runtime on laufey API 57 (runtime
+  3.0.0-denext.22); an older runtime reports both capabilities `false`, skips the config values
+  with a warning and rejects the setters.
+
+### Documentation
+
+- **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains
+  why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
+  recent apps (an unpinned app installed under /Applications gets a recents tile whenever its
+  running tile goes away, on quit or on switching back to `"accessory"`, with no opt-out; one
+  installed anywhere else gets none), and the pattern that avoids it: stay
+  `"accessory"` and bring windows up with `focusWindow()` / a window ref's `focus()`, which activate
+  the app without changing the policy. Laufey's macOS `focus()` also orders the window in front of
+  other apps' windows when the activation is declined, on both backends, from the runtime that
+  carries laufey's `MacFocusWindow`. `setActivationPolicy`'s docs no longer suggest switching to
+  regular while a window is open.
+
+## [4.17.0] - 2026-11-13
+
+### Added
+
 - **Desktop: `getWindows()` reports each window's title.** The `title` the Window menu shows (as
   opened, then the page's `document.title` or `setWindowTitle`) is in every entry of `getWindows()`
   and the `windows` capability's `list`.
@@ -108,27 +163,6 @@ and this project adheres to
   those calls carry no cookies, as before. `createTestClient(handler, { cookieJar })` and
   `new CookieJar(store)` apply a URL-aware store's host, path, expiry and `Secure` rules; the
   default name-keyed jar is unchanged.
-- **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
-  `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
-  the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.
-  `denext start` now warns once when the process that serves runs with `--max-memory` and such a
-  flag, naming the flag, the cap and the fix (drop the flag and rely on the cap), and `denext dev`
-  warns that it will override `start.limits.memory` in production. @denext/backend warns the same
-  way for Edge Functions' `memoryMb`.
-- **Size limits on opened desktop windows.** `windows.open` / `host.openWindow` and a page's
-  `openWindow` take `minSize` / `maxSize` (`{ width, height }` in CSS pixels), and a window that
-  sets neither inherits `desktop.minSize` / `desktop.maxSize` as the main window gets them, the way
-  it inherits `desktop.titleBar`. A minimum larger than the maximum the window ends up with (its own
-  or the inherited one) is refused `validation` before the window opens.
-- **The desktop backend hears notification clicks.** `runDesktop({ onNotificationClick })`,
-  `onNotificationClick(fn)` on what `runDesktop` resolves with and an extension's
-  `host.onNotificationClick(fn)` are called with `{ tag, action, data, launch }` for every click the
-  runtime reports on one of the app's notifications: the pages' (which still reach
-  `onLocalNotificationTapped` / the web `Notification`) and the ones the backend posted itself
-  through `Deno.desktop.notifications`, which nothing heard before. The click that launched the app
-  reaches every hook, however late it subscribes. One dispatcher reads the runtime's launch clicks
-  and listens once for the `notifications` capability and the hooks. Never called without denext's
-  pinned runtime or in a sidecar's child.
 
 ### Changed
 
@@ -258,34 +292,8 @@ and this project adheres to
 
 ### Documentation
 
-- **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains
-  why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
-  recent apps (an unpinned app installed under /Applications gets a recents tile whenever its
-  running tile goes away, on quit or on switching back to `"accessory"`, with no opt-out; one
-  installed anywhere else gets none), and the pattern that avoids it: stay
-  `"accessory"` and bring windows up with `focusWindow()` / a window ref's `focus()`, which activate
-  the app without changing the policy. Laufey's macOS `focus()` also orders the window in front of
-  other apps' windows when the activation is declined, on both backends, from the runtime that
-  carries laufey's `MacFocusWindow`. `setActivationPolicy`'s docs no longer suggest switching to
-  regular while a window is open.
 - **Desktop: a sidecar or extension path outside the project is embedded too.** The desktop docs
   and the known limitations say that packaging embeds the file a `../` path names.
-- **Desktop: native title options.** `desktop.window.titleVisibility: "hidden"` hides the title
-  text and keeps the OS's own title bar, its buttons and its drag area; the window's title still
-  names it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS
-  (`NSWindow.titleVisibility`) and Windows (`SetWindowThemeAttribute`, caption buttons kept, with or
-  without Mica) hide it on every backend; on Linux only a title bar GTK draws itself (client-side
-  decorations) can, and under a window manager's decorations the title stays and the capability
-  says so. `desktop.window.toolbarStyle: "unified" | "unifiedCompact" | "expanded"` lays the macOS
-  title bar out with an empty toolbar (macOS 11+), the title left-aligned like Finder for
-  `"unified"`; with `desktop.titleBar: "hiddenInset"` it sets the inset's style, and with
-  `"hidden"` (no toolbar) it is a config error. Windows opened with `windows.open` / `openWindow`
-  inherit both unless their own options say; a page changes its window's with
-  `setTitleVisibility` / `setToolbarStyle` from `denext/desktop/window`, which reject
-  `unsupported` with the reason, and feature-detects them with `windowCapabilities()`
-  (`titleVisibility`, `toolbarStyle`). Needs a runtime on laufey API 57 (runtime
-  3.0.0-denext.22); an older runtime reports both capabilities `false`, skips the config values
-  with a warning and rejects the setters.
 
 ## [4.16.0] - 2026-11-11
 
@@ -22069,7 +22077,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.16.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.17.0...development
+[4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
 [4.14.0]: https://jsr.io/@denext/denext@4.14.0
