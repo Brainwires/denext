@@ -21,12 +21,14 @@
  *
  * As in Fresh, the answer's head is merged into the page's before the regions swap: its
  * `<title>`, each `<meta>` (by `name`, `property`, `http-equiv` or `itemprop`; `charset` is left
- * alone) updated or added, and each stylesheet `<link>` the page lacks added and loaded first.
- * Under an element with `f-view-transition`, the swap runs inside `document.startViewTransition`
- * where the browser has it. Browser back / forward between the entries partial navigation made
- * restores each region as that entry left it (an `append` / `prepend` history included); an
- * entry this page load holds no record of (after a reload) is fetched as a partial request and
- * its regions replaced.
+ * alone) updated or added, each stylesheet `<link>` the page lacks added and loaded first, each
+ * data `<script>` (JSON-LD and the like; never an executable one) added or updated, and each
+ * `<style>` without an `id` added; nothing the page has is removed. Under an element with
+ * `f-view-transition`, the swap runs inside `document.startViewTransition` where the browser has
+ * it. Browser back / forward between the entries partial navigation made restores each region as
+ * that entry left it (an `append` / `prepend` history included) and the entry's scroll position;
+ * an entry this page load holds no record of (after a reload) is fetched as a partial request
+ * whose regions apply in their modes, as Fresh's `popstate` handler does.
  *
  * @module
  */
@@ -147,33 +149,52 @@ interface FoundPartial {
   children: VNodeChildren;
 }
 
-/** The head elements an answer merges into the page's head (`<title>` travels as its title). */
+/**
+ * The head elements an answer merges into the page's head (`<title>` travels as its title):
+ * `<meta>` and `<link>` wherever they are (denext hoists them into the head), `<script>` and
+ * `<style>` inside the answer's `<head>`, as Fresh reads them from the parsed document's head.
+ */
 const HEAD_TAGS = new Set(["meta", "link"]);
+const HEAD_ONLY_TAGS = new Set(["script", "style"]);
+
+/** Whether a head element of an answer is one {@link mergeHead} merges. */
+function isMergedHeadTag(tag: string, inHead: boolean): boolean {
+  return HEAD_TAGS.has(tag) || (inHead && HEAD_ONLY_TAGS.has(tag));
+}
 
 /**
  * The outermost `<Partial>` elements of a parsed tree, in document order, and (into `head`) the
- * `<meta>` / `<link>` elements outside them (an `<svg>`'s content is not searched).
+ * head elements outside them (an `<svg>`'s content is not searched).
  */
-function collectPartials(node: unknown, out: FoundPartial[], head?: VNode[]): FoundPartial[] {
+function collectPartials(
+  node: unknown,
+  out: FoundPartial[],
+  head?: VNode[],
+  inHead = false,
+): FoundPartial[] {
   if (Array.isArray(node)) {
-    for (const child of node) collectPartials(child, out, head);
+    for (const child of node) collectPartials(child, out, head, inHead);
   } else if (node !== null && typeof node === "object" && "props" in node) {
-    const v = node as VNode;
-    const props = v.props as { name?: unknown; mode?: PartialMode; children?: VNodeChildren };
-    if (v.type === Partial && typeof props.name === "string") {
-      out.push({
-        name: props.name,
-        mode: props.mode ?? "replace",
-        key: v.key == null ? null : String(v.key),
-        children: props.children,
-      });
-    } else if (typeof v.type === "string" && HEAD_TAGS.has(v.type)) {
-      head?.push(v);
-    } else if (v.type !== "svg") {
-      collectPartials(props.children, out, head);
-    }
+    collectElement(node as VNode, out, head, inHead);
   }
   return out;
+}
+
+/** {@link collectPartials} for one element: a `<Partial>`, a head element, or its children. */
+function collectElement(v: VNode, out: FoundPartial[], head: VNode[] | undefined, inHead: boolean) {
+  const props = v.props as { name?: unknown; mode?: PartialMode; children?: VNodeChildren };
+  if (v.type === Partial && typeof props.name === "string") {
+    out.push({
+      name: props.name,
+      mode: props.mode ?? "replace",
+      key: v.key == null ? null : String(v.key),
+      children: props.children,
+    });
+  } else if (typeof v.type === "string" && isMergedHeadTag(v.type, inHead)) {
+    head?.push(v);
+  } else if (v.type !== "svg") {
+    collectPartials(props.children, out, head, inHead || v.type === "head");
+  }
 }
 
 // ── The answer's head ────────────────────────────────────────────────────────
@@ -264,9 +285,74 @@ function mergeStylesheet(head: HTMLHeadElement, attrs: [string, string][]): Prom
   return loaded;
 }
 
+/** The text an element's children hold (a `<script>` / `<style>` body). */
+function textOf(children: unknown): string {
+  if (children == null || typeof children === "boolean") return "";
+  if (Array.isArray(children)) return children.map(textOf).join("");
+  return typeof children === "object" ? "" : String(children);
+}
+
+/** A `<script>` / `<style>` element's body: its `dangerouslySetInnerHTML`, else its text. */
+function bodyOf(props: Record<string, unknown>): string {
+  const raw = (props.dangerouslySetInnerHTML as { __html?: unknown } | undefined)?.__html;
+  return typeof raw === "string" ? raw : textOf(props.children);
+}
+
+/** Script types that run (Fresh never merges those: they would run a second time). */
+const EXECUTABLE_SCRIPT = new Set(["", "module", "text/javascript", "importmap"]);
+
+/**
+ * Merge a data `<script>` (JSON-LD, a JSON blob) as Fresh does: one with the same type and `id`
+ * (or, without an `id`, the same type and content) is updated, else it is added. Executable
+ * scripts are skipped.
+ */
+function mergeDataScript(head: HTMLHeadElement, attrs: [string, string][], text: string): void {
+  const type = attrs.find(([k]) => k === "type")?.[1] ?? "";
+  if (EXECUTABLE_SCRIPT.has(type) || attrs.some(([k]) => k === "src")) return;
+  const id = attrs.find(([k]) => k === "id")?.[1] ?? "";
+  const existing = [...head.querySelectorAll("script")].find((el) =>
+    el.getAttribute("type") === type &&
+    (id ? el.getAttribute("id") === id : el.textContent === text)
+  );
+  if (existing) {
+    if (existing.textContent !== text) existing.textContent = text;
+    return;
+  }
+  const script = headElement("script", attrs);
+  script.textContent = text;
+  head.appendChild(script);
+}
+
+/** A document whose `adoptedStyleSheets` can hold a constructed sheet. */
+type SheetDocument = Document & { adoptedStyleSheets?: CSSStyleSheet[] };
+
+/**
+ * Add a `<style>` without an `id` as Fresh does (one with an `id` is the page's own, kept as it
+ * is). When the page's Content-Security-Policy does not allow its text (it hashes the styles of
+ * the document it was served with), the rules apply through a constructed style sheet instead.
+ */
+function mergeStyle(head: HTMLHeadElement, attrs: [string, string][], text: string): void {
+  if (attrs.some(([k, v]) => k === "id" && v !== "")) return;
+  const style = headElement("style", attrs);
+  style.textContent = text;
+  head.appendChild(style);
+  const sheet = (style as HTMLStyleElement).sheet;
+  if (text.trim() === "" || (sheet && sheet.cssRules.length > 0)) return;
+  const doc = document as SheetDocument;
+  if (typeof CSSStyleSheet !== "function" || !doc.adoptedStyleSheets) return;
+  try {
+    const constructed = new CSSStyleSheet();
+    constructed.replaceSync(text);
+    doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, constructed];
+  } catch {
+    // Not a style sheet the browser can parse: nothing to apply.
+  }
+}
+
 /**
  * Merge an answer's head elements into the page's, as Fresh does: `<meta>` updated or added,
- * new stylesheets added. Nothing the page has is removed.
+ * new stylesheets added, data `<script>`s added or updated and `<style>`s added. Nothing the
+ * page has is removed (Fresh's `applyPartials` removes nothing either).
  *
  * @returns The new stylesheets' loads (the regions swap once they settle).
  */
@@ -275,8 +361,11 @@ function mergeHead(nodes: VNode[]): Promise<void>[] {
   const waits: Promise<void>[] = [];
   if (!head) return waits;
   for (const node of nodes) {
-    const attrs = attributesOf(node.props as Record<string, unknown>);
+    const props = node.props as Record<string, unknown>;
+    const attrs = attributesOf(props);
     if (node.type === "meta") mergeMeta(head, attrs);
+    else if (node.type === "script") mergeDataScript(head, attrs, bodyOf(props));
+    else if (node.type === "style") mergeStyle(head, attrs, bodyOf(props));
     else {
       const wait = mergeStylesheet(head, attrs);
       if (wait) waits.push(wait);
@@ -307,11 +396,11 @@ async function readAnswer(res: Response): Promise<PartialAnswer | null> {
   return { found, head, title: payload.title ?? null };
 }
 
-/** Apply found partials to the regions of the same names, each in its mode (or `mode`). */
-function applyFound(found: FoundPartial[], mode?: PartialMode): void {
+/** Apply found partials to the regions of the same names, each in its mode. */
+function applyFound(found: FoundPartial[]): void {
   for (const p of found) {
     const region = ACTIVE.get(p.name);
-    if (region) region.apply(mode ?? p.mode, p.children, p.key);
+    if (region) region.apply(p.mode, p.children, p.key);
     else console.warn(`denext/fresh: partial "${p.name}" is not on this page; skipped`);
   }
 }
@@ -365,8 +454,6 @@ interface PartialRequest {
   init?: RequestInit;
   /** Swap inside a view transition (the element is under `f-view-transition`). */
   transition?: boolean;
-  /** Apply every partial in this mode (a back / forward re-fetch replaces). */
-  mode?: PartialMode;
 }
 
 /**
@@ -427,7 +514,7 @@ async function commitAnswer(req: PartialRequest, url: URL, answer: PartialAnswer
   const entry = markEntry();
   if (req.navigate && !req.replace && url.href !== location.href) remember(entry);
   await swap(() => {
-    applyFound(answer.found, req.mode);
+    applyFound(answer.found);
     if (answer.title) document.title = answer.title;
   }, req.transition === true);
   pushNavigation(req, url);
@@ -438,8 +525,29 @@ function pushNavigation(req: PartialRequest, url: URL): void {
   if (!req.navigate) return;
   if (url.href === location.href) return emit();
   if (req.replace) history.replaceState(entryState(currentEntry!), "", url.href);
-  else history.pushState(entryState(currentEntry = newEntryId()), "", url.href);
+  else {
+    // As Fresh does: the entry left keeps its scroll position, the new one starts at the top.
+    history.replaceState(entryState(currentEntry!, scrollPosition()), "", location.href);
+    history.pushState(entryState(currentEntry = newEntryId(), { x: 0, y: 0 }), "", url.href);
+  }
   emit();
+}
+
+/** The window's scroll position. */
+function scrollPosition(): { x: number; y: number } {
+  return { x: globalThis.scrollX ?? 0, y: globalThis.scrollY ?? 0 };
+}
+
+/** The `history.state` key holding an entry's scroll position. */
+const SCROLL_KEY = "denextFreshScroll";
+
+/** Scroll to the position a popped entry recorded (Fresh's `state.scrollX` / `scrollY`). */
+function restoreScroll(state: unknown): void {
+  const pos = state !== null && typeof state === "object"
+    ? (state as Record<string, unknown>)[SCROLL_KEY] as { x?: number; y?: number } | undefined
+    : undefined;
+  if (typeof scrollTo !== "function") return;
+  scrollTo({ left: pos?.x ?? 0, top: pos?.y ?? 0, behavior: "instant" });
 }
 
 // ── Back / forward ───────────────────────────────────────────────────────────
@@ -472,10 +580,10 @@ function entryOf(state: unknown): string | null {
 }
 
 /** A `history.state` naming `id`, keeping what the current state holds otherwise. */
-function entryState(id: string): Record<string, unknown> {
+function entryState(id: string, scroll?: { x: number; y: number }): Record<string, unknown> {
   const state = history.state;
   const base = state !== null && typeof state === "object" ? state as Record<string, unknown> : {};
-  return { ...base, [ENTRY_KEY]: id };
+  return { ...base, [ENTRY_KEY]: id, ...(scroll ? { [SCROLL_KEY]: scroll } : {}) };
 }
 
 /** Mark the entry the page shows (once), so a back / forward to it can restore its regions. */
@@ -507,26 +615,31 @@ function restoreRegions(snap: RegionsSnapshot): boolean {
 
 /**
  * The router's back / forward claim: an entry partial navigation made is shown by its regions,
- * restored as the page left it, or (no record of it in this page load) fetched as a partial
- * request that replaces them. Any other entry, or one whose page was re-rendered since, is left
- * to the router (a whole-page navigation).
+ * restored as the page left it, or (no record of it in this page load: after a reload) fetched as
+ * a partial request whose regions apply in their own modes, as Fresh's `popstate` handler does;
+ * an answer with no partials renders the whole page. The entry's scroll position is restored.
+ * Any other entry, or one whose page was re-rendered since, is left to the router (a whole-page
+ * navigation, which Fresh makes a document load: either way the page renders as its URL's).
  *
  * @returns Whether the pop was claimed.
  */
 function claimPop(href: string, event: Event): boolean {
-  const id = entryOf((event as PopStateEvent).state);
+  const state = (event as PopStateEvent).state;
+  const id = entryOf(state);
   if (id === null) return false;
   if (currentEntry !== null && entryOf(history.state) !== currentEntry) remember(currentEntry);
   const snap = SNAPSHOTS.get(id);
   if (snap) {
     if (!restoreRegions(snap)) return false;
     currentEntry = id;
+    restoreScroll(state);
     return true;
   }
   currentEntry = id;
   const url = new URL(href);
-  void fetchPartials({ url, partial: url, navigate: false, mode: "replace" }).catch(() =>
-    navigate(href, { history: false, scroll: false })
+  void fetchPartials({ url, partial: url, navigate: false }).then(
+    () => restoreScroll(state),
+    () => navigate(href, { history: false, scroll: false }),
   );
   return true;
 }

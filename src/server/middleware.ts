@@ -561,7 +561,7 @@ async function runEntry(
   if (isRewrite(result)) {
     return {
       type: "rewrite",
-      url: new URL(result.destination, url).href,
+      url: rewriteUrl(result.destination, url),
       headers: result.headers ? new Headers(result.headers) : undefined,
     };
   }
@@ -572,6 +572,21 @@ async function runEntry(
     };
   }
   return { type: "next" };
+}
+
+/**
+ * Where a `rewrite(destination)` goes: the destination resolved against the request URL, keeping
+ * the request's query string when the destination names none (`rewrite("/home")` on `/a?x=1`
+ * serves `/home?x=1`; `rewrite("/home?y=2")` serves exactly that).
+ *
+ * @param destination The rewrite's destination (a path, a relative path or a URL).
+ * @param url The request URL.
+ * @returns The absolute URL to serve.
+ */
+export function rewriteUrl(destination: string, url: URL): string {
+  const target = new URL(destination, url);
+  if (!/[?]/.test(destination) && target.search === "") target.search = url.search;
+  return target.href;
 }
 
 /** Merge one entry's response headers in, preserving multiple Set-Cookie entries (a plain set() would collapse them). */

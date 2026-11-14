@@ -102,9 +102,6 @@ Not blocking 5.0; each item says why.
 
 ## Framework compatibility surfaces
 
-- **Fresh partial navigation:** the gaps left in KNOWN-LIMITATIONS (merging an answer's
-  `<script>` / `<style>` into the head, history across reloads). _Why 5.x: fixable gaps, none
-  blocking._
 - **Preact compat:** render-to-string streaming (the parity gate lists it). _Why 5.x: a small,
   independent gap._
 

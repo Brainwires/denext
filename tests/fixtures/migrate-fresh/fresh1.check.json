@@ -21,6 +21,10 @@
       "action": "create"
     },
     {
+      "path": "app/fresh-app-route/page.tsx",
+      "action": "create"
+    },
+    {
       "path": "app/layout.tsx",
       "action": "create"
     },
@@ -51,7 +55,7 @@
     },
     {
       "path": "fresh.config.ts",
-      "action": "delete"
+      "action": "modify"
     },
     {
       "path": "fresh.gen.ts",
@@ -75,12 +79,7 @@
       "from": "static/favicon.ico"
     }
   ],
-  "wontMigrate": [
-    {
-      "item": "fresh.config.ts: kvOAuthPlugin()",
-      "reason": "a Fresh plugin; denext does not run Fresh plugins. Port what it adds (routes, middleware, islands, styles) to the app or to a denext plugin"
-    }
-  ],
+  "wontMigrate": [],
   "review": [
     {
       "item": "./assets/styles.css",

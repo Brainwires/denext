@@ -8,6 +8,104 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Fresh conformance beds and a Fresh comparison page.** The migration beds now run
+  `denext migrate` on the two apps `@fresh/init` scaffolds (Vite with Tailwind, and Fresh's own
+  builder), on Deno's node_test_viewer (stable Fresh 2 with Vite, Tailwind 4 and Deno KV) and on
+  Deno SaaSKit (a Fresh 1.x app with five plugins), besides Fresh's own website, and each is
+  built, served and hydrated with nothing left as won't-migrate (`wontMigrate: []` on a bed;
+  `serve: false` stops a bed after the build). Fresh's website migrates with no hand edit. A migrated Fresh 1.x
+  app's imports of `$fresh/src/server/defines.ts`, `/types.ts` and `src/runtime/utils.ts` resolve
+  to `denext/fresh`. The new [Fresh and denext](https://denext.dev/docs/fresh-vs-denext) page
+  lists what Fresh does, where each part lives on denext, and what denext adds.
+- **`viteBuildPlugin` runs Vite plugins' build hooks.** From `denext/plugin-kit/vite-emitter`
+  (and `denext/plugin-kit`): `configResolved`, `buildStart`, `generateBundle`, `writeBundle` and
+  `closeBundle` in Rollup's order, with `this.emitFile`, for plugins given directly, as a Vite
+  config or module, or through a loader called at build; `apply: "serve"` plugins are skipped,
+  `enforce` order is kept, and the module-graph hooks it cannot run are named in a warning.
+  `denext migrate --from fresh` moves a Vite config's other plugins to `vite.plugins.ts` and runs
+  them through it instead of reporting them.
+- **Fresh 1.x plugins run.** A `fresh.config.ts` with plugins stays (Fresh's Tailwind plugin
+  removed), and `denext/fresh/server` runs their `routes` (sorted with the file routes),
+  `middlewares` (by directory, like `_middleware` files) and `render` / `renderAsync` hooks (an
+  async hook starts before the page renders and resumes with its HTML; `styles` and `links` go
+  into the head). `freshPlugins()` from the new `denext/fresh/plugins` bundles each plugin's
+  `entrypoints` into `public/_fresh-plugins/`, which a page whose hook returned `scripts` loads.
+  `denext migrate` marks the islands a local plugin declares `"use client"` and keeps
+  `$fresh/plugins/` mapped to the app's Fresh release. Preact's `options._diff` / `__b` is called
+  as an element is created (what twind's plugin hooks).
+- **`onRenderSettled`**: an internal settled-render head hook every document renderer awaits
+  after the tree renders, with its HTML (what Fresh's render hooks run through).
+- **Fresh partial navigation merges `<script>` and `<style>` and keeps scroll positions, as Fresh
+  does.** A data `<script>` in the answer's head (JSON-LD, …) is added or updated by type and `id`
+  (never an executable one), a `<style>` without an `id` is added (through a constructed style
+  sheet when the page's policy does not cover its text), each history entry keeps its scroll
+  position for back / forward, and an entry made before a reload applies the refetched regions in
+  their own modes, as Fresh's `popstate` handler does, instead of replacing them.
+- **Fresh's `new App({ basePath })`, `csp({ useNonce: true })` and `import.meta.env.PROD`
+  behave as in Fresh.** The generated `middleware.ts` mounts every route under the `App`'s
+  `basePath` (a path outside it renders the not-found page with a 404; `ctx.url` stays the full
+  URL). `useNonce` mints a nonce per request, lists it in `script-src` / `style-src` in place of
+  `'unsafe-inline'`, and gives it to each `<script>` / `<style>` element the page creates through
+  Preact's entry points. `denext migrate` reduces a `PROD` / `DEV` choice between Vite's bundle
+  location and the source location to the source one, which denext runs from under `dev` and
+  `start`; Fresh's own website now migrates with no hand edit.
+- **Islands a Fresh app registers in code migrate in place.** `app.island(fileOrUrl, exportName,
+  Component)` and `app.islands(…)` in `main.ts`, `builder.registerIsland()` in `dev.ts` and
+  `fresh({ islandSpecifiers })` each make their module a `"use client"` one where it is; a package
+  module gets a `"use client"` re-export under `app/_fresh/islands/` that `deno.json` points the
+  app at. `App` records `island()` / `islands()` instead of ignoring them.
+- **`fresh({ … })` options carry over.** `routeDir`, `islandsDir`, `staticDir` (several, the
+  earlier one winning a shared path), `serverEntry`, `clientEntry`, `ignore` and
+  `islandSpecifiers` are read from the Vite config and applied by the migration; a Fresh 1.x
+  `fresh.config.ts`'s `staticDir`, `router.basePath` and `router.trailingSlash` too (the last two
+  as `basePath` / `trailingSlash` in `denext.config.ts`). A client entry's stylesheets now resolve
+  relative to the entry.
+- **`denext migrate --from fresh` merges files that already exist.** A `static/` file identical to
+  the `public/` file at its path is dropped, a `robots.txt` / `humans.txt` / `ads.txt` /
+  `app-ads.txt` / `security.txt` gets the lines it lacks appended, `client.ts`'s code is appended
+  to an existing `instrumentation-client.ts` unless the two declare the same name, and a generated
+  file the app already has with the same content is no longer reported. Only a file that really
+  differs is left in place and reported.
+- **`preact-render-to-string/jsx` and `/stream-node`.** `denext/preact/render-to-string/jsx`
+  writes the pretty-printed, JSX-like markup snapshot tests compare against (`render`, the default
+  export, and `shallowRender`, with the `/jsx` entry's options), and
+  `denext/preact/render-to-string/stream-node` has `renderToPipeableStream` (`pipe`, `abort`,
+  `onShellReady`, `onAllReady`, `onError`). `denext migrate` maps both specifiers there for Fresh and
+  Preact apps instead of reporting them, and the parity gate checks both against
+  preact-render-to-string's own surface.
+- **`createModel`, `useModel` and `useSignalRef` in `denext/signals`, and Preact Signals' options.**
+  `createModel(factory)` builds models whose functions are actions and whose effects
+  `[Symbol.dispose]()` disposes (an effect created in `untracked()` stays the caller's; a nested
+  model's effects are its parent's too); `useModel` keeps one per component; `useSignalRef` is a
+  signal usable as a `ref`. `signal`, `computed`, `useSignal` and `useComputed` take `{ name,
+  watched, unwatched }`, `effect` and `useSignalEffect` take `{ name }`. A computed or effect
+  created inside `untracked()` now tracks its own reads, as in Preact.
+- **Preact's `options` hooks are called.** The reconciler calls `options._render` / `__r` before
+  each component renders, `diffed` for each vnode a commit rendered or changed (children first,
+  DOM in place), `_commit` / `__c` once per commit, `unmount` for each removed vnode (parent
+  first), and schedules an update's render through `debounceRendering` and the `useEffect` flush
+  through `requestAnimationFrame` when an app sets them. Without a Preact entry loaded, each call
+  site is one null check.
+
+### Fixed
+
+- **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
+  `start`, `build` and every other verb that runs project code ran it with the flags of the
+  config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so
+  an app with `"unstable": ["kv"]` that opens Deno KV failed with `Deno.openKv is not a
+  function`. Each re-run child (the toolchain re-exec, a pinned denext's child, the CSS /
+  module-config re-exec, the limits re-run) now gets `--unstable-<name>` for each entry, and a
+  last gate re-runs a process that still lacks one once with them.
+- **A middleware `rewrite(path)` keeps the request's query string.** `rewrite("/home")` on
+  `/a?x=1` serves `/home?x=1`; a destination with its own `?query` is served as written.
+- **A component from a package that bundles its own Preact gets its context.** Real Preact calls
+  a component whose `contextType` is one of its contexts (its `Context.Consumer`) with the
+  context's value as the second argument; denext now passes the context's default value there,
+  so a JSR icon set importing `npm:preact` (SaaSKit's `@preact-icons`) renders instead of
+  throwing.
+
 ## [4.18.0] - 2026-11-14
 
 ### Added

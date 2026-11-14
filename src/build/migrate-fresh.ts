@@ -26,6 +26,16 @@ import { DENEXT_EXCLUDE } from "./dep-age.ts";
 import { exists } from "./migrate-fs.ts";
 import { isPreactPackage, PREACT_SOURCE_RULES, preactAliasImports } from "./preact-layer.ts";
 import { mfs } from "./migrate-io.ts";
+import { pluginCalls, skipToken, vitePluginsModule } from "./fresh-config-read.ts";
+import { planFreshConfig } from "./fresh-plugins-migrate.ts";
+import { type FreshLayout, ignoredByFresh, readFreshLayout, VITE_CONFIGS } from "./fresh-layout.ts";
+import {
+  islandWrapperPath,
+  islandWrapperSource,
+  packageExportNames,
+  planIslands,
+  scanIslandRegistrations,
+} from "./fresh-islands.ts";
 import {
   APP_ROUTE_FOLDER,
   appFolder,
@@ -37,6 +47,7 @@ import {
   FRESH_PARTIAL_SHIM,
   FRESH_RUNTIME_SHIM,
   type FreshFile,
+  freshMatchOrder,
   freshPattern,
   importPath,
   internalFolder,
@@ -79,9 +90,14 @@ export interface FreshMigrateInfo {
   review: FreshFinding[];
   /**
    * Import-map entries that replace the default Fresh aliases: `fresh/runtime` (and its other
-   * spellings) pointed at the app's `app/_fresh/runtime.ts` when the app uses Partials.
+   * spellings) pointed at the app's `app/_fresh/runtime.ts` when the app uses Partials, and each
+   * package island the app registers in code at its `"use client"` re-export.
    */
   importOverrides: Record<string, string>;
+  /** `denext.config.ts` entries carried from the app's Fresh options (`basePath: "/app"`, …). */
+  configEntries: string[];
+  /** The imports those entries need. */
+  configImports: string[];
 }
 
 /** The Fresh app `dir` holds, or null. */
@@ -96,8 +112,6 @@ export interface FreshDetection {
 
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"];
 const ROUTE_EXTS = new Set([".tsx", ".jsx", ".ts", ".js"]);
-/** Fresh's default ignore pattern: test files next to the routes. */
-const TEST_FILE = /[._]test\.[tj]sx?$/;
 
 /** The app's Deno config: the first of `deno.json` / `deno.jsonc`, parsed. */
 async function readDenoConfig(
@@ -139,7 +153,7 @@ function versionFrom(imports: Record<string, string>, hasGen: boolean): 1 | 2 | 
  * @returns The detection, or null for anything else.
  */
 export async function detectFresh(dir: string): Promise<FreshDetection | null> {
-  if (!(await exists(join(dir, "routes")))) return null;
+  if (!(await exists(join(dir, (await readFreshLayout(dir)).routes)))) return null;
   const { path, config } = await readDenoConfig(dir);
   const version = versionFrom(importsOf(config), await exists(join(dir, "fresh.gen.ts")));
   return version === null ? null : { version, configPath: path, config };
@@ -172,24 +186,28 @@ interface RoutesScan {
   localIslands: string[];
 }
 
-/** Scan `routes/` as Fresh does: `(_x)` folders are not routes (`(_islands)` holds islands). */
-async function scanRoutes(dir: string): Promise<RoutesScan> {
+/**
+ * Scan the routes directory as Fresh does: `(_x)` folders are not routes (`(_islands)` holds
+ * islands), and the `ignore` patterns skip files.
+ */
+async function scanRoutes(dir: string, layout: FreshLayout): Promise<RoutesScan> {
   const files: FreshFile[] = [];
   const localIslands: string[] = [];
-  for (const rel of await walk(join(dir, "routes"))) {
+  const root = layout.routes;
+  for (const rel of await walk(join(dir, root))) {
     const ext = extname(rel);
-    if (!ROUTE_EXTS.has(ext) || TEST_FILE.test(rel)) continue;
+    if (!ROUTE_EXTS.has(ext) || ignoredByFresh(layout, `${root}/${rel}`, rel)) continue;
     const segments = rel.split("/");
     const hidden = segments.slice(0, -1).find((s) => /^\(_.+\)$/.test(s));
     if (hidden) {
-      if (hidden === "(_islands)") localIslands.push(`routes/${rel}`);
+      if (hidden === "(_islands)") localIslands.push(`${root}/${rel}`);
       continue;
     }
     const id = rel.slice(0, -ext.length);
     const base = basename(id);
     const dirPart = segments.slice(0, -1).join("/");
-    const source = await mfs.readTextFile(join(dir, "routes", rel));
-    files.push({ id, path: `routes/${rel}`, kind: fileKind(base), dir: dirPart, source });
+    const source = await mfs.readTextFile(join(dir, root, rel));
+    files.push({ id, path: `${root}/${rel}`, kind: fileKind(base), dir: dirPart, source });
   }
   return { files, localIslands };
 }
@@ -219,33 +237,7 @@ function handlerMethods(source: string): string[] {
   return named.length > 0 ? named : METHODS.filter((m) => m !== "HEAD");
 }
 
-/**
- * A specificity key per path segment, for Fresh's match order: a static segment before a
- * partial one before a parameter; a segment that may be empty (a catch-all, an optional
- * parameter) after the path ending there (`/docs` before `/docs/:slug*`).
- */
-function segmentScore(segment: string): number {
-  if (segment.startsWith(":") && segment.endsWith("*")) return -3;
-  if (segment.startsWith("{")) return -2;
-  if (segment.startsWith(":")) return 2;
-  if (segment.includes(":")) return 3;
-  return 4;
-}
-
-/** Order routes as Fresh matches them: more specific segments first. */
-function byMatchOrder(a: { pattern: string }, b: { pattern: string }): number {
-  const sa = a.pattern.split("/").filter(Boolean).map(segmentScore);
-  const sb = b.pattern.split("/").filter(Boolean).map(segmentScore);
-  for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
-    // A path that ends here sorts between a real segment and one that may be empty.
-    const x = sa[i] ?? -1;
-    const y = sb[i] ?? -1;
-    if (x !== y) return y - x;
-  }
-  return a.pattern < b.pattern ? -1 : a.pattern > b.pattern ? 1 : 0;
-}
-
-export { byMatchOrder as freshMatchOrder, handlerMethods as freshHandlerMethods };
+export { freshMatchOrder, handlerMethods as freshHandlerMethods };
 
 // ── The plan ─────────────────────────────────────────────────────────────────
 
@@ -313,6 +305,10 @@ interface Plan {
   v1: boolean;
   /** The Fresh 2 `main.ts` (absolute), once known. */
   main: string | null;
+  /** The Fresh 1.x `fresh.config.ts` (absolute) whose plugins run, once known. */
+  config: string | null;
+  /** The app's other Vite plugins moved to `vite.plugins.ts`. */
+  vitePlugins?: boolean;
   roles: Roles;
   gen: GenFile[];
   mwRoutes: MiddlewareRouteSpec[];
@@ -320,6 +316,10 @@ interface Plan {
   review: FreshFinding[];
   pages: number;
   handlers: number;
+  /** Where the app keeps its files. */
+  layout: FreshLayout;
+  /** The `public/` files a static directory filled this run (absolute paths). */
+  moved: Set<string>;
 }
 
 const abs = (plan: Plan, rel: string) => join(plan.dir, rel);
@@ -427,12 +427,21 @@ function rootLayout(plan: Plan, css: string[]): GenFile {
   const target = abs(plan, file);
   const { app, rootLayout: layout } = plan.roles;
   if (!app && !layout) {
-    return { path: file, source: bareRootLayoutSource(target, css, plan.main) };
+    return { path: file, source: bareRootLayoutSource(target, css, plan.main, plan.config) };
   }
   if (app && !layout) {
     return {
       path: file,
-      source: layoutSource(target, app, abs(plan, app.path), plan.v1, true, css, plan.main),
+      source: layoutSource(
+        target,
+        app,
+        abs(plan, app.path),
+        plan.v1,
+        true,
+        css,
+        plan.main,
+        plan.config,
+      ),
     };
   }
   return { path: file, source: composedRootSource(plan, target, css) };
@@ -441,9 +450,10 @@ function rootLayout(plan: Plan, css: string[]): GenFile {
 /** The root layout's `App` wrapper line (the `_app` file and / or `main.ts`), if any. */
 function appWrapperLine(plan: Plan): string[] {
   const { app } = plan.roles;
-  if (!app && !plan.main) return [];
+  if (!app && !plan.main && !plan.config) return [];
   const opts = ['id: "_app"', "app: true", ...(plan.v1 ? ["v1: true"] : [])];
   if (plan.main) opts.push("main");
+  if (plan.config) opts.push("plugins: freshConfig.default?.plugins");
   return [`const App = freshLayout(${app ? "app" : "{}"}, { ${opts.join(", ")} });`];
 }
 
@@ -461,6 +471,7 @@ function composedRootSource(plan: Plan, target: string, css: string[]): string {
     `import * as layout from "${rel(layout!.path)}";`,
     ...(app ? [`import * as app from "${rel(app.path)}";`] : []),
     ...(plan.main ? [`import * as main from "${importPath(target, plan.main)}";`] : []),
+    ...(plan.config ? [`import * as freshConfig from "${importPath(target, plan.config)}";`] : []),
     "",
     `const Layout = freshLayout(layout, { id: ""${v1} });`,
     ...wrapper,
@@ -531,12 +542,22 @@ function withUseClient(source: string): string | null {
   return `"use client";\n${signals}${source}`;
 }
 
-/** Mark every island `"use client"` (`islands/` and the routes' `(_islands)` folders). */
-async function markIslands(dir: string, localIslands: string[]): Promise<string[]> {
-  const files = [
-    ...(await walk(join(dir, "islands"))).map((rel) => `islands/${rel}`),
-    ...localIslands,
-  ].filter((rel) => ROUTE_EXTS.has(extname(rel)) && !TEST_FILE.test(rel));
+/**
+ * Mark every island `"use client"`: the islands directory, the routes' `(_islands)` folders, and
+ * the modules the app registers in code.
+ */
+async function markIslands(
+  dir: string,
+  layout: FreshLayout,
+  localIslands: string[],
+  registered: string[],
+): Promise<string[]> {
+  const inDir = (await walk(join(dir, layout.islands))).filter((rel) =>
+    !ignoredByFresh(layout, `${layout.islands}/${rel}`, rel)
+  ).map((rel) => `${layout.islands}/${rel}`);
+  const files = [...new Set([...inDir, ...localIslands, ...registered])].filter((rel) =>
+    ROUTE_EXTS.has(extname(rel))
+  );
   for (const rel of files) {
     const path = join(dir, rel);
     const next = withUseClient(await mfs.readTextFile(path));
@@ -572,10 +593,84 @@ function withLeadingImport(source: string, line: string): string {
  * when there is nothing to rewrite.
  */
 export function rewriteEnvReads(source: string): string | null {
-  const next = source.replace(META_ENV, ENV_ID)
+  const next = rewriteModePathPicks(source).replace(META_ENV, ENV_ID)
     .replace(PUBLIC_ENV_READ, (_m, _q, a, b) => `${ENV_ID}.${a ?? b}`);
   if (next === source) return null;
   return new RegExp(`\\b${ENV_ID}\\b`).test(source) ? next : withLeadingImport(next, ENV_IMPORT);
+}
+
+/** A Vite mode test: `import.meta.env.PROD` / `.DEV` (also cast, also negated). */
+const MODE_TEST =
+  /(!\s*)?(?:\(\s*import\.meta(?:\s+as\s+[\w$.<>[\], ]+)?\s*\)\.env|\bimport\.meta\.env)\.(PROD|DEV)\s*\?/g;
+
+/** A file location relative to the module (what moves when Vite bundles the server). */
+const MODULE_RELATIVE = /\bimport\.meta\.(?:url|dirname|filename|resolve)\b/;
+
+/** A bracket's effect on the nesting depth (+1 opening, -1 closing, 0 for anything else). */
+function bracketDelta(ch: string): number {
+  if ("([{".includes(ch)) return 1;
+  return ")]}".includes(ch) ? -1 : 0;
+}
+
+/**
+ * The end of a ternary operand starting at `from`: the first top-level `stop` character (a
+ * closing bracket of the enclosing group counts when it is a stop), or -1. A `\0` stop also
+ * accepts the end of the source.
+ */
+function operandEnd(source: string, from: number, stop: string): number {
+  let depth = 0;
+  for (let i = from; i < source.length; i++) {
+    const skipped = skipToken(source, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const ch = source[i];
+    const delta = bracketDelta(ch);
+    if (depth === 0 && (delta < 0 || stop.includes(ch))) return stop.includes(ch) ? i : -1;
+    depth += delta;
+  }
+  return stop.includes("\0") ? source.length : -1;
+}
+
+/**
+ * A Vite app's build-output path pick — `import.meta.env.PROD ? new URL(built, import.meta.url)
+ * : new URL(source, import.meta.url)`, which picks the file's location by whether the server
+ * runs from Vite's bundle — reduced to the source branch: denext runs the module in place under
+ * `denext dev` and `denext start` alike, so that branch is right in both. A ternary whose two
+ * branches are not both module-relative locations is left alone.
+ *
+ * @param source A module's source.
+ * @returns The source with each such pick reduced.
+ */
+export function rewriteModePathPicks(source: string): string {
+  let out = source;
+  for (let guard = 0; guard < 100; guard++) {
+    const next = reduceOnePick(out);
+    if (next === out) return out;
+    out = next;
+  }
+  return out;
+}
+
+/** Reduce the first build-output path pick in `source` (see {@link rewriteModePathPicks}). */
+function reduceOnePick(source: string): string {
+  for (const m of source.matchAll(MODE_TEST)) {
+    const thenStart = m.index + m[0].length;
+    const colon = operandEnd(source, thenStart, ":");
+    if (colon < 0) continue;
+    const elseEnd = operandEnd(source, colon + 1, ";,)]}\0");
+    if (elseEnd < 0) continue;
+    const whenTrue = source.slice(thenStart, colon).trim();
+    const whenFalse = source.slice(colon + 1, elseEnd).trim();
+    if (!MODULE_RELATIVE.test(whenTrue) || !MODULE_RELATIVE.test(whenFalse)) continue;
+    // The development (source-location) branch: PROD's false one, DEV's true one.
+    const devIsTrue = (m[2] === "DEV") !== Boolean(m[1]);
+    const kept = devIsTrue ? whenTrue : whenFalse;
+    const trailing = source.slice(colon + 1, elseEnd).match(/\s*$/)?.[0] ?? "";
+    return source.slice(0, m.index) + kept + trailing + source.slice(elseEnd);
+  }
+  return source;
 }
 
 /** Rewrite the env reads of the app's sources (not Vite's config); the files changed. */
@@ -604,11 +699,26 @@ const TAILWIND_DIRECTIVE = /@import\s+["']tailwindcss["']|@tailwind\s+(base|util
 async function moveStatic(
   plan: Plan,
 ): Promise<{ input: string; output: string } | null> {
-  const { dir } = plan;
   let tailwind: { input: string; output: string } | null = null;
-  const files = await walk(join(dir, "static"));
+  // Fresh searches the static directories in order: an earlier one's file wins.
+  for (const staticDir of plan.layout.statics) {
+    if (staticDir === "public") continue; // already where denext serves it
+    tailwind = await moveStaticDir(plan, staticDir, tailwind);
+  }
+  return tailwind;
+}
+
+/** Move one static directory's files to `public/` (see {@link moveStatic}). */
+async function moveStaticDir(
+  plan: Plan,
+  staticDir: string,
+  found: { input: string; output: string } | null,
+): Promise<{ input: string; output: string } | null> {
+  const { dir } = plan;
+  let tailwind = found;
+  const files = await walk(join(dir, staticDir));
   for (const rel of files) {
-    const from = join(dir, "static", rel);
+    const from = join(dir, staticDir, rel);
     let to = join(dir, "public", rel);
     if (!tailwind && rel.endsWith(".css")) {
       const css = await mfs.readTextFile(from).catch(() => "");
@@ -618,17 +728,86 @@ async function moveStatic(
       }
     }
     if (await exists(to)) {
-      plan.wont.push({
-        item: `static/${rel}`,
-        reason: `public/${rel} already exists; merge them by hand`,
-      });
+      const item = `${staticDir}/${rel}`;
+      const target = to.slice(dir.length + 1).replaceAll("\\", "/"); // Windows: `public\robots.txt`
+      if (plan.moved.has(to)) await shadowed(plan, from, item, target);
+      else await mergeExisting(plan, from, to, item, target);
       continue;
     }
     await mfs.mkdir(dirname(to), { recursive: true });
     await mfs.rename(from, to);
+    plan.moved.add(to);
   }
-  await removeEmptyDirs(join(dir, "static"));
+  await removeEmptyDirs(join(dir, staticDir));
   return tailwind;
+}
+
+/**
+ * A later static directory's file at a path an earlier one already filled: Fresh never served
+ * it, so it is dropped when identical and otherwise left in place and reported.
+ */
+async function shadowed(plan: Plan, from: string, item: string, target: string): Promise<void> {
+  if (await sameBytes(from, join(plan.dir, target))) {
+    await mfs.remove(from);
+    return;
+  }
+  plan.review.push({
+    item,
+    reason: `an earlier staticDir has ${target.replace(/^public\//, "")}, which Fresh serves ` +
+      "instead; this copy was left in place",
+  });
+}
+
+/** Line-based files whose entries add up (`robots.txt` rules, `ads.txt` sellers): merged. */
+const APPENDABLE = /(?:^|\/)(?:robots|humans|ads|app-ads|security)\.txt$/;
+
+/** Whether two files hold the same bytes. */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const [x, y] = await Promise.all([Deno.readFile(a), Deno.readFile(b)]).catch(() => [null, null]);
+  if (!x || !y || x.length !== y.length) return false;
+  return x.every((v, i) => v === y[i]);
+}
+
+/**
+ * `existing` plus the lines of `incoming` it lacks, or null when it already has them all (the
+ * line order of each is kept; `incoming`'s new lines go after a blank line).
+ */
+export function appendMissingLines(existing: string, incoming: string): string | null {
+  const have = new Set(existing.split(/\r?\n/).map((l) => l.trimEnd()));
+  const extra = incoming.split(/\r?\n/).filter((l) => l.trim() !== "" && !have.has(l.trimEnd()));
+  if (extra.length === 0) return null;
+  const base = existing.endsWith("\n") ? existing : existing + "\n";
+  return `${base}\n${extra.join("\n")}\n`;
+}
+
+/**
+ * A `static/` file whose `public/` path is taken: an identical copy is dropped, a line-based file
+ * that adds up (`robots.txt`, …) gets the missing lines appended; anything else is a real
+ * conflict, left in `static/` and reported.
+ */
+async function mergeExisting(
+  plan: Plan,
+  from: string,
+  to: string,
+  item: string,
+  target: string,
+): Promise<void> {
+  if (await sameBytes(from, to)) {
+    await mfs.remove(from);
+    return;
+  }
+  if (APPENDABLE.test(target)) {
+    const merged = appendMissingLines(await mfs.readTextFile(to), await mfs.readTextFile(from));
+    if (merged !== null) await mfs.writeTextFile(to, merged);
+    await mfs.remove(from);
+    plan.review.push({ item, reason: `merged into ${target} (its missing lines appended)` });
+    return;
+  }
+  plan.wont.push({
+    item,
+    reason: `${target} already exists with different content; ${item} was left in place: ` +
+      "keep one of them",
+  });
 }
 
 /** Remove `abs` and its subdirectories when they hold no files. */
@@ -672,21 +851,33 @@ function splitClientEntry(dir: string, source: string): ClientEntry {
  * @returns The stylesheets (absolute paths).
  */
 async function carryClientEntry(plan: Plan): Promise<string[]> {
-  for (const name of ["client.ts", "client.tsx", "client.js"]) {
+  const names = plan.layout.clientEntry
+    ? [plan.layout.clientEntry]
+    : ["client.ts", "client.tsx", "client.js"];
+  for (const name of names) {
     const path = join(plan.dir, name);
     const source = await mfs.readTextFile(path).catch(() => null);
     if (source === null) continue;
-    const { css, rest } = splitClientEntry(plan.dir, source);
+    const { css, rest } = splitClientEntry(dirname(path), source);
     if (rest) {
       const target = join(plan.dir, "instrumentation-client.ts");
-      if (await exists(target)) {
+      const existing = await mfs.readTextFile(target).catch(() => null);
+      const merged = existing === null ? rest : appendModule(existing, rest);
+      if (merged === null) {
         plan.wont.push({
           item: name,
-          reason: "instrumentation-client.ts exists; merge client.ts's code into it by hand",
+          reason: "instrumentation-client.ts exists and declares a name client.ts's code " +
+            "declares too; merge client.ts's code into it by hand",
         });
         return css;
       }
-      await mfs.writeTextFile(target, rest);
+      if (existing !== null) {
+        plan.review.push({
+          item: name,
+          reason: "its code was appended to the existing instrumentation-client.ts",
+        });
+      }
+      await mfs.writeTextFile(target, merged);
     }
     await mfs.remove(path);
     return css;
@@ -694,52 +885,107 @@ async function carryClientEntry(plan: Plan): Promise<string[]> {
   return [];
 }
 
-/** The Vite plugins a `vite.config.*` registers (`name(`), minus Fresh's and Tailwind's. */
-function otherVitePlugins(source: string): string[] {
-  const block = /plugins\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}?/.exec(source)?.[1] ?? "";
-  const names = [...block.matchAll(/([A-Za-z_$][\w$.]*)\s*\(/g)].map((m) => m[1]);
-  return names.filter((n) => n !== "fresh" && n !== "tailwindcss" && n !== "tailwind");
+/** The top-level names a module declares or imports (the ones a second module could clash with). */
+function topLevelNames(source: string): Set<string> {
+  const names = new Set<string>();
+  const decl =
+    /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function\*?|class)\s+([A-Za-z_$][\w$]*)/gm;
+  for (const m of source.matchAll(decl)) names.add(m[1]);
+  for (const m of source.matchAll(/^import\s+([^"';]+?)\s+from\s/gm)) {
+    for (const part of m[1].replace(/[{}*]/g, ",").split(",")) {
+      const local = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (local && /^[A-Za-z_$][\w$]*$/.test(local) && local !== "type") names.add(local);
+    }
+  }
+  return names;
 }
 
-/** Remove `vite.config.*` (denext builds the app), reporting the plugins it ran. */
+/**
+ * `extra` appended to the module `existing` (ES imports may appear anywhere at the top level), or
+ * null when they declare a name in common, which would not compile.
+ */
+export function appendModule(existing: string, extra: string): string | null {
+  if (existing.includes(extra.trim())) return existing;
+  const have = topLevelNames(existing);
+  for (const name of topLevelNames(extra)) if (have.has(name)) return null;
+  const base = existing.endsWith("\n") ? existing : existing + "\n";
+  return `${base}\n// From client.ts (the Fresh app's Vite client entry):\n${extra}`;
+}
+
+/** Where a Fresh 2 app's other Vite plugins move (`viteBuildPlugin` loads it). */
+const VITE_PLUGINS_MODULE = "vite.plugins.ts";
+
+/**
+ * Remove `vite.config.*` (denext builds the app). Its other plugins (not Fresh's or Tailwind's)
+ * move, with the config's own code, to `vite.plugins.ts`, which `viteBuildPlugin` in
+ * `denext.config.ts` runs at build.
+ */
 async function dropViteConfig(plan: Plan): Promise<void> {
-  for (const name of ["vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"]) {
+  for (const name of VITE_CONFIGS) {
     const path = join(plan.dir, name);
     const source = await mfs.readTextFile(path).catch(() => null);
     if (source === null) continue;
-    for (const plugin of otherVitePlugins(source)) {
-      plan.wont.push({
-        item: `${name}: ${plugin}()`,
-        reason: "a Vite plugin; denext builds the app without Vite. Port what it does (a build " +
-          "step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)",
-      });
-    }
-    if (/\bfresh\s*\(\s*\{/.test(source)) {
-      plan.review.push({
-        item: `${name}: fresh({ … })`,
-        reason: "Fresh plugin options are not carried; the migration reads routes/, islands/ " +
-          "and client.ts at their default places",
-      });
+    const others = pluginCalls(source).map((c) => c.name).filter((n) =>
+      n !== "fresh" && n !== "tailwindcss" && n !== "tailwind"
+    );
+    const module = others.length ? vitePluginsModule(source) : null;
+    if (module) {
+      await carryVitePlugins(
+        plan,
+        `${name}: ${others.map((n) => `${n}()`).join(", ")}`,
+        module,
+      );
     }
     await mfs.remove(path);
   }
 }
 
-/** Report a Fresh 1.x `fresh.config.ts`'s plugins, then remove it (denext.config.ts replaces it). */
-async function dropFreshConfig(plan: Plan): Promise<void> {
+/** Write the app's other Vite plugins to `vite.plugins.ts` (see {@link dropViteConfig}). */
+async function carryVitePlugins(plan: Plan, item: string, module: string): Promise<void> {
+  const target = join(plan.dir, VITE_PLUGINS_MODULE);
+  if (await exists(target)) {
+    plan.wont.push({
+      item,
+      reason: `${VITE_PLUGINS_MODULE} exists; move the Vite plugins into it by hand`,
+    });
+    return;
+  }
+  await mfs.writeTextFile(target, module);
+  plan.vitePlugins = true;
+  plan.review.push({
+    item,
+    reason: `moved to ${VITE_PLUGINS_MODULE}, which viteBuildPlugin runs at build: ` +
+      "configResolved, buildStart, generateBundle, writeBundle and closeBundle (with " +
+      "this.emitFile); resolveId / load / transform / renderChunk / transformIndexHtml are not " +
+      "run, and dev-server hooks have no denext counterpart",
+  });
+}
+
+/**
+ * A Fresh 1.x `fresh.config.ts`: kept when it has plugins other than Tailwind's (which denext's
+ * Tailwind build replaces), which `denext/fresh/server` then runs; removed otherwise.
+ *
+ * @returns The kept config (absolute), and the island modules its local plugins declare.
+ */
+async function carryFreshConfig(plan: Plan): Promise<{ config: string | null; islands: string[] }> {
   const path = join(plan.dir, "fresh.config.ts");
   const source = await mfs.readTextFile(path).catch(() => null);
-  if (source === null) return;
-  const block = /plugins\s*:\s*\[([\s\S]*?)\]/.exec(source)?.[1] ?? "";
-  for (const m of block.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
-    if (m[1] === "tailwind") continue;
-    plan.wont.push({
-      item: `fresh.config.ts: ${m[1]}()`,
-      reason: "a Fresh plugin; denext does not run Fresh plugins. Port what it adds (routes, " +
-        "middleware, islands, styles) to the app or to a denext plugin",
+  if (source === null) return { config: null, islands: [] };
+  const kept = await planFreshConfig(plan.dir, source);
+  if (kept.source === null) {
+    await mfs.remove(path);
+    return { config: null, islands: [] };
+  }
+  if (kept.source !== source) await mfs.writeTextFile(path, kept.source);
+  for (const r of kept.remote) {
+    plan.review.push({
+      item: `fresh.config.ts: ${r.name}()`,
+      reason: `a plugin from ${r.specifier}: its routes, middleware and render hooks run; ` +
+        "islands it declares are not read from outside the project, so they render without " +
+        "hydrating (vendor the plugin into the project to have them hydrate)",
     });
   }
-  await mfs.remove(path);
+  return { config: path, islands: kept.islands };
 }
 
 /** Remove Fresh's own entry and generated files; Fresh 2's `main.ts` stays (middleware.ts runs it). */
@@ -753,7 +999,7 @@ async function dropFreshEntries(plan: Plan): Promise<string | null> {
       await mfs.remove(path);
     }
   }
-  const mainPath = join(dir, "main.ts");
+  const mainPath = join(dir, plan.layout.serverEntry);
   const main = await mfs.readTextFile(mainPath).catch(() => null);
   if (main === null) return null;
   if (/\bstart\s*\(\s*manifest/.test(main) || plan.v1) {
@@ -798,34 +1044,27 @@ const SOURCE_RULES: SourceRule[] = [
       "FRESH_PUBLIC_* read was rewritten to denext/fresh/env); pass the value as a prop, or use " +
       "publicEnv() from denext",
   },
-  {
-    re: /\.islands\s*\(/,
-    only: "main",
-    item: "main.ts",
-    wont: true,
-    reason: 'app.islands() is not run on denext: islands are the "use client" files ' +
-      "(islands/ and (_islands) folders); move the components there",
-  },
-  {
-    re: /new\s+App\s*\(\s*\{[^}]*basePath/,
-    only: "main",
-    item: "main.ts: basePath",
-    reason: "set `basePath` in denext.config.ts; the App option is not applied",
-  },
 ];
 
 /** The project's source files the findings scan reads (generated and vendored trees skipped). */
-async function sourceFiles(dir: string): Promise<string[]> {
-  const skip = /^(?:node_modules|_fresh|\.denext|app|public|static|vendor|\.git)\//;
+async function sourceFiles(dir: string, layout: FreshLayout): Promise<string[]> {
+  const skip = /^(?:node_modules|_fresh|\.denext|app|public|vendor|\.git)\//;
+  const statics = layout.statics.map((d) => `${d}/`);
   return (await walk(dir)).filter((rel) =>
-    ROUTE_EXTS.has(extname(rel)) && !skip.test(rel) && !TEST_FILE.test(rel)
+    ROUTE_EXTS.has(extname(rel)) && !skip.test(rel) && !statics.some((d) => rel.startsWith(d)) &&
+    !ignoredByFresh(layout, rel, rel)
   );
 }
 
 /** Whether a rule reads `rel` (an island-only or a `main.ts`-only rule reads only those). */
-function ruleApplies(rule: SourceRule, rel: string, islands: Set<string>): boolean {
+function ruleApplies(
+  rule: SourceRule,
+  rel: string,
+  islands: Set<string>,
+  serverEntry: string,
+): boolean {
   if (rule.only === "island") return islands.has(rel);
-  return rule.only !== "main" || rel === "main.ts";
+  return rule.only !== "main" || rel === serverEntry;
 }
 
 /** Scan the app's sources for what does not migrate: one finding per rule, naming the files. */
@@ -834,7 +1073,7 @@ async function scanFindings(plan: Plan, islands: Set<string>, files: string[]): 
   for (const rel of files) {
     const source = await mfs.readTextFile(join(plan.dir, rel)).catch(() => "");
     for (const rule of SOURCE_RULES) {
-      if (ruleApplies(rule, rel, islands) && rule.re.test(source)) {
+      if (ruleApplies(rule, rel, islands, plan.layout.serverEntry) && rule.re.test(source)) {
         hits.set(rule, [...(hits.get(rule) ?? []), rel]);
       }
     }
@@ -878,12 +1117,19 @@ export function freshAliasImports(sub: (s: string) => string): Record<string, st
     "denext/fresh/partial": sub("fresh/partial"),
     "denext/fresh/env": sub("fresh/env"),
     "denext/fresh/server": sub("fresh/server"),
+    "denext/fresh/plugins": sub("fresh/plugins"),
+    "denext/plugin-kit/vite-emitter": sub("plugin-kit/vite-emitter"),
     "fresh": sub("fresh"),
     "fresh/runtime": sub("fresh/runtime"),
     "@fresh/core": sub("fresh"),
     "@fresh/core/runtime": sub("fresh/runtime"),
     "$fresh/server.ts": sub("fresh"),
     "$fresh/runtime.ts": sub("fresh/runtime"),
+    // Fresh 1.x's own modules apps import directly (`defineRoute` / `defineLayout` / `defineApp`,
+    // the types).
+    "$fresh/src/server/defines.ts": sub("fresh"),
+    "$fresh/src/server/types.ts": sub("fresh"),
+    "$fresh/src/runtime/utils.ts": sub("fresh/runtime"),
     ...preactAliasImports(sub),
   };
 }
@@ -981,14 +1227,22 @@ async function writableGen(path: string): Promise<boolean> {
   return current === null || current.includes("generated by `denext migrate`");
 }
 
-/** Write the planned files; one the user wrote is left alone (and reported). */
+/** A file's text without the migration's generated-file header (for comparing contents). */
+function withoutGenHeader(text: string): string {
+  return text.replace(FRESH_GEN_HEADER, "").replace(/\r\n/g, "\n").trim();
+}
+
+/** Write the planned files; one the user wrote is left alone (and reported, unless the same). */
 async function writeGenerated(plan: Plan, written: string[]): Promise<void> {
   for (const g of plan.gen) {
     const path = join(plan.dir, g.path);
     if (!(await writableGen(path))) {
+      const current = await mfs.readTextFile(path).catch(() => "");
+      if (withoutGenHeader(current) === withoutGenHeader(g.source)) continue; // already what we'd write
       plan.wont.push({
         item: g.path,
-        reason: "exists and was not generated by migrate; left as is",
+        reason: "exists with different content and was not generated by migrate; left as is " +
+          "(move it aside and re-run migrate to see what it generates)",
       });
       continue;
     }
@@ -1040,12 +1294,14 @@ export async function transformFreshApp(
   written: string[],
 ): Promise<FreshMigrateInfo> {
   const v1 = detection.version === 1;
-  const scan = await scanRoutes(dir);
+  const layout = await readFreshLayout(dir);
+  const scan = await scanRoutes(dir, layout);
   const findings: FreshFinding[] = [];
   const plan: Plan = {
     dir,
     v1,
     main: null,
+    config: null,
     roles: rolesOf(scan.files, findings),
     gen: [],
     mwRoutes: [],
@@ -1053,24 +1309,27 @@ export async function transformFreshApp(
     review: [],
     pages: 0,
     handlers: 0,
+    layout,
+    moved: new Set(),
   };
-  const sourcesBefore = await sourceFiles(dir);
+  const sourcesBefore = await sourceFiles(dir, layout);
   for (const route of plan.roles.routes) planRoute(plan, route);
-  plan.mwRoutes.sort((a, b) => byMatchOrder(a, b));
+  plan.mwRoutes.sort((a, b) => freshMatchOrder(a, b));
   planLayouts(plan);
 
-  const islands = await markIslands(dir, scan.localIslands);
+  reportUnreadOptions(plan);
+  const registered = await planCodeIslands(plan, detection, sourcesBefore);
+  const islands = await markIslands(dir, layout, scan.localIslands, registered.local);
   const envFiles = await rewriteEnv(dir, sourcesBefore);
-  const importOverrides = await planPartials(plan, sourcesBefore);
+  const importOverrides = { ...await planPartials(plan, sourcesBefore), ...registered.overrides };
   const staticTailwind = await moveStatic(plan);
   const clientCss = await carryClientEntry(plan);
   await dropViteConfig(plan);
-  if (v1) await dropFreshConfig(plan);
   const main = await dropFreshEntries(plan);
   plan.main = main;
   const mainSource = main ? await mfs.readTextFile(main).catch(() => null) : null;
   planNotFound(plan, mainSource);
-  const appRoute = main ? planAppRoutePage(plan) : undefined;
+  const appRoute = main || plan.config ? planAppRoutePage(plan) : undefined;
 
   const { tailwind, css } = await layoutStylesheets(dir, clientCss, staticTailwind);
   plan.gen.unshift(rootLayout(plan, css));
@@ -1089,27 +1348,12 @@ export async function transformFreshApp(
       layouts: plan.roles.layouts.map((l) => ({ file: l, abs: abs(plan, l.path) })),
       routes: plan.mwRoutes,
       appRoute,
+      config: plan.config,
     }),
   });
   await writeGenerated(plan, written);
   await scanFindings(plan, new Set(islands), sourcesBefore);
-  if (envFiles.length > 0) {
-    plan.review.push({
-      item: "import.meta.env",
-      reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
-        "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
-        "variables are not in it: read Deno.env). PROD is true under `denext start`, where " +
-        "your source runs in place, not from Vite's build output: check code that picks a " +
-        `file path by it (${envFiles.join(", ")})`,
-    });
-  }
-  if (tailwind && staticTailwind && v1) {
-    plan.review.push({
-      item: tailwind.input,
-      reason: "denext compiles Tailwind v4; a Tailwind v3 stylesheet and tailwind.config.ts " +
-        "need `npx @tailwindcss/upgrade` first",
-    });
-  }
+  reportEnvAndTailwind(plan, envFiles, tailwind && staticTailwind ? tailwind : null);
   return {
     version: detection.version,
     pages: plan.pages,
@@ -1121,5 +1365,140 @@ export async function transformFreshApp(
     wontMigrate: plan.wont,
     review: plan.review,
     importOverrides,
+    configEntries: configEntriesOf(layout, plan),
+    configImports: configImportsOf(plan),
   };
+}
+
+/** The imports the generated `denext.config.ts` entries need. */
+function configImportsOf(plan: Plan): string[] {
+  return [
+    ...(plan.config ? [`import { freshPlugins } from "denext/fresh/plugins";`] : []),
+    ...(plan.vitePlugins
+      ? [`import { viteBuildPlugin } from "denext/plugin-kit/vite-emitter";`]
+      : []),
+  ];
+}
+
+/** Report each Fresh option migrate could not read (or carry). */
+function reportUnreadOptions(plan: Plan): void {
+  for (const option of plan.layout.unread) {
+    plan.review.push({
+      item: option,
+      reason: option.includes("checkImports")
+        ? "Vite-time import checks are not carried: denext's own build refuses a server-only " +
+          "module in client code"
+        : "set to something migrate cannot read without running it; carry it by hand",
+    });
+  }
+}
+
+/**
+ * The islands registered outside `islands/`: in code (`app.island()`, `registerIsland()`,
+ * `islandSpecifiers`) and by a Fresh 1.x config's local plugins, whose config is kept (`plan.config`).
+ */
+async function planCodeIslands(
+  plan: Plan,
+  detection: FreshDetection,
+  sources: string[],
+): Promise<{ local: string[]; overrides: Record<string, string> }> {
+  const registered = await planRegisteredIslands(plan, detection, sources);
+  const carried = plan.v1 ? await carryFreshConfig(plan) : { config: null, islands: [] };
+  plan.config = carried.config;
+  // The kept config's other `$fresh/plugins/*` imports (twind) stay on the Fresh they came with.
+  const freshBase = importsOf(detection.config)["$fresh/"];
+  if (plan.config && freshBase) registered.overrides["$fresh/plugins/"] = `${freshBase}plugins/`;
+  return { local: [...registered.local, ...carried.islands], overrides: registered.overrides };
+}
+
+/** The review items for the env rewrite and a Fresh 1.x Tailwind v3 stylesheet. */
+function reportEnvAndTailwind(
+  plan: Plan,
+  envFiles: string[],
+  staticTailwind: { input: string } | null,
+): void {
+  if (envFiles.length > 0) {
+    plan.review.push({
+      item: "import.meta.env",
+      reason: "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL " +
+        "and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only " +
+        "variables are not in it: read Deno.env). A PROD / DEV test choosing between two " +
+        "import.meta.url-relative locations was reduced to the source location, which denext " +
+        `runs from under dev and start alike (${envFiles.join(", ")})`,
+    });
+  }
+  if (staticTailwind && plan.v1) {
+    plan.review.push({
+      item: staticTailwind.input,
+      reason: "denext compiles Tailwind v4; a Tailwind v3 stylesheet and tailwind.config.ts " +
+        "need `npx @tailwindcss/upgrade` first",
+    });
+  }
+}
+
+/** The `denext.config.ts` entries a Fresh app's options carry (1.x `router`). */
+function configEntriesOf(layout: FreshLayout, plan: Plan): string[] {
+  const out: string[] = [];
+  // freshPlugins() bundles fresh.config.ts's plugins' client entrypoints; viteBuildPlugin runs
+  // the app's other Vite plugins' build hooks.
+  const plugins = [
+    ...(plan.config ? ["freshPlugins()"] : []),
+    ...(plan.vitePlugins ? [`viteBuildPlugin(() => import("./${VITE_PLUGINS_MODULE}"))`] : []),
+  ];
+  if (plugins.length) out.push(`plugins: [${plugins.join(", ")}],`);
+  if (layout.basePath) out.push(`basePath: ${JSON.stringify(layout.basePath)},`);
+  if (layout.trailingSlash !== undefined) out.push(`trailingSlash: ${layout.trailingSlash},`);
+  return out;
+}
+
+/** The files that may register islands: the server entry, `dev.ts`, and modules importing Fresh. */
+async function registrationFiles(plan: Plan, sources: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const rel of sources) {
+    if (rel === plan.layout.serverEntry || rel === "dev.ts") {
+      out.push(rel);
+      continue;
+    }
+    const source = await mfs.readTextFile(join(plan.dir, rel)).catch(() => "");
+    if (/from\s+["'](?:fresh|@fresh\/core|\$fresh\/)[^"']*["']/.test(source)) out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * The islands the app registers in code (`app.island()` / `app.islands()`, `registerIsland()`,
+ * `fresh({ islandSpecifiers })`): local modules to mark `"use client"`, and for each package
+ * module a `"use client"` re-export plus the import-map entry that points the app at it.
+ */
+async function planRegisteredIslands(
+  plan: Plan,
+  detection: FreshDetection,
+  sources: string[],
+): Promise<{ local: string[]; overrides: Record<string, string> }> {
+  const scan = await scanIslandRegistrations(plan.dir, await registrationFiles(plan, sources));
+  const fromVite = plan.layout.islandSpecifiers.map((spec) => ({
+    spec,
+    from: plan.layout.vite?.name ?? "vite.config.ts",
+    relativeToFile: false,
+  }));
+  const islands = planIslands(plan.dir, [...scan.found, ...fromVite], importsOf(detection.config));
+  plan.review.push(...scan.unread, ...islands.unsupported);
+  const overrides: Record<string, string> = {};
+  for (const pkg of islands.packages) {
+    const names = pkg.exportName
+      ? [pkg.exportName]
+      : await packageExportNames(plan.dir, pkg.target);
+    if (names === null) {
+      plan.review.push({
+        item: pkg.key,
+        reason: "a package island whose exports could not be read (offline?): re-run migrate " +
+          "online, or write its re-export under app/_fresh/islands/ by hand",
+      });
+      continue;
+    }
+    const path = islandWrapperPath(pkg.key);
+    claim(plan, path, islandWrapperSource(FRESH_GEN_HEADER, pkg.key, pkg.target, names), pkg.key);
+    overrides[pkg.key] = `./${path}`;
+  }
+  return { local: islands.local, overrides };
 }

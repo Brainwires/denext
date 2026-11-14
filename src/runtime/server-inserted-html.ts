@@ -15,7 +15,7 @@
 import type { VNodeChildren } from "../jsx/types.ts";
 import { createContext } from "./context.ts";
 import type { Context } from "./hooks.ts";
-import { renderScope } from "./render-scope.ts";
+import { renderScope, type SettledHeadCallback } from "./render-scope.ts";
 
 /**
  * `next/navigation`'s `ServerInsertedHTMLContext` — the React context carrying the
@@ -34,4 +34,16 @@ export const ServerInsertedHTMLContext: Context<((callback: () => VNodeChildren)
  */
 export function useServerInsertedHTML(callback: () => VNodeChildren): void {
   renderScope().insertSink?.(callback);
+}
+
+/**
+ * Register head markup computed once the whole tree has rendered (internal: what Fresh's plugin
+ * render hooks run through). `callback` receives the rendered HTML and returns head markup,
+ * possibly asynchronously; the renderer awaits it before the head is written. Outside a render
+ * that collects these (a client render) it does nothing.
+ *
+ * @param callback Computes the head markup.
+ */
+export function onRenderSettled(callback: SettledHeadCallback): void {
+  renderScope().settledSink?.(callback);
 }
