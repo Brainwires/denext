@@ -337,7 +337,8 @@ Deno.test("runtime: the helper is copied into the data folder once, and again wh
       "Fleet.app",
     ]);
     // A link in the tree is refused.
-    await Deno.symlink("/etc/hosts", join(source.bundle, "Contents", "link"));
+    // (Windows needs the link's kind when its target does not exist.)
+    await Deno.symlink("/etc/hosts", join(source.bundle, "Contents", "link"), { type: "file" });
     await assertRejects(() => installDockHelper(source, data), Error, "not a file or a folder");
   } finally {
     await Deno.remove(dir, { recursive: true });

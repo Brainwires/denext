@@ -734,7 +734,8 @@ Deno.test("startup: with a helper the presence follows the windows, and a copy t
       closeWindow: () => {},
       dataDir: data,
       warn: (m) => warnings.push(m),
-      execPath: join(app, "Contents", "MacOS", "laufey_webview"),
+      // `/`-separated, as a macOS executable path is (the bundle lookup reads it so on every OS).
+      execPath: [app, "Contents", "MacOS", "laufey_webview"].join("/"),
     });
     assert(presence);
     assertEquals(presence.state(), "idle", "no window yet");
