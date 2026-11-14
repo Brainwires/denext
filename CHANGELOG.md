@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-11-14
+
 ### Added
 
 - **`run.exclude` for a bundled Node backend sidecar.** Next to `nodeModules` / `external`,
@@ -22260,7 +22262,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.17.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.18.0...development
+[4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0
