@@ -304,7 +304,7 @@ Deno.test("runtime: the copy's folder must be a real folder, never a link", asyn
     const data = join(dir, "data");
     await Deno.mkdir(join(dir, "elsewhere"));
     await Deno.mkdir(data);
-    await Deno.symlink(join(dir, "elsewhere"), join(data, "dock-helper"));
+    await Deno.symlink(join(dir, "elsewhere"), join(data, "dock-helper"), { type: "dir" });
     await assertRejects(
       () => installDockHelper({ bundle: source, fileName: "Fleet" }, data),
       Error,

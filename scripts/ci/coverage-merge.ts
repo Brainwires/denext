@@ -24,7 +24,14 @@ import {
   planShards,
   readDurations,
 } from "./coverage-shards.ts";
-import { reEmitCovered, type ShardRecord, stockPassDeno, toolchainDeno } from "../test-run.ts";
+import {
+  isRegeneratedModuleProfile,
+  profileUrlOf,
+  reEmitCovered,
+  type ShardRecord,
+  stockPassDeno,
+  toolchainDeno,
+} from "../test-run.ts";
 
 /** One shard as found in the shards directory. */
 export interface FoundShard {
@@ -119,6 +126,12 @@ export async function gatherProfiles(
       if (!e.isFile || !e.name.endsWith(".json")) continue;
       const src = join(from, e.name);
       const dest = join(outDir, `s${record.index}-${e.name}`);
+      // A Vitest-regenerated copy's offsets don't fit the module's source (scripts/test-run.ts).
+      const url = await profileUrlOf(src);
+      if (url !== null && isRegeneratedModuleProfile(url)) {
+        await Deno.remove(src);
+        continue;
+      }
       if (record.root === root) await Deno.rename(src, dest);
       else {
         await Deno.writeTextFile(

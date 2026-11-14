@@ -465,6 +465,50 @@ function profileUrl(head: string): string | null {
   }
 }
 
+/**
+ * Whether a profile is of a module the Vitest layer regenerated (`…/x.ts?__vitest_gen=2`, a copy
+ * it re-evaluates for `vi.mock` / `vi.resetModules`): its offsets are of that transformed source,
+ * which `deno coverage` maps onto the plain module's, so the module's report comes out wrong (all
+ * of its functions read as never called). The plain module's own profiles carry its coverage.
+ *
+ * @param url The profile's module URL.
+ * @returns Whether to leave the profile out.
+ */
+export function isRegeneratedModuleProfile(url: string): boolean {
+  return url.startsWith("file:") && /[?&]__vitest_gen=/.test(url);
+}
+
+/**
+ * Remove the profiles of regenerated modules ({@linkcode isRegeneratedModuleProfile}) from a
+ * coverage directory.
+ *
+ * @param dir The coverage directory.
+ * @returns How many were removed.
+ */
+export async function pruneRegeneratedProfiles(dir: string): Promise<number> {
+  let n = 0;
+  for await (const entry of Deno.readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+    const path = join(dir, entry.name);
+    const url = await profileUrlOf(path);
+    if (url !== null && isRegeneratedModuleProfile(url)) {
+      await Deno.remove(path);
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * A raw V8 profile file's module URL, read from its first bytes, or `null`.
+ *
+ * @param path The profile file.
+ * @returns The URL.
+ */
+export async function profileUrlOf(path: string): Promise<string | null> {
+  return profileUrl(await readHead(path, PROFILE_HEAD_BYTES));
+}
+
 /** The first `n` bytes of `path`, decoded. */
 async function readHead(path: string, n: number): Promise<string> {
   using file = await Deno.open(path);
@@ -662,6 +706,7 @@ async function runPasses(): Promise<boolean> {
   const serial = await runPass(withWatchdog(passes.serial), stock);
   const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
   const dir = coverageDir(split.flags);
+  if (dir !== null) await pruneRegeneratedProfiles(dir).catch(() => 0);
   if (dir !== null && split.reEmit) await reEmitCovered(dir, { bin: stock });
   if (dir !== null && shard) await writeShardRecord(dir, shard, args);
   return parallel && serial && vitest;
