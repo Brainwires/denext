@@ -25,12 +25,13 @@ import {
   readDurations,
 } from "./coverage-shards.ts";
 import {
-  isRegeneratedModuleProfile,
-  profileUrlOf,
+  checkoutEmitDir,
+  copyTransformedEmits,
   reEmitCovered,
   type ShardRecord,
   stockPassDeno,
   toolchainDeno,
+  transformedEmitsDir,
 } from "../test-run.ts";
 
 /** One shard as found in the shards directory. */
@@ -126,12 +127,6 @@ export async function gatherProfiles(
       if (!e.isFile || !e.name.endsWith(".json")) continue;
       const src = join(from, e.name);
       const dest = join(outDir, `s${record.index}-${e.name}`);
-      // A Vitest-regenerated copy's offsets don't fit the module's source (scripts/test-run.ts).
-      const url = await profileUrlOf(src);
-      if (url !== null && isRegeneratedModuleProfile(url)) {
-        await Deno.remove(src);
-        continue;
-      }
       if (record.root === root) await Deno.rename(src, dest);
       else {
         await Deno.writeTextFile(
@@ -180,4 +175,13 @@ if (import.meta.main) {
   const bin = stockPassDeno(await toolchainDeno(), Deno.execPath());
   const emitted = await reEmitCovered(outDir, { bin, tempDir: await Deno.makeTempDir() });
   console.log(`coverage-merge: re-emitted ${emitted} covered modules`);
+  // The Vitest pass's profiles map through its transformed emits (scripts/test-run.ts's
+  // transformedEmitsDir): each shard's go into this machine's emit cache, under this checkout.
+  const emitDir = await checkoutEmitDir(bin, fromFileUrl(rootPath));
+  if (emitDir === null) throw new Error("coverage-merge: `deno info --json` named no emit cache");
+  let transformed = 0;
+  for (const { dir } of shards) {
+    transformed += await copyTransformedEmits(transformedEmitsDir(join(dir, "profile")), emitDir);
+  }
+  console.log(`coverage-merge: ${transformed} Vitest-transformed emits restored`);
 }

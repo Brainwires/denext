@@ -24,13 +24,13 @@ import {
   rebaseProfile,
 } from "../scripts/ci/coverage-merge.ts";
 import {
-  isRegeneratedModuleProfile,
-  profileNames,
-  pruneVitestProfiles,
+  copyTransformedEmits,
+  emitDirFor,
   shardArgs,
   shardRecordPath,
   splitArgs,
   testPasses,
+  transformedEmitsDir,
 } from "../scripts/test-run.ts";
 
 const ROOT = new URL("../", import.meta.url);
@@ -212,62 +212,29 @@ Deno.test("coverage merge: profiles move under this checkout's root, renamed per
   }
 });
 
-Deno.test("coverage: the Vitest pass's transformed-module profiles are left out, in a run and in the merge", async () => {
-  // `…/x.ts?__vitest_gen=2` is the Vitest layer's re-evaluated copy: its offsets are of a
-  // transformed source, and `deno coverage` mapped them onto x.ts (bridge-client.ts read 15.7%).
-  assert(isRegeneratedModuleProfile("file:///r/src/x.ts?__vitest_gen=2"));
-  assert(isRegeneratedModuleProfile("file:///r/src/x.ts?a=1&__vitest_gen=3"));
-  assert(!isRegeneratedModuleProfile("file:///r/src/x.ts"));
-  assert(!isRegeneratedModuleProfile("https://x.test/y.ts?__vitest_gen=1"));
+Deno.test("coverage shards: the Vitest-transformed emits travel beside the profiles to the merge's cache", async () => {
+  // The Vitest pass's profiles are of its transformed emit, which `deno coverage` finds in the
+  // emit cache; the merge's runner has none of a shard's, so each shard carries them.
+  assertEquals(transformedEmitsDir("coverage/profile"), "coverage/profile.transformed");
+  assertEquals(transformedEmitsDir("coverage/profile/"), "coverage/profile.transformed");
+  assertEquals(
+    emitDirFor("/c/gen", "/home/runner/work/denext/denext/"),
+    join("/c/gen", "file", "home", "runner", "work", "denext", "denext"),
+  );
+  assertEquals(emitDirFor("/c/gen", "C:\\a\\denext\\"), join("/c/gen", "file", "C", "a", "denext"));
   const dir = await Deno.makeTempDir();
   try {
-    const here = toFileUrl(join(dir, "repo") + "/").href;
-    const profile = (url: string) => JSON.stringify({ scriptId: "1", url, functions: [] });
-    // A run's own coverage directory: what the Vitest pass added is checked against the rest.
-    const run = join(dir, "run");
-    await Deno.mkdir(run);
-    const shaped = (url: string, length: number) =>
-      JSON.stringify({
-        scriptId: "1",
-        url,
-        functions: [{
-          functionName: "",
-          ranges: [{ startOffset: 0, endOffset: length, count: 1 }],
-        }],
-      });
-    await Deno.writeTextFile(join(run, "a.json"), shaped(`${here}src/x.ts`, 100));
-    await Deno.writeTextFile(join(run, "c.json"), shaped(`${here}src/y.ts`, 50));
-    await Deno.writeTextFile(join(run, "notes.txt"), "not a profile");
-    const before = await profileNames(run);
-    assertEquals([...before].sort(), ["a.json", "c.json"]);
-    await Deno.writeTextFile(join(run, "v1.json"), shaped(`${here}src/x.ts`, 100)); // same source
-    await Deno.writeTextFile(join(run, "v2.json"), shaped(`${here}src/x.ts`, 160)); // transformed
-    await Deno.writeTextFile(join(run, "v3.json"), shaped(`${here}src/x.ts?__vitest_gen=2`, 160));
-    await Deno.writeTextFile(join(run, "v4.json"), shaped(`${here}src/z.ts`, 70)); // Vitest-only
-    assertEquals(await pruneVitestProfiles(run, before), 2);
-    assertEquals([...Deno.readDirSync(run)].map((e) => e.name).sort(), [
-      "a.json",
-      "c.json",
-      "notes.txt",
-      "v1.json",
-      "v4.json",
-    ]);
-    assertEquals(await profileNames(join(dir, "missing")), new Set());
-    // A shard's (from before the runs pruned them): the merge drops it too.
-    const shard = join(dir, "shards", "1");
-    await Deno.mkdir(join(shard, "profile"), { recursive: true });
-    await Deno.writeTextFile(join(shard, "profile", "a.json"), profile(`${here}src/x.ts`));
-    await Deno.writeTextFile(
-      join(shard, "profile", "b.json"),
-      profile(`${here}src/x.ts?__vitest_gen=4`),
+    const from = join(dir, "from");
+    await Deno.mkdir(join(from, "src", "desktop"), { recursive: true });
+    await Deno.writeTextFile(join(from, "src", "desktop", "bridge-client.ts.transformed.js"), "t");
+    await Deno.writeTextFile(join(from, "src", "desktop", "bridge-client.ts.js"), "plain");
+    const to = join(dir, "to");
+    assertEquals(await copyTransformedEmits(from, to), 1);
+    assertEquals(
+      await Deno.readTextFile(join(to, "src", "desktop", "bridge-client.ts.transformed.js")),
+      "t",
     );
-    await Deno.writeTextFile(
-      join(shard, "profile.shard.json"),
-      JSON.stringify({ index: 1, count: 1, root: here, files: [] }),
-    );
-    const out = join(dir, "profile");
-    assertEquals(await gatherProfiles(await findShards(join(dir, "shards")), out, here), 1);
-    assertEquals([...Deno.readDirSync(out)].map((e) => e.name), ["s1-a.json"]);
+    assertEquals(await copyTransformedEmits(join(dir, "missing"), to), 0);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

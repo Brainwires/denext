@@ -584,7 +584,7 @@ jobs:
       # reports on all six shards' together.
       - name: Pack the raw profiles
         if: ${{ !cancelled() }}
-        run: tar -czf "$RUNNER_TEMP/coverage-shard.tgz" -C coverage profile profile.shard.json shard.txt
+        run: tar -czf "$RUNNER_TEMP/coverage-shard.tgz" -C coverage profile profile.transformed profile.shard.json shard.txt
 
       - name: Upload the raw profiles
         if: ${{ !cancelled() }}
