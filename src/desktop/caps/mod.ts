@@ -33,6 +33,7 @@ import { keepAwakeCapability } from "./keep-awake.ts";
 import { type SecureStoreHost, secureStoreHost } from "./secure-store.ts";
 import { secureStoreLegacy } from "../secure-store-config.ts";
 import { PickedPaths } from "../picked-paths.ts";
+import { type DesktopWebViewSettings, resolveDesktopWebViewSettings } from "../webview-config.ts";
 import {
   type DesktopAppSettings,
   type DesktopWindowSettings,
@@ -104,6 +105,8 @@ export interface ResolvedDesktop {
    * `desktop.minSize`, `desktop.maxSize`) `runDesktop` applies to the window it adopts.
    */
   readonly window: DesktopWindowSettings;
+  /** `desktop.webViews`: the per-window web view limit and allowed origins. */
+  readonly webViews: DesktopWebViewSettings;
   /** `desktop.app`'s launch settings (`keepAlive`, `dock`) `runDesktop` applies. */
   readonly app: DesktopAppSettings;
   /** `desktop.tray`: the backend-owned tray `runDesktop` creates, when the config sets one. */
@@ -308,6 +311,7 @@ function desktopLaunchBase(
     deepLinks,
     pickedPaths,
     window: resolveDesktopWindowSettings(desktop),
+    webViews: resolveDesktopWebViewSettings(desktop),
     app: resolveDesktopAppSettings(desktop),
     ...(tray ? { configTray: tray } : {}),
     ...(menu ? { configMenu: menu } : {}),

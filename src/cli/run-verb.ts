@@ -10,6 +10,7 @@ import {
   childToolchainMarker,
   entrypointArg,
   handsToolchainToChildren,
+  heapFlagNotice,
   isStandaloneBinary,
   legacyAbortActive,
   maybeReexecForLimits,
@@ -66,6 +67,7 @@ import {
   START_LIMITS_ENV,
 } from "../build/resource-limits.ts";
 import { VERSION } from "../version.ts";
+import { memoryCap } from "../build/heap-flags.ts";
 import { crashReportAppEnv } from "../build/crash-report.ts";
 import type { CommandContext, CommandSpec } from "./command.ts";
 import { envTierFor, projectDir } from "./shared.ts";
@@ -794,7 +796,7 @@ async function limitsGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   const applied = takeEnv(LIMITS_APPLIED_ENV);
   const dir = gateDir(command, ctx);
   const runtime = ownRuntime();
-  return await maybeReexecForLimits({
+  const reran = await maybeReexecForLimits({
     configured: handed ?? await startLimits(command, dir),
     runtime,
     applied,
@@ -820,6 +822,13 @@ async function limitsGate(command: CommandSpec, ctx: CommandContext): Promise<bo
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
   });
+  // This process serves: under the flags it was started with (`DENEXT_LIMITS_APPLIED`), a heap
+  // size from V8's flags raises `--max-memory` to its own.
+  if (!reran) {
+    const notice = await heapFlagNotice(memoryCap(applied?.split(" ") ?? []), "now");
+    if (notice) console.error(notice);
+  }
+  return reran;
 }
 
 /**

@@ -19,13 +19,18 @@
  * environment (without the runtime's own `DENO_SERVE_ADDRESS` / `DENO_DESKTOP_*`), and one JSON
  * line on stdin: `{"name","port","bootstrap","secrets"}`. Its stdin then stays open for as long as
  * the app runs, so a program that exits on end-of-file on stdin never outlives the app, however
- * the app ends.
+ * the app ends. With `run.bootstrapFd` the line goes to that file descriptor instead (a pipe
+ * written once and closed, as an Electron app hands its backend `--bootstrap-fd 3`): `Deno.Command`
+ * has no extra descriptors, so such a program is spawned through `node:child_process`, whose
+ * `stdio` array has them, under the same permission checks.
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
  * @module
  */
 
+import type { spawn as nodeSpawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import { basename, dirname, fromFileUrl, isAbsolute, join } from "@std/path";
 import type { SidecarExit } from "./sidecar.ts";
 import { type SidecarChildBase, sidecarChildHelpersUrl } from "./sidecar-child.ts";
@@ -71,9 +76,10 @@ const writer = (sink) => function (chunk, enc, cb) {
 };
 try { process.stdout.write = writer(out); process.stderr.write = writer(err); } catch { /* read-only */ }
 // A sidecar is the main program of its own world, without an IPC channel (as Node's main thread
-// without one): not a worker_threads worker, whose process.connected / channel / send throw.
-for (const [key, value] of [["connected", false], ["channel", undefined], ["send", undefined], ["disconnect", undefined]]) {
-  try { Object.defineProperty(process, key, { value, configurable: true, writable: true }); } catch { /* keep */ }
+// without one, where connected, channel, send and disconnect are all undefined): not a
+// worker_threads worker, whose process.connected / channel / send throw or read false.
+for (const key of ["connected", "channel", "send", "disconnect"]) {
+  try { Object.defineProperty(process, key, { value: undefined, configurable: true, writable: true }); } catch { /* keep */ }
 }
 // Nor does it have a location (Node's main thread has none): a blob: worker's WorkerLocation reads
 // origin "null", and a library that resolves URLs against location.origin + location.pathname
@@ -279,6 +285,73 @@ export interface ExecLauncherOptions {
   readonly cwd?: string;
   /** The program's spawner (tests pass a fake `Deno.Command`). */
   readonly Command?: typeof Deno.Command;
+  /** The spawner of a program with `run.bootstrapFd` (default `node:child_process`'s). */
+  readonly spawn?: typeof nodeSpawn;
+}
+
+/** A running program, whichever way it was spawned: what the exec launcher drives. */
+interface ProgramChild {
+  readonly pid: number;
+  readonly stdin: WritableStream<Uint8Array>;
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  readonly status: Promise<{ readonly code: number; readonly signal: string | null }>;
+  kill(signal?: Deno.Signal): void;
+}
+
+/** What spawning a program takes. */
+interface ProgramSpawn {
+  readonly program: string;
+  readonly args: string[];
+  readonly cwd?: string;
+  readonly env: Record<string, string>;
+}
+
+/**
+ * Spawn a program with one more pipe on descriptor `fd` (3 to 9; those below it closed), write
+ * `line` to it and close it. Resolves once the program has started; rejects as `Deno.Command`
+ * would (a missing program is `NotFound`).
+ */
+async function spawnWithBootstrapFd(
+  o: ProgramSpawn,
+  fd: number,
+  line: string,
+  spawnOverride?: typeof nodeSpawn,
+): Promise<ProgramChild> {
+  // Loaded only for such a program: an app without one never pays for Node's child_process.
+  const spawn = spawnOverride ?? (await import("node:child_process")).spawn;
+  const stream = await import("node:stream");
+  const stdio = ["pipe", "pipe", "pipe", ...Array(fd - 3).fill("ignore"), "pipe"] as const;
+  const child = spawn(o.program, o.args, {
+    ...(o.cwd ? { cwd: o.cwd } : {}),
+    env: o.env, // the whole environment, as `clearEnv` + `env` give Deno.Command
+    stdio: [...stdio],
+    windowsHide: true,
+  });
+  const status = new Promise<{ code: number; signal: string | null }>((resolve) =>
+    child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal: signal ?? null }))
+  );
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", (err: Error & { code?: string }) =>
+      reject(
+        err.code === "ENOENT" ? new Deno.errors.NotFound(`${o.program}: ${err.message}`) : err,
+      ));
+  });
+  const pipe = child.stdio[fd] as Writable;
+  // A program that never reads it must not hold the launch up, nor an EPIPE end the app.
+  pipe.on("error", () => {});
+  pipe.end(line);
+  return {
+    pid: child.pid!,
+    stdin: stream.Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
+    stdout: stream.Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>,
+    stderr: stream.Readable.toWeb(child.stderr!) as ReadableStream<Uint8Array>,
+    status,
+    kill: (signal) => {
+      child.kill(signal as Parameters<typeof child.kill>[0]);
+    },
+  };
 }
 
 /** Read `stream` line by line into `onLine` until it ends. */
@@ -302,7 +375,7 @@ async function pumpLines(
 }
 
 /** The programs started by every exec launcher, for the synchronous kill at exit. */
-const RUNNING = new Set<Deno.ChildProcess>();
+const RUNNING = new Set<ProgramChild>();
 
 /**
  * End every program sidecar now (synchronously): what the app does as it exits, and before a
@@ -327,25 +400,35 @@ export function execSidecarLauncher(options: ExecLauncherOptions): SidecarLaunch
   return async (ctx) => {
     const def = ctx.definition;
     if (options.cwd) await Deno.mkdir(options.cwd, { recursive: true });
-    const child = new Command(options.program, {
+    const spawn: ProgramSpawn = {
+      program: options.program,
       args: sidecarArgs(def.args, ctx.port),
       ...(options.cwd ? { cwd: options.cwd } : {}),
-      clearEnv: true,
       env: execSidecarEnv(Deno.env.toObject(), sidecarEnv(ctx)),
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    RUNNING.add(child);
-    const writer = child.stdin.getWriter();
+    };
     const hello = JSON.stringify({
       name: def.name,
       port: ctx.port ?? null,
       bootstrap: ctx.bootstrap ?? null,
       secrets: ctx.secrets,
-    });
-    // The program may not read stdin at all: never let a full pipe hold the launch up.
-    writer.write(new TextEncoder().encode(hello + "\n")).catch(() => {});
+    }) + "\n";
+    const fd = (def.run as { bootstrapFd?: number }).bootstrapFd;
+    const child: ProgramChild = fd === undefined
+      ? new Command(spawn.program, {
+        args: spawn.args,
+        ...(spawn.cwd ? { cwd: spawn.cwd } : {}),
+        clearEnv: true,
+        env: spawn.env,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn()
+      : await spawnWithBootstrapFd(spawn, fd, hello, options.spawn);
+    RUNNING.add(child);
+    const writer = child.stdin.getWriter();
+    // The program may not read stdin at all: never let a full pipe hold the launch up. With
+    // `bootstrapFd` the line went there; stdin only stays open.
+    if (fd === undefined) writer.write(new TextEncoder().encode(hello)).catch(() => {});
     const pumps = Promise.all([
       pumpLines(child.stdout, (l) => ctx.onLine("stdout", l)),
       pumpLines(child.stderr, (l) => ctx.onLine("stderr", l)),

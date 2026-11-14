@@ -20,8 +20,14 @@ import {
   strictPermissionsSidecarError,
 } from "../../desktop/permissions-mode.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
-import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
+import {
+  type DesktopTitleBarStyle,
+  type DesktopToolbarStyle,
+  desktopWindowKeyProblem,
+  titleOptionsProblem,
+} from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
+import { webViewsConfigProblem } from "../../desktop/webview-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
 import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
@@ -79,6 +85,13 @@ function validateDesktopPermissions(desktop: Record<string, unknown>, fail: Fail
   }
   const conflict = strictPermissionsSidecarError(desktop.sidecars);
   if (conflict) fail("desktop.permissions", conflict);
+  if ((desktop.app as { dock?: unknown } | undefined)?.dock === "while-window-open") {
+    fail(
+      "desktop.permissions",
+      '"strict" cannot be used with desktop.app.dock "while-window-open": the app reads its Dock ' +
+        "helper from its own bundle, whose install path is only known at run time",
+    );
+  }
 }
 
 /** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */
@@ -188,11 +201,12 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  for (const key of ["singleInstance", "keepAlive", "dock", "restoreWindows"]) {
+  for (const key of ["singleInstance", "keepAlive", "restoreWindows"]) {
     if (a[key] !== undefined && typeof a[key] !== "boolean") {
       fail(`desktop.app.${key}`, "must be a boolean");
     }
   }
+  validateDock(a, fail);
   if (a.maxWindows !== undefined) {
     const problem = maxWindowsProblem(a.maxWindows);
     if (problem) fail("desktop.app.maxWindows", problem);
@@ -202,6 +216,25 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   }
   validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/**
+ * `desktop.app.dock`: a boolean or `"while-window-open"`, which needs `desktop.app.identifier` (the
+ * helper is copied into the app's data folder, a path the runtime knows by the identifier).
+ */
+function validateDock(a: Record<string, unknown>, fail: Fail): void {
+  const dock = a.dock;
+  if (dock === undefined || typeof dock === "boolean") return;
+  if (dock !== "while-window-open") {
+    fail("desktop.app.dock", 'must be a boolean or "while-window-open"');
+  }
+  if (typeof a.identifier !== "string" || a.identifier.trim() === "") {
+    fail(
+      "desktop.app.dock",
+      'is "while-window-open", which needs desktop.app.identifier (the app copies its Dock ' +
+        "helper into the data folder named by it)",
+    );
+  }
 }
 
 /** `desktop.app.activationPolicy`: `"regular"` or `"accessory"`, and not regular with no Dock. */
@@ -215,6 +248,13 @@ function validateActivationPolicy(a: Record<string, unknown>, fail: Fail): void 
     fail(
       "desktop.app.activationPolicy",
       'is "regular" (a Dock icon) but desktop.app.dock is false: drop one of them',
+    );
+  }
+  if (policy === "regular" && a.dock === "while-window-open") {
+    fail(
+      "desktop.app.activationPolicy",
+      'is "regular" (a Dock icon for good) but desktop.app.dock is "while-window-open" (an ' +
+        "accessory app with a Dock icon while a window shows): drop one of them",
     );
   }
 }
@@ -256,7 +296,8 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
 
 /**
  * `desktop.window`: optional width/height and defaultWidth/defaultHeight (≥ 1), title, and the flags (resizable, show, frameless,
- * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
+ * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity,
+ * titleVisibility, toolbarStyle.
  */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
@@ -272,6 +313,20 @@ function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (problem) fail(`desktop.${problem[0]}`, problem[1]);
 }
 
+/**
+ * `desktop.window.toolbarStyle` against `desktop.titleBar`: the `"hidden"` title bar has no
+ * toolbar (the frameless combinations are `desktop.window`'s own, checked with its keys).
+ */
+function validateDesktopTitleOptions(d: Record<string, unknown>, fail: Fail): void {
+  if (!isPlainObject(d.window)) return;
+  const w = d.window as Record<string, unknown>;
+  const problem = titleOptionsProblem({
+    titleBar: d.titleBar as DesktopTitleBarStyle | undefined,
+    toolbarStyle: w.toolbarStyle as DesktopToolbarStyle | undefined,
+  });
+  if (problem) fail(`desktop.window.${problem[0]}`, problem[1]);
+}
+
 /** `desktop.tray`: an icon path in the export, optional texts, a menu and a panel. */
 function validateDesktopTray(tray: unknown, fail: Fail): void {
   if (tray === undefined) return;
@@ -279,13 +334,17 @@ function validateDesktopTray(tray: unknown, fail: Fail): void {
   if (problem) fail(`desktop.${problem[0]}`, problem[1]);
 }
 
-/** The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload. */
+/**
+ * The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload,
+ * webViews.
+ */
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
   validateDesktopTray(d.tray, fail);
   const menu = desktopMenuProblem(d.menu);
   if (menu) fail(`desktop.${menu[0]}`, menu[1]);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
+  validateDesktopTitleOptions(d, fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);
   validateDesktopSize(d.maxSize, "desktop.maxSize", fail);
@@ -300,6 +359,8 @@ function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void 
   if (d.preload !== undefined && (typeof d.preload !== "string" || d.preload === "")) {
     fail("desktop.preload", "must be a module path");
   }
+  const webViews = webViewsConfigProblem(d.webViews);
+  if (webViews) fail(`desktop.${webViews[0]}`, webViews[1]);
 }
 
 /**

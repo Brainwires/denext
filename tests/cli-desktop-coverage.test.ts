@@ -1177,6 +1177,17 @@ Deno.test("desktop add sidecar: a config whose desktop is code is refused with t
   }
 });
 
+Deno.test("desktop --headless: run only", async () => {
+  const dir = await tempDir("denext_desktop_headless_");
+  try {
+    const out = await runVerb(["build"], dir, { headless: true });
+    assertEquals(out.code, 1);
+    assertStringIncludes(out.err, "--headless applies to `denext desktop run` only");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop --inspect-renderer: dev only, and a non-loopback address is refused", async () => {
   const dir = await tempDir("denext_desktop_inspect_");
   try {

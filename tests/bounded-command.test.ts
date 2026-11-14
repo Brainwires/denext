@@ -283,7 +283,52 @@ Deno.test("inChild: a child killed at its deadline names the subprocess it waite
   );
   // The tree: the grandchild, still alive at the deadline.
   const tree = err.message.slice(err.message.indexOf("Its process tree at the deadline:"));
-  if (!tree.includes("Win32_Process refused")) {
-    assertStringIncludes(tree, "denext-stalled-grandchild", tree);
+  assert(showsStalledGrandchild(tree), tree);
+});
+
+/**
+ * Whether the process tree an `inChild` deadline reports shows the stalled grandchild: by its
+ * command line, or, in the OS snapshot a loaded Windows host falls back to (no command lines), as a
+ * `deno` process under the child, the root. Where `Win32_Process` is refused, the parents are
+ * unknown, so nothing can be told.
+ */
+function showsStalledGrandchild(tree: string): boolean {
+  if (tree.includes("denext-stalled-grandchild") || tree.includes("Win32_Process refused")) {
+    return true;
   }
+  if (!tree.includes("command lines unavailable")) return false;
+  const lines = tree.split(/\r?\n/);
+  const root = lines.map((line) => /^(\d+) {2}/.exec(line)?.[1]).find((pid) => pid);
+  return root !== undefined &&
+    lines.some((line) =>
+      new RegExp(`^ {2}\\d+ \\(parent ${root}\\) .*\\bdeno(\\.exe)?$`).test(line)
+    );
+}
+
+Deno.test("showsStalledGrandchild: the command line, or in the OS snapshot the child's deno child", () => {
+  const head = "Its process tree at the deadline:\n";
+  const note = "powershell.exe still running after 5000 ms: the OS's process snapshot instead, " +
+    "command lines unavailable";
+  // The full listing: the grandchild by its command line.
+  assert(showsStalledGrandchild(
+    `${head}5480  started 1 cpu 0.2s threads 9 handles 90  deno.exe run child.ts\n` +
+      "  8484 (parent 5480)  started 2 cpu 0s threads 7 handles 40  deno.exe eval " +
+      "await new Promise(() => {}); // denext-stalled-grandchild",
+  ));
+  // A loaded Windows host (CI on 2026-11-13): PowerShell late, the OS snapshot instead.
+  assert(showsStalledGrandchild(
+    `${head}${note}\n5480  threads 9  deno.exe\n  8484 (parent 5480)  threads 7  deno.exe`,
+  ));
+  // The snapshot without the grandchild, or with it under another process: not shown.
+  assert(!showsStalledGrandchild(`${head}${note}\n5480  threads 9  deno.exe`));
+  assert(
+    !showsStalledGrandchild(
+      `${head}${note}\n5480  threads 9  deno.exe\n  8484 (parent 5480)  threads 7  conhost.exe`,
+    ),
+  );
+  assert(!showsStalledGrandchild(`${head}${note}\n(pid 5480 and its descendants are gone)`));
+  // The full listing without the grandchild's command line: not shown.
+  assert(
+    !showsStalledGrandchild(`${head}5480  started 1 cpu 0.2s threads 9  deno.exe run child.ts`),
+  );
 });

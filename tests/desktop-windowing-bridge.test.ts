@@ -339,13 +339,15 @@ Deno.test("client: focus and blur subscriptions; openWindow returns a handle act
 });
 
 Deno.test("client: the Dock, the backend tray and its panel", async () => {
+  // One Dock click waits in the queue; a take empties it (the page also takes on each connect).
+  const actions = [{ source: "dockReopen", hasVisibleWindows: true }];
   await inDesktop({
     app: {
       setDockVisible: () => ({ applied: true }),
       backendTray: () => ({ id: "app" }),
       panel: (a) => ({ visible: (a as { action: string }).action !== "hide" }),
       updateTray: () => null,
-      take: () => [{ source: "dockReopen", hasVisibleWindows: true }],
+      take: () => actions.splice(0),
       capabilities: () => ({ dockVisibility: true, backendTray: true, trayPanel: true }),
     },
   }, async (rt) => {

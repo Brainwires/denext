@@ -53,6 +53,7 @@ export const NATIVE_TEMPLATES = packedRecords(
       "CONTEXT_MENU_ANDROID_FILES": ["DenextContextMenuPlugin.java"],
       "CONTEXT_MENU_IOS_FILES": ["DenextContextMenuPlugin.swift"],
     },
+    "desktopDockHelper": { "DESKTOP_DOCK_HELPER_FILES": ["DockHelper.m"] },
     "desktopPackageScripts": {
       "DESKTOP_PACKAGE_SCRIPTS": ["package-macos.ts", "package-linux.ts", "package-windows.ts"],
     },

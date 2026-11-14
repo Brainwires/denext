@@ -21,6 +21,8 @@
  * - `titleBarPreferences`: the user changed their title bar settings — the page reads
  *   `titleBarPreferences` (runtime 2.9.7-denext.12).
  * - `focus` / `blur`: the window gained or lost the keyboard focus (every runtime).
+ * - `webview` `{ id, event, detail }`: an event of one of the page's embedded web views
+ *   (`./webview.ts` has the web view methods and their checks).
  *
  * Overlay windows (a desktop companion, a HUD): the opacity, click-through
  * (`setIgnoreMouseEvents`), a click-catching hit region (`setHitRegion`), every-workspace
@@ -60,7 +62,14 @@ import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events
 import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
+import type { DesktopEventAppendOptions } from "../bridge-events.ts";
 import { applyWindowLevel, DEFAULT_VIBRANCY } from "../window-config.ts";
+import type { CreateWebViewOptions, WebViewHandle } from "../webview.ts";
+import type { DesktopWebViewSettings } from "../webview-config.ts";
+import { createWebViewHost, type WebViewHost } from "./webview.ts";
+
+/** A one-shot event: for the page live now, never replayed to a page that loads later. */
+const LIVE_ONLY: DesktopEventAppendOptions = { retain: false };
 
 /** How long a guarded close may go unacknowledged before a repeated close request wins. */
 export const UNRESPONSIVE_MS = 5_000;
@@ -88,6 +97,7 @@ export const WINDOW_EVENTS: readonly string[] = [
   "titleBarPreferences",
   "focus",
   "blur",
+  "webview",
 ];
 
 /** The window state events the runtime fires (each becomes a `state` signal). */
@@ -139,6 +149,8 @@ interface BrowserWindowLike {
   setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
   setSkipTaskbar?(skip: boolean): void;
   setTitleBarStyle?(style: string): boolean;
+  setTitleVisibility?(visibility: string): boolean;
+  setToolbarStyle?(style: string): boolean;
   setWindowButtonPosition?(position: { x: number; y: number } | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
@@ -152,6 +164,9 @@ interface BrowserWindowLike {
     y?: number;
   }): Promise<{ outcome?: unknown; target?: unknown; reason?: unknown }>;
 }
+
+/** The window as the web view host sees it (`createWebView` on the runtime that has web views). */
+type WebViewHostWindow = Parameters<typeof createWebViewHost>[0]["window"];
 
 /** One file of a drop, as the page takes it. */
 interface DroppedFile {
@@ -201,8 +216,13 @@ export interface WindowControllerOptions {
   readonly window: unknown;
   /** The runtime's app API (`Deno.desktop`, denext's pinned runtime only). */
   readonly api?: DesktopAppApi;
-  /** Push an event to the page's stream (the bridge's `emit`). */
-  readonly emit: (cap: string, event: string, data: unknown) => void;
+  /** Push an event to the page's stream (the bridge's `emit`; `retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** End the process once the window closed for good (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
   /**
@@ -232,6 +252,15 @@ export interface WindowControllerOptions {
    * becomes the layer surface's margins, so `setPosition` is reported. Default: not one.
    */
   readonly overlay?: boolean;
+  /** `desktop.webViews` as resolved (default: 8 web views per window, any http(s) origin). */
+  readonly webViews?: () => DesktopWebViewSettings;
+  /**
+   * The app's own origins, which a web view never loads: `desktop.app.origin` and the origin the
+   * app's pages are served from.
+   */
+  readonly appOrigins?: () => readonly string[];
+  /** The runtime's `Deno.WebView` class (tests; default the runtime's). */
+  readonly webViewClass?: unknown;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -247,6 +276,13 @@ export interface WindowController {
   install(): void;
   /** Accept one drop (the event handler's path; exported for tests). */
   acceptDrop(detail: unknown): Promise<void>;
+  /**
+   * Open a web view in this window for `desktop.ts` (`win.createWebView`): the page's checks and
+   * the same per-window limit.
+   */
+  createWebView(options: CreateWebViewOptions): Promise<WebViewHandle>;
+  /** The window closed for good: its web views are gone. */
+  windowClosed(): void;
 }
 
 /** Why a window feature is missing when nothing more specific is known. */
@@ -369,6 +405,9 @@ async function reportedCapabilities(
     displayEvents: false,
     titleBarHidden: false,
     titleBarHiddenInset: false,
+    // Reported by the runtime's windowCapabilities() where it has the setters; false before.
+    titleVisibility: false,
+    toolbarStyle: false,
     windowButtonPosition: false,
     mica: false,
     acrylic: false,
@@ -521,7 +560,7 @@ interface WindowState {
   readonly options: WindowControllerOptions;
   readonly win: BrowserWindowLike | undefined;
   readonly api: DesktopAppApi | undefined;
-  readonly emit: (event: string, data: unknown) => void;
+  readonly emit: (event: string, data: unknown, options?: DesktopEventAppendOptions) => void;
   readonly exit: (code: number) => void;
   readonly picked: PickedPaths;
   readonly resolve: DroppedPathResolver;
@@ -532,6 +571,8 @@ interface WindowState {
   guardQuitOnly: boolean;
   pending: { id: string; at: number; acked: boolean; reason: CloseReason } | undefined;
   installed: boolean;
+  /** The window's embedded web views. */
+  readonly webViews: WebViewHost;
 }
 
 /** Why a guarded window is asked to close. */
@@ -976,8 +1017,70 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
         return { applied: applied === true };
       },
     },
+    setTitleVisibility: { handler: (args) => setTitleVisibility(s, args) },
+    setToolbarStyle: { handler: (args) => setToolbarStyle(s, args) },
     setBackdrop: { handler: (args) => setBackdrop(s, args) },
   };
+}
+
+/** The runtime's own `windowCapabilities()` report, or `{}` (an older runtime, or it threw). */
+function runtimeCapabilities(s: WindowState): Record<string, unknown> {
+  try {
+    return (s.api?.windowCapabilities?.() as Record<string, unknown> | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Why the title could not be hidden: the OS / session, else the window itself. */
+function titleVisibilityReason(s: WindowState): string {
+  if (runtimeCapabilities(s).titleVisibility === true) {
+    return "it has no title bar to change (a frameless window)";
+  }
+  if (Deno.build.os === "linux") {
+    return "on Linux only a title bar GTK draws itself (client-side decorations, such as GNOME " +
+      "on Wayland) can hide its title; here the window manager draws the title bars (server-side " +
+      "decorations), or the backend is CEF, which draws Chromium's own";
+  }
+  return "this OS and backend have no title visibility";
+}
+
+/** `setTitleVisibility`: hide or show the title text, keeping the native title bar. */
+function setTitleVisibility(s: WindowState, args: unknown): null {
+  const visibility = argsOf(args).visibility;
+  if (visibility !== "visible" && visibility !== "hidden") {
+    throw invalid('visibility must be "visible" or "hidden"');
+  }
+  const what = visibility === "hidden" ? "hide its title" : "show its title";
+  if (call(s, "setTitleVisibility", what, visibility) !== true) {
+    throw unsupported(what, titleVisibilityReason(s));
+  }
+  return null;
+}
+
+/** The toolbar styles `setToolbarStyle` takes. */
+const TOOLBAR_STYLE_NAMES = new Set(["automatic", "unified", "unifiedCompact", "expanded"]);
+
+/** `setToolbarStyle`: an empty macOS toolbar in this style lays the title bar out. */
+function setToolbarStyle(s: WindowState, args: unknown): null {
+  const style = argsOf(args).style;
+  if (typeof style !== "string" || !TOOLBAR_STYLE_NAMES.has(style)) {
+    throw invalid('style must be "automatic", "unified", "unifiedCompact" or "expanded"');
+  }
+  const what = "take a toolbar style";
+  if (call(s, "setToolbarStyle", what, style) === true) return null;
+  if (runtimeCapabilities(s).toolbarStyle !== true) {
+    throw unsupported(
+      what,
+      Deno.build.os === "darwin"
+        ? "toolbar styles need macOS 11 or later"
+        : "toolbar styles are macOS only",
+    );
+  }
+  throw invalid(
+    `the window's title bar can't take the "${style}" toolbar style: the "hidden" title bar has ` +
+      'no toolbar (use "hiddenInset" for that look), and a frameless window has no title bar',
+  );
 }
 
 /** The always-on-top levels (Electron's names), lowest first. */
@@ -1169,7 +1272,8 @@ function pageUnresponsive(s: WindowState): boolean {
 function askPage(s: WindowState, reason: CloseReason): void {
   if (s.pending && (reason !== "quit" || s.pending.reason === "quit")) return;
   s.pending = { id: crypto.randomUUID(), at: s.now(), acked: false, reason };
-  s.emit("closeRequested", { id: s.pending.id, reason });
+  // Asked of the page live now: a page that loads later never answers an old request.
+  s.emit("closeRequested", { id: s.pending.id, reason }, LIVE_ONLY);
 }
 
 /** The window's `close` listener hook (see {@linkcode WindowController.interceptClose}). */
@@ -1190,8 +1294,8 @@ function installWindowEvents(s: WindowState): void {
   s.installed = true;
   for (const type of STATE_EVENTS) win.addEventListener(type, () => s.emit("state", null));
   win.addEventListener("drop", (e) => void acceptDrop(s, (e as CustomEvent).detail));
-  win.addEventListener("focus", () => s.emit("focus", null));
-  win.addEventListener("blur", () => s.emit("blur", null));
+  win.addEventListener("focus", () => s.emit("focus", null, LIVE_ONLY));
+  win.addEventListener("blur", () => s.emit("blur", null, LIVE_ONLY));
   s.api?.addEventListener?.("displaychanged", () => s.emit("display", null));
   // The user's title bar settings changed (runtime 2.9.7-denext.12).
   s.api?.addEventListener?.(
@@ -1208,13 +1312,16 @@ function installWindowEvents(s: WindowState): void {
  * @returns The controller.
  */
 export function createWindowController(options: WindowControllerOptions): WindowController {
+  const win = typeof options.window === "object" && options.window !== null
+    ? options.window as BrowserWindowLike
+    : undefined;
+  const emit = (event: string, data: unknown, emitOptions?: DesktopEventAppendOptions) =>
+    options.emit("window", event, data, emitOptions);
   const s: WindowState = {
     options,
-    win: typeof options.window === "object" && options.window !== null
-      ? options.window as BrowserWindowLike
-      : undefined,
+    win,
     api: options.api,
-    emit: (event, data) => options.emit("window", event, data),
+    emit,
     exit: options.exit ?? Deno.exit,
     picked: options.picked ?? new PickedPaths(),
     resolve: options.resolveDropped ?? resolveDropped,
@@ -1224,6 +1331,14 @@ export function createWindowController(options: WindowControllerOptions): Window
     guardQuitOnly: false,
     pending: undefined,
     installed: false,
+    webViews: createWebViewHost({
+      window: win as WebViewHostWindow | undefined,
+      api: options.api as { webViewCapabilities?(): unknown } | undefined,
+      ...(options.webViews ? { settings: options.webViews } : {}),
+      ...(options.appOrigins ? { appOrigins: options.appOrigins } : {}),
+      webViewClass: options.webViewClass ?? (Deno as unknown as { WebView?: unknown }).WebView,
+      emit,
+    }),
   };
   const capability: DesktopCapability = {
     name: "window",
@@ -1241,11 +1356,14 @@ export function createWindowController(options: WindowControllerOptions): Window
       ...windowLookMethods(s),
       ...windowOverlayMethods(s),
       ...windowCloseAndDragMethods(s),
+      ...s.webViews.methods,
     },
   };
   return {
     capability,
     acceptDrop: (detail) => acceptDrop(s, detail),
+    createWebView: (opts) => s.webViews.create(opts),
+    windowClosed: () => s.webViews.windowClosed(),
     interceptClose: (event) => interceptClose(s, event),
     install: () => installWindowEvents(s),
   };

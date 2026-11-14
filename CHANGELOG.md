@@ -8,6 +8,244 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-11-14
+
+### Added
+
+- **`run.exclude` for a bundled Node backend sidecar.** Next to `nodeModules` / `external`,
+  `exclude` takes package names or globs (`"@anthropic-ai/claude-code-*"`; `*` stays within one name
+  segment) that are never inlined nor copied, and need not be installed: a dependency the app must
+  not ship, such as an SDK's per-platform binary package. At run time `require()` / `import()` of
+  one throws `MODULE_NOT_FOUND`, and a static import binds a stand-in that throws the same error
+  only when it is used; a copied package's dependency that matches stays behind. The bundle report
+  lists what was excluded, and a name both in `external` and `exclude` is a config error.
+- **Sidecar addons signed before they are archived.** The packages a bundled Node backend copies
+  whole travel in an archive that `codesign`, `notarytool` and `signtool` never look inside, so
+  nothing in it was signed with the app. The package scripts now sign that native code first: for
+  macOS with `DENEXT_CODESIGN_IDENTITY`, every Mach-O (found by its header: `pty.node`,
+  `spawn-helper`, a `.dylib`; every slice of a universal file) and code bundle in the copies,
+  innermost first, with the identity, the Hardened Runtime and a secure timestamp, keeping their
+  entitlements, then verified, so the unpacked addons load as the team's own code even with
+  `disable-library-validation` off; without an identity only unsigned code, ad-hoc. For Windows with
+  `DENEXT_WINDOWS_CERT` (and no `--no-sign`), every PE file there is Authenticode-signed.
+  `denext desktop run` / `dev` leave them as installed.
+- **`run: { exec, bootstrapFd }` for a program sidecar.** The first line
+  (`{"name","port","bootstrap","secrets"}`) goes to that file descriptor (3 to 9), a pipe written
+  once and closed, instead of stdin, which still stays open for the app's lifetime: what an Electron
+  backend reads with `--bootstrap-fd 3`. Such a program is spawned through `node:child_process`,
+  since `Deno.Command` passes no further descriptors.
+- **Desktop: embedded web views.** `createWebView(options)` from `denext/desktop/window` places
+  another site's page in a native view inside the app's window, above the page, at bounds the page
+  sets (CSS pixels of the page viewport); `desktop.ts` gets the same call as
+  `win.createWebView(options)` on a window handle. The handle navigates, goes back / forward,
+  reloads, stops, takes the keyboard focus, reports its `state()`, `capture()`s what it shows as a
+  `Blob`, `evaluate()`s a script in an isolated world, and fires `title`, `url`, `load`, `console`,
+  `focus-change`, `new-window`, `find-result`, `context-menu` and `closed`. Views stack above the
+  page and among themselves (`raise()`, `lower()`, `setZOrder(n)`, `state().zOrder`);
+  `capture({ format: "jpeg", scale: 1 })` makes the snapshot an `<img>` stands in for while an HTML
+  overlay is up; `setZoom` / `getZoom`, `find` / `stopFind`, `print()` and `openDevTools()`
+  (`not_allowed` unless the app's DevTools are on: a dev run or `desktop.inspectable: true`);
+  `contextMenu: "app"` suppresses the engine's menu, and `permissions` also takes
+  `{ prompts, clipboardRead, clipboardWrite }`. Keys and focus: the app menu's accelerators fire
+  while a view has the keyboard (`menuAccelerators`), `forwardKeys` / `setForwardKeys(keys)` hand
+  chosen accelerators back to the app as `keydown` events with `forwarded: true`, keydowns the
+  view's page left unhandled arrive with `forwarded: false` where the engine can tell
+  (`unhandledKeys`), and a click into an unfocused view fires `focus-change` before the page gets
+  it. A view never gets the desktop bridge, the app's
+  storage (named `partition`s, `"ephemeral:"` ones in memory) or the window's navigation guard; it
+  loads `http:` / `https:` only and never the app's own origin, with popup, download and
+  permission-prompt policies; it closes with its window. `attachWebView(view, element)` keeps a
+  view on an element through resizes, scrolling, window resizes and display scale changes (one
+  `setBounds` per frame at most), fits it to the element's visible part (cut to the viewport and
+  its scroll containers; `clip: false` keeps the whole box) and hides it while the element is
+  detached, hidden or out of view. `desktop.webViews.limit` caps the views per window (default 8, up to
+  32) and `desktop.webViews.allowedOrigins` narrows what they may load. `webViewCapabilities()` says
+  whether the engine hosts them and which features work (each `false` where the engine or runtime
+  lacks it, and its call rejects `unsupported`). Web views need runtime 3.0.0-denext.22 (laufey
+  API 58): CEF and WKWebView on macOS first, WebView2 and WebKitGTK as each engine lands; under an
+  older runtime it answers `supported: false` and `createWebView` rejects `unsupported`.
+- **A warning when V8's flags override a heap cap.** V8 takes `--max-old-space-size` /
+  `--max-heap-size` (either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` or
+  the process's own `--v8-flags=…` silently raised `start.limits.memory` to the flag's size.
+  `denext start` now warns once when the process that serves runs with `--max-memory` and such a
+  flag, naming the flag, the cap and the fix (drop the flag and rely on the cap), and `denext dev`
+  warns that it will override `start.limits.memory` in production. @denext/backend warns the same
+  way for Edge Functions' `memoryMb`.
+- **Size limits on opened desktop windows.** `windows.open` / `host.openWindow` and a page's
+  `openWindow` take `minSize` / `maxSize` (`{ width, height }` in CSS pixels), and a window that
+  sets neither inherits `desktop.minSize` / `desktop.maxSize` as the main window gets them, the way
+  it inherits `desktop.titleBar`. A minimum larger than the maximum the window ends up with (its own
+  or the inherited one) is refused `validation` before the window opens.
+- **The desktop backend hears notification clicks.** `runDesktop({ onNotificationClick })`,
+  `onNotificationClick(fn)` on what `runDesktop` resolves with and an extension's
+  `host.onNotificationClick(fn)` are called with `{ tag, action, data, launch }` for every click the
+  runtime reports on one of the app's notifications: the pages' (which still reach
+  `onLocalNotificationTapped` / the web `Notification`) and the ones the backend posted itself
+  through `Deno.desktop.notifications`, which nothing heard before. The click that launched the app
+  reaches every hook, however late it subscribes. One dispatcher reads the runtime's launch clicks
+  and listens once for the `notifications` capability and the hooks. Never called without denext's
+  pinned runtime or in a sidecar's child.
+- **Desktop: native title options.** `desktop.window.titleVisibility: "hidden"` hides the title
+  text and keeps the OS's own title bar, its buttons and its drag area; the window's title still
+  names it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS
+  (`NSWindow.titleVisibility`) and Windows (`SetWindowThemeAttribute`, caption buttons kept, with or
+  without Mica) hide it on every backend; on Linux only a title bar GTK draws itself (client-side
+  decorations) can, and under a window manager's decorations the title stays and the capability
+  says so. `desktop.window.toolbarStyle: "unified" | "unifiedCompact" | "expanded"` lays the macOS
+  title bar out with an empty toolbar (macOS 11+), the title left-aligned like Finder for
+  `"unified"`; with `desktop.titleBar: "hiddenInset"` it sets the inset's style, and with
+  `"hidden"` (no toolbar) it is a config error. Windows opened with `windows.open` / `openWindow`
+  inherit both unless their own options say; a page changes its window's with
+  `setTitleVisibility` / `setToolbarStyle` from `denext/desktop/window`, which reject
+  `unsupported` with the reason, and feature-detects them with `windowCapabilities()`
+  (`titleVisibility`, `toolbarStyle`). Needs a runtime on laufey API 57 (runtime
+  3.0.0-denext.22); an older runtime reports both capabilities `false`, skips the config values
+  with a warning and rejects the setters.
+- **Desktop: a macOS tray app with a Dock icon only while a window is open.**
+  `desktop.app.dock: "while-window-open"` keeps the app accessory from launch to quit, and gives it
+  a Dock icon and a Cmd-Tab entry while one of its windows (not the tray panel, not an overlay) is
+  showing, without ever leaving a tile in the Dock's recent apps. macOS adds a recents tile when an
+  app's running tile goes away (on quit, or on switching back to accessory), but only for an app
+  under `/Applications`, so packaging (`denext desktop package`) builds a small helper app into
+  `Contents/Helpers/<Name>.app` (clang, the app's architectures, name, icon and version; signed and
+  notarized with the app), the app copies it into its data folder (again whenever the bundled copy
+  differs) and opens it through LaunchServices while a window shows. Clicking the helper's Dock icon
+  or switching to it with Cmd-Tab brings the app's window to the front; its Quit (the Dock menu,
+  Cmd-Q while it is in front) closes the app's windows as their close buttons would and never quits
+  the app, so a tray app keeps running until its own Quit (an app that is not kept alive quits with
+  its last window, as ever). The two talk over a loopback connection the helper proves with a
+  per-launch token, which it reads from a file in the app's 0700 data folder. The packaged app gets
+  `--allow-run=/usr/bin/open` and the write of `<data>/dock-helper`. Where the helper cannot run
+  (`denext desktop run` / `dev` builds, a failed copy or launch) the app keeps the accessory
+  behaviour; on Windows and Linux the value is `true`. Needs `desktop.app.identifier`, and not with
+  `desktop.permissions: "strict"` or `activationPolicy: "regular"`.
+- **Desktop: the app's own top-level menus, per-window menu state and Window-menu items.**
+  `desktop.menu.menus: [{ id, label, after?, items }]` adds menus beside the managed ones (on macOS
+  the app menu, Edit and Window), after `"app"`, `"file"`, `"edit"`, `"view"` (default) or
+  `"window"`; items take `accelerator`, `enabled`, `checked`, `type` (`"checkbox"` toggles,
+  `"radio"` excludes the rest of its `group`), submenus, separators, roles and icons. The page
+  (`denext/desktop/app`) and the backend (`runDesktop`'s result, an extension's host) change them
+  with `setMenu(menuId, { label?, after?, items } | null)` and `setMenuItemState(itemId, { checked?,
+  enabled?, label? }, { windowId? })`: state set for a window shows while it is key, over the
+  app-wide state. `setWindowMenuAppItems` puts a window's own items (one per MDI document, Cascade,
+  Tile) in the Window menu below the window list while it is key, cleared when it closes. Clicks
+  reach the pages' `onAppMenuItem(id, info)` (now with `kind`, `keyWindow`, `menu`, `checked`) and
+  the backend's `runDesktop({ onAppMenuItem })` / `host.onAppMenuItem` with the key window. Once an
+  app uses them every app window gets its own menu bar with its state (on Windows and Linux not an
+  overlay or frameless one); macOS also gets the app-level menu (`Deno.desktop.setApplicationMenu`,
+  runtime 3.0.0-denext.21) with the app-wide state. `appCapabilities()` reports `customMenus` and
+  `appLevelMenu`. No new runtime is needed: the runtime's per-window application menus and
+  checkmarks carry it (radio items show a checkmark, not a dot).
+- **Desktop: the managed macOS menu bar.** With `desktop.menu.window` and no page `setAppMenu`, the
+  bar is now the app menu, Edit and Window: the Window submenu used to be the bar's first submenu,
+  which AppKit shows under the app's name, with the runtime's Edit menu after it.
+- **Desktop: one-shot events, `emit(cap, event, data, { retain: false })`.** `runDesktop`'s
+  `emit`, an extension's `host.emit` and a handler's `ctx.emit` take `retain: false` for an action
+  meant for the page live now (a menu click forwarded from `onAppMenuItem`): the live pages receive
+  it, a live page whose event stream reconnects still does (`Last-Event-ID`), and a page that
+  subscribes later, a reloaded one included, never does, so it is not acted on again. Such events
+  have a replay buffer of their own and never push a deep link out of the retained one.
+- **Headless desktop runs: `denext desktop run --headless`, `DENEXT_DESKTOP_HEADLESS=1`.** The app
+  starts with every window hidden while its pages, extensions and sidecars run: a packaged app's
+  self-test on a machine where no window may show. `runDesktop` hides the main window as it adopts
+  it, before its first page load (so the runtime never reveals it), every window opened later is
+  created hidden, `show()` / `focus()` / `maximize()` / `restore()` / `setFullScreen()` and the
+  Dock's reopen and `bounce()` do nothing, and the app is an `"accessory"` one (no Dock icon). The
+  webview host gets `LAUFEY_HEADLESS=1` and `LAUFEY_ACTIVATION_POLICY=accessory` from its first
+  frame: `denext desktop run` / `dev` set both whenever the run is headless (`--headless`, or
+  `DENEXT_DESKTOP_HEADLESS=1` in their environment), and a packaged app is started with all three
+  (`DENEXT_DESKTOP_HEADLESS=1 LAUFEY_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory ./MyApp`). A host
+  that reads `LAUFEY_HEADLESS` keeps every window hidden, CEF's first one included, and does not
+  activate the app at launch on macOS; under one that doesn't, the CEF backend still shows its
+  first window as it creates it, and the macOS host activates the app.
+- **Sidecar bundles per architecture.** Each `--arch` a package script builds (`both` on Linux and
+  Windows, each half of a macOS `universal`) bundles a Node backend sidecar for its own arch: only
+  that arch's `prebuilds/<platform>-<arch>/` (node-gyp-build's `darwin-x64+arm64` for either), only
+  the per-platform packages whose npm `os` and `cpu` allow it (`cpu` was not checked), and a warning
+  for a copied `.node` built for another arch (a `build/Release` addon compiled on the host) or a
+  per-platform optional dependency npm did not install for the target. `run.archDirs`
+  (`{ "darwin-x86_64": "vendor/x64/node_modules" }`, or an `"arm64"` / `"x86_64"` key) names a
+  `node_modules` built for a target, whose packages are copied in place of the host's. The copies
+  are signed per arch as before. A macOS package script from before this release keeps the host
+  arch's addons in both halves until `denext desktop package --regenerate-scripts`.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.22.** It carries laufey API 57
+  and 58: title visibility and the macOS toolbar style (`BrowserWindow.setTitleVisibility()` /
+  `setToolbarStyle()`, what the native title options use), embedded web views
+  (`BrowserWindow.prototype.createWebView()`, behind `createWebView` and `attachWebView` in
+  `denext/desktop/window`, with keys and focus forwarded), `LAUFEY_HEADLESS` for headless runs and
+  an accessory app left in the background at launch. It also adds Web MIDI
+  (`navigator.requestMIDIAccess()`, `--allow-midi[=devices,sysex]`) and WebRTC data channels
+  (`RTCPeerConnection`, `RTCDataChannel`), and Node.js fixes: `node:fs` on a descriptor the process
+  inherited or a native addon opened (node-pty's master in a worker), a worker without IPC with no
+  IPC members, a self-signal on Windows writing its profiles first, and a packaged program spawned
+  while "text file busy" for a moment. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
+- **An accessory app no longer activates at launch on macOS.** With runtime 3.0.0-denext.22 the
+  webview host leaves an app whose activation policy is `"accessory"`
+  (`desktop.app.activationPolicy`, a tray app such as one with `dock: "while-window-open"`) in the
+  background when it starts, as well as in headless runs: it no longer takes the focus from the app
+  in front.
+
+### Fixed
+
+- **`install.sh` verifies with a snap-packaged GitHub CLI.** The installer downloaded into a
+  `mktemp` folder under `/tmp`, which the snap store's `gh` (Ubuntu's `/snap/bin/gh`) cannot see
+  from its private `/tmp`, so `gh attestation verify` failed to open the archive and nothing was
+  installed. It now downloads and verifies in a private folder (mode 0700) that `gh` can read,
+  removed on exit: under `${XDG_CACHE_HOME:-$HOME/.cache}/denext/install-XXXXXX`, or, with a snap
+  `gh`, whose `home` interface grants only non-hidden paths under `$HOME` (not `~/.cache`), under
+  `$XDG_CACHE_HOME/denext` when that is a non-hidden folder in the home directory, else
+  `$HOME/denext-install-XXXXXX`. The system temp folder is the last resort. If a snap `gh` still
+  cannot open the file, the installer says so and what to do, and installs nothing
+  (`DENEXT_INSECURE=1` remains the only way past an unverified attestation). The checksum check is
+  unchanged; `install.ps1` downloads into the user's own temp folder and needed no change.
+- **Desktop: a page's event stream recovers from a connection that died silently.** The bridge
+  client never watched the runtime's 15-second heartbeat, so after a sleep and wake, a stalled
+  socket or a relay hiccup that left the connection open but dead, the page got no more
+  `onDesktopEvent` pushes for as long as it stayed open. Nothing read for 2.5 heartbeats now counts
+  as a dead connection: the page drops it and reconnects with backoff, resuming with
+  `Last-Event-ID` and taking its pull queues again as on every connect. It also reconnects at once
+  on `online`, and when it is shown again after being hidden for longer than that.
+- **Desktop: a reloaded page no longer gets the events of the page before it.** denext's own
+  one-shot events (menu, tray, Dock and shortcut signals, focus and blur, a close request, the
+  windows opening and closing, system-stats samples) are sent with `retain: false`, so a reloaded
+  page no longer runs its `onWindowFocus`, `onCloseRequested` or window-list handlers for what
+  happened before it loaded, and a notification click the last page never took is dropped at the
+  next page load (the click that launched the app still waits for a page). The page's pull queues
+  take again whenever the event stream connects, so a click made while it connects is not missed.
+- **A module sidecar's `process.connected` reads `undefined`.** The worker a `run: { module }`
+  sidecar runs in had set it to `false`; Node's main thread without an IPC channel defines none of
+  `process.connected`, `channel`, `send` or `disconnect`, and now neither does the sidecar, so a
+  library that tells a fork from a main program by them sees a main program. Its
+  `globalThis.location` stays `undefined` too, as before.
+- **A sidecar's children get the same globals.** A `spawnSelf` / `childCommand` child, which a
+  runtime may run as a headless worker, had that worker's `WorkerLocation` (origin `"null"`, from
+  which a library such as PostHog built `nullnull/…` URLs) and a worker's `process.connected` /
+  `channel`, which throw. Its `globalThis.location` is now `undefined`, and the four IPC properties
+  follow Node's rules for a child: kept when it has an IPC channel (`spawnSelf` starts it with
+  `"ipc"`), all `undefined` when it has none.
+
+### Documentation
+
+- **Desktop: an http://localhost iframe inside the app origin.** The desktop page now says which
+  frames a secure custom-scheme page can load on each engine (localhost and 127.0.0.1 yes;
+  `*.localhost` on Chromium and recent WebKit; any other plain-http host is mixed content
+  everywhere), that the navigation guard never applies to frames, and the ways around it.
+- **Desktop: tray apps and the Dock's recent apps.** A new section on the desktop page explains
+  why a macOS tray app that switches to `"regular"` while a window is open lands in the Dock's
+  recent apps (an unpinned app installed under /Applications gets a recents tile whenever its
+  running tile goes away, on quit or on switching back to `"accessory"`, with no opt-out; one
+  installed anywhere else gets none), and how to avoid it: `desktop.app.dock: "while-window-open"`
+  (above) for a Dock icon while a window shows, and in every case staying `"accessory"` and
+  bringing windows up with `focusWindow()` / a window ref's `focus()`, which activate the app
+  without changing the policy. Laufey's macOS `focus()` also orders the window in front of
+  other apps' windows when the activation is declined, on both backends, from the runtime that
+  carries laufey's `MacFocusWindow`. `setActivationPolicy`'s docs no longer suggest switching to
+  regular while a window is open.
+
 ## [4.17.0] - 2026-11-13
 
 ### Added
@@ -22024,7 +22262,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.17.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.18.0...development
+[4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0
 [4.15.0]: https://jsr.io/@denext/denext@4.15.0

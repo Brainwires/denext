@@ -793,6 +793,24 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Traffic lights where the page wants them** — `desktop.window.windowButtonPosition` (and a
   window's own option) places the macOS window buttons under a hidden title bar; ignored on
   Windows and Linux. — `src/desktop/window-config.ts`.
+- **Native title options** — `desktop.window.titleVisibility: "hidden"` hides the title text and
+  keeps the OS's title bar, buttons and drag area (macOS, Windows, and Linux where GTK draws the
+  title bar; refused, never faked, under a window manager's decorations), and
+  `desktop.window.toolbarStyle` lays the macOS title bar out with a unified / compact / expanded
+  toolbar; per window in `openWindow`, and `setTitleVisibility` / `setToolbarStyle` from a page,
+  feature-detected through `windowCapabilities()`. — `src/desktop/window-config.ts`,
+  `src/desktop/caps/window.ts`.
+- **Embedded web views** — `createWebView` (page) / `win.createWebView` (`desktop.ts`) put another
+  site in a native view inside the window, isolated from the bridge, the app's storage and its
+  navigation guard (named or ephemeral partitions; popup, download and permission policies;
+  http(s) only, never the app's origin, an optional `desktop.webViews.allowedOrigins`, a
+  per-window `limit`), with navigation, `state`, `capture` (a `Blob`, at a chosen scale), isolated
+  `evaluate`, stacking (`raise` / `lower` / `setZOrder`), zoom, find, print, DevTools (only where
+  the app's are on), an app-drawn context menu, clipboard permissions, menu accelerators and
+  `forwardKeys` / unhandled `keydown` events while it has the keyboard, and its events;
+  `attachWebView` glues one to an element's visible part and hides it while the element is out of
+  view.
+  Gated by `webViewCapabilities()`. — `src/desktop/webview.ts`, `src/desktop/caps/webview.ts`.
 - **Linux desktop entry and AppStream metadata** — `desktop.linux.desktopEntry` (categories,
   keywords, `GenericName`, `StartupWMClass`, `MimeType`) goes into every `.desktop` file the
   packages carry, the bundle's own entry is rewritten with the app's name and icon, and the

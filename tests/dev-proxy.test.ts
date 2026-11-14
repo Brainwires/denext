@@ -9,10 +9,12 @@ import {
   gzipSync,
   inflateSync,
 } from "node:zlib";
+import { encodeBase64 } from "@std/encoding/base64";
 import {
   fetchDecodedEncoding,
   matchesProxyPrefix,
   proxyToBackend,
+  wsBridgesClosed,
 } from "../src/build/dev-proxy.ts";
 import { fetchDecodesDeflate } from "../src/build/deno-version.ts";
 import { validateDenextConfig } from "../src/build/paths.ts";
@@ -273,6 +275,112 @@ Deno.test("proxyToBackend: a client's hop-by-hop headers never reach the backend
       assert(head.includes(kept), `dropped ${kept}\n${head}`);
     }
   } finally {
+    await backend.close();
+  }
+});
+
+/**
+ * A WebSocket backend over raw TCP that echoes short text frames and answers a close frame only
+ * once `answerClose()` is called: the backend that has not yet answered the proxy's close.
+ */
+function startHeldCloseBackend(): {
+  port: number;
+  answerClose: () => void;
+  close: () => Promise<void>;
+} {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const answer = Promise.withResolvers<void>();
+  const tasks: Promise<void>[] = [];
+  const enc = new TextEncoder();
+  const serveConn = async (conn: Deno.Conn) => {
+    try {
+      const buf = new Uint8Array(4096);
+      const n = await conn.read(buf);
+      const head = new TextDecoder().decode(buf.subarray(0, n ?? 0));
+      const key = /sec-websocket-key:\s*(\S+)/i.exec(head)?.[1] ?? "";
+      const accept = encodeBase64(
+        await crypto.subtle.digest(
+          "SHA-1",
+          enc.encode(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`),
+        ),
+      );
+      await conn.write(enc.encode(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      ));
+      // Client frames are masked and, here, short (< 126 bytes): 2 header bytes + 4 mask bytes.
+      while (await conn.read(buf) !== null) {
+        const opcode = buf[0] & 0x0f;
+        const payload = buf.slice(6, 6 + (buf[1] & 0x7f)).map((b, i) => b ^ buf[2 + (i % 4)]);
+        if (opcode === 1) {
+          const out = enc.encode(`echo:${new TextDecoder().decode(payload)}`);
+          await conn.write(new Uint8Array([0x81, out.length, ...out]));
+        } else if (opcode === 8) {
+          await answer.promise;
+          await conn.write(new Uint8Array([0x88, payload.length, ...payload]));
+          break;
+        }
+      }
+    } catch {
+      /* the proxy went away */
+    } finally {
+      conn.close();
+    }
+  };
+  const accepting = (async () => {
+    for await (const conn of listener) tasks.push(serveConn(conn));
+  })().catch(() => {});
+  return {
+    port: (listener.addr as Deno.NetAddr).port,
+    answerClose: () => answer.resolve(),
+    close: async () => {
+      answer.resolve();
+      listener.close();
+      await accepting;
+      await Promise.all(tasks);
+    },
+  };
+}
+
+Deno.test("proxyToBackend: wsBridgesClosed waits for the backend to answer the bridge's close", async () => {
+  // A client's close makes the bridge close its upstream, and `ws` keeps a 30 s close timer until
+  // the backend answers. A test that returned before that answer left the timer to the leak
+  // sanitizer on a loaded CI runner; wsBridgesClosed() is what a teardown awaits.
+  const backend = startHeldCloseBackend();
+  const cfg = { prefixes: ["/ws"], target: `http://127.0.0.1:${backend.port}` };
+  const ac = new AbortController();
+  const listening = Promise.withResolvers<number>();
+  const server = Deno.serve(
+    {
+      port: 0,
+      hostname: "127.0.0.1",
+      signal: ac.signal,
+      onListen: (a) => listening.resolve(a.port),
+    },
+    (req) => proxyToBackend(req, new URL(req.url), cfg),
+  );
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${await listening.promise}/ws`);
+    const echoed = Promise.withResolvers<string>();
+    ws.onopen = () => ws.send("ping");
+    ws.onmessage = (e) => echoed.resolve(String(e.data));
+    ws.onerror = () => echoed.reject(new Error("ws error"));
+    assertEquals(await echoed.promise, "echo:ping");
+    const closed = Promise.withResolvers<void>();
+    ws.onclose = () => closed.resolve();
+    ws.close();
+    await closed.promise;
+
+    let settled = false;
+    const bridges = wsBridgesClosed().then(() => (settled = true));
+    await new Promise((r) => setTimeout(r, 50));
+    assertEquals(settled, false, "the backend has not answered the close yet");
+    backend.answerClose();
+    await bridges;
+    assert(settled);
+  } finally {
+    ac.abort();
+    await server.finished;
     await backend.close();
   }
 });

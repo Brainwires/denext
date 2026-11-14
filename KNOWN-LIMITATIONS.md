@@ -57,6 +57,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
+- **WebRTC is data channels only:** `RTCPeerConnection` has no media tracks (`addTrack()`,
+  `addTransceiver()`, `getSenders()` and the rest are empty or throw `NotSupportedError`), and no
+  `certificates` / `RTCPeerConnection.generateCertificate()` (each connection makes its own ECDSA
+  P-256 certificate). The `RTCDtlsTransport` / `RTCIceTransport` objects and the legacy callback
+  signatures are not provided, and `setConfiguration()` records a new configuration but does not
+  gather again.
+- **WebRTC ICE is UDP only:** remote TCP candidates and mDNS `.local` candidates are accepted and
+  skipped. A browser that hides its addresses behind mDNS is still reached, as a peer-reflexive
+  candidate once its checks arrive. Local host candidates are literal addresses, which is why they
+  need `--allow-sys=networkInterfaces`. TURN over TCP or TLS gives relay candidates only (no
+  server-reflexive candidate from such a server).
+- **WebRTC engine:** the protocol stack (ICE, DTLS 1.2, SCTP) is webrtc-rs's `rtc`, pre-1.0 and not
+  externally audited. Its parsers are exposed to any peer that completes ICE. A panic inside the
+  engine aborts a release build. Firefox has not been tested as a peer.
 - **Won't: esbuild compiled to wasm** (`@denext/esbuild`). It would remove the npm download but runs
   several times slower on every compat build and dev session; the build runs the toolchain's esbuild
   binary instead.
@@ -629,6 +643,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no
+  `--allow-midi`, so `navigator.requestMIDIAccess()` in `desktop.ts`, an extension or a module
+  sidecar rejects `NotAllowedError` there (a page uses its engine's own Web MIDI where it has one).
+  A `midi` capability (`denext desktop add midi`) is planned.
+- **Embedded web views follow the engine:** `webViewCapabilities()` reports, per engine, whether
+  views are hosted and which of capture, evaluate, stacking, zoom, find, DevTools, the context
+  menu, print, clipboard and key forwarding work; where one is missing its call rejects
+  `unsupported`. A view never gets the desktop bridge, the app's storage or its navigation guard.
 - **A bridge handler's `ctx.caller.frame` is verified only on CEF and WKWebView.** A runtime that
   marks frames (`Deno.desktop.marksFrames`) does so only where the engine says which frame made
   the request: CEF, and macOS's WKWebView where WebKit reports the frame. WebView2 (Windows) and
@@ -646,6 +668,24 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   WKWebView holds the navigation. WebKitGTK (2.40 and later) decides at the response, after the
   request was sent, reports every `kind` as `"other"` with no `initiator`, and reports back /
   forward and reloads too.
+- **A hidden title on Linux needs client-side decorations.** `desktop.window.titleVisibility:
+  "hidden"` works where GTK draws the title bar itself (GNOME and other Wayland compositors without
+  server-side decorations, or `GTK_CSD=1`); where the window manager draws it (KDE Plasma, X11
+  window managers) and on the CEF backend the title stays, `windowCapabilities().titleVisibility`
+  is `false` and `setTitleVisibility("hidden")` rejects `unsupported`. denext never switches a
+  window to client-side decorations to fake it. `desktop.window.toolbarStyle` is macOS-only
+  (macOS 11 and later) and has no equivalent on Windows or Linux.
+- **Embedded web views draw above the page and come engine by engine.** A view from
+  `createWebView` is a native view: no HTML can be drawn over it (hide it, or show a `capture()`
+  snapshot in its place, while a menu or dialog overlaps it), and the page's own key listeners
+  don't hear keys typed into it. A view can't be cropped: `attachWebView` fits it to the visible
+  part of a partly scrolled-away element by resizing it, so the page inside lays out at that size.
+  `desktop.webViews.allowedOrigins` checks `createWebView` and
+  `navigate`, not the links the user follows inside the view (those are held to `http:` /
+  `https:` only). A reload of the window's page can't reach the views it had open (they stay until
+  closed or the window closes). Web views need an engine that hosts them —
+  `webViewCapabilities().supported` says; elsewhere `createWebView` rejects `unsupported` — and
+  WKWebView keeps a named partition only on macOS 14 and later (in memory before).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app

@@ -40,7 +40,7 @@
 
 import { timingSafeEqual } from "./auth-session-runtime.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
-import { DesktopEventLog } from "./bridge-events.ts";
+import { type DesktopEventAppendOptions, DesktopEventLog } from "./bridge-events.ts";
 import {
   DESKTOP_FRAME_HEADER,
   type DesktopServeInfo,
@@ -65,6 +65,7 @@ import {
 import type { PickedPaths } from "./picked-paths.ts";
 import type { WindowLifecycleHost } from "./window-lifecycle.ts";
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
+import type { DesktopAppMenusApi } from "./app-menus.ts";
 import type {
   DesktopOpenWindowOptions,
   DesktopSecondInstanceEvent,
@@ -72,6 +73,7 @@ import type {
 } from "./app-windows.ts";
 import { desktopConfirm } from "./message-box.ts";
 import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
+import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -152,6 +154,12 @@ export interface DesktopBridgeOptions {
    */
   readonly onWindowMenuItem?: (fn: DesktopWindowMenuItemHandler) => () => void;
   /**
+   * The app's own top-level menus and the windows' Window-menu items: what the host's `setMenu`,
+   * `setMenuItemState`, `setWindowMenuAppItems` and `onAppMenuItem` delegate to. Without it (no
+   * desktop runtime, a test) the calls throw `unsupported` and a subscription is kept by nobody.
+   */
+  readonly appMenus?: DesktopAppMenusApi;
+  /**
    * Subscribe to every window's top-level navigations: what
    * {@link DesktopExtensionHost.onWillNavigate} delegates to. Without it (no desktop runtime, a
    * test) a subscription is kept by nobody.
@@ -170,6 +178,12 @@ export interface DesktopBridgeOptions {
   readonly onSecondInstance?: (
     fn: (event: DesktopSecondInstanceEvent) => void | Promise<void>,
   ) => () => void;
+  /**
+   * Subscribe to the clicks on the app's notifications: what
+   * {@link DesktopExtensionHost.onNotificationClick} delegates to. Without it (no desktop runtime,
+   * a test) a subscription is kept by nobody.
+   */
+  readonly onNotificationClick?: (fn: DesktopNotificationClickListener) => () => void;
 }
 
 /**
@@ -213,9 +227,16 @@ export interface DesktopBridge {
   ): Promise<Response | null>;
   /**
    * Push an event to the pages' streams (its `cap` need not be a registered capability's): every
-   * window's, or only `target`'s.
+   * window's, or only `target`'s. `options.retain: false` sends a one-shot action to the live
+   * pages only (see {@linkcode DesktopEventLog.append}).
    */
-  emit(cap: string, event: string, data: unknown, target?: string): void;
+  emit(
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ): void;
   /**
    * A window started a new top-level page load: run the capabilities'
    * {@link DesktopCapability.onPageLoad} so state the previous page owned is released (every
@@ -484,6 +505,22 @@ export function runOnDesktopMainThread(
   return context === undefined ? api.runOnMainThread(fn) : api.runOnMainThread(fn, context);
 }
 
+/** The host's custom-menu calls over `api`, or `unsupported` ones without it. */
+function hostAppMenus(api: DesktopAppMenusApi | undefined): DesktopAppMenusApi {
+  if (api) return api;
+  const none = (): never => {
+    throw new DesktopCapError("unsupported", "the app's menus need the desktop runtime's windows", {
+      status: 501,
+    });
+  };
+  return {
+    setMenu: none,
+    setMenuItemState: none,
+    setWindowMenuAppItems: none,
+    onAppMenuItem: () => () => {},
+  };
+}
+
 /**
  * Create a desktop bridge over the enabled capabilities. Rejects duplicate capability names (an
  * extension colliding with a built-in) at construction.
@@ -520,7 +557,7 @@ export function createDesktopBridge(
     if (cap.events?.includes(event) !== true) {
       throw new Error(`desktop cap "${cap.name}" emitted undeclared event "${event}"`);
     }
-    events.append(cap.name, event, data, emitOptions?.window);
+    events.append(cap.name, event, data, emitOptions?.window, retainOf(emitOptions));
   };
   /** A handle the user picked in this launch, to its absolute path; anything else is refused. */
   const pickedPath = (handle: unknown, pathOptions?: DesktopPickedPathOptions): string => {
@@ -575,7 +612,9 @@ export function createDesktopBridge(
     onBeforeQuit: (fn) => lifecycle.onBeforeQuit(fn, cap.name),
     quit: () => lifecycle.requestQuit(cap.name),
     onWindowMenuItem: (fn) => options.onWindowMenuItem?.(fn) ?? (() => {}),
+    ...hostAppMenus(options.appMenus),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
+    onNotificationClick: (fn) => options.onNotificationClick?.(fn) ?? (() => {}),
     onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
@@ -694,8 +733,8 @@ export function createDesktopBridge(
       if (url.pathname === EVENTS_PATH) return await handleEvents(request, token, info);
       return null;
     },
-    emit: (cap, event, data, target) => {
-      events.append(cap, event, data, target);
+    emit: (cap, event, data, target, appendOptions) => {
+      events.append(cap, event, data, target, appendOptions);
     },
     pageLoaded,
     navigationStarted: async () => {
@@ -734,6 +773,11 @@ interface PageTracker {
   seen(windowId: string, pageId: string | null): Promise<void>;
   /** The window's page went (released by the caller): the next page id is its first. */
   forget(windowId: string): void;
+}
+
+/** The log's append options for an emit's `retain` (omitted when it keeps the default). */
+function retainOf(options: DesktopEmitOptions | undefined): DesktopEventAppendOptions | undefined {
+  return options?.retain === false ? { retain: false } : undefined;
 }
 
 /**

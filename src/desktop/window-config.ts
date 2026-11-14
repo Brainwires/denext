@@ -80,14 +80,21 @@ export interface DesktopWindowSettings {
   readonly defaultHeight?: number;
   /** Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`). */
   readonly windowButtonPosition?: DesktopWindowButtonPosition;
+  /** Whether the native title bar draws the title text (`desktop.window.titleVisibility`). */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /** The macOS toolbar style that lays the title bar out (`desktop.window.toolbarStyle`). */
+  readonly toolbarStyle?: DesktopToolbarStyle;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
 export interface DesktopAppSettings {
   /** Keep running with no window (`desktop.app.keepAlive`; unset: on with a tray). */
   readonly keepAlive?: boolean;
-  /** Show the macOS Dock icon (`desktop.app.dock`, default `true`). */
-  readonly dock?: boolean;
+  /**
+   * Show the macOS Dock icon (`desktop.app.dock`, default `true`); `"while-window-open"`: an
+   * accessory app whose Dock helper holds the icon while a window shows (macOS).
+   */
+  readonly dock?: boolean | "while-window-open";
   /** The macOS activation policy at launch (`desktop.app.activationPolicy`). */
   readonly activationPolicy?: "regular" | "accessory";
   /** Reopen the keyed windows of the last session at launch (`desktop.app.restoreWindows`). */
@@ -124,6 +131,25 @@ export const DEFAULT_VIBRANCY = "under-window";
 export const TITLE_BARS = ["default", "hidden", "hiddenInset"] as const;
 /** A title bar style. */
 export type DesktopTitleBarStyle = typeof TITLE_BARS[number];
+/**
+ * The title visibilities (`desktop.window.titleVisibility`, a window's `titleVisibility`):
+ * `"hidden"` keeps the native title bar, its buttons and its drag area but draws no title text.
+ */
+/** A title visibility. */
+export type DesktopTitleVisibility = "visible" | "hidden";
+export const TITLE_VISIBILITIES: readonly DesktopTitleVisibility[] = ["visible", "hidden"];
+/**
+ * The macOS toolbar styles (`desktop.window.toolbarStyle`, a window's `toolbarStyle`): an empty
+ * toolbar in that style lays the title bar out; `"automatic"` adds none.
+ */
+/** A toolbar style. */
+export type DesktopToolbarStyle = "automatic" | "unified" | "unifiedCompact" | "expanded";
+export const TOOLBAR_STYLES: readonly DesktopToolbarStyle[] = [
+  "automatic",
+  "unified",
+  "unifiedCompact",
+  "expanded",
+];
 const POLICIES = ["regular", "accessory"] as const;
 /** The most `desktop.app.maxWindows` may be. */
 export const MAX_WINDOWS_LIMIT = 64;
@@ -242,6 +268,73 @@ export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, st
     ? null
     : windowButtonPositionProblem(w.windowButtonPosition);
   if (buttons !== null) return ["window.windowButtonPosition", buttons];
+  const title = titleOptionValuesProblem(w);
+  if (title !== null) return [`window.${title[0]}`, title[1]];
+  const combo = titleOptionsProblem({
+    frameless: w.frameless === true,
+    titleVisibility: w.titleVisibility as DesktopTitleVisibility | undefined,
+    toolbarStyle: w.toolbarStyle as DesktopToolbarStyle | undefined,
+  });
+  if (combo !== null) return [`window.${combo[0]}`, combo[1]];
+  return null;
+}
+
+/**
+ * Why a window's `titleVisibility` / `toolbarStyle` value is not one of the allowed ones, as
+ * `[key, message]`, or `null`. Shared by `desktop.window` and a window's own options.
+ *
+ * @param w The options (only those two keys are read).
+ * @returns The problem, or `null`.
+ */
+export function titleOptionValuesProblem(w: Record<string, unknown>): [string, string] | null {
+  const v = w.titleVisibility;
+  if (v !== undefined && !TITLE_VISIBILITIES.includes(v as DesktopTitleVisibility)) {
+    return ["titleVisibility", `must be one of ${TITLE_VISIBILITIES.join(", ")}`];
+  }
+  const t = w.toolbarStyle;
+  if (t !== undefined && !TOOLBAR_STYLES.includes(t as DesktopToolbarStyle)) {
+    return ["toolbarStyle", `must be one of ${TOOLBAR_STYLES.join(", ")}`];
+  }
+  return null;
+}
+
+/** The title options of one window, checked together by {@linkcode titleOptionsProblem}. */
+export interface TitleOptionsCombination {
+  /** The window has no title bar (`frameless: true`). */
+  readonly frameless?: boolean;
+  /** Its title bar style (`desktop.titleBar`, or the window's own `titleBar`). */
+  readonly titleBar?: DesktopTitleBarStyle;
+  /** Its title visibility. */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /** Its toolbar style. */
+  readonly toolbarStyle?: DesktopToolbarStyle;
+}
+
+/**
+ * Why these title options can't be shown together, as `[key, message]` (the key is
+ * `titleVisibility` or `toolbarStyle`), or `null`. A frameless window has no title bar to hide a
+ * title in or lay out with a toolbar, and the `"hidden"` title bar style has no toolbar (the
+ * runtime refuses a toolbar style there: `"hiddenInset"` is that look). The defaults
+ * (`"visible"`, `"automatic"`) always combine.
+ *
+ * @param o The window's title options.
+ * @returns The problem, or `null`.
+ */
+export function titleOptionsProblem(o: TitleOptionsCombination): [string, string] | null {
+  const toolbar = o.toolbarStyle !== undefined && o.toolbarStyle !== "automatic";
+  if (o.frameless === true) {
+    if (o.titleVisibility === "hidden") {
+      return ["titleVisibility", "needs a title bar: a frameless window has none"];
+    }
+    if (toolbar) return ["toolbarStyle", "needs a title bar: a frameless window has none"];
+  }
+  if (toolbar && o.titleBar === "hidden") {
+    return [
+      "toolbarStyle",
+      `"${o.toolbarStyle}" needs the "default" or "hiddenInset" title bar: the "hidden" title ` +
+      `bar has no toolbar (use "hiddenInset" for that look)`,
+    ];
+  }
   return null;
 }
 
@@ -274,6 +367,12 @@ function windowKeys(raw: unknown): Omit<
     ...(w.key !== undefined ? { key: w.key as string } : {}),
     ...(w.windowButtonPosition !== undefined
       ? { windowButtonPosition: windowButtonPositionOf(w.windowButtonPosition) }
+      : {}),
+    ...(w.titleVisibility !== undefined
+      ? { titleVisibility: w.titleVisibility as DesktopTitleVisibility }
+      : {}),
+    ...(w.toolbarStyle !== undefined
+      ? { toolbarStyle: w.toolbarStyle as DesktopToolbarStyle }
       : {}),
   };
 }
@@ -342,14 +441,20 @@ export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings 
   };
   const out: {
     keepAlive?: boolean;
-    dock?: boolean;
+    dock?: boolean | "while-window-open";
     restoreWindows?: boolean;
     maxWindows?: number;
   } = {};
-  for (const key of ["keepAlive", "dock", "restoreWindows"] as const) {
+  for (const key of ["keepAlive", "restoreWindows"] as const) {
     if (a[key] === undefined) continue;
     if (typeof a[key] !== "boolean") throw bad(`app.${key}`, "must be a boolean");
     out[key] = a[key] as boolean;
+  }
+  if (a.dock !== undefined) {
+    if (typeof a.dock !== "boolean" && a.dock !== "while-window-open") {
+      throw bad("app.dock", 'must be a boolean or "while-window-open"');
+    }
+    out.dock = a.dock;
   }
   if (a.maxWindows !== undefined) {
     const problem = maxWindowsProblem(a.maxWindows);
@@ -429,8 +534,11 @@ export function resolveDesktopWindowSettings(desktop: unknown): DesktopWindowSet
   if (minSize && maxSize && (minSize.width > maxSize.width || minSize.height > maxSize.height)) {
     throw bad("minSize", "is larger than desktop.maxSize");
   }
+  const window = windowKeys(d.window);
+  const combo = titleOptionsProblem({ ...window, ...(titleBar !== undefined ? { titleBar } : {}) });
+  if (combo !== null) throw bad(`window.${combo[0]}`, combo[1]);
   return {
-    ...windowKeys(d.window),
+    ...window,
     ...(titleBar !== undefined ? { titleBar } : {}),
     ...(backdrop !== undefined ? { backdrop } : {}),
     ...(minSize ? { minSize } : {}),
@@ -450,6 +558,8 @@ interface ConfigurableWindow {
   setMinimumSize?(width: number, height: number): void;
   setMaximumSize?(width: number, height: number): void;
   setTitleBarStyle?(style: string): boolean;
+  setTitleVisibility?(visibility: string): boolean;
+  setToolbarStyle?(style: string): boolean;
   setWindowButtonPosition?(position: DesktopWindowButtonPosition | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
@@ -466,6 +576,8 @@ interface ConfigurableWindow {
 const FUTURE_METHODS = new Set<keyof ConfigurableWindow>([
   "setSkipTaskbar",
   "setVisibleOnAllWorkspaces",
+  "setTitleVisibility",
+  "setToolbarStyle",
 ]);
 
 /**
@@ -608,25 +720,45 @@ export function applyDesktopWindowSettings(
 ): void {
   if (typeof window !== "object" || window === null || !settings) return;
   const win = window as ConfigurableWindow;
-  if (settings.minSize) {
-    const { width, height } = settings.minSize;
-    tryCall(win, "setMinimumSize", "minSize", warn, width, height);
-  }
-  if (settings.maxSize) {
-    const { width, height } = settings.maxSize;
-    tryCall(win, "setMaximumSize", "maxSize", warn, width, height);
-  }
+  applySizeLimits(win, settings, warn);
   if (settings.width !== undefined || settings.height !== undefined) applySize(win, settings, warn);
   if (settings.title !== undefined) tryCall(win, "setTitle", "window.title", warn, settings.title);
   if (settings.resizable !== undefined) {
     tryCall(win, "setResizable", "window.resizable", warn, settings.resizable);
   }
   if (settings.titleBar !== undefined) applyTitleBarStyle(win, settings.titleBar, warn);
+  if (settings.frameless !== true) applyTitleOptions(win, settings, warn);
   if (settings.windowButtonPosition !== undefined && settings.frameless !== true) {
     applyWindowButtonPosition(win, settings.windowButtonPosition, warn);
   }
   if (settings.backdrop !== undefined) applyBackdrop(win, settings.backdrop, warn);
   applyOverlaySettings(win, settings, warn);
+}
+
+/**
+ * Apply a window's size limits (the adopted one, or one `openWindow` made): `minSize` with
+ * `setMinimumSize`, `maxSize` with `setMaximumSize`. A runtime without them (the stock one) is a
+ * warning; nothing throws.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param limits The smallest and largest sizes, either optional.
+ * @param warn Where warnings go.
+ */
+export function applySizeLimits(
+  win: unknown,
+  limits: Pick<DesktopWindowSettings, "minSize" | "maxSize">,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null) return;
+  const w = win as ConfigurableWindow;
+  if (limits.minSize) {
+    const { width, height } = limits.minSize;
+    tryCall(w, "setMinimumSize", "minSize", warn, width, height);
+  }
+  if (limits.maxSize) {
+    const { width, height } = limits.maxSize;
+    tryCall(w, "setMaximumSize", "maxSize", warn, width, height);
+  }
 }
 
 /**
@@ -645,6 +777,33 @@ export function applyTitleBarStyle(
 ): void {
   if (typeof win !== "object" || win === null || style === "default") return;
   tryCall(win as ConfigurableWindow, "setTitleBarStyle", "titleBar", warn, style);
+}
+
+/**
+ * Apply a window's title visibility and toolbar style (the adopted one, or one `openWindow` made),
+ * after its title bar style. Only a value other than the default (`"visible"`, `"automatic"`) is
+ * applied, since a new window starts with the defaults. The runtime answers `false` where the OS
+ * can't (the toolbar style off macOS, the title under a Linux window manager's decorations), which
+ * is not an error (`windowCapabilities()` reports it); a runtime without the method warns. Nothing
+ * throws.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param settings The settings (only `titleVisibility` and `toolbarStyle` are read).
+ * @param warn Where warnings go.
+ */
+export function applyTitleOptions(
+  win: unknown,
+  settings: Pick<DesktopWindowSettings, "titleVisibility" | "toolbarStyle">,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null) return;
+  const w = win as ConfigurableWindow;
+  if (settings.titleVisibility === "hidden") {
+    tryCall(w, "setTitleVisibility", "window.titleVisibility", warn, "hidden");
+  }
+  if (settings.toolbarStyle !== undefined && settings.toolbarStyle !== "automatic") {
+    tryCall(w, "setToolbarStyle", "window.toolbarStyle", warn, settings.toolbarStyle);
+  }
 }
 
 /**

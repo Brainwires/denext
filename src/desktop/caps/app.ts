@@ -40,7 +40,16 @@
  *
  * The application menu's clicks (the page's items and the backend's "Window" submenu) come from
  * `Deno.desktop`'s `"menuclick"` from runtime `FIRST_APP_MENU_EVENT_RUNTIME` (whichever
- * window is key, and after the main window closed), else from the main window's.
+ * window is key, and after the main window closed), else from the window whose menu it is.
+ *
+ * The app's own top-level menus (`desktop.menu.menus`, `setMenu`) and each window's own Window-menu
+ * items (`setWindowMenuAppItems`) are `../app-menus.ts`'s model. Once the app uses them, every app
+ * window gets its own menu bar built with its state (the tray panel never; on Windows and Linux no
+ * overlay or frameless window either): on macOS the runtime swaps the menu bar as windows take the
+ * focus, and the app-level menu (`Deno.desktop.setApplicationMenu`, where the runtime has it) holds
+ * the app-wide state for when no window with a menu is key. Until then the menu is set on the main
+ * window only, as before. With no page menu the bar is the managed one: on macOS the app menu and
+ * Edit (the standard roles), then the custom menus and Window.
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -51,10 +60,21 @@ import { base64ToBytes } from "../../mobile/base64.ts";
 import { supportsAppMenuEvent } from "../../build/deno-version.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
-import { APP_ITEM_PREFIX, type BackendMenu } from "../window-menu.ts";
+import { APP_ITEM_PREFIX, type BackendMenu, windowSubmenuItems } from "../window-menu.ts";
+import {
+  type AppMenuClick,
+  type AppMenus,
+  createAppMenus,
+  type DesktopAppMenuItemContext,
+  MENU_ITEM_PREFIX,
+  WINDOW_APP_ITEM_PREFIX,
+} from "../app-menus.ts";
+import type { DesktopMenuSpec } from "../menu-config.ts";
+import { insertCustomMenus, managedBar, mergeWindowSubmenu } from "../menu-bar.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
+import type { DesktopEventAppendOptions } from "../bridge-events.ts";
 import { createUserActivity, type UserActivityHandle } from "./user-activity.ts";
 import {
   isPrimaryClick,
@@ -135,9 +155,25 @@ type TrayWireEvent =
   | "mouseenter"
   | "mouseleave";
 
+/** The key window when a menu item was chosen (`null` with no app window open). */
+type KeyWindowRef = { readonly id: string; readonly key?: string } | null;
+
 /** One click the page takes. */
 type AppAction =
-  | { readonly source: "menu" | "dock"; readonly id: string }
+  | {
+    readonly source: "menu";
+    readonly id: string;
+    /** The page's own item (`setAppMenu`), a custom menu's, or a window's own Window-menu item. */
+    readonly kind: "appMenu" | "menu" | "windowMenu";
+    readonly keyWindow: KeyWindowRef;
+    /** A custom item's top-level menu. */
+    readonly menu?: string;
+    /** A checkbox's or radio item's state after the click. */
+    readonly checked?: boolean;
+    /** The window a Window-menu item belongs to. */
+    readonly windowId?: string;
+  }
+  | { readonly source: "dock"; readonly id: string }
   | {
     readonly source: "tray";
     readonly tray: string;
@@ -154,8 +190,17 @@ export interface AppControllerOptions {
   readonly window: unknown;
   /** The runtime's app API (`Deno.desktop`), when it has one. */
   readonly api?: DesktopAppApi;
-  /** Push an event to the pages (the bridge's `emit`): every window's, or only `target`'s. */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /**
+   * Push an event to the pages (the bridge's `emit`): every window's, or only `target`'s
+   * (`retain: false`: the live pages only).
+   */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** The `Deno.Tray` constructor (default the runtime's); tests pass a fake. */
   readonly Tray?: TrayConstructor;
   /** `Deno.dock` (default the runtime's); tests pass a fake. */
@@ -170,6 +215,19 @@ export interface AppControllerOptions {
    * (`api`), not the main window's.
    */
   readonly runtimeVersion?: string;
+  /** `desktop.menu.menus`, checked. */
+  readonly menus?: readonly DesktopMenuSpec[];
+  /**
+   * The windows that get a menu bar of their own once the app uses custom menus or Window-menu
+   * items (default only the main window).
+   */
+  readonly menuWindows?: () => readonly { readonly id: string; readonly window: unknown }[];
+  /** Whether window `id` is open (default: one of {@linkcode menuWindows}). */
+  readonly hasWindow?: (id: string) => boolean;
+  /** The key window (default none). */
+  readonly keyWindow?: () => { readonly id: string; readonly key?: string } | undefined;
+  /** A custom item or a window's own Window-menu item was chosen: the backend's handlers. */
+  readonly onMenuItem?: (id: string, ctx: DesktopAppMenuItemContext) => void;
 }
 
 /** What {@linkcode createAppController} returns. */
@@ -192,8 +250,16 @@ export interface AppController {
    * application menu re-applied. Its clicks go to the submenu's `onClick`, never to the pages.
    */
   setBackendMenu(menu: BackendMenu | undefined): void;
-  /** A window closed for good: remove the trays its page made and its queue. */
+  /** A window closed for good: remove the trays its page made, its queue and its menu state. */
   windowClosed(windowId: string): void;
+  /** A window opened: it gets its menu bar (once the app uses custom menus). */
+  windowOpened(windowId: string): void;
+  /** `setMenu` from the backend: throws a {@linkcode DesktopCapError} for a bad update. */
+  setMenu(menuId: string, update: unknown): void;
+  /** `setMenuItemState` from the backend. */
+  setMenuItemState(itemId: string, state: unknown, windowId?: string): void;
+  /** `setWindowMenuAppItems` from the backend, for any window. */
+  setWindowMenuAppItems(windowId: string, items: unknown): void;
   /** Queue an action for every window (the backend tray's clicks; tests). */
   broadcast(action: AppAction): void;
   /**
@@ -308,6 +374,12 @@ interface AppState {
   pageMenu: DesktopMenuItem[] | undefined;
   /** The backend's "Window" submenu (`desktop.menu.window`), if any. */
   backendMenu: BackendMenu | undefined;
+  /** The custom menus, their state and the windows' own Window-menu items. */
+  readonly model: AppMenus;
+  /** The menus were last applied per window (the model active). */
+  perWindow: boolean;
+  /** Windows whose own `"menuclick"` is listened to (a runtime without app-level clicks). */
+  readonly listened: WeakSet<object>;
   dockMenuIds: Set<string>;
   nextTray: number;
   installed: boolean;
@@ -316,46 +388,98 @@ interface AppState {
   trayPending: Promise<unknown>;
 }
 
-/** The label of the submenu the backend's window items join (case-insensitive). */
-const WINDOW_SUBMENU_LABEL = "window";
-
 /**
- * The page's application menu with the backend's "Window" submenu merged in: into the page's own
- * "Window" submenu (after a separator) when it has one, else appended as a submenu; with no page
- * menu, the submenu alone.
+ * The "Window" submenu for window `windowId`: the backend's items and the window's own, with the
+ * macOS roles; `undefined` when there is nothing to show (on the managed macOS bar of an app using
+ * custom menus, the roles alone).
  */
-function mergedAppMenu(s: AppState): DesktopMenuItem[] | undefined {
-  const backend = s.backendMenu;
-  if (!backend) return s.pageMenu;
-  const page = s.pageMenu ?? [];
-  let merged = false;
-  const out = page.map((entry): DesktopMenuItem => {
-    if (
-      merged || typeof entry !== "object" || !("submenu" in entry) ||
-      entry.submenu.label.trim().toLowerCase() !== WINDOW_SUBMENU_LABEL
-    ) return entry;
-    merged = true;
-    const own = entry.submenu.items;
-    const items = own.length > 0 && backend.items.length > 0
-      ? [...own, "separator" as const, ...backend.items]
-      : [...own, ...backend.items];
-    return { submenu: { label: entry.submenu.label, items } };
-  });
-  if (!merged) out.push({ submenu: { label: "Window", items: backend.items } });
-  return out;
+function windowSubmenuFor(
+  s: AppState,
+  windowId: string | undefined,
+): DesktopMenuItem[] | undefined {
+  const body = s.backendMenu?.items ?? [];
+  const extra = s.model.appItemsFor(windowId);
+  if (body.length === 0 && extra.length === 0) {
+    const managed = s.pageMenu === undefined && s.model.active() && s.os === "darwin";
+    return managed ? windowSubmenuItems(s.os, []) : undefined;
+  }
+  return windowSubmenuItems(s.os, body, extra);
 }
 
-/** Apply the application menu (the page's merged with the backend's), where the runtime can. */
-function applyAppMenu(s: AppState): void {
-  const menu = mergedAppMenu(s);
-  if (menu === undefined || typeof s.win?.setApplicationMenu !== "function") return;
+/**
+ * The menu bar for window `windowId` (`undefined`: the app-wide state): the page's menu, else the
+ * managed one, with the "Window" submenu merged in and the custom menus placed. Before the app
+ * uses custom menus or Window-menu items, the page's menu with the backend's submenu, as ever.
+ */
+function barFor(s: AppState, windowId?: string): DesktopMenuItem[] | undefined {
+  const active = s.model.active();
+  if (!active && !s.backendMenu) return s.pageMenu;
+  const bar = mergeWindowSubmenu(s.pageMenu ?? managedBar(s.os), windowSubmenuFor(s, windowId));
+  return active ? insertCustomMenus(bar, s.model.menusFor(windowId), s.os) : bar;
+}
+
+/** Set `menu` as `win`'s application menu; a failure is a warning. */
+function setWindowMenu(win: AppWindow | undefined, menu: DesktopMenuItem[]): void {
+  if (typeof win?.setApplicationMenu !== "function") return;
   try {
-    s.win.setApplicationMenu(menu);
+    win.setApplicationMenu(menu);
   } catch (err) {
     console.warn(
       `desktop: the application menu could not be set: ${err instanceof Error ? err.message : err}`,
     );
   }
+}
+
+/** The windows that get their own menu bar (default the main window). */
+function menuTargets(s: AppState): readonly { readonly id: string; readonly window: unknown }[] {
+  return s.options.menuWindows?.() ?? (s.win ? [{ id: "main", window: s.win }] : []);
+}
+
+/**
+ * On a runtime whose application-menu clicks come from the window, listen to `win`'s too (once):
+ * it has a menu of its own now.
+ */
+function listenToWindowMenu(s: AppState, win: AppWindow): void {
+  if (win === s.win || s.listened.has(win) || appMenuClickTarget(s) !== s.win) return;
+  s.listened.add(win);
+  win.addEventListener("menuclick", (e) => onAppMenuClick(s, e));
+}
+
+/**
+ * Apply the application menu where the runtime can: on the main window alone while the app uses
+ * no custom menus; else each window's own bar (`only`: that window's alone, unless the bars were
+ * not per window yet), and on macOS the app-level menu with the app-wide state.
+ */
+function applyAppMenu(s: AppState, only?: string): void {
+  if (!s.model.active()) {
+    const menu = barFor(s);
+    if (menu !== undefined) setWindowMenu(s.win, menu);
+    return;
+  }
+  // The first time per window: every window's bar, whatever changed.
+  const scope = s.perWindow ? only : undefined;
+  s.perWindow = true;
+  applyPerWindow(s, scope);
+  if (scope === undefined && s.os === "darwin") applyAppLevelMenu(s);
+}
+
+/** Each window's own bar (`only`: that window's alone). */
+function applyPerWindow(s: AppState, only: string | undefined): void {
+  for (const target of menuTargets(s)) {
+    const win = target.window as AppWindow | undefined;
+    if (!win || (only !== undefined && target.id !== only)) continue;
+    setWindowMenu(win, barFor(s, target.id) ?? []);
+    listenToWindowMenu(s, win);
+  }
+}
+
+/** macOS: the app-level menu (no window's: shown when the key window has none of its own). */
+function applyAppLevelMenu(s: AppState): void {
+  const api = s.options.api;
+  if (typeof api?.setApplicationMenu !== "function") return;
+  try {
+    api.setApplicationMenu(barFor(s) ?? []);
+  } catch { /* an older runtime's: the key window's menu stays */ }
 }
 
 /** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
@@ -367,7 +491,11 @@ function dockMenuWorks(s: AppState): boolean {
 function queueFor(s: AppState, windowId: string): PullQueue<AppAction> {
   let queue = s.queues.get(windowId);
   if (!queue) {
-    queue = createPullQueue<AppAction>(() => s.options.emit("app", "action", null, windowId));
+    // A click is a one-shot action for the page live now: its signal is never replayed to a page
+    // that loads later (the queue itself is emptied by the window's next page load).
+    queue = createPullQueue<AppAction>(() =>
+      s.options.emit("app", "action", null, windowId, { retain: false })
+    );
     s.queues.set(windowId, queue);
   }
   return queue;
@@ -611,6 +739,7 @@ async function appCapabilities(s: AppState) {
     icons: caps.icons === true,
     tooltips: caps.tooltips === true,
     destructive: caps.destructive === true,
+    ...customMenuCapabilities(s),
     tray: trayReason === null,
     trayReason,
     trayHost: facts.trayHost,
@@ -635,6 +764,16 @@ async function appCapabilities(s: AppState) {
     bounce: typeof dock?.bounce === "function",
     dockMenu: dockMenuWorks(s),
     ...trayAndDockCapabilities(s, trayReason === null),
+  };
+}
+
+/** Whether the custom menus' calls work, and whether the runtime has an app-level menu. */
+function customMenuCapabilities(s: AppState) {
+  const win = s.win;
+  const api = s.options.api;
+  return {
+    customMenus: typeof win?.setApplicationMenu === "function",
+    appLevelMenu: typeof api?.setApplicationMenu === "function",
   };
 }
 
@@ -676,10 +815,12 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
           );
         }
         const { items, ids } = nativeMenu(argsOf(args).menu);
-        // The app's own Window-menu items (`desktop.menu.window.items`) are the backend's.
+        // The app's own Window-menu items (`desktop.menu.window.items`), the custom menus' and the
+        // windows' own items are the backend's.
         for (const id of ids) {
-          if (id.startsWith(APP_ITEM_PREFIX)) {
-            throw invalid(`menu: the id prefix "${APP_ITEM_PREFIX}" is reserved for the backend`);
+          const reserved = RESERVED_PREFIXES.find((p) => id.startsWith(p));
+          if (reserved) {
+            throw invalid(`menu: the id prefix "${reserved}" is reserved for the backend`);
           }
         }
         s.pageMenu = items;
@@ -740,6 +881,65 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
       },
     },
   };
+}
+
+/** The id prefixes a page's `setAppMenu` may not use. */
+const RESERVED_PREFIXES = [APP_ITEM_PREFIX, MENU_ITEM_PREFIX, WINDOW_APP_ITEM_PREFIX];
+
+/** `unsupported` unless the runtime can set an application menu here. */
+function requireAppMenu(s: AppState): void {
+  if (typeof s.win?.setApplicationMenu === "function") return;
+  throw unsupported(
+    "an app menu",
+    s.win ? "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu" : "no app window",
+  );
+}
+
+/** The custom menus' and the Window menu's own items' methods (`setMenu`, …). */
+function customMenuMethods(s: AppState): DesktopCapability["methods"] {
+  return {
+    setMenu: {
+      handler: (args) => {
+        const a = argsOf(args);
+        setMenu(s, a.menuId, a.menu);
+        return null;
+      },
+    },
+    setMenuItemState: {
+      handler: (args) => {
+        const a = argsOf(args);
+        setMenuItemState(s, a.itemId, a.state, a.windowId ?? undefined);
+        return null;
+      },
+    },
+    setWindowMenuAppItems: {
+      handler: (args, ctx) => {
+        setWindowMenuAppItems(s, ctx?.windowId ?? "main", argsOf(args).items);
+        return null;
+      },
+    },
+  };
+}
+
+/** `setMenu`, then the menus follow. */
+function setMenu(s: AppState, menuId: unknown, update: unknown): void {
+  requireAppMenu(s);
+  s.model.setMenu(menuId, update);
+  applyAppMenu(s);
+}
+
+/** `setMenuItemState`, then the menu of the window it changed (or every window's) follows. */
+function setMenuItemState(s: AppState, itemId: unknown, state: unknown, windowId: unknown): void {
+  requireAppMenu(s);
+  const changed = s.model.setItemState(itemId, state, windowId);
+  applyAppMenu(s, changed ?? undefined);
+}
+
+/** `setWindowMenuAppItems` for window `windowId`, then its menu follows. */
+function setWindowMenuAppItems(s: AppState, windowId: string, items: unknown): void {
+  requireAppMenu(s);
+  s.model.setWindowAppItems(windowId, items);
+  applyAppMenu(s, windowId);
 }
 
 /** The activation policies `setActivationPolicy` takes. */
@@ -813,12 +1013,49 @@ function trayMethods(s: AppState): DesktopCapability["methods"] {
   };
 }
 
-/** An application-menu click: the backend's submenu handles its own items, the pages the rest. */
+/** The key window as a click reports it. */
+function keyWindowOf(s: AppState): KeyWindowRef {
+  const key = s.options.keyWindow?.();
+  return key ? { id: key.id, ...(key.key !== undefined ? { key: key.key } : {}) } : null;
+}
+
+/**
+ * An application-menu click: the backend's submenu handles its own items; a custom item's or a
+ * window's own item's state follows, then the pages and the backend's handlers hear of it; the
+ * page's own items go to the pages.
+ */
 function onAppMenuClick(s: AppState, e: Event): void {
   const id = clickedId(e);
   if (id === undefined) return;
   if (s.backendMenu?.ids.has(id)) return s.backendMenu.onClick(id);
-  if (s.appMenuIds.has(id)) pushAction(s, { source: "menu", id });
+  const keyWindow = keyWindowOf(s);
+  const custom = s.model.click(id, keyWindow?.id);
+  if (custom) return customClicked(s, custom, keyWindow);
+  if (s.appMenuIds.has(id)) pushAction(s, { source: "menu", id, kind: "appMenu", keyWindow });
+}
+
+/**
+ * A custom item (to every window's page) or a window's own Window-menu item (to that window's page)
+ * was chosen: the menus follow a state change, then the pages and the backend hear of it.
+ */
+function customClicked(s: AppState, click: AppMenuClick, keyWindow: KeyWindowRef): void {
+  if (click.source === "menu") {
+    if (click.changed !== undefined) applyAppMenu(s, click.changed ?? undefined);
+    const checked = click.checked !== undefined ? { checked: click.checked } : {};
+    pushAction(s, {
+      source: "menu",
+      id: click.id,
+      kind: "menu",
+      keyWindow,
+      menu: click.menu,
+      ...checked,
+    });
+    s.options.onMenuItem?.(click.id, { source: "menu", keyWindow, menu: click.menu, ...checked });
+    return;
+  }
+  const { id, windowId } = click;
+  pushAction(s, { source: "menu", id, kind: "windowMenu", keyWindow, windowId }, windowId);
+  s.options.onMenuItem?.(id, { source: "windowMenu", keyWindow, windowId });
 }
 
 /**
@@ -877,6 +1114,13 @@ export function createAppController(options: AppControllerOptions): AppControlle
     appMenuIds: new Set(),
     pageMenu: undefined,
     backendMenu: undefined,
+    model: createAppMenus({
+      ...(options.menus ? { menus: options.menus } : {}),
+      hasWindow: options.hasWindow ??
+        ((id) => (options.menuWindows?.() ?? [{ id: "main" }]).some((w) => w.id === id)),
+    }),
+    perWindow: false,
+    listened: new WeakSet(),
     dockMenuIds: new Set(),
     nextTray: 1,
     installed: false,
@@ -885,7 +1129,12 @@ export function createAppController(options: AppControllerOptions): AppControlle
   };
   const capability: DesktopCapability = {
     name: "app",
-    methods: { ...menuAndDockMethods(s), ...trayMethods(s), ...s.activity.methods },
+    methods: {
+      ...menuAndDockMethods(s),
+      ...customMenuMethods(s),
+      ...trayMethods(s),
+      ...s.activity.methods,
+    },
     events: ["action", "activity"],
     perWindow: true,
     onPageLoad: (windowId = "main") => {
@@ -905,7 +1154,14 @@ export function createAppController(options: AppControllerOptions): AppControlle
     windowClosed: (windowId) => {
       destroyTrays(s, windowId);
       s.queues.delete(windowId);
+      s.model.windowClosed(windowId);
     },
+    windowOpened: (windowId) => {
+      if (s.model.active()) applyAppMenu(s, windowId);
+    },
+    setMenu: (menuId, update) => setMenu(s, menuId, update),
+    setMenuItemState: (itemId, state, windowId) => setMenuItemState(s, itemId, state, windowId),
+    setWindowMenuAppItems: (windowId, items) => setWindowMenuAppItems(s, windowId, items),
     broadcast: (action) => pushAction(s, action),
     backendTrayPending: (pending) => {
       s.trayPending = pending.catch(() => {});

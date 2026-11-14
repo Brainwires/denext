@@ -44,7 +44,7 @@ import { standaloneVerb } from "../src/standalone/mod.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 import { inChild } from "./helpers/isolated.ts";
 import { withoutHeapSize } from "./helpers/heap-flags.ts";
-import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
+import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
@@ -671,6 +671,13 @@ Deno.test({
 /**
  * `runVerb` for a core `start` whose run records the hand-off variables, in a child (it may exit,
  * and it re-runs the CLI entry, here `entry.ts`, which records what it was started with).
+ *
+ * The child runs with the toolchain marker `path`, so `runVerb`'s toolchain gate keeps it in
+ * process whatever Deno runs the tests: on a toolchain build other than the pinned one (a stale
+ * `toolchain link`, or the toolchain of an installed `denext` older than this checkout) that gate
+ * re-runs the entry on the pinned build before the limits gate is reached, and every case below
+ * then reads as a limits re-run (exit 7). Only the limits gate is under test here; the limits
+ * gate still tells the runtime from the running Deno's own identity.
  */
 async function startThroughRunVerb(
   env: Record<string, string | undefined>,
@@ -719,7 +726,7 @@ await runVerb(${JSON.stringify(toFileUrl(entry).href)}, {
 }, ${JSON.stringify(dir)});
 return { exits, ran };
 `,
-      env,
+      env: { [TOOLCHAIN_ACTIVE_ENV]: "path", ...env },
       cwd: dir,
     });
     let entryRun: Record<string, string | undefined> | null = null;

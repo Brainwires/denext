@@ -21,8 +21,10 @@ import {
   type DockLike,
 } from "./caps/app.ts";
 import { createWindowController } from "./caps/window.ts";
-import type { DesktopCapability } from "./extension.ts";
+import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import type { DesktopAppApi } from "./launch-events.ts";
+import type { DesktopEventAppendOptions } from "./bridge-events.ts";
+import { headlessDock, headlessWindow, headlessWindowConstructor } from "./headless.ts";
 import type { DesktopAppDirs } from "./app-dirs.ts";
 import type { PickedPaths } from "./picked-paths.ts";
 import {
@@ -46,6 +48,7 @@ import {
   type WindowRegistry,
 } from "./window-registry.ts";
 import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
+import { type DockPresence, startDockHelper } from "./dock-helper.ts";
 import {
   createWindowMenu,
   type DesktopNewWindowHandler,
@@ -53,7 +56,14 @@ import {
   type WindowMenu,
 } from "./window-menu.ts";
 import type { DesktopMenuSettings } from "./menu-config.ts";
+import type {
+  DesktopAppMenuItemContext,
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+} from "./app-menus.ts";
 import type { SessionWindow } from "./window-store.ts";
+import type { CreateWebViewOptions, WebViewHandle } from "./webview.ts";
+import type { DesktopWebViewSettings } from "./webview-config.ts";
 import {
   applyDesktopWindowSettings,
   type DesktopAppSettings,
@@ -75,7 +85,10 @@ export interface DesktopWindowRef {
   show(): void;
   /** Hide it. */
   hide(): void;
-  /** Bring it to the front and focus it. */
+  /**
+   * Bring it to the front and focus it. On macOS it activates the app without changing the
+   * activation policy: how an accessory (tray) app shows its window with no Dock icon.
+   */
   focus(): void;
   /** Close it for good (the app quits once its last window is gone, unless kept alive). */
   close(): void;
@@ -90,6 +103,19 @@ export interface DesktopWindowRef {
    * handler added after it closed is never called. Returns the unsubscribe.
    */
   onClosed(handler: () => void): () => void;
+  /**
+   * Open an embedded web view of another site inside this window, above its page (the page's
+   * `createWebView` from `denext/desktop/window`, owned by `desktop.ts`): the same checks
+   * (`http:` / `https:` only, never the app's own origin, `desktop.webViews.allowedOrigins`) and
+   * the same per-window `desktop.webViews.limit`, shared with the views its pages made. The view
+   * closes with the window; its events reach this handle only, never the page.
+   *
+   * @param options The URL, where it sits (CSS pixels of the window's page viewport) and its
+   *   policies.
+   * @returns Its handle (`capture` resolves a `Blob`). Rejects with a `DesktopCapError`:
+   *   `unsupported` on a runtime without web views, `not_allowed_url`, `limit`, `validation`.
+   */
+  createWebView(options: CreateWebViewOptions): Promise<WebViewHandle>;
 }
 
 /** The options of a window `desktop.ts` or a page opens (`openWindow` in `denext/desktop/window`). */
@@ -121,6 +147,24 @@ export interface DesktopOpenWindowOptions {
    * `null` keeps the OS's place. A frameless window has none.
    */
   readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null;
+  /**
+   * Whether the native title bar draws the title text: default `desktop.window.titleVisibility`,
+   * as the main window gets it. `"hidden"` keeps the title bar, its buttons and its drag area.
+   */
+  readonly titleVisibility?: "visible" | "hidden";
+  /**
+   * The macOS toolbar style that lays the title bar out: default `desktop.window.toolbarStyle`, as
+   * the main window gets it. Refused with the `"hidden"` title bar and on a frameless window.
+   */
+  readonly toolbarStyle?: "automatic" | "unified" | "unifiedCompact" | "expanded";
+  /**
+   * The smallest size the user can resize it to, in CSS pixels: default `desktop.minSize`, as the
+   * main window gets it. Each side 1 to 10000; refused `validation` when larger than the
+   * `maxSize` it ends up with (its own or the inherited one).
+   */
+  readonly minSize?: { readonly width: number; readonly height: number };
+  /** The largest size the user can resize it to: default `desktop.maxSize`, as the main window gets it. */
+  readonly maxSize?: { readonly width: number; readonly height: number };
   /** Screen x of the top-left corner. */
   readonly x?: number;
   /** Screen y of the top-left corner. */
@@ -249,8 +293,14 @@ export interface DesktopWindowsOptions {
   readonly api?: DesktopAppApi;
   /** `Deno.dock` (default the runtime's). */
   readonly dock?: DockLike;
-  /** Push an event to the pages: every window's, or `target`'s. */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /** Push an event to the pages: every window's, or `target`'s (`retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /** `desktop.window` / `desktop.titleBar` / … as resolved. */
   readonly windowSettings?: DesktopWindowSettings;
   /** `desktop.app`'s `keepAlive` / `dock`. */
@@ -261,6 +311,13 @@ export interface DesktopWindowsOptions {
   readonly picked?: PickedPaths;
   /** The app's own folders (drag-out). */
   readonly dirs?: DesktopAppDirs;
+  /** `desktop.webViews` as resolved (default: 8 per window, any http(s) origin). */
+  readonly webViews?: DesktopWebViewSettings;
+  /**
+   * The app's own origins besides the one its pages load from (`desktop.app.origin`, a dev
+   * server's): a web view never loads them.
+   */
+  readonly appOrigins?: () => readonly string[];
   /** The app support folder (the window store's home; none: frames kept for this launch only). */
   readonly appSupportDir?: string;
   /** `desktop.menu` as resolved (the standard window items). */
@@ -271,6 +328,8 @@ export interface DesktopWindowsOptions {
   readonly onDockReopen?: DesktopDockReopenHandler;
   /** `desktop.ts`'s handler of the app's own Window-menu items (`runDesktop({ onWindowMenuItem })`). */
   readonly onWindowMenuItem?: DesktopWindowMenuItemHandler;
+  /** `desktop.ts`'s handler of the custom menus' clicks (`runDesktop({ onAppMenuItem })`). */
+  readonly onAppMenuItem?: DesktopAppMenuItemHandler;
   /** `desktop.ts`'s second launch (`runDesktop({ onSecondInstance })`). */
   readonly onSecondInstance?: DesktopSecondInstanceHandler;
   /** End the process (default `Deno.exit`). */
@@ -279,6 +338,11 @@ export interface DesktopWindowsOptions {
   readonly os?: string;
   /** Where warnings go. */
   readonly warn?: (message: string) => void;
+  /**
+   * Every window stays hidden (`DENEXT_DESKTOP_HEADLESS=1`, see `headless.ts`): the main window,
+   * every window opened later, no Dock icon and no Dock bounce.
+   */
+  readonly headless?: boolean;
   /**
    * The Deno Desktop runtime's version (default `Deno.version.deno`): from `3.0.0-denext.7` the
    * main window with `desktop.window.overlay` and the tray panel are layer-shell overlays where
@@ -350,6 +414,8 @@ export interface DesktopWindowsSetup {
    * extension host's `onWindowMenuItem`. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
+  /** The custom menus and the windows' own Window-menu items, as `desktop.ts` and extensions drive them. */
+  readonly appMenus: DesktopAppMenusApi;
   /**
    * Call `fn` on every second launch of the app (`Deno.desktop`'s `"secondinstance"`), after what
    * `runDesktop({ onSecondInstance })` opens: an extension host's `onSecondInstance`, or a
@@ -379,8 +445,29 @@ interface SetupState {
   readonly closedHandlers: Map<string, Set<() => void>>;
   /** The extensions' handlers of the app's own Window-menu items. */
   readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
+  /** The extensions' handlers of the custom menus' clicks. */
+  readonly appMenuHandlers: Set<DesktopAppMenuItemHandler>;
   /** The extensions' second-launch subscribers. */
   readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
+  /** The Dock helper's presence (`desktop.app.dock: "while-window-open"`, macOS), once started. */
+  dockPresence?: DockPresence;
+}
+
+/**
+ * `options` for a headless launch: the main window hidden, windows opened later created hidden, no
+ * window able to show or focus itself, the Dock without an icon or a bounce, and no Dock helper.
+ */
+function headlessWindowsOptions(options: DesktopWindowsOptions): DesktopWindowsOptions {
+  const dock = headlessDock(options.dock ?? runtimeDock());
+  return {
+    ...options,
+    window: headlessWindow(options.window),
+    ...(options.BrowserWindow !== undefined
+      ? { BrowserWindow: headlessWindowConstructor(options.BrowserWindow) }
+      : {}),
+    ...(dock ? { dock } : {}),
+    appSettings: { ...options.appSettings, dock: false, activationPolicy: "accessory" },
+  };
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -444,13 +531,25 @@ function getPolicy(st: SetupState): ActivationPolicy | null {
 }
 
 /**
- * Whether the app starts with no Dock icon: `desktop.app.activationPolicy: "accessory"` or
- * `desktop.app.dock: false`. From runtime `3.0.0-denext.6` the launch file already started it so;
- * applying it again here covers an older runtime (where the icon shows until now).
+ * Whether the app starts with no Dock icon: `desktop.app.activationPolicy: "accessory"`,
+ * `desktop.app.dock: false`, or (macOS only: elsewhere a window's taskbar entry already lasts as
+ * long as the window) `dock: "while-window-open"`. From runtime `3.0.0-denext.6` the launch file
+ * already started it so; applying it again here covers an older runtime (where the icon shows until
+ * now).
  */
 function startsAccessory(st: SetupState): boolean {
   const app = st.options.appSettings;
-  return app?.activationPolicy === "accessory" || app?.dock === false;
+  return app?.activationPolicy === "accessory" || app?.dock === false ||
+    (app?.dock === "while-window-open" && st.os === "darwin");
+}
+
+/** The app's own origins: the one its pages load from, and the configured / dev ones. */
+function appOrigins(st: SetupState): string[] {
+  const out = [...(st.options.appOrigins?.() ?? [])];
+  try {
+    out.push(new URL(st.appUrl("/")).origin);
+  } catch { /* no app URL yet */ }
+  return out;
 }
 
 /** A registered window as `desktop.ts` sees it. */
@@ -484,6 +583,7 @@ function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
         return null; // closing, or no position here
       }
     },
+    createWebView: (options) => entry.controller.createWebView(options),
     onClosed: (handler) => {
       if (st.registry?.get(entry.id)?.window !== w) return () => {};
       let set = st.closedHandlers.get(entry.id);
@@ -684,15 +784,25 @@ function onSecondInstance(st: SetupState, raw: Event): void {
   for (const fn of [...st.secondInstanceHandlers]) callSecondInstanceListener(st, fn, event);
 }
 
-/** What opened windows take from the main window's settings: the title bar and its buttons. */
+/**
+ * What opened windows take from the main window's settings: the title bar, its title visibility,
+ * its toolbar style, its buttons and the size limits (`desktop.minSize` / `desktop.maxSize`).
+ */
 function inheritedChrome(
   w: DesktopWindowSettings | undefined,
-): Pick<DesktopWindowSettings, "titleBar" | "windowButtonPosition"> {
+): Pick<
+  DesktopWindowSettings,
+  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle" | "minSize" | "maxSize"
+> {
   return {
     ...(w?.titleBar !== undefined ? { titleBar: w.titleBar } : {}),
     ...(w?.windowButtonPosition !== undefined
       ? { windowButtonPosition: w.windowButtonPosition }
       : {}),
+    ...(w?.titleVisibility !== undefined ? { titleVisibility: w.titleVisibility } : {}),
+    ...(w?.toolbarStyle !== undefined ? { toolbarStyle: w.toolbarStyle } : {}),
+    ...(w?.minSize !== undefined ? { minSize: w.minSize } : {}),
+    ...(w?.maxSize !== undefined ? { maxSize: w.maxSize } : {}),
   };
 }
 
@@ -709,11 +819,16 @@ function createRegistry(st: SetupState): WindowRegistry {
     warn: st.warn,
     onQuitWorkChanged: () => applyKeepAlive(st),
     appUrl: (path) => st.appUrl(path),
-    emit: o.emit,
+    emit: (cap, event, data, target, emitOptions) => {
+      o.emit(cap, event, data, target, emitOptions);
+      // A window opened, closed or took the focus: the Dock helper follows at once (it also polls).
+      if (cap === "windows") st.dockPresence?.sync();
+    },
     keepAlive: () => keepAliveOf(st),
     ...inheritedChrome(o.windowSettings),
     onTitleChanged: () => st.menu?.refresh(),
-    onClosed: (id) => {
+    onClosed: (id, entry) => {
+      entry.controller.windowClosed();
       st.app?.windowClosed(id);
       runClosedHandlers(st, id);
     },
@@ -723,9 +838,11 @@ function createRegistry(st: SetupState): WindowRegistry {
         window,
         api: o.api,
         overlay,
-        emit: (cap, event, data) => o.emit(cap, event, data, id),
+        emit: (cap, event, data, emitOptions) => o.emit(cap, event, data, id, emitOptions),
         closed,
         wayBack: () => st.app?.hasTray() === true,
+        ...(o.webViews ? { webViews: () => o.webViews! } : {}),
+        appOrigins: () => appOrigins(st),
         ...(o.picked ? { picked: o.picked } : {}),
         ...(o.dirs ? { dirs: o.dirs } : {}),
       }),
@@ -746,12 +863,12 @@ function adoptMain(st: SetupState, registry: WindowRegistry, win: RegistryWindow
   });
 }
 
-/** Call `fn` for a Window-menu item; a throw or a rejection is a warning. */
-function callMenuItemHandler(
+/** Call `fn` for a menu item; a throw or a rejection is a warning. */
+function callMenuItemHandler<C>(
   st: SetupState,
-  fn: DesktopWindowMenuItemHandler,
+  fn: (id: string, ctx: C) => void | Promise<void>,
   id: string,
-  ctx: Parameters<DesktopWindowMenuItemHandler>[1],
+  ctx: C,
 ): void {
   const failed = (err: unknown) =>
     st.warn(`the Window menu item "${id}" failed: ${err instanceof Error ? err.message : err}`);
@@ -785,6 +902,48 @@ function windowMenuItemChosen(st: SetupState, registry: WindowRegistry, id: stri
     );
   }
   for (const fn of handlers) callMenuItemHandler(st, fn, id, ctx);
+}
+
+/**
+ * A custom menu's item or a window's own Window-menu item was chosen: hand it, once, to
+ * `desktop.ts`'s handler and to every extension's (the pages hear of it from the `app` capability).
+ */
+function appMenuItemChosen(st: SetupState, id: string, ctx: DesktopAppMenuItemContext): void {
+  const first = st.options.onAppMenuItem;
+  for (const fn of [...(first ? [first] : []), ...st.appMenuHandlers]) {
+    callMenuItemHandler(st, fn, id, ctx);
+  }
+}
+
+/** The custom menus' calls for `desktop.ts` and extensions (over the `app` controller). */
+function appMenusApi(st: SetupState): DesktopAppMenusApi {
+  const app = (): AppController => {
+    if (st.app) return st.app;
+    throw new DesktopCapError("unsupported", "the app has no window to set a menu on", {
+      status: 501,
+    });
+  };
+  return {
+    setMenu: (menuId, menu) => app().setMenu(menuId, menu),
+    setMenuItemState: (itemId, state, options) =>
+      app().setMenuItemState(itemId, state, options?.windowId),
+    setWindowMenuAppItems: (windowId, items) => app().setWindowMenuAppItems(windowId, items),
+    onAppMenuItem: (fn) => {
+      st.appMenuHandlers.add(fn);
+      return () => void st.appMenuHandlers.delete(fn);
+    },
+  };
+}
+
+/**
+ * The windows that get their own menu bar once the app uses custom menus: every app window (the
+ * tray panel never); on Windows and Linux, where the bar is drawn in the window, not an overlay or
+ * a frameless one.
+ */
+function menuWindows(st: SetupState, registry: WindowRegistry) {
+  return registry.list().filter((w) =>
+    w.kind !== "panel" && (st.os === "darwin" || (w.overlay !== true && w.frameless !== true))
+  );
 }
 
 /** The window menu (`desktop.menu.window`, `runDesktop({ newWindow })`), when either is set. */
@@ -823,6 +982,11 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     os: st.os,
     windows: () => st.registry?.list().map((w) => w.id) ?? ["main"],
     ...(o.runtimeVersion !== undefined ? { runtimeVersion: o.runtimeVersion } : {}),
+    ...(o.menuSettings?.menus ? { menus: o.menuSettings.menus } : {}),
+    menuWindows: () => menuWindows(st, registry),
+    hasWindow: (id) => registry.get(id) !== undefined,
+    keyWindow: () => registry.keyWindow(),
+    onMenuItem: (id, ctx) => appMenuItemChosen(st, id, ctx),
   });
   st.app = app;
   st.menu = createMenu(st, registry, app);
@@ -837,7 +1001,8 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
  * @param options The adopted window, the runtime APIs, the emitter and the settings.
  * @returns The setup.
  */
-export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWindowsSetup {
+export function setUpDesktopWindows(given: DesktopWindowsOptions): DesktopWindowsSetup {
+  const options = given.headless === true ? headlessWindowsOptions(given) : given;
   const st: SetupState = {
     options,
     dock: options.dock ?? runtimeDock(),
@@ -847,6 +1012,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     hasTray: options.wantsTray,
     closedHandlers: new Map(),
     menuItemHandlers: new Set(),
+    appMenuHandlers: new Set(),
     secondInstanceHandlers: new Set(),
   };
   const win = typeof options.window === "object" && options.window !== null
@@ -879,7 +1045,10 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     install: () => {
       st.app?.install();
       st.registry?.lifecycle.install();
+      // Each window gets its own menu bar once the app uses custom menus (the main one first).
+      st.registry?.lifecycle.onWindowOpened((info) => st.app?.windowOpened(info.id));
       st.menu?.install();
+      installDockHelper(st);
       st.dock?.addEventListener("reopen", (e) => onDockReopen(st, e));
       // `Deno.desktop` of the pinned runtime only (none outside it, or before launch events).
       if (typeof options.api?.addEventListener === "function") {
@@ -922,11 +1091,43 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.menuItemHandlers.add(fn);
       return () => void st.menuItemHandlers.delete(fn);
     },
+    appMenus: appMenusApi(st),
     onSecondInstance: (fn) => {
       st.secondInstanceHandlers.add(fn);
       return () => void st.secondInstanceHandlers.delete(fn);
     },
   };
+}
+
+/**
+ * `desktop.app.dock: "while-window-open"` on macOS: start the Dock helper's presence over the
+ * registry (a Dock icon while a window shows; src/desktop/dock-helper.ts). The helper's Quit closes
+ * the app's windows and never quits it. A failure to start is a warning: the app stays accessory.
+ */
+function installDockHelper(st: SetupState): void {
+  const registry = st.registry;
+  if (st.os !== "darwin" || st.options.appSettings?.dock !== "while-window-open" || !registry) {
+    return;
+  }
+  startDockHelper({
+    windows: () => registry.list(),
+    keyWindow: () => registry.keyWindow(),
+    // The helper's Quit closes the windows, never the app: each as its close button would, so a
+    // page that guards its close is asked (a synthetic cancelable `close` through the same hook).
+    closeWindow: (id) => {
+      if (!registry.interceptClose(id, new Event("close", { cancelable: true }))) {
+        registry.close(id);
+      }
+    },
+    dataDir: st.options.dirs?.data ?? st.options.appSupportDir,
+    warn: st.warn,
+  }).then(
+    (presence) => {
+      st.dockPresence = presence;
+    },
+    (err) =>
+      st.warn(`the Dock helper could not start: ${err instanceof Error ? err.message : err}`),
+  );
 }
 
 /** Whether the runtime makes overlay main windows and tray panels (`3.0.0-denext.7`+). */
@@ -967,7 +1168,7 @@ function screensOf(api: DesktopAppApi | undefined): readonly PlacementScreen[] {
  *
  * @returns `windows`, `setDockVisible` and the activation policy for such a `DesktopRuntime`.
  */
-export function noDesktopWindows(): {
+export function noDesktopWindows(): DesktopAppMenusApi & {
   windows: DesktopWindows;
   setDockVisible(visible: boolean): boolean;
   setActivationPolicy(policy: ActivationPolicy): boolean;
@@ -993,5 +1194,14 @@ export function noDesktopWindows(): {
     onDockReopen: () => () => {},
     onSecondInstance: () => () => {},
     onWillNavigate: () => () => {},
+    setMenu: noMenus,
+    setMenuItemState: noMenus,
+    setWindowMenuAppItems: noMenus,
+    onAppMenuItem: () => () => {},
   };
+}
+
+/** A menu call in a launch with no windows. */
+function noMenus(): never {
+  throw new Error("desktop: this launch has no windows (a sidecar's child)");
 }

@@ -491,6 +491,41 @@ interface ChildHelpersModule {
   installRequireBase(requireBase: string, modulesPath: string): void;
 }
 
+/**
+ * Give this process the globals of a Node child program, as a module sidecar's worker has them: no
+ * `globalThis.location` (a worker's `WorkerLocation` would make a library resolve URLs against it:
+ * PostHog's "nullnull/…"; a main thread's `--location` is not configurable and stays), and `process.connected` / `channel` / `send` /
+ * `disconnect` as Node defines them: kept when the child has an IPC channel (`spawnSelf` starts it
+ * with `"ipc"`), else all `undefined` (a worker's throw or are worker stubs).
+ *
+ * @param process This process's `node:process`.
+ */
+function asNodeChildProgram(process: object): void {
+  const p = process as { channel?: unknown; send?: unknown };
+  let ipc = false;
+  try {
+    ipc = p.channel != null && typeof p.send === "function";
+  } catch { /* a worker's process.channel throws: no IPC */ }
+  if (!ipc) {
+    for (const key of ["connected", "channel", "send", "disconnect"]) {
+      try {
+        Object.defineProperty(process, key, {
+          value: undefined,
+          configurable: true,
+          writable: true,
+        });
+      } catch { /* keep */ }
+    }
+  }
+  try {
+    Object.defineProperty(globalThis, "location", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+  } catch { /* keep */ }
+}
+
 /** Options for {@linkcode runSidecarChild}. */
 export interface RunSidecarChildOptions {
   /** The app entry's `import.meta.url`. */
@@ -529,6 +564,7 @@ export async function runSidecarChild(
     }
   }
   const { default: process } = await import("node:process");
+  asNodeChildProgram(process);
   process.argv = [
     process.execPath,
     entry.startsWith("file:") ? fromFileUrl(entry) : entry,

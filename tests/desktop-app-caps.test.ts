@@ -422,6 +422,22 @@ Deno.test("notifications: clicks are pulled once — the launch click first, for
   ]);
 });
 
+Deno.test("notifications: a page load drops the clicks the last page never took, not a launch click", async () => {
+  const f = fakeNotifications();
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false });
+  const ctx = ctxOf();
+  assertEquals(await call(cap, "take", {}, ctx), []);
+  const respond = (detail: unknown) =>
+    f.listeners.get("notificationresponse")!(new CustomEvent("notificationresponse", { detail }));
+  // A click for the running page it never took (it reloaded first), and one that launched the app.
+  respond({ tag: "denext-3-1", action: null, data: { denext: { id: 3 }, data: {} } });
+  respond({ tag: "denext-4-1", action: null, data: { denext: { id: 4 }, data: {} }, launch: true });
+  await cap.onPageLoad!();
+  assertEquals(await call(cap, "take", {}, ctx), [
+    { id: 4, actionId: "tap", data: {}, launch: true },
+  ]);
+});
+
 Deno.test("notifications: where the runtime cannot schedule, now is a Deno Notification; later is unsupported", async () => {
   const f = fakeNotifications();
   f.noSchedule();
@@ -723,7 +739,9 @@ Deno.test("app: the application menu's clicks are pulled; ids it does not have a
   click(win, "new");
   click(win, "not-mine");
   assertEquals(emitted, ["app:action"]);
-  assertEquals(await call(cap, "take"), [{ source: "menu", id: "new" }]);
+  assertEquals(await call(cap, "take"), [
+    { source: "menu", id: "new", kind: "appMenu", keyWindow: null },
+  ]);
   assertEquals(await call(cap, "take"), []);
   const caps = await call(cap, "capabilities") as Record<string, boolean>;
   assertEquals([caps.appMenu, caps.accelerators, caps.tray, caps.dockMenu], [
@@ -1399,6 +1417,8 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     icons: false,
     tooltips: false,
     destructive: false,
+    customMenus: false,
+    appLevelMenu: false,
     tray: true,
     trayReason: null,
     trayHost: "unknown",
@@ -1459,7 +1479,9 @@ Deno.test("app: badge text is checked; an empty dock menu clears it; install is 
   await call(cap, "setAppMenu", { menu: [{ id: "n", label: "N" }] });
   win.dispatchEvent(new CustomEvent("menuclick", { detail: undefined }));
   click(win, "n");
-  assertEquals(await call(cap, "take"), [{ source: "menu", id: "n" }]);
+  assertEquals(await call(cap, "take"), [
+    { source: "menu", id: "n", kind: "appMenu", keyWindow: null },
+  ]);
   assertEquals(emitted, ["app:action"]);
 });
 

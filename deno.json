@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "4.17.0",
+  "version": "4.18.0",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -363,7 +363,10 @@
     "test:migration-bed": "deno test -A --unstable-kv tests/migration-bed/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
     "test:coverage": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task test:coverage:run",
-    "test:coverage:run": "rm -rf coverage/profile && DENEXT_CHILD_COVERAGE=coverage/profile deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno run -A scripts/toolchain-deno.ts coverage coverage/profile --include=/src/ --include=/packages/backend/ --include=/packages/content-collections/ --exclude=/src/build/esbuild/vendor/ --threshold=85 && deno run -A scripts/toolchain-deno.ts coverage coverage/profile --include=/src/ --include=/packages/ --exclude=/src/build/esbuild/vendor/ --exclude=/packages/[^/]+/lib/ --lcov --output=coverage/lcov.info && deno task coverage:floor && deno task coverage:ratchet",
+    "test:coverage:run": "rm -rf coverage/profile && DENEXT_CHILD_COVERAGE=coverage/profile deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno task coverage:report",
+    "test:coverage:shard": "rm -rf coverage/profile coverage/profile.shard.json && DENEXT_CHILD_COVERAGE=coverage/profile deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile --no-re-emit",
+    "coverage:merge": "deno run -A scripts/ci/coverage-merge.ts coverage/shards coverage/profile && deno task coverage:report",
+    "coverage:report": "deno run -A scripts/toolchain-deno.ts coverage coverage/profile --include=/src/ --include=/packages/backend/ --include=/packages/content-collections/ --exclude=/src/build/esbuild/vendor/ --threshold=85 && deno run -A scripts/toolchain-deno.ts coverage coverage/profile --include=/src/ --include=/packages/ --exclude=/src/build/esbuild/vendor/ --exclude=/packages/[^/]+/lib/ --lcov --output=coverage/lcov.info && deno task coverage:floor && deno task coverage:ratchet",
     "coverage:floor": "deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info --full",
     "coverage:ratchet": "deno run --allow-read scripts/coverage-ratchet.ts coverage/lcov.info",
     "coverage:ratchet:update": "deno run --allow-read --allow-write=scripts/coverage-baseline.json scripts/coverage-ratchet.ts coverage/lcov.info --update",
@@ -439,7 +442,7 @@
     "effect": "npm:effect@^3.22.0",
     "@prisma/driver-adapter-utils": "npm:@prisma/driver-adapter-utils@7.10.1",
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
-    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.17.0",
+    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.18.0",
     "sass": "npm:sass@^1.80.0",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@^3",
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",

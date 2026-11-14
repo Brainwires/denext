@@ -56,6 +56,31 @@ const MAX_FRAME_CHARS = 1024 * 1024;
 const BASE_RETRY_MS = 1_000;
 /** The longest reconnect delay. */
 const MAX_RETRY_MS = 30_000;
+/** The runtime's heartbeat interval on the event stream (`bridge-events.ts`). */
+const HEARTBEAT_MS = 15_000;
+
+/**
+ * The stream's liveness timing: nothing read for `heartbeatTimeoutMs` (2.5 heartbeats) is a dead
+ * connection, and a page hidden for longer than `hiddenReconnectMs` reconnects when it is shown.
+ */
+const timing = {
+  heartbeatTimeoutMs: HEARTBEAT_MS * 2.5,
+  hiddenReconnectMs: HEARTBEAT_MS * 2.5,
+};
+
+/**
+ * Override the stream's liveness timing (tests only).
+ *
+ * @param next The values to change.
+ * @returns A function that restores the previous ones.
+ */
+export function setDesktopStreamTimingForTesting(
+  next: Partial<typeof timing>,
+): () => void {
+  const prev = { ...timing };
+  Object.assign(timing, next);
+  return () => void Object.assign(timing, prev);
+}
 
 /**
  * Why a desktop call failed:
@@ -341,9 +366,31 @@ interface StreamState {
   retryMs: number;
   failures: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The current connection was dropped by the page itself to reconnect (silent, online, shown). */
+  stale?: boolean;
+  /** When the page was last hidden (`visibilitychange`), else `undefined`. */
+  hiddenAt?: number;
+  /** Removes the `online` / `visibilitychange` listeners. */
+  unlisten?: () => void;
 }
 
 let stream: StreamState | undefined;
+
+/** Called each time the event stream (re)connects: see {@linkcode onDesktopStreamOpen}. */
+const openListeners = new Set<() => void>();
+
+/**
+ * Call `fn` each time this page's event stream connects or reconnects — the moment from which
+ * every event reaches it live. A one-shot event (`retain: false`) emitted before that is not
+ * replayed to a new connection, so a pull queue takes again here to catch what it signalled.
+ *
+ * @param fn Called on each (re)connect; a throw is ignored.
+ * @returns Its removal.
+ */
+export function onDesktopStreamOpen(fn: () => void): () => void {
+  openListeners.add(fn);
+  return () => void openListeners.delete(fn);
+}
 
 /** The `cap:event` key a frame is routed by. */
 function keyOf(cap: string, event: string): string {
@@ -409,31 +456,54 @@ function deliverFrame(state: StreamState, frame: SseFrame): void {
   dispatch(state, keyOf(parsed.cap, parsed.event), parsed.data);
 }
 
-/** Read an SSE body to its end, delivering each frame. */
-async function readEvents(state: StreamState, body: ReadableStream<Uint8Array>): Promise<void> {
+/**
+ * Read an SSE body to its end, delivering each frame. `onRead` runs on every chunk (the heartbeat
+ * watchdog); an abort of `signal` cancels the read, so a connection that went silent ends too.
+ */
+async function readEvents(
+  state: StreamState,
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onRead: () => void,
+): Promise<void> {
   const reader = body.getReader();
+  const cancel = () => void reader.cancel().catch(() => {});
+  signal.addEventListener("abort", cancel, { once: true });
   const decoder = new TextDecoder();
-  let pending = "";
-  let frame: SseFrame = { data: [] };
+  const parse: SseParse = { pending: "", frame: { data: [] } };
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) return;
-      pending += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = pending.search(/\r\n|\r|\n/)) >= 0) {
-        const line = pending.slice(0, nl);
-        pending = pending.slice(pending[nl] === "\r" && pending[nl + 1] === "\n" ? nl + 2 : nl + 1);
-        if (line === "") {
-          deliverFrame(state, frame);
-          frame = { data: [] };
-        } else applyLine(state, frame, line);
-      }
-      if (pending.length > MAX_FRAME_CHARS) return; // a runaway frame: drop the connection
+      if (done || signal.aborted) return;
+      onRead();
+      parse.pending += decoder.decode(value, { stream: true });
+      consumeLines(state, parse);
+      if (parse.pending.length > MAX_FRAME_CHARS) return; // a runaway frame: drop the connection
       state.failures = 0;
     }
   } finally {
+    signal.removeEventListener("abort", cancel);
     reader.releaseLock();
+  }
+}
+
+/** The text read but not yet split into lines, and the frame being built. */
+interface SseParse {
+  pending: string;
+  frame: SseFrame;
+}
+
+/** Apply every complete line in `parse.pending`; a blank line delivers the frame. */
+function consumeLines(state: StreamState, parse: SseParse): void {
+  let nl: number;
+  while ((nl = parse.pending.search(/\r\n|\r|\n/)) >= 0) {
+    const line = parse.pending.slice(0, nl);
+    const crlf = parse.pending[nl] === "\r" && parse.pending[nl + 1] === "\n";
+    parse.pending = parse.pending.slice(crlf ? nl + 2 : nl + 1);
+    if (line === "") {
+      deliverFrame(state, parse.frame);
+      parse.frame = { data: [] };
+    } else applyLine(state, parse.frame, line);
   }
 }
 
@@ -457,7 +527,12 @@ async function eventHeaders(state: StreamState, token: string): Promise<Record<s
  * One connection: read the stream to its end. Resolves `true` when retrying cannot help (the
  * gate refused it, or there is no events endpoint).
  */
-async function readOnce(state: StreamState, token: string, signal: AbortSignal): Promise<boolean> {
+async function readOnce(
+  state: StreamState,
+  token: string,
+  abort: AbortController,
+): Promise<boolean> {
+  const signal = abort.signal;
   try {
     const res = await fetch(EVENTS_PATH, {
       method: "GET",
@@ -467,7 +542,29 @@ async function readOnce(state: StreamState, token: string, signal: AbortSignal):
       cache: "no-store",
     });
     if (res.ok && res.body) {
-      await readEvents(state, res.body);
+      for (const fn of [...openListeners]) {
+        try {
+          fn();
+        } catch {
+          // a listener's bug must not stop the stream
+        }
+      }
+      // Nothing at all (no frame, no heartbeat) for 2.5 heartbeats: the connection died silently
+      // (sleep and wake, a stalled socket). Drop it; the caller reconnects.
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const arm = () => {
+        if (watchdog !== undefined) clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          watchdog = undefined;
+          if (state.abort === abort) dropConnection(state);
+        }, timing.heartbeatTimeoutMs);
+      };
+      arm();
+      try {
+        await readEvents(state, res.body, signal, arm);
+      } finally {
+        if (watchdog !== undefined) clearTimeout(watchdog);
+      }
       return false;
     }
     await res.body?.cancel();
@@ -482,14 +579,24 @@ function live(state: StreamState): boolean {
   return stream === state && wanted(state);
 }
 
+/** Drop the current connection to reconnect (the page's own decision, not a disconnect). */
+function dropConnection(state: StreamState): void {
+  state.stale = true;
+  state.abort?.abort();
+}
+
 /** Open (or reopen) the stream; reconnects with backoff while anyone listens. */
 async function connect(state: StreamState): Promise<void> {
   const token = desktopToken();
   if (token === undefined || !live(state)) return;
   const abort = new AbortController();
   state.abort = abort;
-  const fatal = await readOnce(state, token, abort.signal);
-  if (abort.signal.aborted || fatal || !live(state)) return;
+  state.stale = false;
+  const fatal = await readOnce(state, token, abort);
+  // Set meanwhile by the watchdog or a wake (the narrowing above does not see it).
+  const stale = (state.stale as boolean | undefined) === true && state.abort === abort;
+  if ((abort.signal.aborted && !stale) || fatal || !live(state)) return;
+  state.stale = false;
   const delay = Math.min(MAX_RETRY_MS, state.retryMs * 2 ** state.failures++);
   state.timer = setTimeout(() => {
     state.timer = undefined;
@@ -497,9 +604,59 @@ async function connect(state: StreamState): Promise<void> {
   }, delay);
 }
 
+/**
+ * Reconnect now (the network is back, the page is shown again): the current connection, which may
+ * have died silently meanwhile, is replaced, and a pending retry runs at once.
+ */
+function reconnectNow(state: StreamState): void {
+  if (!live(state)) return;
+  state.failures = 0;
+  if (state.timer !== undefined) {
+    clearTimeout(state.timer);
+    state.timer = undefined;
+    void connect(state);
+    return;
+  }
+  if (state.abort !== undefined && !state.abort.signal.aborted) {
+    // The drop reconnects after the first retry delay; the network is back, so go now.
+    state.abort.abort();
+    void connect(state);
+  }
+}
+
+/** Listen for `online` and the page being shown again; returns the removal. */
+function listenForWake(state: StreamState): () => void {
+  const g = globalThis as {
+    addEventListener?: (type: string, fn: () => void) => void;
+    removeEventListener?: (type: string, fn: () => void) => void;
+    document?: EventTarget & { visibilityState?: string };
+  };
+  const onOnline = () => reconnectNow(state);
+  const doc = g.document;
+  const onVisibility = () => {
+    if (doc?.visibilityState === "hidden") {
+      state.hiddenAt = Date.now();
+      return;
+    }
+    const hiddenAt = state.hiddenAt;
+    state.hiddenAt = undefined;
+    if (hiddenAt !== undefined && Date.now() - hiddenAt > timing.hiddenReconnectMs) {
+      reconnectNow(state);
+    }
+  };
+  g.addEventListener?.("online", onOnline);
+  doc?.addEventListener?.("visibilitychange", onVisibility);
+  return () => {
+    g.removeEventListener?.("online", onOnline);
+    doc?.removeEventListener?.("visibilitychange", onVisibility);
+  };
+}
+
 /** Close the stream and forget its state (no listener is left). */
 function disconnect(state: StreamState): void {
   if (state.timer !== undefined) clearTimeout(state.timer);
+  state.unlisten?.();
+  state.unlisten = undefined;
   state.abort?.abort();
   if (stream === state) stream = undefined;
 }
@@ -539,7 +696,10 @@ export function subscribeDesktopEvent(
       for (const data of queued) dispatch(state, key, data);
     });
   }
-  if (first && state.abort === undefined) void connect(state);
+  if (first && state.abort === undefined) {
+    state.unlisten ??= listenForWake(state);
+    void connect(state);
+  }
   let active = true;
   return () => {
     if (!active) return;
@@ -553,5 +713,6 @@ export function subscribeDesktopEvent(
 export function resetDesktopBridgeForTesting(): void {
   if (stream) disconnect(stream);
   stream = undefined;
+  openListeners.clear();
   windowTokenPromise = undefined;
 }

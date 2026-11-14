@@ -344,6 +344,13 @@ the flags), and `denext start` / `build --compile` warn that they are not applie
 needs a start task that is a plain `deno run` line, and the fly preset warns when `memory` is not
 below the machine's memory (the OOM killer would end the server first).
 
+A heap size in V8's flags beats `memory`: V8 takes `--max-old-space-size` / `--max-heap-size`
+(either spelling) over an isolate's own heap cap, so one in `DENO_V8_FLAGS` (comma- or
+space-separated) or in the server's own `--v8-flags=…` raises the cap to the flag's size.
+`denext start` warns once when the process that serves runs with `memory` and such a flag, naming
+the flag, and `denext dev` warns that it will override `memory` in production. Drop the flag and
+rely on `memory`, or drop `memory`.
+
 The config is read as the idle trim's is: what the last `denext build` recorded in
 `.denext/deploy-manifest.json` (`server.limits`), and before a first build the literal values in the
 config file. A generated file keeps the limits it was written with; regenerate after a change.

@@ -25,6 +25,9 @@ import { abortJobRuns } from "../../server/jobs.ts";
 import { markBuildPhase } from "../../server/phase.ts";
 import { applyRawFlag } from "../explain-output.ts";
 import { commandMeta } from "../command-meta.ts";
+import { memoryCap } from "../../build/heap-flags.ts";
+import { resourceLimitFlags } from "../../build/resource-limits.ts";
+import { heapFlagNotice } from "../self-exec.ts";
 
 /**
  * Resolve the project a command operates on. SPA mode has no `app/` directory — skip the
@@ -83,6 +86,16 @@ function devBind(
   };
 }
 
+/**
+ * Say once that a heap size in V8's flags will raise `start.limits.memory` in production: dev does
+ * not apply `start.limits`, but the same environment usually reaches `denext start`.
+ */
+async function warnDevHeapFlags(paths: ProjectPaths): Promise<void> {
+  const caps = memoryCap(resourceLimitFlags(paths.config?.start?.limits));
+  const notice = await heapFlagNotice(caps, "production");
+  if (notice) console.error(notice);
+}
+
 /** Print a usage error and exit 2. */
 function fail(message: string): never {
   console.error(message);
@@ -98,6 +111,7 @@ export const devCommand: CommandSpec = {
     const bind = devBind(ctx);
     const { paths } = await appProject(ctx);
     markDevelopment();
+    await warnDevHeapFlags(paths);
     const controller = new AbortController();
     installShutdown(controller);
     // Shutdown aborts every job run's signal, `runJob()` calls that passed none included.

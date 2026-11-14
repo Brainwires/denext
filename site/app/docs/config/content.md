@@ -484,7 +484,8 @@ See [Writing a plugin](/docs/plugins).
   `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
   `preload`, `inspectable`, the first window (`window`, `titleBar`, `backdrop`,
   `minSize`, `maxSize`), `menu` (the backend's "Window" submenu: `newWindow`,
-  `reopenClosed`, `list`, `items`), `tray` (a tray icon the backend owns), `permissions`
+  `reopenClosed`, `list`, `items`; and `menus`, the app's own top-level menus beside the
+  managed ones: [custom menus](/docs/desktop#desktop-custom-menus)), `tray` (a tray icon the backend owns), `permissions`
   (`"default"` or `"strict"`, which scopes the baked `--allow-read` / `--allow-env`),
   `installers`, `linux` and `windows` (each OS's launch settings), `extraPermissions`
   and `denoFlags`.

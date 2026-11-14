@@ -1215,14 +1215,26 @@ export interface DesktopConfig {
      * once it starts, so it shows briefly at launch. On Windows and Linux
      * the app's windows are kept off the taskbar instead where the runtime can
      * (`setSkipTaskbar`); a `focusable: false` window is always off it.
+     *
+     * `"while-window-open"` (macOS, packaged apps): a tray app with a Dock icon and a Cmd-Tab entry
+     * only while one of its windows is showing, and never a tile in the Dock's recent apps. The app
+     * itself stays `"accessory"` from launch to quit; packaging adds a small helper app
+     * (`Contents/Helpers`), which the app copies into its data folder and runs while a window
+     * (not the tray panel, not an overlay) is showing. Clicking the helper's Dock icon or switching
+     * to it brings the app's window to the front, and its Quit closes the app's windows (as their
+     * close buttons would) but never quits the app: only the app's own Quit or the end of the OS
+     * session does. Where the helper cannot run the app keeps the accessory behaviour (windows,
+     * no Dock icon). On Windows and
+     * Linux, where a window's taskbar entry already lasts as long as the window, it is `true`.
+     * Requires {@link identifier}; not with `activationPolicy: "regular"`.
      */
-    dock?: boolean;
+    dock?: boolean | "while-window-open";
     /**
      * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
      * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
      * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
      * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
-     * `desktop.app.dock: false` implies `"accessory"`. Switch it while the app runs with
+     * `desktop.app.dock: false` or `"while-window-open"` implies `"accessory"`. Switch it while the app runs with
      * `setActivationPolicy` (`denext/desktop/app`, or `DesktopRuntime.setActivationPolicy` in
      * `desktop.ts`). On an older runtime `dock: false` still hides the icon, once the backend
      * starts. Windows and Linux have no policy.
@@ -1263,7 +1275,8 @@ export interface DesktopConfig {
    * submenu of them by title, each reopening its window), `list`
    * (the open windows, each focusing its window) and `items` (the app's own items, whose clicks
    * reach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the
-   * submenu also carries the standard Minimize / Zoom / Bring All to Front items.
+   * submenu also carries the standard Minimize / Zoom / Bring All to Front items. `menus` adds the
+   * app's own top-level menus beside the managed ones (see {@link DesktopMenuConfig.menus}).
    */
   menu?: DesktopMenuConfig;
   /** The capability allowlist (default deny). */
@@ -1325,6 +1338,13 @@ export interface DesktopConfig {
   minSize?: DesktopSize;
   /** The largest window size the user can resize to. Needs denext's pinned runtime. */
   maxSize?: DesktopSize;
+  /**
+   * Embedded web views (`createWebView` from `denext/desktop/window`, `win.createWebView` in
+   * `desktop.ts`): native views of other sites inside a window, above its page. This sets how many
+   * one window hosts at once and, optionally, the only origins they may load. Web views need a
+   * Deno Desktop runtime and engine that host them (`webViewCapabilities().supported`).
+   */
+  webViews?: DesktopWebViewsConfig;
   /**
    * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
    * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
@@ -1448,7 +1468,8 @@ export interface DesktopSidecarConfig {
 
 /**
  * {@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with
- * `nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.
+ * `nodeModules`, `external`, `exclude` and `entries` for a Node backend) or `exec` (a program,
+ * with `bootstrapFd`), not both.
  */
 export interface DesktopSidecarRunConfig {
   /** The module, relative to the project. */
@@ -1457,10 +1478,27 @@ export interface DesktopSidecarRunConfig {
   nodeModules?: string;
   /** Packages copied whole rather than bundled (loaded with `require()` at run time). */
   external?: string[];
+  /**
+   * Packages never bundled nor copied, by name or glob (`"@anthropic-ai/claude-code-*"`; `*`
+   * stays within one name segment): `require()` / `import()` of one throws `MODULE_NOT_FOUND` at
+   * run time, a static import throws only once used.
+   */
+  exclude?: string[];
   /** Further entry modules it starts itself (worker scripts), relative to the module. */
   entries?: string[];
+  /**
+   * Per-target `node_modules` folders whose packages are copied in place of the host's when
+   * packaging for that target: `"<os>-<arch>"` (`"darwin-x86_64"`) or `"<arch>"` (`"arm64"`)
+   * keys, relative to the project. For an addon built per arch with no prebuild for the other.
+   */
+  archDirs?: Record<string, string>;
   /** A program: an absolute path, a name on `PATH`, or a file of the project (`"./bin/server"`). */
   exec?: string;
+  /**
+   * A program's first line (`{"name","port","bootstrap","secrets"}`) on this file descriptor, 3 to
+   * 9 (a pipe written once, then closed), instead of stdin.
+   */
+  bootstrapFd?: number;
 }
 
 /** {@link DesktopSidecarConfig.loginShellEnv} with options. */
@@ -1727,6 +1765,25 @@ export interface DesktopUiUpdateConfig {
   platform?: "macos" | "windows" | "linux";
 }
 
+/** `desktop.webViews`: the embedded web views a window may host. */
+export interface DesktopWebViewsConfig {
+  /**
+   * The most web views one window hosts at once (default 8), counting the page's and
+   * `desktop.ts`'s together; one more rejects `limit`.
+   *
+   * @minimum 1
+   * @maximum 32
+   */
+  limit?: number;
+  /**
+   * The exact origins (`"https://docs.example"`: scheme, host and port, no path) a web view may
+   * load through `createWebView` and `navigate`; any other rejects `not_allowed_url`. Unset: any
+   * `http:` / `https:` origin. The app's own origin is refused either way. Links the user follows
+   * inside the view are not checked against it (only their scheme is: `http:` / `https:`).
+   */
+  allowedOrigins?: string[];
+}
+
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */
 export interface DesktopSize {
   /**
@@ -1778,8 +1835,21 @@ export interface DesktopTrayMenuEntry {
   separator?: boolean;
 }
 
-/** The application menu's standard window items ({@link DesktopConfig.menu}). */
+/** The application menu's standard window items and the app's own menus ({@link DesktopConfig.menu}). */
 export interface DesktopMenuConfig {
+  /**
+   * The app's own top-level menus (at most 16), beside the managed ones (on macOS the app menu,
+   * Edit and Window): each `{ id, label, after?, items }`, placed after the `after` menu (`"app"`,
+   * `"file"`, `"edit"`, `"view"` (default) or `"window"`, matched by label; one the bar does not
+   * have falls back to the one before it). A page's `setAppMenu` keeps them too. Items are
+   * `{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }` (`type` `"checkbox"`
+   * toggles on a click, `"radio"` checks itself and unchecks the rest of its `group`; `icon` a
+   * base64 PNG), submenus `{ label, items }`, separators `{ type: "separator" }` and roles
+   * `{ role }`. Item ids are unique across every menu. Clicks reach the pages' `onAppMenuItem` and
+   * the backend's `runDesktop({ onAppMenuItem })` with the key window; the pages and the backend
+   * change them at runtime with `setMenu` / `setMenuItemState` (app-wide or for one window).
+   */
+  menus?: readonly DesktopCustomMenuConfig[];
   /** The "Window" submenu's items. */
   window?: {
     /** The app path New Window (Cmd/Ctrl+N) opens (`"/"`); `false` or unset: no item. */
@@ -1802,6 +1872,58 @@ export interface DesktopMenuConfig {
      */
     items?: readonly DesktopWindowMenuItemConfig[];
   };
+}
+
+/** One of the app's own top-level menus ({@link DesktopMenuConfig.menus}). */
+export interface DesktopCustomMenuConfig {
+  /** Its id (unique, at most 64 characters): what `setMenu(id, …)` names. */
+  id: string;
+  /** The label in the menu bar. */
+  label: string;
+  /** The standard menu it goes after (default `"view"`). */
+  after?: "app" | "file" | "edit" | "view" | "window";
+  /** Its entries (at most 500, submenus included, nested at most 8 deep). */
+  items: readonly DesktopCustomMenuItemConfig[];
+}
+
+/** One entry of a custom menu ({@link DesktopCustomMenuConfig.items}). */
+export interface DesktopCustomMenuItemConfig {
+  /** What a click reports (unique across every custom menu, at most 128 characters); items need one. */
+  id?: string;
+  /** The label (items and submenus). */
+  label?: string;
+  /** The keyboard shortcut (`"CommandOrControl+Shift+K"`). */
+  accelerator?: string;
+  /** Selectable (default `true`). */
+  enabled?: boolean;
+  /** A checkmark (a checkbox's or radio item's initial state). */
+  checked?: boolean;
+  /** `"normal"` (default), `"checkbox"`, `"radio"`, `"separator"` or `"submenu"` (default with `items`). */
+  type?: "normal" | "checkbox" | "radio" | "separator" | "submenu";
+  /** A radio item's group (default: the radio items of the same submenu without one). */
+  group?: string;
+  /** A submenu's entries. */
+  items?: readonly DesktopCustomMenuItemConfig[];
+  /** A PNG as base64 (drawn where the backend draws menu icons). */
+  icon?: string;
+  /** A standard item the OS handles (`"copy"`, `"toggleFullScreen"`, …). */
+  role?:
+    | "about"
+    | "hide"
+    | "hideOthers"
+    | "unhide"
+    | "quit"
+    | "undo"
+    | "redo"
+    | "cut"
+    | "copy"
+    | "paste"
+    | "selectAll"
+    | "minimize"
+    | "zoom"
+    | "close"
+    | "front"
+    | "toggleFullScreen";
 }
 
 /** One of the app's own items in the backend's "Window" submenu ({@link DesktopMenuConfig.window}). */
@@ -1911,6 +2033,30 @@ export interface DesktopWindowConfig {
    * runtime (ignored with a warning before).
    */
   windowButtonPosition?: DesktopWindowButtonPosition;
+  /**
+   * Whether the native title bar draws the title text (default `"visible"`). `"hidden"` keeps the
+   * OS's title bar, its buttons and its drag area and draws no text; the window's title still names
+   * it in the Dock / taskbar, the Window menu, Mission Control and alt-tab. Each OS does it natively:
+   * macOS, Windows, and Linux only where GTK draws the title bar itself (client-side decorations,
+   * such as GNOME on Wayland); under a window manager's decorations (KDE Plasma, X11 window
+   * managers) it is not applied, and `windowCapabilities().titleVisibility` is `false`. Windows
+   * opened with `windows.open` / `openWindow` take it too, unless their own `titleVisibility`
+   * says. Not for a frameless window (it has no title bar). Needs a Deno Desktop runtime with
+   * `BrowserWindow.setTitleVisibility` (ignored with a warning before).
+   */
+  titleVisibility?: "visible" | "hidden";
+  /**
+   * The macOS toolbar style that lays the title bar out (default `"automatic"`: no toolbar). An
+   * empty toolbar in that style is attached: `"unified"` is one tall bar with the title
+   * left-aligned (Finder, Safari), `"unifiedCompact"` the same, shorter, and `"expanded"` puts the
+   * title on its own row. With `desktop.titleBar: "hiddenInset"` it sets the inset toolbar's style
+   * (`"unifiedCompact"`: a shorter inset); `desktop.titleBar: "hidden"` has no toolbar, so any
+   * style but `"automatic"` is an error there (use `"hiddenInset"`), as it is on a frameless
+   * window. macOS 11 and later; ignored on Windows and Linux (`windowCapabilities().toolbarStyle`
+   * is `false`). Windows opened with `windows.open` / `openWindow` take it too, unless their own
+   * `toolbarStyle` says.
+   */
+  toolbarStyle?: "automatic" | "unified" | "unifiedCompact" | "expanded";
   /** The window title (defaults to the page's `<title>`). */
   title?: string;
   /** Whether the user can resize the window (default `true`). */

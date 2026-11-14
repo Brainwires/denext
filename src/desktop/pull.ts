@@ -3,14 +3,16 @@
  * shortcut presses): one subscription per queue, shared by every listener in the page. The first
  * listener subscribes to the queue's payload-free signal and takes the queue at once (a click that
  * started the app is already waiting); each signal then takes it again, and every item goes to
- * every listener present. The last listener to leave closes the subscription.
+ * every listener present. A one-shot queue's signal (a menu click's) is not replayed to a new
+ * connection, so the queue is also taken each time the stream (re)connects. The last listener to
+ * leave closes the subscription.
  *
  * Client-only: web APIs, nothing runs at import.
  *
  * @module
  */
 
-import { desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
+import { desktopRpc, onDesktopStreamOpen, subscribeDesktopEvent } from "./bridge-client.ts";
 
 /** Subscribe a listener to a pull queue; returns its unsubscribe. */
 export type PullSubscribe<T> = (listener: (item: T) => void) => () => void;
@@ -70,7 +72,12 @@ export function pullQueue<T>(
   return (listener) => {
     listeners.add(listener);
     if (listeners.size === 1) {
-      stop = subscribeDesktopEvent(cap, event, () => void take());
+      const off = subscribeDesktopEvent(cap, event, () => void take());
+      const offOpen = onDesktopStreamOpen(() => void take());
+      stop = () => {
+        off();
+        offOpen();
+      };
       void take();
     }
     let active = true;

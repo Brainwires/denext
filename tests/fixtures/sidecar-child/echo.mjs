@@ -20,6 +20,13 @@ if (sc.child) {
       marker: process.env.DENEXT_SIDECAR_CHILD ?? null,
       secrets: Object.keys(sc.secrets),
       grandchild: typeof sc.spawnSelf, // a child can start one of its own
+      location: typeof globalThis.location,
+      ipc: [
+        process.connected,
+        typeof process.channel,
+        typeof process.send,
+        typeof process.disconnect,
+      ],
     };
     process.stdout.write(JSON.stringify(seen) + "\n");
     process.exitCode = Number(process.argv[3] ?? 0);

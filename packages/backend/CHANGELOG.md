@@ -15,6 +15,10 @@
   over it is terminated: the requests it was serving answer `546 WORKER_LIMIT`, and the next call
   starts a fresh one. Like `permissions`, it needs `"unstable": ["worker-options"]` in `deno.json`;
   the plugin refuses to start without it.
+- **A warning when `DENO_V8_FLAGS` overrides `memoryMb`.** A heap size there
+  (`--max-old-space-size` / `--max-heap-size`, either spelling) beats each worker's own heap cap,
+  so the plugin now warns once at startup when it is set together with `functions.memoryMb` or a
+  function's `memoryMb`, naming the flag, the caps and the fix.
 
 ### Changed
 

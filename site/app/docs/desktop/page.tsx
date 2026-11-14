@@ -150,6 +150,30 @@ watchScanner((id) => emit("scanner", "attached", { id })); // an OS event of you
 import { onDesktopEvent } from "denext/desktop/client";
 const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));`}
       </Code>
+      <p id="desktop-event-retain">
+        Keeping an event for a later page is right for state and for what launched the app (a deep
+        link, an opened file), and wrong for a one-shot action: a menu click forwarded with{" "}
+        <code>emit</code>{" "}
+        would reach the page again after a reload, which then acts on it a second time. Pass{" "}
+        <code>{"{ retain: false }"}</code> for those (with or without{" "}
+        <code>window</code>): the pages live now receive it, and so does a live page whose event
+        stream reconnects (<code>Last-Event-ID</code>), but a page that subscribes later, a reloaded
+        one included, never does. An extension&apos;s <code>host.emit</code> and a handler&apos;s
+        {" "}
+        <code>ctx.emit</code>{" "}
+        take the same option. denext&apos;s own events follow the same rule: menu, tray, Dock and
+        context-menu clicks, shortcut presses, focus and blur, a close request, the windows opening
+        and closing, and system-stats samples are for the live page only (a click waits for the page
+        that is loaded when it happens, and is dropped when that page goes away); deep links, opened
+        files, the notification click that launched the app, the window&apos;s state, display and
+        title-bar changes, sidecar status and progress are retained.
+      </p>
+      <Code lang="ts">
+        {`const app = await runDesktop({
+  importMetaUrl: import.meta.url,
+  onAppMenuItem: (id) => app.emit("qutty", "menu", { id }, { retain: false }),
+});`}
+      </Code>
       <Callout kind="note">
         <code>runDesktop</code> serves the static export (<code>/about</code> →{" "}
         <code>about/index.html</code> or <code>about.html</code>; any other path gets the root{" "}
@@ -2816,7 +2840,9 @@ if (folder) {
         <code>denext/desktop/window</code>{" "}
         is the page&apos;s control over its own window: maximize, minimize, fullscreen and their
         events, size and size limits, the displays, the title bar, a backdrop, a cancelable close,
-        quitting, and files dragged in and out. It needs no <code>denext desktop add</code>{" "}
+        quitting, files dragged in and out, and <a href="#desktop-web-views">embedded web views</a>
+        {" "}
+        of other sites. It needs no <code>denext desktop add</code>{" "}
         (the runtime registers it for every app). The basics (size, position, title, show / hide)
         work on every runtime; the rest needs denext&apos;s pinned runtime and otherwise rejects
         {" "}
@@ -2876,8 +2902,11 @@ onCloseRequested(({ reason }) => {
           <strong>Chrome</strong>: <code>setTitleBarStyle</code> (<code>"hidden"</code> /{" "}
           <code>"hiddenInset"</code>, macOS), <code>setWindowButtonPosition</code>{" "}
           (the traffic lights; <code>desktop.window.windowButtonPosition</code>{" "}
-          sets them at launch), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
-          <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
+          sets them at launch), <code>setTitleVisibility</code> and <code>setToolbarStyle</code>
+          {" "}
+          (<a href="#desktop-title-options">native title options</a>),{" "}
+          <code>setWindowBackdrop</code> (<code>"mica"</code>, <code>"acrylic"</code>,{" "}
+          <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
           on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
           <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>,
           {" "}
@@ -2993,6 +3022,45 @@ const app = await runDesktop({
 });
 app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisibleWindows));`}
       </Code>
+      <h3 id="desktop-headless">Headless runs: a self-test with no window</h3>
+      <p>
+        <code>denext desktop run --headless</code>, or <code>DENEXT_DESKTOP_HEADLESS=1</code>{" "}
+        in a packaged app&apos;s environment, starts the app with every window hidden while its
+        pages, extensions and sidecars load and run as usual: for a self-test (a terminal&apos;s
+        round trip, a sidecar&apos;s health) on a machine where no window may appear. Each page
+        still runs in a real window, which is never shown: <code>runDesktop</code>{" "}
+        hides the main window as soon as it adopts it, before its first page load, so the runtime
+        never reveals it, every window opened later (<code>windows.open</code>,{" "}
+        <code>openWindow</code>, a tray panel) is created hidden, and <code>show()</code>,{" "}
+        <code>focus()</code>, <code>maximize()</code>, <code>restore()</code> and{" "}
+        <code>setFullScreen()</code> on any of them, the Dock&apos;s reopen and its{" "}
+        <code>bounce()</code> do nothing. The app switches to the <code>"accessory"</code>{" "}
+        policy (no Dock icon) and refuses any other. The webview host reads two variables of its own
+        at process start, before any page runs: <code>LAUFEY_HEADLESS=1</code>{" "}
+        keeps every window hidden from the first (CEF&apos;s included) and leaves the app in the
+        background at launch on macOS, and <code>LAUFEY_ACTIVATION_POLICY=accessory</code>{" "}
+        means no Dock icon from the first frame. <code>denext desktop run</code> and{" "}
+        <code>dev</code> set both whenever the run is headless (<code>--headless</code>, or{" "}
+        <code>DENEXT_DESKTOP_HEADLESS=1</code>{" "}
+        in their environment); a packaged app reads them from the environment it is started with, so
+        set all three when you launch one. A strict-permissions app reads the variable without
+        declaring it.
+      </p>
+      <Code lang="sh">
+        {`denext desktop run --headless
+DENEXT_DESKTOP_HEADLESS=1 LAUFEY_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory \\
+  ./dist/MyApp.app/Contents/MacOS/MyApp`}
+      </Code>
+      <Callout kind="warn">
+        Under a webview host that does not read <code>LAUFEY_HEADLESS</code>{" "}
+        (<code>appCapabilities()</code>{" "}
+        cannot tell; the runtime reference lists the release that added it), the CEF backend shows
+        the window it starts with as it creates it, so a headless CEF app flashes its main window
+        before <code>runDesktop</code>{" "}
+        hides it, and the macOS host activates the app at launch, taking the focus from the app in
+        front. A hidden page&apos;s timers are throttled on WKWebView (about once a second, never
+        frozen); a window opened with <code>backgroundThrottling: false</code> keeps full speed.
+      </Callout>
       <h3 id="desktop-overlay-windows">Overlay windows</h3>
       <p>
         A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
@@ -3095,7 +3163,79 @@ app.onDockReopen(({ hasVisibleWindows }) => console.log("Dock click", hasVisible
         window&apos;s own <code>windowButtonPosition</code> overrides it (<code>null</code>{" "}
         keeps the OS&apos;s place), and <code>setWindowButtonPosition</code>{" "}
         moves them later from a page. It is applied after the title bar style, needs denext&apos;s
-        pinned runtime, and is ignored on Windows and Linux.
+        pinned runtime, and is ignored on Windows and Linux. The size limits follow it too:{" "}
+        <code>desktop.minSize</code> / <code>desktop.maxSize</code>{" "}
+        bound every opened window as they bound the main window, a window&apos;s own{" "}
+        <code>minSize</code> / <code>maxSize</code> (<code>{"{ width, height }"}</code>{" "}
+        in CSS pixels) overrides each, and a minimum larger than the maximum the window ends up with
+        is refused <code>validation</code> before it opens.
+      </p>
+      <h3 id="desktop-title-options">Native title options</h3>
+      <p>
+        Two options change the OS&apos;s own title bar instead of replacing it with a page-drawn
+        one: the native buttons, the drag area and the double-click action stay. Each OS does it
+        natively; denext draws nothing.
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    window: {
+      titleVisibility: "hidden", // no title text; the title still names the window in the Dock
+      toolbarStyle: "unified", // macOS: the title left-aligned in one tall bar, as in Finder
+    },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          <strong>
+            <code>titleVisibility: "hidden"</code>
+          </strong>{" "}
+          hides the title text and keeps the title bar. The window keeps its title, so it is still
+          named in the Dock / taskbar, the Window menu, Mission Control and alt-tab. macOS and
+          Windows hide it on every backend. On Linux only a title bar GTK draws itself can hide its
+          title (client-side decorations, as on GNOME under Wayland); where the window manager draws
+          the title bars (KDE Plasma, X11 window managers), and on the CEF backend, the title stays:
+          {" "}
+          <code>windowCapabilities().titleVisibility</code> is <code>false</code> and{" "}
+          <code>setTitleVisibility("hidden")</code> rejects <code>unsupported</code>{" "}
+          with the reason. The window is never switched to client-side decorations to fake it.
+        </li>
+        <li>
+          <strong>
+            <code>toolbarStyle</code>
+          </strong>{" "}
+          (macOS 11 and later) attaches an empty toolbar that lays the title bar out:{" "}
+          <code>"unified"</code> is one tall bar with the title left-aligned (Finder, Safari),{" "}
+          <code>"unifiedCompact"</code> the same, shorter, <code>"expanded"</code>{" "}
+          puts the title on its own row, and <code>"automatic"</code>{" "}
+          (the default) adds no toolbar. Windows and Linux have no such thing:{" "}
+          <code>windowCapabilities().toolbarStyle</code> is <code>false</code>{" "}
+          there, the config value is ignored, and <code>setToolbarStyle</code> rejects{" "}
+          <code>unsupported</code>.
+        </li>
+      </ul>
+      <p>
+        How they combine with <code>desktop.titleBar</code>: with <code>"default"</code>{" "}
+        every combination works; with <code>"hiddenInset"</code>{" "}
+        the toolbar style sets the inset toolbar&apos;s style (<code>"unifiedCompact"</code>{" "}
+        gives a shorter inset); <code>"hidden"</code> has no toolbar, so a toolbar style other than
+        {" "}
+        <code>"automatic"</code> is a config error there (use <code>"hiddenInset"</code>{" "}
+        for that look), and while a toolbar style is set <code>setTitleBarStyle("hidden")</code>
+        {" "}
+        answers <code>false</code>. The hidden title bar styles never draw the title; a{" "}
+        <code>titleVisibility</code> choice applies again under{" "}
+        <code>"default"</code>. A frameless window has no title bar: either option on one is an
+        error. Windows opened with <code>windows.open</code> / <code>openWindow</code>{" "}
+        take both from <code>desktop.window</code> unless their own <code>titleVisibility</code> /
+        {" "}
+        <code>toolbarStyle</code> say, and a page changes its window&apos;s with{" "}
+        <code>setTitleVisibility</code> / <code>setToolbarStyle</code> from{" "}
+        <code>denext/desktop/window</code> (feature-detect with{" "}
+        <code>windowCapabilities()</code>). Both need a Deno Desktop runtime with the window&apos;s
+        title options; on one without them the config values are skipped with a warning and the
+        setters reject <code>unsupported</code>.
       </p>
       <p>
         A <code>capabilities</code>{" "}
@@ -3394,6 +3534,118 @@ await runDesktop({
   },
 });`}
       </Code>
+      <h4 id="desktop-custom-menus">The app&apos;s own top-level menus</h4>
+      <p>
+        <code>desktop.menu.menus</code> adds top-level menus beside the managed ones, each{" "}
+        <code>{"{ id, label, after?, items }"}</code>. Unlike a page&apos;s{" "}
+        <code>setAppMenu</code>, they never replace the managed menus: with no page menu the bar is
+        the managed one — on macOS the app menu (About, Hide, Hide Others, Show All, Quit) and Edit
+        (the standard editing roles, which the editing shortcuts need), then the custom menus and
+        Window; on Windows and Linux the custom menus and Window, if it has items — and with a page
+        menu they are placed among its submenus. <code>after</code> names the menu one goes after:
+        {" "}
+        <code>"app"</code> (the macOS app menu; elsewhere the start of the bar),{" "}
+        <code>"file"</code>, <code>"edit"</code>, <code>"view"</code> (the default) or{" "}
+        <code>"window"</code> (matched by label, ignoring case and a <code>&amp;</code>{" "}
+        mnemonic). One the bar does not have falls back to the one before it, so <code>"view"</code>
+        {" "}
+        with no View menu is <code>"edit"</code>. Items are{" "}
+        <code>{"{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }"}</code>:{" "}
+        <code>type: "checkbox"</code> toggles <code>checked</code> on a click,{" "}
+        <code>type: "radio"</code> checks itself and unchecks the rest of its <code>group</code>
+        {" "}
+        (by default the radio items of the same submenu without a group); submenus are{" "}
+        <code>{"{ label, items }"}</code>, separators <code>{'{ type: "separator" }'}</code>{" "}
+        and standard items{" "}
+        <code>{"{ role }"}</code>. Item ids are unique across every custom menu (at most 16 menus,
+        500 entries each). A menu shows its checkmarks as checkmarks on every OS: the runtime&apos;s
+        menus have no radio-dot style.
+      </p>
+      <p>
+        At runtime the page (<code>denext/desktop/app</code>) and the backend (what{" "}
+        <code>runDesktop</code>{" "}
+        resolves with, an extension&apos;s host) change them with the same calls:{" "}
+        <code>setMenu(menuId, {"{ label?, after?, items }"})</code>{" "}
+        replaces a menu&apos;s entries, adds a menu (a <code>label</code> is required then) or, with
+        {" "}
+        <code>null</code>, removes one;{" "}
+        <code>setMenuItemState(itemId, {"{ checked?, enabled?, label? }"}, {"{ windowId? }"})</code>
+        {" "}
+        changes one item, app-wide or, with <code>windowId</code> (a page&apos;s own from{" "}
+        <code>currentWindowId()</code>), for that window only. Once the app uses any of this, every
+        app window gets a menu bar of its own built with its state: on macOS the OS menu bar shows
+        the key window&apos;s (the runtime swaps it as windows take the focus), on Windows and Linux
+        each window&apos;s own bar shows its own (no overlay or frameless window gets one there; the
+        tray panel never does). An item&apos;s state for a window is its definition, then the
+        app-wide state, then the state set for that window, so a window with nothing of its own
+        shows the app-wide state. Where the runtime has an app-level menu (<code>
+          appCapabilities().appLevelMenu
+        </code>), macOS shows the app-wide state while no window with a menu is key, with every
+        window closed for one. A checkbox or radio click changes the state where it came from: for
+        the key window when its <code>checked</code>{" "}
+        was set for that window, else app-wide. A window&apos;s state goes when it closes. Until the
+        app uses custom menus or Window-menu items, the menu is set on the main window only, as
+        before.
+      </p>
+      <p id="desktop-window-menu-app-items">
+        <code>setWindowMenuAppItems(items)</code> (a page, for its own window) and{" "}
+        <code>setWindowMenuAppItems(windowId, items)</code>{" "}
+        (the backend, for any window) put a window&apos;s own items in the Window menu, below the
+        window list after a separator (on macOS before Bring All to Front), shown while that window
+        is key: <code>{"{ id, label, checked?, enabled?, accelerator? }"}</code> or{" "}
+        <code>{'{ type: "separator" }'}</code>, at most 64. Each call replaces the list,{" "}
+        <code>null</code>{" "}
+        clears it, and it goes when the window closes — one item per document of an MDI window with
+        a checkmark on the active one, say, then Cascade and Tile with <code>enabled</code>{" "}
+        following the documents.
+      </p>
+      <p>
+        Clicks on both arrive with the key window: in the pages through{" "}
+        <code>onAppMenuItem((id, info) =&gt; …)</code>, whose <code>info</code> carries{" "}
+        <code>kind</code> (<code>"appMenu"</code> for the page&apos;s own items,{" "}
+        <code>"menu"</code>, <code>"windowMenu"</code>), <code>keyWindow</code>{" "}
+        (<code>{"{ id, key? }"}</code> or <code>null</code>), a custom item&apos;s <code>menu</code>
+        {" "}
+        and a checkbox&apos;s or radio item&apos;s new <code>checked</code>{" "}
+        (the menu shows it already) — a custom item&apos;s click reaches every window&apos;s page, a
+        window&apos;s own item only that window&apos;s — and in the backend through{" "}
+        <code>runDesktop({"{ onAppMenuItem: (id, ctx) => … }"})</code> and{" "}
+        <code>host.onAppMenuItem(fn)</code>, once per click each.{" "}
+        <code>appCapabilities().customMenus</code>{" "}
+        says whether the calls work here; without an application menu they reject{" "}
+        <code>unsupported</code>.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default { desktop: { menu: {
+  window: { list: true },
+  menus: [{ id: "view-mode", label: "Layout", after: "view", items: [
+    { id: "free", label: "Free-form", type: "radio", group: "layout", checked: true },
+    { id: "tabs", label: "Tabbed", type: "radio", group: "layout" },
+    { type: "separator" },
+    { id: "toolbar", label: "Show Toolbar", type: "checkbox", checked: true },
+  ] }],
+} } };
+
+// A page: its own layout, and one Window-menu item per document
+import { onAppMenuItem, setMenuItemState, setWindowMenuAppItems } from "denext/desktop/app";
+import { currentWindowId } from "denext/desktop/window";
+
+const me = await currentWindowId();
+await setMenuItemState("tabs", { checked: true }, { windowId: me }); // this window only
+await setWindowMenuAppItems([
+  ...docs.map((d) => ({ id: \`doc:\${d.id}\`, label: d.title, checked: d.id === active })),
+  { type: "separator" },
+  { id: "cascade", label: "Cascade", enabled: docs.length > 1 },
+  { id: "tile-v", label: "Tile Vertically", enabled: docs.length > 1 },
+]);
+onAppMenuItem((id, { kind, keyWindow, checked }) => {
+  if (kind === "menu" && keyWindow?.id !== me) return; // another window's turn
+  if (id === "free" || id === "tabs") setLayout(id);
+  if (id === "toolbar") showToolbar(checked === true);
+  if (id.startsWith("doc:")) activate(id.slice(4));
+});`}
+      </Code>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -3462,6 +3714,366 @@ const { outcome } = await shareFromWindow({
   title: "Q3 report",
   files: [{ directory: "documents", path: "reports/q3.pdf" }],
 });`}
+      </Code>
+
+      <h3 id="desktop-web-views">Embedded web views</h3>
+      <p>
+        <code>createWebView</code> from <code>denext/desktop/window</code>{" "}
+        places another site&apos;s page inside the app&apos;s window: a native browser view of its
+        own, above the page, at a rectangle the page chooses (CSS pixels from the top-left of the
+        window&apos;s page viewport). Use it for what an <code>&lt;iframe&gt;</code>{" "}
+        can&apos;t do: a site that refuses to be framed, its own cookies and history, a screenshot
+        of it, a script run in it. The view belongs to the window that created it and closes with
+        it; a reload or navigation of the window&apos;s page does not close it.{" "}
+        <code>desktop.ts</code> gets the same call on a window handle,{" "}
+        <code>windows.get("main")!.createWebView(…)</code> (or a window from{" "}
+        <code>windows.open</code>), for a view the backend owns: its events reach that handle only,
+        and the page cannot drive it.
+      </p>
+      <Code lang="ts">
+        {`import {
+  attachWebView,
+  createWebView,
+  webViewCapabilities,
+} from "denext/desktop/window";
+
+const caps = await webViewCapabilities();
+if (caps.supported) {
+  const tile = document.querySelector("#docs-tile")!;
+  const view = await createWebView({
+    url: "https://docs.example/start",
+    bounds: { x: 0, y: 0, width: 0, height: 0 }, // attachWebView sets them
+    partition: "ephemeral:docs", // in memory, gone when the app exits
+    allowPopups: "deny",
+  });
+  const detach = attachWebView(view, tile); // follows the tile; returns the detach
+  view.on("title", ({ title }) => (tile.title = title));
+  view.on("new-window", ({ url }) => console.log("blocked popup", url));
+  view.on("closed", () => detach());
+  // later, when the tile unmounts:
+  await view.close();
+} else {
+  // the iframe path
+}`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Isolation.</strong>{" "}
+          The view never gets the desktop bridge (no token, no binding, no app scheme), its storage
+          is never the app&apos;s, and its navigations never reach the window&apos;s navigation
+          guard (<code>onWillNavigate</code>). It only loads <code>http:</code> and{" "}
+          <code>https:</code>: <code>createWebView</code> and <code>navigate</code> reject{" "}
+          <code>not_allowed_url</code> for any other scheme and for the app&apos;s own origin (its
+          {" "}
+          <code>desktop.app.origin</code>, the loopback origin its pages are served from, the dev
+          server), and inside the view a navigation to another scheme is cancelled.{" "}
+          <code>evaluate</code> and <code>capture</code>{" "}
+          are the page&apos;s; nothing in the view can reach them.
+        </li>
+        <li>
+          <strong>Partitions.</strong> <code>partition</code> names the view&apos;s storage (default
+          {" "}
+          <code>"webview:default"</code>; 1 to 64 letters, digits, <code>.</code>, <code>_</code>,
+          {" "}
+          <code>:</code> or{" "}
+          <code>-</code>, starting with a letter or digit). Views with the same partition share
+          cookies and storage. <code>"ephemeral"</code>, or a name starting with{" "}
+          <code>"ephemeral:"</code>, is kept in memory and gone when the app exits; any other name
+          is persistent, stored apart from the app&apos;s own data. Where the engine can&apos;t keep
+          a named store (WKWebView before macOS 14) a persistent name is served in memory.
+        </li>
+        <li>
+          <strong>Popups, downloads and permissions.</strong> <code>allowPopups</code> —{" "}
+          <code>"same-view"</code> (default) loads a popup&apos;s URL in this view,{" "}
+          <code>"browser"</code> opens it in the system browser, <code>"deny"</code>{" "}
+          opens nothing and fires <code>new-window</code> <code>{`{ url, disposition }`}</code>{" "}
+          (<code>"popup"</code> when the page asked for window features, else <code>"tab"</code>).
+          {" "}
+          <code>downloads</code> — <code>"deny"</code> (default) cancels them, <code>"ask"</code>
+          {" "}
+          shows the OS save panel, <code>"browser"</code> hands the URL to the system browser.{" "}
+          <code>permissions</code> — <code>"deny"</code>{" "}
+          (default) refuses camera, microphone, location and notification requests without a prompt,
+          {" "}
+          <code>"ask"</code> asks the user, naming the site; the object form{" "}
+          <code>{`{ prompts, clipboardRead, clipboardWrite }`}</code>{" "}
+          also sets the clipboard (see below). <code>contextMenu</code> — <code>"native"</code>{" "}
+          (default) or <code>"app"</code>. <code>userAgent</code>{" "}
+          replaces the engine&apos;s user agent for this view.
+        </li>
+        <li>
+          <strong>Events.</strong> <code>view.on(event, fn)</code> returns the unsubscribe:{" "}
+          <code>title</code>, <code>url</code> (with <code>canGoBack</code> /{" "}
+          <code>canGoForward</code>), <code>load</code> (<code>"loading"</code> →{" "}
+          <code>"interactive"</code> → <code>"complete"</code>, or <code>"failed"</code> with an
+          {" "}
+          <code>error.code</code> of <code>"network"</code>, <code>"dns"</code>, <code>"tls"</code>,
+          {" "}
+          <code>"blocked"</code>, <code>"aborted"</code> or <code>"failed"</code>),{" "}
+          <code>console</code>, <code>focus-change</code>, <code>new-window</code>,{" "}
+          <code>find-result</code>, <code>context-menu</code>, <code>keydown</code> (see{" "}
+          <a href="#desktop-web-views-keys">Keys and focus</a>) and{" "}
+          <code>closed</code>, which comes once, last.
+        </li>
+        <li>
+          <strong>It draws above the page.</strong>{" "}
+          The native view covers every bit of HTML under its rectangle, menus and dialogs included:
+          see <a href="#desktop-web-views-stacking">How web views stack and overlap</a>.
+        </li>
+        <li>
+          <strong>Focus.</strong> <code>view.focus()</code> moves the keyboard into the view. When
+          {" "}
+          <code>focus-change</code> reports <code>focused: false</code>{" "}
+          the keyboard has left it (a click outside, or Tab past its end): focus the next element of
+          the page yourself. Global shortcuts and app-menu accelerators still fire while the view
+          has the focus; the page&apos;s own <code>keydown</code> listeners do not.
+        </li>
+        <li>
+          <strong>Lifecycle.</strong> <code>close()</code>{" "}
+          when the tile unmounts; views also close with their window. After <code>closed</code>{" "}
+          every call on the handle rejects{" "}
+          <code>closed</code>. A view outlives a reload of the window&apos;s page, which can&apos;t
+          reach it again, so close views before reloading.
+        </li>
+        <li>
+          <strong>
+            <code>attachWebView(view, element, options?)</code>
+          </strong>{" "}
+          keeps the view on the element&apos;s border box: it follows resizes, scrolling in any
+          scroller, window resizes and display scale changes, with at most one{" "}
+          <code>setBounds</code>{" "}
+          per animation frame, only when the rectangle changed. It hides the view while the element
+          is out of the document,{" "}
+          <code>display: none</code>, zero-sized or out of view (scrolled away, clipped by a
+          scroller) and shows it again when it is back, so it owns the view&apos;s visibility while
+          attached. The bounds it sets are the element&apos;s visible part: its box cut to the
+          viewport and to every scroll container around it, so the view never covers what is outside
+          them (<code>clip: false</code> keeps the whole box; <code>hideWhenOutOfView: false</code>
+          {" "}
+          with it keeps a view shown while scrolled away). The function it returns stops following
+          and leaves the view open; it also stops when the view closes.
+        </li>
+        <li>
+          <strong>Limits and gating.</strong> A window hosts at most{" "}
+          <code>desktop.webViews.limit</code> views (default 8, up to 32, the page&apos;s and{" "}
+          <code>desktop.ts</code>&apos;s together); one more rejects <code>limit</code>.{" "}
+          <code>desktop.webViews.allowedOrigins</code> (exact origins) narrows what{" "}
+          <code>createWebView</code> and <code>navigate</code>{" "}
+          accept. Web views need a Deno Desktop runtime and engine that host them:{" "}
+          <code>webViewCapabilities()</code> answers <code>supported</code>, the engine, and whether
+          {" "}
+          <code>capture</code>, <code>evaluate</code>, <code>zOrder</code>, <code>zoom</code>,{" "}
+          <code>find</code>, <code>devTools</code>, <code>contextMenu</code>, <code>print</code>,
+          {" "}
+          <code>clipboard</code>, <code>menuAccelerators</code>, <code>unhandledKeys</code> and{" "}
+          <code>forwardKeys</code> work (a feature reported <code>false</code> rejects{" "}
+          <code>unsupported</code>). On a runtime without web views it answers{" "}
+          <code>supported: false</code> and <code>createWebView</code> rejects{" "}
+          <code>unsupported</code>: keep an iframe path behind that check.
+        </li>
+      </ul>
+      <h4 id="desktop-web-views-stacking">How web views stack and overlap</h4>
+      <ul>
+        <li>
+          <strong>Native above HTML.</strong>{" "}
+          A web view is a native view on top of the window&apos;s page: no z-index, transform or
+          {" "}
+          <code>&lt;dialog&gt;</code>{" "}
+          can put HTML over it. Where the page&apos;s menus, dialogs, popovers or toasts may overlap
+          a view, use the snapshot pattern below.
+        </li>
+        <li>
+          <strong>Order among views.</strong>{" "}
+          A new view starts on top of the window&apos;s other views. <code>raise()</code> /{" "}
+          <code>lower()</code> move one to the top or bottom (still above the page), and{" "}
+          <code>setZOrder(n)</code>{" "}
+          sets an integer order: higher is above, and views with the same order keep their creation
+          order (newer above). <code>state().zOrder</code> reads it back.
+        </li>
+        <li>
+          <strong>It covers only its box.</strong> A view covers exactly the bounds it was given.
+          {" "}
+          <code>attachWebView</code>{" "}
+          gives it the element&apos;s visible part, cut to the viewport and to the scroll containers
+          around the element, so a tile half-scrolled out of a list never draws over the list&apos;s
+          header. A native view can&apos;t be cropped, only resized: the partly visible view&apos;s
+          page lays out at the smaller size rather than being cut off. With{" "}
+          <code>clip: false</code>, or bounds you set yourself, the view covers the whole rectangle,
+          including whatever lies outside a scroll container.
+        </li>
+      </ul>
+      <p>The snapshot pattern, for an HTML overlay that must appear over a view:</p>
+      <ol>
+        <li>
+          <code>const shot = await view.capture({`{ format: "jpeg", scale: 1 }`})</code> — a{" "}
+          <code>Blob</code> at one output pixel per CSS pixel (small and quick; leave{" "}
+          <code>scale</code> out for device pixels).
+        </li>
+        <li>
+          Show it in an <code>&lt;img&gt;</code>{" "}
+          (<code>URL.createObjectURL(shot)</code>) placed exactly over the view&apos;s placeholder
+          element.
+        </li>
+        <li>
+          <code>await view.setVisible(false)</code>{" "}
+          — the page, the image and the overlay are now plain HTML, layered as usual.
+        </li>
+        <li>
+          When the overlay closes:{" "}
+          <code>await view.setVisible(true)</code>, then remove the image and{" "}
+          <code>URL.revokeObjectURL</code> it. A tile drag or resize can use the same swap. (With
+          {" "}
+          <code>attachWebView</code>{" "}
+          attached, detach first or it will show the view again on the next change; attach again
+          after.)
+        </li>
+      </ol>
+      <Code lang="ts">
+        {`import type { WebViewHandle } from "denext/desktop/window";
+
+async function withOverlay(view: WebViewHandle, tile: HTMLElement, open: () => Promise<void>) {
+  const shot = await view.capture({ format: "jpeg", scale: 1 });
+  const img = Object.assign(document.createElement("img"), { src: URL.createObjectURL(shot) });
+  img.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+  tile.append(img);
+  await view.setVisible(false);
+  try {
+    await open(); // the menu / dialog, drawn over the image
+  } finally {
+    await view.setVisible(true);
+    img.remove();
+    URL.revokeObjectURL(img.src);
+  }
+}`}
+      </Code>
+      <h4 id="desktop-web-views-features">Zoom, find, DevTools, context menu, print, clipboard</h4>
+      <ul>
+        <li>
+          <strong>Zoom.</strong> <code>setZoom(factor)</code> (0.25 to 5; 1 is 100%) and{" "}
+          <code>getZoom()</code>.
+        </li>
+        <li>
+          <strong>Find.</strong> <code>find(text, {`{ forward, matchCase }`})</code>{" "}
+          highlights matches; calling it again with the same text moves to the next match (forward
+          by default). Each step fires <code>find-result</code>{" "}
+          <code>{`{ matches, activeMatch }`}</code> (1-based, 0 for none) for a "2 of 7" label.{" "}
+          <code>stopFind()</code> clears it.
+        </li>
+        <li>
+          <strong>DevTools.</strong> <code>openDevTools()</code>{" "}
+          opens the engine&apos;s inspector for the view, only where the app&apos;s own DevTools are
+          on: <code>denext desktop dev</code>, or{" "}
+          <code>desktop.inspectable: true</code>. Elsewhere it rejects <code>not_allowed</code>{" "}
+          (denext checks, and the runtime refuses too).
+        </li>
+        <li>
+          <strong>Context menu.</strong> <code>contextMenu: "native"</code>{" "}
+          (default) shows the engine&apos;s own menu; <code>"app"</code>{" "}
+          suppresses it so the page can draw its own. Either way <code>context-menu</code>{" "}
+          fires with{" "}
+          <code>{`{ x, y, linkUrl?, imageUrl?, selectionText?, isEditable, mediaType? }`}</code>
+          {" "}
+          (<code>x</code> / <code>y</code>{" "}
+          in CSS pixels from the view&apos;s top-left). A page-drawn menu is HTML, so it sits under
+          the view: show it with the snapshot pattern, or as a native menu (<code>
+            showContextMenu
+          </code>{" "}
+          from <code>denext/mobile</code>).
+        </li>
+        <li>
+          <strong>Print.</strong> <code>print()</code>{" "}
+          opens the OS print dialog for the view&apos;s page.
+        </li>
+        <li>
+          <strong>Clipboard.</strong> With{" "}
+          <code>{`permissions: { prompts, clipboardRead, clipboardWrite }`}</code>{" "}
+          the site may write the clipboard on a user gesture (<code>clipboardWrite</code>, default
+          {" "}
+          <code>true</code>) and read it only with <code>clipboardRead: true</code> (default{" "}
+          <code>false</code>); <code>prompts</code> is the string form&apos;s <code>"deny"</code> /
+          {" "}
+          <code>"ask"</code>.
+        </li>
+      </ul>
+      <h4 id="desktop-web-views-keys">Keys and focus</h4>
+      <ul>
+        <li>
+          <strong>Menu accelerators come first.</strong>{" "}
+          While a view has the keyboard, a key that matches an accelerator of the app&apos;s menu
+          (the application menu, the window&apos;s menu, the Window menu&apos;s items such as
+          Cmd/Ctrl+W or Cmd/Ctrl+N) goes to the menu before the view&apos;s page, as in a browser:
+          the item fires and the page never sees the key. <code>webViewCapabilities()</code>{" "}
+          reports it as <code>menuAccelerators</code>; where it is <code>false</code>{" "}
+          the view&apos;s page gets those keys.
+        </li>
+        <li>
+          <strong>
+            <code>forwardKeys</code>
+          </strong>{" "}
+          — accelerators the view hands back to the app instead of its page (<code>
+            forwardKeys: ["CmdOrCtrl+1", "Meta+Shift+L"]
+          </code>, the syntax <code>registerShortcut</code> takes; at most 64), each arriving as
+          {" "}
+          <code>keydown</code> with <code>forwarded: true</code>. <code>setForwardKeys(keys)</code>
+          {" "}
+          replaces the list (<code>[]</code>{" "}
+          forwards none). Menu accelerators still win over them. Capability{" "}
+          <code>forwardKeys</code>; without it the option is ignored and <code>setForwardKeys</code>
+          {" "}
+          rejects <code>unsupported</code>.
+        </li>
+        <li>
+          <strong>Unhandled keys.</strong> Where the engine can tell (<code>unhandledKeys</code>
+          {" "}
+          — CEF and WKWebView can; WebView2 cannot), a keydown the view&apos;s page did not handle
+          (not prevented, not typed into a field) arrives after the page had it, as{" "}
+          <code>keydown</code> with <code>forwarded: false</code>{" "}
+          — the place for the app&apos;s own shortcuts that should work inside the view too. The
+          {" "}
+          <code>key</code> / <code>code</code> values and the modifier flags are the DOM{" "}
+          <code>KeyboardEvent</code>&apos;s.
+        </li>
+        <li>
+          <strong>Focus before the click.</strong>{" "}
+          A mouse-down in a view that doesn&apos;t have the keyboard fires <code>focus-change</code>
+          {" "}
+          <code>{`{ focused: true }`}</code>{" "}
+          before the click reaches the view&apos;s page, and the click still arrives (no lost first
+          click), so the app can move its own focus ring first. Leaving the view (a click on the
+          page, Tab past its end) fires <code>{`{ focused: false }`}</code>.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`const view = await createWebView({
+  url: "https://docs.example",
+  bounds: { x: 0, y: 0, width: 0, height: 0 },
+  forwardKeys: ["CmdOrCtrl+1", "CmdOrCtrl+2"], // tab switching stays the app's
+});
+view.on("keydown", (e) => {
+  if (e.forwarded) switchToTab(Number(e.key));
+  else if (e.key === "Escape") closeTile(); // unhandled by the view's page
+});
+view.on("focus-change", ({ focused }) => tile.classList.toggle("focused", focused));`}
+      </Code>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    webViews: {
+      limit: 4, // per window (default 8, at most 32)
+      allowedOrigins: ["https://docs.example", "https://status.example"],
+    },
+  },
+};`}
+      </Code>
+      <Code lang="ts">
+        {`// desktop.ts: a view the backend owns
+const app = await runDesktop({ /* … */ });
+const view = await app.windows.get("main")!.createWebView({
+  url: "https://status.example",
+  bounds: { x: 0, y: 48, width: 400, height: 300 },
+});
+view.on("load", ({ state }) => console.log("status page", state));
+const png = await view.capture(); // a Blob`}
       </Code>
 
       <h2 id="desktop-notifications">Notifications and menus</h2>
@@ -3562,6 +4174,39 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           groups only for these two calls; the OS does not group them.
         </li>
       </ul>
+      <p id="desktop-notification-click">
+        The backend hears the clicks too. <code>runDesktop({"{ onNotificationClick }"})</code>,{" "}
+        <code>app.onNotificationClick(fn)</code> on what <code>runDesktop()</code>{" "}
+        resolves with, and an extension&apos;s <code>host.onNotificationClick(fn)</code>{" "}
+        (each but the first returns the unsubscribe) are called for every click the runtime reports
+        on one of the app&apos;s notifications, whatever posted it:{" "}
+        <code>scheduleNotification</code> or a page&apos;s <code>new Notification(…)</code>{" "}
+        (the page still gets those clicks as above) and, which nothing else hears, a notification
+        the backend posted itself through <code>Deno.desktop.notifications</code>. Each gets{" "}
+        <code>{"{ tag, action, data, launch }"}</code>: the notification&apos;s tag, the action
+        button (<code>null</code> for the notification itself), the <code>data</code>{" "}
+        it was posted with and whether it is the click that launched the app. The launch click
+        reaches every hook, on a microtask after it subscribes, however late, ahead of any later
+        click. A throw or a rejection is logged. As with the page&apos;s clicks, treat{" "}
+        <code>data</code>{" "}
+        as untrusted. Without denext&apos;s pinned runtime (and in a sidecar&apos;s child) none of
+        these is ever called.
+      </p>
+      <Code lang="ts">
+        {`const app = await runDesktop({
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  onNotificationClick: ({ tag, action, launch }) => {
+    if (tag === "sync-failed" && action === "retry") void retrySync();
+  },
+});
+// Elsewhere in the backend, a notification only it knows about:
+await Deno.desktop.notifications.schedule({
+  title: "Sync failed",
+  at: Date.now(),
+  tag: "sync-failed",
+  actions: [{ action: "retry", title: "Retry" }],
+});`}
+      </Code>
       <h3 id="desktop-web-notification">The web Notification API</h3>
       <p>
         A webview has no working <code>Notification</code>{" "}
@@ -3722,10 +4367,14 @@ await bounce({ critical: true }); // until the app is focused`}
         <li>
           <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
           <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
-          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
-          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
-          only while it has a full window open, which also brings it to the front. Windows and Linux
-          have no policy: there <code>"regular"</code>{" "}
+          <code>app.setActivationPolicy</code>): a tray app is <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar); for a Dock icon only while its window is open, use{" "}
+          <code>desktop.app.dock: "while-window-open"</code>, never a switch to{" "}
+          <code>"regular"</code> and back (see{" "}
+          <a href="#desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</a>).
+          Switching to <code>"regular"</code>{" "}
+          also brings the app to the front. Windows and Linux have no policy: there{" "}
+          <code>"regular"</code>{" "}
           shows the main window&apos;s taskbar entry and the others hide it, as{" "}
           <code>"accessory"</code> hides it at launch. <code>desktop.app.activationPolicy</code> (or
           {" "}
@@ -3740,6 +4389,115 @@ await bounce({ critical: true }); // until the app is focused`}
           hiding the Dock icon once the backend starts.
         </li>
       </ul>
+      <h3 id="desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</h3>
+      <p>
+        On macOS an app that is installed under <code>/Applications</code>{" "}
+        (at any depth, nested helper apps included) and not kept in the Dock gets a tile in the
+        Dock&apos;s recent-apps section (with &ldquo;Show suggested and recent apps in Dock&rdquo;
+        on) whenever its running Dock tile goes away: when it quits, and also when a{" "}
+        <code>"regular"</code> app switches back to{" "}
+        <code>"accessory"</code>. A tray app that becomes regular while its window is open therefore
+        lands in the recents, and comes back there after the user removes it; macOS has no opt-out.
+        An app that is accessory from launch to quit never has a running tile, so it never appears
+        there. The Dock records only apps under <code>/Applications</code>: one run from{" "}
+        <code>~/Applications</code>, its Application Support folder or anywhere else gets the
+        running tile and Cmd-Tab while regular and leaves no recents entry. Apple documents none of
+        this, so a tray app that may be installed under <code>/Applications</code>{" "}
+        never turns regular itself.
+      </p>
+      <p>
+        For a Dock icon while a window is open, <code>desktop.app.dock: "while-window-open"</code>
+        {" "}
+        gives a tray app a Dock icon and a Cmd-Tab entry exactly while one of its windows is showing
+        (not the tray panel, not an overlay; a minimized window counts), and never a recents tile:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: {
+      name: "Fleet",
+      identifier: "dev.example.fleet",
+      keepAlive: true,
+      dock: "while-window-open", // accessory, with a Dock icon while a window shows
+    },
+    tray: { icon: "/tray.png", menu: [{ id: "open", label: "Open Fleet" }] },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          The app itself stays <code>"accessory"</code> from launch to quit.{" "}
+          <code>denext desktop package</code> builds a small helper app into{" "}
+          <code>Contents/Helpers/&lt;Name&gt;.app</code>{" "}
+          (compiled with clang from the Xcode Command Line Tools for the app&apos;s architectures,
+          with the app&apos;s name, icon and version, and its own identifier,{" "}
+          <code>&lt;identifier&gt;.dock</code>), signed with the app&apos;s identity and notarized
+          with it. While a window shows, the app copies it into its data folder (
+          <code>
+            ~/Library/Application Support/&lt;identifier&gt;/dock-helper/&lt;Name&gt;.app
+          </code>, again whenever the bundled copy&apos;s files differ) and opens it through
+          LaunchServices: a regular app with no window of its own, which holds the Dock icon. The
+          copy is outside{" "}
+          <code>/Applications</code>, so the Dock records no recents tile for it either. Its baked
+          grants are the write of that folder and the run of <code>/usr/bin/open</code>{" "}
+          (the copy itself is never a run grant: Deno denies writes to a program it may run and to
+          the folders above it, so the app could not keep the copy up to date).
+        </li>
+        <li>
+          Clicking the helper&apos;s Dock icon, or switching to it with Cmd-Tab, brings the
+          app&apos;s key window to the front (un-minimized). The helper&apos;s Quit (its Dock menu,
+          Cmd-Q while it is in front, or a <code>quit</code>{" "}
+          Apple event) never quits the app: it closes the app&apos;s windows as their close buttons
+          would (a page that guards its close is asked; the tray panel and overlays stay), so the
+          icon goes and a tray app keeps running. An app that is not kept alive quits with its last
+          window, as it always does. Only the app&apos;s own Quit (its tray menu,{" "}
+          <code>quitApp()</code>) and the end of the OS session quit it; <code>onBeforeQuit</code>
+          {" "}
+          guards never see the Dock&apos;s Quit. Closing the last window takes the icon away;
+          quitting the app ends the helper with it. Launched on its own (Spotlight, a tile the user
+          kept in the Dock) the helper opens the app instead, which reopens its window as a Dock
+          click would.
+        </li>
+        <li>
+          The app and the helper talk over a loopback connection: before opening the helper the app
+          writes the port, a fresh token and its process id to a file beside the copy (the folder is
+          the user&apos;s own, 0700), and takes only the connection that presents that token. The
+          helper leaves when the connection closes, so it never outlives the app. The helper&apos;s
+          windows list in the Dock menu and App Exposé is empty, and the menu bar stays the
+          accessory app&apos;s (none): handle Cmd+W in the page (a <code>keydown</code> with{" "}
+          <code>metaKey</code> calling <code>closeWindow()</code>).
+        </li>
+        <li>
+          Where the helper cannot run (a <code>denext desktop run</code> / <code>dev</code>{" "}
+          build has none; the copy or the launch failed; it kept crashing) the app warns once and
+          keeps the accessory behaviour: its windows, with no Dock icon. It needs{" "}
+          <code>desktop.app.identifier</code>, and cannot be combined with{" "}
+          <code>desktop.permissions: "strict"</code>{" "}
+          (the app reads the helper from its own bundle) or{" "}
+          <code>activationPolicy: "regular"</code>. On Windows and Linux, where a window&apos;s
+          taskbar entry already lasts as long as the window, the value means <code>true</code>.
+        </li>
+      </ul>
+      <p>
+        With or without the helper, keep a tray app accessory for good:{" "}
+        <code>desktop.app.activationPolicy: "accessory"</code> (or <code>dock: false</code> /{" "}
+        <code>"while-window-open"</code>) and no{" "}
+        <code>setActivationPolicy("regular")</code>. Bring its window up with the window ref&apos;s
+        {" "}
+        <code>focus()</code> (<code>app.windows.byKey(key)?.focus()</code>, after{" "}
+        <code>windows.open</code> for a new one) in <code>desktop.ts</code>, or{" "}
+        <code>focusWindow()</code> from <code>denext/desktop/window</code>{" "}
+        in a page: on macOS it activates the app ignoring other apps (the cooperative activation of
+        recent macOS versions often leaves an accessory app&apos;s window behind the active app),
+        makes the window key and orders it in front, without changing the activation policy. Where
+        the runtime&apos;s focus only activates the app, the window still comes up and takes the
+        keyboard when macOS grants the activation. An accessory app has no menu bar: the editing
+        shortcuts (Cmd+C, Cmd+V, Cmd+X, Cmd+A, Cmd+Z) and Cmd+Q still work through the host&apos;s
+        built-in menu while the app sets none of its own, but nothing closes the window on Cmd+W, so
+        handle it in the page (a <code>keydown</code> with <code>metaKey</code> calling{" "}
+        <code>closeWindow()</code>).
+      </p>
       <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
       <p>
         A tray-first app (a menu-bar app) wants its icon before any page loads and never removed by
@@ -3818,9 +4576,11 @@ tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Cont
         <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
         to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
         {" "}
-        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
-        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
-        no <code>onMenuItem</code> in{" "}
+        <code>onClosed()</code>) and their <code>focus()</code> to bring one to the front, and{" "}
+        <code>desktop.app.dock: "while-window-open"</code>{" "}
+        for a Dock icon while a window shows (<a href="#desktop-tray-dock-recents">above</a>).
+        denext warns once when a menu item is chosen with no window showing and no{" "}
+        <code>onMenuItem</code> in{" "}
         <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
         app gets no icon, its main window is shown instead, and it is no longer kept alive by the
         tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
@@ -4160,7 +4920,10 @@ desktop: {
         declared <code>events</code>, and both keep an event until the page subscribes, like{" "}
         <code>runDesktop</code>&apos;s <code>emit(cap, event, data)</code>. Pass{" "}
         <code>{'{ window: "panel" }'}</code>{" "}
-        (a window id) as a third argument to reach one window instead of every one.
+        (a window id) as a third argument to reach one window instead of every one, and{" "}
+        <code>{"{ retain: false }"}</code>{" "}
+        for a one-shot action that a page loaded later must not receive
+        (<a href="#desktop-event-retain">above</a>).
       </p>
       <Code lang="ts">
         {`// desktop/extensions/jobs.ts
@@ -4461,7 +5224,38 @@ export default defineDesktopExtension({
           <code>external</code>) travel as one archive beside it and are unpacked into the
           app&apos;s cache folder on the sidecar&apos;s first start, once per version, where the
           backend&apos;s own <code>createRequire(import.meta.url)</code> finds them too.{" "}
-          <code>node:sea</code> answers <code>isSea() === false</code>.
+          <code>node:sea</code> answers <code>isSea() === false</code>. Packages listed in{" "}
+          <code>exclude</code> (names, or globs whose <code>*</code> stays within one name segment:
+          {" "}
+          <code>"@anthropic-ai/claude-code-*"</code>) are neither inlined nor copied, and need not
+          be installed: a dependency the app must not ship, such as an SDK&apos;s per-platform
+          binary package. At run time <code>require()</code> or <code>import()</code> of one throws
+          {" "}
+          <code>MODULE_NOT_FOUND</code> (what an optional dependency&apos;s{" "}
+          <code>try {"{ require(…) }"}</code>{" "}
+          expects), and a static import binds a stand-in that throws the same error only when it is
+          used, so the backend starts and fails only on the path that needs the package. A copied
+          package&apos;s dependency that matches stays behind too. A name both in{" "}
+          <code>external</code> and <code>exclude</code> is a config error.
+          <br />
+          Each architecture a package script builds gets its own bundle (<code>--arch both</code>
+          {" "}
+          on Linux and Windows, each half of a macOS{" "}
+          <code>universal</code>): it keeps only that architecture&apos;s{" "}
+          <code>prebuilds/&lt;platform&gt;-&lt;arch&gt;/</code> (node-gyp-build&apos;s{" "}
+          <code>darwin-x64+arm64</code> for either) and the per-platform packages whose npm{" "}
+          <code>os</code> and <code>cpu</code>{" "}
+          allow it (<code>@scope/pkg-darwin-arm64</code>), and warns about a copied{" "}
+          <code>.node</code>{" "}
+          built for another architecture (an addon compiled on the build machine into{" "}
+          <code>build/Release</code>) or a per-platform optional dependency npm did not install. For
+          those, <code>archDirs</code> names a <code>node_modules</code>{" "}
+          built for a target, whose packages are copied in place of{" "}
+          <code>nodeModules</code>&apos; ones: keys <code>"&lt;os&gt;-&lt;arch&gt;"</code>{" "}
+          (<code>"darwin-x86_64"</code>, <code>"linux-arm64"</code>) or{" "}
+          <code>"&lt;arch&gt;"</code>, relative to the project. <code>denext desktop run</code> and
+          {" "}
+          <code>dev</code> keep every architecture&apos;s.
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
@@ -4507,7 +5301,18 @@ export default defineDesktopExtension({
           loads or runs in turn. The program gets the sidecar&apos;s variables, and one JSON line on
           stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
-          as the app runs, so a program that exits on end-of-file never outlives it.
+          as the app runs, so a program that exits on end-of-file never outlives it. With{" "}
+          <code>run: {"{ exec, bootstrapFd: 3 }"}</code>{" "}
+          (3 to 9) the line goes to that file descriptor instead, a pipe written once and then
+          closed, as an Electron app hands its backend{" "}
+          <code>--bootstrap-fd 3</code>; stdin then carries nothing but still stays open.{" "}
+          <code>Deno.Command</code>{" "}
+          passes no descriptor beyond stdin, stdout and stderr, so such a program is spawned through
+          {" "}
+          <code>node:child_process</code> (its <code>stdio</code> array), under the same{" "}
+          <code>--allow-run</code>{" "}
+          grant. On Windows the pipe is passed the way Node passes extra stdio, which a Node or
+          libuv program reads as that descriptor; any other program there should read stdin.
         </li>
       </ul>
       <Code lang="ts">
@@ -4520,6 +5325,7 @@ desktop: {
       module: "apps/server/dist/main.mjs",
       nodeModules: "apps/server/node_modules",
       external: ["playwright-core"], // loaded with require() at run time, or reads its own files
+      exclude: ["@anthropic-ai/claude-code-*"], // never shipped: not bundled, not copied
     },
     args: ["--port", "{port}"],
     env: { MODE: "desktop" },
@@ -4544,6 +5350,64 @@ desktop: {
         {" "}
         holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
       </p>
+      <p>
+        The archive of copied packages is data to <code>codesign</code>, <code>notarytool</code> and
+        {" "}
+        <code>signtool</code>: nothing inside it is signed or checked when the app is. So the
+        package scripts sign the native code in it before it is archived, with the credentials that
+        sign the app. For a macOS package with{" "}
+        <code>DENEXT_CODESIGN_IDENTITY</code>, every Mach-O file in the copied packages (found by
+        its header, whatever its name: <code>pty.node</code>, <code>spawn-helper</code>, a prebuilt
+        {" "}
+        <code>.dylib</code>; a universal file in every slice) and every code bundle there is signed
+        innermost first with that identity, the Hardened Runtime and a secure timestamp, keeping the
+        entitlements it already carries, then verified. The unpacked addons then load as the app
+        team&apos;s own code, even when <code>DENEXT_ENTITLEMENTS</code> turns{" "}
+        <code>disable-library-validation</code>{" "}
+        off. Without an identity, code that carries no signature at all is signed ad-hoc (Apple
+        silicon runs no unsigned code) and a vendor&apos;s signature is kept. For a Windows package
+        with <code>DENEXT_WINDOWS_CERT</code> (or{" "}
+        <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>) and no{" "}
+        <code>--no-sign</code>, every PE file there (<code>.node</code>, <code>.dll</code>,{" "}
+        <code>.exe</code>) is Authenticode-signed like the bundle&apos;s own.{" "}
+        <code>denext desktop run</code> and <code>dev</code>{" "}
+        leave them as installed, and each architecture&apos;s bundle is signed on its own. The
+        packages copied are the ones installed in <code>nodeModules</code> (or a target&apos;s{" "}
+        <code>archDirs</code>): give every architecture its addons as prebuilds or through{" "}
+        <code>archDirs</code>.
+      </p>
+      <Code lang="ts">
+        {`// node-pty compiled on an arm64 Mac, and again for x86_64 into vendor/x64
+sidecars: [{
+  name: "pty",
+  run: {
+    module: "server/main.mjs",
+    nodeModules: "server/node_modules",
+    archDirs: { "darwin-x86_64": "vendor/x64/node_modules" },
+  },
+  permissions: { ffi: ["*"] },
+}],
+
+// a program that reads its bootstrap from fd 3 (Electron's --bootstrap-fd 3)
+sidecars: [{
+  name: "server",
+  run: { exec: "./bin/server", bootstrapFd: 3 },
+  args: ["--bootstrap-fd", "3", "--port", "{port}"],
+  port: "auto",
+  secrets: { TOKEN: "$random" },
+  bootstrap: { mode: "desktop" },
+}]
+
+// in the program (Node): one JSON line, then end of file
+import { readFileSync } from "node:fs";
+const { port, bootstrap, secrets } = JSON.parse(readFileSync(3, "utf8"));
+
+// or, without bootstrapFd, the first line of stdin (keep reading it: its end is the app's)
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+const hello = JSON.parse(await new Promise((r) => lines.once("line", r)));
+lines.on("close", () => process.exit(0));`}
+      </Code>
       <p>
         An <code>"auto"</code>{" "}
         port is picked by binding a free loopback port and releasing it, so another process can take
@@ -5071,6 +5935,27 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
         entry logs that the origin is not in effect). Nothing breaks either way: the security gates
         detect which runtime they are under.
       </Callout>
+      <h3 id="desktop-app-origin-iframes">A local server in an iframe</h3>
+      <p>
+        The app origin is a secure context on every engine (the custom scheme is registered as
+        secure, with CORS and fetch, on CEF, WebView2 and WebKitGTK; WKWebView treats a handled
+        scheme as secure), so a frame from <code>http://</code>{" "}
+        is held to the engine&apos;s mixed-content rule, and the window&apos;s navigation guard
+        never looks at frames, only the top-level page. <code>http://localhost</code> and{" "}
+        <code>http://127.0.0.1</code>{" "}
+        are trustworthy origins, which Chromium (CEF, WebView2) loads in a frame;{" "}
+        <code>http://*.localhost</code>{" "}
+        is trustworthy on Chromium, and on WebKit (WKWebView, WebKitGTK) only on recent versions;
+        any other plain-<code>http</code> host (
+        <code>http://app.test</code>) is blocked as mixed content on every engine. WebKit has also
+        upgraded <code>http://localhost</code> requests from a secure page to{" "}
+        <code>https</code>, so test such a frame on WKWebView and WebKitGTK. List the frame&apos;s
+        origins in <code>csp.frameSrc</code>, serve anything but localhost over{" "}
+        <code>https</code>, or reach it through the app&apos;s own origin (
+        <a href="/docs/spa">
+          <code>spa.proxy</code>
+        </a>).
+      </p>
 
       <h2 id="desktop-preload">A preload script</h2>
       <p>

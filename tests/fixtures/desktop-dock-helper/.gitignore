@@ -1,0 +1,6 @@
+.denext/
+.deno-desktop/
+out/
+dist/
+scripts/
+deno.lock

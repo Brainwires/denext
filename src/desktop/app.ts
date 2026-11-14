@@ -46,7 +46,15 @@
 
 import { bytesToBase64 } from "../mobile/base64.ts";
 import { desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
-import { onAppAction } from "./app-actions.ts";
+import { type AppMenuClickInfo, onAppAction } from "./app-actions.ts";
+import type {
+  DesktopMenuAnchor,
+  DesktopMenuItemSpec,
+  DesktopMenuItemState,
+  DesktopMenuItemType,
+  DesktopMenuUpdate,
+  DesktopWindowMenuAppItem,
+} from "./menu-config.ts";
 import { menuWire } from "./menu-wire.ts";
 import { pullQueue } from "./pull.ts";
 import type { TrayEventType, TrayMouseDetail } from "./tray-events.ts";
@@ -57,6 +65,15 @@ export {
   isDesktopBridgeError,
 } from "./bridge-client.ts";
 export type { TrayEventType, TrayModifiers, TrayMouseDetail } from "./tray-events.ts";
+export type { AppMenuClickInfo, AppMenuKeyWindow } from "./app-actions.ts";
+export type {
+  DesktopMenuAnchor,
+  DesktopMenuItemSpec,
+  DesktopMenuItemState,
+  DesktopMenuItemType,
+  DesktopMenuUpdate,
+  DesktopWindowMenuAppItem,
+};
 
 /** A standard menu item the OS draws and handles itself. */
 export type AppMenuRole =
@@ -150,6 +167,16 @@ export interface AppCapabilities {
   readonly tooltips: boolean;
   /** Destructive menu items are drawn as such (red; runtime 2.9.7-denext.20). */
   readonly destructive: boolean;
+  /**
+   * {@linkcode setMenu}, {@linkcode setMenuItemState} and {@linkcode setWindowMenuAppItems} work
+   * (the runtime sets application menus; each window gets its own bar with its state).
+   */
+  readonly customMenus: boolean;
+  /**
+   * The runtime has an app-level menu (`Deno.desktop.setApplicationMenu`): on macOS the custom menus'
+   * app-wide state shows while no window with a menu is key (with every window closed, say).
+   */
+  readonly appLevelMenu: boolean;
   /** {@linkcode createTray} works. */
   readonly tray: boolean;
   /** Why {@linkcode createTray} does not work here (`null` when it does): the runtime's reason. */
@@ -307,6 +334,8 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     icons: flag("icons"),
     tooltips: flag("tooltips"),
     destructive: flag("destructive"),
+    customMenus: flag("customMenus"),
+    appLevelMenu: flag("appLevelMenu"),
     tray: flag("tray"),
     trayReason: typeof reason === "string" && reason !== ""
       ? reason
@@ -379,15 +408,79 @@ export async function setAppMenu(menu: readonly AppMenuItem[]): Promise<void> {
 
 /**
  * Call `handler` with the `id` of each application-menu item the user chooses (by click or
- * accelerator).
+ * accelerator): the page's own items ({@linkcode setAppMenu}), the custom menus' items
+ * (`desktop.menu.menus`, {@linkcode setMenu}) and this window's own Window-menu items
+ * ({@linkcode setWindowMenuAppItems}; only this window's page hears those). `info` says which
+ * (`kind`), the key window when it was chosen, a custom item's menu and a checkbox's or radio
+ * item's state after the click (the menu shows it already).
  *
- * @param handler Called with the item's id.
+ * @param handler Called with the item's id and the click's context.
  * @returns A function that unsubscribes.
  */
-export function onAppMenuItem(handler: (id: string) => void): () => void {
+export function onAppMenuItem(handler: (id: string, info: AppMenuClickInfo) => void): () => void {
   return onAppAction((action) => {
-    if (action.source === "menu") handler(action.id);
+    if (action.source !== "menu") return;
+    const { source: _source, id, ...info } = action;
+    handler(id, info);
   });
+}
+
+/**
+ * Replace one of the app's own top-level menus (`desktop.menu.menus`), add one (`menu.label`
+ * required then), or remove one with `null`. Unlike {@linkcode setAppMenu}, the managed menus stay
+ * (on macOS the app menu, Edit and Window) and the menu goes after its `after` anchor (default
+ * `"view"`). Items are `{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }`
+ * (`type` `"checkbox"` toggles on a click, `"radio"` checks itself and unchecks the rest of its
+ * `group`), submenus `{ label, items }`, separators `{ type: "separator" }` and roles `{ role }`.
+ * Clicks reach {@linkcode onAppMenuItem} (every window's page) and the backend's `onAppMenuItem`.
+ *
+ * @param menuId The menu's id.
+ * @param menu Its entries (and optionally label and place), or `null` to remove it.
+ * @returns A promise that settles once the menus are set. It rejects `validation` for a bad entry
+ *   or an item id another menu uses, `unsupported` where the runtime sets no application menu.
+ */
+export async function setMenu(menuId: string, menu: DesktopMenuUpdate | null): Promise<void> {
+  await desktopRpc("app", "setMenu", { menuId, menu });
+}
+
+/**
+ * Change a custom menu item's `checked`, `enabled` or `label`: app-wide, or with `{ windowId }`
+ * ({@linkcode currentWindowId} in `denext/desktop/window` for this page's) for that window only,
+ * shown while it is key (on Windows and Linux in its own menu bar) over the app-wide state.
+ * Checking a radio item unchecks the rest of its group at the same level.
+ *
+ * @param itemId The item's id.
+ * @param state What to change.
+ * @param options `windowId`: the window the state is for (default app-wide).
+ * @returns A promise that settles once the menus show it. It rejects `validation` for an unknown
+ *   item, `not_found` for a window that is not open.
+ */
+export async function setMenuItemState(
+  itemId: string,
+  state: DesktopMenuItemState,
+  options: { readonly windowId?: string } = {},
+): Promise<void> {
+  await desktopRpc("app", "setMenuItemState", {
+    itemId,
+    state,
+    ...(options.windowId !== undefined ? { windowId: options.windowId } : {}),
+  });
+}
+
+/**
+ * This window's own items in the Window menu, below the window list after a separator, shown while
+ * this window is key: one per document with a checkmark on the active one, Cascade / Tile with
+ * `enabled` following the documents. Each call replaces the list; `null` or `[]` clears it, and it
+ * goes when the window closes. Clicks reach this page's {@linkcode onAppMenuItem} (`kind:
+ * "windowMenu"`) and the backend's `onAppMenuItem`.
+ *
+ * @param items `{ id, label, checked?, enabled?, accelerator? }` or `{ type: "separator" }`.
+ * @returns A promise that settles once the menu shows them.
+ */
+export async function setWindowMenuAppItems(
+  items: readonly DesktopWindowMenuAppItem[] | null,
+): Promise<void> {
+  await desktopRpc("app", "setWindowMenuAppItems", { items });
 }
 
 /**
@@ -434,8 +527,12 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
 /**
  * Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `"regular"` (a
  * Dock icon and a menu bar), `"accessory"` (neither: a menu-bar app or a desktop companion) or
- * `"prohibited"`. Switching to regular also brings the app to the front, so a tray app can show a
- * Dock icon only while it has a full window open. `desktop.app.activationPolicy` (or
+ * `"prohibited"`. Switching to regular also brings the app to the front. A tray app should stay
+ * accessory for good and bring its windows up with `focusWindow()` / a window ref's `focus()`,
+ * which activate it without changing the policy: on macOS an app installed under /Applications
+ * that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on
+ * quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it
+ * gets none. `desktop.app.activationPolicy` (or
  * `desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6
  * (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
  * `"accessory"` show / hide the Dock icon as {@linkcode setDockVisible} does.
@@ -448,11 +545,9 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
  * @example
  * ```ts
  * import { setActivationPolicy } from "denext/desktop/app";
- * import { openWindow } from "denext/desktop/window";
  *
- * await setActivationPolicy("regular"); // a Dock icon while the window is open
- * const win = await openWindow({ url: "/library" });
- * win.onClosed(() => void setActivationPolicy("accessory"));
+ * // The user turned "Show in Dock" on in the settings: a regular app from now on.
+ * await setActivationPolicy("regular");
  * ```
  */
 export async function setActivationPolicy(policy: ActivationPolicy): Promise<boolean> {

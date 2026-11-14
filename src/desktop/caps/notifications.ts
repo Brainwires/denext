@@ -62,6 +62,7 @@ import {
 } from "../../mobile/notification-trigger.ts";
 import { platformFacts } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
+import { subscribeNotificationResponses } from "../notification-clicks.ts";
 
 /** How many occurrences of a repeating notification are scheduled ahead. */
 export const REPEAT_HORIZON = 16;
@@ -799,13 +800,8 @@ function install(
   if (s.queue && s.webQueue) return { queue: s.queue, webQueue: s.webQueue };
   const queue = s.queue = createPullQueue<NotificationTapWire>(() => ctx.emit("tap", null));
   const webQueue = s.webQueue = createPullQueue<WebTapWire>(() => ctx.emit("webtap", null));
-  const a = s.api();
-  const launched = a?.launchNotificationResponses;
-  for (const r of Array.isArray(launched) ? launched : []) route(s, r, true);
-  a?.addEventListener?.(
-    "notificationresponse",
-    (e) => route(s, (e as CustomEvent).detail ?? {}, false),
-  );
+  // Through the shared dispatcher: the backend's notification-click hooks hear the same clicks.
+  subscribeNotificationResponses(s.api(), "page", (r, launch) => route(s, r, launch));
   return { queue, webQueue };
 }
 
@@ -1016,5 +1012,12 @@ export function notificationsCapability(
     name: "notifications",
     methods: { ...schedulingMethods(s), ...deliveryMethods(s), ...webMethods(s) },
     events: ["tap", "webtap"],
+    // A click the last page never took was for that page: a page that loads now does not act on
+    // it again. The click that launched the app is what launched it, and waits for a page.
+    // A web notification's click belonged to the page that showed it.
+    onPageLoad: () => {
+      s.queue?.retainOnly((tap) => tap.launch);
+      s.webQueue?.clear();
+    },
   };
 }

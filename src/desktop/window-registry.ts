@@ -50,15 +50,26 @@ import {
 import type { WindowController } from "./caps/window.ts";
 import { isAppQuitting, WINDOW_EVENTS } from "./caps/window.ts";
 import { isAppPath } from "./tray-config.ts";
+import type { DesktopEventAppendOptions } from "./bridge-events.ts";
+
+/** A one-shot event: for the pages live now, never replayed to a page that loads later. */
+const LIVE_ONLY: DesktopEventAppendOptions = { retain: false };
 import type { DesktopWindowButtonPosition, DesktopWindowLevel } from "../server/config.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "./launch-events.ts";
 import {
+  applySizeLimits,
   applyTitleBarStyle,
+  applyTitleOptions,
   applyWindowButtonPosition,
   applyWindowOverlaySettings,
   type DesktopTitleBarStyle,
+  type DesktopTitleVisibility,
+  type DesktopToolbarStyle,
   type DesktopWindowSettings,
+  type DesktopWindowSize,
   TITLE_BARS,
+  titleOptionsProblem,
+  titleOptionValuesProblem,
   WINDOW_LEVELS,
   windowButtonPositionOf,
   windowButtonPositionProblem,
@@ -123,6 +134,10 @@ export interface RegisteredWindow {
   readonly capabilities: ReadonlySet<string> | null;
   /** Whether its documents can read the token (the runtime has bindings). */
   readonly bound: boolean;
+  /** It was created as a layer-shell overlay (absent: not). */
+  readonly overlay?: boolean;
+  /** It was opened frameless (absent: not): no menu bar of its own on Windows and Linux. */
+  readonly frameless?: boolean;
   /** The app-chosen key it was opened with, if any. */
   readonly key?: string;
   /** The app path it shows (as opened, or last navigated to through the windows API). */
@@ -166,8 +181,14 @@ export interface WindowRegistryOptions {
   readonly lifecycleTimeouts?: { readonly quitMs?: number; readonly guardMs?: number };
   /** The URL a window loads for an app path (`/vm?id=1` → `app://localhost/vm?id=1`). */
   readonly appUrl: (path: string) => string;
-  /** Push an event to the pages (every window's, or `target`'s). */
-  readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
+  /** Push an event to the pages (every window's, or `target`'s; `retain: false`: live pages only). */
+  readonly emit: (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    options?: DesktopEventAppendOptions,
+  ) => void;
   /**
    * Make the `window` capability controller of a window (its `closed` hook is the registry's);
    * `overlay` when it was created as a layer-shell overlay.
@@ -196,6 +217,20 @@ export interface WindowRegistryOptions {
    * (`desktop.window.windowButtonPosition`).
    */
   readonly windowButtonPosition?: DesktopWindowButtonPosition;
+  /**
+   * The title visibility opened windows take unless their own `titleVisibility` says
+   * (`desktop.window.titleVisibility`).
+   */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /**
+   * The macOS toolbar style opened windows take unless their own `toolbarStyle` says
+   * (`desktop.window.toolbarStyle`).
+   */
+  readonly toolbarStyle?: DesktopToolbarStyle;
+  /** The smallest size opened windows take unless their own `minSize` says (`desktop.minSize`). */
+  readonly minSize?: DesktopWindowSize;
+  /** The largest size opened windows take unless their own `maxSize` says (`desktop.maxSize`). */
+  readonly maxSize?: DesktopWindowSize;
   /** A window's title changed (its page reported or set one): the menus' labels follow. */
   readonly onTitleChanged?: (id: string, title: string) => void;
 }
@@ -361,6 +396,14 @@ export interface OpenWindowSettings {
   readonly titleBar?: DesktopTitleBarStyle;
   /** The traffic lights' position (default the registry's); `null` keeps the OS's. */
   readonly windowButtonPosition?: DesktopWindowButtonPosition | null;
+  /** The title visibility (default the registry's, `desktop.window.titleVisibility`). */
+  readonly titleVisibility?: DesktopTitleVisibility;
+  /** The macOS toolbar style (default the registry's, `desktop.window.toolbarStyle`). */
+  readonly toolbarStyle?: DesktopToolbarStyle;
+  /** The smallest size (default the registry's, `desktop.minSize`). */
+  readonly minSize?: DesktopWindowSize;
+  /** The largest size (default the registry's, `desktop.maxSize`). */
+  readonly maxSize?: DesktopWindowSize;
 }
 
 /** `alwaysOnTop`: a boolean or a level. */
@@ -403,6 +446,7 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
   const keyProblem = a.key === undefined ? null : windowKeyProblem(a.key);
   if (keyProblem !== null) throw invalid(keyProblem);
   const restoreBounds = optBool(a, "restoreBounds");
+  const limits = sizeLimitSettings(a);
   return {
     url: a.url,
     ...(a.title !== undefined ? { title: a.title as string } : {}),
@@ -415,21 +459,117 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
     ...(a.key !== undefined ? { key: a.key as string } : {}),
     ...(restoreBounds !== undefined ? { restoreBounds } : {}),
     ...chrome,
+    ...limits,
   };
+}
+
+/** A window's `minSize` / `maxSize` option: `{ width, height }` in CSS pixels, checked and rounded. */
+function sizeLimitOf(value: unknown, key: string): DesktopWindowSize | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) {
+    throw invalid(`${key} must be { width, height }`);
+  }
+  const { width, height } = value as Record<string, unknown>;
+  const side = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 1 && n <= 10000;
+  if (!side(width) || !side(height)) {
+    throw invalid(`${key} must be { width, height }, each a number from 1 to 10000`);
+  }
+  return { width: Math.round(width as number), height: Math.round(height as number) };
+}
+
+/** Why `minSize` can't go with `maxSize` (larger on a side), or `null`. */
+function sizeLimitsProblem(
+  o: Pick<DesktopWindowSettings, "minSize" | "maxSize">,
+): string | null {
+  const { minSize: min, maxSize: max } = o;
+  return min && max && (min.width > max.width || min.height > max.height)
+    ? "minSize is larger than maxSize"
+    : null;
+}
+
+/** The size limits of a window to open, checked (its own `minSize` no larger than its `maxSize`). */
+function sizeLimitSettings(
+  a: Record<string, unknown>,
+): Pick<OpenWindowSettings, "minSize" | "maxSize"> {
+  const minSize = sizeLimitOf(a.minSize, "minSize");
+  const maxSize = sizeLimitOf(a.maxSize, "maxSize");
+  const limits = { ...(minSize ? { minSize } : {}), ...(maxSize ? { maxSize } : {}) };
+  const problem = sizeLimitsProblem(limits);
+  if (problem !== null) throw invalid(problem);
+  return limits;
+}
+
+/**
+ * A window's size limits as it will get them: each its own, else the registry's (`desktop.minSize`
+ * / `desktop.maxSize`, as the main window gets them), refused with `invalid` when the minimum ends
+ * up larger than the maximum. Checked before the window is created.
+ */
+function effectiveSizeLimits(
+  st: RegistryState,
+  settings: OpenWindowSettings,
+): Pick<DesktopWindowSettings, "minSize" | "maxSize"> {
+  const minSize = settings.minSize ?? st.options.minSize;
+  const maxSize = settings.maxSize ?? st.options.maxSize;
+  const limits = { ...(minSize ? { minSize } : {}), ...(maxSize ? { maxSize } : {}) };
+  const problem = sizeLimitsProblem(limits);
+  if (problem !== null) throw invalid(`${problem} (with the inherited desktop.minSize / maxSize)`);
+  return limits;
 }
 
 /** The title bar style and the traffic lights' position of a window to open, checked. */
 function chromeSettings(
   a: Record<string, unknown>,
-): Pick<OpenWindowSettings, "titleBar" | "windowButtonPosition"> {
+): Pick<
+  OpenWindowSettings,
+  "titleBar" | "windowButtonPosition" | "titleVisibility" | "toolbarStyle"
+> {
   if (a.titleBar !== undefined && !TITLE_BARS.includes(a.titleBar as DesktopTitleBarStyle)) {
     throw invalid(`titleBar must be one of ${TITLE_BARS.join(", ")}`);
   }
+  const values = titleOptionValuesProblem(a);
+  if (values !== null) throw invalid(`${values[0]} ${values[1]}`);
   const buttons = buttonPositionOf(a.windowButtonPosition);
   return {
     ...(a.titleBar !== undefined ? { titleBar: a.titleBar as DesktopTitleBarStyle } : {}),
     ...(buttons !== undefined ? { windowButtonPosition: buttons } : {}),
+    ...(a.titleVisibility !== undefined
+      ? { titleVisibility: a.titleVisibility as DesktopTitleVisibility }
+      : {}),
+    ...(a.toolbarStyle !== undefined
+      ? { toolbarStyle: a.toolbarStyle as DesktopToolbarStyle }
+      : {}),
   };
+}
+
+/**
+ * A window's title options as it will get them (its own, else the registry's, as the main window
+ * gets them), refused with `invalid` when they can't be shown together: a frameless window has no
+ * title bar, and the `"hidden"` title bar has no toolbar. Checked before the window is created.
+ */
+function effectiveTitleOptions(
+  st: RegistryState,
+  settings: OpenWindowSettings,
+): Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle"> {
+  const own = definedTitleOptions(settings);
+  const effective = definedTitleOptions({ ...definedTitleOptions(st.options), ...own });
+  // A frameless window ignores the inherited title options (it has no title bar); only its own are
+  // an error.
+  const problem = titleOptionsProblem(
+    settings.frameless === true ? { frameless: true, ...own } : effective,
+  );
+  if (problem !== null) throw invalid(`${problem[0]} ${problem[1]}`);
+  return effective;
+}
+
+/** The title options `o` sets (its undefined ones left out, so a spread doesn't erase others). */
+function definedTitleOptions(
+  o: Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle">,
+): Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle"> {
+  const out: Record<string, unknown> = {};
+  for (const key of ["titleBar", "titleVisibility", "toolbarStyle"] as const) {
+    if (o[key] !== undefined) out[key] = o[key];
+  }
+  return out as Pick<DesktopWindowSettings, "titleBar" | "titleVisibility" | "toolbarStyle">;
 }
 
 /** `windowButtonPosition`: `{ x, y }`, or `null` for the OS's place. */
@@ -584,6 +724,7 @@ function register(
   key?: string,
   url = "/",
   title?: string,
+  frameless = false,
 ): RegisteredWindow {
   if (st.windows.has(id)) throw new Error(`desktop: a window "${id}" is registered already`);
   const token = (st.options.newToken ?? (() => crypto.randomUUID()))();
@@ -598,6 +739,8 @@ function register(
     controller,
     capabilities,
     bound,
+    ...(overlay ? { overlay: true } : {}),
+    ...(frameless ? { frameless: true } : {}),
     ...(key !== undefined ? { key } : {}),
     url,
     ...(title !== undefined ? { title } : {}),
@@ -607,10 +750,15 @@ function register(
   controller.install();
   window.addEventListener("focus", () => {
     st.focusOrder = [id, ...st.focusOrder.filter((f) => f !== id)];
-    st.options.emit("windows", "focus", { id });
+    st.options.emit("windows", "focus", { id }, undefined, LIVE_ONLY);
   });
-  window.addEventListener("blur", () => st.options.emit("windows", "blur", { id }));
-  st.options.emit("windows", "opened", infoOf(entry));
+  window.addEventListener(
+    "blur",
+    () => st.options.emit("windows", "blur", { id }, undefined, LIVE_ONLY),
+  );
+  // What happened to the windows is for the pages live now; a page that loads later asks
+  // `getWindows()` for the current list.
+  st.options.emit("windows", "opened", infoOf(entry), undefined, LIVE_ONLY);
   lifecycleOf(st).windowOpened(infoOf(entry));
   return entry;
 }
@@ -668,7 +816,7 @@ function closed(st: RegistryState, id: string): void {
   st.store.flush();
   if (!quitting && !endsApp) rememberClosed(st, entry);
   st.options.onClosed?.(id, entry, quitting || endsApp);
-  st.options.emit("windows", "closed", { id });
+  st.options.emit("windows", "closed", { id }, undefined, LIVE_ONLY);
   const lifecycle = lifecycleOf(st);
   lifecycle.windowClosed({ ...infoOf(entry), appQuitting: quitting || endsApp });
   // With quit hooks, a quit's last close is held by the lifecycle while they run, and the runtime
@@ -880,13 +1028,17 @@ function afterCreation(settings: OpenWindowSettings): DesktopWindowSettings {
 
 /**
  * Style an opened window's title bar as the main window's: `desktop.titleBar` (or the window's
- * own), then `desktop.window.windowButtonPosition` (or the window's own; `null` opts out), after
- * the style since a style change puts the buttons back. A frameless window has neither.
+ * own), its title visibility and toolbar style (`desktop.window.titleVisibility` /
+ * `toolbarStyle`, or the window's own), then `desktop.window.windowButtonPosition` (or the
+ * window's own; `null` opts out), after the style since a style change puts the buttons back. A
+ * frameless window has none of them.
  */
 function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWindowSettings) {
   if (settings.frameless === true) return;
-  const titleBar = settings.titleBar ?? st.options.titleBar;
-  if (titleBar !== undefined) applyTitleBarStyle(window, titleBar, st.warn);
+  const title = effectiveTitleOptions(st, settings);
+  if (title.titleBar !== undefined) applyTitleBarStyle(window, title.titleBar, st.warn);
+  // The title visibility and toolbar style compose with the style, so after it.
+  applyTitleOptions(window, title, st.warn);
   const buttons = settings.windowButtonPosition === undefined
     ? st.options.windowButtonPosition
     : settings.windowButtonPosition;
@@ -896,6 +1048,10 @@ function applyChrome(st: RegistryState, window: RegistryWindow, settings: OpenWi
 /** Open a window from checked settings. */
 function open(st: RegistryState, args: unknown): RegisteredWindow {
   const checked = openWindowSettings(args);
+  // Refuse title options that can't be shown together, and size limits that cross, before anything
+  // opens.
+  effectiveTitleOptions(st, checked);
+  const limits = effectiveSizeLimits(st, checked);
   const Ctor = checkCanOpen(st, checked);
   const settings = restoredGeometry(st, checked);
   const window = new Ctor(creationOptions(settings));
@@ -913,11 +1069,14 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
     settings.key,
     settings.url,
     settings.title,
+    settings.frameless === true,
   );
   window.addEventListener("close", (event) => {
     if (interceptClose(st, id, event)) return;
     closed(st, id);
   });
+  // The limits first: the OS fits the window into them, and the frame follows from there.
+  applySizeLimits(window, limits, st.warn);
   followFrame(st, entry, settings.url);
   applyChrome(st, window, settings);
   applyWindowOverlaySettings(window, afterCreation(settings));

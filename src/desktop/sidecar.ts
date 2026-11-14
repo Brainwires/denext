@@ -71,14 +71,39 @@ export type SidecarRun =
     /** Packages copied whole rather than bundled (they read their own files at run time). */
     readonly external?: readonly string[];
     /**
+     * Packages never bundled nor copied, by name or glob (`*` matches within one name segment:
+     * `"@anthropic-ai/claude-code-*"`, `"@img/sharp-*"`): a dependency the app must not ship, such
+     * as a per-platform binary package. Nothing the backend imports of them is resolved at
+     * packaging; at run time `require()` / `import()` of one throws `MODULE_NOT_FOUND` (what an
+     * optional dependency's `try { require(...) }` expects), and a static import binds a stand-in
+     * that throws only once it is used. A dependency of a copied package that matches stays behind.
+     */
+    readonly exclude?: readonly string[];
+    /**
      * Further entry modules the sidecar starts itself (worker scripts), bundled beside the main one
      * under the same relative paths. Relative to the module's folder.
      */
     readonly entries?: readonly string[];
+    /**
+     * Per-target `node_modules` folders (relative to the project) whose packages are copied in
+     * place of the host's when packaging for that target: keys `"<os>-<arch>"`
+     * (`"darwin-x86_64"`, `"linux-arm64"`) or `"<arch>"` (`"x86_64"`, `"arm64"`), the first that
+     * matches. For a native addon built per architecture that ships no prebuild for the other
+     * (`node-pty` compiled on the host), or a per-platform optional dependency npm installed only
+     * for the host. The prebuilt addons and npm `os` / `cpu` rules pick the rest per arch.
+     */
+    readonly archDirs?: Readonly<Record<string, string>>;
   }
   | {
     /** The program to spawn. */
     readonly exec: string;
+    /**
+     * Hand the program its first line (`{"name","port","bootstrap","secrets"}`) on this file
+     * descriptor (3 to 9: a pipe written once, then closed) instead of stdin, which then carries
+     * nothing but stays open as long as the app runs. What an Electron app's backend reads with
+     * `--bootstrap-fd 3`.
+     */
+    readonly bootstrapFd?: number;
   };
 
 /** What makes a sidecar ready: every check given must pass. Without any it is ready once started. */
@@ -392,8 +417,67 @@ function msField(obj: Record<string, unknown>, prefix: string, key: string): Che
 /** The problem with an exec sidecar's `run`, or `null`. */
 function execRunError(run: Record<string, unknown>): string | null {
   if (typeof run.exec !== "string" || run.exec === "") return "run.exec must be a program path";
-  const extra = Object.keys(run).find((k) => k !== "exec");
-  return extra ? `run.${extra} is not an option of an exec sidecar` : null;
+  const extra = Object.keys(run).find((k) => k !== "exec" && k !== "bootstrapFd");
+  if (extra) return `run.${extra} is not an option of an exec sidecar`;
+  const fd = run.bootstrapFd;
+  return fd === undefined || (typeof fd === "number" && Number.isInteger(fd) && fd >= 3 && fd <= 9)
+    ? null
+    : "run.bootstrapFd must be a file descriptor from 3 to 9";
+}
+
+/** A package name or a glob of one: `name`, `@scope/name`, `*` within a segment. */
+const PACKAGE_PATTERN_RE = /^(@[A-Za-z0-9*._~-]+\/)?[A-Za-z0-9*._~-]+$/;
+
+/**
+ * Whether package `name` matches one of `patterns` (a package name, or a glob whose `*` matches
+ * any run of characters but `/`).
+ *
+ * @param name A package name (`@scope/pkg` or `pkg`).
+ * @param patterns The `run.exclude` entries.
+ * @returns Whether it is excluded.
+ */
+export function packageExcluded(name: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => {
+    if (!p.includes("*")) return p === name;
+    // The pattern's characters are a package name's (validated): only `.` needs escaping.
+    const source = p.replaceAll(".", "\\.").replaceAll("*", "[^/]*");
+    return new RegExp("^" + source + "$").test(name);
+  });
+}
+
+/** The problem with `run.exclude`, or `null`. */
+function excludeError(run: Record<string, unknown>): string | null {
+  const exclude = run.exclude;
+  if (exclude === undefined) return null;
+  if (!isStringArray(exclude)) return "run.exclude must be a string array";
+  const bad = exclude.find((p) => !PACKAGE_PATTERN_RE.test(p) || /^(@\*\/)?\*+$/.test(p));
+  if (bad !== undefined) {
+    return `run.exclude: "${bad}" is not a package name or a glob of one ("@scope/name-*")`;
+  }
+  const external = isStringArray(run.external) ? run.external : [];
+  const both = external.find((name) => packageExcluded(name, exclude));
+  return both === undefined ? null : `run.exclude excludes "${both}", which run.external copies`;
+}
+
+/** The targets `run.archDirs` may name: an arch, or `<os>-<arch>`. */
+const ARCH_DIR_KEY_RE = /^(?:(?:darwin|linux|windows)-)?(?:x86_64|arm64)$/;
+
+/** The problem with `run.archDirs`, or `null`. */
+function archDirsError(archDirs: unknown): string | null {
+  if (archDirs === undefined) return null;
+  if (!isObject(archDirs) || Array.isArray(archDirs)) {
+    return 'run.archDirs must be an object such as { "darwin-x86_64": "vendor/x64/node_modules" }';
+  }
+  for (const [key, dir] of Object.entries(archDirs)) {
+    if (!ARCH_DIR_KEY_RE.test(key)) {
+      return `run.archDirs: "${key}" is not "<arch>" or "<os>-<arch>" (x86_64 / arm64; darwin, ` +
+        "linux, windows)";
+    }
+    if (typeof dir !== "string" || dir === "") {
+      return `run.archDirs["${key}"] must be a node_modules folder path`;
+    }
+  }
+  return null;
 }
 
 /** The problem with a module sidecar's `run`, or `null`. */
@@ -401,7 +485,15 @@ function moduleRunError(run: Record<string, unknown>): string | null {
   const bundled = run.nodeModules !== undefined;
   return first([
     () => typeof run.module === "string" && run.module !== "" ? null : "run.module must be a path",
-    () => unknownOption(run, "run", ["module", "nodeModules", "external", "entries"]),
+    () =>
+      unknownOption(run, "run", [
+        "module",
+        "nodeModules",
+        "external",
+        "exclude",
+        "entries",
+        "archDirs",
+      ]),
     () =>
       !bundled || (typeof run.nodeModules === "string" && run.nodeModules !== "")
         ? null
@@ -414,10 +506,15 @@ function moduleRunError(run: Record<string, unknown>): string | null {
       run.entries === undefined || isStringArray(run.entries)
         ? null
         : "run.entries must be a string array",
+    () => excludeError(run),
+    () => archDirsError(run.archDirs),
     () =>
-      bundled || (run.external === undefined && run.entries === undefined)
+      bundled ||
+        (run.external === undefined && run.entries === undefined && run.exclude === undefined &&
+          run.archDirs === undefined)
         ? null
-        : "run.external and run.entries need run.nodeModules (they shape the bundle)",
+        : "run.external, run.exclude, run.entries and run.archDirs need run.nodeModules (they " +
+          "shape the bundle)",
   ]);
 }
 

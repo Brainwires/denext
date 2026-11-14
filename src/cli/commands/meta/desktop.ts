@@ -210,6 +210,13 @@ export const desktopMeta: CommandMeta = {
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
     },
     {
+      name: "headless",
+      type: "boolean",
+      help: "run: start the app with every window hidden — never shown or focused, no Dock " +
+        "icon — while its pages, extensions and sidecars run (a self-test; a packaged app: " +
+        "DENEXT_DESKTOP_HEADLESS=1)",
+    },
+    {
       name: "inspect-renderer",
       type: "string",
       optionalValue: true,

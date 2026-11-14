@@ -823,6 +823,28 @@ Deno.test("worker launcher: the module sees no globalThis.location (as Node's ma
   }
 });
 
+Deno.test("worker launcher: process.connected and process.channel read undefined (Node's main thread without IPC)", async () => {
+  // Node defines neither without an IPC channel; a library that checks `process.connected === false`
+  // or `typeof process.channel` to detect a fork must see a plain main program.
+  const { dir, entry } = await sidecarModule(
+    'import process from "node:process";\n' +
+      'console.log("ipc " + typeof process.connected + " " + typeof process.channel + " " + typeof process.send + " " + typeof process.disconnect);\n' +
+      "globalThis.denextSidecar.ready();\n",
+  );
+  const ctx = realCtx(def());
+  const inst = await workerSidecarLauncher({ entry })(ctx);
+  try {
+    await until(() => ctx.readySignals === 1);
+    assert(
+      ctx.lines.includes("stdout:ipc undefined undefined undefined undefined"),
+      `the module saw an IPC channel: ${JSON.stringify(ctx.lines)}`,
+    );
+  } finally {
+    await inst.stop(0);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** A program sidecar: echoes its first stdin line, then exits when stdin closes (or on SIGTERM). */
 const PROGRAM = `
 const reader = Deno.stdin.readable.pipeThrough(new TextDecoderStream()).getReader();
@@ -865,6 +887,46 @@ Deno.test("exec launcher: the program gets PORT, the hello line on stdin, and en
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test({
+  name:
+    "exec launcher: run.bootstrapFd hands the hello line on that descriptor, stdin stays open and empty",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    // fd 3 is closed below fd 4: the program reads its line from 4, then echoes whatever stdin
+    // carries (nothing) until the stop ends it.
+    const script = 'read -r line <&4; echo "fd4 $line"; [ -e /dev/fd/3 ] && echo "fd3 open"; ' +
+      'cat; echo "stdin closed"';
+    const definition: SidecarDefinition = {
+      name: "fdprog",
+      run: { exec: "sh", bootstrapFd: 4 },
+      args: ["-c", script],
+    };
+    const ctx = realCtx(definition, { port: 4321 });
+    const inst = await execSidecarLauncher({ program: "sh" })(ctx);
+    assert(typeof inst.pid === "number");
+    await until(() => ctx.lines.some((l) => l.startsWith("stdout:fd4 ")));
+    const hello = JSON.parse(ctx.lines[0].slice("stdout:fd4 ".length));
+    assertEquals(hello, {
+      name: "fdprog",
+      port: 4321,
+      bootstrap: { hello: "world" },
+      secrets: { TOKEN: "s3cret" },
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    assertEquals(ctx.lines, [ctx.lines[0]], "nothing came on stdin and fd 3 is not open");
+    await inst.stop(5000);
+    const exit = await inst.exited;
+    assert(exit.code !== undefined || exit.signal !== undefined);
+    await assertRejects(
+      () =>
+        execSidecarLauncher({ program: "/nonexistent/denext-sidecar" })(
+          realCtx({ name: "gone", run: { exec: "/nonexistent/denext-sidecar", bootstrapFd: 3 } }),
+        ),
+      Deno.errors.NotFound,
+    );
+  },
 });
 
 Deno.test("exec launcher: killExecSidecars ends every running program at once", async () => {

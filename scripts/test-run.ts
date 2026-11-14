@@ -61,6 +61,12 @@
 // to turn it off; a file's own `watchTests(ms)` sets its own), past which it fails with the
 // subprocesses it left open and the process tree under the test process, and the run goes on,
 // instead of a hung test holding the CI job until its timeout.
+//
+// `--shard=<i>/<n>` runs only shard `i` of `n` of the test files in scope (stock and Vitest), as
+// `scripts/ci/coverage-shards.ts` plans them from the files' measured coverage durations: ci.yml's
+// `coverage-shard` jobs run one each and the `coverage` job merges their profiles. A shard with no
+// file runs nothing. `--no-re-emit` skips the re-emit step after a coverage run, for a shard whose
+// profiles another checkout reports on (the merge re-emits under its own).
 
 import { walk } from "@std/fs/walk";
 import { parse as parseJsonc } from "@std/jsonc";
@@ -73,15 +79,17 @@ import {
   isDenextDenoVersion,
 } from "../src/build/deno-version.ts";
 import { TEST_VALUE_FLAGS } from "../src/cli/commands/test-passes.ts";
+import {
+  covers,
+  discoverTestFiles,
+  parseShard,
+  planShards,
+  readDurations,
+  type ShardSpec,
+} from "./ci/coverage-shards.ts";
 
 /** The file-name suffix of a test file that runs on denext's Deno toolchain (Vitest's API). */
 export const VITEST_SUFFIX = ".vitest.ts";
-
-/** Whether `file` is `entry` or lies under it (a directory, with or without its trailing `/`). */
-function covers(entry: string, file: string): boolean {
-  const e = entry.replace(/^\.\//, "").replace(/\/$/, "");
-  return e === "" || e === "." || file === e || file.startsWith(`${e}/`);
-}
 
 /**
  * Directories tools write into the checkout that test discovery must never walk: `.deno/` (the
@@ -97,19 +105,25 @@ export const TOOL_CACHE_DIRS: readonly string[] = [".deno/", ".denext/", "covera
 const VALUE_FLAGS = TEST_VALUE_FLAGS;
 
 /**
- * `args` split into `--ignore` entries, `--vitest-allow-env` names, flags (with their values),
- * paths and the `--` tail.
+ * `args` split into `--ignore` entries, `--vitest-allow-env` names, `--shard`, `--no-re-emit`,
+ * flags (with their values), paths and the `--` tail.
  */
-function splitArgs(args: readonly string[]) {
+export function splitArgs(args: readonly string[]) {
   const ignores: string[] = [];
   const vitestEnv: string[] = [];
   const flags: string[] = [];
   const paths: string[] = [];
+  let shard: ShardSpec | null = null;
+  let reEmit = true;
   const end = args.indexOf("--");
   const own = end === -1 ? args : args.slice(0, end);
   for (let i = 0; i < own.length; i++) {
     const a = own[i];
-    if (a.startsWith("--ignore=")) {
+    if (a.startsWith("--shard=")) {
+      shard = parseShard(a.slice("--shard=".length));
+      if (!shard) throw new Error(`test-run: ${a}: expected --shard=<i>/<n>, 1 <= i <= n`);
+    } else if (a === "--no-re-emit") reEmit = false;
+    else if (a.startsWith("--ignore=")) {
       ignores.push(...a.slice("--ignore=".length).split(",").filter(Boolean));
     } else if (a.startsWith("--vitest-allow-env=")) {
       vitestEnv.push(...a.slice("--vitest-allow-env=".length).split(",").filter(Boolean));
@@ -117,7 +131,46 @@ function splitArgs(args: readonly string[]) {
     else if (VALUE_FLAGS.has(a) && i + 1 < own.length) flags.push(a, own[++i]);
     else flags.push(a);
   }
-  return { ignores, vitestEnv, flags, paths, rest: end === -1 ? [] : args.slice(end) };
+  return {
+    ignores,
+    vitestEnv,
+    flags,
+    paths,
+    shard,
+    reEmit,
+    rest: end === -1 ? [] : args.slice(end),
+  };
+}
+
+/**
+ * `args` with `--shard` replaced by the shard's own files as paths (the others kept as they are),
+ * or null when the shard has none. Without `--shard`, `args` unchanged.
+ *
+ * @param args This script's arguments.
+ * @param files Every test file in the repository (`discoverTestFiles`), repo-relative.
+ * @param durations Seconds per file (`scripts/ci/coverage-durations.json`).
+ */
+export function shardArgs(
+  args: readonly string[],
+  files: readonly string[],
+  durations: Readonly<Record<string, number>>,
+): string[] | null {
+  const split = splitArgs(args);
+  if (!split.shard) return [...args];
+  const scope = inScope(files, split.paths, split.ignores);
+  const mine = planShards(scope, durations, split.shard.count)[split.shard.index - 1].files;
+  if (mine.length === 0) return null;
+  const end = args.indexOf("--");
+  const own = end === -1 ? args : args.slice(0, end);
+  const kept: string[] = [];
+  for (let i = 0; i < own.length; i++) {
+    const a = own[i];
+    if (a.startsWith("--shard=")) continue;
+    if (VALUE_FLAGS.has(a) && i + 1 < own.length) kept.push(a, own[++i]);
+    else if (a.startsWith("-")) kept.push(a);
+    // else a path: the shard's files (within it) replace it
+  }
+  return [...kept, ...mine, ...(end === -1 ? [] : args.slice(end))];
 }
 
 /** `files` within `paths` (all of them when there is none) and outside every `ignores` entry. */
@@ -573,17 +626,31 @@ async function toolchainFor(): Promise<string | null | false> {
 /** Every pass, in order; false when any failed (or the toolchain coverage needs is missing). */
 async function runPasses(): Promise<boolean> {
   const ci = (Deno.env.get("CI") ?? "") !== "";
+  const excludes = await configTestExcludes();
+  const shard = splitArgs(Deno.args).shard;
+  const args = shard
+    ? shardArgs(
+      Deno.args,
+      await discoverTestFiles(ROOT, [...excludes, ...TOOL_CACHE_DIRS]),
+      await readDurations(),
+    )
+    : [...Deno.args];
+  if (args === null) {
+    console.error("test-run: this shard has no test files to run.");
+    return true;
+  }
   // On Windows the files that build in the test process run serially too (tests/serial-tests.ts).
   const passes = testPasses(
-    Deno.args,
+    args,
     serialTestsFor(Deno.build.os),
     await findVitestFiles(),
     ci,
-    await configTestExcludes(),
+    excludes,
   );
   // Every pass runs on the toolchain when it resolves; with coverage it must (its `deno coverage`
   // merges the passes' profiles).
-  const coverage = wantsCoverage(splitArgs(Deno.args).flags);
+  const split = splitArgs(args);
+  const coverage = wantsCoverage(split.flags);
   const toolchain = await toolchainFor();
   if (toolchain === false && coverage) return false;
   // Without coverage an unavailable toolchain fails the Vitest pass alone.
@@ -594,9 +661,129 @@ async function runPasses(): Promise<boolean> {
   const parallel = await runPass(withWatchdog(passes.parallel), stock);
   const serial = await runPass(withWatchdog(passes.serial), stock);
   const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
-  const dir = coverageDir(splitArgs(Deno.args).flags);
-  if (dir !== null) await reEmitCovered(dir, { bin: stock });
+  const dir = coverageDir(split.flags);
+  if (dir !== null && split.reEmit) await reEmitCovered(dir, { bin: stock });
+  if (dir !== null && shard) {
+    await saveTransformedEmits(dir, stock);
+    await writeShardRecord(dir, shard, args);
+  }
   return parallel && serial && vitest;
+}
+
+/**
+ * Where a coverage shard keeps the Vitest-transformed emits of this checkout's modules, beside its
+ * profiles (`coverage/profile.transformed`).
+ *
+ * The Vitest pass runs a module as a transformed emit (its `vi.mock()` hoisting), and `deno
+ * coverage` maps that pass's profiles through the transformed emit it finds in the emit cache.
+ * A shard's cache stays on its runner, so the merge (scripts/ci/coverage-merge.ts) puts these back
+ * into its own cache; without them those profiles were laid over the plain emit, reading most of a
+ * module's functions as never called (bridge-client.ts at 15.7%).
+ *
+ * @param dir The shard's coverage directory.
+ * @returns The folder.
+ */
+export function transformedEmitsDir(dir: string): string {
+  return `${dir.replace(/[/\\]+$/, "")}.transformed`;
+}
+
+/**
+ * The folder of a checkout's emits in `bin`'s emit cache: `<gen>/file/<the checkout's path>` (on
+ * Windows the drive letter is a folder, as the cache names it).
+ *
+ * @param bin The Deno that runs and reports the tests (the toolchain).
+ * @param root The checkout's absolute path.
+ * @returns The folder, or `null` when `deno info` does not name the cache.
+ */
+export async function checkoutEmitDir(bin: string, root: string = ROOT): Promise<string | null> {
+  const out = await new Deno.Command(bin, {
+    args: ["info", "--json"],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "null",
+  }).output().catch(() => null);
+  if (!out?.success) return null;
+  let gen: unknown;
+  try {
+    gen = (JSON.parse(new TextDecoder().decode(out.stdout)) as { typescriptCache?: unknown })
+      .typescriptCache;
+  } catch {
+    return null;
+  }
+  return typeof gen === "string" ? emitDirFor(gen, root) : null;
+}
+
+/**
+ * `root`'s folder under the emit cache `gen` (see {@linkcode checkoutEmitDir}).
+ *
+ * @param gen The emit cache (`deno info --json`'s `typescriptCache`).
+ * @param root An absolute path.
+ * @returns The folder.
+ */
+export function emitDirFor(gen: string, root: string): string {
+  const drive = /^([A-Za-z]):[\\/]/.exec(root);
+  const rest = (drive ? root.slice(3) : root).split(/[\\/]+/).filter(Boolean);
+  return join(gen, "file", ...(drive ? [drive[1]] : []), ...rest);
+}
+
+/**
+ * Copy every Vitest-transformed emit (`*.transformed.js`) under `from` to the same place under `to`.
+ *
+ * @param from The folder to copy from (missing: nothing to copy).
+ * @param to The folder to copy to.
+ * @returns How many were copied.
+ */
+export async function copyTransformedEmits(from: string, to: string): Promise<number> {
+  let n = 0;
+  try {
+    for await (const e of walk(from, { includeDirs: false, exts: [".js"] })) {
+      if (!e.name.endsWith(".transformed.js")) continue;
+      const dest = join(to, relative(from, e.path));
+      await Deno.mkdir(join(dest, ".."), { recursive: true });
+      await Deno.copyFile(e.path, dest);
+      n++;
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  return n;
+}
+
+/** Keep the shard's Vitest-transformed emits beside its profiles (see {@linkcode transformedEmitsDir}). */
+async function saveTransformedEmits(dir: string, bin: string): Promise<void> {
+  const to = transformedEmitsDir(dir);
+  await Deno.mkdir(to, { recursive: true });
+  const from = await checkoutEmitDir(bin);
+  if (from !== null) await copyTransformedEmits(from, to);
+}
+
+/** What a coverage shard ran, beside its profiles (`scripts/ci/coverage-merge.ts` reads it). */
+export interface ShardRecord {
+  readonly index: number;
+  readonly count: number;
+  /** This checkout's root as a `file:` URL ending in `/`: the prefix of its profiles' URLs. */
+  readonly root: string;
+  /** The test files it ran, repo-relative, sorted. */
+  readonly files: string[];
+}
+
+/**
+ * The record file of the profiles in `dir`: a sibling (`<dir>.shard.json`), since `deno coverage`
+ * reads every `.json` file inside the directory as a profile.
+ */
+export function shardRecordPath(dir: string): string {
+  return `${dir.replace(/[/\\]+$/, "")}.shard.json`;
+}
+
+/** Write `dir`'s {@linkcode ShardRecord}: the files are the paths `shardArgs` gave the passes. */
+async function writeShardRecord(dir: string, shard: ShardSpec, args: readonly string[]) {
+  const record: ShardRecord = {
+    index: shard.index,
+    count: shard.count,
+    root: new URL("../", import.meta.url).href,
+    files: [...splitArgs(args).paths].sort(),
+  };
+  await Deno.writeTextFile(shardRecordPath(dir), JSON.stringify(record, null, 2) + "\n");
 }
 
 /** One stock pass (none: passed). */

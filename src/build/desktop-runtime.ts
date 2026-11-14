@@ -679,8 +679,13 @@ const MACHO_MAGICS = new Set([
   0xcffaedfe,
 ]);
 
-/** Whether `path` starts with a Mach-O / fat magic. */
-async function isMachO(path: string): Promise<boolean> {
+/**
+ * Whether `path` starts with a Mach-O / fat magic (the header decides, not the extension).
+ *
+ * @param path A file.
+ * @returns Whether it is Mach-O code (thin or universal).
+ */
+export async function isMachO(path: string): Promise<boolean> {
   const f = await Deno.open(path, { read: true }).catch(() => null);
   if (!f) return false;
   try {

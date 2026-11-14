@@ -18,6 +18,7 @@ import {
   type DesktopExtensionHost,
 } from "../src/desktop/extension.ts";
 import { injectedGlobal } from "./helpers/desktop-bridge-server.ts";
+import { notificationsCapability } from "../src/desktop/caps/notifications.ts";
 import {
   boot,
   DENEXT7_DESKTOP,
@@ -411,7 +412,11 @@ Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, th
     assertEquals(hostWindows().map((w) => w.key), ["workspace", "notes"]);
     // The Window menu (desktop.menu.window) is on the main window; New Window opens desktop.ts's window.
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
-    assertEquals(menu.map((e) => e.submenu.label), ["Window"]);
+    // On macOS the managed app menu and Edit come first (AppKit's first submenu is the app menu).
+    assertEquals(
+      menu.map((e) => e.submenu.label),
+      Deno.build.os === "darwin" ? ["App", "Edit", "Window"] : ["Window"],
+    );
     // A real click: the window's "menuclick", then (from laufey API 55) Deno.desktop's. Which one
     // denext hears depends on the runtime running the test; exactly one New Window either way.
     const click = { detail: { id: "denext:window:new" } };
@@ -596,7 +601,8 @@ Deno.test("runDesktop (pinned runtime): the app's own Window-menu items reach de
     const main = FakeMenuWindow.all[0];
     const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
     // (The submenu also carries the macOS roles when the test runs on a Mac.)
-    const items = menu[0].submenu.items.filter((e) => typeof e === "object" && e && "item" in e);
+    const windowMenu = menu.find((e) => e.submenu.label === "Window")!;
+    const items = windowMenu.submenu.items.filter((e) => typeof e === "object" && e && "item" in e);
     assertEquals(items, [{
       item: {
         id: "denext:window:item:end",
@@ -745,6 +751,70 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
     launch([]);
     await until(() => fromHook.length === 2);
     assertEquals([fromRunDesktop.length, fromHost.length, fromRuntime.length], [2, 1, 1]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): notification clicks reach onNotificationClick, the extensions, the runtime and still the page", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    // The click that launched the app: on a notification the page posted.
+    const pageData = { denext: { id: 3 }, data: { path: "/inbox" } };
+    Object.assign(desktop, {
+      notifications: {
+        capabilities: () => ({}),
+        schedule: () => Promise.resolve(""),
+        getScheduled: () => Promise.resolve([]),
+      },
+      launchNotificationResponses: [{
+        tag: "denext-3",
+        action: null,
+        data: pageData,
+        launch: true,
+      }],
+    });
+    const fromRunDesktop: unknown[] = [];
+    const fromHost: unknown[] = [];
+    const fromRuntime: unknown[] = [];
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = { name: "ext", methods: {}, setup: (h) => void (host = h) };
+    const { runtime, served } = await boot({
+      outDir,
+      port: 1,
+      capabilities: [ext, notificationsCapability({ api: desktop, autoTopUp: false })],
+      onNotificationClick: (click) => void fromRunDesktop.push(click),
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const offHost = host!.onNotificationClick((click) => void fromHost.push(click));
+    // Subscribed after runDesktop resolved: the launch click still arrives.
+    const offRuntime = runtime.onNotificationClick((click) => void fromRuntime.push(click));
+    await until(() => fromRuntime.length === 1);
+    const launch = { tag: "denext-3", action: null, data: pageData, launch: true };
+    assertEquals([fromRunDesktop, fromHost, fromRuntime], [[launch], [launch], [launch]]);
+    // A click on a notification the backend posted itself through Deno.desktop.notifications.
+    desktop.dispatchEvent(
+      new CustomEvent("notificationresponse", {
+        detail: { tag: "sync-failed", action: "retry", data: { job: 7 } },
+      }),
+    );
+    const own = { tag: "sync-failed", action: "retry", data: { job: 7 }, launch: false };
+    assertEquals([fromRunDesktop[1], fromHost[1], fromRuntime[1]], [own, own, own]);
+    // The page still takes the launch click on its own notification.
+    const token = injectedGlobal(
+      await (await served.handler(get("http://127.0.0.1:1/"), {})).text(),
+    )!.token as string;
+    assertEquals((await pageRpc(served, token)("notifications", "take")).data, [
+      { id: 3, actionId: "tap", data: { path: "/inbox" }, launch: true },
+    ]);
+    // Unsubscribed: desktop.ts's handler still hears.
+    offHost();
+    offRuntime();
+    desktop.dispatchEvent(new CustomEvent("notificationresponse", { detail: { tag: "x" } }));
+    assertEquals([fromRunDesktop.length, fromHost.length, fromRuntime.length], [3, 2, 2]);
   } finally {
     FakeBrowserWindow.last = undefined;
     FakeMenuWindow.all = [];

@@ -80,6 +80,7 @@ import {
   parseInspectRendererAddr,
 } from "../../build/desktop-inspect-renderer.ts";
 import { commandMeta } from "../command-meta.ts";
+import { desktopHeadlessLaunchEnv, withHeadlessLaunchEnv } from "../../desktop/headless.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -121,7 +122,7 @@ const DESKTOP_ACTIONS: Record<
   (ctx: CommandContext, dir: string, entry: string) => Promise<void>
 > = {
   build: (_ctx, dir, entry) => exportSpa(dir, entry),
-  run: (_ctx, dir, entry) => runDesktop(dir, entry),
+  run: (ctx, dir, entry) => runDesktop(dir, entry, ctx.flags.headless === true),
   dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
   package: (ctx, dir) => packageDesktop(ctx, dir),
   add: (ctx, dir) => desktopAdd(ctx, dir),
@@ -147,9 +148,7 @@ export const desktopCommand: CommandSpec = {
     // At a monorepo root, the workspace's app: never a desktop shell or config in the root.
     const dir = await desktopTargetDir(ctx, action);
     const entry = desktopEntryFlag(dir, ctx.flags.entry as string | undefined);
-    if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
-      fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
-    }
+    refuseMisplacedFlags(ctx, action);
     const handler = Object.hasOwn(DESKTOP_ACTIONS, action) ? DESKTOP_ACTIONS[action] : undefined;
     if (handler) return await handler(ctx, dir, entry);
     console.error(
@@ -159,6 +158,19 @@ export const desktopCommand: CommandSpec = {
     Deno.exit(1);
   },
 };
+
+/** Exit when a flag of one action is given to another (`--inspect-renderer`, `--headless`). */
+function refuseMisplacedFlags(ctx: CommandContext, action: string): void {
+  if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
+    fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
+  }
+  if (action !== "run" && ctx.flags.headless === true) {
+    fail(
+      "denext desktop: --headless applies to `denext desktop run` only (a packaged app: " +
+        "DENEXT_DESKTOP_HEADLESS=1).",
+    );
+  }
+}
 
 /** `--entry` (default `desktop.ts`) as a project-relative path; one outside the project fails. */
 function desktopEntryFlag(dir: string, flag: string | undefined): string {
@@ -373,13 +385,16 @@ async function removeScratch(scratch: string): Promise<void> {
 
 /**
  * Launch a built window's executable directly (so its stdout/stderr stream to this terminal), with
- * the launch env on top of this process's. `stop` ends it; `finished` resolves to its exit code.
+ * the launch env on top of this process's (and a headless run's variables when
+ * `DENEXT_DESKTOP_HEADLESS` is set, see `withHeadlessLaunchEnv`). `stop` ends it; `finished`
+ * resolves to its exit code.
  */
 function launchDesktopWindow(
   built: BuiltDesktopWindow,
   dir: string,
-  env: Record<string, string>,
+  launchEnv: Record<string, string>,
 ): DesktopWindow & { readonly code: Promise<number> } {
+  const env = withHeadlessLaunchEnv(launchEnv);
   const child = new Deno.Command(built.exe, {
     cwd: dir,
     env: built.bootstrap ? { ...env, LAUFEY_CWD: resolve(dir) } : env,
@@ -538,7 +553,7 @@ function announceRendererPages<W extends DesktopWindow>(window: W, endpoint: str
  * `denext desktop run`: export the SPA, build the app into a scratch directory, open it, and stream
  * its output until it exits (Ctrl-C quits it). Exits with the app's exit code.
  */
-async function runDesktop(dir: string, entry: string): Promise<void> {
+async function runDesktop(dir: string, entry: string, headless = false): Promise<void> {
   const entryPath = join(dir, entry);
   try {
     await Deno.stat(entryPath);
@@ -562,9 +577,15 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
   } catch (err) {
     fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
   }
-  console.log(`  Opening the desktop window  ▸  ${built.exe}\n  Ctrl-C quits the app.\n`);
+  console.log(
+    headless
+      ? `  Starting the app headless (every window hidden)  ▸  ${built.exe}\n  Ctrl-C quits it.\n`
+      : `  Opening the desktop window  ▸  ${built.exe}\n  Ctrl-C quits the app.\n`,
+  );
   const stopped = waitForShutdownSignal();
-  const window = launchDesktopWindow(built, dir, launch.env);
+  // --headless: DENEXT_DESKTOP_HEADLESS for runDesktop, and no Dock icon from the first frame.
+  const env = headless ? { ...launch.env, ...desktopHeadlessLaunchEnv() } : launch.env;
+  const window = launchDesktopWindow(built, dir, env);
   const quit = await Promise.race([stopped.then(() => true), window.finished.then(() => false)]);
   await window.stop();
   // Quit from here (Ctrl-C) is a clean exit; otherwise the app's own exit code.

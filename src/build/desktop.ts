@@ -45,6 +45,8 @@ import { readDesktopAppFile } from "./desktop-dev-file.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
+import type { DesktopEventAppendOptions } from "../desktop/bridge-events.ts";
+import { desktopHeadless, headlessWindow } from "../desktop/headless.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
 import type {
@@ -71,6 +73,8 @@ import {
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
 import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type { DesktopAppMenuItemHandler, DesktopAppMenusApi } from "../desktop/app-menus.ts";
+import type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 import type {
   DesktopNewWindowHandler,
   DesktopWindowMenuItemHandler,
@@ -95,6 +99,8 @@ export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
 export type {
   DesktopAppSettings,
+  DesktopTitleVisibility,
+  DesktopToolbarStyle,
   DesktopWindowSettings,
   DesktopWindowSize,
 } from "../desktop/window-config.ts";
@@ -116,13 +122,43 @@ export type {
   DesktopWindows,
 };
 export type { DesktopTrayPanelSettings, DesktopTraySettings } from "../desktop/tray-config.ts";
+/** The app's own menus as the backend drives them (`setMenu`, `onAppMenuItem`, …). */
+export type {
+  DesktopAppMenuItemContext,
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+} from "../desktop/app-menus.ts";
+export type {
+  DesktopMenuAnchor,
+  DesktopMenuItemSpec,
+  DesktopMenuItemState,
+  DesktopMenuItemType,
+  DesktopMenuSpec,
+  DesktopMenuUpdate,
+  DesktopWindowMenuAppItem,
+} from "../desktop/menu-config.ts";
+/** `desktop.webViews` as resolved ({@linkcode RunDesktopOptions.webViews}). */
+export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
+/**
+ * The embedded web views `DesktopWindowRef.createWebView` opens (the same handle a page gets from
+ * `createWebView` in `denext/desktop/window`).
+ */
+export type {
+  CreateWebViewOptions,
+  WebViewBounds,
+  WebViewEventMap,
+  WebViewHandle,
+  WebViewLoadState,
+  WebViewPermissions,
+  WebViewState,
+} from "../desktop/webview.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
 export type { DesktopBridge } from "../desktop/bridge.ts";
 /** The retained-event replay buffer reached through {@linkcode DesktopBridge}'s `events` (re-exported
  * so that public member does not reference a private type). */
-export type { DesktopEventLog } from "../desktop/bridge-events.ts";
+export type { DesktopEventAppendOptions, DesktopEventLog } from "../desktop/bridge-events.ts";
 
 // The desktop native-extension authoring API is served from `denext/desktop` (this module).
 export {
@@ -136,6 +172,15 @@ import {
   type DesktopWillNavigateHandler,
   type WillNavigateHooks,
 } from "../desktop/will-navigate.ts";
+export type {
+  DesktopNotificationClick,
+  DesktopNotificationClickListener,
+} from "../desktop/notification-clicks.ts";
+import {
+  createNotificationClickHooks,
+  type DesktopNotificationClickListener,
+  type NotificationClickHooks,
+} from "../desktop/notification-clicks.ts";
 export {
   defineDesktopExtension,
   type DesktopCaller,
@@ -701,6 +746,12 @@ export interface RunDesktopOptions {
    */
   configMenu?: DesktopMenuSettings;
   /**
+   * `desktop.webViews` as `resolveDesktopCapabilities` resolved it: how many embedded web views a
+   * window hosts at once (default 8) and the origins they may load (default any `http:` /
+   * `https:` origin but the app's own).
+   */
+  webViews?: DesktopWebViewSettings;
+  /**
    * What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),
    * or `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a
    * fresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`.
@@ -736,6 +787,15 @@ export interface RunDesktopOptions {
    */
   onWillNavigate?: DesktopWillNavigateHandler;
   /**
+   * Called for every click the runtime reports on one of the app's notifications, whatever posted
+   * it — `scheduleNotification` / a page's `new Notification(…)` (still delivered to the pages as
+   * well) or the backend itself through `Deno.desktop.notifications` — with its `tag`, the
+   * `action` button (`null` for the notification itself), its `data` and `launch`. The click that
+   * launched the app arrives too (`launch: true`), right after `runDesktop` subscribed. A throw or
+   * a rejection is logged. Never called without denext's pinned runtime (or in a sidecar's child).
+   */
+  onNotificationClick?: DesktopNotificationClickListener;
+  /**
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
    * key when it was opened with one), or `null` with no window open. The clicks never reach the
@@ -744,6 +804,15 @@ export interface RunDesktopOptions {
    * while the main window is open. A throw or a rejection is logged.
    */
   onWindowMenuItem?: DesktopWindowMenuItemHandler;
+  /**
+   * Called once per click on one of the app's own top-level menus' items (`desktop.menu.menus`,
+   * `setMenu`) or a window's own Window-menu items (`setWindowMenuAppItems`), with the item's `id`
+   * and the context: the key window (`{ id, key? }`, or `null` with none open), the menu, a
+   * checkbox's or radio item's new state, the window a Window-menu item belongs to. The pages hear
+   * the same clicks (`onAppMenuItem` in `denext/desktop/app`); extensions get them too
+   * (`host.onAppMenuItem`). A throw or a rejection is logged.
+   */
+  onAppMenuItem?: DesktopAppMenuItemHandler;
   /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
@@ -789,7 +858,7 @@ export interface RunDesktopOptions {
  * `onDesktopEvent(cap, event, …)` in `denext/desktop/client` receives) — the seam OS events (deep
  * links, open-file, …) are emitted through.
  */
-export interface DesktopRuntime {
+export interface DesktopRuntime extends DesktopAppMenusApi {
   /** The adopted initial `Deno.BrowserWindow`, or `undefined` outside the desktop runtime. */
   readonly window: unknown;
   /**
@@ -811,7 +880,9 @@ export interface DesktopRuntime {
    * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
    * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
    * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
-   * app to the front. On Windows and Linux `"regular"` shows the main window's taskbar entry and
+   * app to the front. A tray app stays accessory and shows its window with the window's
+   * `focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps
+   * once its running tile goes away. On Windows and Linux `"regular"` shows the main window's taskbar entry and
    * the others hide it (as `"accessory"` does at launch), where the runtime can. Returns whether it
    * applied.
    */
@@ -837,12 +908,23 @@ export interface DesktopRuntime {
    * called on a runtime without the hook (or in a sidecar's child).
    */
   onWillNavigate(fn: DesktopWillNavigateHandler): () => void;
+  /**
+   * Call `fn` for every click on one of the app's notifications, as
+   * {@linkcode RunDesktopOptions.onNotificationClick} is: any tag, the backend's own
+   * `Deno.desktop.notifications` posts included. The click that launched the app reaches `fn` too
+   * (`launch: true`, on a microtask after it subscribed), however late it subscribes. A throw or a
+   * rejection is logged. Returns the unsubscribe; never called without denext's pinned runtime (or
+   * in a sidecar's child).
+   */
+  onNotificationClick(fn: DesktopNotificationClickListener): () => void;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
    * Push an event to the pages (`cap` need not be a registered capability's): every window's, or
    * only `options.window`'s. Events are retained for replay, so one emitted before the page
-   * subscribes is still delivered. An extension module reaches the same stream without this
+   * subscribes is still delivered; `{ retain: false }` sends a one-shot action (a menu click
+   * forwarded from `onAppMenuItem`) to the live pages only, so a reloaded page never acts on it
+   * again. An extension module reaches the same stream without this
    * handle through its {@linkcode DesktopCapability.setup} host.
    */
   emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void;
@@ -1709,7 +1791,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // so it still goes through the close rules and the lifecycle hooks.
   const windowsRef: { setup?: DesktopWindowsSetup; closedEarly?: boolean } = {};
   const exit = Deno.exit;
-  const appWindow = installWindowCloseHandler(
+  const adopted = installWindowCloseHandler(
     undefined,
     () => {
       if (windowsRef.setup) windowsRef.setup.mainClosed();
@@ -1717,6 +1799,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     },
     (event) => windowsRef.setup?.interceptMainClose(event) ?? false,
   );
+  // DENEXT_DESKTOP_HEADLESS=1 (`denext desktop run --headless`): the window is hidden at once,
+  // before the sidecars start, and no window of the app shows or takes focus (see headless.ts).
+  const headless = desktopHeadless();
+  const appWindow = headless ? headlessWindow(adopted) : adopted;
+  if (headless && appWindow !== undefined) {
+    console.log("desktop: headless (DENEXT_DESKTOP_HEADLESS): every window stays hidden");
+  }
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
   // in-process memory transport at a stable origin, or the stock runtime's loopback port.
   const trustDecision = resolveDesktopTrust(
@@ -1765,8 +1854,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // handler error include its message; a packaged build stays generic.
   // Events can fire before the bridge exists (a window registered first): they are dropped then.
   const bridgeRef: { bridge?: DesktopBridge } = {};
-  const emitToPage = (cap: string, event: string, data: unknown, target?: string) =>
-    bridgeRef.bridge?.emit(cap, event, data, target);
+  const emitToPage = (
+    cap: string,
+    event: string,
+    data: unknown,
+    target?: string,
+    emitOptions?: DesktopEventAppendOptions,
+  ) => bridgeRef.bridge?.emit(cap, event, data, target, emitOptions);
   const appEvents = desktopAppEvents(options, emitToPage, preloadKey);
   // The sidecars (`desktop.sidecars` + `runDesktop({ sidecars })`): ports and secrets are settled
   // now, so `spa.proxy` can point at the proxied one; they start once the server is up.
@@ -1784,13 +1878,22 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.app ? { appSettings: options.app } : {}),
     wantsTray: options.tray !== undefined || options.configTray !== undefined,
     exit,
+    ...(headless ? { headless: true } : {}),
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
     ...(options.configMenu ? { menuSettings: options.configMenu } : {}),
+    // A web view's DevTools open where the app's do: `desktop.inspectable: true`, or a dev run.
+    webViews: {
+      ...(options.webViews ?? { limit: 8, allowedOrigins: null }),
+      devTools: options.webViews?.devTools === true || devDecision.proxy,
+    },
+    // A web view never loads the app: its configured origin or the dev server it proxies.
+    appOrigins: () => [options.appOrigin, devUrl].filter((o): o is string => typeof o === "string"),
     ...(options.newWindow ? { newWindow: options.newWindow } : {}),
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
+    ...(options.onAppMenuItem ? { onAppMenuItem: options.onAppMenuItem } : {}),
     ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;
@@ -1811,6 +1914,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     if (cap.onSecondInstance) windows.onSecondInstance(cap.onSecondInstance);
   }
   const navigation = desktopNavigationHooks(windows, appWindow, options.onWillNavigate);
+  const notificationClicks = desktopNotificationClickHooks(options.onNotificationClick);
   const bridge = createDesktopBridge(
     capabilities,
     {
@@ -1828,7 +1932,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       // An extension host's openWindow is desktop.ts's windows.open.
       ...(registry ? { openWindow: (o: DesktopOpenWindowOptions) => windows.windows.open(o) } : {}),
       onWindowMenuItem: (fn: DesktopWindowMenuItemHandler) => windows.onWindowMenuItem(fn),
+      appMenus: windows.appMenus,
       onSecondInstance: (fn) => windows.onSecondInstance(fn),
+      onNotificationClick: (fn) => notificationClicks.add(fn),
       dev: devDecision.proxy,
       trust,
       ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
@@ -1896,14 +2002,23 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onDockReopen: (fn) => windows.onDockReopen(fn),
     onSecondInstance: (fn) => windows.onSecondInstance(fn),
     onWillNavigate: (fn) => navigation.add(fn),
+    onNotificationClick: (fn) => notificationClicks.add(fn),
     trust,
-    emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
+    emit: (cap, event, data, emitOptions) =>
+      bridge.emit(
+        cap,
+        event,
+        data,
+        emitOptions?.window,
+        emitOptions?.retain === false ? { retain: false } : undefined,
+      ),
     sidecar: (name) => {
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
     onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn, DESKTOP_TS_OWNER) ?? (() => {}),
     quit: () => windows.lifecycle?.requestQuit(DESKTOP_TS_OWNER) ?? Promise.resolve(false),
+    ...windows.appMenus,
   };
 }
 
@@ -1922,6 +2037,21 @@ function desktopNavigationHooks(
   });
   if (first) navigation.add(first);
   return navigation;
+}
+
+/**
+ * The backend's notification-click hooks over `Deno.desktop`, with
+ * `runDesktop({ onNotificationClick })` subscribed first when given.
+ */
+function desktopNotificationClickHooks(
+  first: DesktopNotificationClickListener | undefined,
+): NotificationClickHooks {
+  const hooks = createNotificationClickHooks(
+    desktopAppApi(),
+    (m) => console.warn(`desktop: ${m}`),
+  );
+  if (first) hooks.add(first);
+  return hooks;
 }
 
 /**
@@ -1950,6 +2080,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
   return {
     window: undefined,
     ...noDesktopWindows(),
+    onNotificationClick: () => () => {},
     trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
     emit: () => {},
     sidecar: (name) => {

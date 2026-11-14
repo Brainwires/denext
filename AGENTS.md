@@ -665,18 +665,24 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 `runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
-buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`);
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
 `deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
 on macOS and Windows (on Linux, what denext posted this run). `context-menu`
 is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `null` on dismiss).
 `share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
-`denext/desktop/window` shares picked / app-folder files). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`denext/desktop/window` shares picked / app-folder files). Embedded web views: `createWebView({ url, bounds, partition?, allowPopups?, downloads?, permissions? })`
+from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts another http(s) site in a native view over the page (no bridge, own storage;
+`attachWebView(view, element)` follows an element's visible part; it draws above all HTML, so swap in `capture({ format: "jpeg", scale: 1 })` as an `<img>` + `setVisible(false)` under an overlay;
+`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
 "mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` on runtime
 3.0.0-denext.6), `setActivationPolicy("accessory" | "regular")` (`desktop.app.activationPolicy`: no Dock
-icon from the first frame), `openWindow({ url, overlay, focusable: false, … })` and the overlay calls
+icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app stays accessory and a
+helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
+tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
+focusable: false, … })` and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
@@ -687,7 +693,7 @@ windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/des
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
-(`width` > saved > default), opened windows take `desktop.titleBar` and `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), a Dock click with no window
+(`width` > saved > default), opened windows take `desktop.titleBar`, `desktop.window.windowButtonPosition` (`{ x, y }`, the traffic lights; their own `titleBar` / `windowButtonPosition` override, `null` keeps the OS's), `desktop.window.titleVisibility: "hidden"` (no title text, the native title bar kept; Linux only under client-side decorations) and `desktop.window.toolbarStyle` (macOS `"unified"` / `"unifiedCompact"` / `"expanded"`; not with `titleBar: "hidden"`) and `desktop.minSize` / `maxSize` (their own `minSize` / `maxSize` override), a Dock click with no window
 showing reopens the last closed keyed window (`runDesktop({ onDockReopen: ({ closed }) => options | undefined })`
 decides; `app.onDockReopen(fn)` hears every click; a `singleInstance` second launch does the same, or
 `runDesktop({ onSecondInstance: ({ args, cwd }) => options | undefined })` / `app.onSecondInstance(fn)` on its result / `host.onSecondInstance(fn)`), `windows.forget(key)` drops a key from reopening and

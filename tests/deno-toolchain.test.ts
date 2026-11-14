@@ -173,13 +173,16 @@ Deno.test("ci.yml: tests and the type-check run on the toolchain; stock Deno onl
   const switched: string[] = [];
   for (const [name, job] of Object.entries(ci.jobs)) {
     const setup = job.steps.findIndex((s) => s.uses?.startsWith("denoland/setup-deno@") ?? false);
-    // coverage: stock Deno starts scripts/test-run.ts, which runs every pass on the toolchain under
-    // --coverage; backend-integration installs the toolchain itself (the test above); cargo-audit
+    // coverage-shard / coverage: stock Deno starts scripts/test-run.ts / scripts/ci/coverage-merge.ts,
+    // which run every pass, the re-emit and `deno coverage` on the toolchain; backend-integration installs the toolchain itself (the test above); cargo-audit
     // runs only scripts/cargo-audit.ts (cargo-audit over the wasm packages' lockfiles), no project
     // code, so it stays on the stock Deno; windows-runner only runs scripts/ci/pick-windows-runner.ts
-    // (which Windows runner the Windows jobs take), no project code either.
+    // (which Windows runner the Windows jobs take), and linux-runner only
+    // scripts/ci/pick-linux-runners.ts (which runner the Linux jobs take), no project code either.
     if (
-      setup === -1 || name === "coverage" || name === "cargo-audit" || name === "windows-runner"
+      setup === -1 || name === "coverage" || name === "coverage-shard" || name === "cargo-audit" ||
+      name === "windows-runner" ||
+      name === "linux-runner"
     ) {
       continue;
     }
