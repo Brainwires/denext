@@ -987,6 +987,11 @@ export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/server-only",
   "denext/remix/server",
   "denext/fresh/server",
+  // `freshPlugins()`: a denext plugin, run by `denext dev` / `build` / `export`.
+  "denext/fresh/plugins",
+  // preact-render-to-string's snapshot renderer (tests) and its `node:stream` renderer.
+  "denext/preact/render-to-string/jsx",
+  "denext/preact/render-to-string/stream-node",
   "denext/next-intl/server",
   "denext/next-intl/middleware",
   // The `next-auth` shim's server modules (`NextAuth()`, `next-auth/jwt`, the providers).
