@@ -478,25 +478,96 @@ export function isRegeneratedModuleProfile(url: string): boolean {
   return url.startsWith("file:") && /[?&]__vitest_gen=/.test(url);
 }
 
+/** The profile files (`*.json`) in a coverage directory; empty when it doesn't exist yet. */
+export async function profileNames(dir: string): Promise<Set<string>> {
+  const names = new Set<string>();
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isFile && e.name.endsWith(".json")) names.add(e.name);
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  return names;
+}
+
+/** A parsed profile's module URL and script length (its top-level range's end), or null. */
+async function profileShape(path: string): Promise<{ url: string; length: number } | null> {
+  try {
+    const p = JSON.parse(await Deno.readTextFile(path)) as {
+      url?: unknown;
+      functions?: { ranges?: { endOffset?: number }[] }[];
+    };
+    if (typeof p.url !== "string") return null;
+    let length = 0;
+    for (const f of p.functions ?? []) {
+      for (const r of f.ranges ?? []) length = Math.max(length, r.endOffset ?? 0);
+    }
+    return { url: p.url, length };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Remove the profiles of regenerated modules ({@linkcode isRegeneratedModuleProfile}) from a
- * coverage directory.
+ * Remove the profiles the Vitest pass wrote that `deno coverage` can't map: the Vitest layer runs
+ * each module as a transformed source (a prelude added; a `?__vitest_gen=N` copy for `vi.mock` /
+ * `vi.resetModules`), and `deno coverage` lays those offsets over the module's own source, which
+ * reads most of its functions as never called (bridge-client.ts at 15.7%). A profile written since
+ * `before` is removed when it is a regenerated copy ({@linkcode isRegeneratedModuleProfile}) or
+ * its script length differs from the length the other passes' profiles of the module have; the
+ * other passes' profiles carry the module's coverage.
  *
  * @param dir The coverage directory.
+ * @param before The profile files in it before the Vitest pass ({@linkcode profileNames}).
  * @returns How many were removed.
  */
-export async function pruneRegeneratedProfiles(dir: string): Promise<number> {
-  let n = 0;
-  for await (const entry of Deno.readDir(dir)) {
-    if (!entry.isFile || !entry.name.endsWith(".json")) continue;
-    const path = join(dir, entry.name);
-    const url = await profileUrlOf(path);
-    if (url !== null && isRegeneratedModuleProfile(url)) {
-      await Deno.remove(path);
-      n++;
-    }
+export async function pruneVitestProfiles(
+  dir: string,
+  before: ReadonlySet<string>,
+): Promise<number> {
+  const all = await profileNames(dir);
+  const { regenerated, kept } = await addedProfiles(dir, [...all].filter((n) => !before.has(n)));
+  const lengths = await otherPassLengths(dir, before, new Set(kept.map((k) => k.url)));
+  const drop = [
+    ...regenerated,
+    ...kept.filter((k) => (lengths.get(k.url) ?? k.length) !== k.length).map((k) => k.name),
+  ];
+  for (const name of drop) await Deno.remove(join(dir, name));
+  return drop.length;
+}
+
+/** The Vitest pass's profiles: the regenerated copies, and the others with their shapes. */
+async function addedProfiles(dir: string, added: readonly string[]): Promise<{
+  regenerated: string[];
+  kept: { name: string; url: string; length: number }[];
+}> {
+  const regenerated: string[] = [];
+  const kept: { name: string; url: string; length: number }[] = [];
+  for (const name of added) {
+    const shape = await profileShape(join(dir, name));
+    if (shape === null) continue;
+    if (isRegeneratedModuleProfile(shape.url)) regenerated.push(name);
+    else kept.push({ name, ...shape });
   }
-  return n;
+  return { regenerated, kept };
+}
+
+/** The script length the other passes' profiles give each of `urls` (the first found). */
+async function otherPassLengths(
+  dir: string,
+  before: ReadonlySet<string>,
+  urls: ReadonlySet<string>,
+): Promise<Map<string, number>> {
+  const lengths = new Map<string, number>();
+  for (const name of before) {
+    if (lengths.size === urls.size) break;
+    const url = await profileUrlOf(join(dir, name)).catch(() => null);
+    if (url === null || !urls.has(url) || lengths.has(url)) continue;
+    const shape = await profileShape(join(dir, name));
+    if (shape !== null) lengths.set(url, shape.length);
+  }
+  return lengths;
 }
 
 /**
@@ -704,9 +775,8 @@ async function runPasses(): Promise<boolean> {
   const stock = stockPassDeno(toolchain, Deno.execPath());
   const parallel = await runPass(withWatchdog(passes.parallel), stock);
   const serial = await runPass(withWatchdog(passes.serial), stock);
-  const vitest = await vitestPass(passes.vitest, toolchain); // every pass runs, whatever failed
   const dir = coverageDir(split.flags);
-  if (dir !== null) await pruneRegeneratedProfiles(dir).catch(() => 0);
+  const vitest = await coveredVitestPass(passes.vitest, toolchain, dir); // every pass runs
   if (dir !== null && split.reEmit) await reEmitCovered(dir, { bin: stock });
   if (dir !== null && shard) await writeShardRecord(dir, shard, args);
   return parallel && serial && vitest;
@@ -744,6 +814,19 @@ async function writeShardRecord(dir: string, shard: ShardSpec, args: readonly st
 /** One stock pass (none: passed). */
 async function runPass(args: string[] | null, bin: string): Promise<boolean> {
   return args ? await deno(args, bin) : true;
+}
+
+/** The Vitest pass, then (with coverage) its unmappable profiles removed (pruneVitestProfiles). */
+async function coveredVitestPass(
+  args: string[] | null,
+  toolchain: string | null | false,
+  dir: string | null,
+): Promise<boolean> {
+  if (dir === null) return await vitestPass(args, toolchain);
+  const before = await profileNames(dir);
+  const ok = await vitestPass(args, toolchain);
+  await pruneVitestProfiles(dir, before);
+  return ok;
 }
 
 /** The Vitest pass (none: passed; no toolchain: failed). */

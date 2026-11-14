@@ -25,7 +25,8 @@ import {
 } from "../scripts/ci/coverage-merge.ts";
 import {
   isRegeneratedModuleProfile,
-  pruneRegeneratedProfiles,
+  profileNames,
+  pruneVitestProfiles,
   shardArgs,
   shardRecordPath,
   splitArgs,
@@ -211,7 +212,7 @@ Deno.test("coverage merge: profiles move under this checkout's root, renamed per
   }
 });
 
-Deno.test("coverage: a Vitest-regenerated module's profile is left out, in a run and in the merge", async () => {
+Deno.test("coverage: the Vitest pass's transformed-module profiles are left out, in a run and in the merge", async () => {
   // `…/x.ts?__vitest_gen=2` is the Vitest layer's re-evaluated copy: its offsets are of a
   // transformed source, and `deno coverage` mapped them onto x.ts (bridge-client.ts read 15.7%).
   assert(isRegeneratedModuleProfile("file:///r/src/x.ts?__vitest_gen=2"));
@@ -222,14 +223,36 @@ Deno.test("coverage: a Vitest-regenerated module's profile is left out, in a run
   try {
     const here = toFileUrl(join(dir, "repo") + "/").href;
     const profile = (url: string) => JSON.stringify({ scriptId: "1", url, functions: [] });
-    // A run's own coverage directory.
+    // A run's own coverage directory: what the Vitest pass added is checked against the rest.
     const run = join(dir, "run");
     await Deno.mkdir(run);
-    await Deno.writeTextFile(join(run, "a.json"), profile(`${here}src/x.ts`));
-    await Deno.writeTextFile(join(run, "b.json"), profile(`${here}src/x.ts?__vitest_gen=2`));
+    const shaped = (url: string, length: number) =>
+      JSON.stringify({
+        scriptId: "1",
+        url,
+        functions: [{
+          functionName: "",
+          ranges: [{ startOffset: 0, endOffset: length, count: 1 }],
+        }],
+      });
+    await Deno.writeTextFile(join(run, "a.json"), shaped(`${here}src/x.ts`, 100));
+    await Deno.writeTextFile(join(run, "c.json"), shaped(`${here}src/y.ts`, 50));
     await Deno.writeTextFile(join(run, "notes.txt"), "not a profile");
-    assertEquals(await pruneRegeneratedProfiles(run), 1);
-    assertEquals([...Deno.readDirSync(run)].map((e) => e.name).sort(), ["a.json", "notes.txt"]);
+    const before = await profileNames(run);
+    assertEquals([...before].sort(), ["a.json", "c.json"]);
+    await Deno.writeTextFile(join(run, "v1.json"), shaped(`${here}src/x.ts`, 100)); // same source
+    await Deno.writeTextFile(join(run, "v2.json"), shaped(`${here}src/x.ts`, 160)); // transformed
+    await Deno.writeTextFile(join(run, "v3.json"), shaped(`${here}src/x.ts?__vitest_gen=2`, 160));
+    await Deno.writeTextFile(join(run, "v4.json"), shaped(`${here}src/z.ts`, 70)); // Vitest-only
+    assertEquals(await pruneVitestProfiles(run, before), 2);
+    assertEquals([...Deno.readDirSync(run)].map((e) => e.name).sort(), [
+      "a.json",
+      "c.json",
+      "notes.txt",
+      "v1.json",
+      "v4.json",
+    ]);
+    assertEquals(await profileNames(join(dir, "missing")), new Set());
     // A shard's (from before the runs pruned them): the merge drops it too.
     const shard = join(dir, "shards", "1");
     await Deno.mkdir(join(shard, "profile"), { recursive: true });
