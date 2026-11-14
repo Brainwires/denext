@@ -643,6 +643,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   not a confinement boundary; keep the files an app should carry inside the project.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
+- **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no
+  `--allow-midi`, so `navigator.requestMIDIAccess()` in `desktop.ts`, an extension or a module
+  sidecar rejects `NotAllowedError` there (a page uses its engine's own Web MIDI where it has one).
+  A `midi` capability (`denext desktop add midi`) is planned.
+- **Embedded web views follow the engine:** `webViewCapabilities()` reports, per engine, whether
+  views are hosted and which of capture, evaluate, stacking, zoom, find, DevTools, the context
+  menu, print, clipboard and key forwarding work; where one is missing its call rejects
+  `unsupported`. A view never gets the desktop bridge, the app's storage or its navigation guard.
 - **A bridge handler's `ctx.caller.frame` is verified only on CEF and WKWebView.** A runtime that
   marks frames (`Deno.desktop.marksFrames`) does so only where the engine says which frame made
   the request: CEF, and macOS's WKWebView where WebKit reports the frame. WebView2 (Windows) and

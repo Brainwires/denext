@@ -169,6 +169,18 @@ and this project adheres to
 
 ### Changed
 
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.22.** It carries laufey API 57
+  and 58: title visibility and the macOS toolbar style (`BrowserWindow.setTitleVisibility()` /
+  `setToolbarStyle()`, what the native title options use), embedded web views
+  (`BrowserWindow.prototype.createWebView()`, behind `createWebView` and `attachWebView` in
+  `denext/desktop/window`, with keys and focus forwarded), `LAUFEY_HEADLESS` for headless runs and
+  an accessory app left in the background at launch. It also adds Web MIDI
+  (`navigator.requestMIDIAccess()`, `--allow-midi[=devices,sysex]`) and WebRTC data channels
+  (`RTCPeerConnection`, `RTCDataChannel`), and Node.js fixes: `node:fs` on a descriptor the process
+  inherited or a native addon opened (node-pty's master in a worker), a worker without IPC with no
+  IPC members, a self-signal on Windows writing its profiles first, and a packaged program spawned
+  while "text file busy" for a moment. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists each change.
 - **An accessory app no longer activates at launch on macOS.** With runtime 3.0.0-denext.22 the
   webview host leaves an app whose activation policy is `"accessory"`
   (`desktop.app.activationPolicy`, a tray app such as one with `dock: "while-window-open"`) in the

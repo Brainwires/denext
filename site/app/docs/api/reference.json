@@ -16976,7 +16976,7 @@
             {
               "kind": "property",
               "name": "app",
-              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean; activationPolicy?: \"regular\" | \"accessory\"; restoreWindows?: boolean; maxWindows?: number }",
+              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean | \"while-window-open\"; activationPolicy?: \"regular\" | \"accessory\"; restoreWindows?: boolean; maxWindows?: number }",
               "doc": "App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders\nand the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as\n`\"com.example.myapp\"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would\notherwise share one folder and one keychain service across every denext desktop app, letting\none app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier`\n(which `deno desktop` uses for the bundle id); the scaffold writes both."
             },
             {
@@ -16989,7 +16989,7 @@
               "kind": "property",
               "name": "menu",
               "signature": "menu?: DesktopMenuConfig",
-              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window), `list`\n(the open windows, each focusing its window) and `items` (the app's own items, whose clicks\nreach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the\nsubmenu also carries the standard Minimize / Zoom / Bring All to Front items."
+              "doc": "The standard window items the backend adds to the application menu, as a \"Window\" submenu\n(merged into a page's `setAppMenu` menu: into its own \"Window\" submenu when it has one, else\nappended). Opt-in, each item on its own: `newWindow` (the app path New Window, Cmd/Ctrl+N,\nopens with a fresh `window-N` key; `runDesktop({ newWindow })` in `desktop.ts` supplies the\nwindow instead), `reopenClosed` (Reopen Closed Window, Cmd/Ctrl+Shift+T: the keyed windows the\nuser closed, most recent first, opened again as pages with their keys and frames; `\"list\"`: a\nsubmenu of them by title, each reopening its window), `list`\n(the open windows, each focusing its window) and `items` (the app's own items, whose clicks\nreach the backend once with the key window: `runDesktop({ onWindowMenuItem })`). On macOS the\nsubmenu also carries the standard Minimize / Zoom / Bring All to Front items. `menus` adds the\napp's own top-level menus beside the managed ones (see {@link DesktopMenuConfig.menus})."
             },
             {
               "kind": "property",
@@ -17053,6 +17053,12 @@
             },
             {
               "kind": "property",
+              "name": "webViews",
+              "signature": "webViews?: DesktopWebViewsConfig",
+              "doc": "Embedded web views (`createWebView` from `denext/desktop/window`, `win.createWebView` in\n`desktop.ts`): native views of other sites inside a window, above its page. This sets how many\none window hosts at once and, optionally, the only origins they may load. Web views need a\nDeno Desktop runtime and engine that host them (`webViewCapabilities().supported`)."
+            },
+            {
+              "kind": "property",
               "name": "extraPermissions",
               "signature": "extraPermissions?: DesktopExtraPermissions",
               "doc": "Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what\nthe enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what\nthe capability catalog can't see: the desktop updater's feed host (`net`) and data dir\n(`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need.\n`denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script)."
@@ -17104,6 +17110,118 @@
               "name": "denoFlags",
               "signature": "denoFlags?: string[]",
               "doc": "Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the\npackage scripts: for a project that needs them to build at all. npm resolution needs none:\na project with a package.json or node_modules (a pnpm workspace member included) is built\nwith `--node-modules-dir=none --exclude-unused-npm` already.\nOne flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`,\n`--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`,\n`--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`,\n`--conditions` and `--unstable-*`. Permission flags are refused: they come from\n{@link capabilities} and {@link extraPermissions}."
+            }
+          ]
+        },
+        {
+          "name": "DesktopCustomMenuConfig",
+          "slug": "DesktopCustomMenuConfig",
+          "kind": "interface",
+          "signature": "interface DesktopCustomMenuConfig",
+          "doc": "One of the app's own top-level menus (DesktopMenuConfig.menus).",
+          "docFull": "One of the app's own top-level menus ({@link DesktopMenuConfig.menus}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id: string",
+              "doc": "Its id (unique, at most 64 characters): what `setMenu(id, …)` names."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "label: string",
+              "doc": "The label in the menu bar."
+            },
+            {
+              "kind": "property",
+              "name": "after",
+              "signature": "after?: \"app\" | \"file\" | \"edit\" | \"view\" | \"window\"",
+              "doc": "The standard menu it goes after (default `\"view\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "items: readonly DesktopCustomMenuItemConfig[]",
+              "doc": "Its entries (at most 500, submenus included, nested at most 8 deep)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopCustomMenuItemConfig",
+          "slug": "DesktopCustomMenuItemConfig",
+          "kind": "interface",
+          "signature": "interface DesktopCustomMenuItemConfig",
+          "doc": "One entry of a custom menu (DesktopCustomMenuConfig.items).",
+          "docFull": "One entry of a custom menu ({@link DesktopCustomMenuConfig.items}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id?: string",
+              "doc": "What a click reports (unique across every custom menu, at most 128 characters); items need one."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "label?: string",
+              "doc": "The label (items and submenus)."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+K\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "enabled?: boolean",
+              "doc": "Selectable (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "checked?: boolean",
+              "doc": "A checkmark (a checkbox's or radio item's initial state)."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "type?: \"normal\" | \"checkbox\" | \"radio\" | \"separator\" | \"submenu\"",
+              "doc": "`\"normal\"` (default), `\"checkbox\"`, `\"radio\"`, `\"separator\"` or `\"submenu\"` (default with `items`)."
+            },
+            {
+              "kind": "property",
+              "name": "group",
+              "signature": "group?: string",
+              "doc": "A radio item's group (default: the radio items of the same submenu without one)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "items?: readonly DesktopCustomMenuItemConfig[]",
+              "doc": "A submenu's entries."
+            },
+            {
+              "kind": "property",
+              "name": "icon",
+              "signature": "icon?: string",
+              "doc": "A PNG as base64 (drawn where the backend draws menu icons)."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "role?: \"about\" | \"hide\" | \"hideOthers\" | \"unhide\" | \"quit\" | \"undo\" | \"redo\" | \"cut\" | \"copy\" | \"paste\" | \"selectAll\" | \"minimize\" | \"zoom\" | \"close\" | \"front\" | \"toggleFullScreen\"",
+              "doc": "A standard item the OS handles (`\"copy\"`, `\"toggleFullScreen\"`, …)."
             }
           ]
         },
@@ -17416,13 +17534,19 @@
           "slug": "DesktopMenuConfig",
           "kind": "interface",
           "signature": "interface DesktopMenuConfig",
-          "doc": "The application menu's standard window items (DesktopConfig.menu).",
-          "docFull": "The application menu's standard window items ({@link DesktopConfig.menu}).",
+          "doc": "The application menu's standard window items and the app's own menus (DesktopConfig.menu).",
+          "docFull": "The application menu's standard window items and the app's own menus ({@link DesktopConfig.menu}).",
           "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true,
           "members": [
+            {
+              "kind": "property",
+              "name": "menus",
+              "signature": "menus?: readonly DesktopCustomMenuConfig[]",
+              "doc": "The app's own top-level menus (at most 16), beside the managed ones (on macOS the app menu,\nEdit and Window): each `{ id, label, after?, items }`, placed after the `after` menu (`\"app\"`,\n`\"file\"`, `\"edit\"`, `\"view\"` (default) or `\"window\"`, matched by label; one the bar does not\nhave falls back to the one before it). A page's `setAppMenu` keeps them too. Items are\n`{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }` (`type` `\"checkbox\"`\ntoggles on a click, `\"radio\"` checks itself and unchecks the rest of its `group`; `icon` a\nbase64 PNG), submenus `{ label, items }`, separators `{ type: \"separator\" }` and roles\n`{ role }`. Item ids are unique across every menu. Clicks reach the pages' `onAppMenuItem` and\nthe backend's `runDesktop({ onAppMenuItem })` with the key window; the pages and the backend\nchange them at runtime with `setMenu` / `setMenuItemState` (app-wide or for one window)."
+            },
             {
               "kind": "property",
               "name": "window",
@@ -17802,8 +17926,8 @@
           "slug": "DesktopSidecarRunConfig",
           "kind": "interface",
           "signature": "interface DesktopSidecarRunConfig",
-          "doc": "DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.",
-          "docFull": "{@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with\n`nodeModules`, `external` and `entries` for a Node backend) or `exec` (a program), not both.",
+          "doc": "DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external, exclude and entries for a Node backend) or exec (a program, with bootstrapFd), not both.",
+          "docFull": "{@link DesktopSidecarConfig.run}: `module` (run in a worker of the app's own runtime; with\n`nodeModules`, `external`, `exclude` and `entries` for a Node backend) or `exec` (a program,\nwith `bootstrapFd`), not both.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -17829,15 +17953,33 @@
             },
             {
               "kind": "property",
+              "name": "exclude",
+              "signature": "exclude?: string[]",
+              "doc": "Packages never bundled nor copied, by name or glob (`\"@anthropic-ai/claude-code-*\"`; `*`\nstays within one name segment): `require()` / `import()` of one throws `MODULE_NOT_FOUND` at\nrun time, a static import throws only once used."
+            },
+            {
+              "kind": "property",
               "name": "entries",
               "signature": "entries?: string[]",
               "doc": "Further entry modules it starts itself (worker scripts), relative to the module."
             },
             {
               "kind": "property",
+              "name": "archDirs",
+              "signature": "archDirs?: Record<string, string>",
+              "doc": "Per-target `node_modules` folders whose packages are copied in place of the host's when\npackaging for that target: `\"<os>-<arch>\"` (`\"darwin-x86_64\"`) or `\"<arch>\"` (`\"arm64\"`)\nkeys, relative to the project. For an addon built per arch with no prebuild for the other."
+            },
+            {
+              "kind": "property",
               "name": "exec",
               "signature": "exec?: string",
               "doc": "A program: an absolute path, a name on `PATH`, or a file of the project (`\"./bin/server\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "bootstrapFd",
+              "signature": "bootstrapFd?: number",
+              "doc": "A program's first line (`{\"name\",\"port\",\"bootstrap\",\"secrets\"}`) on this file descriptor, 3 to\n9 (a pipe written once, then closed), instead of stdin."
             }
           ]
         },
@@ -18146,6 +18288,32 @@
           ]
         },
         {
+          "name": "DesktopWebViewsConfig",
+          "slug": "DesktopWebViewsConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWebViewsConfig",
+          "doc": "desktop.webViews: the embedded web views a window may host.",
+          "docFull": "`desktop.webViews`: the embedded web views a window may host.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "limit",
+              "signature": "limit?: number",
+              "doc": "The most web views one window hosts at once (default 8), counting the page's and\n`desktop.ts`'s together; one more rejects `limit`."
+            },
+            {
+              "kind": "property",
+              "name": "allowedOrigins",
+              "signature": "allowedOrigins?: string[]",
+              "doc": "The exact origins (`\"https://docs.example\"`: scheme, host and port, no path) a web view may\nload through `createWebView` and `navigate`; any other rejects `not_allowed_url`. Unset: any\n`http:` / `https:` origin. The app's own origin is refused either way. Links the user follows\ninside the view are not checked against it (only their scheme is: `http:` / `https:`)."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowButtonPosition",
           "slug": "DesktopWindowButtonPosition",
           "kind": "interface",
@@ -18212,6 +18380,18 @@
               "name": "windowButtonPosition",
               "signature": "windowButtonPosition?: DesktopWindowButtonPosition",
               "doc": "Where the macOS window buttons (the traffic lights) sit: the close button's top-left corner,\nin points from the window's top-left, for a page drawn under a hidden title bar\n(`desktop.titleBar: \"hidden\"` / `\"hiddenInset\"`). Windows opened with `windows.open` /\n`openWindow` take it too, unless their own `windowButtonPosition` says (`null` keeps the OS's\nplace); a frameless window has none. Ignored on Windows and Linux. Needs denext's pinned\nruntime (ignored with a warning before)."
+            },
+            {
+              "kind": "property",
+              "name": "titleVisibility",
+              "signature": "titleVisibility?: \"visible\" | \"hidden\"",
+              "doc": "Whether the native title bar draws the title text (default `\"visible\"`). `\"hidden\"` keeps the\nOS's title bar, its buttons and its drag area and draws no text; the window's title still names\nit in the Dock / taskbar, the Window menu, Mission Control and alt-tab. Each OS does it natively:\nmacOS, Windows, and Linux only where GTK draws the title bar itself (client-side decorations,\nsuch as GNOME on Wayland); under a window manager's decorations (KDE Plasma, X11 window\nmanagers) it is not applied, and `windowCapabilities().titleVisibility` is `false`. Windows\nopened with `windows.open` / `openWindow` take it too, unless their own `titleVisibility`\nsays. Not for a frameless window (it has no title bar). Needs a Deno Desktop runtime with\n`BrowserWindow.setTitleVisibility` (ignored with a warning before)."
+            },
+            {
+              "kind": "property",
+              "name": "toolbarStyle",
+              "signature": "toolbarStyle?: \"automatic\" | \"unified\" | \"unifiedCompact\" | \"expanded\"",
+              "doc": "The macOS toolbar style that lays the title bar out (default `\"automatic\"`: no toolbar). An\nempty toolbar in that style is attached: `\"unified\"` is one tall bar with the title\nleft-aligned (Finder, Safari), `\"unifiedCompact\"` the same, shorter, and `\"expanded\"` puts the\ntitle on its own row. With `desktop.titleBar: \"hiddenInset\"` it sets the inset toolbar's style\n(`\"unifiedCompact\"`: a shorter inset); `desktop.titleBar: \"hidden\"` has no toolbar, so any\nstyle but `\"automatic\"` is an error there (use `\"hiddenInset\"`), as it is on a frameless\nwindow. macOS 11 and later; ignored on Windows and Linux (`windowCapabilities().toolbarStyle`\nis `false`). Windows opened with `windows.open` / `openWindow` take it too, unless their own\n`toolbarStyle` says."
             },
             {
               "kind": "property",
@@ -45470,6 +45650,80 @@
           "denextOnly": true
         },
         {
+          "name": "CreateWebViewOptions",
+          "slug": "CreateWebViewOptions",
+          "kind": "interface",
+          "signature": "interface CreateWebViewOptions",
+          "doc": "What createWebView opens.",
+          "docFull": "What {@linkcode createWebView} opens.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "The page to load: `http:` or `https:` only; the app's own origin is refused."
+            },
+            {
+              "kind": "property",
+              "name": "bounds",
+              "signature": "bounds: WebViewBounds",
+              "doc": "Where the view sits (CSS pixels, relative to the window's page viewport)."
+            },
+            {
+              "kind": "property",
+              "name": "partition",
+              "signature": "partition?: string",
+              "doc": "The storage partition (default `\"webview:default\"`; never the app's own storage): 1 to 64\nletters, digits, `.`, `_`, `:` or `-`, starting with a letter or digit. Views with the same\npartition share cookies and storage. `\"ephemeral\"` or a name starting with `\"ephemeral:\"` is\nkept in memory and gone when the app exits; any other name is persistent."
+            },
+            {
+              "kind": "property",
+              "name": "visible",
+              "signature": "visible?: boolean",
+              "doc": "Whether the view shows once created (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "allowPopups",
+              "signature": "allowPopups?: \"deny\" | \"same-view\" | \"browser\"",
+              "doc": "What `window.open` / a `target=\"_blank\"` link in the view does: `\"same-view\"` (default) loads\nit in this view, `\"browser\"` opens it in the system browser, `\"deny\"` opens nothing and fires\n`new-window`."
+            },
+            {
+              "kind": "property",
+              "name": "downloads",
+              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\"",
+              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "permissions?: \"deny\" | \"ask\" | WebViewPermissions",
+              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user. The object form also sets the clipboard: `prompts`\n(default `\"deny\"`) is the string form's choice, `clipboardRead` (default `false`) lets the\nsite read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture."
+            },
+            {
+              "kind": "property",
+              "name": "contextMenu",
+              "signature": "contextMenu?: \"native\" | \"app\"",
+              "doc": "The context menu: `\"native\"` (default) is the engine's own; `\"app\"` suppresses it so the page\ndraws its own from the `context-menu` event (which fires in both modes)."
+            },
+            {
+              "kind": "property",
+              "name": "forwardKeys",
+              "signature": "forwardKeys?: string[]",
+              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+            },
+            {
+              "kind": "property",
+              "name": "userAgent",
+              "signature": "userAgent?: string",
+              "doc": "Replaces the engine's user agent string for this view."
+            }
+          ]
+        },
+        {
           "name": "DEFAULT_DESKTOP_INSTALLERS",
           "slug": "DEFAULT_DESKTOP_INSTALLERS",
           "kind": "variable",
@@ -45660,6 +45914,100 @@
           ]
         },
         {
+          "name": "DesktopAppMenuItemContext",
+          "slug": "DesktopAppMenuItemContext",
+          "kind": "interface",
+          "signature": "interface DesktopAppMenuItemContext",
+          "doc": "What the backend's handlers (runDesktop({ onAppMenuItem }), an extension's host.onAppMenuItem) get with a click on a custom menu's item or a window's own Window-menu item.",
+          "docFull": "What the backend's handlers (`runDesktop({ onAppMenuItem })`, an extension's\n`host.onAppMenuItem`) get with a click on a custom menu's item or a window's own Window-menu item.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "readonly source: \"menu\" | \"windowMenu\"",
+              "doc": "A custom menu's item (`\"menu\"`) or a window's own Window-menu item (`\"windowMenu\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "keyWindow",
+              "signature": "readonly keyWindow: { readonly id: string; readonly key?: string } | null",
+              "doc": "The key window when the item was chosen (the app window focused last, else the one opened\nlast), with its app key when it has one; `null` with no app window open."
+            },
+            {
+              "kind": "property",
+              "name": "menu",
+              "signature": "readonly menu?: string",
+              "doc": "A custom item's top-level menu id."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkbox's or radio item's state after the click (the menu shows it already)."
+            },
+            {
+              "kind": "property",
+              "name": "windowId",
+              "signature": "readonly windowId?: string",
+              "doc": "The window a Window-menu item belongs to (`setWindowMenuAppItems`)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopAppMenuItemHandler",
+          "slug": "DesktopAppMenuItemHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopAppMenuItemHandler = (id: string, ctx: DesktopAppMenuItemContext) => void | Promise<void>",
+          "doc": "A handler of custom-menu clicks: the item's id and the click's context.",
+          "docFull": "A handler of custom-menu clicks: the item's id and the click's context.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopAppMenusApi",
+          "slug": "DesktopAppMenusApi",
+          "kind": "interface",
+          "signature": "interface DesktopAppMenusApi",
+          "doc": "The custom menus as the backend drives them (runDesktop's result, an extension's host). Each call throws a DesktopCapError (validation, not_found for a window not open, unsupported where the runtime sets no application menu).",
+          "docFull": "The custom menus as the backend drives them (`runDesktop`'s result, an extension's host). Each\ncall throws a `DesktopCapError` (`validation`, `not_found` for a window not open, `unsupported`\nwhere the runtime sets no application menu).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "setMenu",
+              "signature": "setMenu(menuId: string, menu: DesktopMenuUpdate | null): void",
+              "doc": "Replace a custom top-level menu's entries (and optionally its label and place), add one (a\n`label` is required then), or remove one with `null` (a configured one too, until it is set\nagain). Item ids stay unique across every custom menu. The app-wide state set on the menu's\nitems is dropped (the new entries carry their own); a window's state stays for ids still there."
+            },
+            {
+              "kind": "method",
+              "name": "setMenuItemState",
+              "signature": "setMenuItemState(itemId: string, state: DesktopMenuItemState, options?: { readonly windowId?: string }): void",
+              "doc": "Change a custom item's `checked`, `enabled` or `label`: app-wide, or with `{ windowId }` for\nthat window only, shown while it is key (and in its own menu bar on Windows and Linux) over the\napp-wide state. Checking a radio item unchecks the rest of its group at the same level. The\nwindow's state goes when it closes."
+            },
+            {
+              "kind": "method",
+              "name": "setWindowMenuAppItems",
+              "signature": "setWindowMenuAppItems(windowId: string, items: readonly DesktopWindowMenuAppItem[] | null): void",
+              "doc": "Window `windowId`'s own items in the Window menu, below the window list after a separator,\nshown while that window is key; `null` (or `[]`) clears them, and they go when it closes."
+            },
+            {
+              "kind": "method",
+              "name": "onAppMenuItem",
+              "signature": "onAppMenuItem(fn: DesktopAppMenuItemHandler): () => void",
+              "doc": "Call `fn` once per click on a custom menu's item or a window's own Window-menu item, with its\nid and {@linkcode DesktopAppMenuItemContext} (the key window, the menu, a checkbox's or radio\nitem's new state). The pages hear the same clicks through `onAppMenuItem`. A throw or a\nrejection is logged. Returns the unsubscribe."
+            }
+          ]
+        },
+        {
           "name": "desktopAppName",
           "slug": "desktopAppName",
           "kind": "function",
@@ -45697,8 +46045,8 @@
             {
               "kind": "property",
               "name": "dock",
-              "signature": "readonly dock?: boolean",
-              "doc": "Show the macOS Dock icon (`desktop.app.dock`, default `true`)."
+              "signature": "readonly dock?: boolean | \"while-window-open\"",
+              "doc": "Show the macOS Dock icon (`desktop.app.dock`, default `true`); `\"while-window-open\"`: an\naccessory app whose Dock helper holds the icon while a window shows (macOS)."
             },
             {
               "kind": "property",
@@ -45850,8 +46198,8 @@
             {
               "kind": "method",
               "name": "emit",
-              "signature": "emit(cap: string, event: string, data: unknown, target?: string): void",
-              "doc": "Push an event to the pages' streams (its `cap` need not be a registered capability's): every\nwindow's, or only `target`'s."
+              "signature": "emit(cap: string, event: string, data: unknown, target?: string, options?: DesktopEventAppendOptions): void",
+              "doc": "Push an event to the pages' streams (its `cap` need not be a registered capability's): every\nwindow's, or only `target`'s. `options.retain: false` sends a one-shot action to the live\npages only (see {@linkcode DesktopEventLog.append})."
             },
             {
               "kind": "method",
@@ -46244,7 +46592,7 @@
               "kind": "method",
               "name": "emit",
               "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
-              "doc": "Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`\nmust be one the capability declared in {@linkcode DesktopCapability.events}; emitting an\nundeclared event throws. Events are retained for replay, so a page that subscribes later still\nreceives it. For work that outlives the call (or that no page call started), use the\n{@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives."
+              "doc": "Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`\nmust be one the capability declared in {@linkcode DesktopCapability.events}; emitting an\nundeclared event throws. Events are retained for replay, so a page that subscribes later still\nreceives it; `{ retain: false }` sends a one-shot action only to the pages live now. For work\nthat outlives the call (or that no page call started), use the\n{@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives."
             },
             {
               "kind": "method",
@@ -46553,6 +46901,32 @@
               "name": "window",
               "signature": "readonly window?: string",
               "doc": "The one window the event is for (`\"main\"`, `\"panel\"`, or an id `openWindow` returned); every\nwindow's stream when omitted."
+            },
+            {
+              "kind": "property",
+              "name": "retain",
+              "signature": "readonly retain?: boolean",
+              "doc": "Whether the event is kept for a page that subscribes later (default `true`). Keep state, and\nwhat launched the app (a deep link, an opened file), retained. Pass `false` for a one-shot\naction meant for the page that is live now — a menu click, a button press forwarded from the\nbackend — so a page that loads or reloads afterwards does not receive (and act on) it again.\nA non-retained event still reaches a live page whose stream reconnects (`Last-Event-ID`)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopEventAppendOptions",
+          "slug": "DesktopEventAppendOptions",
+          "kind": "interface",
+          "signature": "interface DesktopEventAppendOptions",
+          "doc": "How DesktopEventLog.append keeps an event.",
+          "docFull": "How {@linkcode DesktopEventLog.append} keeps an event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "retain",
+              "signature": "readonly retain?: boolean",
+              "doc": "`false`: a one-shot action for the live pages. It is replayed only to a stream that resumes\nafter it (`Last-Event-ID`), never to a page that subscribes later. Default `true`."
             }
           ]
         },
@@ -46583,7 +46957,7 @@
             {
               "kind": "method",
               "name": "append",
-              "signature": "append(cap: string, event: string, data: unknown, target?: string): number",
+              "signature": "append(cap: string, event: string, data: unknown, target?: string, options?: DesktopEventAppendOptions): number",
               "doc": "Append an event: assign the next id, retain it (evicting the oldest past the cap), and hand it\nto every connected sink. Returns the assigned id.",
               "params": [
                 {
@@ -46601,6 +46975,10 @@
                 {
                   "name": "target",
                   "doc": "The one window it is for (a window id); every window's stream when omitted."
+                },
+                {
+                  "name": "options",
+                  "doc": "retain: false for a one-shot action (see DesktopEventAppendOptions)."
                 }
               ]
             },
@@ -46608,7 +46986,7 @@
               "kind": "method",
               "name": "open",
               "signature": "open(lastEventId: string | null, window?: string): ReadableStream<Uint8Array>",
-              "doc": "Open an SSE body for a subscriber: replay the retained backlog (after `lastEventId`, or all of\nit), then stream new events live, with periodic heartbeats. The returned stream is closed by\ncancelling it (the page navigating away or unsubscribing), which detaches the sink and stops\nthe heartbeat.",
+              "doc": "Open an SSE body for a subscriber: replay the backlog (after `lastEventId`, non-retained events\nincluded; or every retained event without one), then stream new events live, with periodic heartbeats. The returned stream is closed by\ncancelling it (the page navigating away or unsubscribing), which detaches the sink and stops\nthe heartbeat.",
               "params": [
                 {
                   "name": "lastEventId",
@@ -46644,9 +47022,9 @@
           "name": "DesktopExtensionHost",
           "slug": "DesktopExtensionHost",
           "kind": "interface",
-          "signature": "interface DesktopExtensionHost",
+          "signature": "interface DesktopExtensionHost extends DesktopAppMenusApi",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)\nevery top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `setMenu` / `setMenuItemState` / `setWindowMenuAppItems` / `onAppMenuItem` drive the app's\nown top-level menus and each window's Window-menu items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)\nevery top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46674,7 +47052,7 @@
               "kind": "method",
               "name": "emit",
               "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
-              "doc": "Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be\none the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.\nEvents are retained for replay: one emitted before any page subscribes is delivered to the\nfirst `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}."
+              "doc": "Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be\none the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.\nEvents are retained for replay: one emitted before any page subscribes is delivered to the\nfirst `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}. Pass\n`{ retain: false }` for a one-shot action (a menu click forwarded to the page), which a page\nthat loads or reloads later never receives."
             },
             {
               "kind": "method",
@@ -46726,6 +47104,12 @@
             },
             {
               "kind": "method",
+              "name": "onNotificationClick",
+              "signature": "onNotificationClick(fn: DesktopNotificationClickListener): () => void",
+              "doc": "Call `fn` for every click the runtime reports on one of the app's notifications, with its\n`tag`, the `action` button (`null` for the notification itself), its `data` and `launch`:\nany tag, including notifications the extension posted itself through\n`Deno.desktop.notifications` (the pages still get the clicks on theirs). The click that\nlaunched the app reaches `fn` too (`launch: true`, on a microtask after it subscribed). A throw\nor a rejection is logged. Never called without denext's pinned runtime. Returns the\nunsubscribe."
+            },
+            {
+              "kind": "method",
               "name": "onWillNavigate",
               "signature": "onWillNavigate(fn: DesktopWillNavigateHandler): () => void",
               "doc": "Call `fn` before every top-level navigation of every window, ahead of the navigation guard\n(`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`\n(`\"link\"`, `\"script\"`, `\"redirect\"`, `\"window-open\"`, `\"other\"`) and the `initiator` when the\nengine says: `event.preventDefault()` refuses it, `event.allow()` loads it in place although\nthe guard would send it to the browser (a refusal wins). Decide synchronously; a throw is\nlogged and decides nothing. Never called on a runtime without the hook (one that publishes no\n`Deno.desktop.navigationEvents`). Returns the unsubscribe."
@@ -46747,6 +47131,12 @@
               "name": "openWindow",
               "signature": "openWindow(options: DesktopOpenWindowOptions): DesktopWindowRef",
               "doc": "Open a window on a page of the app, exactly as `desktop.ts`'s `windows.open` does (the same\noptions, limits and key rules), and return it. Throws on bad options, past\n`desktop.app.maxWindows`, or with no desktop runtime (an `unsupported`\n{@linkcode DesktopCapError})."
+            }
+          ],
+          "extends": [
+            {
+              "type": "DesktopAppMenusApi",
+              "ref": "denext-desktop/DesktopAppMenusApi"
             }
           ]
         },
@@ -46798,7 +47188,7 @@
           "name": "desktopIncludeArgs",
           "slug": "desktopIncludeArgs",
           "kind": "function",
-          "signature": "desktopIncludeArgs(entryUrl: string, os?: DesktopOs, appEntry?: string): Promise<string[]>",
+          "signature": "desktopIncludeArgs(entryUrl: string, os?: DesktopOs, appEntry?: string, options: { readonly signNativeCode?: boolean; readonly target?: string }): Promise<string[]>",
           "doc": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:",
           "docFull": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module\nthe app loads at runtime, and loads each one from the binary, never from the build machine's\ndisk:\n\n- `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches\n  but the runtime fails to load the extension (\"Module not found\"), since `--include out` only\n  bundles the export;\n- `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute\n  local target (`\"denext/desktop\": \"file:///…\"`): a compiled binary resolves such a target to the\n  build machine's path, so a relocatable copy of the map is written and used instead.\n\nReads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →\n`../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.",
           "params": [
@@ -46813,6 +47203,10 @@
             {
               "name": "appEntry",
               "doc": "The entry that calls runDesktop, relative to the project (default desktop.ts; denext desktop run / dev --entry): a relative extension module and a sidecar's module, program or bundle are resolved from its folder, as the app resolves them."
+            },
+            {
+              "name": "options",
+              "doc": "signNativeCode: false leaves a bundled sidecar's copied native addons as installed (denext desktop run / dev); by default they are signed for the target OS with the package script's credentials before they are archived (see desktop-sidecar-sign.ts). target: the Rust target triple being built (aarch64-apple-darwin), or \"host\": a bundled sidecar then keeps only that architecture's prebuilt addons and per-platform packages (and uses run.archDirs); without it every architecture's are kept."
             }
           ],
           "returns": "[\"--include\", path, …, \"--import-map\", file], ready to splice into the deno desktop argv.",
@@ -47132,6 +47526,136 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMenuAnchor",
+          "slug": "DesktopMenuAnchor",
+          "kind": "typeAlias",
+          "signature": "type DesktopMenuAnchor = \"app\" | \"file\" | \"edit\" | \"view\" | \"window\"",
+          "doc": "The standard menus a custom top-level menu goes after: the app menu (macOS; elsewhere the start of the bar), then File, Edit, View and Window by their labels. One the bar does not have falls back to the one before it (\"view\" with no View menu is \"edit\").",
+          "docFull": "The standard menus a custom top-level menu goes after: the app menu (macOS; elsewhere the start\nof the bar), then File, Edit, View and Window by their labels. One the bar does not have falls\nback to the one before it (`\"view\"` with no View menu is `\"edit\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMenuItemSpec",
+          "slug": "DesktopMenuItemSpec",
+          "kind": "interface",
+          "signature": "interface DesktopMenuItemSpec",
+          "doc": "One entry of a custom menu (desktop.menu.menus[].items, setMenu): an item (id, label), a checkbox or a radio item (type, with checked; radio items of one group exclude each other), a submenu (items), a separator (type: \"separator\") or a standard item (role).",
+          "docFull": "One entry of a custom menu (`desktop.menu.menus[].items`, `setMenu`): an item (`id`, `label`), a\ncheckbox or a radio item (`type`, with `checked`; radio items of one `group` exclude each other),\na submenu (`items`), a separator (`type: \"separator\"`) or a standard item (`role`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "What a click reports (unique among every custom menu's items); clickable items need one."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label (items and submenus)."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+K\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkmark next to the label (the initial state of a checkbox or radio item)."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type?: DesktopMenuItemType",
+              "doc": "What it is: `\"normal\"` (default), `\"checkbox\"` (a click toggles `checked`), `\"radio\"` (a click\nchecks it and unchecks the rest of its group), `\"separator\"`, `\"submenu\"` (default with `items`)."
+            },
+            {
+              "kind": "property",
+              "name": "group",
+              "signature": "readonly group?: string",
+              "doc": "A radio item's group (default: the radio items of the same submenu without a group)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items?: readonly DesktopMenuItemSpec[]",
+              "doc": "A submenu's entries."
+            },
+            {
+              "kind": "property",
+              "name": "icon",
+              "signature": "readonly icon?: string",
+              "doc": "A PNG as base64, where the backend draws menu icons (`appCapabilities().icons`)."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "readonly role?: string",
+              "doc": "A standard item the OS handles (`\"copy\"`, `\"toggleFullScreen\"`, …); the other keys are ignored."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuItemState",
+          "slug": "DesktopMenuItemState",
+          "kind": "interface",
+          "signature": "interface DesktopMenuItemState",
+          "doc": "What setMenuItemState changes on an item of a custom menu.",
+          "docFull": "What `setMenuItemState` changes on an item of a custom menu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "The checkmark (a radio item checked unchecks the rest of its group)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuItemType",
+          "slug": "DesktopMenuItemType",
+          "kind": "typeAlias",
+          "signature": "type DesktopMenuItemType = \"normal\" | \"checkbox\" | \"radio\" | \"separator\" | \"submenu\"",
+          "doc": "What an entry of a custom menu is.",
+          "docFull": "What an entry of a custom menu is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopMenuSettings",
           "slug": "DesktopMenuSettings",
           "kind": "interface",
@@ -47148,6 +47672,82 @@
               "name": "window",
               "signature": "readonly window?: DesktopWindowMenuSettings",
               "doc": "The standard window items."
+            },
+            {
+              "kind": "property",
+              "name": "menus",
+              "signature": "readonly menus?: readonly DesktopMenuSpec[]",
+              "doc": "The app's own top-level menus, in order."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuSpec",
+          "slug": "DesktopMenuSpec",
+          "kind": "interface",
+          "signature": "interface DesktopMenuSpec",
+          "doc": "A custom top-level menu (desktop.menu.menus).",
+          "docFull": "A custom top-level menu (`desktop.menu.menus`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "Its id (`setMenu(id, …)`; unique, at most 64 characters)."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label: string",
+              "doc": "The label in the menu bar."
+            },
+            {
+              "kind": "property",
+              "name": "after",
+              "signature": "readonly after?: DesktopMenuAnchor",
+              "doc": "The standard menu it goes after (default `\"view\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items: readonly DesktopMenuItemSpec[]",
+              "doc": "Its entries."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuUpdate",
+          "slug": "DesktopMenuUpdate",
+          "kind": "interface",
+          "signature": "interface DesktopMenuUpdate",
+          "doc": "What setMenu(menuId, update) sets: the entries, and optionally a new label and place.",
+          "docFull": "What `setMenu(menuId, update)` sets: the entries, and optionally a new label and place.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label in the menu bar (required for a menu `setMenu` adds)."
+            },
+            {
+              "kind": "property",
+              "name": "after",
+              "signature": "readonly after?: DesktopMenuAnchor",
+              "doc": "The standard menu it goes after (a new menu's default `\"view\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items: readonly DesktopMenuItemSpec[]",
+              "doc": "Its entries (they replace the menu's)."
             }
           ]
         },
@@ -47292,6 +47892,56 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopNotificationClick",
+          "slug": "DesktopNotificationClick",
+          "kind": "interface",
+          "signature": "interface DesktopNotificationClick",
+          "doc": "A click on one of the app's notifications, as the backend's hooks receive it.",
+          "docFull": "A click on one of the app's notifications, as the backend's hooks receive it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "tag",
+              "signature": "readonly tag: string",
+              "doc": "The notification's tag: the one it was posted with (`Deno.desktop.notifications.schedule({\ntag })`, a `new Notification(title, { tag })`), or the one denext gave it (`denext-<id>…` for\n`scheduleNotification`, `denext-web-…` for a page's web notification)."
+            },
+            {
+              "kind": "property",
+              "name": "action",
+              "signature": "readonly action: string | null",
+              "doc": "The action button clicked, or `null` for the notification itself."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data: unknown",
+              "doc": "The `data` it was posted with, as the runtime round-trips it (`null` when none)."
+            },
+            {
+              "kind": "property",
+              "name": "launch",
+              "signature": "readonly launch: boolean",
+              "doc": "`true` for the click that launched the app (or one that came before the backend listened)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopNotificationClickListener",
+          "slug": "DesktopNotificationClickListener",
+          "kind": "typeAlias",
+          "signature": "type DesktopNotificationClickListener = (click: DesktopNotificationClick) => void | Promise<void>",
+          "doc": "A backend hook on notification clicks: a throw or a rejection is logged.",
+          "docFull": "A backend hook on notification clicks: a throw or a rejection is logged.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopNpmArgs",
           "slug": "desktopNpmArgs",
           "kind": "function",
@@ -47367,6 +48017,30 @@
               "name": "windowButtonPosition",
               "signature": "readonly windowButtonPosition?: { readonly x: number; readonly y: number } | null",
               "doc": "Where the macOS traffic lights sit (the close button's top-left corner, in points from the\nwindow's top-left): default `desktop.window.windowButtonPosition`, as the main window gets it;\n`null` keeps the OS's place. A frameless window has none."
+            },
+            {
+              "kind": "property",
+              "name": "titleVisibility",
+              "signature": "readonly titleVisibility?: \"visible\" | \"hidden\"",
+              "doc": "Whether the native title bar draws the title text: default `desktop.window.titleVisibility`,\nas the main window gets it. `\"hidden\"` keeps the title bar, its buttons and its drag area."
+            },
+            {
+              "kind": "property",
+              "name": "toolbarStyle",
+              "signature": "readonly toolbarStyle?: \"automatic\" | \"unified\" | \"unifiedCompact\" | \"expanded\"",
+              "doc": "The macOS toolbar style that lays the title bar out: default `desktop.window.toolbarStyle`, as\nthe main window gets it. Refused with the `\"hidden\"` title bar and on a frameless window."
+            },
+            {
+              "kind": "property",
+              "name": "minSize",
+              "signature": "readonly minSize?: { readonly width: number; readonly height: number }",
+              "doc": "The smallest size the user can resize it to, in CSS pixels: default `desktop.minSize`, as the\nmain window gets it. Each side 1 to 10000; refused `validation` when larger than the\n`maxSize` it ends up with (its own or the inherited one)."
+            },
+            {
+              "kind": "property",
+              "name": "maxSize",
+              "signature": "readonly maxSize?: { readonly width: number; readonly height: number }",
+              "doc": "The largest size the user can resize it to: default `desktop.maxSize`, as the main window gets it."
             },
             {
               "kind": "property",
@@ -47960,7 +48634,7 @@
           "name": "DesktopRuntime",
           "slug": "DesktopRuntime",
           "kind": "interface",
-          "signature": "interface DesktopRuntime",
+          "signature": "interface DesktopRuntime extends DesktopAppMenusApi",
           "doc": "What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.",
           "docFull": "What {@linkcode runDesktop} hands back once the server is up: the app window, the desktop world\nthe gates enforce, and a hook that pushes an event down the page's bridge stream (what\n`onDesktopEvent(cap, event, …)` in `denext/desktop/client` receives) — the seam OS events (deep\nlinks, open-file, …) are emitted through.",
           "params": [],
@@ -48008,7 +48682,7 @@
               "kind": "method",
               "name": "setActivationPolicy",
               "signature": "setActivationPolicy(policy: \"regular\" | \"accessory\" | \"prohibited\"): boolean",
-              "doc": "Set the macOS activation policy: `\"regular\"` (a Dock icon and a menu bar), `\"accessory\"`\n(neither: a tray app) or `\"prohibited\"` (runtime `3.0.0-denext.6`+; on an older runtime\n`\"regular\"` / `\"accessory\"` show / hide the Dock icon). Switching to regular also brings the\napp to the front. On Windows and Linux `\"regular\"` shows the main window's taskbar entry and\nthe others hide it (as `\"accessory\"` does at launch), where the runtime can. Returns whether it\napplied."
+              "doc": "Set the macOS activation policy: `\"regular\"` (a Dock icon and a menu bar), `\"accessory\"`\n(neither: a tray app) or `\"prohibited\"` (runtime `3.0.0-denext.6`+; on an older runtime\n`\"regular\"` / `\"accessory\"` show / hide the Dock icon). Switching to regular also brings the\napp to the front. A tray app stays accessory and shows its window with the window's\n`focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps\nonce its running tile goes away. On Windows and Linux `\"regular\"` shows the main window's taskbar entry and\nthe others hide it (as `\"accessory\"` does at launch), where the runtime can. Returns whether it\napplied."
             },
             {
               "kind": "method",
@@ -48036,9 +48710,15 @@
             },
             {
               "kind": "method",
+              "name": "onNotificationClick",
+              "signature": "onNotificationClick(fn: DesktopNotificationClickListener): () => void",
+              "doc": "Call `fn` for every click on one of the app's notifications, as\n{@linkcode RunDesktopOptions.onNotificationClick} is: any tag, the backend's own\n`Deno.desktop.notifications` posts included. The click that launched the app reaches `fn` too\n(`launch: true`, on a microtask after it subscribed), however late it subscribes. A throw or a\nrejection is logged. Returns the unsubscribe; never called without denext's pinned runtime (or\nin a sidecar's child)."
+            },
+            {
+              "kind": "method",
               "name": "emit",
               "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
-              "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
+              "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered; `{ retain: false }` sends a one-shot action (a menu click\nforwarded from `onAppMenuItem`) to the live pages only, so a reloaded page never acts on it\nagain. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
             },
             {
               "kind": "method",
@@ -48057,6 +48737,12 @@
               "name": "quit",
               "signature": "quit(): Promise<boolean>",
               "doc": "Quit the app again, the whole sequence (the extensions' guards, the pages, the quit hooks),\nexcept that the guards added with {@linkcode onBeforeQuit} here are not asked again (see\n`DesktopExtensionHost.quit`, the same rules). Resolves `true` when the app is quitting, `false`\nwhen a guard or a page refused or holds it, or outside the desktop runtime."
+            }
+          ],
+          "extends": [
+            {
+              "type": "DesktopAppMenusApi",
+              "ref": "denext-desktop/DesktopAppMenusApi"
             }
           ]
         },
@@ -48391,6 +49077,30 @@
               "type": "Error"
             }
           ]
+        },
+        {
+          "name": "DesktopTitleVisibility",
+          "slug": "DesktopTitleVisibility",
+          "kind": "typeAlias",
+          "signature": "type DesktopTitleVisibility = \"visible\" | \"hidden\"",
+          "doc": "A title visibility.",
+          "docFull": "A title visibility.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopToolbarStyle",
+          "slug": "DesktopToolbarStyle",
+          "kind": "typeAlias",
+          "signature": "type DesktopToolbarStyle = \"automatic\" | \"unified\" | \"unifiedCompact\" | \"expanded\"",
+          "doc": "A toolbar style.",
+          "docFull": "A toolbar style.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "desktopToolGate",
@@ -49040,6 +49750,38 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopWebViewSettings",
+          "slug": "DesktopWebViewSettings",
+          "kind": "interface",
+          "signature": "interface DesktopWebViewSettings",
+          "doc": "desktop.webViews as resolved.",
+          "docFull": "`desktop.webViews` as resolved.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "limit",
+              "signature": "readonly limit: number",
+              "doc": "The most web views one window hosts at once (1..32)."
+            },
+            {
+              "kind": "property",
+              "name": "allowedOrigins",
+              "signature": "readonly allowedOrigins: readonly string[] | null",
+              "doc": "The exact origins a web view may load (`null`: any `http:` / `https:` origin)."
+            },
+            {
+              "kind": "property",
+              "name": "devTools",
+              "signature": "readonly devTools?: boolean",
+              "doc": "Whether a web view's DevTools may open: `desktop.inspectable: true`, or a dev run\n(`runDesktop` turns it on under `denext desktop dev`). Off otherwise."
+            }
+          ]
+        },
+        {
           "name": "DesktopWillNavigateEvent",
           "slug": "DesktopWillNavigateEvent",
           "kind": "interface",
@@ -49174,6 +49916,56 @@
               "name": "key",
               "signature": "readonly key?: string",
               "doc": "The app-chosen key it was opened with (`windows.open({ key })`), if any."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuAppItem",
+          "slug": "DesktopWindowMenuAppItem",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuAppItem",
+          "doc": "One of a window's own items in the Window menu (setWindowMenuAppItems): shown below the window list while that window is key.",
+          "docFull": "One of a window's own items in the Window menu (`setWindowMenuAppItems`): shown below the window\nlist while that window is key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "What a click reports (unique in the window's list); `\"separator\"` entries need none."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkmark next to the label (the active document, say)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type?: \"normal\" | \"separator\"",
+              "doc": "`\"normal\"` (default) or `\"separator\"`."
             }
           ]
         },
@@ -49337,7 +50129,7 @@
               "kind": "method",
               "name": "focus",
               "signature": "focus(): void",
-              "doc": "Bring it to the front and focus it."
+              "doc": "Bring it to the front and focus it. On macOS it activates the app without changing the\nactivation policy: how an accessory (tray) app shows its window with no Dock icon."
             },
             {
               "kind": "method",
@@ -49362,6 +50154,19 @@
               "name": "onClosed",
               "signature": "onClosed(handler: () => void): () => void",
               "doc": "Call `handler` once the window has closed for good (by the user, `close()` or its page). A\nhandler added after it closed is never called. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "createWebView",
+              "signature": "createWebView(options: CreateWebViewOptions): Promise<WebViewHandle>",
+              "doc": "Open an embedded web view of another site inside this window, above its page (the page's\n`createWebView` from `denext/desktop/window`, owned by `desktop.ts`): the same checks\n(`http:` / `https:` only, never the app's own origin, `desktop.webViews.allowedOrigins`) and\nthe same per-window `desktop.webViews.limit`, shared with the views its pages made. The view\ncloses with the window; its events reach this handle only, never the page.",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "The URL, where it sits (CSS pixels of the window's page viewport) and its policies."
+                }
+              ],
+              "returns": "Its handle (capture resolves a Blob). Rejects with a DesktopCapError: unsupported on a runtime without web views, not_allowed_url, limit, validation."
             }
           ]
         },
@@ -49564,6 +50369,18 @@
               "name": "windowButtonPosition",
               "signature": "readonly windowButtonPosition?: DesktopWindowButtonPosition",
               "doc": "Where the macOS traffic lights sit (`desktop.window.windowButtonPosition`)."
+            },
+            {
+              "kind": "property",
+              "name": "titleVisibility",
+              "signature": "readonly titleVisibility?: DesktopTitleVisibility",
+              "doc": "Whether the native title bar draws the title text (`desktop.window.titleVisibility`)."
+            },
+            {
+              "kind": "property",
+              "name": "toolbarStyle",
+              "signature": "readonly toolbarStyle?: DesktopToolbarStyle",
+              "doc": "The macOS toolbar style that lays the title bar out (`desktop.window.toolbarStyle`)."
             }
           ]
         },
@@ -50605,6 +51422,12 @@
             },
             {
               "kind": "property",
+              "name": "webViews",
+              "signature": "readonly webViews: DesktopWebViewSettings",
+              "doc": "`desktop.webViews`: the per-window web view limit and allowed origins."
+            },
+            {
+              "kind": "property",
               "name": "app",
               "signature": "readonly app: DesktopAppSettings",
               "doc": "`desktop.app`'s launch settings (`keepAlive`, `dock`) `runDesktop` applies."
@@ -50846,6 +51669,12 @@
             },
             {
               "kind": "property",
+              "name": "webViews",
+              "signature": "webViews?: DesktopWebViewSettings",
+              "doc": "`desktop.webViews` as `resolveDesktopCapabilities` resolved it: how many embedded web views a\nwindow hosts at once (default 8) and the origins they may load (default any `http:` /\n`https:` origin but the app's own)."
+            },
+            {
+              "kind": "property",
               "name": "newWindow",
               "signature": "newWindow?: DesktopNewWindowHandler",
               "doc": "What New Window (`desktop.menu.window`, Cmd/Ctrl+N) opens: the open options (`url`, `key`),\nor `undefined` for nothing. Without it New Window opens `desktop.menu.window.newWindow` with a\nfresh `window-N` key. Setting it adds the item even without `desktop.menu.window.newWindow`."
@@ -50870,9 +51699,21 @@
             },
             {
               "kind": "property",
+              "name": "onNotificationClick",
+              "signature": "onNotificationClick?: DesktopNotificationClickListener",
+              "doc": "Called for every click the runtime reports on one of the app's notifications, whatever posted\nit — `scheduleNotification` / a page's `new Notification(…)` (still delivered to the pages as\nwell) or the backend itself through `Deno.desktop.notifications` — with its `tag`, the\n`action` button (`null` for the notification itself), its `data` and `launch`. The click that\nlaunched the app arrives too (`launch: true`), right after `runDesktop` subscribed. A throw or\na rejection is logged. Never called without denext's pinned runtime (or in a sidecar's child)."
+            },
+            {
+              "kind": "property",
               "name": "onWindowMenuItem",
               "signature": "onWindowMenuItem?: DesktopWindowMenuItemHandler",
               "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from\nruntime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only\nwhile the main window is open. A throw or a rejection is logged."
+            },
+            {
+              "kind": "property",
+              "name": "onAppMenuItem",
+              "signature": "onAppMenuItem?: DesktopAppMenuItemHandler",
+              "doc": "Called once per click on one of the app's own top-level menus' items (`desktop.menu.menus`,\n`setMenu`) or a window's own Window-menu items (`setWindowMenuAppItems`), with the item's `id`\nand the context: the key window (`{ id, key? }`, or `null` with none open), the menu, a\ncheckbox's or radio item's new state, the window a Window-menu item belongs to. The pages hear\nthe same clicks (`onAppMenuItem` in `denext/desktop/app`); extensions get them too\n(`host.onAppMenuItem`). A throw or a rejection is logged."
             },
             {
               "kind": "property",
@@ -51423,7 +52264,7 @@
           "name": "SidecarRun",
           "slug": "SidecarRun",
           "kind": "typeAlias",
-          "signature": "type SidecarRun = { readonly module: string; readonly nodeModules?: string; readonly external?: readonly string[]; readonly entries?: readonly string[] } | { readonly exec: string }",
+          "signature": "type SidecarRun = { readonly module: string; readonly nodeModules?: string; readonly external?: readonly string[]; readonly exclude?: readonly string[]; readonly entries?: readonly string[]; readonly archDirs?: Readonly<Record<string, string>> } | { readonly exec: string; readonly bootstrapFd?: number }",
           "doc": "What runs: a module in the app's runtime, or a program.",
           "docFull": "What runs: a module in the app's runtime, or a program.\n\n`module` is relative to the folder of the entry that calls `runDesktop`, the project root for\n`desktop.ts` (`\"./server/main.ts\"`). Without `nodeModules` it is part of\nthe app's own module graph (resolved through the app's `deno.json`) and embedded as it is. With\n`nodeModules` (a Node backend, e.g. `\"apps/server/dist/bin.mjs\"` and its package's\n`node_modules`) denext bundles it at packaging, every npm import inlined, except the packages\nwith a native addon (`.node`) and those listed in `external`, which are copied whole beside the\nbundle and loaded with `require`.\n\n`exec` is a program path: absolute, a bare name found on `PATH`, or relative to the project\n(`\"./bin/server\"`), which the package scripts copy into the app. A relative path is resolved\nfrom the folder of the entry that calls `runDesktop` (its `importMetaUrl`): the project root for\n`desktop.ts`, `app/` for `denext desktop run --entry app/desktop.ts`.",
           "params": [],
@@ -51857,6 +52698,370 @@
           "denextOnly": true
         },
         {
+          "name": "WebViewBounds",
+          "slug": "WebViewBounds",
+          "kind": "interface",
+          "signature": "interface WebViewBounds",
+          "doc": "A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.",
+          "docFull": "A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "The left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "The top edge."
+            },
+            {
+              "kind": "property",
+              "name": "width",
+              "signature": "width: number",
+              "doc": "The width."
+            },
+            {
+              "kind": "property",
+              "name": "height",
+              "signature": "height: number",
+              "doc": "The height."
+            }
+          ]
+        },
+        {
+          "name": "WebViewEventMap",
+          "slug": "WebViewEventMap",
+          "kind": "interface",
+          "signature": "interface WebViewEventMap",
+          "doc": "The events a web view fires (WebViewHandle.on) and their payloads.",
+          "docFull": "The events a web view fires ({@linkcode WebViewHandle.on}) and their payloads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "title: { title: string }",
+              "doc": "The document's title changed."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: { url: string; canGoBack: boolean; canGoForward: boolean }",
+              "doc": "The main frame's URL changed (a same-document change too)."
+            },
+            {
+              "kind": "property",
+              "name": "load",
+              "signature": "load: { state: WebViewLoadState; url: string; error?: { code: string; message: string } }",
+              "doc": "A main-frame load started, committed, finished or failed (`error` with `\"failed\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "console",
+              "signature": "console: { level: \"log\" | \"info\" | \"warn\" | \"error\" | \"debug\"; message: string; source?: string; line?: number }",
+              "doc": "The page in the view logged to its console."
+            },
+            {
+              "kind": "property",
+              "name": "focus-change",
+              "signature": "\"focus-change\": { focused: boolean }",
+              "doc": "The native view gained or lost keyboard focus."
+            },
+            {
+              "kind": "property",
+              "name": "new-window",
+              "signature": "\"new-window\": { url: string; disposition: \"popup\" | \"tab\" }",
+              "doc": "A popup was refused (only with `allowPopups: \"deny\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "find-result",
+              "signature": "\"find-result\": { matches: number; activeMatch: number }",
+              "doc": "A {@linkcode WebViewHandle.find} search's matches (`activeMatch` 1-based, `0` = none)."
+            },
+            {
+              "kind": "property",
+              "name": "context-menu",
+              "signature": "\"context-menu\": { x: number; y: number; linkUrl?: string; imageUrl?: string; selectionText?: string; isEditable: boolean; mediaType?: \"image\" | \"video\" | \"audio\" | \"canvas\" | \"plugin\" }",
+              "doc": "A context menu was asked for (right click, the menu key), in both `contextMenu` modes: where\n(CSS pixels from the view's top-left) and what is under the pointer."
+            },
+            {
+              "kind": "property",
+              "name": "keydown",
+              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
+              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+            },
+            {
+              "kind": "property",
+              "name": "closed",
+              "signature": "closed: Record<string, never>",
+              "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
+            }
+          ]
+        },
+        {
+          "name": "WebViewHandle",
+          "slug": "WebViewHandle",
+          "kind": "interface",
+          "signature": "interface WebViewHandle",
+          "doc": "A web view (from createWebView, or win.createWebView in desktop.ts).",
+          "docFull": "A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "Its id (the runtime's, as a string)."
+            },
+            {
+              "kind": "method",
+              "name": "setBounds",
+              "signature": "setBounds(bounds: WebViewBounds): Promise<void>",
+              "doc": "Move / resize it (CSS pixels, relative to the window's page viewport)."
+            },
+            {
+              "kind": "method",
+              "name": "setVisible",
+              "signature": "setVisible(visible: boolean): Promise<void>",
+              "doc": "Show or hide it."
+            },
+            {
+              "kind": "method",
+              "name": "navigate",
+              "signature": "navigate(url: string): Promise<void>",
+              "doc": "Load another `http:` / `https:` page (rejects `not_allowed_url` otherwise)."
+            },
+            {
+              "kind": "method",
+              "name": "back",
+              "signature": "back(): Promise<void>",
+              "doc": "Go back in its history."
+            },
+            {
+              "kind": "method",
+              "name": "forward",
+              "signature": "forward(): Promise<void>",
+              "doc": "Go forward in its history."
+            },
+            {
+              "kind": "method",
+              "name": "reload",
+              "signature": "reload(opts?: { ignoreCache?: boolean }): Promise<void>",
+              "doc": "Reload (`ignoreCache`: bypass the cache)."
+            },
+            {
+              "kind": "method",
+              "name": "stop",
+              "signature": "stop(): Promise<void>",
+              "doc": "Stop loading."
+            },
+            {
+              "kind": "method",
+              "name": "focus",
+              "signature": "focus(): Promise<void>",
+              "doc": "Move keyboard focus into the view."
+            },
+            {
+              "kind": "method",
+              "name": "state",
+              "signature": "state(): Promise<WebViewState>",
+              "doc": "Its URL, title, load state and history."
+            },
+            {
+              "kind": "method",
+              "name": "capture",
+              "signature": "capture(opts?: { format?: \"png\" | \"jpeg\"; quality?: number; scale?: number }): Promise<Blob>",
+              "doc": "What the view shows now: PNG by default (JPEG `quality` 0..100), at device pixels unless\n`scale` (output pixels per CSS pixel, up to 4) says."
+            },
+            {
+              "kind": "method",
+              "name": "evaluate",
+              "signature": "evaluate<T>(script: string): Promise<T>",
+              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+            },
+            {
+              "kind": "method",
+              "name": "raise",
+              "signature": "raise(): Promise<void>",
+              "doc": "Put it above the window's other views."
+            },
+            {
+              "kind": "method",
+              "name": "lower",
+              "signature": "lower(): Promise<void>",
+              "doc": "Put it below the window's other views (still above the page)."
+            },
+            {
+              "kind": "method",
+              "name": "setZOrder",
+              "signature": "setZOrder(n: number): Promise<void>",
+              "doc": "Set its stacking order (an integer; higher is above, equal keeps creation order)."
+            },
+            {
+              "kind": "method",
+              "name": "setZoom",
+              "signature": "setZoom(factor: number): Promise<void>",
+              "doc": "Zoom its page (0.25 to 5; 1 is 100%)."
+            },
+            {
+              "kind": "method",
+              "name": "getZoom",
+              "signature": "getZoom(): Promise<number>",
+              "doc": "Its page's zoom factor."
+            },
+            {
+              "kind": "method",
+              "name": "find",
+              "signature": "find(text: string, opts?: { forward?: boolean; matchCase?: boolean }): Promise<void>",
+              "doc": "Find `text` in its page (repeating the same text moves to the next match); results come as\n`find-result`."
+            },
+            {
+              "kind": "method",
+              "name": "stopFind",
+              "signature": "stopFind(): Promise<void>",
+              "doc": "End the find (its highlights go)."
+            },
+            {
+              "kind": "method",
+              "name": "openDevTools",
+              "signature": "openDevTools(): Promise<void>",
+              "doc": "Open the engine's DevTools for the view: rejects `not_allowed` unless the app's DevTools are\non (`denext desktop dev`, or `desktop.inspectable: true`)."
+            },
+            {
+              "kind": "method",
+              "name": "print",
+              "signature": "print(): Promise<void>",
+              "doc": "Show the OS print dialog for its page."
+            },
+            {
+              "kind": "method",
+              "name": "setForwardKeys",
+              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "doc": "Replace its `forwardKeys` (an empty list forwards none)."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on<K>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void",
+              "doc": "Listen to one of its events; returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): Promise<void>",
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewLoadState",
+          "slug": "WebViewLoadState",
+          "kind": "typeAlias",
+          "signature": "type WebViewLoadState = \"loading\" | \"interactive\" | \"complete\" | \"failed\"",
+          "doc": "A web view's last load state.",
+          "docFull": "A web view's last load state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissions",
+          "slug": "WebViewPermissions",
+          "kind": "interface",
+          "signature": "interface WebViewPermissions",
+          "doc": "The object form of CreateWebViewOptions.permissions.",
+          "docFull": "The object form of {@linkcode CreateWebViewOptions.permissions}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "prompts",
+              "signature": "prompts?: \"deny\" | \"ask\"",
+              "doc": "Camera / microphone / geolocation / notification prompts (default `\"deny\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "clipboardRead",
+              "signature": "clipboardRead?: boolean",
+              "doc": "Whether the site may read the clipboard (default `false`)."
+            },
+            {
+              "kind": "property",
+              "name": "clipboardWrite",
+              "signature": "clipboardWrite?: boolean",
+              "doc": "Whether the site may write the clipboard on a user gesture (default `true`)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewState",
+          "slug": "WebViewState",
+          "kind": "interface",
+          "signature": "interface WebViewState",
+          "doc": "What WebViewHandle.state answers.",
+          "docFull": "What {@linkcode WebViewHandle.state} answers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "The main frame's URL."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "title: string",
+              "doc": "The document's title."
+            },
+            {
+              "kind": "property",
+              "name": "load",
+              "signature": "load: WebViewLoadState",
+              "doc": "The last load state (`\"complete\"` before the first navigation)."
+            },
+            {
+              "kind": "property",
+              "name": "canGoBack",
+              "signature": "canGoBack: boolean",
+              "doc": "Whether `back()` has somewhere to go."
+            },
+            {
+              "kind": "property",
+              "name": "canGoForward",
+              "signature": "canGoForward: boolean",
+              "doc": "Whether `forward()` has somewhere to go."
+            },
+            {
+              "kind": "property",
+              "name": "zOrder",
+              "signature": "zOrder: number",
+              "doc": "Its stacking order among the window's views (higher is above; equal: newer above)."
+            }
+          ]
+        },
+        {
           "name": "WindowsTrustDeps",
           "slug": "WindowsTrustDeps",
           "kind": "interface",
@@ -51893,8 +53098,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an \"accessory\" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The microphone or camera on a runtime that does not enforce the grant is refused (assertMediaCaptureRuntime) before anything is written.",
-          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`, and marks an `\"accessory\"` app `LSUIElement` (no Dock tile at launch;\n{@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The\nmicrophone or camera on a runtime that does not enforce the grant is refused\n({@linkcode assertMediaCaptureRuntime}) before anything is written.",
+          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an \"accessory\" app LSUIElement (no Dock tile at launch; withActivationPolicy), and with desktop.app.dock: \"while-window-open\" builds the Dock helper into Contents/Helpers (addMacosDockHelper). On macOS call it BEFORE code-signing: these files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The microphone or camera on a runtime that does not enforce the grant is refused (assertMediaCaptureRuntime) before anything is written.",
+          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`, and marks an `\"accessory\"` app `LSUIElement` (no Dock tile at launch;\n{@linkcode withActivationPolicy}), and with `desktop.app.dock: \"while-window-open\"` builds the Dock\nhelper into `Contents/Helpers` ({@linkcode addMacosDockHelper}). On macOS call it BEFORE\ncode-signing: these files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The\nmicrophone or camera on a runtime that does not enforce the grant is refused\n({@linkcode assertMediaCaptureRuntime}) before anything is written.",
           "params": [
             {
               "name": "entryUrl",
@@ -54094,6 +55299,57 @@
       "module": "denext/desktop/window",
       "symbols": [
         {
+          "name": "attachWebView",
+          "slug": "attachWebView",
+          "kind": "function",
+          "signature": "attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): () => void",
+          "doc": "Keep handle glued to element's border box: the view follows the element through resizes, scrolling (any scroller), window resizes and display scale changes, at most one setBounds per animation frame and only when the rectangle changed. It is hidden (setVisible(false)) while the element is out of the document, display: none, zero-sized or out of view, and shown again when it is back — so the attachment owns the view's visibility while attached. The view only ever covers the element's visible part: its box cut to the viewport and to the scroll containers around it (clip: false keeps the whole box).",
+          "docFull": "Keep `handle` glued to `element`'s border box: the view follows the element through resizes,\nscrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per\nanimation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the\nelement is out of the document, `display: none`, zero-sized or out of view, and shown again when\nit is back — so the attachment owns the view's visibility while attached. The view only ever\ncovers the element's visible part: its box cut to the viewport and to the scroll containers\naround it (`clip: false` keeps the whole box).",
+          "params": [
+            {
+              "name": "handle",
+              "doc": "The view (createWebView)."
+            },
+            {
+              "name": "element",
+              "doc": "The placeholder element the view should cover."
+            },
+            {
+              "name": "options",
+              "doc": "hideWhenOutOfView, clip."
+            }
+          ],
+          "returns": "A function that stops following (the view stays as it is, open). It also stops when the view closes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AttachWebViewOptions",
+          "slug": "AttachWebViewOptions",
+          "kind": "interface",
+          "signature": "interface AttachWebViewOptions",
+          "doc": "Options for attachWebView.",
+          "docFull": "Options for {@linkcode attachWebView}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "hideWhenOutOfView",
+              "signature": "readonly hideWhenOutOfView?: boolean",
+              "doc": "Hide the view while the element is entirely outside the viewport or clipped away by a\nscrolling ancestor (default `true`). It is always hidden while the element is out of the\ndocument, `display: none` or zero-sized."
+            },
+            {
+              "kind": "property",
+              "name": "clip",
+              "signature": "readonly clip?: boolean",
+              "doc": "Fit the view to the part of the element that is visible: inside the viewport and inside every\nancestor that clips its overflow (a scroll container) (default `true`). A native view can't\nbe cropped, so a partly scrolled-away element gets a smaller view whose page lays out at that\nsize (it is resized, not cut). `false` keeps the whole element box, and the view then draws\nover whatever is outside the scroll container (a toolbar, the window's other content)."
+            }
+          ]
+        },
+        {
           "name": "BeforeQuitHandler",
           "slug": "BeforeQuitHandler",
           "kind": "typeAlias",
@@ -54160,6 +55416,99 @@
           "returns": "Once the close was requested.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "createWebView",
+          "slug": "createWebView",
+          "kind": "function",
+          "signature": "createWebView(opts: CreateWebViewOptions): Promise<WebViewHandle>",
+          "doc": "Open a web view of another site inside this window, above the page, at bounds. It belongs to this window and closes with it; a reload or navigation of the page does not close it.",
+          "docFull": "Open a web view of another site inside this window, above the page, at `bounds`. It belongs to\nthis window and closes with it; a reload or navigation of the page does not close it.\n\nThe view is isolated: it never gets the desktop bridge, its storage is its partition's (never\nthe app's), and its navigations never reach the window's navigation guard. It draws above all of\nthe page's HTML: hide it (or show a {@linkcode WebViewHandle.capture} snapshot in its place)\nwhile a menu or dialog overlaps it. {@linkcode attachWebView} keeps it on an element.",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "The URL, where it sits, and its partition, popup, download and permission policies."
+            }
+          ],
+          "returns": "Its handle. Rejects unsupported where this engine / runtime has no web views, not_allowed_url for a URL that is not http: / https:, the app's own origin, or outside desktop.webViews.allowedOrigins, limit past desktop.webViews.limit views in this window, validation for a bad option; off desktop unavailable.",
+          "examples": [
+            "```ts\nimport { attachWebView, createWebView, webViewCapabilities } from \"denext/desktop/window\";\n\nif ((await webViewCapabilities()).supported) {\n  const tile = document.querySelector(\"#docs\")!;\n  const view = await createWebView({ url: \"https://docs.example\", bounds: { x: 0, y: 0, width: 0, height: 0 } });\n  const detach = attachWebView(view, tile);\n  view.on(\"title\", ({ title }) => (tile.ariaLabel = title));\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "CreateWebViewOptions",
+          "slug": "CreateWebViewOptions",
+          "kind": "interface",
+          "signature": "interface CreateWebViewOptions",
+          "doc": "What createWebView opens.",
+          "docFull": "What {@linkcode createWebView} opens.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "The page to load: `http:` or `https:` only; the app's own origin is refused."
+            },
+            {
+              "kind": "property",
+              "name": "bounds",
+              "signature": "bounds: WebViewBounds",
+              "doc": "Where the view sits (CSS pixels, relative to the window's page viewport)."
+            },
+            {
+              "kind": "property",
+              "name": "partition",
+              "signature": "partition?: string",
+              "doc": "The storage partition (default `\"webview:default\"`; never the app's own storage): 1 to 64\nletters, digits, `.`, `_`, `:` or `-`, starting with a letter or digit. Views with the same\npartition share cookies and storage. `\"ephemeral\"` or a name starting with `\"ephemeral:\"` is\nkept in memory and gone when the app exits; any other name is persistent."
+            },
+            {
+              "kind": "property",
+              "name": "visible",
+              "signature": "visible?: boolean",
+              "doc": "Whether the view shows once created (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "allowPopups",
+              "signature": "allowPopups?: \"deny\" | \"same-view\" | \"browser\"",
+              "doc": "What `window.open` / a `target=\"_blank\"` link in the view does: `\"same-view\"` (default) loads\nit in this view, `\"browser\"` opens it in the system browser, `\"deny\"` opens nothing and fires\n`new-window`."
+            },
+            {
+              "kind": "property",
+              "name": "downloads",
+              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\"",
+              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "permissions?: \"deny\" | \"ask\" | WebViewPermissions",
+              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user. The object form also sets the clipboard: `prompts`\n(default `\"deny\"`) is the string form's choice, `clipboardRead` (default `false`) lets the\nsite read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture."
+            },
+            {
+              "kind": "property",
+              "name": "contextMenu",
+              "signature": "contextMenu?: \"native\" | \"app\"",
+              "doc": "The context menu: `\"native\"` (default) is the engine's own; `\"app\"` suppresses it so the page\ndraws its own from the `context-menu` event (which fires in both modes)."
+            },
+            {
+              "kind": "property",
+              "name": "forwardKeys",
+              "signature": "forwardKeys?: string[]",
+              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+            },
+            {
+              "kind": "property",
+              "name": "userAgent",
+              "signature": "userAgent?: string",
+              "doc": "Replaces the engine's user agent string for this view."
+            }
+          ]
         },
         {
           "name": "currentWindowId",
@@ -54521,10 +55870,10 @@
           "slug": "focusWindow",
           "kind": "function",
           "signature": "focusWindow(): Promise<void>",
-          "doc": "Bring the window to the front and focus it. @returns Once requested.",
-          "docFull": "Bring the window to the front and focus it. @returns Once requested.",
+          "doc": "Bring the window to the front and focus it. On macOS this activates the app ignoring other apps and never changes its activation policy, so an accessory (tray) app's window comes to the front with no Dock icon; a tray app uses it instead of setActivationPolicy(\"regular\"), which would put an app installed under /Applications in the Dock's recent apps once it went back to accessory or quit. Where the runtime only activates the app, the window comes up when macOS grants the activation.",
+          "docFull": "Bring the window to the front and focus it. On macOS this activates the app ignoring other apps\nand never changes its activation policy, so an accessory (tray) app's window comes to the front\nwith no Dock icon; a tray app uses it instead of `setActivationPolicy(\"regular\")`, which would\nput an app installed under /Applications in the Dock's recent apps once it went back to\naccessory or quit. Where the runtime\nonly activates the app, the window comes up when macOS grants the activation.",
           "params": [],
-          "returns": "",
+          "returns": "Once requested.",
           "examples": [],
           "denextOnly": true
         },
@@ -54871,6 +56220,30 @@
             },
             {
               "kind": "property",
+              "name": "titleVisibility",
+              "signature": "readonly titleVisibility?: TitleVisibility",
+              "doc": "Whether the native title bar draws the title text: default `desktop.window.titleVisibility`,\nas the main window gets it. Where the OS can't hide it ({@linkcode setTitleVisibility}) the\ntitle stays."
+            },
+            {
+              "kind": "property",
+              "name": "toolbarStyle",
+              "signature": "readonly toolbarStyle?: ToolbarStyle",
+              "doc": "The macOS toolbar style: default `desktop.window.toolbarStyle`, as the main window gets it.\nRejected `invalid` with the `\"hidden\"` title bar and on a frameless window; ignored off macOS."
+            },
+            {
+              "kind": "property",
+              "name": "minSize",
+              "signature": "readonly minSize?: { readonly width: number; readonly height: number }",
+              "doc": "The smallest size the user can resize it to, in CSS pixels: default `desktop.minSize`, as the\nmain window gets it (as {@linkcode setMinimumWindowSize} sets it later). Rejected `validation`\nwhen larger than the `maxSize` it ends up with (its own or the inherited one)."
+            },
+            {
+              "kind": "property",
+              "name": "maxSize",
+              "signature": "readonly maxSize?: { readonly width: number; readonly height: number }",
+              "doc": "The largest size the user can resize it to: default `desktop.maxSize`, as the main window gets\nit ({@linkcode setMaximumWindowSize})."
+            },
+            {
+              "kind": "property",
               "name": "x",
               "signature": "readonly x?: number",
               "doc": "Screen x of the top-left corner (see the module docs for the units)."
@@ -55140,6 +56513,42 @@
             }
           ],
           "returns": "Whether this OS / backend applied it.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setTitleVisibility",
+          "slug": "setTitleVisibility",
+          "kind": "function",
+          "signature": "setTitleVisibility(visibility: TitleVisibility): Promise<void>",
+          "doc": "Hide the title text (or show it again) while the native title bar, its buttons and its drag area stay; the title still names the window in the Dock / taskbar, the Window menu, Mission Control and alt-tab. Each OS does it natively: macOS, Windows, and Linux only where GTK draws the title bar itself (client-side decorations). Under the \"hidden\" / \"hiddenInset\" title bar styles the title is never drawn; the choice applies again under \"default\".",
+          "docFull": "Hide the title text (or show it again) while the native title bar, its buttons and its drag area\nstay; the title still names the window in the Dock / taskbar, the Window menu, Mission Control\nand alt-tab. Each OS does it natively: macOS, Windows, and Linux only where GTK draws the title\nbar itself (client-side decorations). Under the `\"hidden\"` / `\"hiddenInset\"` title bar styles\nthe title is never drawn; the choice applies again under `\"default\"`.",
+          "params": [
+            {
+              "name": "visibility",
+              "doc": "\"hidden\" or \"visible\"."
+            }
+          ],
+          "returns": "Resolves once applied; rejects unsupported (with the reason) where this OS, title bar or runtime can't: a window manager's decorations on Linux, a frameless window, the CEF backend on Linux.",
+          "examples": [
+            "```ts\nimport { setTitleVisibility, windowCapabilities } from \"denext/desktop/window\";\nif ((await windowCapabilities()).titleVisibility) await setTitleVisibility(\"hidden\");\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "setToolbarStyle",
+          "slug": "setToolbarStyle",
+          "kind": "function",
+          "signature": "setToolbarStyle(style: ToolbarStyle): Promise<void>",
+          "doc": "Lay the macOS title bar out with an empty toolbar in this style (macOS 11 and later; \"automatic\" removes it). Under the \"hiddenInset\" title bar style it sets the inset toolbar's style (\"unifiedCompact\": a shorter inset). While it is not \"automatic\", setTitleBarStyle(\"hidden\") answers false.",
+          "docFull": "Lay the macOS title bar out with an empty toolbar in this style (macOS 11 and later;\n`\"automatic\"` removes it). Under the `\"hiddenInset\"` title bar style it sets the inset toolbar's\nstyle (`\"unifiedCompact\"`: a shorter inset). While it is not `\"automatic\"`,\n{@linkcode setTitleBarStyle}`(\"hidden\")` answers `false`.",
+          "params": [
+            {
+              "name": "style",
+              "doc": "The toolbar style."
+            }
+          ],
+          "returns": "Resolves once applied; rejects invalid under the \"hidden\" title bar style for any style but \"automatic\" (it has no toolbar: use \"hiddenInset\"), and unsupported (with the reason) off macOS, on a frameless window and on a runtime without it.",
           "examples": [],
           "denextOnly": true
         },
@@ -55459,6 +56868,30 @@
           "denextOnly": true
         },
         {
+          "name": "TitleVisibility",
+          "slug": "TitleVisibility",
+          "kind": "typeAlias",
+          "signature": "type TitleVisibility = \"visible\" | \"hidden\"",
+          "doc": "Whether the native title bar draws the title text: \"hidden\" keeps the title bar, its buttons and its drag area, and the title still names the window in the Dock / taskbar, the Window menu, Mission Control and alt-tab.",
+          "docFull": "Whether the native title bar draws the title text: `\"hidden\"` keeps the title bar, its buttons\nand its drag area, and the title still names the window in the Dock / taskbar, the Window menu,\nMission Control and alt-tab.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ToolbarStyle",
+          "slug": "ToolbarStyle",
+          "kind": "typeAlias",
+          "signature": "type ToolbarStyle = \"automatic\" | \"unified\" | \"unifiedCompact\" | \"expanded\"",
+          "doc": "How an (empty) toolbar lays the macOS title bar out: \"unified\" one tall bar with the title left-aligned (Finder, Safari), \"unifiedCompact\" the same, shorter, \"expanded\" the title on its own row; \"automatic\" no toolbar.",
+          "docFull": "How an (empty) toolbar lays the macOS title bar out: `\"unified\"` one tall bar with the title\nleft-aligned (Finder, Safari), `\"unifiedCompact\"` the same, shorter, `\"expanded\"` the title on its\nown row; `\"automatic\"` no toolbar.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "unmaximizeWindow",
           "slug": "unmaximizeWindow",
           "kind": "function",
@@ -55481,6 +56914,524 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "WebViewAnchor",
+          "slug": "WebViewAnchor",
+          "kind": "interface",
+          "signature": "interface WebViewAnchor",
+          "doc": "The slice of a DOM element attachWebView measures.",
+          "docFull": "The slice of a DOM element {@linkcode attachWebView} measures.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "isConnected",
+              "signature": "readonly isConnected?: boolean",
+              "doc": "`false` once it is out of the document."
+            },
+            {
+              "kind": "property",
+              "name": "parentElement",
+              "signature": "readonly parentElement?: WebViewAnchor | null",
+              "doc": "Its parent element (walked for the scroll containers that clip it)."
+            },
+            {
+              "kind": "method",
+              "name": "getBoundingClientRect",
+              "signature": "getBoundingClientRect(): { readonly left: number; readonly top: number; readonly width: number; readonly height: number }",
+              "doc": "Its border box, in CSS pixels relative to the viewport."
+            }
+          ]
+        },
+        {
+          "name": "WebViewBounds",
+          "slug": "WebViewBounds",
+          "kind": "interface",
+          "signature": "interface WebViewBounds",
+          "doc": "A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.",
+          "docFull": "A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "x: number",
+              "doc": "The left edge."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "y: number",
+              "doc": "The top edge."
+            },
+            {
+              "kind": "property",
+              "name": "width",
+              "signature": "width: number",
+              "doc": "The width."
+            },
+            {
+              "kind": "property",
+              "name": "height",
+              "signature": "height: number",
+              "doc": "The height."
+            }
+          ]
+        },
+        {
+          "name": "webViewCapabilities",
+          "slug": "webViewCapabilities-fn",
+          "kind": "function",
+          "signature": "webViewCapabilities(): Promise<WebViewCapabilities>",
+          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
+          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
+          "params": [],
+          "returns": "The capabilities. Off desktop it rejects unavailable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewCapabilities",
+          "slug": "WebViewCapabilities-iface",
+          "kind": "interface",
+          "signature": "interface WebViewCapabilities",
+          "doc": "What webViewCapabilities answers.",
+          "docFull": "What {@linkcode webViewCapabilities} answers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "supported",
+              "signature": "supported: boolean",
+              "doc": "Whether this window's engine and runtime host web views ({@linkcode createWebView} works)."
+            },
+            {
+              "kind": "property",
+              "name": "engines",
+              "signature": "engines: Array<WebViewEngine>",
+              "doc": "The engine that hosts them (empty where unsupported)."
+            },
+            {
+              "kind": "property",
+              "name": "capture",
+              "signature": "capture: boolean",
+              "doc": "Whether {@linkcode WebViewHandle.capture} works."
+            },
+            {
+              "kind": "property",
+              "name": "evaluate",
+              "signature": "evaluate: boolean",
+              "doc": "Whether {@linkcode WebViewHandle.evaluate} works."
+            },
+            {
+              "kind": "property",
+              "name": "zOrder",
+              "signature": "zOrder: boolean",
+              "doc": "Whether `raise` / `lower` / `setZOrder` work."
+            },
+            {
+              "kind": "property",
+              "name": "zoom",
+              "signature": "zoom: boolean",
+              "doc": "Whether `setZoom` / `getZoom` work."
+            },
+            {
+              "kind": "property",
+              "name": "find",
+              "signature": "find: boolean",
+              "doc": "Whether `find` / `stopFind` work."
+            },
+            {
+              "kind": "property",
+              "name": "devTools",
+              "signature": "devTools: boolean",
+              "doc": "Whether `openDevTools` works (it is still refused unless the app's DevTools are on)."
+            },
+            {
+              "kind": "property",
+              "name": "contextMenu",
+              "signature": "contextMenu: boolean",
+              "doc": "Whether `contextMenu: \"app\"` and the `context-menu` event work."
+            },
+            {
+              "kind": "property",
+              "name": "print",
+              "signature": "print: boolean",
+              "doc": "Whether `print` works."
+            },
+            {
+              "kind": "property",
+              "name": "clipboard",
+              "signature": "clipboard: boolean",
+              "doc": "Whether the `clipboardRead` / `clipboardWrite` permissions apply."
+            },
+            {
+              "kind": "property",
+              "name": "menuAccelerators",
+              "signature": "menuAccelerators: boolean",
+              "doc": "Whether the app menu's accelerators fire while a view has the keyboard."
+            },
+            {
+              "kind": "property",
+              "name": "unhandledKeys",
+              "signature": "unhandledKeys: boolean",
+              "doc": "Whether keydowns the view's page left unhandled arrive as `keydown` (`forwarded: false`)."
+            },
+            {
+              "kind": "property",
+              "name": "forwardKeys",
+              "signature": "forwardKeys: boolean",
+              "doc": "Whether `forwardKeys` / `setForwardKeys` work."
+            }
+          ]
+        },
+        {
+          "name": "WebViewEngine",
+          "slug": "WebViewEngine",
+          "kind": "typeAlias",
+          "signature": "type WebViewEngine = \"cef\" | \"wkwebview\" | \"webview2\" | \"webkitgtk\"",
+          "doc": "An engine that hosts web views.",
+          "docFull": "An engine that hosts web views.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewEventMap",
+          "slug": "WebViewEventMap",
+          "kind": "interface",
+          "signature": "interface WebViewEventMap",
+          "doc": "The events a web view fires (WebViewHandle.on) and their payloads.",
+          "docFull": "The events a web view fires ({@linkcode WebViewHandle.on}) and their payloads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "title: { title: string }",
+              "doc": "The document's title changed."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: { url: string; canGoBack: boolean; canGoForward: boolean }",
+              "doc": "The main frame's URL changed (a same-document change too)."
+            },
+            {
+              "kind": "property",
+              "name": "load",
+              "signature": "load: { state: WebViewLoadState; url: string; error?: { code: string; message: string } }",
+              "doc": "A main-frame load started, committed, finished or failed (`error` with `\"failed\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "console",
+              "signature": "console: { level: \"log\" | \"info\" | \"warn\" | \"error\" | \"debug\"; message: string; source?: string; line?: number }",
+              "doc": "The page in the view logged to its console."
+            },
+            {
+              "kind": "property",
+              "name": "focus-change",
+              "signature": "\"focus-change\": { focused: boolean }",
+              "doc": "The native view gained or lost keyboard focus."
+            },
+            {
+              "kind": "property",
+              "name": "new-window",
+              "signature": "\"new-window\": { url: string; disposition: \"popup\" | \"tab\" }",
+              "doc": "A popup was refused (only with `allowPopups: \"deny\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "find-result",
+              "signature": "\"find-result\": { matches: number; activeMatch: number }",
+              "doc": "A {@linkcode WebViewHandle.find} search's matches (`activeMatch` 1-based, `0` = none)."
+            },
+            {
+              "kind": "property",
+              "name": "context-menu",
+              "signature": "\"context-menu\": { x: number; y: number; linkUrl?: string; imageUrl?: string; selectionText?: string; isEditable: boolean; mediaType?: \"image\" | \"video\" | \"audio\" | \"canvas\" | \"plugin\" }",
+              "doc": "A context menu was asked for (right click, the menu key), in both `contextMenu` modes: where\n(CSS pixels from the view's top-left) and what is under the pointer."
+            },
+            {
+              "kind": "property",
+              "name": "keydown",
+              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
+              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+            },
+            {
+              "kind": "property",
+              "name": "closed",
+              "signature": "closed: Record<string, never>",
+              "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
+            }
+          ]
+        },
+        {
+          "name": "WebViewHandle",
+          "slug": "WebViewHandle",
+          "kind": "interface",
+          "signature": "interface WebViewHandle",
+          "doc": "A web view (from createWebView, or win.createWebView in desktop.ts).",
+          "docFull": "A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "Its id (the runtime's, as a string)."
+            },
+            {
+              "kind": "method",
+              "name": "setBounds",
+              "signature": "setBounds(bounds: WebViewBounds): Promise<void>",
+              "doc": "Move / resize it (CSS pixels, relative to the window's page viewport)."
+            },
+            {
+              "kind": "method",
+              "name": "setVisible",
+              "signature": "setVisible(visible: boolean): Promise<void>",
+              "doc": "Show or hide it."
+            },
+            {
+              "kind": "method",
+              "name": "navigate",
+              "signature": "navigate(url: string): Promise<void>",
+              "doc": "Load another `http:` / `https:` page (rejects `not_allowed_url` otherwise)."
+            },
+            {
+              "kind": "method",
+              "name": "back",
+              "signature": "back(): Promise<void>",
+              "doc": "Go back in its history."
+            },
+            {
+              "kind": "method",
+              "name": "forward",
+              "signature": "forward(): Promise<void>",
+              "doc": "Go forward in its history."
+            },
+            {
+              "kind": "method",
+              "name": "reload",
+              "signature": "reload(opts?: { ignoreCache?: boolean }): Promise<void>",
+              "doc": "Reload (`ignoreCache`: bypass the cache)."
+            },
+            {
+              "kind": "method",
+              "name": "stop",
+              "signature": "stop(): Promise<void>",
+              "doc": "Stop loading."
+            },
+            {
+              "kind": "method",
+              "name": "focus",
+              "signature": "focus(): Promise<void>",
+              "doc": "Move keyboard focus into the view."
+            },
+            {
+              "kind": "method",
+              "name": "state",
+              "signature": "state(): Promise<WebViewState>",
+              "doc": "Its URL, title, load state and history."
+            },
+            {
+              "kind": "method",
+              "name": "capture",
+              "signature": "capture(opts?: { format?: \"png\" | \"jpeg\"; quality?: number; scale?: number }): Promise<Blob>",
+              "doc": "What the view shows now: PNG by default (JPEG `quality` 0..100), at device pixels unless\n`scale` (output pixels per CSS pixel, up to 4) says."
+            },
+            {
+              "kind": "method",
+              "name": "evaluate",
+              "signature": "evaluate<T>(script: string): Promise<T>",
+              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+            },
+            {
+              "kind": "method",
+              "name": "raise",
+              "signature": "raise(): Promise<void>",
+              "doc": "Put it above the window's other views."
+            },
+            {
+              "kind": "method",
+              "name": "lower",
+              "signature": "lower(): Promise<void>",
+              "doc": "Put it below the window's other views (still above the page)."
+            },
+            {
+              "kind": "method",
+              "name": "setZOrder",
+              "signature": "setZOrder(n: number): Promise<void>",
+              "doc": "Set its stacking order (an integer; higher is above, equal keeps creation order)."
+            },
+            {
+              "kind": "method",
+              "name": "setZoom",
+              "signature": "setZoom(factor: number): Promise<void>",
+              "doc": "Zoom its page (0.25 to 5; 1 is 100%)."
+            },
+            {
+              "kind": "method",
+              "name": "getZoom",
+              "signature": "getZoom(): Promise<number>",
+              "doc": "Its page's zoom factor."
+            },
+            {
+              "kind": "method",
+              "name": "find",
+              "signature": "find(text: string, opts?: { forward?: boolean; matchCase?: boolean }): Promise<void>",
+              "doc": "Find `text` in its page (repeating the same text moves to the next match); results come as\n`find-result`."
+            },
+            {
+              "kind": "method",
+              "name": "stopFind",
+              "signature": "stopFind(): Promise<void>",
+              "doc": "End the find (its highlights go)."
+            },
+            {
+              "kind": "method",
+              "name": "openDevTools",
+              "signature": "openDevTools(): Promise<void>",
+              "doc": "Open the engine's DevTools for the view: rejects `not_allowed` unless the app's DevTools are\non (`denext desktop dev`, or `desktop.inspectable: true`)."
+            },
+            {
+              "kind": "method",
+              "name": "print",
+              "signature": "print(): Promise<void>",
+              "doc": "Show the OS print dialog for its page."
+            },
+            {
+              "kind": "method",
+              "name": "setForwardKeys",
+              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "doc": "Replace its `forwardKeys` (an empty list forwards none)."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on<K>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void",
+              "doc": "Listen to one of its events; returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): Promise<void>",
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewLoadState",
+          "slug": "WebViewLoadState",
+          "kind": "typeAlias",
+          "signature": "type WebViewLoadState = \"loading\" | \"interactive\" | \"complete\" | \"failed\"",
+          "doc": "A web view's last load state.",
+          "docFull": "A web view's last load state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissions",
+          "slug": "WebViewPermissions",
+          "kind": "interface",
+          "signature": "interface WebViewPermissions",
+          "doc": "The object form of CreateWebViewOptions.permissions.",
+          "docFull": "The object form of {@linkcode CreateWebViewOptions.permissions}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "prompts",
+              "signature": "prompts?: \"deny\" | \"ask\"",
+              "doc": "Camera / microphone / geolocation / notification prompts (default `\"deny\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "clipboardRead",
+              "signature": "clipboardRead?: boolean",
+              "doc": "Whether the site may read the clipboard (default `false`)."
+            },
+            {
+              "kind": "property",
+              "name": "clipboardWrite",
+              "signature": "clipboardWrite?: boolean",
+              "doc": "Whether the site may write the clipboard on a user gesture (default `true`)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewState",
+          "slug": "WebViewState",
+          "kind": "interface",
+          "signature": "interface WebViewState",
+          "doc": "What WebViewHandle.state answers.",
+          "docFull": "What {@linkcode WebViewHandle.state} answers.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "The main frame's URL."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "title: string",
+              "doc": "The document's title."
+            },
+            {
+              "kind": "property",
+              "name": "load",
+              "signature": "load: WebViewLoadState",
+              "doc": "The last load state (`\"complete\"` before the first navigation)."
+            },
+            {
+              "kind": "property",
+              "name": "canGoBack",
+              "signature": "canGoBack: boolean",
+              "doc": "Whether `back()` has somewhere to go."
+            },
+            {
+              "kind": "property",
+              "name": "canGoForward",
+              "signature": "canGoForward: boolean",
+              "doc": "Whether `forward()` has somewhere to go."
+            },
+            {
+              "kind": "property",
+              "name": "zOrder",
+              "signature": "zOrder: number",
+              "doc": "Its stacking order among the window's views (higher is above; equal: newer above)."
+            }
+          ]
         },
         {
           "name": "WindowBackdrop",
@@ -55771,6 +57722,18 @@
               "name": "focusEvents",
               "signature": "readonly focusEvents: boolean",
               "doc": "{@linkcode onWindowFocus} / {@linkcode onWindowBlur} fire."
+            },
+            {
+              "kind": "property",
+              "name": "titleVisibility",
+              "signature": "readonly titleVisibility: boolean",
+              "doc": "{@linkcode setTitleVisibility} can hide the title text and keep the native title bar: macOS,\nWindows, and Linux only where GTK draws the title bars (client-side decorations, such as GNOME\non Wayland); not under a window manager's decorations, not on the CEF backend on Linux, and\nnot on a runtime without it."
+            },
+            {
+              "kind": "property",
+              "name": "toolbarStyle",
+              "signature": "readonly toolbarStyle: boolean",
+              "doc": "{@linkcode setToolbarStyle} works (macOS 11 and later)."
             }
           ]
         },
@@ -56076,6 +58039,18 @@
             },
             {
               "kind": "property",
+              "name": "customMenus",
+              "signature": "readonly customMenus: boolean",
+              "doc": "{@linkcode setMenu}, {@linkcode setMenuItemState} and {@linkcode setWindowMenuAppItems} work\n(the runtime sets application menus; each window gets its own bar with its state)."
+            },
+            {
+              "kind": "property",
+              "name": "appLevelMenu",
+              "signature": "readonly appLevelMenu: boolean",
+              "doc": "The runtime has an app-level menu (`Deno.desktop.setApplicationMenu`): on macOS the custom menus'\napp-wide state shows while no window with a menu is key (with every window closed, say)."
+            },
+            {
+              "kind": "property",
               "name": "tray",
               "signature": "readonly tray: boolean",
               "doc": "{@linkcode createTray} works."
@@ -56349,12 +58324,68 @@
           ]
         },
         {
+          "name": "AppMenuClickInfo",
+          "slug": "AppMenuClickInfo",
+          "kind": "interface",
+          "signature": "interface AppMenuClickInfo",
+          "doc": "What an application-menu click carries besides the item's id.",
+          "docFull": "What an application-menu click carries besides the item's id.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: \"appMenu\" | \"menu\" | \"windowMenu\"",
+              "doc": "The page's own item (`setAppMenu`), a custom menu's (`setMenu`), or a window's own Window-menu item."
+            },
+            {
+              "kind": "property",
+              "name": "keyWindow",
+              "signature": "readonly keyWindow: AppMenuKeyWindow",
+              "doc": "The key window when the item was chosen."
+            },
+            {
+              "kind": "property",
+              "name": "menu",
+              "signature": "readonly menu?: string",
+              "doc": "A custom item's top-level menu id."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkbox's or radio item's state after the click."
+            },
+            {
+              "kind": "property",
+              "name": "windowId",
+              "signature": "readonly windowId?: string",
+              "doc": "The window a Window-menu item belongs to."
+            }
+          ]
+        },
+        {
           "name": "AppMenuItem",
           "slug": "AppMenuItem",
           "kind": "typeAlias",
           "signature": "type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | \"separator\"",
           "doc": "One entry of an application, tray or Dock menu.",
           "docFull": "One entry of an application, tray or Dock menu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppMenuKeyWindow",
+          "slug": "AppMenuKeyWindow",
+          "kind": "typeAlias",
+          "signature": "type AppMenuKeyWindow = { readonly id: string; readonly key?: string } | null",
+          "doc": "The key window a menu click reports (null with no app window open).",
+          "docFull": "The key window a menu click reports (`null` with no app window open).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -56628,6 +58659,218 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMenuAnchor",
+          "slug": "DesktopMenuAnchor",
+          "kind": "typeAlias",
+          "signature": "type DesktopMenuAnchor = \"app\" | \"file\" | \"edit\" | \"view\" | \"window\"",
+          "doc": "The standard menus a custom top-level menu goes after: the app menu (macOS; elsewhere the start of the bar), then File, Edit, View and Window by their labels. One the bar does not have falls back to the one before it (\"view\" with no View menu is \"edit\").",
+          "docFull": "The standard menus a custom top-level menu goes after: the app menu (macOS; elsewhere the start\nof the bar), then File, Edit, View and Window by their labels. One the bar does not have falls\nback to the one before it (`\"view\"` with no View menu is `\"edit\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMenuItemSpec",
+          "slug": "DesktopMenuItemSpec",
+          "kind": "interface",
+          "signature": "interface DesktopMenuItemSpec",
+          "doc": "One entry of a custom menu (desktop.menu.menus[].items, setMenu): an item (id, label), a checkbox or a radio item (type, with checked; radio items of one group exclude each other), a submenu (items), a separator (type: \"separator\") or a standard item (role).",
+          "docFull": "One entry of a custom menu (`desktop.menu.menus[].items`, `setMenu`): an item (`id`, `label`), a\ncheckbox or a radio item (`type`, with `checked`; radio items of one `group` exclude each other),\na submenu (`items`), a separator (`type: \"separator\"`) or a standard item (`role`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "What a click reports (unique among every custom menu's items); clickable items need one."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label (items and submenus)."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut (`\"CommandOrControl+Shift+K\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkmark next to the label (the initial state of a checkbox or radio item)."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type?: DesktopMenuItemType",
+              "doc": "What it is: `\"normal\"` (default), `\"checkbox\"` (a click toggles `checked`), `\"radio\"` (a click\nchecks it and unchecks the rest of its group), `\"separator\"`, `\"submenu\"` (default with `items`)."
+            },
+            {
+              "kind": "property",
+              "name": "group",
+              "signature": "readonly group?: string",
+              "doc": "A radio item's group (default: the radio items of the same submenu without a group)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items?: readonly DesktopMenuItemSpec[]",
+              "doc": "A submenu's entries."
+            },
+            {
+              "kind": "property",
+              "name": "icon",
+              "signature": "readonly icon?: string",
+              "doc": "A PNG as base64, where the backend draws menu icons (`appCapabilities().icons`)."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "readonly role?: string",
+              "doc": "A standard item the OS handles (`\"copy\"`, `\"toggleFullScreen\"`, …); the other keys are ignored."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuItemState",
+          "slug": "DesktopMenuItemState",
+          "kind": "interface",
+          "signature": "interface DesktopMenuItemState",
+          "doc": "What setMenuItemState changes on an item of a custom menu.",
+          "docFull": "What `setMenuItemState` changes on an item of a custom menu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "The checkmark (a radio item checked unchecks the rest of its group)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMenuItemType",
+          "slug": "DesktopMenuItemType",
+          "kind": "typeAlias",
+          "signature": "type DesktopMenuItemType = \"normal\" | \"checkbox\" | \"radio\" | \"separator\" | \"submenu\"",
+          "doc": "What an entry of a custom menu is.",
+          "docFull": "What an entry of a custom menu is.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMenuUpdate",
+          "slug": "DesktopMenuUpdate",
+          "kind": "interface",
+          "signature": "interface DesktopMenuUpdate",
+          "doc": "What setMenu(menuId, update) sets: the entries, and optionally a new label and place.",
+          "docFull": "What `setMenu(menuId, update)` sets: the entries, and optionally a new label and place.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label in the menu bar (required for a menu `setMenu` adds)."
+            },
+            {
+              "kind": "property",
+              "name": "after",
+              "signature": "readonly after?: DesktopMenuAnchor",
+              "doc": "The standard menu it goes after (a new menu's default `\"view\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "items",
+              "signature": "readonly items: readonly DesktopMenuItemSpec[]",
+              "doc": "Its entries (they replace the menu's)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopWindowMenuAppItem",
+          "slug": "DesktopWindowMenuAppItem",
+          "kind": "interface",
+          "signature": "interface DesktopWindowMenuAppItem",
+          "doc": "One of a window's own items in the Window menu (setWindowMenuAppItems): shown below the window list while that window is key.",
+          "docFull": "One of a window's own items in the Window menu (`setWindowMenuAppItems`): shown below the window\nlist while that window is key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "What a click reports (unique in the window's list); `\"separator\"` entries need none."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label?: string",
+              "doc": "The label."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkmark next to the label (the active document, say)."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The keyboard shortcut."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type?: \"normal\" | \"separator\"",
+              "doc": "`\"normal\"` (default) or `\"separator\"`."
+            }
+          ]
+        },
+        {
           "name": "getActivationPolicy",
           "slug": "getActivationPolicy",
           "kind": "function",
@@ -56739,13 +58982,13 @@
           "name": "onAppMenuItem",
           "slug": "onAppMenuItem",
           "kind": "function",
-          "signature": "onAppMenuItem(handler: (id: string) => void): () => void",
-          "doc": "Call handler with the id of each application-menu item the user chooses (by click or accelerator).",
-          "docFull": "Call `handler` with the `id` of each application-menu item the user chooses (by click or\naccelerator).",
+          "signature": "onAppMenuItem(handler: (id: string, info: AppMenuClickInfo) => void): () => void",
+          "doc": "Call handler with the id of each application-menu item the user chooses (by click or accelerator): the page's own items (setAppMenu), the custom menus' items (desktop.menu.menus, setMenu) and this window's own Window-menu items (setWindowMenuAppItems; only this window's page hears those). info says which (kind), the key window when it was chosen, a custom item's menu and a checkbox's or radio item's state after the click (the menu shows it already).",
+          "docFull": "Call `handler` with the `id` of each application-menu item the user chooses (by click or\naccelerator): the page's own items ({@linkcode setAppMenu}), the custom menus' items\n(`desktop.menu.menus`, {@linkcode setMenu}) and this window's own Window-menu items\n({@linkcode setWindowMenuAppItems}; only this window's page hears those). `info` says which\n(`kind`), the key window when it was chosen, a custom item's menu and a checkbox's or radio\nitem's state after the click (the menu shows it already).",
           "params": [
             {
               "name": "handler",
-              "doc": "Called with the item's id."
+              "doc": "Called with the item's id and the click's context."
             }
           ],
           "returns": "A function that unsubscribes.",
@@ -56864,8 +59107,8 @@
           "slug": "setActivationPolicy",
           "kind": "function",
           "signature": "setActivationPolicy(policy: ActivationPolicy): Promise<boolean>",
-          "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front, so a tray app can show a Dock icon only while it has a full window open. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
-          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
+          "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front. A tray app should stay accessory for good and bring its windows up with focusWindow() / a window ref's focus(), which activate it without changing the policy: on macOS an app installed under /Applications that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it gets none. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
+          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front. A tray app should stay\naccessory for good and bring its windows up with `focusWindow()` / a window ref's `focus()`,\nwhich activate it without changing the policy: on macOS an app installed under /Applications\nthat was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on\nquit, or on switching back to accessory), and there is no opt-out; installed anywhere else it\ngets none. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
           "params": [
             {
               "name": "policy",
@@ -56874,7 +59117,7 @@
           ],
           "returns": "Whether it applied (false where the runtime can't hide a taskbar entry).",
           "examples": [
-            "```ts\nimport { setActivationPolicy } from \"denext/desktop/app\";\nimport { openWindow } from \"denext/desktop/window\";\n\nawait setActivationPolicy(\"regular\"); // a Dock icon while the window is open\nconst win = await openWindow({ url: \"/library\" });\nwin.onClosed(() => void setActivationPolicy(\"accessory\"));\n```"
+            "```ts\nimport { setActivationPolicy } from \"denext/desktop/app\";\n\n// The user turned \"Show in Dock\" on in the settings: a regular app from now on.\nawait setActivationPolicy(\"regular\");\n```"
           ],
           "denextOnly": true
         },
@@ -56949,6 +59192,52 @@
           "denextOnly": true
         },
         {
+          "name": "setMenu",
+          "slug": "setMenu",
+          "kind": "function",
+          "signature": "setMenu(menuId: string, menu: DesktopMenuUpdate | null): Promise<void>",
+          "doc": "Replace one of the app's own top-level menus (desktop.menu.menus), add one (menu.label required then), or remove one with null. Unlike setAppMenu, the managed menus stay (on macOS the app menu, Edit and Window) and the menu goes after its after anchor (default \"view\"). Items are { id, label, accelerator?, enabled?, checked?, type?, group?, icon? } (type \"checkbox\" toggles on a click, \"radio\" checks itself and unchecks the rest of its group), submenus { label, items }, separators { type: \"separator\" } and roles { role }. Clicks reach onAppMenuItem (every window's page) and the backend's onAppMenuItem.",
+          "docFull": "Replace one of the app's own top-level menus (`desktop.menu.menus`), add one (`menu.label`\nrequired then), or remove one with `null`. Unlike {@linkcode setAppMenu}, the managed menus stay\n(on macOS the app menu, Edit and Window) and the menu goes after its `after` anchor (default\n`\"view\"`). Items are `{ id, label, accelerator?, enabled?, checked?, type?, group?, icon? }`\n(`type` `\"checkbox\"` toggles on a click, `\"radio\"` checks itself and unchecks the rest of its\n`group`), submenus `{ label, items }`, separators `{ type: \"separator\" }` and roles `{ role }`.\nClicks reach {@linkcode onAppMenuItem} (every window's page) and the backend's `onAppMenuItem`.",
+          "params": [
+            {
+              "name": "menuId",
+              "doc": "The menu's id."
+            },
+            {
+              "name": "menu",
+              "doc": "Its entries (and optionally label and place), or null to remove it."
+            }
+          ],
+          "returns": "A promise that settles once the menus are set. It rejects validation for a bad entry or an item id another menu uses, unsupported where the runtime sets no application menu.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setMenuItemState",
+          "slug": "setMenuItemState",
+          "kind": "function",
+          "signature": "setMenuItemState(itemId: string, state: DesktopMenuItemState, options: { readonly windowId?: string }): Promise<void>",
+          "doc": "Change a custom menu item's checked, enabled or label: app-wide, or with { windowId } (currentWindowId in denext/desktop/window for this page's) for that window only, shown while it is key (on Windows and Linux in its own menu bar) over the app-wide state. Checking a radio item unchecks the rest of its group at the same level.",
+          "docFull": "Change a custom menu item's `checked`, `enabled` or `label`: app-wide, or with `{ windowId }`\n({@linkcode currentWindowId} in `denext/desktop/window` for this page's) for that window only,\nshown while it is key (on Windows and Linux in its own menu bar) over the app-wide state.\nChecking a radio item unchecks the rest of its group at the same level.",
+          "params": [
+            {
+              "name": "itemId",
+              "doc": "The item's id."
+            },
+            {
+              "name": "state",
+              "doc": "What to change."
+            },
+            {
+              "name": "options",
+              "doc": "windowId: the window the state is for (default app-wide)."
+            }
+          ],
+          "returns": "A promise that settles once the menus show it. It rejects validation for an unknown item, not_found for a window that is not open.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "setUserActivity",
           "slug": "setUserActivity",
           "kind": "function",
@@ -56965,6 +59254,23 @@
           "examples": [
             "```ts\nimport { setUserActivity } from \"denext/desktop/app\";\n\nawait setUserActivity({\n  type: \"com.example.notes.editing\",\n  title: note.title,\n  url: `https://notes.example.com/n/${note.id}`,\n  userInfo: { noteId: note.id },\n  searchable: true,\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "setWindowMenuAppItems",
+          "slug": "setWindowMenuAppItems",
+          "kind": "function",
+          "signature": "setWindowMenuAppItems(items: readonly DesktopWindowMenuAppItem[] | null): Promise<void>",
+          "doc": "This window's own items in the Window menu, below the window list after a separator, shown while this window is key: one per document with a checkmark on the active one, Cascade / Tile with enabled following the documents. Each call replaces the list; null or [] clears it, and it goes when the window closes. Clicks reach this page's onAppMenuItem (kind: \"windowMenu\") and the backend's onAppMenuItem.",
+          "docFull": "This window's own items in the Window menu, below the window list after a separator, shown while\nthis window is key: one per document with a checkmark on the active one, Cascade / Tile with\n`enabled` following the documents. Each call replaces the list; `null` or `[]` clears it, and it\ngoes when the window closes. Clicks reach this page's {@linkcode onAppMenuItem} (`kind:\n\"windowMenu\"`) and the backend's `onAppMenuItem`.",
+          "params": [
+            {
+              "name": "items",
+              "doc": "{ id, label, checked?, enabled?, accelerator? } or { type: \"separator\" }."
+            }
+          ],
+          "returns": "A promise that settles once the menu shows them.",
+          "examples": [],
           "denextOnly": true
         },
         {
