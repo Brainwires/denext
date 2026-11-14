@@ -181,6 +181,25 @@ Deno.test("packaging: the helper's grants are baked only for macOS on a runtime 
   }
 });
 
+/**
+ * POSIX permission bits mean something only off Windows: NTFS has none (`Deno.stat` reports 0o666
+ * for every file), so the helper's private folder, session file and executables are checked there.
+ * The Dock helper itself is macOS-only; these packaging and runtime tests also run on Windows CI.
+ */
+const POSIX_MODES = Deno.build.os !== "windows";
+
+/** `path`'s permission bits are `mode` (where they exist). */
+async function assertMode(path: string, mode: number): Promise<void> {
+  if (POSIX_MODES) assertEquals((await Deno.stat(path)).mode! & 0o777, mode, path);
+}
+
+/** `path` is executable (where the executable bit exists); it is a file either way. */
+async function assertExecutable(path: string): Promise<void> {
+  const info = await Deno.stat(path);
+  assert(info.isFile, path);
+  if (POSIX_MODES) assert((info.mode! & 0o111) !== 0, `${path} is executable`);
+}
+
 /** A bundle as `deno desktop` writes one, with an icon. */
 async function fakeAppBundle(dir: string, archs = ["arm64"]): Promise<string> {
   const app = join(dir, "Tray.app");
@@ -225,7 +244,7 @@ Deno.test("packaging: addMacosDockHelper builds Contents/Helpers/<Name>.app for 
     assertEquals(calls, ["compile:x86_64", "compile:arm64", "lipo:2"]);
     const exe = join(helper!, "Contents", "MacOS", "Fleet");
     assertEquals(await Deno.readTextFile(exe), "universal");
-    assert(((await Deno.stat(exe)).mode! & 0o111) !== 0, "executable");
+    await assertExecutable(exe);
     assertEquals(
       await Deno.readTextFile(join(helper!, "Contents", "Resources", "AppIcon.icns")),
       "icon",
@@ -299,8 +318,8 @@ Deno.test("runtime: the helper is copied into the data folder once, and again wh
     const copy = join(data, "dock-helper", "Fleet.app");
     assertEquals(exe, join(copy, "Contents", "MacOS", "Fleet"));
     assertEquals(await treeFingerprint(copy), await treeFingerprint(source.bundle));
-    assertEquals((await Deno.stat(join(data, "dock-helper"))).mode! & 0o777, 0o700);
-    assert(((await Deno.stat(exe)).mode! & 0o111) !== 0);
+    await assertMode(join(data, "dock-helper"), 0o700);
+    await assertExecutable(exe);
     // Unchanged: left alone.
     const before = (await Deno.stat(exe)).mtime;
     await installDockHelper(source, data);
@@ -348,7 +367,7 @@ Deno.test("runtime: no helper in the bundle (a run / dev build) keeps the access
 /** A stand-in for the helper the opener "launches": reads the session beside it and connects. */
 async function fakeHelperConnect(bundle: string, token?: string): Promise<Deno.Conn> {
   const session = JSON.parse(await Deno.readTextFile(join(bundle, "..", "session")));
-  assertEquals(((await Deno.stat(join(bundle, "..", "session"))).mode ?? 0) & 0o777, 0o600);
+  await assertMode(join(bundle, "..", "session"), 0o600);
   assertEquals(session.pid, Deno.pid);
   assertEquals(session.token.length, 64);
   const conn = await Deno.connect({ hostname: "127.0.0.1", port: session.port });

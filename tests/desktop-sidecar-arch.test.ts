@@ -280,7 +280,9 @@ Deno.test("bundleDesktopSidecar: signing per arch signs only that arch's copies"
     };
     const { report } = await bundle({ os: "darwin", arch }, deps);
     assertEquals(report.signing.how, "ad-hoc");
-    return report.signing.signed.map((p) => p.slice(p.indexOf("node_modules/") + 13)).sort();
+    // The report lists native paths (`\` on Windows): compared from `node_modules/` on.
+    return report.signing.signed.map((p) => p.replaceAll("\\", "/"))
+      .map((p) => p.slice(p.indexOf("node_modules/") + "node_modules/".length)).sort();
   };
   assertEquals(await signedFor("x86_64"), [
     "@q/ptylib-darwin-x64/helper.node",
