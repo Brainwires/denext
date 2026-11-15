@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox troubleshooting",
   description:
-    "In development for denext 4.20: telling whether the kernel sandbox refused something, turning it down safely, and fixes for common symptoms.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): telling whether the kernel sandbox refused something, turning it down safely, and fixes for common symptoms.",
 };
 
 export default async function KernelSandboxTroubleshooting() {

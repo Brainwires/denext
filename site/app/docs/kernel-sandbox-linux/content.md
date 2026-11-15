@@ -5,9 +5,11 @@ lead: How the kernel sandbox holds a grant on Linux. Landlock for files and TCP 
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, filled in as the Linux
-> enforcement lands in denext's Deno fork. The [overview](/docs/kernel-sandbox#every-kernel-denext-runs-on-today-keeps-working)
-> has the per-kernel table.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, filled in as the Linux enforcement
+> lands in denext's Deno fork. The
+> [overview](/docs/kernel-sandbox#every-kernel-denext-runs-on-today-keeps-working) has the
+> per-kernel table.
 
 ## How a Linux process confines itself
 

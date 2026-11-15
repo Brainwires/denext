@@ -5,9 +5,10 @@ lead: What the kernel sandbox promises, cell by cell. For each permission, platf
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** The matrix is published with the release and
-> generated from the same policy data `--kernel-sandbox-report` prints. Until it's generated,
-> this page is an outline. The [overview](/docs/kernel-sandbox) lists the known limits in prose.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** The matrix is published with the release and generated from
+> the same policy data `--kernel-sandbox-report` prints. Until it's generated, this page is an
+> outline. The [overview](/docs/kernel-sandbox) lists the known limits in prose.
 
 ## How to read the matrix
 

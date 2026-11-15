@@ -5,9 +5,9 @@ lead: Something that worked before fails under the kernel sandbox. How to tell w
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page collects symptoms as the sandbox is
-> tested against real programs, packages and CI setups. The [overview](/docs/kernel-sandbox) has
-> the design.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page collects symptoms as the sandbox is tested against
+> real programs, packages and CI setups. The [overview](/docs/kernel-sandbox) has the design.
 
 ## Was it the kernel sandbox?
 

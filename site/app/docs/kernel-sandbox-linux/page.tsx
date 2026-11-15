@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox on Linux",
   description:
-    "In development for denext 4.20: how the kernel sandbox uses Landlock, seccomp and a supervisor on Linux, what each Landlock ABI adds, and containers, systemd and WSL.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): how the kernel sandbox uses Landlock, seccomp and a supervisor on Linux, what each Landlock ABI adds, and containers, systemd and WSL.",
 };
 
 export default async function KernelSandboxLinux() {

@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox for desktop and compiled apps",
   description:
-    "In development for denext 4.20: the kernel sandbox in compiled binaries and packaged desktop apps, baked modes, desktop.permissions strict, and browser engines.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): the kernel sandbox in compiled binaries and packaged desktop apps, baked modes, desktop.permissions strict, and browser engines.",
 };
 
 export default async function KernelSandboxDesktopAndCompiled() {

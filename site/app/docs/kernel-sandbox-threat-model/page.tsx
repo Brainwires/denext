@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox threat model",
   description:
-    "In development for denext 4.20: the attacker the kernel sandbox assumes, what it protects, what is out of scope, and how to report a sandbox escape.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): the attacker the kernel sandbox assumes, what it protects, what is out of scope, and how to report a sandbox escape.",
 };
 
 export default async function KernelSandboxThreatModel() {

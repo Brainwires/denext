@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox on Windows",
   description:
-    "In development for denext 4.20: on Windows the kernel sandbox contains children with a job object and limits writes with a lowered integrity level; reads and network stay Deno-only.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): on Windows the kernel sandbox contains children with a job object and limits writes with a lowered integrity level; reads and network stay Deno-only.",
 };
 
 export default async function KernelSandboxWindows() {

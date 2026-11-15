@@ -5,8 +5,9 @@ lead: What the kernel sandbox defends against, what it doesn't, and where the bo
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, finished before the
-> release together with the [guarantee matrix](/docs/kernel-sandbox-guarantees). The
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, finished before the release
+> together with the [guarantee matrix](/docs/kernel-sandbox-guarantees). The
 > [overview](/docs/kernel-sandbox) has the design.
 
 ## The attacker

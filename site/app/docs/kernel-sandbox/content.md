@@ -5,9 +5,12 @@ lead: Kernel-enforced permissions. When a run's --allow-* grant can't change, th
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** The pages in this section are written while
-> the feature is built in denext's Deno fork, so they describe the design, not something you can
-> run today. Until 4.20 ships, every released denext treats Deno's permissions as
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** The pages in this section are written while the feature is
+> built in denext's Deno fork, so they describe the full design, not something you can run today.
+> The 4.20 preview changes nothing unless you ask for it: you opt in with
+> `--kernel-sandbox=enforce` or `--kernel-sandbox=warn`, or the `deno.json` key, on Linux and
+> macOS. Without that opt-in, and in every released denext until then, Deno's permissions stay
 > [least-privilege guardrails](/docs/permissions#least-privilege-guardrails-not-a-sandbox), and
 > nothing here applies. Flag names, defaults and the per-kernel details can still change. Where a
 > point is still open, the page says so.
@@ -115,17 +118,21 @@ to the socket between them, so the supervisor treats every request as untrusted.
 
 ## When it switches on
 
+**Status:** in denext 4.20 nothing switches on by itself. The preview applies only when you opt
+in with the flag or the `deno.json` key ([Modes](#modes)). Automatic enforcement for the fixed
+contexts below, bare CI runs included, comes with the full sandbox in denext 5.0.
+
 The kernel layer can only narrow. If a prompt could widen the grant halfway through a run, a
 kernel policy fixed at startup would be wrong. So the sandbox switches on by itself **only when
 the permission set can't change during the run**: nobody can be prompted, and the author has
 fixed the grant.
 
-| How the program runs                                                         | Default when it ships                                                                                                    |
+| How the program runs                                                         | With the full sandbox                                                                                                    |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | A compiled binary (`deno compile`, `denext build --compile`)                 | On (`auto`). The mode is baked in at compile time.                                                                       |
 | A packaged desktop app with `desktop.permissions: "strict"`                  | On (`enforce`). See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).                              |
 | `denext start`, the generated Docker image, the generated systemd unit       | On (`auto`).                                                                                                             |
-| A bare non-interactive run: CI, a pipe, `--no-prompt`, no TTY                | Warns first (`warn`). Switches on in the following minor release.                                                        |
+| A bare non-interactive run: CI, a pipe, `--no-prompt`, no TTY                | On (`auto`).                                                                                                             |
 | An interactive run that can prompt                                           | Off, as today. Prompts keep working.                                                                                     |
 | `-A` / `--allow-all` with no `--deny-*`                                      | Off. There's nothing to narrow, so nothing changes.                                                                      |
 | `-A` with `--deny-*`                                                         | The denies are enforced where the kernel can express them exactly. The rest are reported.                                |
@@ -147,6 +154,10 @@ Two consequences are worth knowing up front:
   prompting today. Under the sandbox it also decides whether the kernel layer is on.
 
 ## Modes
+
+**Status:** the denext 4.20 preview accepts `enforce` and `warn` on Linux and macOS, from the
+command-line flag or the `deno.json` key, and is off unless you ask for it. The other modes and
+settings below arrive with the full sandbox in denext 5.0.
 
 One setting picks the behaviour, in three places:
 
@@ -324,7 +335,7 @@ gap, not a vulnerability.
   folder can be read through that folder, as with any path-based rule. Creating new links or
   renames that would gain rights is refused.
 - **Desktop apps.** Whether a browser engine can run inside the app's sandbox is being tested
-  now. If it can't, packaged desktop apps get the headless guarantees in the first release, and
+  now. If it can't, packaged desktop apps get the headless guarantees at first, and
   a confined split-process design follows later. See
   [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
 

@@ -81,8 +81,8 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    under explicit `--allow-*` grants, so an RCE or path traversal that did land
    is limited to what those grants allow through Deno's own APIs. They are
    checks inside Deno, not a sandbox: a subprocess, FFI or a native addon goes
-   around them, and kernel enforcement is in development for denext 4.20, not shipped
-   ([Kernel sandbox](/docs/kernel-sandbox)). See
+   around them. Kernel enforcement is in development, not shipped: an opt-in preview in
+   denext 4.20, the full system in denext 5.0 ([Kernel sandbox](/docs/kernel-sandbox)). See
    [Permissions](/docs/permissions) for the grants that amount to full trust, and
    [Permission flags are guardrails](#permission-flags-are-guardrails).
 
@@ -327,8 +327,10 @@ Treat code you haven't reviewed as having every permission the process could rea
 run it only where that is acceptable: [Untrusted repositories](#untrusted-repositories) lists which
 verbs run a project's code. Kernel enforcement of the grants (Landlock and seccomp on Linux,
 Seatbelt on macOS, a job object on Windows, so a subprocess, FFI or a native addon is held to them
-too) is in development in the runtime fork for denext 4.20; it is not shipped. The
-[Kernel sandbox](/docs/kernel-sandbox) section describes the design as it is built.
+too) is in development in the runtime fork and not shipped. The full system, with automatic
+enforcement, lands in denext 5.0; denext 4.20 carries an opt-in preview on Linux and macOS, off
+unless you ask for it. The [Kernel sandbox](/docs/kernel-sandbox) section describes the design as
+it is built.
 
 ### `denext dashboard` — a password-gated database GUI
 

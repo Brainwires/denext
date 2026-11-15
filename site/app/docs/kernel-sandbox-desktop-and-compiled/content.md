@@ -5,10 +5,10 @@ lead: Compiled binaries and packaged desktop apps are where the kernel sandbox s
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, filled in as these
-> parts land. Desktop guarantees depend on experiments still running (see
-> [Browser engines](#browser-engines-inside-the-sandbox)). The [overview](/docs/kernel-sandbox)
-> has the design.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, filled in as these parts land.
+> Desktop guarantees depend on experiments still running (see [Browser engines](#browser-engines-inside-the-sandbox)). The [overview](/docs/kernel-sandbox) has the
+> design.
 
 ## Compiled binaries
 
@@ -30,11 +30,11 @@ includes.
 _Being written as this lands._ A desktop app hosts a browser engine (CEF, WKWebView, WebKitGTK or
 WebView2), and each engine runs its own sandbox for web content. Whether those engines can start
 inside the app's kernel sandbox is being tested on every platform before any desktop work is
-built. If they can, packaged apps get in-process confinement. If they can't, packaged apps in the
-first release get the headless guarantees only: the Deno runtime's own checks plus what the
-platform can apply without breaking the engine. A confined split-process design, with the engine host outside and the
-runtime and native extensions in a confined child, follows later. This section records the result
-for each engine.
+built. If they can, packaged apps get in-process confinement. If they can't, packaged apps get the
+headless guarantees only: the Deno runtime's own checks plus what the platform can apply without
+breaking the engine. A confined split-process design, with the engine host outside and the runtime
+and native extensions in a confined child, follows later. This section records the result for each
+engine.
 
 ## Native extensions and sidecars
 
@@ -52,4 +52,4 @@ bus on Linux).
 ## Per platform
 
 _Being written as this lands._ A short table of what a packaged app gets on macOS, Linux and
-Windows in the first release, linked to the [guarantee matrix](/docs/kernel-sandbox-guarantees).
+Windows, linked to the [guarantee matrix](/docs/kernel-sandbox-guarantees).

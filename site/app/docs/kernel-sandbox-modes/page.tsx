@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox modes",
   description:
-    "In development for denext 4.20: the --kernel-sandbox modes (off, warn, auto, enforce, broker), the deno.json key, the mode deno compile bakes in, the DENO_KERNEL_SANDBOX switch, --kernel-sandbox-report and deno info --json.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): the --kernel-sandbox modes (off, warn, auto, enforce, broker), the deno.json key, the mode deno compile bakes in, the DENO_KERNEL_SANDBOX switch, --kernel-sandbox-report and deno info --json.",
 };
 
 export default async function KernelSandboxModes() {

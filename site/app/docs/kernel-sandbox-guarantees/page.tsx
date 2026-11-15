@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox guarantee matrix",
   description:
-    "In development for denext 4.20: per permission, platform, Linux kernel and mode, whether the kernel sandbox enforces a rule exactly, more coarsely, or leaves it to Deno's checks, and what counts as a vulnerability.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): per permission, platform, Linux kernel and mode, whether the kernel sandbox enforces a rule exactly, more coarsely, or leaves it to Deno's checks, and what counts as a vulnerability.",
 };
 
 export default async function KernelSandboxGuarantees() {

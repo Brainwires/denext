@@ -5,9 +5,11 @@ lead: How to choose what the kernel sandbox does — the --kernel-sandbox flag, 
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, filled in as each part
-> lands in denext's Deno fork. The [overview](/docs/kernel-sandbox) has the design. Nothing here
-> applies to a released denext yet.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, filled in as each part lands in
+> denext's Deno fork. The [overview](/docs/kernel-sandbox) has the design. Nothing here applies to
+> a released denext yet. **Status:** the 4.20 preview accepts only `enforce` and `warn`, from the
+> flag or the `deno.json` key, on Linux and macOS, off unless asked for.
 
 ## The five modes
 

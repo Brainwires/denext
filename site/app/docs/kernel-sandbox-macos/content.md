@@ -5,9 +5,9 @@ lead: How the kernel sandbox holds a grant on macOS with Seatbelt, the same engi
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, filled in as the
-> macOS enforcement lands in denext's Deno fork. The [overview](/docs/kernel-sandbox) has the
-> design.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, filled in as the macOS enforcement
+> lands in denext's Deno fork. The [overview](/docs/kernel-sandbox) has the design.
 
 ## How a macOS process confines itself
 

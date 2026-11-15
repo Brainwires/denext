@@ -5,10 +5,12 @@ lead: What the kernel sandbox holds on Windows, and what it doesn't. A job objec
 ---
 
 > [!IMPORTANT]
-> **In development. This lands in denext 4.20.** This page is an outline, filled in as the
-> Windows part lands in denext's Deno fork. The [overview](/docs/kernel-sandbox) has the design.
+> **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
+> enforcement, lands in denext 5.0.** This page is an outline, filled in as the Windows part lands
+> in denext's Deno fork. **Status:** the 4.20 preview covers Linux and macOS only; Windows comes
+> with the full sandbox in denext 5.0. The [overview](/docs/kernel-sandbox) has the design.
 
-## What Windows gets first
+## What Windows gets
 
 _Being written as this lands._ The scope, stated plainly:
 

@@ -8,7 +8,7 @@ import { kernelSandboxNav } from "../../../lib/kernel-sandbox.ts";
 export const metadata = {
   title: "Kernel sandbox on macOS",
   description:
-    "In development for denext 4.20: how the kernel sandbox holds a grant on macOS with a generated Seatbelt profile covering files, network, execution and native code loading.",
+    "In development (an opt-in preview in denext 4.20, the full sandbox in 5.0): how the kernel sandbox holds a grant on macOS with a generated Seatbelt profile covering files, network, execution and native code loading.",
 };
 
 export default async function KernelSandboxMacos() {
