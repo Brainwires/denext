@@ -58,6 +58,7 @@ import type {
 import { menuWire } from "./menu-wire.ts";
 import { pullQueue } from "./pull.ts";
 import type { TrayEventType, TrayMouseDetail } from "./tray-events.ts";
+import type { TrayIconSet } from "./tray-icons.ts";
 
 export {
   type DesktopBridgeError,
@@ -65,6 +66,7 @@ export {
   isDesktopBridgeError,
 } from "./bridge-client.ts";
 export type { TrayEventType, TrayModifiers, TrayMouseDetail } from "./tray-events.ts";
+export type { TrayIconSet, TrayIconVariant } from "./tray-icons.ts";
 export type { AppMenuClickInfo, AppMenuKeyWindow } from "./app-actions.ts";
 export type {
   DesktopMenuAnchor,
@@ -291,6 +293,11 @@ export interface AppCapabilities {
   readonly trayPosition: boolean;
   /** A tray's `popUpMenu()` opens its menu (macOS, Windows; runtime 3.0.0-denext.6). */
   readonly trayPopUpMenu: boolean;
+  /**
+   * A tray's `title` shows beside its icon (macOS' menu bar; a runtime whose `Deno.Tray` has
+   * `setTitle`). Elsewhere `title` is accepted and not shown.
+   */
+  readonly trayTitle: boolean;
 }
 
 /** `raw[key]` when it is one of `allowed`, else `"unknown"`. */
@@ -375,6 +382,7 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     trayModifiers: flag("trayModifiers"),
     trayPosition: flag("trayPosition"),
     trayPopUpMenu: flag("trayPopUpMenu"),
+    trayTitle: flag("trayTitle"),
   };
 }
 
@@ -589,12 +597,23 @@ export type TrayIcon = Uint8Array | string;
 
 /** The settings of a tray icon ({@linkcode createTray}). */
 export interface TrayOptions {
-  /** The icon (PNG). On macOS a black-and-transparent image is drawn as a template image. */
-  readonly icon: TrayIcon;
-  /** The icon in dark mode, where the OS tells them apart. */
+  /**
+   * The icon (PNG). On macOS a black-and-transparent image is drawn as a template image. Or one
+   * per OS, `{ macos, windows, linux, default }`, each an icon or `{ icon, iconDark }` (a macOS
+   * template image, Windows full-colour art with a dark-taskbar variant): the running OS's entry
+   * is shown, else `default`.
+   */
+  readonly icon: TrayIcon | TrayIconSet<TrayIcon>;
+  /** The icon in dark mode, where the OS tells them apart (a per-OS entry's own wins). */
   readonly iconDark?: TrayIcon | null;
   /** Shown on hover. */
   readonly tooltip?: string | null;
+  /**
+   * Short text beside the icon in the macOS menu bar (a count, a timer), as Electron's
+   * `tray.setTitle`; `null` removes it. Shown where {@linkcode appCapabilities} reports
+   * `trayTitle`, ignored elsewhere.
+   */
+  readonly title?: string | null;
   /** The menu (right-click, or click on macOS when there is no click handler). */
   readonly menu?: readonly AppMenuItem[] | null;
 }
@@ -615,7 +634,7 @@ export interface TrayBounds {
 export interface AppTray {
   /** Its id. */
   readonly id: string;
-  /** Change its icon, tooltip or menu (`null` removes the tooltip / menu / dark icon). */
+  /** Change its icon, tooltip, title or menu (`null` removes the tooltip / title / menu / dark icon). */
   update(options: Partial<TrayOptions>): Promise<void>;
   /** Where it is, or `null` where the OS cannot say (Linux). */
   getBounds(): Promise<TrayBounds | null>;
@@ -654,14 +673,38 @@ function iconWire(icon: TrayIcon): string {
   return typeof icon === "string" ? icon : bytesToBase64(icon);
 }
 
+/** An icon on the wire when it is one (PNG bytes or base64), else as given (the backend checks). */
+function leafWire(value: unknown): unknown {
+  return typeof value === "string" || value instanceof Uint8Array ? iconWire(value) : value;
+}
+
+/** A tray icon, or a per-OS set of them, on the wire (the backend picks the running OS's). */
+function iconSetWire(icon: TrayIcon | TrayIconSet<TrayIcon>): unknown {
+  if (typeof icon !== "object" || icon === null || icon instanceof Uint8Array) {
+    return leafWire(icon);
+  }
+  const entries = Object.entries(icon).map(([os, entry]) => {
+    if (typeof entry !== "object" || entry === null || entry instanceof Uint8Array) {
+      return [os, leafWire(entry)];
+    }
+    const e = entry as { icon: unknown; iconDark?: unknown };
+    const dark = e.iconDark === undefined || e.iconDark === null
+      ? e.iconDark
+      : leafWire(e.iconDark);
+    return [os, { icon: leafWire(e.icon), ...(dark !== undefined ? { iconDark: dark } : {}) }];
+  });
+  return Object.fromEntries(entries);
+}
+
 /** The wire form of tray settings (only what is set). */
 function trayWire(options: Partial<TrayOptions>): Record<string, unknown> {
   return {
-    ...(options.icon !== undefined ? { icon: iconWire(options.icon) } : {}),
+    ...(options.icon !== undefined ? { icon: iconSetWire(options.icon) } : {}),
     ...(options.iconDark !== undefined
       ? { iconDark: options.iconDark === null ? null : iconWire(options.iconDark) }
       : {}),
     ...(options.tooltip !== undefined ? { tooltip: options.tooltip } : {}),
+    ...(options.title !== undefined ? { title: options.title } : {}),
     ...(options.menu !== undefined
       ? { menu: options.menu === null ? null : menuWire(options.menu) }
       : {}),

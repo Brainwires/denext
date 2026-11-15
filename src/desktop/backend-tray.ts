@@ -21,6 +21,7 @@ import {
   type PlacementScreen,
   placeTrayPanel,
 } from "./tray-config.ts";
+import { resolveTrayIcon, type TrayIconSet } from "./tray-icons.ts";
 import type { RegisteredWindow, RegistryWindow, WindowRegistry } from "./window-registry.ts";
 import {
   isPrimaryClick,
@@ -36,12 +37,20 @@ export type DesktopTrayIcon = Uint8Array | string;
 
 /** The backend tray's settings in `runDesktop({ tray })`, laid over `desktop.tray`. */
 export interface DesktopTrayOptions {
-  /** The icon (overrides `desktop.tray.icon`). */
-  readonly icon?: DesktopTrayIcon;
-  /** The dark-mode icon. */
+  /**
+   * The icon (overrides `desktop.tray.icon`), or one per OS (`{ macos, windows, linux, default }`,
+   * each an icon or `{ icon, iconDark }`): the running OS's entry, else `default`.
+   */
+  readonly icon?: DesktopTrayIcon | TrayIconSet<DesktopTrayIcon>;
+  /** The dark-mode icon (a per-OS entry's own `iconDark` wins). */
   readonly iconDark?: DesktopTrayIcon;
   /** The tooltip. */
   readonly tooltip?: string;
+  /**
+   * Short text beside the icon in the macOS menu bar (Electron's `tray.setTitle`); ignored where
+   * the runtime has no tray title.
+   */
+  readonly title?: string;
   /** The menu, written like `denext/desktop/app`'s (`{ id, label }`, `{ label, submenu }`, …). */
   readonly menu?: readonly unknown[];
   /** The panel at the icon: `{ url, width?, height?, hideOnBlur? }`. */
@@ -68,14 +77,19 @@ export interface DesktopTrayOptions {
   readonly onMenuItem?: (id: string) => void;
 }
 
-/** What `update` changes on the backend tray (`null` removes the tooltip / menu / dark icon). */
+/**
+ * What `update` changes on the backend tray (`null` removes the tooltip / title / menu / dark
+ * icon).
+ */
 export interface DesktopTrayUpdate {
-  /** The icon, as PNG bytes. */
-  readonly icon?: Uint8Array;
+  /** The icon, as PNG bytes, or one per OS (the running OS's entry, else `default`). */
+  readonly icon?: Uint8Array | TrayIconSet<Uint8Array>;
   /** The dark-mode icon. */
   readonly iconDark?: Uint8Array | null;
   /** The tooltip. */
   readonly tooltip?: string | null;
+  /** The text beside the icon (macOS). */
+  readonly title?: string | null;
   /** The menu. */
   readonly menu?: readonly unknown[] | null;
 }
@@ -100,7 +114,7 @@ export interface DesktopTrayPanelHandle {
 export interface DesktopTrayHandle {
   /** The runtime's `Deno.Tray`. */
   readonly tray: unknown;
-  /** Change the icon, tooltip or menu. */
+  /** Change the icon, tooltip, title or menu. */
   update(options: DesktopTrayUpdate): void;
   /** Where the icon is, or `null` where the OS cannot say (Linux). */
   getBounds(): { x: number; y: number; width: number; height: number } | null;
@@ -184,7 +198,7 @@ async function iconWire(
 }
 
 /** The keys `runDesktop({ tray })` lays over `desktop.tray`. */
-const TRAY_KEYS = ["icon", "iconDark", "tooltip", "menu", "panel"] as const;
+const TRAY_KEYS = ["icon", "iconDark", "tooltip", "title", "menu", "panel"] as const;
 
 /** The tray's settings: `runDesktop({ tray })` over `desktop.tray`, or `undefined` for none. */
 function mergedSettings(ctx: BackendTrayContext): Record<string, unknown> | undefined {
@@ -194,18 +208,28 @@ function mergedSettings(ctx: BackendTrayContext): Record<string, unknown> | unde
   return Object.fromEntries(TRAY_KEYS.map((key) => [key, given[key] ?? config[key]]));
 }
 
+/** The running OS's icons of a tray `icon` / `iconDark`, or an error naming the missing OS. */
+function osIcons<I>(icon: unknown, iconDark: I | null | undefined, os: string) {
+  const resolved = resolveTrayIcon(icon as I | TrayIconSet<I>, iconDark, os);
+  if (!resolved) {
+    throw new Error(`desktop: the tray icon names no icon for ${os}: add that OS or default`);
+  }
+  return resolved;
+}
+
 /** The wire options `createBackendTray` takes, icons read and menus converted. */
 async function wireOptions(
   merged: Record<string, unknown>,
   readFile: (path: string) => Promise<Uint8Array | null>,
+  os: string,
 ): Promise<Record<string, unknown>> {
   if (merged.icon === undefined) throw new Error("desktop: the tray needs an icon");
+  const { icon, iconDark } = osIcons(merged.icon, merged.iconDark as DesktopTrayIcon, os);
   return {
-    icon: await iconWire(merged.icon as DesktopTrayIcon, readFile),
-    ...(merged.iconDark !== undefined
-      ? { iconDark: await iconWire(merged.iconDark as DesktopTrayIcon, readFile) }
-      : {}),
+    icon: await iconWire(icon, readFile),
+    ...(iconDark ? { iconDark: await iconWire(iconDark, readFile) } : {}),
     ...(merged.tooltip !== undefined ? { tooltip: merged.tooltip } : {}),
+    ...(merged.title !== undefined ? { title: merged.title } : {}),
     ...(merged.menu !== undefined ? { menu: menuWire(merged.menu as unknown[]) } : {}),
   };
 }
@@ -337,17 +361,20 @@ function trayHandle(
   backend: BackendTray,
   panel: DesktopTrayPanelHandle | undefined,
   clicks: ClickHandlers,
+  os: string,
 ): DesktopTrayHandle {
   const tray = backend.tray;
+  const b64 = (png: Uint8Array | null | undefined) => png ? bytesToBase64(png) : png;
   return {
     tray,
     update: (u) => {
+      const icons = u.icon !== undefined ? osIcons(u.icon, u.iconDark, os) : undefined;
+      const iconDark = icons ? icons.iconDark : u.iconDark;
       backend.update({
-        ...(u.icon !== undefined ? { icon: bytesToBase64(u.icon) } : {}),
-        ...(u.iconDark !== undefined
-          ? { iconDark: u.iconDark === null ? null : bytesToBase64(u.iconDark) }
-          : {}),
+        ...(icons ? { icon: bytesToBase64(icons.icon) } : {}),
+        ...(iconDark !== undefined ? { iconDark: b64(iconDark) } : {}),
         ...(u.tooltip !== undefined ? { tooltip: u.tooltip } : {}),
+        ...(u.title !== undefined ? { title: u.title } : {}),
         ...(u.menu !== undefined ? { menu: u.menu === null ? null : menuWire(u.menu) } : {}),
       });
     },
@@ -395,7 +422,8 @@ export async function startBackendTray(
 ): Promise<DesktopTrayHandle | { reason: string } | undefined> {
   const merged = mergedSettings(ctx);
   if (!merged) return undefined;
-  const made = await ctx.app.createBackendTray(await wireOptions(merged, ctx.readFile));
+  const os = ctx.os ?? Deno.build.os;
+  const made = await ctx.app.createBackendTray(await wireOptions(merged, ctx.readFile, os));
   if ("reason" in made) {
     ctx.warn(`no tray icon here (${made.reason}); the window is shown instead`);
     return made;
@@ -403,9 +431,9 @@ export async function startBackendTray(
   const panelConfig = panelSettings(merged.panel);
   const panel = panelConfig ? attachPanel(ctx, made, panelConfig) : undefined;
   const clicks: ClickHandlers = { count: 0, menus: 0 };
-  const handle = trayHandle(made, panel, clicks);
+  const handle = trayHandle(made, panel, clicks, os);
   warnPageOnlyMenu(ctx, made, clicks);
-  if (!panel && (ctx.os ?? Deno.build.os) === "darwin") {
+  if (!panel && os === "darwin") {
     // macOS: a status item with a menu opens it on a plain left click too (Electron's tray); a
     // panel or a backend `onClick` handler takes the left click instead.
     listenMouse(made.tray, "click", (detail) => {

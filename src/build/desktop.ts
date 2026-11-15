@@ -122,6 +122,7 @@ export type {
   DesktopWindows,
 };
 export type { DesktopTrayPanelSettings, DesktopTraySettings } from "../desktop/tray-config.ts";
+export type { TrayIconSet, TrayIconVariant } from "../desktop/tray-icons.ts";
 /** The app's own menus as the backend drives them (`setMenu`, `onAppMenuItem`, …). */
 export type {
   DesktopAppMenuItemContext,
