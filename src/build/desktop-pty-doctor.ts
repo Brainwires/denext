@@ -2,12 +2,18 @@
 // read from the project's `desktop` config as data (the doctor never runs the project's code).
 //
 //   - the `--allow-run` the package bakes for it (its shells for this OS, never an unscoped run);
-//   - whether the pinned Deno Desktop runtime has `Deno.openPty` (FIRST_PTY_RUNTIME);
+//   - whether the pinned Deno Desktop runtime has `Deno.openPty` (FIRST_PTY_RUNTIME), and on
+//     Windows whether its `Deno.openPty` starts a ConPTY (FIRST_WINDOWS_PTY_RUNTIME);
 //   - `onWindowClose: "detach"` in an app that quits with its last window (no
 //     `desktop.app.keepAlive`, no tray), where a detached terminal has no window left to attach it;
 //   - a shells list with nothing for this OS, and an invalid `pty` value.
 
-import { FIRST_PTY_RUNTIME, supportsPty } from "./deno-version.ts";
+import {
+  FIRST_PTY_RUNTIME,
+  FIRST_WINDOWS_PTY_RUNTIME,
+  supportsPty,
+  supportsPtyOn,
+} from "./deno-version.ts";
 import { ptyConfigProblem, type PtyOs, resolvePtyConfig } from "../desktop/pty-config.ts";
 
 /** One finding (the doctor's `DesktopDoctorFinding` shape). */
@@ -24,8 +30,10 @@ export interface DoctorPty {
   readonly runAllow: readonly string[];
   /** What closing a terminal's window does. */
   readonly onWindowClose: "kill" | "detach";
-  /** Whether the pinned runtime has `Deno.openPty`. */
+  /** Whether the pinned runtime starts terminals on the checked OS (`Deno.openPty`). */
   readonly runtimeSupported: boolean;
+  /** The first runtime that starts terminals on the checked OS. */
+  readonly runtimeFloor: string;
 }
 
 /** Whether the app keeps running with no window: `desktop.app.keepAlive`, else on with a tray. */
@@ -76,14 +84,14 @@ export function ptyDoctorCheck(
       fix: `upgrade denext to a release that pins runtime ${FIRST_PTY_RUNTIME} or later`,
     });
   }
-  if (os === "windows") {
+  if (os === "windows" && runtimeSupported && !supportsPtyOn(runtimeVersion, "windows")) {
     findings.push({
       check: "pty",
       level: "warning",
-      message: "denext's Deno Desktop runtime has no terminals on Windows yet (Deno.openPty " +
-        "throws NotSupported): every spawnPty() there rejects `unsupported`",
-      fix: "give the page a fallback for Windows (check the `unsupported` code), or leave pty " +
-        "out of the Windows build",
+      message: `the pinned runtime ${runtimeVersion} has no terminals on Windows (its ` +
+        `Deno.openPty throws NotSupported there until ${FIRST_WINDOWS_PTY_RUNTIME}): every ` +
+        "spawnPty() there rejects `unsupported`",
+      fix: `upgrade denext to a release that pins runtime ${FIRST_WINDOWS_PTY_RUNTIME} or later`,
     });
   }
   if (config.shells.length === 0) {
@@ -107,7 +115,12 @@ export function ptyDoctorCheck(
     });
   }
   return {
-    pty: { runAllow: config.shells, onWindowClose: config.onWindowClose, runtimeSupported },
+    pty: {
+      runAllow: config.shells,
+      onWindowClose: config.onWindowClose,
+      runtimeSupported: supportsPtyOn(runtimeVersion, os),
+      runtimeFloor: os === "windows" ? FIRST_WINDOWS_PTY_RUNTIME : FIRST_PTY_RUNTIME,
+    },
     findings,
   };
 }
@@ -120,6 +133,6 @@ export function ptyDoctorCheck(
  */
 export function ptyFactLine(pty: DoctorPty): string {
   const run = pty.runAllow.length > 0 ? `--allow-run=${pty.runAllow.join(",")}` : "no shell";
-  const runtime = pty.runtimeSupported ? "Deno.openPty available" : `needs ${FIRST_PTY_RUNTIME}`;
+  const runtime = pty.runtimeSupported ? "Deno.openPty available" : `needs ${pty.runtimeFloor}`;
   return `  pty       ${run}; onWindowClose ${pty.onWindowClose}; ${runtime}`;
 }

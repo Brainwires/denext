@@ -40,7 +40,7 @@ import {
   type DesktopExtensionHost,
 } from "../extension.ts";
 import { createOwnedResources, type OwnedResourcesHost } from "../owned-resources.ts";
-import { FIRST_PTY_RUNTIME } from "../../build/deno-version.ts";
+import { FIRST_PTY_RUNTIME, FIRST_WINDOWS_PTY_RUNTIME } from "../../build/deno-version.ts";
 import { isPtyShellFor, type PtyOs, type ResolvedPtyConfig } from "../pty-config.ts";
 
 /** `Deno.openPty`'s options (runtime 3.0.0-denext.12). */
@@ -365,10 +365,15 @@ function ownedHost(host: DesktopExtensionHost): OwnedResourcesHost {
   };
 }
 
-/** Why the runtime has no terminals on this OS (its `Deno.openPty` throws `NotSupported`). */
+/**
+ * Why the runtime has no terminals on this OS (its `Deno.openPty` throws `NotSupported`): on
+ * Windows a runtime before {@linkcode FIRST_WINDOWS_PTY_RUNTIME}, or a Windows without ConPTY
+ * (before 10 1809).
+ */
 const PTY_PLATFORM_UNSUPPORTED_REASON =
-  "the pty capability is not available on this OS: denext's Deno Desktop runtime has no " +
-  "terminals here yet (Windows)";
+  "the pty capability is not available here: this Deno Desktop runtime has no terminals on " +
+  `this OS (on Windows they need runtime ${FIRST_WINDOWS_PTY_RUNTIME} or later and Windows 10 ` +
+  "1809 or later)";
 
 /**
  * Open the PTY; the runtime's refusal is `forbidden`, an OS it has no terminals on
@@ -388,7 +393,7 @@ function startPty(open: OpenPty, options: DenoPtyOptions): DenoPty {
     }
     if (name === "NotSupported") {
       throw new DesktopCapError("unsupported", PTY_PLATFORM_UNSUPPORTED_REASON, {
-        data: { reason: PTY_PLATFORM_UNSUPPORTED_REASON },
+        data: { reason: PTY_PLATFORM_UNSUPPORTED_REASON, requires: FIRST_WINDOWS_PTY_RUNTIME },
       });
     }
     throw new DesktopCapError("spawn_failed", "pty: the program could not be started");

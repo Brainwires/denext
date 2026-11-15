@@ -494,11 +494,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     },
     trust: "full",
     notes:
-      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; not on Windows yet): --allow-run of the allowed shells only",
+      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; on Windows a ConPTY, from runtime 3.0.0-denext.21): --allow-run of the allowed shells only",
     manual: [
       "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
       'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
-      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later; before it every call rejects `unsupported`. On Windows the runtime has no terminals yet: spawnPty() rejects `unsupported` there.",
+      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later (on Windows 3.0.0-denext.21 or later, and Windows 10 1809 or later: a ConPTY); before it every call rejects `unsupported`. A ConPTY's output carries its own VT sequences even for plain text: render it with a terminal emulator (xterm.js).",
     ],
   },
   microphone: {

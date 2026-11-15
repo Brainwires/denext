@@ -39,7 +39,13 @@ import {
   desktopBuildFlags,
   desktopPtyRunPaths,
 } from "../src/build/desktop-capabilities.ts";
-import { FIRST_PTY_RUNTIME, supportsPty } from "../src/build/deno-version.ts";
+import {
+  FIRST_PTY_RUNTIME,
+  FIRST_WINDOWS_PTY_RUNTIME,
+  supportsPty,
+  supportsPtyOn,
+} from "../src/build/deno-version.ts";
+import { DESKTOP_RUNTIME_PIN } from "../src/build/desktop-runtime.ts";
 import { ptyDoctorCheck, ptyFactLine } from "../src/build/desktop-pty-doctor.ts";
 import { formatDesktopDoctor, runDesktopDoctor } from "../src/build/desktop-doctor.ts";
 import { validateDesktop } from "../src/server/config-validate/desktop.ts";
@@ -666,6 +672,53 @@ Deno.test("pty: without Deno.openPty every method rejects unsupported with the r
   await t.quit();
 });
 
+Deno.test("pty.spawn: NotSupported names the Windows runtime floor in its data", async () => {
+  const t = setup({
+    openPty: () => {
+      const e = new Error("no conpty");
+      e.name = "NotSupported";
+      throw e;
+    },
+  });
+  const err = await rejectsCode(spawn(t.cap), "unsupported");
+  assertEquals((err.data as { requires: string }).requires, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(err.message, FIRST_WINDOWS_PTY_RUNTIME);
+  assert(!err.message.includes("yet"), "no 'not on Windows yet': the runtime has terminals there");
+});
+
+Deno.test("supportsPtyOn: Windows terminals from 3.0.0-denext.21, macOS / Linux from .12", () => {
+  assertEquals(FIRST_WINDOWS_PTY_RUNTIME, "3.0.0-denext.21");
+  assert(supportsPtyOn("3.0.0-denext.21", "windows"));
+  assert(!supportsPtyOn("3.0.0-denext.20", "windows"));
+  assert(supportsPtyOn("3.0.0-denext.12", "linux"));
+  assert(supportsPtyOn("3.0.0-denext.12", "darwin"));
+  assert(!supportsPtyOn("not a version", "windows"));
+  // The runtime denext pins has terminals on every desktop OS.
+  for (const os of ["darwin", "linux", "windows"] as const) {
+    assert(supportsPtyOn(DESKTOP_RUNTIME_PIN.version, os), os);
+  }
+});
+
+Deno.test("doctor pty: Windows under the pinned runtime has terminals (no Windows warning)", () => {
+  const pinned = ptyDoctorCheck({ capabilities: { pty: true } }, "windows", "3.0.0-denext.22")!;
+  assertEquals(pinned.findings, []);
+  assertEquals(pinned.pty!.runtimeSupported, true);
+  assertStringIncludes(ptyFactLine(pinned.pty!), "Deno.openPty available");
+  const older = ptyDoctorCheck({ capabilities: { pty: true } }, "windows", "3.0.0-denext.20")!;
+  assertEquals(older.findings.length, 1);
+  assertStringIncludes(older.findings[0].message, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(older.findings[0].fix, FIRST_WINDOWS_PTY_RUNTIME);
+  assertEquals(older.pty!.runtimeSupported, false);
+  assertStringIncludes(ptyFactLine(older.pty!), `needs ${FIRST_WINDOWS_PTY_RUNTIME}`);
+});
+
+Deno.test("desktop add pty: the catalog no longer says Windows has no terminals", () => {
+  const entry = DESKTOP_CAPABILITIES.pty;
+  assert(!entry.notes.includes("not on Windows yet"), entry.notes);
+  assert(!entry.manual!.some((m) => m.includes("no terminals yet")));
+  assert(entry.manual!.some((m) => m.includes(FIRST_WINDOWS_PTY_RUNTIME)));
+});
+
 Deno.test("FIRST_PTY_RUNTIME: Deno.openPty from 3.0.0-denext.12 (no .11 release)", () => {
   assertEquals(FIRST_PTY_RUNTIME, "3.0.0-denext.12");
   assert(supportsPty("3.0.0-denext.12"));
@@ -770,6 +823,7 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
     runAllow: ["/bin/zsh", "/bin/bash", "/bin/sh"],
     onWindowClose: "kill",
     runtimeSupported: false,
+    runtimeFloor: FIRST_PTY_RUNTIME,
   });
   assertEquals(old.findings.map((f) => f.level), ["warning"]);
   assert(old.findings[0].message.includes(FIRST_PTY_RUNTIME));
@@ -804,9 +858,10 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
     "windows",
     "3.0.0-denext.12",
   )!;
-  // Windows: no terminals in the runtime yet, and no Windows program on the list.
+  // Windows under a runtime before its ConPTY: no terminals there, and no Windows program listed.
   assertEquals(none.findings.map((f) => f.check), ["pty", "pty"]);
   assertStringIncludes(none.findings[0].message, "no terminals on Windows");
+  assertStringIncludes(none.findings[0].message, FIRST_WINDOWS_PTY_RUNTIME);
   assertStringIncludes(none.findings[1].message, "lists no program for windows");
   const bad = ptyDoctorCheck(
     { capabilities: { pty: { shells: ["sh"] } } },

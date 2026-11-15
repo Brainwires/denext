@@ -91,6 +91,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
+  `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
+  (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
+  could open behind the app's window, where Return and Escape never reached it. A window that has
+  closed gets an app-modal box, never the main window in its place.
 - **`denext desktop package --arch`.** `--arch x86_64 | arm64 | both` (and `universal` for macOS)
   picks the architecture to package, `--target-os windows` included; it was an unknown flag, so a
   Windows Arm64 package could only be built through `-- --arch arm64`. An architecture the target
@@ -100,17 +105,17 @@ and this project adheres to
   capability or `spa.proxy` added to the config reached a bare `deno desktop` build only after
   `denext desktop run` / `dev` or a package script. The scaffolded `desktop.ts` comment no longer
   says `denext build` rewrites it (it does not; export after editing the config).
+- **Terminals (`pty`) on Windows.** denext's Deno Desktop runtime opens a ConPTY on Windows from
+  3.0.0-denext.21 (the pinned runtime is later), so `denext desktop doctor` no longer warns that a Windows
+  build has no terminals, `denext desktop add pty` no longer says so, and the doctor checks the
+  Windows floor (`FIRST_WINDOWS_PTY_RUNTIME`) instead. Under an older runtime `spawnPty()` still
+  rejects `unsupported`, now naming that runtime in `error.data.requires`.
 - **`denext desktop add secure-store` names the Windows `--allow-run=powershell.exe` grant.** The
   Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
   runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
   lets any code in the app's process run scripts as the user. The capability's notes, the
   permission table on the desktop docs page and the source now say so.
 
-- **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
-  `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
-  (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
-  could open behind the app's window, where Return and Escape never reached it. A window that has
-  closed gets an app-modal box, never the main window in its place.
 - **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
   `start`, `build` and every other verb that runs project code ran it with the flags of the
   config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so
