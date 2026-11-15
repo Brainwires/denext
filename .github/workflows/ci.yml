@@ -70,16 +70,19 @@ jobs:
       hosted: ${{ steps.pick.outputs.hosted }}
     steps:
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@2f0959e7d75f85d8e3f5a0789d563b615a43d526 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@68d8c0c773592f5b99ed5e9b1ca009f0a1690e40 # pick-runners
         with:
           jobs: >-
             ${{ github.event_name == 'push' && github.ref != 'refs/heads/main'
             && 'check=linux-x64 bundle_budget=linux-x64 cargo_audit=linux-x64 windows_resolve=windows-x64'
             || startsWith(github.event_name, 'pull_request')
-            && 'check=linux-x64 integration=linux-x64 next_compat=linux-x64 bundle_budget=linux-x64 cargo_audit=linux-x64 windows_tests=windows-x64 windows_resolve=windows-x64 macos_tests=macos-arm64'
-            || 'coverage_1=linux-x64-docker coverage_2=linux-x64 coverage_3=linux-x64 coverage_4=linux-x64 coverage_5=linux-x64 coverage_6=linux-x64 backend_integration=linux-x64 check=linux-x64 integration=linux-x64 next_compat=linux-x64 bundle_budget=linux-x64 cargo_audit=linux-x64 coverage_merge=~coverage_2 windows_tests=windows-x64 windows_resolve=windows-x64 macos_tests=macos-arm64' }}
+            && 'check=linux-x64 integration=linux-x64 next_compat=linux-x64 bundle_budget=linux-x64 cargo_audit=linux-x64 windows_tests=windows-x64-fast windows_resolve=windows-x64 macos_tests=macos-arm64'
+            || 'coverage_1=linux-x64-docker coverage_2=linux-x64 coverage_3=linux-x64 coverage_4=linux-x64 coverage_5=linux-x64 coverage_6=linux-x64 backend_integration=linux-x64 check=linux-x64 integration=linux-x64 next_compat=linux-x64 bundle_budget=linux-x64 cargo_audit=linux-x64 coverage_merge=~coverage_2 windows_tests=windows-x64-fast windows_resolve=windows-x64 macos_tests=macos-arm64' }}
           vars: ${{ toJSON(vars) }}
           runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+        # windows_tests asks for windows-x64-fast: the label only the fast Windows host (win-x64,
+        # 63-72 min for this job) carries, never win-x64-brain (an i3: 80-95 min). When the fast
+        # host is busy it runs on windows-latest.
 
   # Fast feedback: formatting, lint, type-check, the unit test suite, and doc
   # coverage. Excludes the heavy build/bundle integration tests (see the
