@@ -91,6 +91,18 @@ and this project adheres to
 
 ### Fixed
 
+- **Injections into a streamed page rewrite it as it flows.** A first-party streaming HTML
+  rewriter (element and end-tag handlers over an incremental tokenizer, in the shape of
+  `HTMLRewriter`; plain TypeScript, no dependency) now carries what denext adds to a streamed
+  response. `denext desktop dev`'s live-reload proxy no longer reads the dev server's whole page
+  before adding the desktop global: the window gets the first bytes when the dev server sends them
+  (about 2 ms instead of the time to the last Suspense boundary, 400 ms in the test), and each
+  streamed boundary as it renders. The global lands after the real `<head>` even when the tag is
+  split across chunks, and a `<head>` inside a comment or a script is no longer taken for it.
+  React Native mode's late style sheets find each streamed boundary the same way: one split
+  across two chunks still gets its rules ahead of it, and boundary text inside a script no longer
+  gets a rules block.
+
 - **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
   `start`, `build` and every other verb that runs project code ran it with the flags of the
   config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so

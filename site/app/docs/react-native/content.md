@@ -359,7 +359,9 @@ head has been sent. They stream ahead of that boundary's content, each rule once
 a JSON block, then a constant inline script that inserts the rules into the head's sheet through
 the CSSOM, in react-native-web's group order, before the content swaps in. The content is never
 shown unstyled, and a Server Component's rules, which the client never computes, reach the page
-too. The script is allowed by its hash in the streamed response's
+too. Each boundary is found as the response streams, by denext's streaming HTML rewriter, so a
+boundary split across two chunks still gets its rules and text inside a script is never taken for
+one. The script is allowed by its hash in the streamed response's
 [Content-Security-Policy](#under-a-content-security-policy) (denext's policy is hash-based, so
 there is no nonce to give it); an app without `reactNative` streams unchanged.
 
