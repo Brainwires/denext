@@ -261,37 +261,51 @@ can enforce yet. This is the object on a Linux machine with Landlock ABI 4 and n
 | `enforced`      | Whether the operating system is holding the policy in this run. Always `false` in the preview. |
 | `enforcerBuilt` | Whether this runtime has an enforcer for this platform.                                        |
 | `osSandbox`     | The mechanism this platform uses: `landlock`, `seccomp`, `seatbelt`, `job-object` or `none`.   |
-| `landlockAbi`   | The Landlock ABI on Linux, when there is one.                                                  |
+| `landlockAbi`   | The Landlock ABI on Linux. Left out when there's no Landlock.                                  |
 | `capabilities`  | What the machine offers, as detected (below).                                                  |
-| `features`      | What the sandbox can hold on this machine (below).                                             |
+| `features`      | What this machine's mechanisms could hold (below).                                             |
 | `warnings`      | Anything worth knowing about this machine or configuration.                                    |
 
 `capabilities`:
 
-| Key              | Meaning                                                      |
-| ---------------- | ------------------------------------------------------------ |
-| `os`             | The platform: `linux`, `macos` or `windows`.                 |
-| `landlockAbi`    | The Landlock ABI the kernel reports (Linux).                 |
-| `seccomp`        | Whether seccomp filters are available (Linux).               |
-| `userNamespaces` | Whether unprivileged user namespaces can be created (Linux). |
-| `seatbelt`       | Whether the Seatbelt sandbox is available (macOS).           |
-| `jobObject`      | Whether a job object can be applied (Windows).               |
-| `lowIntegrity`   | Whether the process can lower its integrity level (Windows). |
-| `enforcerBuilt`  | Whether this runtime has an enforcer for the platform.       |
+| Key              | Meaning                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `os`             | The platform: `linux`, `macos`, `windows` or `other`.                                                                                                        |
+| `landlockAbi`    | The Landlock ABI the kernel reports, or `null` when there's no Landlock (macOS, Windows, or Linux without it). The top-level `landlockAbi` is left out then. |
+| `seccomp`        | Whether the runtime has a seccomp filter for this architecture (Linux x86_64 and aarch64). It's a property of the build, not detected at run time.           |
+| `userNamespaces` | Whether an unprivileged user and network namespace can be created (Linux).                                                                                   |
+| `seatbelt`       | Whether `/usr/bin/sandbox-exec` works here (macOS; `false` inside another sandbox).                                                                          |
+| `jobObject`      | Always `true` on Windows: job objects are available on every supported Windows.                                                                              |
+| `lowIntegrity`   | Always `true` on Windows: lowering the integrity level is available on every supported Windows.                                                              |
+| `enforcerBuilt`  | Whether this runtime has an enforcer for the platform. `false` everywhere for now.                                                                           |
 
-`features`, each present when the machine supports it:
+`features` lists what this machine's mechanisms could hold; nothing is applied while
+`enforcerBuilt` is `false`. The list depends on the machine, so a value appears only where its
+mechanism exists:
 
-| Feature          | What the sandbox can hold                                           |
-| ---------------- | ------------------------------------------------------------------- |
-| `fsRead`         | read scopes                                                         |
-| `fsWrite`        | write, create and remove scopes                                     |
-| `fsExec`         | execute scopes                                                      |
-| `fsRefer`        | moving and linking files between folders (Landlock ABI 2 and later) |
-| `fsTruncate`     | truncation (Landlock ABI 3 and later)                               |
-| `tcpPorts`       | TCP port rules for `connect` and `bind` (Landlock ABI 4 and later)  |
-| `socketFamilies` | refusing socket families (IPv4, IPv6, Unix) that aren't granted     |
-| `execRefusal`    | refusing to start any program when there's no `--allow-run`         |
-| `attackSurface`  | refusing the dangerous system calls                                 |
+| Feature             | What the sandbox could hold                                                                                                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fsRead`            | Read scopes.                                                                                                                                                                                                |
+| `fsWrite`           | Write, create and remove scopes.                                                                                                                                                                            |
+| `fsExec`            | Execute scopes.                                                                                                                                                                                             |
+| `fsRefer`           | Moving and linking files between folders (Landlock ABI 2 and later; always on macOS). Without it, every cross-folder rename or link is refused.                                                             |
+| `fsTruncate`        | Truncation (Landlock ABI 3 and later; always on macOS).                                                                                                                                                     |
+| `fsIoctlDev`        | Device `ioctl`s held to the write scope (Landlock ABI 5 and later; macOS).                                                                                                                                  |
+| `tcpPorts`          | TCP port rules for `connect` and `bind` (Landlock ABI 4 and later; always on macOS). Port rules match ports, never addresses.                                                                               |
+| `socketFamilies`    | Gating socket family, type and protocol (seccomp on Linux, Seatbelt network rules on macOS): for example no UDP, or no `AF_UNIX`, when not granted.                                                         |
+| `unixSocketPaths`   | Unix sockets scoped by path (macOS).                                                                                                                                                                        |
+| `scopeAbstractUnix` | Abstract Unix sockets outside the sandbox can't be reached (Landlock ABI 6 and later; macOS).                                                                                                               |
+| `scopeSignal`       | Signals can't reach processes outside the sandbox (Landlock ABI 6 and later; macOS).                                                                                                                        |
+| `execRefusal`       | Refusing to start any program when there's no `--allow-run`; on Windows, a job object's limit of one active process.                                                                                        |
+| `attackSurface`     | A Docker-derived list of kernel-attack-surface system calls refused (`bpf`, `perf_event_open`, `userfaultfd`, `keyctl`, `ptrace`, `mount`, `kexec`, module loading): seccomp, Linux only, never under `-A`. |
+| `denyInsideAllow`   | A deny below an allow, held exactly (macOS).                                                                                                                                                                |
+| `metadataRead`      | Path-scoped `stat` and other metadata reads (macOS).                                                                                                                                                        |
+| `mapExecutable`     | Path-scoped loading of executable code: FFI, addons, dyld (macOS).                                                                                                                                          |
+| `sysctlNarrowing`   | System information narrowed by sysctl name (macOS).                                                                                                                                                         |
+| `auditLog`          | Denials written to the audit log (Landlock ABI 7 and later).                                                                                                                                                |
+| `overmount`         | Denied paths hidden by an empty mount in a user and mount namespace (Linux, with `userNamespaces`).                                                                                                         |
+| `childContainment`  | The process tree can't escape and is killed together (Windows job object).                                                                                                                                  |
+| `writeConfinement`  | Writes held to labelled folders (Windows low integrity).                                                                                                                                                    |
 
 More keys and features appear as later stages land.
 
