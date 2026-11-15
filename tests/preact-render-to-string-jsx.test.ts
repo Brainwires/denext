@@ -265,3 +265,64 @@ Deno.test("preact-render-to-string/jsx: HTML attributes (jsx: false), sorting, f
     "<div>\n\t<b>\n\t\tx that is long enough to be large for sure here\n\t</b>\n</div>",
   );
 });
+
+Deno.test("preact-render-to-string/stream-node: a render error reaches onError and onShellError; nothing streams", async () => {
+  const Boom = () => {
+    throw new Error("render failed");
+  };
+  const seen: string[] = [];
+  let shellReady = false;
+  await new Promise<void>((resolve) => {
+    renderToPipeableStream(h(Boom, null), {
+      onShellReady: () => (shellReady = true),
+      onError: (e) => seen.push(`error ${(e as Error).message}`),
+      onShellError: (e) => {
+        seen.push(`shell ${(e as Error).message}`);
+        resolve();
+      },
+    });
+  });
+  assertEquals(seen, ["error render failed", "shell render failed"]);
+  assertEquals(shellReady, false);
+});
+
+Deno.test("preact-render-to-string/stream-node: abort's default reason, abort before a failed render, after the end", async () => {
+  const Boom = () => {
+    throw new Error("render failed");
+  };
+  // No reason: the default one. A render that fails after the abort reports nothing more.
+  const errors: unknown[] = [];
+  let shellError = false;
+  const early = renderToPipeableStream(h(Boom, null), {
+    onError: (e) => errors.push(e),
+    onShellError: () => (shellError = true),
+  });
+  early.abort();
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(errors.map((e) => (e as Error).message), [
+    "The render was aborted by the server without a reason.",
+  ]);
+  assertEquals(shellError, false);
+  // Once the stream has ended, abort is a no-op; no callbacks are needed to render.
+  const late: unknown[] = [];
+  const done = renderToPipeableStream(h("p", null, "x"), { onError: (e) => late.push(e) });
+  const ended = new Promise<void>((resolve) =>
+    done.pipe(new Writable({ write: (_c, _e, cb) => cb(), final: (cb) => (cb(), resolve()) }))
+  );
+  await ended;
+  done.abort(new Error("too late"));
+  assertEquals(late, []);
+  renderToPipeableStream(h("p", null, "no callbacks"));
+  // A render error with no onError goes to console.error.
+  const logged: unknown[] = [];
+  const original = console.error;
+  console.error = (e: unknown) => logged.push(e);
+  try {
+    await new Promise<void>((resolve) =>
+      renderToPipeableStream(h(Boom, null), { onShellError: () => resolve() })
+    );
+  } finally {
+    console.error = original;
+  }
+  assertEquals(logged.map((e) => (e as Error).message), ["render failed"]);
+});

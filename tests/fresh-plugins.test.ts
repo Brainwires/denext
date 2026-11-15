@@ -5,15 +5,20 @@
 // routes answer, middleware runs under its path, the render hooks see the page's HTML and add
 // to its head, and `freshPlugins()` bundles the plugins' client entrypoints.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { join, toFileUrl } from "@std/path";
 import { createTestApp, createTestClient } from "../src/testing/mod.ts";
 import {
   isSpecialPluginRoute,
   pluginMiddlewarePrefix,
   pluginRoutePattern,
 } from "../src/compat/fresh/plugins.ts";
-import { bundlePluginEntrypoints, entrypointRunner } from "../src/compat/fresh/plugin-build.ts";
+import {
+  bundlePluginEntrypoints,
+  entrypointRunner,
+  freshPlugins,
+} from "../src/compat/fresh/plugin-build.ts";
+import type { PluginContext, PluginPrepareStep } from "../src/plugin/mod.ts";
 
 const u = (rel: string) => new URL(rel, import.meta.url).href;
 const JSX = u("../src/jsx/jsx-runtime.ts");
@@ -161,4 +166,63 @@ Deno.test("freshPlugins: each plugin entrypoint is bundled into public/_fresh-pl
     assertStringIncludes(js, "data-fresh-plugin-state");
   });
   assertStringIncludes(entrypointRunner("./x.ts", "a", "b"), `JSON.stringify("a:b")`);
+});
+
+Deno.test("freshPlugins: the plugin's prepare step bundles the config's entrypoints and watches it", async () => {
+  await withApp({
+    "deno.json": `{ "imports": { "util": "./plugins/util.ts" } }\n`,
+    "plugins/client.ts":
+      `import { tag } from "util";\nexport default (s) => { globalThis.out = tag + s; };\n`,
+    "plugins/util.ts": `export const tag = "mapped";\n`,
+    // An absolute URL entrypoint is used as it is; a plugin without entrypoints adds nothing.
+    "config/fresh.ts": `export default { plugins: [{ name: "abs", entrypoints: { main: ${
+      JSON.stringify(toFileUrl("/placeholder").href)
+    } } }, { name: "empty", entrypoints: {} }] };\n`,
+  }, async (dir) => {
+    // The placeholder becomes the real client module's URL (known only once the temp dir exists).
+    const configPath = join(dir, "config", "fresh.ts");
+    const config = await Deno.readTextFile(configPath);
+    await Deno.writeTextFile(
+      configPath,
+      config.replace(
+        toFileUrl("/placeholder").href,
+        toFileUrl(join(dir, "plugins", "client.ts")).href,
+      ),
+    );
+    const steps: { step: PluginPrepareStep; watch?: string[] }[] = [];
+    const ctx = {
+      addPrepareStep: (step: PluginPrepareStep, opts?: { watch?: string[] }) =>
+        steps.push({ step, watch: opts?.watch }),
+    } as unknown as PluginContext;
+    const plugin = freshPlugins({ config: "config/fresh.ts" });
+    assertEquals(plugin.name, "denext:fresh-plugins");
+    await plugin.setup(ctx);
+    assertEquals(steps.length, 1);
+    assertEquals(steps[0].watch, ["config/fresh.ts"]);
+    await steps[0].step({ projectRoot: dir } as Parameters<PluginPrepareStep>[0]);
+    const js = await Deno.readTextFile(join(dir, "public", "_fresh-plugins", "abs-main.js"));
+    assertStringIncludes(js, `"mapped"`, "the app's deno.json import map resolved the entrypoint");
+  });
+});
+
+Deno.test("freshPlugins: a config that fails to load, and an entrypoint that fails to bundle, are errors", async () => {
+  await withApp({
+    "fresh.config.ts": `throw new Error("config is broken");\n`,
+  }, async (dir) => {
+    const err = await assertRejects(() =>
+      bundlePluginEntrypoints(dir, join(dir, "fresh.config.ts"))
+    );
+    assertStringIncludes(String(err), "fresh.config.ts failed");
+    assertStringIncludes(String(err), "config is broken");
+  });
+  await withApp({
+    "plugins/bad.ts": `export default function ( {\n`,
+    "fresh.config.ts":
+      `export default { plugins: [{ name: "bad", entrypoints: { main: "./plugins/bad.ts" } }] };\n`,
+  }, async (dir) => {
+    const err = await assertRejects(() =>
+      bundlePluginEntrypoints(dir, join(dir, "fresh.config.ts"))
+    );
+    assertStringIncludes(String(err), "deno bundle exited with");
+  });
 });
