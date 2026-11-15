@@ -94,6 +94,7 @@ async function upload(req: Request): Promise<Response> {
 function serve(): { base: string; ranges: () => number; close: () => Promise<void> } {
   let ranges = 0;
   const big = pattern(1_048_576);
+  const holds = new Set<() => void>();
   const server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, async (req) => {
     const path = new URL(req.url).pathname;
     if (path === "/big") {
@@ -114,6 +115,14 @@ function serve(): { base: string; ranges: () => number; close: () => Promise<voi
     // Deno.serve's default onError print the read error into the middle of the test's report line.
     try {
       if (path === "/upload") return await upload(req);
+      // Never answers: harness step 10's first upload stays running until it is cancelled.
+      if (path === "/hold") {
+        await new Promise<void>((resolve) => {
+          holds.add(resolve);
+          req.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return new Response("cancelled", { status: 499 });
+      }
       if (path === "/raw") {
         const bytes = (await req.arrayBuffer()).byteLength;
         return new Response(`${req.method} ${req.headers.get("content-type")} ${bytes}`);
@@ -124,7 +133,15 @@ function serve(): { base: string; ranges: () => number; close: () => Promise<voi
     return new Response("not here", { status: 404 });
   });
   const { port } = server.addr as Deno.NetAddr;
-  return { base: `http://127.0.0.1:${port}`, ranges: () => ranges, close: () => server.shutdown() };
+  return {
+    base: `http://127.0.0.1:${port}`,
+    ranges: () => ranges,
+    close: () => {
+      // A held upload whose cancel never reached the server is released, so shutdown can finish.
+      for (const release of holds) release();
+      return server.shutdown();
+    },
+  };
 }
 
 function has(tool: string, args: string[]): boolean {

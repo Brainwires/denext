@@ -192,9 +192,11 @@ do {
 } catch { check("the multipart body is framed as RFC 7578 asks", false, "\(error)") }
 
 // 10. An id cancelled, forgotten and started again: the old task's late response bytes stay out of
-// the new transfer's body. Delivered here on purpose, so the race is not left to timing.
+// the new transfer's body. Delivered here on purpose, so the race is not left to timing. The first
+// start goes to /hold, which never answers, so the cancel always finds it running (a 100 KB PUT to
+// /raw can finish before the cancel on a loaded machine).
 do {
-    try manager.start(record("u3", "upload", "up/photo.jpg", url: "\(base)/raw", method: "PUT", mimeType: "image/jpeg"))
+    try manager.start(record("u3", "upload", "up/photo.jpg", url: "\(base)/hold", method: "PUT", mimeType: "image/jpeg"))
     check("a reused id: cancel answers true", manager.cancel("u3"))
     check("a reused id: forget answers true", manager.forget("u3"))
     try manager.start(record("u3", "upload", "up/photo.jpg", url: "\(base)/raw", method: "PUT", mimeType: "image/jpeg"))
