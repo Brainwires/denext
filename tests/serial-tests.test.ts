@@ -505,7 +505,7 @@ Deno.test("test-run: profiledModules lists the existing emitted modules under th
   try {
     const src = join(dir, "repo", "src");
     await Deno.mkdir(join(src, "node_modules"), { recursive: true });
-    for (const f of ["a.ts", "b.tsx", "c.d.ts", "d.js", "node_modules/e.ts"]) {
+    for (const f of ["a.ts", "b.tsx", "c.d.ts", "d.js", "node_modules/e.ts", "q.ts", "h.ts"]) {
       await Deno.writeTextFile(join(src, f), "");
     }
     const root = `${toFileUrl(src).href}/`;
@@ -522,9 +522,17 @@ Deno.test("test-run: profiledModules lists the existing emitted modules under th
     await profile("6", `${root}node_modules/e.ts`);
     await profile("7", `${root}gone.ts`); // removed since the run
     await profile("8", toFileUrl(join(dir, "elsewhere.ts")).href); // outside the roots
+    // Only ever imported with a query (or a fragment): listed by its plain URL.
+    await profile("10", `${root}q.ts?client=0.5`);
+    await profile("11", `${root}h.ts#frag`);
     await Deno.writeTextFile(join(dir, "9.json"), "{}"); // no url
     await Deno.writeTextFile(join(dir, "notes.txt"), `"url": "${root}a.ts"`);
-    assertEquals(await profiledModules(dir, [root]), [`${root}a.ts`, `${root}b.tsx`]);
+    assertEquals(await profiledModules(dir, [root]), [
+      `${root}a.ts`,
+      `${root}b.tsx`,
+      `${root}h.ts`,
+      `${root}q.ts`,
+    ]);
     assertEquals(
       emitEntrySource([`${root}a.ts`, `${root}b.tsx`]),
       `import ${JSON.stringify(`${root}a.ts`)};\nimport ${JSON.stringify(`${root}b.tsx`)};\n`,

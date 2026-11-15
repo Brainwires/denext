@@ -485,7 +485,10 @@ export async function profiledModules(dir: string, roots: readonly string[]): Pr
   const found = new Set<string>();
   for await (const entry of Deno.readDir(dir)) {
     if (!entry.isFile || !entry.name.endsWith(".json")) continue;
-    const url = profileUrl(await readHead(join(dir, entry.name), PROFILE_HEAD_BYTES));
+    // A module a test imported with a query (`server-only.ts?client=…`, to re-run its import-time
+    // code) is reported under its plain URL, the one `deno coverage` looks its emit up by.
+    const url = profileUrl(await readHead(join(dir, entry.name), PROFILE_HEAD_BYTES))
+      ?.replace(/[?#].*$/, "");
     if (!url || found.has(url) || !EMITTED.test(url) || url.includes("/node_modules/")) continue;
     if (!roots.some((r) => url.startsWith(r))) continue;
     try {
