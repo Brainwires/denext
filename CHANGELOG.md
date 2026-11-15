@@ -91,6 +91,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`render()` from `denext/testing` mounts a controlled `<select>`.** Its in-memory DOM had no
+  `select.options`, so rendering `<select value="a">` threw `el.options is not iterable`. A
+  `<select>` there now has `options` (inside an `<optgroup>` too), `selectedOptions`,
+  `selectedIndex` and a `value` that follows the selected option and selects one when assigned,
+  and an `<option>` has `selected` and a `value` that falls back to its text, as in a browser;
+  `fireEvent.change` and `userEvent.selectOptions` select the option they name.
 - **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
   `start`, `build` and every other verb that runs project code ran it with the flags of the
   config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so

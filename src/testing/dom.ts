@@ -514,10 +514,15 @@ export class DomEl extends DomNode implements TestElement {
   readonly attributeNamespaces = new Map<string, string>();
   listeners = new Map<string, Set<Listener>>();
   captureListeners = new Map<string, Set<Listener>>();
-  value = "";
   checked = false;
   ownerDocument: DomDocument | null = null;
   readonly #qualifiedName: string;
+  /** The value of a non-`<select>`, non-`<option>` field. */
+  #value = "";
+  /** An `<option>`'s selectedness once script set it (`null`: its `selected` attribute's). */
+  #selected: boolean | null = null;
+  /** Set on a `<select>` once script picked its options (no implicit first option then). */
+  #picked = false;
 
   /**
    * @param tagName The qualified name (an HTML one is matched case-insensitively, as by
@@ -533,9 +538,104 @@ export class DomEl extends DomNode implements TestElement {
     this.tagName = html ? tagName.toUpperCase() : tagName;
   }
 
+  /**
+   * The form value. A `<select>`'s is its first selected option's (`""` with none), and
+   * assigning one selects the option with that value (none when nothing matches); an
+   * `<option>`'s is its `value` attribute, else its text, as in a browser.
+   */
+  get value(): string {
+    if (this.tagName === "SELECT") return this.selectedOptions[0]?.value ?? "";
+    if (this.tagName === "OPTION") {
+      return this.attributes.get("value") ?? this.textContent.replace(/\s+/g, " ").trim();
+    }
+    return this.#value;
+  }
+  set value(value: string) {
+    const v = String(value);
+    if (this.tagName === "OPTION") this.setAttribute("value", v);
+    else if (this.tagName !== "SELECT") this.#value = v;
+    else {
+      let found = false;
+      for (const o of this.options) {
+        const on: boolean = o.value === v && (!found || this.#multiple());
+        found ||= on;
+        o.#selected = on;
+      }
+      this.#picked = true;
+    }
+  }
+
+  /** A `<select>`'s `<option>`s in tree order (those in an `<optgroup>` too); `[]` otherwise. */
+  get options(): DomEl[] {
+    const out: DomEl[] = [];
+    if (this.tagName !== "SELECT") return out;
+    const walk = (el: DomEl) => {
+      for (const c of el.children) c.tagName === "OPTION" ? out.push(c) : walk(c);
+    };
+    walk(this);
+    return out;
+  }
+
+  /**
+   * A `<select>`'s selected options: the ones selected by attribute or script; a single-choice
+   * select shows its last such option, else (until script picks) its first enabled one.
+   */
+  get selectedOptions(): DomEl[] {
+    const options = this.options;
+    const chosen = options.filter((o) => o.#selected ?? o.hasAttribute("selected"));
+    if (this.#multiple()) return chosen;
+    if (chosen.length) return [chosen[chosen.length - 1]];
+    if (this.#picked || Number(this.getAttribute("size")) > 1) return [];
+    const first = options.find((o) => !o.hasAttribute("disabled"));
+    return first ? [first] : [];
+  }
+
+  /** A `<select>`'s first selected option's index, `-1` with none; assigning one selects it. */
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  get selectedIndex(): number {
+    const first = this.selectedOptions[0];
+    return first ? this.options.indexOf(first) : -1;
+  }
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  set selectedIndex(index: number) {
+    this.options.forEach((o, i) => o.#selected = i === index);
+    this.#picked = true;
+  }
+
+  /** Whether an `<option>` is selected; selecting one in a single-choice select drops the rest. */
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  get selected(): boolean {
+    const select = this.#ownerSelect();
+    if (select) return select.selectedOptions.includes(this);
+    return this.#selected ?? this.hasAttribute("selected");
+  }
+  // fallow-ignore-next-line unused-class-member -- the DOM API a component under test calls
+  set selected(on: boolean) {
+    const select = this.#ownerSelect();
+    if (select && on && !select.#multiple()) {
+      for (const o of select.options) o.#selected = false;
+    }
+    if (select) select.#picked = true;
+    this.#selected = Boolean(on);
+  }
+
+  /** The `<select>` an `<option>` belongs to (its parent, or its `<optgroup>`'s), if any. */
+  #ownerSelect(): DomEl | null {
+    let p = this.parentNode;
+    if (p?.tagName === "OPTGROUP") p = p.parentNode;
+    return p?.tagName === "SELECT" ? p : null;
+  }
+  /** Whether a `<select>` takes several options (its `multiple` attribute or property). */
+  #multiple(): boolean {
+    return this.hasAttribute("multiple") ||
+      (this as unknown as { multiple?: unknown }).multiple === true;
+  }
+
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
-    if (name === "value") this.value = value;
+    if (name === "value" && this.tagName !== "SELECT" && this.tagName !== "OPTION") {
+      this.#value = value;
+    }
     if (name === "checked") this.checked = true;
   }
   getAttribute(name: string): string | null {

@@ -125,6 +125,18 @@ assertEquals(screen.getByRole("button").textContent, "Count: 1");`}
         and events fire on SVG elements like any other.
       </p>
       <p>
+        Form fields behave as in a browser too. A <code>&lt;select&gt;</code>, controlled (
+        <code>value</code>) or not (<code>defaultValue</code>, <code>multiple</code>,{" "}
+        <code>&lt;optgroup&gt;</code>s), has <code>options</code>, <code>selectedOptions</code>,
+        {" "}
+        <code>selectedIndex</code> and a <code>value</code> that follows its selected option; an
+        {" "}
+        <code>&lt;option&gt;</code> has <code>selected</code> and a <code>value</code>{" "}
+        that falls back to its text. So{" "}
+        <code>fireEvent.change(select, {'{ target: { value: "b" } }'})</code> or{" "}
+        <code>userEvent.selectOptions(select, "b")</code> selects that option.
+      </p>
+      <p>
         For state that settles <em>after</em> an async effect, use the async <code>findBy*</code>
         {" "}
         queries (or <code>waitFor</code>){" "}
