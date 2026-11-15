@@ -139,33 +139,52 @@ native code would have been refused.
 ## `--kernel-sandbox-report`
 
 `--kernel-sandbox-report` prints the resolved mode, the machine, the compiled policy and every gap
-to stderr, then runs the program as usual. For example, for
-`deno run --kernel-sandbox=warn --kernel-sandbox-report --allow-read=. --deny-read=./.env --allow-write=./data --allow-net=api.example.com:443 --allow-env=PORT main.ts`
-on a Linux 6.8 machine (illustrative; the exact layout can still change):
+to stderr, then runs the program as usual. This is the output on a Linux machine with Landlock ABI
+4, with no mode set, for:
+
+```sh
+deno run --kernel-sandbox-report --allow-read=. --allow-write=./out --deny-write=./out/keep \
+  --allow-net=example.com:443 main.ts
+```
 
 ```text
-kernel sandbox (preview)
-  mode      warn (source: flag), enforced: no (no enforcer built in yet)
-  machine   linux 6.8, Landlock ABI 4, seccomp available, user namespaces restricted
-  policy    sha256:7c1e09a4b2d3f5e6
-  read      /home/me/project
-  deny-read /home/me/project/.env
-  write     /home/me/project/data
-  exec      none (no --allow-run)
-  load      none (no --allow-ffi)
-  net       connect tcp 443 (from api.example.com:443)
-  unix      none
-  sys       none
-  env       PORT
-  implicit  runtime binary, shared libraries, locale and time zone data, TLS roots,
-            DENO_DIR caches (read only), /dev/null, /dev/urandom, /proc/self
-gaps
-  ! fail-open   net api.example.com:443  the kernel can limit the port, not the host; held by Deno's checks only (use broker)
-  ! fail-open   deny-read /home/me/project/.env  the allowed folder is written and user namespaces are unavailable; held by Deno's checks only
-    documented  env  environment variables are in process memory; held by Deno's checks only
-    documented  sys  system information is held by Deno's checks only
-    documented  metadata  whether a file exists, and its size, can be read outside the read grant
+kernel sandbox (preview): auto (default); applies: off; would apply: warn
+  why: auto applies nothing yet (the kernel sandbox is an opt-in preview)
+  permission set: fixed (no prompt can widen it)
+  machine: linux, Landlock ABI 4, seccomp, enforcer built: no
+  policy 647d53aee64387a7 (mode B, with a broker)
+    read:       /home/me/project + implicit set (47)
+    deny read:  none
+    write:      /home/me/project/out + implicit set (4)
+    deny write: /home/me/project/out/keep (broker)
+    exec:       no programs
+    load code:  only the implicit set (6)
+    net:        through the broker: connect example.com:443; bind example.com:443
+    unix:       denied
+    sys:        narrows /proc/loadavg, /proc/meminfo, /proc/uptime, /proc/net
+    env:        not scrubbed
+    implicit:   DENO_DIR, DNS, TLS roots, devices, locale and time zones, process info, runtime, shared libraries, user database
+  gaps: 3 (1 refused by enforce, marked !)
+    sys [documented] no --allow-sys: sys is enforced by Deno; the kernel narrows: /proc/loadavg, ...
+    env [documented] no --allow-env: env is enforced by Deno: native code reads the process environment directly ...
+  ! enforcer [fail-open] --kernel-sandbox: no kernel enforcer for linux is built into this runtime yet: every rule is held by Deno's checks only
 ```
+
+Reading it from the top:
+
+- **The first line** gives the mode and where it came from (`auto`, by default), what applies in this
+  run (`off`), and what `auto` would apply once enforcement exists (`warn`, because only the missing
+  terminal fixes the permission set here).
+- **`permission set: fixed`** means no prompt can widen the grant in this run, so a kernel policy
+  could hold it.
+- **`machine`** is what was detected: the platform, the Landlock ABI, seccomp, and whether this
+  runtime has an enforcer for it.
+- **`policy`** is the compiled policy and its hash. It says `mode B, with a broker` because two
+  rules need the supervisor: the write deny inside the write allow, and the host-scoped network
+  grant. Each line is one kind of access. `+ implicit set (n)` counts the entries the runtime itself
+  needs; the `implicit` line lists their categories.
+- **`gaps`** lists every rule the operating system wouldn't hold exactly, by kind. The `!` line is
+  the one `enforce` would refuse to start over: in the preview, the missing enforcer itself.
 
 The gap kinds:
 
@@ -190,50 +209,91 @@ How some grants map today, from the policy the preview computes:
 
 `deno info --json` reports a `kernelSandbox` object. A runtime without the sandbox leaves it out,
 so a tool can detect the feature by checking for it, and `enforcerBuilt` says whether the runtime
-can enforce yet. An example from a Linux 6.8 machine with `"kernelSandbox": "warn"` in `deno.json`
-(illustrative):
+can enforce yet. This is the object on a Linux machine with Landlock ABI 4 and no mode set:
 
 ```json
 {
-  "kernelSandbox": {
-    "preview": true,
-    "mode": "warn",
-    "source": "config",
-    "effective": "warn",
-    "wouldApply": "warn",
-    "reason": "set in deno.json",
-    "enforced": false,
-    "enforcerBuilt": false,
-    "osSandbox": "landlock",
+  "preview": true,
+  "mode": "auto",
+  "source": "default",
+  "effective": "off",
+  "wouldApply": "warn",
+  "reason": "auto applies nothing yet (the kernel sandbox is an opt-in preview)",
+  "enforced": false,
+  "enforcerBuilt": false,
+  "osSandbox": "landlock",
+  "landlockAbi": 4,
+  "capabilities": {
+    "os": "linux",
     "landlockAbi": 4,
-    "capabilities": {
-      "landlock": true,
-      "seccomp": true,
-      "userNamespaces": false
-    },
-    "features": ["fs", "tcp-ports"],
-    "warnings": []
-  }
+    "seccomp": true,
+    "userNamespaces": false,
+    "seatbelt": false,
+    "jobObject": false,
+    "lowIntegrity": false,
+    "enforcerBuilt": false
+  },
+  "features": [
+    "fsRead",
+    "fsWrite",
+    "fsExec",
+    "fsRefer",
+    "fsTruncate",
+    "tcpPorts",
+    "socketFamilies",
+    "execRefusal",
+    "attackSurface"
+  ],
+  "warnings": [
+    "kernel sandbox: no enforcer is built into this runtime yet; --kernel-sandbox=enforce and broker refuse to start"
+  ]
 }
 ```
 
-| Field           | Meaning                                                                                                      |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `preview`       | `true` while the sandbox is a preview.                                                                       |
-| `mode`          | The mode that was asked for.                                                                                 |
-| `source`        | Where it came from: `default`, `flag`, `env`, `config` or `compiled`.                                        |
-| `effective`     | What applies after [the context rules](#how-the-mode-is-chosen), for example `off` in a run that can prompt. |
-| `wouldApply`    | What `auto` would apply here once enforcement exists.                                                        |
-| `reason`        | A short explanation of `effective`.                                                                          |
-| `enforced`      | Whether the operating system is holding the policy in this run. Always `false` in the preview.               |
-| `enforcerBuilt` | Whether this runtime has an enforcer for this platform.                                                      |
-| `osSandbox`     | The mechanism this platform would use: `landlock`, `seccomp`, `seatbelt`, `job-object` or `none`.            |
-| `landlockAbi`   | The Landlock ABI on Linux, when there is one.                                                                |
-| `capabilities`  | What the machine offers, as detected.                                                                        |
-| `features`      | What the sandbox could hold here.                                                                            |
-| `warnings`      | Anything worth knowing about this machine or configuration.                                                  |
+| Field           | Meaning                                                                                        |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| `preview`       | `true` while the sandbox is a preview.                                                         |
+| `mode`          | The mode that was asked for.                                                                   |
+| `source`        | Where it came from: `default`, `flag`, `env`, `config` or `compiled`.                          |
+| `effective`     | What applies in this run after [the context rules](#how-the-mode-is-chosen).                   |
+| `wouldApply`    | What `auto` would apply here once enforcement exists.                                          |
+| `reason`        | A short explanation of `effective`.                                                            |
+| `enforced`      | Whether the operating system is holding the policy in this run. Always `false` in the preview. |
+| `enforcerBuilt` | Whether this runtime has an enforcer for this platform.                                        |
+| `osSandbox`     | The mechanism this platform uses: `landlock`, `seccomp`, `seatbelt`, `job-object` or `none`.   |
+| `landlockAbi`   | The Landlock ABI on Linux, when there is one.                                                  |
+| `capabilities`  | What the machine offers, as detected (below).                                                  |
+| `features`      | What the sandbox can hold on this machine (below).                                             |
+| `warnings`      | Anything worth knowing about this machine or configuration.                                    |
 
-The contents of `capabilities` and `features` can grow as later stages land.
+`capabilities`:
+
+| Key              | Meaning                                                      |
+| ---------------- | ------------------------------------------------------------ |
+| `os`             | The platform: `linux`, `macos` or `windows`.                 |
+| `landlockAbi`    | The Landlock ABI the kernel reports (Linux).                 |
+| `seccomp`        | Whether seccomp filters are available (Linux).               |
+| `userNamespaces` | Whether unprivileged user namespaces can be created (Linux). |
+| `seatbelt`       | Whether the Seatbelt sandbox is available (macOS).           |
+| `jobObject`      | Whether a job object can be applied (Windows).               |
+| `lowIntegrity`   | Whether the process can lower its integrity level (Windows). |
+| `enforcerBuilt`  | Whether this runtime has an enforcer for the platform.       |
+
+`features`, each present when the machine supports it:
+
+| Feature          | What the sandbox can hold                                           |
+| ---------------- | ------------------------------------------------------------------- |
+| `fsRead`         | read scopes                                                         |
+| `fsWrite`        | write, create and remove scopes                                     |
+| `fsExec`         | execute scopes                                                      |
+| `fsRefer`        | moving and linking files between folders (Landlock ABI 2 and later) |
+| `fsTruncate`     | truncation (Landlock ABI 3 and later)                               |
+| `tcpPorts`       | TCP port rules for `connect` and `bind` (Landlock ABI 4 and later)  |
+| `socketFamilies` | refusing socket families (IPv4, IPv6, Unix) that aren't granted     |
+| `execRefusal`    | refusing to start any program when there's no `--allow-run`         |
+| `attackSurface`  | refusing the dangerous system calls                                 |
+
+More keys and features appear as later stages land.
 
 ## Mode B (`broker`) in detail
 

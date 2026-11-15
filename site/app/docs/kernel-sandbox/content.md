@@ -366,8 +366,8 @@ A sandbox claim is only as good as the tests behind it. Three things back this o
   macOS, arm64 and x86_64. A run with Landlock compiled in but turned off is planned. Each kernel
   has its expected results.
 - **A published guarantee matrix.** A [draft](/docs/kernel-sandbox-guarantees) is up now.
-  Platform × kernel × mode, each cell saying whether a permission is enforced by the kernel, by the kernel more
-  coarsely (and how), or by Deno only. It's generated from the same policy data
+  Platform × kernel × mode, each cell saying whether a permission is enforced by the kernel, by
+  the kernel more coarsely (and how), or by Deno only. It's generated from the same policy data
   `--kernel-sandbox-report` prints, published with the release, and it's the definition of a
   vulnerability: a way out of a cell marked "kernel" is a security bug, to be reported as the
   [threat model](/docs/kernel-sandbox-threat-model#reporting-a-sandbox-escape) describes.
