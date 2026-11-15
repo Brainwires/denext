@@ -35,11 +35,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Picks the job's runner (Brainwires/.github's pick-runners action): our self-hosted Linux pool while
+  # biscuits' shared Linux capacity has a free slot, else ubuntu-latest at once (always on a fork's
+  # pull request). It runs on GitHub's image (it must not wait in the queue it shortens) and never
+  # fails: the job's `|| 'ubuntu-latest'` takes GitHub's image if the plan is empty.
+  runners:
+    name: pick runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+    outputs:
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@2e093cef9ee71f64a75ea1c47aa2f923119050fa # pick-runners
+        with:
+          jobs: drift=linux-x64
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
   drift:
-    # Linux: the self-hosted x64 runner the repository variable RUNNER_LINUX_X64
-    # names (a label, or a JSON array), else ubuntu-latest; always ubuntu-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: the runners job's pick (`linux-x64`): our pool while biscuits' shared Linux capacity has
+    # a free slot, else ubuntu-latest at once; always ubuntu-latest on a fork's pull request.
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').drift || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

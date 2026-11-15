@@ -151,8 +151,6 @@ on:
       - "scripts/ci/desktop-appimage-smoke.sh"
       - "scripts/ci/desktop-linux-launch-smoke.sh" # installers-linux: the .rpm / .deb app launches
       - "scripts/ci/linux-needed-check.ts" # installers-linux: the packages' NEEDED check
-      - "scripts/ci/pick-windows-runner.ts" # the windows-runner job: our Windows runner or the overflow
-      - "scripts/ci/pick-linux-runners.ts" # the linux-runner job: our Linux pools or the overflow
       - "scripts/coverage-to-istanbul.ts"
       - "tests/desktop-*.test.ts"
       - "tests/integration/scaffold.test.ts"
@@ -186,119 +184,62 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Picks each Linux job's runner (scripts/ci/pick-linux-runners.ts): biscuits' Linux pools
-  # (RUNNER_LINUX_X64, RUNNER_LINUX_X64_DOCKER) share one set of job containers, so the jobs that
-  # most need them (first in PICK_JOBS) take that capacity's free slots and the rest run on
-  # ubuntu-latest at once instead of queueing behind each other; ubuntu-latest on a fork's pull
-  # request, or when DENEXT_POOL_HEALTH is stale or marks a pool down. It runs on GitHub's image (it
-  # must not wait in the queue it shortens), and its pick step never fails: on any error a Linux job whose
-  # pick is empty takes its repository variable (each runs `if: !cancelled()`).
-  linux-runner:
+  # Picks every job's runner (Brainwires/.github's pick-runners action): our self-hosted pools are the
+  # first choice, never a bottleneck. In the order of `jobs`, a job takes our pool while it has a free
+  # slot (DENEXT_POOL_HEALTH and the queued jobs; biscuits' three Linux labels share one capacity),
+  # else its GitHub image at once (macOS: at most 3 of this run's jobs on GitHub's few macOS slots,
+  # the rest wait for our pool); a fork's pull request runs every job on GitHub's images. It runs on
+  # GitHub's image (it must not wait in the queue it shortens) and never fails: each job's
+  # `|| <image>` takes its GitHub image if the plan is empty (each runs `if: !cancelled()`). A matrix
+  # entry names its key in `pick`; an entry without one keeps its image.
+  runners:
+    name: pick runners
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read # the repository's queued / running jobs
-      contents: read
     outputs:
-      desktop_tests: ${{ steps.pick.outputs.desktop_tests }}
-      cross_package_cef: ${{ steps.pick.outputs.cross_package_cef }}
-      cross_package: ${{ steps.pick.outputs.cross_package }}
-      linux_appimage_smoke: ${{ steps.pick.outputs.linux_appimage_smoke }}
-      scaffold: ${{ steps.pick.outputs.scaffold }}
-      packaging_output_path: ${{ steps.pick.outputs.packaging_output_path }}
-      install_sh: ${{ steps.pick.outputs.install_sh }}
+      plan: ${{ steps.pick.outputs.plan }}
       hosted: ${{ steps.pick.outputs.hosted }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
+      # ci.yml picks first; this one waits a little so it counts the jobs ci.yml queued on the pools.
+      - name: Let ci.yml's dispatched run pick first
+        if: github.event_name == 'workflow_dispatch'
+        run: sleep 30
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@2e093cef9ee71f64a75ea1c47aa2f923119050fa # pick-runners
         with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/ci/pick-linux-runners.ts
-            scripts/ci/pick-windows-runner.ts
-          sparse-checkout-cone-mode: false
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
-      # The script bounds its API calls (60 s) and prints its own fallback on an API error; a crash
-      # before it prints leaves the outputs empty, which the jobs read as "the variable".
-      - name: Pick
-        id: pick
-        env:
-          PICK_JOBS: desktop_tests cross_package_cef cross_package linux_appimage_smoke scaffold packaging_output_path install_sh
-          PICK_RUNNER_X64: ${{ vars.RUNNER_LINUX_X64 }}
-          PICK_RUNNER_DOCKER: ${{ vars.RUNNER_LINUX_X64_DOCKER }}
-          PICK_RUNNER_2204: ${{ vars.RUNNER_LINUX_X64_2204 }}
-          PICK_SHARED_SLOTS: ${{ vars.RUNNER_LINUX_X64_SHARED_SLOTS }}
-          PICK_HEALTH: ${{ vars.DENEXT_POOL_HEALTH }}
-          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-          # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
-          # each later one waits a little so it counts the jobs an earlier one queued on the pools.
-          PICK_DELAY: ${{ github.event_name == 'workflow_dispatch' && '30' || '0' }}
-          GITHUB_TOKEN: ${{ github.token }}
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
-        run: |
-          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-linux-runners.ts >> "$GITHUB_OUTPUT" ||
-            echo "::warning::the Linux runner pick failed: every Linux job takes its repository variable"
-
-  # Picks each Windows x64 job's runner (scripts/ci/pick-windows-runner.ts): our self-hosted
-  # Windows x64 runner (RUNNER_WINDOWS_X64) while it has a free slot (none of this repository's
-  # other runs holds it, queued or running), windows-latest for the overflow; windows-latest on a
-  # fork's pull request. It never fails the run: on any error every job keeps our runner, and a
-  # Windows job whose pick is empty falls back to the variable (each runs `if: !cancelled()`).
-  windows-runner:
-    # GitHub's image: a one-minute pick must not wait in the Linux pools' queue.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read # the repository's queued / running jobs
-      contents: read
-    outputs:
-      desktop_tests: ${{ steps.pick.outputs.desktop_tests }}
-      secure_store_roundtrip: ${{ steps.pick.outputs.secure_store_roundtrip }}
-      packaging_output_path: ${{ steps.pick.outputs.packaging_output_path }}
-      cross_package: ${{ steps.pick.outputs.cross_package }}
-      cross_launch: ${{ steps.pick.outputs.cross_launch }}
-      install_ps1: ${{ steps.pick.outputs.install_ps1 }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: scripts/ci/pick-windows-runner.ts
-          sparse-checkout-cone-mode: false
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
-      # The script bounds its API calls (60 s) and prints the fallback itself on an API error; a
-      # crash before it prints leaves the outputs empty, which the jobs read as "the variable".
-      - name: Pick
-        id: pick
-        env:
-          PICK_JOBS: desktop_tests cross_package packaging_output_path secure_store_roundtrip install_ps1
-          PICK_FOLLOW: cross_launch=cross_package
-          PICK_RUNNER: ${{ vars.RUNNER_WINDOWS_X64 }}
-          PICK_SLOTS: ${{ vars.RUNNER_WINDOWS_X64_SLOTS || '1' }}
-          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-          GITHUB_TOKEN: ${{ github.token }}
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
-        run: |
-          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-windows-runner.ts >> "$GITHUB_OUTPUT" ||
-            echo "::warning::the Windows runner pick failed: every Windows job takes RUNNER_WINDOWS_X64"
+          # cross_launch_windows launches what cross_package_windows_linux's Linux side built and
+          # starts when cross-package ends: it takes the same runner.
+          jobs: >-
+            desktop_tests_linux=linux-x64 cross_package_linux_windows_cef=linux-x64
+            cross_package_linux_windows=linux-x64 linux_appimage_smoke=linux-x64 scaffold=linux-x64
+            packaging_output_path_linux=linux-x64 install_sh_linux=linux-x64
+            desktop_tests_windows=windows-x64 cross_package_windows_linux=windows-x64
+            packaging_output_path_windows=windows-x64 secure_store_roundtrip_windows=windows-x64
+            install_ps1=windows-x64 cross_launch_windows=~cross_package_windows_linux
+            desktop_tests_macos=macos-arm64 cross_package_macos_windows=macos-arm64
+            cross_package_macos_linux=macos-arm64 desktop_run_macos=macos-arm64
+            secure_store_roundtrip_macos=macos-arm64 installers_macos=macos-arm64
+            install_sh_macos=macos-arm64
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
 
   desktop-tests:
     name: desktop tests (${{ matrix.os }})
-    needs: [windows-runner, linux-runner]
+    needs: runners
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   macos-latest → RUNNER_MACOS_ARM
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    #   ubuntu-latest → RUNNER_LINUX_X64 while biscuits' shared Linux capacity has a free slot, else ubuntu-latest (the linux-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (needs.windows-runner.outputs.desktop_tests || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) || needs.linux-runner.outputs.desktop_tests || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+        include:
+          - { os: windows-latest, pick: desktop_tests_windows }
+          - { os: macos-latest, pick: desktop_tests_macos }
+          - { os: ubuntu-latest, pick: desktop_tests_linux }
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 30
     steps:
@@ -322,19 +263,18 @@ jobs:
 
   secure-store-roundtrip:
     name: secureStore round-trip (${{ matrix.os }})
-    needs: windows-runner
+    needs: runners
     strategy:
       fail-fast: false
       matrix:
         # Linux has no CLI backend: its store is the pinned runtime's (the window test covers it).
-        os: [windows-latest, macos-latest]
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   macos-latest → RUNNER_MACOS_ARM
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || (needs.windows-runner.outputs.secure_store_roundtrip || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))))) }}
+        include:
+          - { os: windows-latest, pick: secure_store_roundtrip_windows }
+          - { os: macos-latest, pick: secure_store_roundtrip_macos }
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 20
     steps:
@@ -347,18 +287,17 @@ jobs:
 
   packaging-output-path:
     name: packaging output path (${{ matrix.os }})
-    needs: [windows-runner, linux-runner]
+    needs: runners
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    #   ubuntu-latest → RUNNER_LINUX_X64 while biscuits' shared Linux capacity has a free slot, else ubuntu-latest (the linux-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'windows-latest' && (needs.windows-runner.outputs.packaging_output_path || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) || needs.linux-runner.outputs.packaging_output_path || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+        include:
+          - { os: windows-latest, pick: packaging_output_path_windows }
+          - { os: ubuntu-latest, pick: packaging_output_path_linux }
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 20
     defaults:
@@ -394,7 +333,7 @@ jobs:
   # the host's arm64. Two legs upload their archive for `cross-launch`.
   cross-package:
     name: cross-package (${{ matrix.label }})
-    needs: [windows-runner, linux-runner]
+    needs: runners
     strategy:
       fail-fast: false
       matrix:
@@ -402,6 +341,7 @@ jobs:
           - {
               os: ubuntu-latest,
               label: linux-to-windows,
+              pick: cross_package_linux_windows,
               target: windows,
               arch: x86_64,
               out: x64,
@@ -412,6 +352,7 @@ jobs:
           - {
               os: ubuntu-latest,
               label: linux-to-windows-cef,
+              pick: cross_package_linux_windows_cef,
               target: windows,
               arch: x86_64,
               out: x64,
@@ -421,6 +362,7 @@ jobs:
           - {
               os: macos-latest,
               label: macos-to-windows,
+              pick: cross_package_macos_windows,
               target: windows,
               arch: x86_64,
               out: x64,
@@ -430,6 +372,7 @@ jobs:
           - {
               os: macos-latest,
               label: macos-to-linux,
+              pick: cross_package_macos_linux,
               target: linux,
               arch: arm64,
               out: arm64,
@@ -439,6 +382,7 @@ jobs:
           - {
               os: windows-latest,
               label: windows-to-linux,
+              pick: cross_package_windows_linux,
               target: linux,
               arch: x86_64,
               out: x64,
@@ -446,14 +390,10 @@ jobs:
               formats: "tar.gz,deb",
               smoke: denext-native-x64-linux.tar.gz,
             }
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   macos-latest → RUNNER_MACOS_ARM
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    #   ubuntu-latest → RUNNER_LINUX_X64 while biscuits' shared Linux capacity has a free slot, else ubuntu-latest (the linux-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'windows-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || matrix.os == 'windows-latest' && (needs.windows-runner.outputs.cross_package || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest'))) || (matrix.label == 'linux-to-windows-cef' && needs.linux-runner.outputs.cross_package_cef || matrix.label != 'linux-to-windows-cef' && needs.linux-runner.outputs.cross_package) || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 30
     env:
@@ -502,7 +442,7 @@ jobs:
   # server and stay up (`scripts/ci/desktop-launch-smoke.ts`).
   cross-launch:
     name: cross-launch (${{ matrix.label }})
-    needs: [cross-package, windows-runner]
+    needs: [runners, cross-package]
     strategy:
       fail-fast: false
       matrix:
@@ -516,15 +456,14 @@ jobs:
           - {
               os: windows-latest,
               label: linux-to-windows,
+              pick: cross_launch_windows,
               archive: denext-native-x64-windows.zip,
               exe: denext-native-x64/denext-native-x64.exe,
             }
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (needs.windows-runner.outputs.cross_launch || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    runs-on: ${{ matrix.pick && fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() && needs.cross-package.result == 'success' }}
     timeout-minutes: 20
     defaults:
@@ -565,13 +504,10 @@ jobs:
   # serves and type-checks. CI's `integration` job runs the same file on PRs and `main` only.
   scaffold:
     name: scaffold + package-script drift
-    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
-    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
-    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
-    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
-    # pull_request_target (a self-hosted runner never takes a fork's code).
-    needs: linux-runner
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.scaffold || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: the runners job's pick (`linux-x64`): our pool while biscuits' shared Linux capacity has
+    # a free slot, else ubuntu-latest at once; always ubuntu-latest on a fork's pull request.
+    needs: runners
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').scaffold || 'ubuntu-latest' }}
     if: ${{ !cancelled() }}
     timeout-minutes: 20
     steps:
@@ -591,12 +527,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest]
-    # The macos-latest entry runs on the self-hosted arm64 runner the repository
-    # variable RUNNER_MACOS_ARM names (a label, or a JSON array) when it is set;
-    # always the image on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
-    # pull_request runs on it). The other entries keep their image.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'macos-latest') && format('"{0}"', matrix.os) || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+        include:
+          - { os: ubuntu-22.04 }
+          - { os: macos-latest, pick: desktop_run_macos }
+    # The macos-latest entry runs where the runners job's pick puts it: our arm64 runner while it
+    # has a free slot, else macos-latest (always on a fork's pull request). The other entries keep
+    # their image.
+    needs: runners
+    runs-on: ${{ matrix.pick && fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -653,13 +592,10 @@ jobs:
   # (`--appimage-extract-and-run` without FUSE), listens and stays up.
   linux-appimage-smoke:
     name: AppImage smoke (linux-x64 — package, AppStream, launch, libnode addon check)
-    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
-    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
-    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
-    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
-    # pull_request_target (a self-hosted runner never takes a fork's code).
-    needs: linux-runner
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.linux_appimage_smoke || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: the runners job's pick (`linux-x64`): our pool while biscuits' shared Linux capacity has
+    # a free slot, else ubuntu-latest at once; always ubuntu-latest on a fork's pull request.
+    needs: runners
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').linux_appimage_smoke || 'ubuntu-latest' }}
     if: ${{ !cancelled() }}
     timeout-minutes: 30
     env:
@@ -867,10 +803,11 @@ jobs:
 
   installers-macos:
     name: installers (macos-latest — .dmg mounted, .pkg installed; unsigned)
-    # macOS: the self-hosted arm64 runner the repository variable RUNNER_MACOS_ARM
-    # names (a label, or a JSON array), else macos-latest; always macos-latest on a
-    # fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    # macOS: the runners job's pick (`macos-arm64`): our arm64 runner while it has a free slot, else
+    # macos-latest; always macos-latest on a fork's pull request.
+    needs: runners
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').installers_macos || 'macos-latest' }}
+    if: ${{ !cancelled() }}
     timeout-minutes: 45
     defaults:
       run:
@@ -915,13 +852,10 @@ jobs:
 
   install-ps1:
     name: install.ps1 (windows-latest — loopback release, this commit's build, the real latest one)
-    needs: windows-runner
-    # Our self-hosted Windows x64 runner (the repository variable RUNNER_WINDOWS_X64: a label, or a
-    # JSON array) while it has a free slot, else windows-latest (the overflow), as the windows-runner
-    # job picked; that job's output empty (it failed), RUNNER_WINDOWS_X64, else windows-latest. Always
-    # windows-latest on a fork's pull_request / pull_request_target (a self-hosted runner never takes
-    # a fork's code; a same-repo pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-latest"' || (needs.windows-runner.outputs.install_ps1 || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    needs: runners
+    # The runners job's pick (`windows-x64`): our Windows x64 runner while it has a free slot, else
+    # windows-latest at once; always windows-latest on a fork's pull request.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').install_ps1 || 'windows-latest' }}
     if: ${{ !cancelled() }}
     timeout-minutes: 20
     steps:
@@ -1109,17 +1043,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    # The macos-latest entry runs on the self-hosted arm64 runner the repository
-    # variable RUNNER_MACOS_ARM names, the ubuntu-latest entries on the self-hosted
-    # x64 runner RUNNER_LINUX_X64 names (each a label, or a JSON array) when it is
-    # set; always the image on a fork's pull_request / pull_request_target (a
-    # self-hosted runner never takes a fork's code; a same-repo pull_request runs on
-    # it). The other entries keep their image.
-    # The ubuntu-latest entry takes RUNNER_LINUX_X64 only while biscuits' shared Linux
-    # capacity has a free slot, else ubuntu-latest (the linux-runner job picks).
-    needs: linux-runner
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || (matrix.os != 'macos-latest' && matrix.os != 'ubuntu-latest')) && format('"{0}"', matrix.os) || (matrix.os == 'macos-latest' && (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest')) || needs.linux-runner.outputs.install_sh || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest')))) }}
+        include:
+          - { os: ubuntu-latest, pick: install_sh_linux }
+          - { os: macos-latest, pick: install_sh_macos }
+    # Each entry with a `pick` runs where the runners job's pick puts it: our pool while it has a free
+    # slot, else the entry's GitHub image at once (always the image on a fork's pull request); an
+    # entry without one keeps its image.
+    needs: runners
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 20
     steps:

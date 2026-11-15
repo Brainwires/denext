@@ -258,20 +258,25 @@ Deno.test("coverage gate: shards and the unsharded run report through one covera
   ) as {
     jobs: Record<string, {
       needs?: string | string[];
-      strategy?: { matrix: { include: { shard: number }[] } };
+      strategy?: { matrix: { include: { shard: number; pick: string }[] } };
       steps: { run?: string }[];
     }>;
   };
   const shard = ci.jobs["coverage-shard"];
   assertEquals(shard.strategy!.matrix.include.map((m) => m.shard), [1, 2, 3, 4, 5, 6]);
   assert(shard.steps.some((s) => s.run?.includes(`--shard=\${{ matrix.shard }}/${SHARDS}`)));
-  assertEquals(ci.jobs.coverage.needs, ["linux-runner", "coverage-shard"]);
-  assert(ci.jobs.coverage.steps.some((s) => s.run === "deno task coverage:merge"));
-  const pick = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
-  for (let i = 1; i <= SHARDS; i++) {
-    assert(pick.includes(`coverage_${i}: \${{ steps.pick.outputs.coverage_${i} }}`), `output ${i}`);
-  }
-  assert(
-    pick.includes("'coverage_1:docker coverage_2 coverage_3 coverage_4 coverage_5 coverage_6 "),
+  assertEquals(
+    shard.strategy!.matrix.include.map((m) => m.pick),
+    Array.from({ length: SHARDS }, (_, i) => `coverage_${i + 1}`),
   );
+  assertEquals(ci.jobs.coverage.needs, ["runners", "coverage-shard"]);
+  assert(ci.jobs.coverage.steps.some((s) => s.run === "deno task coverage:merge"));
+  // The runners job lists every shard's pick key (shard 1 on the docker pool) and the merge.
+  const pick = await Deno.readTextFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  assert(
+    pick.includes(
+      "'coverage_1=linux-x64-docker coverage_2=linux-x64 coverage_3=linux-x64 coverage_4=linux-x64 coverage_5=linux-x64 coverage_6=linux-x64 ",
+    ),
+  );
+  assert(pick.includes(" coverage_merge=~coverage_2 "));
 });

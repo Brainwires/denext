@@ -976,7 +976,6 @@
   "tests/pbxproj-targets.test.ts": 0.4,
   "tests/pbxproj.test.ts": 0.3,
   "tests/permission-hint.test.ts": 0.4,
-  "tests/pick-windows-runner.test.ts": 0.4,
   "tests/picture-in-picture.test.ts": 0.6,
   "tests/platform-constant.test.ts": 7.6,
   "tests/platform-extensions-compat.test.ts": 105.6,
