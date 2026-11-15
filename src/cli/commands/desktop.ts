@@ -597,6 +597,7 @@ async function runDesktop(dir: string, entry: string, headless = false): Promise
 async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   if (ctx.flags["regenerate-scripts"] === true) return await regeneratePackageScripts(dir);
   const targetOs = packageTargetOs(ctx);
+  const archArgs = packageArchArgsOrExit(targetOs, ctx.flags.arch as string | undefined);
   const script = join(dir, "scripts", PACKAGE_SCRIPTS[targetOs]);
   let scriptText: string;
   try {
@@ -645,7 +646,51 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   const env = npmMode.includes("--node-modules-dir=none")
     ? { DENEXT_DESKTOP_NPM: "none" }
     : undefined;
-  await spawnDenoAndExit(["run", "-A", ...npmMode, script, ...formatArgs, ...ctx.rest], dir, env);
+  await spawnDenoAndExit(
+    ["run", "-A", ...npmMode, script, ...archArgs, ...formatArgs, ...ctx.rest],
+    dir,
+    env,
+  );
+}
+
+/** {@linkcode packageArchArgs}, exiting with its message for an architecture the OS lacks. */
+function packageArchArgsOrExit(targetOs: PackageOs, arch: string | undefined): string[] {
+  try {
+    return packageArchArgs(targetOs, arch);
+  } catch (err) {
+    fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** The `--arch` values each packaging script takes (`scripts/package-<os>.ts`). */
+const PACKAGE_ARCHES: Readonly<Record<PackageOs, readonly string[]>> = {
+  macos: ["host", "arm64", "x86_64", "both", "universal"],
+  linux: ["host", "x86_64", "arm64", "both"],
+  windows: ["host", "x86_64", "arm64", "both"],
+};
+
+/**
+ * The `--arch` arguments `denext desktop package` hands the target's packaging script: none
+ * without `--arch` (the script's default, the host's architecture), else `["--arch", value]`
+ * once the value is one that script takes. `aarch64` / `amd64` / `x64` are read as `arm64` /
+ * `x86_64`.
+ *
+ * @param targetOs The OS packaged for.
+ * @param arch The `--arch` value, when given.
+ * @returns The script arguments.
+ * @throws When the value is not an architecture the target's script builds.
+ */
+export function packageArchArgs(targetOs: PackageOs, arch: string | undefined): string[] {
+  if (arch === undefined) return [];
+  const lower = arch.trim().toLowerCase();
+  const value = lower === "aarch64" ? "arm64" : ["amd64", "x64"].includes(lower) ? "x86_64" : lower;
+  const allowed = PACKAGE_ARCHES[targetOs];
+  if (!allowed.includes(value)) {
+    throw new Error(
+      `--arch ${arch} is not an architecture ${targetOs} packaging builds (${allowed.join(" | ")})`,
+    );
+  }
+  return ["--arch", value];
 }
 
 /**
@@ -908,7 +953,8 @@ async function warnIfUpdaterMissingNet(dir: string): Promise<void> {
   );
 }
 
-type PackageOs = "macos" | "linux" | "windows";
+/** The OS `denext desktop package` packages for (`--target-os`). */
+export type PackageOs = "macos" | "linux" | "windows";
 
 /** The scaffolded packaging script per OS. */
 const PACKAGE_SCRIPTS: Record<PackageOs, string> = {

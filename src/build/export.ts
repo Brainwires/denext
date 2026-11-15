@@ -35,6 +35,7 @@ import { preparePartytown } from "./partytown.ts";
 import { join } from "@std/path";
 import { writeMobileExportExtras } from "./mobile-export-extras.ts";
 import { writeDesktopPreload } from "./desktop-preload.ts";
+import { syncDesktopAfterExport } from "./desktop-app-config.ts";
 
 export type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
 
@@ -94,11 +95,17 @@ export async function staticExport(
   // irrelevant with no built-in optimizer.
   setImageRuntimeConfig({ unoptimized: true });
   const early = await exportWithoutAppRouter(paths, options);
-  if (early) return early;
+  if (early) {
+    // SPA mode syncs a desktop app's files in its own export (prepareDesktopExport).
+    if (paths.config?.mode !== "spa") await syncDesktopAfterExport(projectDir, paths.config);
+    return early;
+  }
 
   try {
     const ctx = await prepareExport(projectDir, paths, options);
     await renderExport(ctx);
+    // A desktop app's `.deno-desktop/config.json` / `app.json`, as SPA mode's export does.
+    await syncDesktopAfterExport(projectDir, paths.config);
     return { outDir: ctx.finalOutDir, pages: ctx.pages, skipped: ctx.skipped };
   } finally {
     // The target's graph redirects belong to this export only.

@@ -449,9 +449,10 @@ function desktopEntry(): string {
 // Native capabilities (\`denext desktop add <cap>\`) are read from \`desktop.capabilities\`
 // in the config and served through the gated bridge — default deny when \`desktop\` is
 // absent; a backend reverse proxy is \`spa.proxy\`. Both arrive through
-// \`.deno-desktop/config.json\`, the runtime part of \`denext.config.ts\` that every export, build
-// and \`denext desktop\` command rewrites: the config module itself (and any plugin it imports)
-// is never compiled into the app.
+// \`.deno-desktop/config.json\`, the runtime part of \`denext.config.ts\`, rewritten by every
+// export (\`denext export\`, \`denext desktop build\`), \`denext desktop run\` / \`dev\` and the
+// package scripts — not by \`denext build\`: export after editing the config. The config module
+// itself (and any plugin it imports) is never compiled into the app.
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 

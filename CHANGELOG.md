@@ -91,6 +91,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop package --arch`.** `--arch x86_64 | arm64 | both` (and `universal` for macOS)
+  picks the architecture to package, `--target-os windows` included; it was an unknown flag, so a
+  Windows Arm64 package could only be built through `-- --arch arm64`. An architecture the target
+  OS's script does not build is refused before the export starts.
+- **An App Router or Pages Router export of a desktop app rewrites `.deno-desktop/config.json`.**
+  `denext export` and `denext desktop build` left it as it was unless the app was in SPA mode, so a
+  capability or `spa.proxy` added to the config reached a bare `deno desktop` build only after
+  `denext desktop run` / `dev` or a package script. The scaffolded `desktop.ts` comment no longer
+  says `denext build` rewrites it (it does not; export after editing the config).
 - **`denext desktop add secure-store` names the Windows `--allow-run=powershell.exe` grant.** The
   Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
   runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
