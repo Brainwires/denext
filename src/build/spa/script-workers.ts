@@ -18,6 +18,7 @@ import {
   scriptWorkersEnabled,
 } from "../partytown.ts";
 import { newHtmlRewriter } from "../../server/html-rewriter.ts";
+import { parseAttributes, type RawAttribute } from "../../server/html-stream-rewriter.ts";
 import { escapeHtml } from "./shared.ts";
 
 /** A SPA has no `basePath`: Partytown is served at the origin's own prefix. */
@@ -80,73 +81,6 @@ export function newScriptNonce(): string {
  */
 const SHELL_TOKEN =
   /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes)(?=[\s>\/])((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?(?:<\/\1\s*>|$))|<(meta)(?=[\s>\/])((?:"[^"]*"|'[^']*'|[^'">])*)>|<\/head\s*>/gi;
-
-/** One attribute of a start tag, as written. */
-interface RawAttribute {
-  /** Its name, lowercased. */
-  name: string;
-  /** Its text from the name to the end of the value (quotes included). */
-  raw: string;
-  /** Its value as written, without quotes (`undefined`: no value). */
-  value?: string;
-}
-
-/** Whether `c` is HTML whitespace. */
-function isSpace(c: string): boolean {
-  return c === " " || c === "\t" || c === "\n" || c === "\f" || c === "\r";
-}
-
-/** Where an attribute's value ends in `src` (it starts at `at`), and the value. */
-function readValue(src: string, at: number): { end: number; value: string } {
-  const quote = src[at];
-  if (quote === '"' || quote === "'") {
-    const close = src.indexOf(quote, at + 1);
-    const end = close === -1 ? src.length : close + 1;
-    return { end, value: src.slice(at + 1, close === -1 ? end : close) };
-  }
-  let end = at;
-  while (end < src.length && !isSpace(src[end])) end++;
-  return { end, value: src.slice(at, end) };
-}
-
-/** The first index from `i` on that is not whitespace. */
-function skipSpace(src: string, i: number): number {
-  while (i < src.length && isSpace(src[i])) i++;
-  return i;
-}
-
-/** The attribute starting at `start` (its name's first character) and where it ends. */
-function readAttribute(src: string, start: number): { attribute: RawAttribute; end: number } {
-  let i = start + 1; // a name may start with `=`
-  while (i < src.length && !isSpace(src[i]) && src[i] !== "/" && src[i] !== "=") i++;
-  const name = src.slice(start, i).toLowerCase();
-  const eq = skipSpace(src, i);
-  if (src[eq] !== "=") return { attribute: { name, raw: src.slice(start, i) }, end: i };
-  const { end, value } = readValue(src, skipSpace(src, eq + 1));
-  return { attribute: { name, raw: src.slice(start, end), value }, end };
-}
-
-/**
- * A start tag's attributes as the HTML tokenizer reads them (the text between the tag name and
- * `>`), and whether the tag closes itself (`/` right before `>`).
- */
-function parseAttributes(src: string): { attributes: RawAttribute[]; selfClosing: boolean } {
-  const attributes: RawAttribute[] = [];
-  let selfClosing = false;
-  let i = 0;
-  while (i < src.length) {
-    if (isSpace(src[i])) {
-      i++;
-    } else if (src[i] === "/") {
-      selfClosing = ++i === src.length;
-    } else {
-      const { attribute, end } = readAttribute(src, i);
-      attributes.push(attribute);
-      i = end;
-    }
-  }
-  return { attributes, selfClosing };
-}
 
 /**
  * A start tag rewritten as the runtime's `HTMLRewriter` (lol_html) writes one it changed: each

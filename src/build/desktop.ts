@@ -40,6 +40,7 @@ import {
   resolveDesktopWsUrl,
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
+import { type HtmlStartTag, rewriteHtmlStream } from "../server/html-stream-rewriter.ts";
 import { devProxyTokenHeaders, hasDevSessionToken } from "./dev-server/dev-token.ts";
 import { readDesktopAppFile } from "./desktop-dev-file.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
@@ -595,7 +596,8 @@ export function stripDesktopCredentials(request: Request): Request {
 
 /**
  * Forward a request through the live-reload dev proxy, injecting `__denext` into an UNCOMPRESSED
- * HTML navigation response so `runtimePlatform()` reads "desktop" in dev too. The per-launch token
+ * HTML navigation response so `runtimePlatform()` reads "desktop" in dev too, as the body streams
+ * ({@linkcode injectDesktopScriptsStream}). The per-launch token
  * is injected only when `injectToken` (a loopback target, or a token-gated --lan one). Compressed or
  * non-HTML responses (and HEAD) stream through untouched — injecting into a gzipped body corrupts it.
  */
@@ -610,29 +612,36 @@ async function devProxyResponse(
   page?: DesktopPageGlobals,
 ): Promise<Response> {
   const res = await devProxy(stripDesktopCredentials(request), url);
+  if (!injectable(request, res)) return res;
+  const scripts = injectToken
+    ? desktopInlineScripts(token, true, preload, preloadKey, page ?? {})
+    : desktopInlineScripts(null, false, undefined, preloadKey, page ?? {});
+  const hashes = await scriptHashes(scripts);
+  const headers = proxiedHeaders(res.headers, hashes);
+  const body = res.body
+    ? injectDesktopScriptsStream(res.body, scriptTags(scripts), hashes)
+    : scriptTags(scripts);
+  return new Response(body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/** Whether a proxied response is an uncompressed HTML page (not a HEAD) to inject into. */
+function injectable(request: Request, res: Response): boolean {
   const type = (res.headers.get("content-type") ?? "").toLowerCase();
-  if (
-    request.method === "HEAD" || res.headers.get("content-encoding") || !type.includes("text/html")
-  ) {
-    return res;
-  }
-  const injected = await injectDesktopScripts(
-    await res.text(),
-    injectToken ? token : null,
-    injectToken,
-    injectToken ? preload : undefined,
-    preloadKey,
-    page ?? {},
-  );
-  const headers = new Headers(res.headers);
+  return request.method !== "HEAD" && !res.headers.get("content-encoding") &&
+    type.includes("text/html");
+}
+
+/**
+ * The proxied page's headers: no `content-length` (the body grows), and the dev server's CSP
+ * header, if any, allowing the injected scripts too — a strict `script-src` would otherwise block
+ * the desktop global (no `__denext`, no token, no bridge).
+ */
+function proxiedHeaders(from: Headers, hashes: readonly string[]): Headers {
+  const headers = new Headers(from);
   headers.delete("content-length");
-  // The dev server's CSP travels as a header: allow the injected scripts there too, or a strict
-  // `script-src` blocks the desktop global (no `__denext`, no token, no bridge).
   const csp = headers.get("content-security-policy");
-  if (csp) {
-    headers.set("content-security-policy", addScriptHashesToCspHeader(csp, injected.hashes));
-  }
-  return new Response(injected.html, { status: res.status, statusText: res.statusText, headers });
+  if (csp) headers.set("content-security-policy", addScriptHashesToCspHeader(csp, hashes));
+  return headers;
 }
 
 /** Who `DesktopRuntime.onBeforeQuit` guards belong to: `DesktopRuntime.quit()` skips them. */
@@ -1003,12 +1012,76 @@ function addScriptHashToCspMeta(html: string, hashes: readonly string[]): string
   const cm = tag.match(contentRe);
   if (!cm) return html;
   const policy = cm[2];
-  // No explicit script-src ⇒ default-src governs scripts; leave the policy untouched.
-  const missing = hashes.filter((hash) => !policy.includes(hash));
-  if (!/script-src\b/i.test(policy) || missing.length === 0) return html;
-  const newPolicy = policy.replace(/(script-src\b[^;]*)/i, (d) => `${d} ${missing.join(" ")}`);
+  const newPolicy = metaPolicyWithScriptHashes(policy, hashes);
+  if (newPolicy === policy) return html;
   const newTag = tag.replace(contentRe, (_full, q: string) => `content=${q}${newPolicy}${q}`);
   return html.replace(tag, newTag);
+}
+
+/**
+ * A CSP meta's policy with `hashes` added to its `script-src`. No explicit `script-src` means
+ * `default-src` governs scripts: the policy is returned untouched, as it is when it lists them all.
+ */
+function metaPolicyWithScriptHashes(policy: string, hashes: readonly string[]): string {
+  const missing = hashes.filter((hash) => !policy.includes(hash));
+  if (!/script-src\b/i.test(policy) || missing.length === 0) return policy;
+  return policy.replace(/(script-src\b[^;]*)/i, (d) => `${d} ${missing.join(" ")}`);
+}
+
+/**
+ * {@linkcode injectDesktopGlobal} for a STREAMED document (the dev server's page, Suspense holes
+ * and all), rewritten as it flows instead of read whole first: the scripts go right after the
+ * first `<head>` (or `<body>`) start tag — before the first other tag when the document opens
+ * with neither, where the parser starts the head, else at the end — and the first CSP meta's
+ * `script-src` gets their hashes. Tags inside comments, scripts and styles are never taken for
+ * these. Each chunk goes out as it arrives (src/server/html-stream-rewriter.ts), so the dev
+ * page's first bytes and its streamed holes reach the window when the dev server sends them.
+ */
+function injectDesktopScriptsStream(
+  body: ReadableStream<Uint8Array>,
+  tags: string,
+  hashes: readonly string[],
+): ReadableStream<Uint8Array> {
+  let injected = false;
+  let cspDone = false;
+  return rewriteHtmlStream(body, {
+    startTag(tag, control) {
+      if (!injected && tag.name !== "html") {
+        placeScripts(tag, tags);
+        injected = true;
+      }
+      if (!cspDone && isCspMeta(tag)) {
+        cspDone = true;
+        addHashesToCspMetaTag(tag, hashes);
+      }
+      // A CSP meta counts only in the head: past it, nothing is left to rewrite.
+      if (injected && tag.name === "body") control.stop();
+    },
+    endTag(tag, control) {
+      if (injected && tag.name === "head") control.stop();
+    },
+    end: () => injected ? undefined : tags,
+  });
+}
+
+/** The scripts right after a `<head>` / `<body>` start tag, else before the tag. */
+function placeScripts(tag: HtmlStartTag, tags: string): void {
+  if (tag.name === "head" || tag.name === "body") tag.after(tags);
+  else tag.before(tags);
+}
+
+/** Whether the tag is a `<meta http-equiv="Content-Security-Policy">`. */
+function isCspMeta(tag: HtmlStartTag): boolean {
+  return tag.name === "meta" &&
+    tag.getAttribute("http-equiv")?.toLowerCase() === "content-security-policy";
+}
+
+/** A CSP meta tag's `script-src` with `hashes` added ({@linkcode metaPolicyWithScriptHashes}). */
+function addHashesToCspMetaTag(tag: HtmlStartTag, hashes: readonly string[]): void {
+  const policy = tag.getAttribute("content");
+  if (policy === null) return;
+  const next = metaPolicyWithScriptHashes(policy, hashes);
+  if (next !== policy) tag.setAttribute("content", next);
 }
 
 /**
@@ -1128,30 +1201,19 @@ export async function injectDesktopGlobal(
   preloadKey?: string,
   page: DesktopPageGlobals = {},
 ): Promise<string> {
-  return (await injectDesktopScripts(html, token, beacon, preload, preloadKey, page)).html;
+  const scripts = desktopInlineScripts(token, beacon, preload, preloadKey, page);
+  const out = insertAfterHeadOrBody(html, scriptTags(scripts));
+  return addScriptHashToCspMeta(out, await scriptHashes(scripts));
 }
 
-/**
- * {@linkcode injectDesktopGlobal}, also returning the injected scripts' CSP hashes
- * (`'sha256-…'`), for a caller that must allow them in a `Content-Security-Policy` header too.
- */
-async function injectDesktopScripts(
-  html: string,
-  token: string | null,
-  beacon: boolean,
-  preload: string | undefined,
-  preloadKey: string | undefined,
-  page: DesktopPageGlobals,
-): Promise<{ html: string; hashes: string[] }> {
-  const scripts = desktopInlineScripts(token, beacon, preload, preloadKey, page);
-  const out = insertAfterHeadOrBody(
-    html,
-    scripts.map((code) => `<script>${code}</script>`).join(""),
-  );
-  const hashes = await Promise.all(
-    scripts.map(async (code) => `'sha256-${await sha256Base64(code)}'`),
-  );
-  return { html: addScriptHashToCspMeta(out, hashes), hashes };
+/** The inline scripts as `<script>` elements, in order. */
+function scriptTags(scripts: readonly string[]): string {
+  return scripts.map((code) => `<script>${code}</script>`).join("");
+}
+
+/** Each inline script's CSP source (`'sha256-…'`). */
+function scriptHashes(scripts: readonly string[]): Promise<string[]> {
+  return Promise.all(scripts.map(async (code) => `'sha256-${await sha256Base64(code)}'`));
 }
 
 /** What the global script carries only with the token: the overrides, shims and the beacon. */
@@ -1162,7 +1224,7 @@ function tokenScripts(beacon: boolean, page: DesktopPageGlobals): string {
     (beacon ? BOOT_BEACON_JS : "");
 }
 
-/** The inline scripts {@linkcode injectDesktopScripts} injects, in order. */
+/** The inline scripts {@linkcode injectDesktopGlobal} injects, in order. */
 function desktopInlineScripts(
   token: string | null,
   beacon: boolean,

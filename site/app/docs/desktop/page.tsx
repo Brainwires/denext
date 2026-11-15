@@ -511,9 +511,11 @@ ws.onopen = () =>
         In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}
         marker into the HTML the dev server returns, so <code>runtimePlatform()</code> reports{" "}
         <code>"desktop"</code> as in a real window, and <code>openAuthSession</code>{" "}
-        and the OTA boot beacon work against the local runtime. The per-launch token rides the page
-        too, so the capability bridge (<code>secureStore</code>, <code>fs</code>, …) works. With
-        {" "}
+        and the OTA boot beacon work against the local runtime. The page is rewritten as it streams,
+        so its first bytes and each streamed Suspense boundary reach the window when the dev server
+        sends them; the marker goes right after the page&apos;s <code>&lt;head&gt;</code>{" "}
+        (never inside a comment or a script). The per-launch token rides the page too, so the
+        capability bridge (<code>secureStore</code>, <code>fs</code>, …) works. With{" "}
         <code>--lan</code>{" "}
         it does so only when the dev URL carries the dev server&apos;s per-run session token (<code>
           ?__denext_dev=…
