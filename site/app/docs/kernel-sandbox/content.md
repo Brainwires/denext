@@ -88,11 +88,11 @@ What the terms mean:
   processes use. denext generates a profile from your grant: which paths may be read, written or
   mapped as executable code, which network endpoints may be reached, and whether programs may be
   started. On macOS a single profile covers files, network and execution.
-- **Job objects and integrity levels** are the Windows tools a process can apply to itself
-  without administrator rights. A job object keeps every child in the job (a child can't break
-  away, and the job can forbid children altogether). Lowering the process's integrity level to
-  _Low_ means it can only write to objects labelled Low. Neither one limits reads or network,
-  which is why on Windows those stay with Deno's checks. See [Windows](/docs/kernel-sandbox-windows).
+- **Job objects and integrity levels** are the Windows tools a process can apply to itself without
+  administrator rights. A job object keeps every child in the job (a child can't break away, and the
+  job can forbid children altogether). Lowering the process's integrity level to _Low_ means it can
+  only write to objects labelled Low. Neither one limits reads or network, which is why on Windows
+  those stay with Deno's checks. See [Windows](/docs/kernel-sandbox-windows).
 - **The supervisor and broker** is what this section calls **Mode B**. When a rule is finer
   than the kernel can express, such as "only `api.example.com`", "this folder except `.env`" or
   "this one Unix socket", `deno` splits in two. A small unconfined **supervisor** with no
@@ -224,14 +224,16 @@ What that means in practice:
 
 ### Containers, WSL and macOS versions
 
-- **Docker.** Recent versions of Docker's default seccomp profile allow the Landlock system
-  calls. We're confirming this across versions, and the result will be listed on the
-  [Linux](/docs/kernel-sandbox-linux) page. Landlock and seccomp stack with a container's own
-  confinement and with a systemd unit's `NoNewPrivileges=` and `ProtectSystem=`.
+- **Docker.** Docker's default seccomp profile allows the Landlock system calls and a nested seccomp
+  filter, so enforcement works in a default container. Features that need a new user namespace
+  (hiding denied paths by mounting over them, Chrome's own sandbox) don't, and Deno falls back.
+  Landlock and seccomp stack with a container's own confinement and with a systemd unit's
+  `NoNewPrivileges=` and `ProtectSystem=`. Details on the
+  [Linux](/docs/kernel-sandbox-linux#containers) page.
 - **gVisor and some Firecracker setups** don't offer Landlock, so the "older than 5.13" row
   applies there.
-- **WSL2** depends on how its kernel was configured. `denext doctor` says whether Landlock is
-  present and enabled.
+- **WSL2** depends on how its kernel was configured, and hasn't been verified yet. `denext doctor`
+  will say whether Landlock is present and enabled.
 - **macOS.** Seatbelt works on every macOS version denext supports. Apple has marked the
   programmatic sandbox interface deprecated for years, but it's still present and working, and
   browsers, build tools and package managers rely on it. denext calls it at run time rather
@@ -320,6 +322,9 @@ gap, not a vulnerability.
   by port at most, so host-scoped grants need Mode B. Without it, a host-scoped rule is
   Deno-only and the report says so.
 - **Signals and abstract Unix sockets before Linux 6.12**, as above.
+- **Changing file attributes on Linux.** Landlock doesn't restrict changing a file's mode,
+  timestamps or extended attributes, so with any write grant, native code can change those on the
+  user's files outside the grant. Contents stay protected. macOS holds this in the kernel.
 - **File metadata on macOS.** Path resolution needs to look up every parent folder, so the
   profile allows reading file metadata everywhere. That reveals whether a file exists and how
   big it is, not what it contains. Linux's Landlock doesn't control metadata reads either.
@@ -334,30 +339,33 @@ gap, not a vulnerability.
 - **Existing hard links.** A hard link to a protected file that already exists inside an allowed
   folder can be read through that folder, as with any path-based rule. Creating new links or
   renames that would gain rights is refused.
-- **Desktop apps.** Whether a browser engine can run inside the app's sandbox is being tested
-  now. If it can't, packaged desktop apps get the headless guarantees at first, and
-  a confined split-process design follows later. See
-  [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
+- **Desktop apps.** A browser engine limits what a packaged app gets. From the first experiments:
+  WKWebView apps on macOS and WebKitGTK apps on Linux are confined in-process (though WKWebView's
+  own processes sit outside the app's sandbox, and the Linux session bus is a gap); CEF apps are
+  confined on Linux where user namespaces are allowed and get headless guarantees only on macOS;
+  Windows desktop apps get the job object's containment. Compiled command-line apps get the full
+  matrix everywhere. See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
 
 ## How it's proven
 
 A sandbox claim is only as good as the tests behind it. Three things back this one:
 
-- **An escape-test corpus.** One native probe, built three ways (a standalone program, an FFI
-  library and a Node-API addon), tries each way out: opening, renaming, linking and changing
-  files outside the grant, starting programs, opening sockets of each family, connecting by
-  address, `io_uring`, `ptrace`, `/proc/<pid>/mem`, Unix sockets by path and abstract name,
-  signals, mounts, user namespaces, the session bus, and on macOS LaunchServices and
-  AppleEvents. It prints one line per attempt.
+- **An escape-test corpus.** 46 probes, each tried the four ways native code reaches the operating
+  system (FFI, a Node-API addon, an addon inside an npm package, and an `--allow-run` child): 184
+  checks across 27 cells of the matrix. The probes try each way out: opening, renaming, linking and
+  changing files outside the grant, starting programs, opening sockets of each family, connecting by
+  address, `io_uring`, `ptrace`, `/proc/<pid>/mem`, Unix sockets by path and abstract name, signals,
+  mounts, user namespaces, the session bus, and on macOS LaunchServices and AppleEvents. It prints
+  one line per attempt.
 - **A kernel matrix.** The corpus runs on Linux virtual machines booting 5.15, 6.1, 6.8 and 6.12
   or newer, on x86_64 and aarch64, plus inside Docker's default profile and with Landlock compiled
   in but disabled. On macOS it runs on every version the CI runners have. Each kernel has its
   expected results.
-- **A published guarantee matrix.** Platform × kernel × mode, each cell saying whether a
-  permission is enforced by the kernel, by the kernel more coarsely (and how), or by Deno only.
-  It's generated from the same policy data `--kernel-sandbox-report` prints, published with the
-  release, and it's the definition of a vulnerability: a way out of a cell marked "kernel" is a
-  security bug, to be reported as the
+- **A published guarantee matrix.** A [draft](/docs/kernel-sandbox-guarantees) is up now.
+  Platform × kernel × mode, each cell saying whether a permission is enforced by the kernel, by the kernel more
+  coarsely (and how), or by Deno only. It's generated from the same policy data
+  `--kernel-sandbox-report` prints, published with the release, and it's the definition of a
+  vulnerability: a way out of a cell marked "kernel" is a security bug, to be reported as the
   [threat model](/docs/kernel-sandbox-threat-model#reporting-a-sandbox-escape) describes.
 
 ## Seeing what applies

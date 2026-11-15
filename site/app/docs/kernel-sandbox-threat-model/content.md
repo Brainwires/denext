@@ -6,32 +6,56 @@ lead: What the kernel sandbox defends against, what it doesn't, and where the bo
 
 > [!IMPORTANT]
 > **In development. An opt-in preview lands in denext 4.20; the full sandbox, with automatic
-> enforcement, lands in denext 5.0.** This page is an outline, finished before the release
-> together with the [guarantee matrix](/docs/kernel-sandbox-guarantees). The
-> [overview](/docs/kernel-sandbox) has the design.
+> enforcement, lands in denext 5.0.** **Draft, being validated.** This threat model is checked
+> against the escape-test corpus alongside the [guarantee matrix](/docs/kernel-sandbox-guarantees),
+> and is finished before the release. The [overview](/docs/kernel-sandbox) has the design.
 
 ## The attacker
 
-_Being written as this lands._ The sandbox assumes hostile code running as your user, inside a
-program whose grant is fixed: native code loaded through FFI, a Node-API addon, native code in an
-npm package, or a program started under `--allow-run`, or any of their descendants. That code can
-make any system call, write any bytes to any socket or pipe it holds, and try to race the runtime.
+The kernel sandbox assumes **native code running as your user, inside a run whose permissions are
+fixed**:
+
+- a library loaded through FFI (`Deno.dlopen`);
+- a Node-API addon;
+- native code in an npm package;
+- a program started under `--allow-run`, and every process it starts.
+
+That code can make any system call, write any bytes to any socket or pipe it holds, and try to win
+races against the runtime. It isn't assumed to have root, extra capabilities, or a way to change
+the run's flags before it starts.
 
 ## What it protects
 
-_Being written as this lands._ Files outside the read and write grant, network destinations
-outside the net grant, the ability to start programs when `run` isn't granted, other processes of
-the same user (signals and debugging, where the kernel supports it), and the kernel's own attack
-surface (the refused system calls).
+Within the cells the [guarantee matrix](/docs/kernel-sandbox-guarantees) marks **Kernel** or
+**Kernel (coarser)** for your platform, kernel and mode:
+
+- files outside the read and write grant;
+- network destinations outside the net grant;
+- starting programs when there is no `run` grant;
+- other processes of the same user (reading their memory, and signalling them where the kernel
+  supports it);
+- the kernel's own attack surface, through the refused system calls.
 
 ## What is out of scope
 
-_Being written as this lands._ Stated plainly: environment variables and most `sys` information
-(in the process's memory); worker-level and `revoke()` narrowing (API-level by design); runs where
-a prompt could widen the grant; code running as root or with capabilities the sandbox doesn't
-drop; a compromised kernel or OS; side channels; and anything written to a file a later,
-unconfined run executes. Platform residuals are listed per cell in the
-[guarantee matrix](/docs/kernel-sandbox-guarantees).
+- **Runs that can prompt, and `-A` runs.** A prompt can widen the grant, so there's no fixed policy
+  to enforce. Plain `-A` has nothing to narrow.
+- **`env` and `sys`.** Environment variables live in the process's memory, and system information
+  comes from calls libc needs.
+- **Workers and `Deno.permissions.revoke()`.** The kernel policy is per process and equals the
+  top-level grant. For a kernel boundary between components, run the component as a subprocess
+  with narrower flags.
+- **File descriptors opened before the sandbox.** Files and sockets the process held when it was
+  confined stay usable. They're the launcher's, not the sandboxed code's.
+- **Code a later, unconfined run executes.** If the grant lets the program write `deno.json`,
+  `node_modules`, `.git/hooks` or a shell startup file, the next run outside the sandbox executes
+  what was written. Keep write grants to data folders.
+- **The kernel itself.** A kernel vulnerability is the kernel's to fix. The seccomp filter narrows
+  the attack surface but doesn't defend against a compromised kernel.
+- **Denial of service.** Confined code can still use CPU, memory and disk within its grant.
+  [Resource limits](/docs/deployment-targets#resource-limits) are a separate, best-effort tool.
+
+Platform gaps are listed cell by cell in the [guarantee matrix](/docs/kernel-sandbox-guarantees).
 
 ## The supervisor's trust boundary
 
@@ -47,13 +71,25 @@ _Being written as this lands._ Where checking a path and then opening it by name
 handing back the opened file instead of a yes/no closes it, and why it doesn't matter for rules the
 kernel enforces itself.
 
+## What counts as an escape
+
+An escape means **breaking a Kernel cell on the platform, kernel and mode that cell names**: for
+example, native code reading a file outside the read grant on Linux 6.8 with the sandbox on. Getting
+past what a **Kernel (coarser)** cell still holds counts too. A gap the matrix already lists
+(**Deno-only**, **By design**, or a note) is a documentation issue, not a vulnerability. If the docs
+understate a gap, that's worth an ordinary issue.
+
 ## Reporting a sandbox escape
 
-_Being written as this lands._ A way out of a cell the guarantee matrix marks **kernel**, beyond
-what the cell states, is a security vulnerability. A documented gap is not. Report a suspected
-escape privately, as the [security policy](/docs/policies#reporting-a-vulnerability) describes
-(GitHub Security Advisories on the repository), never in a public issue. Include the platform,
-kernel version and Landlock ABI (or macOS version), the mode, the grant, the
-`--kernel-sandbox-report` output, and a minimal native probe. Each confirmed escape is fixed
-privately, released with an advisory, and gets its own probe in the escape-test corpus. See also
-[Security posture](/docs/security).
+Report a suspected escape **privately**, through the repository's private vulnerability reporting
+(GitHub Security Advisories), as the [security policy](/docs/policies#reporting-a-vulnerability)
+describes. **Never open a public issue** for one. Include:
+
+- the platform, and on Linux the output of `uname -r`;
+- the Landlock ABI (see [Check your own system](/docs/kernel-sandbox-linux#check-your-own-system));
+  on macOS, the output of `sw_vers`;
+- the mode (`--kernel-sandbox=…` or the `deno.json` key) and the grant;
+- a probe that reproduces it, ideally a small native library or program.
+
+Each confirmed escape is fixed privately, released with an advisory, and gets its own probe in the
+escape-test corpus. See also [Security posture](/docs/security).

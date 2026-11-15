@@ -33,9 +33,15 @@ reported as Deno-only (`auto`) or refused (`enforce`), and how Mode B makes it e
 
 ### What Landlock doesn't cover
 
-_Being written as this lands._ The operations the kernel documentation lists as not restricted
-by Landlock (changing a file's mode, owner, times or extended attributes, among others) and how
-the sandbox treats each, per mode.
+The kernel documentation lists operations Landlock doesn't restrict. The one that matters most
+here: changing a file's mode, timestamps or extended attributes. seccomp can't help, because it
+sees only that `chmod` was called, not which file it names. So with any write grant, native code
+can change those attributes on files the user owns outside the grant; it still can't read them or
+change their contents. The [guarantee matrix](/docs/kernel-sandbox-guarantees) marks this
+Deno-only on Linux.
+
+_Being written as this lands:_ the rest of the list, and whether `enforce` refuses the path-based
+forms of these calls.
 
 ## System calls: seccomp
 
@@ -63,14 +69,60 @@ _Being written as this lands._ What children inherit, the system folders added w
 granted, and what no longer works inside (setuid helpers, rootless containers, Chrome's own
 sandbox, `strace`).
 
-## Containers, systemd, WSL and gVisor
+## Containers
 
-_Being written as this lands._ Results of running the sandbox inside Docker's default seccomp
-profile, inside Podman, as root in a container, under a systemd unit with `NoNewPrivileges=`, on
-WSL2's kernel, and on gVisor and Firecracker (no Landlock). How `denext doctor` detects each.
+Docker's default seccomp profile allows the Landlock system calls and a nested seccomp filter, so
+**enforcement works in a default Docker container**. Landlock and seccomp stack with the
+container's own confinement, and with a systemd unit's `NoNewPrivileges=` and `ProtectSystem=`.
 
-## Checking a machine
+What doesn't work in a default container is anything that needs a new **user namespace**, because
+the default profile refuses to create one:
 
-_Being written as this lands._ Reading the Landlock ABI and the security-module list, what
-`/proc/<pid>/status` shows for a confined process (`NoNewPrivs`, `Seccomp`), and reading kernel
-audit records of refusals on 6.15 and later.
+- hiding denied paths by mounting over them, the exact method for a read deny inside a read allow
+  (Deno falls back, as below);
+- Chrome's own namespace sandbox (run headless Chrome with `--no-sandbox`, as you already do in
+  Docker).
+
+The same applies on distributions that restrict unprivileged user namespaces (Ubuntu 24.04 does
+this through AppArmor by default). There the overmount method is unavailable and Deno falls back:
+the deny is enforced where the kernel can express it exactly, reported as Deno-only in `auto`, and
+refused in `enforce`.
+
+gVisor and some Firecracker setups don't offer Landlock at all, so the "no Landlock" case applies:
+seccomp only, and files Deno-only. WSL2 depends on how its kernel is built and **hasn't been
+verified yet**. `denext doctor` will say what it finds on each.
+
+## Check your own system
+
+Until `deno info --json` and `denext doctor` report these directly, you can check by hand.
+
+The kernel version:
+
+```sh
+uname -r
+```
+
+Whether Landlock is enabled (look for `landlock` in the list):
+
+```sh
+cat /sys/kernel/security/lsm
+```
+
+The Landlock ABI. This calls `landlock_create_ruleset` with the flag that asks for the version.
+`444` is that system call's number on x86_64 (aarch64 uses the same number). It prints the ABI, or
+`-1` when Landlock isn't available:
+
+```sh
+python3 -c 'import ctypes;l=ctypes.CDLL(None);print(l.syscall(444,None,0,1))'
+```
+
+Whether unprivileged user namespaces are restricted (an AppArmor restriction of `1`, or a
+`max_user_namespaces` of `0`, means the overmount method is unavailable):
+
+```sh
+sysctl kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces
+```
+
+For a confined process, `/proc/<pid>/status` shows `NoNewPrivs: 1` and a non-zero `Seccomp:` line.
+
+_Being written as this lands:_ reading kernel audit records of refusals on 6.15 and later.

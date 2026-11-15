@@ -45,9 +45,20 @@ and how Mode B makes host-scoped grants exact.
 
 ## Programs and children
 
-_Being written as this lands._ Execution rules, what children inherit, the system and developer
-tool paths added when `run` is granted (Command Line Tools, Homebrew, Nix), and the `EPERM`
-versus `EACCES` difference programs may notice.
+_Being written as this lands:_ execution rules, what children inherit, and the system and developer
+tool paths added when `run` is granted (Command Line Tools, Homebrew, Nix).
+
+### `EPERM`, not `EACCES`
+
+When Seatbelt refuses a file, the call fails with `EPERM` ("operation not permitted"), and so does
+`access()`. File modes produce `EACCES` ("permission denied"). Most programs treat the two alike,
+but not all:
+
+- **git exits** when it gets `EPERM` reading its config, where it would carry on past `EACCES`.
+- **Shells warn and carry on.**
+
+This is why child programs get a baseline of system paths when `run` is granted: a child that can't
+read what it needs to start often fails outright instead of falling back.
 
 ## Seeing refusals
 
@@ -56,5 +67,12 @@ _Being written as this lands._ Reading Seatbelt's refusals from the unified log,
 
 ## Supported macOS versions
 
-_Being written as this lands._ The macOS versions the escape-test corpus runs on, and the status
-of Apple's deprecation notice on the sandbox interface.
+Check your macOS version and whether the `sandbox-exec` fallback is present:
+
+```sh
+sw_vers
+ls -l /usr/bin/sandbox-exec
+```
+
+_Being written as this lands:_ the macOS versions the escape-test corpus runs on, and the status of
+Apple's deprecation notice on the sandbox interface.
