@@ -208,7 +208,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: sleep 30
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@15e1b9a5cae06b73b91be1482adedc5ccfb6a742 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@22c5dd08916efb0f5b2c3d4acb0ebca5a26d7334 # pick-runners
         with:
           # cross_launch_windows launches what cross_package_windows_linux's Linux side built and
           # starts when cross-package ends: it takes the same runner.
