@@ -123,6 +123,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A SPA dev page loaded just before a rebuild still gets its chunks.** The bundled dev loop
+  (`DENEXT_DEV_UNBUNDLED=0`, `denext mobile dev` / `desktop dev` against a SPA) served a client
+  asset from the newest build only and removed the one before, so a page whose entry came from
+  that build got 404s for the chunks it had not fetched yet (esbuild names chunks by content). The
+  build before the newest is now kept and serves what the newest lacks.
 - **Security: a Deno Desktop app on Windows no longer runs whichever `powershell.exe`,
   `explorer.exe` or `rundll32.exe` comes first on `PATH`.** The `secure-store`, `dialogs`, `shell`
   and `auth-session` capabilities spawned those programs by bare name, and the package baked the
