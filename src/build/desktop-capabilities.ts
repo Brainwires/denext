@@ -229,7 +229,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // Keychain, items only the app may read), which needs an unscoped --allow-sys until the runtime
     // gates it on the capability list baked into app.json. macOS keeps `security` while
     // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
-    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`.
+    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`, baked
+    // as --allow-run=powershell.exe: the runtime has no Windows store of its own (its
+    // Deno.desktop.secureStore answers there only on macOS and Linux), and PowerShell is a script
+    // interpreter, so that grant is full trust (the manual line says so).
     os: {
       darwin: secureStorePermissionSet("darwin", LEGACY_PERMISSION_CONTEXT),
       linux: secureStorePermissionSet("linux", LEGACY_PERMISSION_CONTEXT),
@@ -241,7 +244,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
     manual: [
       "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (`libsecret-1.so.0`, loaded at run time: the .deb depends on libsecret-1-0, the .rpm on libsecret). Without one, or under the stock runtime, every call fails `backend_unavailable` with the reason, never a plain file.",
-      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
+      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run=powershell.exe: PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
     ],
   },
   fs: {

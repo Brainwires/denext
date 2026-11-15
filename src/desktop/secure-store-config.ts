@@ -79,7 +79,10 @@ export function secureStoreConfigProblem(value: unknown): [string, string] | nul
  *   capability list: an older runtime's `Deno.desktop.secureStore` needs an unscoped `--allow-sys`.
  * - macOS `run: ["security"]` only while the legacy move is on (whatever the runtime): with
  *   `legacy: false` the capability never runs `security`, so it is never baked.
- * - Windows: `powershell.exe` (WinRT PasswordVault), unchanged.
+ * - Windows: `powershell.exe` (WinRT PasswordVault), whatever the runtime: its own
+ *   `Deno.desktop.secureStore` has no Windows backend. PowerShell is a script interpreter, so this
+ *   `--allow-run` is full trust for any code in the process (`denext desktop add secure-store`
+ *   and the docs say so); the capability runs only its constant script.
  *
  * @param os The target OS.
  * @param ctx The config and runtime facts.

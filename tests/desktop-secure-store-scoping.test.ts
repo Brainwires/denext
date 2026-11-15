@@ -21,6 +21,7 @@ import {
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import { secureStoreLegacy } from "../src/desktop/secure-store-config.ts";
 import {
+  DESKTOP_CAPABILITIES,
   desktopPermissionContext,
   desktopPermissionFlags,
 } from "../src/build/desktop-capabilities.ts";
@@ -422,6 +423,27 @@ Deno.test("secureStore: the declared method permissions are what packaging bakes
       }
     }
   }
+});
+
+Deno.test("secure-store (Windows): the powershell.exe grant is baked on every runtime and named as full trust", () => {
+  // The runtime's own store has no Windows backend, so Windows always runs PowerShell.
+  for (const bakedCapabilities of [false, true]) {
+    assertEquals(
+      desktopPermissionFlags(["secure-store"], "windows", {
+        legacy: false,
+        bakedCapabilities,
+        macRuntimeStore: true,
+      }),
+      ["--allow-run=powershell.exe"],
+    );
+  }
+  // `denext desktop add secure-store` says what that grant gives away: a script interpreter.
+  const entry = DESKTOP_CAPABILITIES["secure-store"];
+  assertEquals(entry.trust, "full");
+  const windows = entry.manual!.find((m) => m.includes("PasswordVault"))!;
+  assertStringIncludes(windows, "--allow-run=powershell.exe");
+  assertStringIncludes(windows, "script interpreter");
+  assertStringIncludes(windows, "any script");
 });
 
 Deno.test("desktopPermissionContext: the config's legacy flag and the runtime's facts", () => {

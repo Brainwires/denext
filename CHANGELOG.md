@@ -91,6 +91,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop add secure-store` names the Windows `--allow-run=powershell.exe` grant.** The
+  Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
+  runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
+  lets any code in the app's process run scripts as the user. The capability's notes, the
+  permission table on the desktop docs page and the source now say so.
+
 - **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
   `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
   (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
