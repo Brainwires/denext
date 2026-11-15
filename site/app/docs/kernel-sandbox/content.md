@@ -155,33 +155,36 @@ Two consequences are worth knowing up front:
 
 ## Modes
 
-**Status:** the denext 4.20 preview accepts `enforce` and `warn` on Linux and macOS, from the
-command-line flag or the `deno.json` key, and is off unless you ask for it. The other modes and
-settings below arrive with the full sandbox in denext 5.0.
+**Status:** the denext 4.20 preview accepts all five modes, from the command-line flag or the
+`deno.json` key, and changes nothing unless you ask for it. In the current preview builds nothing
+is enforced yet: `warn` reports, and `enforce` and `broker` refuse to start because no enforcer is
+built in yet. That changes as later stages land. Automatic enforcement arrives with the full
+sandbox in denext 5.0.
 
-One setting picks the behaviour, in three places:
+One setting picks the behaviour:
 
-| Where                      | How                                                               |
-| -------------------------- | ----------------------------------------------------------------- |
-| On the command line        | `--kernel-sandbox=<mode>`, for example `--kernel-sandbox=enforce` |
-| In a project's `deno.json` | `"permissions": { "kernelSandbox": "enforce" }`                   |
-| In a compiled binary       | `deno compile --kernel-sandbox=…`, baked in at build time         |
+| Where                      | How                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| In a compiled binary       | `deno compile --kernel-sandbox=<mode>`, baked in at build time. Always wins.                                             |
+| On the command line        | `--kernel-sandbox=<mode>` on `run`, `serve`, `test`, `bench`, `repl`, `compile` and `install -g`. Overrides `deno.json`. |
+| In the environment         | `DENO_KERNEL_SANDBOX=off` or `warn`. Can only lower the mode.                                                            |
+| In a project's `deno.json` | `"permissions": { "kernelSandbox": "warn" }`. A workspace member's overrides the root's.                                 |
 
-| Mode      | What it does                                                                                                                                         |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `off`     | No kernel layer. Deno's checks only, as today.                                                                                                       |
-| `warn`    | Computes the policy and reports what it would refuse, without refusing anything (see [How warn mode reports](/docs/kernel-sandbox-modes#warn-mode)). |
-| `auto`    | Applies everything this kernel supports. Rules it can't express stay Deno-only and are reported.                                                     |
-| `enforce` | Like `auto`, but a rule the kernel can't express exactly is a startup error. Deno refuses to start rather than run with weaker protection.           |
-| `broker`  | Forces Mode B, the supervisor and broker, even when Mode A would be enough.                                                                          |
+| Mode             | What it does                                                                                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off`            | No kernel layer. Deno's checks only, as today.                                                                                                                                                        |
+| `warn`           | Runs normally and prints one line saying how many rules would be held by Deno's checks only (see [Warn mode](/docs/kernel-sandbox-modes#warn-mode)). Nothing is refused.                              |
+| `auto` (default) | Applies everything this kernel supports where the permission set is fixed; rules it can't express stay Deno-only and are reported. In the preview it applies nothing and records what it would apply. |
+| `enforce`        | Like `auto`, but a rule the kernel can't express exactly is a startup error: Deno refuses to start rather than run with weaker protection.                                                            |
+| `broker`         | `enforce` plus the supervisor and broker (Mode B), even when Mode A would be enough.                                                                                                                  |
 
-For the CLI family (`deno run`, `serve`, `test`, …) there's also an emergency switch that needs
-no command edit: `DENO_KERNEL_SANDBOX=off` or `=warn` in the environment. It prints a line each
-time it's used. Compiled binaries and packaged desktop apps ignore it, because their sandbox
-setting is the author's choice. No setting can widen a sandbox you're already inside: `off` in a
-confined process means "don't add another layer", never "escape".
+`DENO_KERNEL_SANDBOX` is the emergency switch that needs no command edit. It's read from the real
+environment before any `--env-file`, so a `.env` file can't lower the mode. Compiled programs,
+packaged desktop apps among them, ignore it, because their mode is the author's choice. No setting
+can widen a sandbox you're already inside: `off` in a confined process means "don't add another
+layer", never "escape".
 
-The full reference, including the report and the `deno info --json` shape, is on
+The full reference, with the context rules, the report and the `deno info --json` shape, is on
 [Modes and configuration](/docs/kernel-sandbox-modes).
 
 ## Every kernel denext runs on today keeps working
@@ -287,7 +290,8 @@ here is what to expect:
   `EPERM` differently. The [troubleshooting](/docs/kernel-sandbox-troubleshooting) page collects
   known cases.
 - **Unix sockets need a grant.** `/var/run/docker.sock`, `ssh-agent` (`$SSH_AUTH_SOCK`), the
-  session bus and other local daemons are refused unless the grant names them. A grant to the
+  session bus and other local daemons are refused unless the grant names them (on Linux,
+  `--allow-net=unix:<path>`). A grant to the
   Docker socket is effectively root on most hosts, and the
   [Permissions](/docs/permissions) page already warns about it.
 - **Remote imports are fetched before the sandbox starts.** `deno run` builds and caches the
@@ -372,12 +376,20 @@ A sandbox claim is only as good as the tests behind it. Three things back this o
 
 You don't have to guess:
 
-- `--kernel-sandbox-report` prints the resolved mode and why, the compiled policy, the implicit
-  set and every rule the kernel couldn't hold.
-- `deno info --json` carries a `kernelSandbox` object (mode, reason, mechanisms, gaps). A tool can
-  tell that the runtime it's running on has the kernel sandbox at all by checking whether
-  `deno info --json` reports `kernelSandbox`.
-- `denext doctor` checks the machine (Landlock ABI and whether it's enabled, seccomp, user
+- **`--kernel-sandbox-report`** prints the resolved mode and where it came from, the machine
+  (platform, kernel, Landlock ABI), the compiled policy line by line (read, write, exec, native
+  code loading, network, Unix sockets, `sys`, `env`, and the implicit set), and every gap, then runs
+  the program. Each gap is `fail-open` (the kernel would allow more than Deno's rule, so `enforce`
+  refuses to start), `fail-closed` (the kernel would refuse something Deno allows) or `documented`
+  (a limit the sandbox never claims, such as `env` and `sys`).
+  [Example](/docs/kernel-sandbox-modes#--kernel-sandbox-report).
+- **`deno info --json`** carries a `kernelSandbox` object: the mode asked for, its `source`, the
+  `effective` mode after the context rules, what `auto` `wouldApply`, whether the policy is
+  `enforced`, whether this runtime has an enforcer (`enforcerBuilt`), the mechanism (`osSandbox`),
+  the Landlock ABI, and the machine's capabilities. A runtime without the sandbox leaves the object
+  out, so a tool can detect the feature by checking for it.
+  [Field reference](/docs/kernel-sandbox-modes#deno-info---json--kernelsandbox).
+- **`denext doctor`** checks the machine (Landlock ABI and whether it's enabled, seccomp, user
   namespaces, container or gVisor, Seatbelt availability, an outer sandbox) and lists every gap
   for the project's own `start` grant, plus known npm packages that need extra grants.
 
