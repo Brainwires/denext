@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-11-15
+
 ### Added
 
 - **`runDesktop({ openBrowser })` chooses how `openAuthSession` opens the system browser.** It gets
@@ -22447,7 +22449,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.18.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.19.0...development
+[4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0

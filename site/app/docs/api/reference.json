@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.18.0\"",
+          "signature": "VERSION: \"4.19.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -51742,6 +51742,12 @@
               "name": "authSessionEnabled",
               "signature": "authSessionEnabled?: boolean",
               "doc": "Whether the `auth-session` capability is enabled (from `desktop.capabilities.authSession`, via\n{@link resolveDesktopCapabilities}). The loopback OAuth endpoint ({@link openAuthSession}) is\nDEFAULT-DENY: when this is not `true` it answers `unavailable`, so the page-side\n`openAuthSession` reports that the capability is off rather than opening the system browser. It\nis a full-trust `--allow-run` of the browser opener, so it is opt-in like every other run cap."
+            },
+            {
+              "kind": "property",
+              "name": "openBrowser",
+              "signature": "openBrowser?: (url: string) => Promise<void> | void",
+              "doc": "Opens `openAuthSession`'s authorization URL in the system browser, for the loopback flow and\nfor a custom-scheme callback outside macOS's own auth session. The URL is absolute `https:` and\nalready checked. Default: the OS's own opener, started by absolute path where the OS has one\n(`C:\\Windows\\System32\\rundll32.exe url.dll,FileProtocolHandler <url>` on Windows, `open` on\nmacOS, `xdg-open` on Linux). Give one to choose the browser, or in a test to record the URL\ninstead of opening anything; what it starts needs its own `desktop.extraPermissions.run`."
             },
             {
               "kind": "property",
