@@ -714,6 +714,15 @@ export interface RunDesktopOptions {
    */
   authSessionEnabled?: boolean;
   /**
+   * Opens `openAuthSession`'s authorization URL in the system browser, for the loopback flow and
+   * for a custom-scheme callback outside macOS's own auth session. The URL is absolute `https:` and
+   * already checked. Default: the OS's own opener, started by absolute path where the OS has one
+   * (`C:\Windows\System32\rundll32.exe url.dll,FileProtocolHandler <url>` on Windows, `open` on
+   * macOS, `xdg-open` on Linux). Give one to choose the browser, or in a test to record the URL
+   * instead of opening anything; what it starts needs its own `desktop.extraPermissions.run`.
+   */
+  openBrowser?: (url: string) => Promise<void> | void;
+  /**
    * The configured `desktop.app.origin`, normalized (from {@link resolveDesktopCapabilities}). Only
    * compared against the origin the runtime publishes, to warn about a stale package; the gates
    * trust the PUBLISHED origin ({@link resolveDesktopTrust}).
@@ -1341,6 +1350,7 @@ async function handleLocalEndpoint(
   url: URL,
   token: string,
   authSessionEnabled: boolean,
+  openBrowser: ((url: string) => Promise<void> | void) | undefined,
   access: DesktopRequestAccess,
   onBooted?: () => void | Promise<void>,
   onQuit?: (windowToken: string | null) => void,
@@ -1349,7 +1359,7 @@ async function handleLocalEndpoint(
     // Default-deny: without the `auth-session` capability the endpoint answers `unavailable` and
     // never opens the system browser, so the opener's `--allow-run` is only baked when opted in.
     return authSessionEnabled
-      ? await handleDesktopAuthSession(request, token, undefined, access)
+      ? await handleDesktopAuthSession(request, token, openBrowser, access)
       : authSessionUnavailable();
   }
   if (onBooted && url.pathname === BOOTED_PATH) {
@@ -1565,6 +1575,7 @@ function localDesktopStage(ctx: {
       url,
       token,
       options.authSessionEnabled === true,
+      options.openBrowser,
       { trust, info },
       onBooted,
       onQuit,
@@ -1725,7 +1736,12 @@ function desktopAppEvents(
   if (!api) return { capabilities: [], install: () => {} };
   const schemes = options.deepLinks ?? [];
   const auth = options.authSessionEnabled === true
-    ? createSchemeAuthSessions({ schemes, api, openBrowser: defaultOpenBrowser, preloadKey })
+    ? createSchemeAuthSessions({
+      schemes,
+      api,
+      openBrowser: options.openBrowser ?? defaultOpenBrowser,
+      preloadKey,
+    })
     : undefined;
   const router = createLaunchRouter({
     schemes,

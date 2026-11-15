@@ -11,6 +11,7 @@ import {
   stripDesktopCredentials,
 } from "../src/build/desktop.ts";
 import { isLoopbackHost } from "../src/utils/loopback.ts";
+import { resetDesktopAuthSessionForTesting } from "../src/desktop/auth-session-runtime.ts";
 import { symlinkDir } from "./helpers/temp.ts";
 
 Deno.test("isLoopbackHost: strict — a `127.`-prefix / `.localhost`-suffix DNS name is NOT loopback", () => {
@@ -576,6 +577,56 @@ Deno.test("desktop handler (dev mode): token-gated local endpoints are served lo
     assertEquals(ok.status, 204);
     assertEquals(booted, 1);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop handler: runDesktop's openBrowser opens openAuthSession's URL instead of the OS opener", async () => {
+  const dir = await exportDir();
+  try {
+    resetDesktopAuthSessionForTesting();
+    const token = "tok-open";
+    const opened: string[] = [];
+    let callback: Promise<string> | undefined;
+    const handle = createDesktopHandler(
+      {
+        authSessionEnabled: true,
+        // A test's stand-in browser: it records the URL and answers the loopback redirect itself.
+        openBrowser: (url) => {
+          opened.push(url);
+          const redirect = new URL(new URL(url).searchParams.get("redirect_uri")!);
+          redirect.searchParams.set("code", "c0de");
+          redirect.searchParams.set("state", "s1");
+          callback = fetch(redirect).then((r) => r.text());
+        },
+      },
+      dir,
+      undefined,
+      token,
+    );
+    const endpoint = "http://127.0.0.1/_denext/desktop/auth-session";
+    const authUrl = "https://auth.example/authorize?client_id=x&state=s1&redirect_uri=" +
+      encodeURIComponent("http://127.0.0.1/cb") +
+      "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
+    const res = await handle(
+      new Request(endpoint, {
+        method: "POST",
+        headers: {
+          "x-denext-desktop-token": token,
+          origin: "http://127.0.0.1",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ authUrl }),
+      }),
+      new URL(endpoint),
+    );
+    assertEquals(res.status, 200);
+    assertEquals(opened.length, 1, "the app's opener was asked, once");
+    assertStringIncludes(opened[0], "https://auth.example/authorize?");
+    assertStringIncludes((await res.json()).url, "code=c0de");
+    assertStringIncludes(await callback!, "You can close this tab.");
+  } finally {
+    resetDesktopAuthSessionForTesting();
     await Deno.remove(dir, { recursive: true });
   }
 });

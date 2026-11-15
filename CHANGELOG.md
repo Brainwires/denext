@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`runDesktop({ openBrowser })` chooses how `openAuthSession` opens the system browser.** It gets
+  the checked `https:` authorization URL, for the loopback flow and for a custom-scheme callback
+  outside macOS's own auth session. The default stays the OS's own opener, started by absolute
+  path on Windows (`C:\Windows\System32\rundll32.exe`), never looked up on `PATH`; a test can
+  record the URL instead of opening a browser.
 - **A tray title.** `desktop.tray.title`, `runDesktop({ tray: { title } })`, the backend tray
   handle's `update({ title })` and `createTray({ title })` / `tray.update({ title })` from
   `denext/desktop/app` set the short text beside a tray icon in the macOS menu bar (Electron's
