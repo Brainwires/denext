@@ -1023,6 +1023,29 @@ export async function desktopUiUpdateFloorProblem(
 }
 
 /**
+ * After an export of a desktop app (a `desktop.ts` at the project root), bring its desktop files in
+ * line with the config ({@linkcode syncDesktopAppConfigAt}): the export is what a bare
+ * `deno desktop` embeds, so `.deno-desktop/config.json` (the entry's capabilities and proxy) and
+ * `app.json` must be current after every export, `denext desktop build` included. A project without
+ * `desktop.ts` is left alone.
+ *
+ * @param projectDir The project root.
+ * @param config The project config.
+ * @returns What changed, or `null` for a project that is no desktop app.
+ */
+export async function syncDesktopAfterExport(
+  projectDir: string,
+  config: unknown,
+): Promise<DesktopAppSyncReport | null> {
+  try {
+    if (!(await Deno.stat(join(projectDir, "desktop.ts"))).isFile) return null;
+  } catch {
+    return null;
+  }
+  return await syncDesktopAppConfigAt(projectDir, config);
+}
+
+/**
  * {@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its
  * `scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`. With
  * `desktop.update.ui` set it first requires the export to carry a sequenced OTA manifest

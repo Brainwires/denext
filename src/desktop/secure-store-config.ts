@@ -4,10 +4,13 @@
  * `src/build/desktop-capabilities.ts`) and the runtime side (the capability's declared method
  * permissions, see `./caps/secure-store.ts`), so the two can never drift.
  *
- * Import-free: read by build code and by the desktop runtime alike.
+ * Imports only the import-free `./windows-programs.ts`: read by build code and by the desktop
+ * runtime alike.
  *
  * @module
  */
+
+import { WINDOWS_POWERSHELL } from "./windows-programs.ts";
 
 /** The OS spelling (`Deno.build.os`) the permissions are given for. */
 export type SecureStoreOs = "darwin" | "windows" | "linux";
@@ -79,7 +82,11 @@ export function secureStoreConfigProblem(value: unknown): [string, string] | nul
  *   capability list: an older runtime's `Deno.desktop.secureStore` needs an unscoped `--allow-sys`.
  * - macOS `run: ["security"]` only while the legacy move is on (whatever the runtime): with
  *   `legacy: false` the capability never runs `security`, so it is never baked.
- * - Windows: `powershell.exe` (WinRT PasswordVault), unchanged.
+ * - Windows: Windows PowerShell by absolute path ({@linkcode WINDOWS_POWERSHELL}, never a bare
+ *   `powershell.exe` found through `PATH`; WinRT PasswordVault), whatever the runtime: its own
+ *   `Deno.desktop.secureStore` has no Windows backend. PowerShell is a script interpreter, so this
+ *   `--allow-run` is full trust for any code in the process (`denext desktop add secure-store`
+ *   and the docs say so); the capability runs only its constant script.
  *
  * @param os The target OS.
  * @param ctx The config and runtime facts.
@@ -89,7 +96,7 @@ export function secureStorePermissionSet(
   os: SecureStoreOs,
   ctx: SecureStorePermissionContext,
 ): { run?: string[]; sys?: string[] } {
-  if (os === "windows") return { run: ["powershell.exe"] };
+  if (os === "windows") return { run: [WINDOWS_POWERSHELL] };
   const sys = ctx.bakedCapabilities ? {} : { sys: ["*"] };
   if (os === "linux") return sys;
   const security = ctx.legacy ? { run: ["security"] } : {};

@@ -1,8 +1,10 @@
 /**
  * Native message boxes for desktop extensions: {@linkcode DesktopExtensionHost.confirm} over the
  * runtime's `Deno.desktop.dialog.showMessageBox` (NSAlert, TaskDialogIndirect, GtkMessageDialog).
- * The box is app-modal, so it works with no window open: an `onBeforeQuit` guard asking "Quit
- * anyway?" after the last window closed, or a tray app.
+ * Without a window the box is app-modal, so it works with no window open: an `onBeforeQuit` guard
+ * asking "Quit anyway?" after the last window closed, or a tray app. Given the window it asks for
+ * (`options.window`), it is owned by and modal to that window: on Windows an unowned task dialog
+ * can open behind the app's window, out of reach of the keyboard.
  *
  * RUNTIME-ONLY, like {@link ./extension.ts}'s host: never imported by a client bundle.
  *
@@ -31,6 +33,12 @@ export interface DesktopConfirmDeps {
   readonly desktop?: unknown;
   /** The Deno Desktop runtime's version (default `Deno.version.deno`). */
   readonly runtimeVersion?: string;
+  /**
+   * The runtime window (`Deno.BrowserWindow`) of an app window id, or `undefined` for a window
+   * that is not open: the bridge's `getWindow`. Without it `options.window` is not resolved and the
+   * box is app-modal.
+   */
+  readonly getWindow?: (windowId: string) => unknown;
 }
 
 const KINDS = new Set(["info", "warning", "error"]);
@@ -73,12 +81,34 @@ function checkButtons(buttons: unknown): string[] {
   return [...buttons];
 }
 
+/**
+ * The runtime window `options.window` names, or `undefined` (none given, no resolver, or a window
+ * that is no longer open: the box is then app-modal). A non-string, or an empty one, is a
+ * `validation` error.
+ */
+function ownerWindow(
+  options: DesktopConfirmOptions,
+  getWindow: DesktopConfirmDeps["getWindow"],
+): unknown {
+  const id = options.window;
+  if (id === undefined) return undefined;
+  if (typeof id !== "string" || id === "") {
+    throw invalid('confirm: window must be a window id ("main", "panel" or openWindow\'s)');
+  }
+  const win = getWindow?.(id);
+  return win === null ? undefined : win;
+}
+
 /** Check `options` and build `showMessageBox`'s (Electron's names). */
-function messageBoxOptions(options: DesktopConfirmOptions): Record<string, unknown> {
+function messageBoxOptions(
+  options: DesktopConfirmOptions,
+  getWindow?: DesktopConfirmDeps["getWindow"],
+): Record<string, unknown> {
   if (options === null || typeof options !== "object") {
     throw invalid("confirm: options must be an object");
   }
   checkTexts(options);
+  const owner = ownerWindow(options, getWindow);
   const buttons = checkButtons(options.buttons);
   const count = Math.max(buttons.length, 1);
   const ids = {
@@ -94,11 +124,15 @@ function messageBoxOptions(options: DesktopConfirmOptions): Record<string, unkno
   for (const [key, value] of Object.entries(optional)) {
     if (value !== undefined) out[key] = value;
   }
+  // Owned by and modal to the window (the runtime's `window` option): on Windows the task dialog
+  // gets it as its owner, so it opens over the window and takes its keyboard.
+  if (owner !== undefined) out.window = owner;
   return out;
 }
 
 /**
- * Ask the user with the OS's own message box, app-modal (no window needed). Resolves the pressed
+ * Ask the user with the OS's own message box: owned by and modal to `options.window` when it names
+ * an open window, else app-modal (no window needed). Resolves the pressed
  * button's index; a box dismissed without a button (Escape or the close button with no cancel
  * button, the app quitting) resolves `cancelId`, or `null` without one. Rejects with a
  * `validation` {@linkcode DesktopCapError} for bad options, and with an `unsupported` one (status
@@ -113,7 +147,7 @@ export async function desktopConfirm(
   options: DesktopConfirmOptions,
   deps: DesktopConfirmDeps = {},
 ): Promise<number | null> {
-  const request = messageBoxOptions(options);
+  const request = messageBoxOptions(options, deps.getWindow);
   const api = (deps.desktop ?? (Deno as unknown as { desktop?: unknown }).desktop) as
     | MessageBoxApi
     | undefined;

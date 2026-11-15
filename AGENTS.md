@@ -712,8 +712,8 @@ as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.o
 guards, paused while a `host.confirm` box opened then is up, never for a session end, whose 5 s always run; the OS
 session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s result) quits again, typed, guards and pages
 included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
-other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
-is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
+other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind?, window? })`
+is the OS message box (owned by and modal to `window`, e.g. a handler's `ctx.windowId`), app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
 3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
 `ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
 subframe from a privileged method; `kind` is `verified` only where the runtime marks frames

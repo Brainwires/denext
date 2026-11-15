@@ -159,6 +159,7 @@ export const desktopMeta: CommandMeta = {
     "                                         a free loopback port; --inspect-renderer=127.0.0.1:9229)\n" +
     "  denext desktop package                 Build a distributable bundle for the host OS\n" +
     "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
+    "  denext desktop package --target-os windows --arch arm64  …for Arm64 (x86_64 | arm64 | both)\n" +
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
@@ -190,6 +191,13 @@ export const desktopMeta: CommandMeta = {
       valueName: "<os>",
       help: "package for: macos | linux | windows (default: the host OS; Linux and Windows " +
         "cross-build from any OS, macOS packages on a Mac)",
+    },
+    {
+      name: "arch",
+      type: "string",
+      valueName: "<arch>",
+      help: "package: the architecture to build for — host | x86_64 | arm64 | both (two " +
+        "bundles), and on macOS universal (default: host); the --target-os's script takes it",
     },
     {
       name: "port",

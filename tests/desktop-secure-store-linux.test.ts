@@ -227,7 +227,11 @@ Deno.test("secureStore (Linux): a runtime without its own store is backend_unava
     },
   });
   assertEquals(await call(win, "get", { key: "tok" }), null);
-  assert(ran.length > 0 && ran.every((cmd) => cmd === "powershell.exe"), JSON.stringify(ran));
+  assert(
+    ran.length > 0 &&
+      ran.every((cmd) => cmd === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+    JSON.stringify(ran),
+  );
   assertEquals(runtime.calls, []);
 });
 

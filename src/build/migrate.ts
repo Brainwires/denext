@@ -3073,9 +3073,10 @@ function nextConfigSource(o: {
 /** Source text for the generated `deno desktop` entry (`desktop.ts`). */
 function spaDesktopSource(): string {
   // The entry reads `.deno-desktop/config.json`: the runtime part of denext.config.ts
-  // (`desktop`, `spa.proxy`) that every export, build and `denext desktop` command rewrites, so
-  // ADDING a backend proxy to the config later just works (no desktop.ts hand-edit or
-  // re-migration) and the config module, with any plugin it imports, never ships in the app.
+  // (`desktop`, `spa.proxy`) that every export, `denext desktop run` / `dev` and the package
+  // scripts rewrite, so ADDING a backend proxy to the config later just works (no desktop.ts
+  // hand-edit or re-migration) and the config module, with any plugin it imports, never ships in
+  // the app.
   return GEN_MARKER + "\n" +
     `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native\n` +
     `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +

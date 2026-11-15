@@ -14,6 +14,8 @@ import {
 import { dialogsCapability } from "../src/desktop/caps/dialogs.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import type { DesktopWindowRef } from "../src/desktop/app-windows.ts";
+import { FIRST_MESSAGE_DIALOG_RUNTIME } from "../src/build/deno-version.ts";
+import { withDenoProps } from "./helpers/deno-stub.ts";
 
 const ORIGIN = "http://127.0.0.1:8000";
 const TOKEN = "test-token-1234";
@@ -169,6 +171,37 @@ Deno.test("setup: the host's confirm box goes through the lifecycle (the quit gu
   createDesktopBridge([{ name: "x", methods: {}, setup: (h) => void (bare = h) }]);
   assertEquals(await bare!.quit(), false);
   bare!.onWindowMenuItem(() => {})();
+});
+
+Deno.test("setup: the host's confirm({ window }) box is owned by that OPEN window, not the main one", async () => {
+  const asked: Record<string, unknown>[] = [];
+  const desktop = {
+    dialog: {
+      showMessageBox: (
+        o: Record<string, unknown>,
+      ) => (asked.push(o), Promise.resolve({ response: 1, cancelled: false })),
+    },
+  };
+  const main = { id: 1 };
+  const editor = { id: 2 };
+  const open = new Map<string, unknown>([["main", main], ["window-1", editor]]);
+  let host: DesktopExtensionHost | undefined;
+  createDesktopBridge([{ name: "guard", methods: {}, setup: (h) => void (host = h) }], {
+    // The page-facing getter falls back to the main window; the box's owner must not.
+    getWindow: (id) => open.get(id) ?? main,
+    getOpenWindow: (id) => open.get(id),
+  });
+  await withDenoProps({
+    desktop,
+    version: { ...Deno.version, deno: FIRST_MESSAGE_DIALOG_RUNTIME },
+  }, async () => {
+    assertEquals(await host!.confirm({ message: "Discard?", window: "window-1" }), 1);
+    assertEquals(await host!.confirm({ message: "Discard?", window: "window-2" }), 1);
+    assertEquals(await host!.confirm({ message: "Quit anyway?" }), 1);
+  });
+  assert(asked[0].window === editor, "modal to the calling window");
+  assert(!("window" in asked[1]), "a closed window: app-modal, not the main window");
+  assert(!("window" in asked[2]), "no window: app-modal");
 });
 
 Deno.test("setup: the host's onSecondInstance is desktop.ts's subscription, a no-op without it", () => {

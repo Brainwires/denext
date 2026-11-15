@@ -119,7 +119,7 @@ Deno.test("browserLaunchArgs: an OAuth URL is one un-parsed argv entry on every 
   // Windows: rundll32 FileProtocolHandler, NOT `cmd /c start` — the whole URL (every `&`) is a
   // single argv element, so cmd.exe never parses it as command separators.
   const [winCmd, winArgs] = browserLaunchArgs("windows", url);
-  assertEquals(winCmd, "rundll32.exe");
+  assertEquals(winCmd, "C:\\Windows\\System32\\rundll32.exe");
   assertEquals(winArgs, ["url.dll,FileProtocolHandler", url]);
   assertEquals(winArgs.length, 2);
   assertEquals(winArgs[1], url);

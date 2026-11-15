@@ -91,6 +91,40 @@ and this project adheres to
 
 ### Fixed
 
+- **Security: a Deno Desktop app on Windows no longer runs whichever `powershell.exe`,
+  `explorer.exe` or `rundll32.exe` comes first on `PATH`.** The `secure-store`, `dialogs`, `shell`
+  and `auth-session` capabilities spawned those programs by bare name, and the package baked the
+  same bare names as `--allow-run`, so a same-named program in a user-writable folder listed before
+  `System32` was both the one allowed and the one run, handed the capability's script (the secure
+  store's secrets on stdin) or URL. They now spawn and bake Windows' own copies by absolute path
+  (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, `C:\Windows\explorer.exe`,
+  `C:\Windows\System32\rundll32.exe`), as the `pty` defaults already did. Repackage to pick it up;
+  a Windows installed outside `C:\Windows` refuses these calls instead of running another program.
+- **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
+  `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
+  (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
+  could open behind the app's window, where Return and Escape never reached it. A window that has
+  closed gets an app-modal box, never the main window in its place.
+- **`denext desktop package --arch`.** `--arch x86_64 | arm64 | both` (and `universal` for macOS)
+  picks the architecture to package, `--target-os windows` included; it was an unknown flag, so a
+  Windows Arm64 package could only be built through `-- --arch arm64`. An architecture the target
+  OS's script does not build is refused before the export starts.
+- **An App Router or Pages Router export of a desktop app rewrites `.deno-desktop/config.json`.**
+  `denext export` and `denext desktop build` left it as it was unless the app was in SPA mode, so a
+  capability or `spa.proxy` added to the config reached a bare `deno desktop` build only after
+  `denext desktop run` / `dev` or a package script. The scaffolded `desktop.ts` comment no longer
+  says `denext build` rewrites it (it does not; export after editing the config).
+- **Terminals (`pty`) on Windows.** denext's Deno Desktop runtime opens a ConPTY on Windows from
+  3.0.0-denext.21 (the pinned runtime is later), so `denext desktop doctor` no longer warns that a Windows
+  build has no terminals, `denext desktop add pty` no longer says so, and the doctor checks the
+  Windows floor (`FIRST_WINDOWS_PTY_RUNTIME`) instead. Under an older runtime `spawnPty()` still
+  rejects `unsupported`, now naming that runtime in `error.data.requires`.
+- **`denext desktop add secure-store` names the Windows PowerShell grant.** The
+  Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
+  runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
+  lets any code in the app's process run scripts as the user. The capability's notes, the
+  permission table on the desktop docs page and the source now say so.
+
 - **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
   `start`, `build` and every other verb that runs project code ran it with the flags of the
   config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so

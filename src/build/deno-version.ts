@@ -441,6 +441,27 @@ export function supportsPty(version: string): boolean {
 }
 
 /**
+ * The first Deno Desktop runtime whose `Deno.openPty` starts terminals on Windows (a ConPTY,
+ * Windows 10 1809 and later). Before it the call throws `NotSupported` there, and the `pty`
+ * capability rejects `unsupported`.
+ */
+export const FIRST_WINDOWS_PTY_RUNTIME = "3.0.0-denext.21";
+
+/**
+ * Whether the Deno Desktop runtime `version` starts terminals on `os`: from
+ * {@linkcode FIRST_PTY_RUNTIME} on macOS and Linux, from {@linkcode FIRST_WINDOWS_PTY_RUNTIME} on
+ * Windows. A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @param os The OS the app runs on (`Deno.build.os` spelling).
+ * @returns Whether `spawnPty()` can start a terminal there under it.
+ */
+export function supportsPtyOn(version: string, os: "darwin" | "windows" | "linux"): boolean {
+  const floor = os === "windows" ? FIRST_WINDOWS_PTY_RUNTIME : FIRST_PTY_RUNTIME;
+  return compareDenoVersions(version, floor) >= 0;
+}
+
+/**
  * The first Deno Desktop runtime whose `Deno.desktop.secureStore` serves macOS (the Keychain,
  * written by the app's own process through Security.framework). Under an older or the stock
  * runtime the macOS secure store is `/usr/bin/security`.

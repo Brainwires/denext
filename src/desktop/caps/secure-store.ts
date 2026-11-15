@@ -59,6 +59,7 @@
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { exitedOutput } from "../../build/exited-output.ts";
 import { withOwnModules } from "../../build/windows-powershell.ts";
+import { WINDOWS_POWERSHELL } from "../windows-programs.ts";
 import {
   type DesktopCapability,
   DesktopCapError,
@@ -153,7 +154,7 @@ export function secureStoreCommand(
 ): SecureCommand {
   if (os === "windows") {
     return {
-      cmd: "powershell.exe",
+      cmd: WINDOWS_POWERSHELL,
       args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_VAULT_SCRIPT],
       stdin: JSON.stringify({ op, service, key, value: b64 ?? null }),
     };
