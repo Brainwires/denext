@@ -840,6 +840,7 @@ export async function legacyAbortActive(): Promise<boolean | undefined> {
       (request, info) => {
         seen = request;
         completed = info.completed;
+        completed.catch(() => {}); // a probe cut short rejects it; the `await` below decides
         return new Response("ok", { headers: { connection: "close" } });
       },
     );

@@ -1,5 +1,6 @@
-import { assert, assertEquals, assertNotEquals } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { displayHost, isContentHashed, serveWithPortFallback } from "../src/server/serve-utils.ts";
+import { responseCompletionOf } from "../src/server/remote-addr.ts";
 
 Deno.test("displayHost renders a clickable URL host", () => {
   // Loopback / any-interface → localhost (the bare forms aren't clickable URLs).
@@ -190,4 +191,39 @@ Deno.test("isContentHashed: esbuild / deno bundle `name-HASH` names, never an un
       "unbundled.css",
     ]
   ) assert(!isContentHashed(plain), plain);
+});
+
+Deno.test("a response the client stops reading leaves no unhandled rejection; readers still see it", async () => {
+  // `info.completed` rejects when a streamed HTTP/1.1 response never reaches its end. The server
+  // keeps that promise for every request; nothing here reads it until the server is down, so an
+  // unhandled rejection would fail this test.
+  let seen: Request | undefined;
+  let cancelled!: () => void;
+  const bodyCancelled = new Promise<void>((resolve) => (cancelled = resolve));
+  let port = -1;
+  const server = serveWithPortFallback(
+    { port: 0, hostname: "127.0.0.1", onListen: (addr) => (port = addr.port) },
+    (request) => {
+      seen = request;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("first chunk\n"));
+        },
+        cancel() {
+          cancelled();
+        },
+      });
+      return new Response(body);
+    },
+  );
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+  await conn.write(new TextEncoder().encode("GET / HTTP/1.1\r\nHost: t\r\n\r\n"));
+  await conn.read(new Uint8Array(1024)); // the head and the first chunk
+  conn.close(); // the client goes away mid-stream
+  await bodyCancelled;
+  await server.shutdown();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const completed = responseCompletionOf(seen!);
+  assert(completed, "the server recorded the response's completion");
+  await assertRejects(() => completed);
 });
