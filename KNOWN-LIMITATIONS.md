@@ -57,17 +57,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
-- **WebRTC is data channels only:** `RTCPeerConnection` has no media tracks (`addTrack()`,
-  `addTransceiver()`, `getSenders()` and the rest are empty or throw `NotSupportedError`), and no
-  `certificates` / `RTCPeerConnection.generateCertificate()` (each connection makes its own ECDSA
-  P-256 certificate). The `RTCDtlsTransport` / `RTCIceTransport` objects and the legacy callback
-  signatures are not provided, and `setConfiguration()` records a new configuration but does not
-  gather again.
-- **WebRTC ICE is UDP only:** remote TCP candidates and mDNS `.local` candidates are accepted and
-  skipped. A browser that hides its addresses behind mDNS is still reached, as a peer-reflexive
-  candidate once its checks arrive. Local host candidates are literal addresses, which is why they
-  need `--allow-sys=networkInterfaces`. TURN over TCP or TLS gives relay candidates only (no
-  server-reflexive candidate from such a server).
+- **WebRTC has no capture device or codec:** media flows as encoded frames and RTP. A local track
+  is a `Deno.webrtc.EncodedMediaTrack` the program feeds (`writeFrame()` / `writeRtp()`), and a
+  remote track's packets are read with `Deno.webrtc.readRtp()`; there is no `getUserMedia`, no
+  decoding and no `HTMLCanvasElement`. `getRemoteCertificates()` is empty, and `peerIdentity`,
+  encoded transforms (`RTCRtpScriptTransform`) and a receiver's `audioLevel` are not provided.
+- **WebRTC host candidates are literal addresses unless asked:** a connection publishes its host
+  addresses under mDNS `.local` names only on a `Deno.webrtc.createNetwork({ mdns: true })`
+  network (browsers do it by default), which is why host candidates need
+  `--allow-sys=networkInterfaces`. ICE over TCP is used only on a network with a `tcpPort`; other
+  connections skip a peer's TCP candidates. TURN over UDP is not available on a shared-port
+  network (TCP and TLS TURN are). TURN over TCP or TLS gives relay candidates only.
 - **WebRTC engine:** the protocol stack (ICE, DTLS 1.2, SCTP) is webrtc-rs's `rtc`, pre-1.0 and not
   externally audited. Its parsers are exposed to any peer that completes ICE. A panic inside the
   engine aborts a release build. Firefox has not been tested as a peer.

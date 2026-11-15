@@ -100,6 +100,22 @@ and this project adheres to
   through `requestAnimationFrame` when an app sets them. Without a Preact entry loaded, each call
   site is one null check.
 
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.23.** It adds WebRTC media
+  (`addTransceiver()`, `addTrack()`, senders and receivers with every codec browsers negotiate,
+  `MediaStream`), certificates (`RTCPeerConnection.generateCertificate()`), the DTLS and ICE
+  transports, DTMF and candidate pairs, and `Deno.webrtc` for servers: encoded media tracks a
+  program feeds, RTP reading, certificate export and import, and shared-port networks with 1:1 NAT,
+  ICE-lite, ICE over TCP and mDNS host names. It also fixes `info.completed` resolving for a
+  cut-short HTTP/1.1 stream, a `WebSocket.close()` that waited forever on a silent peer, concurrent
+  HTTP/2 `fetch()` calls failing on refused streams, a `node:http2` crash on GOAWAY,
+  `existsSync()` throwing for a special path (`vite build` under scoped permissions), `deno
+  compile` overflowing its stack on deeply nested npm files and a white window from a per-machine
+  Windows install whose app name had no ASCII letters, and the language server starts faster in
+  workspaces with npm dependencies. The [runtime reference](https://denext.dev/docs/runtime-reference)
+  lists each change.
+
 ### Fixed
 
 - **Security: a Deno Desktop app on Windows no longer runs whichever `powershell.exe`,
