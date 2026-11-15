@@ -78,9 +78,6 @@ async function until(cond: () => boolean, ms: number, what: string): Promise<voi
 Deno.test({
   name: "pty over the real Deno.openPty: a default shell's output and exit reach the window",
   ignore: typeof openPty !== "function",
-  // The capability's coalescing timers and the terminal's streams end with the quit below.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const config = resolvePtyConfig(true, os);
     // Windows: `cmd.exe` from the defaults (PowerShell is slow to start); elsewhere `/bin/sh`.

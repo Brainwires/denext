@@ -85,6 +85,7 @@ on:
       - "src/build/plist-value.ts"
       - "src/build/export-paths.ts"
       - "src/build/export.ts"
+      - "src/build/build.ts" # tests/helpers/bounded-build.ts (a desktop export test's child)
       - "src/build/platform-*.ts"
       # The icon a package script derives when none is set (desktop-icon.ts).
       - "src/build/mobile-icon-source.ts"
