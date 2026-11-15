@@ -107,12 +107,22 @@ export function pendingSpawns(trace: string): string {
   return [...open.values()].join("\n");
 }
 
-/** Read a {@linkcode SPAWN_TRACE} log and say what it shows, for a timeout's error. */
-async function traceReport(file: string): Promise<string> {
-  let trace = "";
+/** A {@linkcode SPAWN_TRACE} log's text, or `""` when nothing was spawned. */
+async function readTrace(file: string): Promise<string> {
   try {
-    trace = await Deno.readTextFile(file);
-  } catch { /* nothing spawned */ }
+    return await Deno.readTextFile(file);
+  } catch {
+    return ""; // nothing spawned
+  }
+}
+
+/**
+ * What a {@linkcode SPAWN_TRACE} log shows, for a timeout's error: read at the deadline, before the
+ * tree is killed. Read after the kill, a subprocess the kill ended first has its `end` line (its
+ * `output()` rejected and the child logged it before it was killed itself, as Windows orders the
+ * kills), and the one it waited on would be reported finished.
+ */
+export function traceReport(trace: string): string {
   const lines = trace.split("\n").filter(Boolean);
   const pending = pendingSpawns(trace);
   return `Its subprocesses (${lines.length} trace line(s)); unfinished:\n${pending || "(none)"}\n` +
@@ -146,6 +156,7 @@ export async function inChild<T = unknown>(run: ChildRun): Promise<ChildResult<T
     // the profile directory they collect into).
     const coverage = Deno.env.get("DENEXT_CHILD_COVERAGE");
     const timeoutMs = run.timeoutMs ?? CHILD_DEADLINE_MS;
+    let atDeadline: string | undefined;
     const out = await runBounded(Deno.execPath(), [
       "run",
       "-A",
@@ -155,12 +166,20 @@ export async function inChild<T = unknown>(run: ChildRun): Promise<ChildResult<T
       "--config",
       fromFileUrl(new URL("deno.json", REPO)),
       main,
-    ], { cwd: run.cwd, env, clearEnv: true, timeoutMs });
+    ], {
+      cwd: run.cwd,
+      env,
+      clearEnv: true,
+      timeoutMs,
+      onDeadline: async () => {
+        atDeadline = await readTrace(trace);
+      },
+    });
     const { stdout, stderr } = out;
     if (out.timedOut) {
       throw new Error(
         `child still running after ${timeoutMs} ms; its tree was killed. It printed:\n` +
-          `${stdout}\n${stderr}\n${await traceReport(trace)}\n` +
+          `${stdout}\n${stderr}\n${traceReport(atDeadline ?? await readTrace(trace))}\n` +
           `Its process tree at the deadline:\n${out.tree}`,
       );
     }
