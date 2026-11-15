@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.18.0\"",
+          "signature": "VERSION: \"4.19.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16915,7 +16915,7 @@
               "kind": "property",
               "name": "pty",
               "signature": "pty?: boolean | DesktopPtyConfig",
-              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later, not on Windows yet;\n`unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
+              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later,\n3.0.0-denext.21 or later on Windows; `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
             },
             {
               "kind": "property",
@@ -18044,20 +18044,26 @@
             {
               "kind": "property",
               "name": "icon",
-              "signature": "icon: string",
-              "doc": "The icon: a PNG in the export, as a path from its root (`\"/tray.png\"` for `public/tray.png`).\nOn macOS a black-and-transparent image is drawn as a template image."
+              "signature": "icon: string | DesktopTrayIconSet",
+              "doc": "The icon: a PNG in the export, as a path from its root (`\"/tray.png\"` for `public/tray.png`).\nOn macOS a black-and-transparent image is drawn as a template image. Or one per OS:\n`{ macos: \"/tray-template.png\", windows: { icon: \"/tray.png\", iconDark: \"/tray-light.png\" },\ndefault: \"/tray.png\" }`; an OS left out takes `default`."
             },
             {
               "kind": "property",
               "name": "iconDark",
               "signature": "iconDark?: string",
-              "doc": "The icon in dark mode, where the OS tells them apart (a path in the export)."
+              "doc": "The icon in dark mode, where the OS tells them apart (a path in the export). A per-OS entry's\nown `iconDark` wins over it."
             },
             {
               "kind": "property",
               "name": "tooltip",
               "signature": "tooltip?: string",
               "doc": "Shown on hover."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "title?: string",
+              "doc": "Short text beside the icon in the macOS menu bar (a count, a timer), as Electron's\n`tray.setTitle`. Ignored where the OS or the Deno Desktop runtime has no tray title\n(`trayTitle` in `appCapabilities()`)."
             },
             {
               "kind": "property",
@@ -18072,6 +18078,82 @@
               "doc": "A panel at the tray icon: a frameless, non-activating window that a click on the icon toggles\nand that hides when it loses focus (the runtime's `Tray.attachPanel`). It is placed under the\nicon in a top menu bar and above it in a bottom taskbar, inside the display's work area; on\nLinux, where the tray has no position, it stays where it last was."
             }
           ]
+        },
+        {
+          "name": "DesktopTrayIconPair",
+          "slug": "DesktopTrayIconPair",
+          "kind": "interface",
+          "signature": "interface DesktopTrayIconPair",
+          "doc": "A tray icon with its dark-mode variant (DesktopTrayIconVariant).",
+          "docFull": "A tray icon with its dark-mode variant ({@link DesktopTrayIconVariant}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "icon",
+              "signature": "icon: string",
+              "doc": "The icon: a PNG path in the export (`\"/tray.png\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "iconDark",
+              "signature": "iconDark?: string",
+              "doc": "The icon in dark mode, where the OS tells them apart (a PNG path in the export)."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTrayIconSet",
+          "slug": "DesktopTrayIconSet",
+          "kind": "interface",
+          "signature": "interface DesktopTrayIconSet",
+          "doc": "DesktopTrayConfig.icon per OS; an OS left out takes default.",
+          "docFull": "{@link DesktopTrayConfig.icon} per OS; an OS left out takes `default`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "macos",
+              "signature": "macos?: DesktopTrayIconVariant",
+              "doc": "The macOS menu bar's: a black-and-transparent template image (about 18 pt; 36 px at 2x)."
+            },
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "windows?: DesktopTrayIconVariant",
+              "doc": "The Windows notification area's: full colour, with `iconDark` for a dark taskbar."
+            },
+            {
+              "kind": "property",
+              "name": "linux",
+              "signature": "linux?: DesktopTrayIconVariant",
+              "doc": "The Linux tray's (AppIndicator / StatusNotifierItem)."
+            },
+            {
+              "kind": "property",
+              "name": "default",
+              "signature": "default?: DesktopTrayIconVariant",
+              "doc": "Every OS not named."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTrayIconVariant",
+          "slug": "DesktopTrayIconVariant",
+          "kind": "typeAlias",
+          "signature": "type DesktopTrayIconVariant = string | DesktopTrayIconPair",
+          "doc": "One OS's tray icon (DesktopTrayIconSet): a PNG path in the export, or it with a dark one.",
+          "docFull": "One OS's tray icon ({@link DesktopTrayIconSet}): a PNG path in the export, or it with a dark one.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "DesktopTrayMenuEntry",
@@ -30044,6 +30126,12 @@
             },
             {
               "kind": "property",
+              "name": "settledSink",
+              "signature": "settledSink?: ((cb: SettledHeadCallback) => void) | null",
+              "doc": "The active settled-render sink (see `onRenderSettled` in server-inserted-html.ts): head\nmarkup computed once the tree has rendered, from its HTML, possibly asynchronously."
+            },
+            {
+              "kind": "property",
               "name": "usedClasses",
               "signature": "usedClasses?: boolean",
               "doc": "Whether this render produced a class component (see {@link markClassRendered}). The\ndocument assembler turns it into the `#__denext_classes` marker that tells the\ngenerated browser entry to load the class runtime before hydrating."
@@ -33649,6 +33737,18 @@
           "signature": "type SetSource = FrameworkMigrationSet | (() => FrameworkMigrationSet | undefined)",
           "doc": "A migration set, or a function that produces it when the CLI asks (undefined: none).",
           "docFull": "A migration set, or a function that produces it when the CLI asks (`undefined`: none).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SettledHeadCallback",
+          "slug": "SettledHeadCallback",
+          "kind": "typeAlias",
+          "signature": "type SettledHeadCallback = (html: string) => VNodeChildren | Promise<VNodeChildren>",
+          "doc": "A settled-render callback: the rendered HTML in, head markup (or a promise of it) out.",
+          "docFull": "A settled-render callback: the rendered HTML in, head markup (or a promise of it) out.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46788,6 +46888,12 @@
               "name": "kind",
               "signature": "readonly kind?: \"info\" | \"warning\" | \"error\"",
               "doc": "The icon (default `\"info\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window?: string",
+              "doc": "The app window the box belongs to: `\"main\"`, `\"panel\"` or an id `openWindow` returned — in a\nhandler, the calling window ({@linkcode DesktopCapCtx.windowId}). The box is then owned by and\nmodal to that window (a sheet on macOS): on Windows it opens over it, never behind it, and\nReturn / Escape reach it. Without one (or naming a window that is no longer open) the box is\napp-modal and needs no window."
             }
           ]
         },
@@ -47124,7 +47230,7 @@
               "kind": "method",
               "name": "confirm",
               "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
-              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Asking on behalf of a window (a handler's\n`ctx.windowId`), pass it as {@linkcode DesktopConfirmOptions.window}: the box is then owned by\nand modal to that window, so on Windows it cannot open behind it. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
             },
             {
               "kind": "method",
@@ -49155,7 +49261,7 @@
               "kind": "method",
               "name": "update",
               "signature": "update(options: DesktopTrayUpdate): void",
-              "doc": "Change the icon, tooltip or menu."
+              "doc": "Change the icon, tooltip, title or menu."
             },
             {
               "kind": "method",
@@ -49222,20 +49328,26 @@
             {
               "kind": "property",
               "name": "icon",
-              "signature": "readonly icon?: DesktopTrayIcon",
-              "doc": "The icon (overrides `desktop.tray.icon`)."
+              "signature": "readonly icon?: DesktopTrayIcon | TrayIconSet<DesktopTrayIcon>",
+              "doc": "The icon (overrides `desktop.tray.icon`), or one per OS (`{ macos, windows, linux, default }`,\neach an icon or `{ icon, iconDark }`): the running OS's entry, else `default`."
             },
             {
               "kind": "property",
               "name": "iconDark",
               "signature": "readonly iconDark?: DesktopTrayIcon",
-              "doc": "The dark-mode icon."
+              "doc": "The dark-mode icon (a per-OS entry's own `iconDark` wins)."
             },
             {
               "kind": "property",
               "name": "tooltip",
               "signature": "readonly tooltip?: string",
               "doc": "The tooltip."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "Short text beside the icon in the macOS menu bar (Electron's `tray.setTitle`); ignored where\nthe runtime has no tray title."
             },
             {
               "kind": "property",
@@ -49378,8 +49490,8 @@
             {
               "kind": "property",
               "name": "icon",
-              "signature": "readonly icon: string",
-              "doc": "The icon: a PNG path in the export (`\"/tray.png\"`)."
+              "signature": "readonly icon: string | TrayIconSet<string>",
+              "doc": "The icon: a PNG path in the export (`\"/tray.png\"`), or one per OS."
             },
             {
               "kind": "property",
@@ -49392,6 +49504,12 @@
               "name": "tooltip",
               "signature": "readonly tooltip?: string",
               "doc": "The tooltip."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string",
+              "doc": "The text beside the icon (macOS' menu bar)."
             },
             {
               "kind": "property",
@@ -49412,8 +49530,8 @@
           "slug": "DesktopTrayUpdate",
           "kind": "interface",
           "signature": "interface DesktopTrayUpdate",
-          "doc": "What update changes on the backend tray (null removes the tooltip / menu / dark icon).",
-          "docFull": "What `update` changes on the backend tray (`null` removes the tooltip / menu / dark icon).",
+          "doc": "What update changes on the backend tray (null removes the tooltip / title / menu / dark icon).",
+          "docFull": "What `update` changes on the backend tray (`null` removes the tooltip / title / menu / dark\nicon).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -49422,8 +49540,8 @@
             {
               "kind": "property",
               "name": "icon",
-              "signature": "readonly icon?: Uint8Array",
-              "doc": "The icon, as PNG bytes."
+              "signature": "readonly icon?: Uint8Array | TrayIconSet<Uint8Array>",
+              "doc": "The icon, as PNG bytes, or one per OS (the running OS's entry, else `default`)."
             },
             {
               "kind": "property",
@@ -49436,6 +49554,12 @@
               "name": "tooltip",
               "signature": "readonly tooltip?: string | null",
               "doc": "The tooltip."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string | null",
+              "doc": "The text beside the icon (macOS)."
             },
             {
               "kind": "property",
@@ -51621,6 +51745,12 @@
             },
             {
               "kind": "property",
+              "name": "openBrowser",
+              "signature": "openBrowser?: (url: string) => Promise<void> | void",
+              "doc": "Opens `openAuthSession`'s authorization URL in the system browser, for the loopback flow and\nfor a custom-scheme callback outside macOS's own auth session. The URL is absolute `https:` and\nalready checked. Default: the OS's own opener, started by absolute path where the OS has one\n(`C:\\Windows\\System32\\rundll32.exe url.dll,FileProtocolHandler <url>` on Windows, `open` on\nmacOS, `xdg-open` on Linux). Give one to choose the browser, or in a test to record the URL\ninstead of opening anything; what it starts needs its own `desktop.extraPermissions.run`."
+            },
+            {
+              "kind": "property",
               "name": "appOrigin",
               "signature": "appOrigin?: string",
               "doc": "The configured `desktop.app.origin`, normalized (from {@link resolveDesktopCapabilities}). Only\ncompared against the origin the runtime publishes, to warn about a stale package; the gates\ntrust the PUBLISHED origin ({@link resolveDesktopTrust})."
@@ -52684,6 +52814,56 @@
               "ref": "denext-desktop/SystemStatsOptions"
             }
           ]
+        },
+        {
+          "name": "TrayIconSet",
+          "slug": "TrayIconSet",
+          "kind": "interface",
+          "signature": "interface TrayIconSet<I>",
+          "doc": "A tray icon per OS; an OS left out takes default.",
+          "docFull": "A tray icon per OS; an OS left out takes `default`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "macos",
+              "signature": "readonly macos?: TrayIconVariant<I>",
+              "doc": "The macOS menu bar's (a black-and-transparent template image, about 18 pt)."
+            },
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "readonly windows?: TrayIconVariant<I>",
+              "doc": "The Windows notification area's (full colour; `iconDark` for a dark taskbar)."
+            },
+            {
+              "kind": "property",
+              "name": "linux",
+              "signature": "readonly linux?: TrayIconVariant<I>",
+              "doc": "The Linux tray's (AppIndicator / StatusNotifierItem)."
+            },
+            {
+              "kind": "property",
+              "name": "default",
+              "signature": "readonly default?: TrayIconVariant<I>",
+              "doc": "Every OS not named."
+            }
+          ]
+        },
+        {
+          "name": "TrayIconVariant",
+          "slug": "TrayIconVariant",
+          "kind": "typeAlias",
+          "signature": "type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }",
+          "doc": "One OS's tray icon: the icon, or the icon with its dark-mode variant.",
+          "docFull": "One OS's tray icon: the icon, or the icon with its dark-mode variant.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "V8_ENTITLEMENTS",
@@ -58258,6 +58438,12 @@
               "name": "trayPopUpMenu",
               "signature": "readonly trayPopUpMenu: boolean",
               "doc": "A tray's `popUpMenu()` opens its menu (macOS, Windows; runtime 3.0.0-denext.6)."
+            },
+            {
+              "kind": "property",
+              "name": "trayTitle",
+              "signature": "readonly trayTitle: boolean",
+              "doc": "A tray's `title` shows beside its icon (macOS' menu bar; a runtime whose `Deno.Tray` has\n`setTitle`). Elsewhere `title` is accepted and not shown."
             }
           ]
         },
@@ -58471,7 +58657,7 @@
               "kind": "method",
               "name": "update",
               "signature": "update(options: Partial<TrayOptions>): Promise<void>",
-              "doc": "Change its icon, tooltip or menu (`null` removes the tooltip / menu / dark icon)."
+              "doc": "Change its icon, tooltip, title or menu (`null` removes the tooltip / title / menu / dark icon)."
             },
             {
               "kind": "method",
@@ -59398,6 +59584,56 @@
           "denextOnly": true
         },
         {
+          "name": "TrayIconSet",
+          "slug": "TrayIconSet",
+          "kind": "interface",
+          "signature": "interface TrayIconSet<I>",
+          "doc": "A tray icon per OS; an OS left out takes default.",
+          "docFull": "A tray icon per OS; an OS left out takes `default`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "macos",
+              "signature": "readonly macos?: TrayIconVariant<I>",
+              "doc": "The macOS menu bar's (a black-and-transparent template image, about 18 pt)."
+            },
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "readonly windows?: TrayIconVariant<I>",
+              "doc": "The Windows notification area's (full colour; `iconDark` for a dark taskbar)."
+            },
+            {
+              "kind": "property",
+              "name": "linux",
+              "signature": "readonly linux?: TrayIconVariant<I>",
+              "doc": "The Linux tray's (AppIndicator / StatusNotifierItem)."
+            },
+            {
+              "kind": "property",
+              "name": "default",
+              "signature": "readonly default?: TrayIconVariant<I>",
+              "doc": "Every OS not named."
+            }
+          ]
+        },
+        {
+          "name": "TrayIconVariant",
+          "slug": "TrayIconVariant",
+          "kind": "typeAlias",
+          "signature": "type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }",
+          "doc": "One OS's tray icon: the icon, or the icon with its dark-mode variant.",
+          "docFull": "One OS's tray icon: the icon, or the icon with its dark-mode variant.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TrayModifiers",
           "slug": "TrayModifiers",
           "kind": "interface",
@@ -59494,20 +59730,26 @@
             {
               "kind": "property",
               "name": "icon",
-              "signature": "readonly icon: TrayIcon",
-              "doc": "The icon (PNG). On macOS a black-and-transparent image is drawn as a template image."
+              "signature": "readonly icon: TrayIcon | TrayIconSet<TrayIcon>",
+              "doc": "The icon (PNG). On macOS a black-and-transparent image is drawn as a template image. Or one\nper OS, `{ macos, windows, linux, default }`, each an icon or `{ icon, iconDark }` (a macOS\ntemplate image, Windows full-colour art with a dark-taskbar variant): the running OS's entry\nis shown, else `default`."
             },
             {
               "kind": "property",
               "name": "iconDark",
               "signature": "readonly iconDark?: TrayIcon | null",
-              "doc": "The icon in dark mode, where the OS tells them apart."
+              "doc": "The icon in dark mode, where the OS tells them apart (a per-OS entry's own wins)."
             },
             {
               "kind": "property",
               "name": "tooltip",
               "signature": "readonly tooltip?: string | null",
               "doc": "Shown on hover."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title?: string | null",
+              "doc": "Short text beside the icon in the macOS menu bar (a count, a timer), as Electron's\n`tray.setTitle`; `null` removes it. Shown where {@linkcode appCapabilities} reports\n`trayTitle`, ignored elsewhere."
             },
             {
               "kind": "property",
@@ -77211,13 +77453,17 @@
           "name": "computed",
           "slug": "computed",
           "kind": "function",
-          "signature": "computed<T>(fn: () => T): ReadonlySignal<T>",
+          "signature": "computed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T>",
           "doc": "A signal derived from other signals: fn re-runs (lazily, when read) after one it read changed.",
           "docFull": "A signal derived from other signals: `fn` re-runs (lazily, when read) after one it read\nchanged.",
           "params": [
             {
               "name": "fn",
               "doc": "Computes the value."
+            },
+            {
+              "name": "options",
+              "doc": "Its name and its watched / unwatched callbacks."
             }
           ],
           "returns": "A read-only signal.",
@@ -77225,16 +77471,57 @@
           "denextOnly": true
         },
         {
+          "name": "createModel",
+          "slug": "createModel",
+          "kind": "function",
+          "signature": "createModel<TModel, TFactoryArgs>(factory: ModelFactory<TModel, TFactoryArgs>): ModelConstructor<TModel, TFactoryArgs>",
+          "doc": "A model constructor (@preact/signals-core's createModel): each new Model(...args) (or call) runs factory, wraps its functions in action, and owns the effects the factory created (outside an untracked callback); model[Symbol.dispose]() disposes them.",
+          "docFull": "A model constructor (`@preact/signals-core`'s `createModel`): each `new Model(...args)` (or\ncall) runs `factory`, wraps its functions in {@link action}, and owns the effects the factory\ncreated (outside an {@link untracked} callback); `model[Symbol.dispose]()` disposes them.",
+          "params": [
+            {
+              "name": "factory",
+              "doc": "Builds the model's signals and actions."
+            }
+          ],
+          "returns": "The constructor.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DisposableLike",
+          "slug": "DisposableLike",
+          "kind": "interface",
+          "signature": "interface DisposableLike",
+          "doc": "Something using / [Symbol.dispose]() disposes.",
+          "docFull": "Something `using` / `[Symbol.dispose]()` disposes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "[Symbol.dispose]",
+              "signature": "[Symbol.dispose](): void",
+              "doc": "Dispose it."
+            }
+          ]
+        },
+        {
           "name": "effect",
           "slug": "effect",
           "kind": "function",
-          "signature": "effect(fn: () => unknown): EffectDispose",
+          "signature": "effect(fn: () => unknown, options?: EffectOptions): EffectDispose",
           "doc": "Run fn now and again after any signal it read changes. fn may return a cleanup, run before the next run and on dispose.",
           "docFull": "Run `fn` now and again after any signal it read changes. `fn` may return a cleanup, run\nbefore the next run and on dispose.",
           "params": [
             {
               "name": "fn",
               "doc": "The effect."
+            },
+            {
+              "name": "options",
+              "doc": "Its name."
             }
           ],
           "returns": "Its dispose function.",
@@ -77252,6 +77539,26 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "EffectOptions",
+          "slug": "EffectOptions",
+          "kind": "interface",
+          "signature": "interface EffectOptions",
+          "doc": "The options of effect and useSignalEffect.",
+          "docFull": "The options of {@link effect} and {@link useSignalEffect}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name?: string",
+              "doc": "A name for debugging tools."
+            }
+          ]
         },
         {
           "name": "For",
@@ -77303,6 +77610,42 @@
           ]
         },
         {
+          "name": "Model",
+          "slug": "Model",
+          "kind": "typeAlias",
+          "signature": "type Model<TModel> = TModel & DisposableLike",
+          "doc": "A model: signals, actions and nested objects of them, with [Symbol.dispose].",
+          "docFull": "A model: signals, actions and nested objects of them, with `[Symbol.dispose]`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ModelConstructor",
+          "slug": "ModelConstructor",
+          "kind": "typeAlias",
+          "signature": "type ModelConstructor<TModel, TFactoryArgs> = new (...args: TFactoryArgs) => Model<TModel>",
+          "doc": "What createModel returns: new it (or call it) to build a model.",
+          "docFull": "What {@link createModel} returns: `new` it (or call it) to build a model.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ModelFactory",
+          "slug": "ModelFactory",
+          "kind": "typeAlias",
+          "signature": "type ModelFactory<TModel, TFactoryArgs> = (...args: TFactoryArgs) => TModel",
+          "doc": "The factory createModel takes.",
+          "docFull": "The factory {@link createModel} takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ReadonlySignal",
           "slug": "ReadonlySignal",
           "kind": "interface",
@@ -77325,6 +77668,12 @@
               "name": "brand",
               "signature": "readonly brand: symbol",
               "doc": "The Preact Signals brand."
+            },
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "readonly name?: string",
+              "doc": "The signal's name (`SignalOptions.name`)."
             },
             {
               "kind": "method",
@@ -77411,13 +77760,17 @@
           "name": "signal",
           "slug": "signal-fn",
           "kind": "function",
-          "signature": "signal<T>(value: T): Signal<T>",
+          "signature": "signal<T>(value: T, options?: SignalOptions<T>): Signal<T>",
           "doc": "Create a signal.",
           "docFull": "Create a signal.",
           "params": [
             {
               "name": "value",
               "doc": "The initial value."
+            },
+            {
+              "name": "options",
+              "doc": "Its name and its watched / unwatched callbacks."
             }
           ],
           "returns": "The signal.",
@@ -77439,12 +77792,16 @@
             {
               "kind": "constructor",
               "name": "constructor",
-              "signature": "constructor(value?: T)",
+              "signature": "constructor(value?: T, options?: SignalOptions<T>)",
               "doc": "Create a signal.",
               "params": [
                 {
                   "name": "value",
                   "doc": "The initial value."
+                },
+                {
+                  "name": "options",
+                  "doc": "Its name and its watched / unwatched callbacks."
                 }
               ]
             },
@@ -77467,6 +77824,22 @@
               "kind": "property",
               "name": "_renders",
               "signature": "_renders: Set<Fiber> | undefined"
+            },
+            {
+              "kind": "property",
+              "name": "_watched",
+              "signature": "_watched: ((this: Signal<T>) => void) | undefined"
+            },
+            {
+              "kind": "property",
+              "name": "_unwatched",
+              "signature": "_unwatched: ((this: Signal<T>) => void) | undefined"
+            },
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string | undefined",
+              "doc": "The signal's name (`SignalOptions.name`), for debugging tools."
             },
             {
               "kind": "property",
@@ -77548,8 +77921,55 @@
             },
             {
               "kind": "method",
+              "name": "_watchedNow",
+              "signature": "_watchedNow(): boolean"
+            },
+            {
+              "kind": "method",
+              "name": "_fireWatch",
+              "signature": "_fireWatch(fn: ((this: Signal<T>) => void) | undefined): void"
+            },
+            {
+              "kind": "method",
+              "name": "_untarget",
+              "signature": "_untarget(target: Computation): void"
+            },
+            {
+              "kind": "method",
               "name": "_notify",
               "signature": "_notify(): void"
+            }
+          ]
+        },
+        {
+          "name": "SignalOptions",
+          "slug": "SignalOptions",
+          "kind": "interface",
+          "signature": "interface SignalOptions<T>",
+          "doc": "The options of signal, computed, useSignal and useComputed.",
+          "docFull": "The options of {@link signal}, {@link computed}, {@link useSignal} and {@link useComputed}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "watched",
+              "signature": "watched?: (this: Signal<T>) => void",
+              "doc": "Called (untracked) when the signal gains its first subscriber."
+            },
+            {
+              "kind": "property",
+              "name": "unwatched",
+              "signature": "unwatched?: (this: Signal<T>) => void",
+              "doc": "Called (untracked) when the signal loses its last subscriber."
+            },
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name?: string",
+              "doc": "A name for debugging tools."
             }
           ]
         },
@@ -77574,13 +77994,17 @@
           "name": "useComputed",
           "slug": "useComputed",
           "kind": "function",
-          "signature": "useComputed<T>(fn: () => T): ReadonlySignal<T>",
+          "signature": "useComputed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T>",
           "doc": "A computed signal owned by the component; fn is always the latest render's.",
           "docFull": "A computed signal owned by the component; `fn` is always the latest render's.",
           "params": [
             {
               "name": "fn",
               "doc": "Computes the value."
+            },
+            {
+              "name": "options",
+              "doc": "Its name and its watched / unwatched callbacks."
             }
           ],
           "returns": "The component's computed signal.",
@@ -77605,16 +78029,37 @@
           "denextOnly": true
         },
         {
+          "name": "useModel",
+          "slug": "useModel",
+          "kind": "function",
+          "signature": "useModel<TModel>(factory: ModelConstructor<TModel, []> | (() => Model<TModel>)): Model<TModel>",
+          "doc": "A model owned by the component (@preact/signals' useModel): built once from a createModel constructor (or a function returning a model), disposed on unmount.",
+          "docFull": "A model owned by the component (`@preact/signals`' `useModel`): built once from a\n{@link createModel} constructor (or a function returning a model), disposed on unmount.",
+          "params": [
+            {
+              "name": "factory",
+              "doc": "The model constructor, or a function returning a model."
+            }
+          ],
+          "returns": "The component's model.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useSignal",
           "slug": "useSignal",
           "kind": "function",
-          "signature": "useSignal<T>(value: T): Signal<T>",
+          "signature": "useSignal<T>(value: T, options?: SignalOptions<T>): Signal<T>",
           "doc": "A signal owned by the component (created once, kept across renders).",
           "docFull": "A signal owned by the component (created once, kept across renders).",
           "params": [
             {
               "name": "value",
               "doc": "The initial value."
+            },
+            {
+              "name": "options",
+              "doc": "Its name and its watched / unwatched callbacks."
             }
           ],
           "returns": "The component's signal.",
@@ -77625,16 +78070,37 @@
           "name": "useSignalEffect",
           "slug": "useSignalEffect",
           "kind": "function",
-          "signature": "useSignalEffect(fn: () => unknown): void",
+          "signature": "useSignalEffect(fn: () => unknown, options?: EffectOptions): void",
           "doc": "An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.",
           "docFull": "An {@link effect} owned by the component: started after mount, disposed on unmount; `fn` is\nalways the latest render's.",
           "params": [
             {
               "name": "fn",
               "doc": "The effect."
+            },
+            {
+              "name": "options",
+              "doc": "Its name."
             }
           ],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "useSignalRef",
+          "slug": "useSignalRef",
+          "kind": "function",
+          "signature": "useSignalRef<T>(value: T): Signal<T> & { current: T }",
+          "doc": "A component-owned signal that is also a ref (@preact/signals/utils's useSignalRef): ref.current reads and writes ref.value, so <div ref={ref} /> sets the signal and a component that read ref.value re-renders.",
+          "docFull": "A component-owned signal that is also a ref (`@preact/signals/utils`'s `useSignalRef`):\n`ref.current` reads and writes `ref.value`, so `<div ref={ref} />` sets the signal and a\ncomponent that read `ref.value` re-renders.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The initial value."
+            }
+          ],
+          "returns": "The signal, with current.",
           "examples": [],
           "denextOnly": true
         }
@@ -82127,6 +82593,25 @@
           "denextOnly": true
         },
         {
+          "name": "viteBuildPlugin",
+          "slug": "viteBuildPlugin",
+          "kind": "function",
+          "signature": "viteBuildPlugin(input: VitePluginInput | (() => VitePluginInput)): ViteEmitterDenextPlugin",
+          "doc": "Run Vite plugins' build hooks as one denext build step (see VITE_BUILD_HOOKS): a Fresh 2 app's other Vite plugins, carried by denext migrate. input may be the plugins (nested arrays and promises included), a Vite config or a module exporting one, or a function returning any of those, called at build so a plugin package loads only then; a plugin that fails to load is skipped with a warning.",
+          "docFull": "Run Vite plugins' build hooks as one denext build step (see {@linkcode VITE_BUILD_HOOKS}): a\nFresh 2 app's other Vite plugins, carried by `denext migrate`. `input` may be the plugins\n(nested arrays and promises included), a Vite config or a module exporting one, or a function\nreturning any of those, called at build so a plugin package loads only then; a plugin that\nfails to load is skipped with a warning.",
+          "params": [
+            {
+              "name": "input",
+              "doc": "The plugins, or what loads them."
+            }
+          ],
+          "returns": "A denext plugin named vite:build.",
+          "examples": [
+            "```ts\n// denext.config.ts\nimport { viteBuildPlugin } from \"denext/plugin-kit/vite-emitter\";\nexport default { plugins: [viteBuildPlugin(() => import(\"./vite.plugins.ts\"))] };\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "ViteEmittedFile",
           "slug": "ViteEmittedFile",
           "kind": "interface",
@@ -82181,6 +82666,12 @@
               "name": "outDir",
               "signature": "readonly outDir: string",
               "doc": "The build output directory."
+            },
+            {
+              "kind": "property",
+              "name": "projectRoot",
+              "signature": "readonly projectRoot?: string",
+              "doc": "The project root (absolute), when the build passes it (a plugin build step's context does)."
             },
             {
               "kind": "property",
@@ -82312,6 +82803,18 @@
           ]
         },
         {
+          "name": "VitePluginInput",
+          "slug": "VitePluginInput",
+          "kind": "typeAlias",
+          "signature": "type VitePluginInput = VitePluginObject | null | false | undefined | Promise<unknown> | readonly unknown[] | { default?: unknown; plugins?: unknown }",
+          "doc": "What viteBuildPlugin takes: plugins, nested arrays, promises, or a module / config.",
+          "docFull": "What {@linkcode viteBuildPlugin} takes: plugins, nested arrays, promises, or a module / config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "VitePluginLike",
           "slug": "VitePluginLike",
           "kind": "interface",
@@ -82340,6 +82843,38 @@
               "name": "generateBundle",
               "signature": "generateBundle?: GenerateBundleHook",
               "doc": "The hook that emits files."
+            }
+          ]
+        },
+        {
+          "name": "VitePluginObject",
+          "slug": "VitePluginObject",
+          "kind": "interface",
+          "signature": "interface VitePluginObject extends VitePluginLike",
+          "doc": "A Vite plugin as viteBuildPlugin reads it: its build hooks, by name.",
+          "docFull": "A Vite plugin as {@linkcode viteBuildPlugin} reads it: its build hooks, by name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "index",
+              "name": "",
+              "signature": "[hook: string]: unknown",
+              "doc": "Any other hook."
+            },
+            {
+              "kind": "property",
+              "name": "enforce",
+              "signature": "enforce?: \"pre\" | \"post\"",
+              "doc": "`\"pre\"` plugins run first, `\"post\"` ones last."
+            }
+          ],
+          "extends": [
+            {
+              "type": "VitePluginLike",
+              "ref": "denext-plugin-kit/VitePluginLike"
             }
           ]
         },
@@ -82473,6 +83008,18 @@
       "module": "denext/plugin-kit/vite-emitter",
       "symbols": [
         {
+          "name": "flattenVitePlugins",
+          "slug": "flattenVitePlugins",
+          "kind": "function",
+          "signature": "flattenVitePlugins(input: unknown): Promise<VitePluginObject[]>",
+          "doc": "Flatten an input into its plugin objects (awaiting promises; a module's default, a config's plugins).",
+          "docFull": "Flatten an input into its plugin objects (awaiting promises; a module's `default`, a config's `plugins`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "GenerateBundleHook",
           "slug": "GenerateBundleHook",
           "kind": "typeAlias",
@@ -82482,6 +83029,49 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VITE_BUILD_HOOKS",
+          "slug": "VITE_BUILD_HOOKS",
+          "kind": "variable",
+          "signature": "VITE_BUILD_HOOKS: \"configResolved\" | \"buildStart\" | \"generateBundle\" | \"writeBundle\" | \"closeBundle\"[]",
+          "doc": "The Vite / Rollup build hooks viteBuildPlugin runs, in this order: configResolved (with a resolved-config stand-in), buildStart, generateBundle, writeBundle, closeBundle (each with this.emitFile, this.warn, this.error). The module-graph hooks below are not run, since denext bundles with esbuild, not Rollup; a plugin that has them is named in a warning.",
+          "docFull": "The Vite / Rollup build hooks {@linkcode viteBuildPlugin} runs, in this order: `configResolved`\n(with a resolved-config stand-in), `buildStart`, `generateBundle`, `writeBundle`, `closeBundle`\n(each with `this.emitFile`, `this.warn`, `this.error`). The module-graph hooks below are not\nrun, since denext bundles with esbuild, not Rollup; a plugin that has them is named in a warning.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VITE_UNSUPPORTED_HOOKS",
+          "slug": "VITE_UNSUPPORTED_HOOKS",
+          "kind": "variable",
+          "signature": "VITE_UNSUPPORTED_HOOKS: \"resolveId\" | \"load\" | \"transform\" | \"renderChunk\" | \"transformIndexHtml\" | \"moduleParsed\" | \"renderStart\" | \"augmentChunkHash\"[]",
+          "doc": "The hooks a Vite plugin may have that denext's build does not run.",
+          "docFull": "The hooks a Vite plugin may have that denext's build does not run.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "viteBuildPlugin",
+          "slug": "viteBuildPlugin",
+          "kind": "function",
+          "signature": "viteBuildPlugin(input: VitePluginInput | (() => VitePluginInput)): ViteEmitterDenextPlugin",
+          "doc": "Run Vite plugins' build hooks as one denext build step (see VITE_BUILD_HOOKS): a Fresh 2 app's other Vite plugins, carried by denext migrate. input may be the plugins (nested arrays and promises included), a Vite config or a module exporting one, or a function returning any of those, called at build so a plugin package loads only then; a plugin that fails to load is skipped with a warning.",
+          "docFull": "Run Vite plugins' build hooks as one denext build step (see {@linkcode VITE_BUILD_HOOKS}): a\nFresh 2 app's other Vite plugins, carried by `denext migrate`. `input` may be the plugins\n(nested arrays and promises included), a Vite config or a module exporting one, or a function\nreturning any of those, called at build so a plugin package loads only then; a plugin that\nfails to load is skipped with a warning.",
+          "params": [
+            {
+              "name": "input",
+              "doc": "The plugins, or what loads them."
+            }
+          ],
+          "returns": "A denext plugin named vite:build.",
+          "examples": [
+            "```ts\n// denext.config.ts\nimport { viteBuildPlugin } from \"denext/plugin-kit/vite-emitter\";\nexport default { plugins: [viteBuildPlugin(() => import(\"./vite.plugins.ts\"))] };\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -82539,6 +83129,12 @@
               "name": "outDir",
               "signature": "readonly outDir: string",
               "doc": "The build output directory."
+            },
+            {
+              "kind": "property",
+              "name": "projectRoot",
+              "signature": "readonly projectRoot?: string",
+              "doc": "The project root (absolute), when the build passes it (a plugin build step's context does)."
             },
             {
               "kind": "property",
@@ -82670,6 +83266,18 @@
           ]
         },
         {
+          "name": "VitePluginInput",
+          "slug": "VitePluginInput",
+          "kind": "typeAlias",
+          "signature": "type VitePluginInput = VitePluginObject | null | false | undefined | Promise<unknown> | readonly unknown[] | { default?: unknown; plugins?: unknown }",
+          "doc": "What viteBuildPlugin takes: plugins, nested arrays, promises, or a module / config.",
+          "docFull": "What {@linkcode viteBuildPlugin} takes: plugins, nested arrays, promises, or a module / config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "VitePluginLike",
           "slug": "VitePluginLike",
           "kind": "interface",
@@ -82698,6 +83306,38 @@
               "name": "generateBundle",
               "signature": "generateBundle?: GenerateBundleHook",
               "doc": "The hook that emits files."
+            }
+          ]
+        },
+        {
+          "name": "VitePluginObject",
+          "slug": "VitePluginObject",
+          "kind": "interface",
+          "signature": "interface VitePluginObject extends VitePluginLike",
+          "doc": "A Vite plugin as viteBuildPlugin reads it: its build hooks, by name.",
+          "docFull": "A Vite plugin as {@linkcode viteBuildPlugin} reads it: its build hooks, by name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "index",
+              "name": "",
+              "signature": "[hook: string]: unknown",
+              "doc": "Any other hook."
+            },
+            {
+              "kind": "property",
+              "name": "enforce",
+              "signature": "enforce?: \"pre\" | \"post\"",
+              "doc": "`\"pre\"` plugins run first, `\"post\"` ones last."
+            }
+          ],
+          "extends": [
+            {
+              "type": "VitePluginLike",
+              "ref": "denext-plugin-kit-vite-emitter/VitePluginLike"
             }
           ]
         }

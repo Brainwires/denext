@@ -161,8 +161,20 @@ through `viteEmitterPlugin(vitePlugin)` from `denext/plugin-kit/vite-emitter` (t
 `emitFile` publishes through this seam (asset files, by `fileName`, or by `name` under that
 content-hashed `[name]-[hash][extname]` name, which `this.getFileName(ref)` returns), and a
 `bundle` holding one chunk whose `modules` are `clientModules`. A chunk-type `emitFile`, a custom
-`assetFileNames` pattern and `setAssetSource` are not supported, and other Vite hooks are not
-run.
+`assetFileNames` pattern and `setAssetSource` are not supported.
+
+`viteBuildPlugin(input)` from the same entry runs a whole set of Vite plugins' build hooks as one
+build step, in Rollup's order: `configResolved` (with a resolved-config stand-in: `command:
+"build"`, `mode: "production"`, `isProduction: true`, `build.outDir`), `buildStart`,
+`generateBundle`, `writeBundle` and `closeBundle`, each with the `this` above (`emitFile`,
+`getFileName`, `warn`, `error`). `input` is the plugins (nested arrays and promises, as Vite takes
+them), a Vite config or a module exporting one, or a function returning any of those, called at
+build so a plugin package loads only then (one that fails to load is skipped with a warning).
+`apply: "serve"` plugins are skipped and `enforce: "pre"` / `"post"` order kept. The
+module-graph hooks (`resolveId`, `load`, `transform`, `renderChunk`, `moduleParsed`,
+`renderStart`, `augmentChunkHash`) and `transformIndexHtml` are not run, since denext bundles
+with esbuild rather than Rollup: a plugin that has them is named in a warning. Dev-server hooks
+(`configureServer`, `handleHotUpdate`) have no denext counterpart.
 
 ### Seam 3b — prepare steps (codegen, dev **and** build)
 

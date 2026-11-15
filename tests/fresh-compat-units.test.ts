@@ -45,7 +45,7 @@ function ctxFor(url: string, init: RequestInit = {}, next = () => new Response("
   return ctx;
 }
 
-Deno.test("App records middleware, code routes, layouts and handlers; islands() is reported", async () => {
+Deno.test("App records middleware, code routes, layouts, handlers and islands", async () => {
   const mw = () => new Response("mw");
   const app = new App({ basePath: "/x" })
     .use(mw)
@@ -64,7 +64,8 @@ Deno.test("App records middleware, code routes, layouts and handlers; islands() 
     .notFound(mw)
     .route("/r", {})
     .mountApp("/m", {})
-    .islands({});
+    .islands({}, ["./islands/A.tsx", new URL("file:///x/B.tsx")])
+    .island("./components/C.tsx", "C", mw);
   assertEquals(app.config.basePath, "/x");
   assertEquals(app._middlewares.map((m) => [m.path, m.fns.length]), [["*", 1], ["/api", 2]]);
   assertEquals(app._routes.map((r) => r.method), [
@@ -82,7 +83,12 @@ Deno.test("App records middleware, code routes, layouts and handlers; islands() 
   assertEquals(app._notFound, { handler: mw });
   assertEquals(app._pages, [{ pattern: "/r", route: {}, config: undefined }]);
   // A mountApp() of something that is not an App adds nothing.
-  assertEquals(app._ignored.map((i) => i.call), ["islands"]);
+  assertEquals(app._ignored, []);
+  assertEquals(app._islands.map((i) => [i.specifier, i.exportName]), [
+    ["./islands/A.tsx", undefined],
+    ["file:///x/B.tsx", undefined],
+    ["./components/C.tsx", "C"],
+  ]);
   assertEquals(constructedApps().at(-1), app as never);
   await app.listen();
   assertThrows(() => app.handler(), Error, "denext serves the app");

@@ -2,7 +2,9 @@
 // `Deno.desktop.dialog.showMessageBox`: the options it hands the runtime (Electron's names), the
 // answer it resolves (the button index, `cancelId` or `null` for a dismissed box), the checks it
 // makes first, and the `unsupported` refusal on a runtime without native message boxes — whether
-// the runtime predates FIRST_MESSAGE_DIALOG_RUNTIME or simply has no `showMessageBox`.
+// the runtime predates FIRST_MESSAGE_DIALOG_RUNTIME or simply has no `showMessageBox`. Given the
+// window it asks for (`window`), the box is owned by and modal to that window: the runtime gets the
+// window's `BrowserWindow`, so on Windows the task dialog opens over it rather than behind it.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { desktopConfirm } from "../src/desktop/message-box.ts";
@@ -154,4 +156,32 @@ Deno.test("confirm: the runtime's own refusals map to validation and dialog_fail
     "dialog_failed",
   );
   assertEquals(failure.status, 500);
+});
+
+Deno.test("confirm: the window it asks for owns the box (the runtime's window option)", async () => {
+  const { desktop, asked } = fakeDesktop({ response: 0, cancelled: false });
+  const editor = { id: 7, title: "editor" };
+  const getWindow = (id: string) => (id === "window-1" ? editor : undefined);
+  const deps = { desktop, runtimeVersion: NEW, getWindow };
+  assertEquals(await desktopConfirm({ message: "Discard?", window: "window-1" }, deps), 0);
+  assert(asked[0].window === editor, "the BrowserWindow itself, modal to it");
+  assertEquals({ ...asked[0], window: undefined }, {
+    message: "Discard?",
+    type: "info",
+    buttons: [],
+    window: undefined,
+  });
+  // A window that is no longer open, and no window at all: app-modal, no window option.
+  await desktopConfirm({ message: "m", window: "window-9" }, deps);
+  await desktopConfirm({ message: "m" }, deps);
+  assertEquals([asked[1], asked[2]].map((a) => "window" in a), [false, false]);
+  // A window id without a resolver (no window registry) is app-modal too.
+  await desktopConfirm({ message: "m", window: "main" }, { desktop, runtimeVersion: NEW });
+  assert(!("window" in asked[3]));
+  // A window that is not an id is a validation error before the runtime is asked.
+  for (const window of ["", 3, {}]) {
+    // deno-lint-ignore no-explicit-any
+    await refused(desktopConfirm({ message: "m", window } as any, deps), "validation");
+  }
+  assertEquals(asked.length, 4);
 });

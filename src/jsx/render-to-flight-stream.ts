@@ -14,6 +14,7 @@ import {
   beginServerInsertCollection,
   escapeHtml,
   flushServerInsertedHTML,
+  flushSettledHead,
   type HeadCollector,
 } from "./render-to-string.ts";
 import { beginSignalCollection, endSignalCollection } from "../runtime/signal-state.ts";
@@ -419,6 +420,7 @@ export async function renderFlightShell(
     // inline (and their `useServerInsertedHTML` markup is collected with the shell's).
     await renderer.boundaries.quiet();
     flushServerInsertedHTML(sink.inserted, head);
+    await flushSettledHead(sink.settled, head, shell.html);
     // A boundary decided inline is part of the shell: a control signal it threw sets the
     // whole response (a 404 page, a redirect) — the caller renders the page buffered.
     const signal = renderer.boundaries.inlineSignal(shell.html);

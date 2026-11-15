@@ -79,6 +79,7 @@ Deno.test("plugin-kit does not leak an over-broad value surface", () => {
     "tapChannelAuthorized",
     "toBase64Url",
     "verifyOrigin",
+    "viteBuildPlugin",
     "viteEmitterPlugin",
   ]);
 });

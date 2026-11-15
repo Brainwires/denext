@@ -1014,8 +1014,8 @@ export interface DesktopCapabilitiesConfig {
   keepAwake?: boolean;
   /**
    * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
-   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later, not on Windows yet;
-   * `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later,
+   * 3.0.0-denext.21 or later on Windows; `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
    * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
    * window that started it. `true` takes the defaults.
    */
@@ -1940,13 +1940,24 @@ export interface DesktopWindowMenuItemConfig {
 export interface DesktopTrayConfig {
   /**
    * The icon: a PNG in the export, as a path from its root (`"/tray.png"` for `public/tray.png`).
-   * On macOS a black-and-transparent image is drawn as a template image.
+   * On macOS a black-and-transparent image is drawn as a template image. Or one per OS:
+   * `{ macos: "/tray-template.png", windows: { icon: "/tray.png", iconDark: "/tray-light.png" },
+   * default: "/tray.png" }`; an OS left out takes `default`.
    */
-  icon: string;
-  /** The icon in dark mode, where the OS tells them apart (a path in the export). */
+  icon: string | DesktopTrayIconSet;
+  /**
+   * The icon in dark mode, where the OS tells them apart (a path in the export). A per-OS entry's
+   * own `iconDark` wins over it.
+   */
   iconDark?: string;
   /** Shown on hover. */
   tooltip?: string;
+  /**
+   * Short text beside the icon in the macOS menu bar (a count, a timer), as Electron's
+   * `tray.setTitle`. Ignored where the OS or the Deno Desktop runtime has no tray title
+   * (`trayTitle` in `appCapabilities()`).
+   */
+  title?: string;
   /** The menu (right click; on Linux usually any click). */
   menu?: readonly DesktopTrayMenuItem[];
   /**
@@ -1956,6 +1967,29 @@ export interface DesktopTrayConfig {
    * Linux, where the tray has no position, it stays where it last was.
    */
   panel?: DesktopTrayPanelConfig;
+}
+
+/** One OS's tray icon ({@link DesktopTrayIconSet}): a PNG path in the export, or it with a dark one. */
+export type DesktopTrayIconVariant = string | DesktopTrayIconPair;
+
+/** A tray icon with its dark-mode variant ({@link DesktopTrayIconVariant}). */
+export interface DesktopTrayIconPair {
+  /** The icon: a PNG path in the export (`"/tray.png"`). */
+  icon: string;
+  /** The icon in dark mode, where the OS tells them apart (a PNG path in the export). */
+  iconDark?: string;
+}
+
+/** {@link DesktopTrayConfig.icon} per OS; an OS left out takes `default`. */
+export interface DesktopTrayIconSet {
+  /** The macOS menu bar's: a black-and-transparent template image (about 18 pt; 36 px at 2x). */
+  macos?: DesktopTrayIconVariant;
+  /** The Windows notification area's: full colour, with `iconDark` for a dark taskbar. */
+  windows?: DesktopTrayIconVariant;
+  /** The Linux tray's (AppIndicator / StatusNotifierItem). */
+  linux?: DesktopTrayIconVariant;
+  /** Every OS not named. */
+  default?: DesktopTrayIconVariant;
 }
 
 /** The tray panel ({@link DesktopTrayConfig.panel}). */

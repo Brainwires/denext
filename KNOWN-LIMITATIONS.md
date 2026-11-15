@@ -57,17 +57,17 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
-- **WebRTC is data channels only:** `RTCPeerConnection` has no media tracks (`addTrack()`,
-  `addTransceiver()`, `getSenders()` and the rest are empty or throw `NotSupportedError`), and no
-  `certificates` / `RTCPeerConnection.generateCertificate()` (each connection makes its own ECDSA
-  P-256 certificate). The `RTCDtlsTransport` / `RTCIceTransport` objects and the legacy callback
-  signatures are not provided, and `setConfiguration()` records a new configuration but does not
-  gather again.
-- **WebRTC ICE is UDP only:** remote TCP candidates and mDNS `.local` candidates are accepted and
-  skipped. A browser that hides its addresses behind mDNS is still reached, as a peer-reflexive
-  candidate once its checks arrive. Local host candidates are literal addresses, which is why they
-  need `--allow-sys=networkInterfaces`. TURN over TCP or TLS gives relay candidates only (no
-  server-reflexive candidate from such a server).
+- **WebRTC has no capture device or codec:** media flows as encoded frames and RTP. A local track
+  is a `Deno.webrtc.EncodedMediaTrack` the program feeds (`writeFrame()` / `writeRtp()`), and a
+  remote track's packets are read with `Deno.webrtc.readRtp()`; there is no `getUserMedia`, no
+  decoding and no `HTMLCanvasElement`. `getRemoteCertificates()` is empty, and `peerIdentity`,
+  encoded transforms (`RTCRtpScriptTransform`) and a receiver's `audioLevel` are not provided.
+- **WebRTC host candidates are literal addresses unless asked:** a connection publishes its host
+  addresses under mDNS `.local` names only on a `Deno.webrtc.createNetwork({ mdns: true })`
+  network (browsers do it by default), which is why host candidates need
+  `--allow-sys=networkInterfaces`. ICE over TCP is used only on a network with a `tcpPort`; other
+  connections skip a peer's TCP candidates. TURN over UDP is not available on a shared-port
+  network (TCP and TLS TURN are). TURN over TCP or TLS gives relay candidates only.
 - **WebRTC engine:** the protocol stack (ICE, DTLS 1.2, SCTP) is webrtc-rs's `rtc`, pre-1.0 and not
   externally audited. Its parsers are exposed to any peer that completes ICE. A panic inside the
   engine aborts a release build. Firefox has not been tested as a peer.
@@ -408,32 +408,33 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### Fresh and Preact
 
-- **Fresh:** partial navigation merges only the `<title>`, `<meta>` and stylesheet `<link>`
-  elements of an answer's head (no `<script>` or `<style>`, and nothing the page has is
-  removed). Browser back / forward to an entry partial navigation made before a reload fetches
-  it and replaces its regions, and back past a whole-page navigation re-renders that page, so an
-  `append` / `prepend` history is replayed only between entries of the same page load and page.
-  `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not run;
-  `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+- **Fresh:** a Fresh 2 app's other Vite plugins run their build hooks (`configResolved`,
+  `buildStart`, `generateBundle`, `writeBundle`, `closeBundle`) through `viteBuildPlugin`, not
+  their module-graph hooks (`resolveId`, `load`, `transform`, `renderChunk`) or
+  `transformIndexHtml`: denext bundles with esbuild. A Fresh 1.x plugin's render hook gets the page's HTML once it has rendered, but
+  the `htmlText` it returns does not replace the page (denext writes its own render); a sync
+  `render` hook runs once the page has rendered rather than around it, and an async hook that
+  keeps module-level state between its start and its result sees concurrent requests'
+  renders interleave. A plugin route named after one of Fresh's special files (`_app`, `_404`,
+  `_500`, `_layout`, `_middleware`) is skipped with a warning, `buildStart` / `buildEnd` /
+  `configResolved` are not called, and the islands a plugin from outside the project declares
+  are not read (they render without hydrating). Partial navigation never runs an executable
+  `<script>` from the answer's head (Fresh does not either). `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
   files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
   page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
   Response body renders as the not-found page's text, at its status, so the static files in
-  `public/` still answer first. `csp({ useNonce: true })` leaves out `'unsafe-inline'` (denext
-  allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
-  true under `denext start`, where the source runs in place rather than from Vite's build output.
-  `denext migrate --check` lists each one it finds
-  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
-- **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
-  its `signal` / `computed` / `effect` (and hook forms) take no options argument (the parity
-  gate lists each in `tests/fixtures/react-parity-known-gaps.json`). Of Preact's `options` hooks denext calls `vnode`, `event`, `useDebugValue` and
-  `attr` (for elements the Preact entry points create); `diffed`,
-  `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
-  so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
+  `public/` still answer first. `denext migrate --check` lists each one it finds
+  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
+- **Preact:** Preact's `options` hooks receive denext's elements (`type`, `props`, `key`), not
+  Preact's internal vnodes (`_diff` / `__b` runs as an element is created), and `_catchError` /
+  `__e`, `_hook` / `__h` and `_root` / `__` are not called, so `preact/debug` / `preact/devtools` (which read Preact's
+  internal vnode fields) are empty modules; `options.unmount` sees the removed vnodes parent
+  first, but their effect cleanups keep React's child-first order. `useErrorBoundary` never catches during
   a server render, and a production build compiles its boundary support in only when the app's
   own sources name `useErrorBoundary` or import preact-iso (a Preact library that calls the hook
   needs the app to name it once). `denext/preact/render-to-string` keeps denext's attribute order and hyphenated SVG attributes, ignores the legacy `context` argument,
-  and `renderToReadableStream` sends the whole document once resolved (no fallback-first
-  streaming); `preact-render-to-string/jsx` and `/stream-node` are not mapped. A migrated Preact
+  and `renderToReadableStream` (and `/stream-node`'s `renderToPipeableStream`) sends the whole
+  document once resolved (no fallback-first streaming). A migrated Preact
   app runs as a SPA, so preset-vite's `prerender` does not carry over. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
   node in place; a signal bound to a DOM prop needs Preact's JSX runtime

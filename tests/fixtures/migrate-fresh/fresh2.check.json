@@ -109,14 +109,13 @@
     {
       "path": "vite.config.ts",
       "action": "delete"
-    }
-  ],
-  "wontMigrate": [
+    },
     {
-      "item": "vite.config.ts: inspect()",
-      "reason": "a Vite plugin; denext builds the app without Vite. Port what it does (a build step, an emitted file) to denext.config.ts (`plugins`, `viteEmitterPlugin`)"
+      "path": "vite.plugins.ts",
+      "action": "create"
     }
   ],
+  "wontMigrate": [],
   "review": [
     {
       "item": "routes/lang/[[lang]].tsx",
@@ -127,8 +126,12 @@
       "reason": "its URL pattern /@:version/:path* has no app/ folder equivalent: middleware.ts answers it with the route's handler"
     },
     {
+      "item": "vite.config.ts: inspect()",
+      "reason": "moved to vite.plugins.ts, which viteBuildPlugin runs at build: configResolved, buildStart, generateBundle, writeBundle and closeBundle (with this.emitFile); resolveId / load / transform / renderChunk / transformIndexHtml are not run, and dev-server hooks have no denext counterpart"
+    },
+    {
       "item": "import.meta.env",
-      "reason": "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only variables are not in it: read Deno.env). PROD is true under `denext start`, where your source runs in place, not from Vite's build output: check code that picks a file path by it (components/Env.tsx)"
+      "reason": "rewritten to importMetaEnv from denext/fresh/env (MODE, DEV, PROD, SSR, BASE_URL and the FRESH_PUBLIC_* / DENEXT_PUBLIC_* / NEXT_PUBLIC_* variables; server-only variables are not in it: read Deno.env). A PROD / DEV test choosing between two import.meta.url-relative locations was reduced to the source location, which denext runs from under dev and start alike (components/Env.tsx)"
     }
   ],
   "dependencies": {

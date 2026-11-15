@@ -4,13 +4,15 @@
 // happy paths perform a full static export + `deno desktop` spawn and are exercised by
 // the desktop e2e/integration suites; here we cover the pure guard logic.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join, resolve } from "@std/path";
 import {
   desktopCommand,
+  packageArchArgs,
   packageScriptAge,
   packageScriptWarnings,
 } from "../src/cli/commands/desktop.ts";
+import { CommandRegistry } from "../src/cli/command.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
@@ -74,6 +76,52 @@ Deno.test("desktop package rejects an unsupported target OS", async () => {
   }
   assert(exit.calls.includes(1));
   assertStringIncludes(cap.errs.join("\n"), "macos | linux | windows");
+});
+
+Deno.test("desktop package --arch: parsed for every target OS (it was an unknown flag)", () => {
+  const reg = new CommandRegistry();
+  reg.register(desktopCommand);
+  const out = reg.parse(["desktop", "package", "--target-os", "windows", "--arch", "arm64"]);
+  assert(out.kind === "run", JSON.stringify(out));
+  assertEquals(out.ctx.flags.arch, "arm64");
+  assertEquals(out.ctx.flags["target-os"], "windows");
+});
+
+Deno.test("desktop package --arch: the script arguments each target OS takes", () => {
+  assertEquals(packageArchArgs("windows", undefined), [], "the script's default: the host");
+  assertEquals(packageArchArgs("windows", "arm64"), ["--arch", "arm64"]);
+  assertEquals(packageArchArgs("windows", "x86_64"), ["--arch", "x86_64"]);
+  assertEquals(packageArchArgs("windows", "both"), ["--arch", "both"]);
+  assertEquals(packageArchArgs("windows", "AArch64"), ["--arch", "arm64"]);
+  assertEquals(packageArchArgs("linux", "x64"), ["--arch", "x86_64"]);
+  assertEquals(packageArchArgs("macos", "universal"), ["--arch", "universal"]);
+  for (const os of ["windows", "linux"] as const) {
+    assertThrows(() => packageArchArgs(os, "universal"), Error, "host | x86_64 | arm64 | both");
+  }
+  assertThrows(() => packageArchArgs("windows", "ia32"), Error, "--arch ia32");
+});
+
+Deno.test("desktop package refuses an --arch the target OS does not build, before any script", async () => {
+  const cap = capture();
+  const exit = stubExit();
+  const dir = await tempDir("denext_desktop_arch_");
+  try {
+    await desktopCommand.run(makeCtx({
+      positionals: ["package"],
+      flags: { "target-os": "windows", arch: "universal" },
+      global: { cwd: dir },
+    }));
+  } catch (e) {
+    assertStringIncludes(String(e), "__exit__1");
+  } finally {
+    exit.restore();
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+  assert(exit.calls.includes(1));
+  const errs = cap.errs.join("\n");
+  assertStringIncludes(errs, "--arch universal");
+  assert(!errs.includes("no packaging script"), "refused before looking for the script");
 });
 
 Deno.test("desktop package errors when the packaging script is missing", async () => {

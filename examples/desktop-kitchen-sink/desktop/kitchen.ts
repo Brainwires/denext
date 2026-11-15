@@ -44,6 +44,7 @@ import {
 } from "denext/desktop/updater";
 import { join, resolve, SEPARATOR } from "@std/path";
 import config from "../denext.config.ts";
+import { standInBrowser, standInBrowserUrls } from "./browser-stand-in.ts";
 import {
   DRIVE_FILE,
   type DriveEvent,
@@ -431,6 +432,8 @@ export default defineDesktopExtension({
       handler: async (_args, ctx) => {
         const dir = await outDir(ctx.appSupportDir);
         if (!dir) return { lines: null };
+        // Windows: the in-process stand-in (the opener is started by absolute path).
+        if (standInBrowser()) return { lines: [...standInBrowserUrls()] };
         let text = "";
         try {
           text = await Deno.readTextFile(join(dir, "bin", "browser.log"));

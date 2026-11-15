@@ -104,10 +104,11 @@ await runDesktop({
       <p>
         The entry reads <code>.deno-desktop/config.json</code>, not{" "}
         <code>denext.config.ts</code>: the part of the config the app uses at runtime (the{" "}
-        <code>desktop</code> section and <code>spa.proxy</code>), which every export, build and{" "}
-        <code>denext desktop</code>{" "}
-        command (and the package scripts) rewrites from the config whenever the entry imports it.
-        {" "}
+        <code>desktop</code> section and <code>spa.proxy</code>), which every export{" "}
+        (<code>denext export</code>, <code>denext desktop build</code>),{" "}
+        <code>denext desktop run</code> / <code>dev</code>{" "}
+        and the package scripts rewrite from the config whenever the entry imports it{" "}
+        (<code>denext build</code> does not: export after editing the config).{" "}
         <code>deno desktop</code>{" "}
         compiles the entry&apos;s imports into the app, so importing the config module would ship
         every plugin it imports (and their build toolchain) too. An entry that still imports{" "}
@@ -510,9 +511,11 @@ ws.onopen = () =>
         In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}
         marker into the HTML the dev server returns, so <code>runtimePlatform()</code> reports{" "}
         <code>"desktop"</code> as in a real window, and <code>openAuthSession</code>{" "}
-        and the OTA boot beacon work against the local runtime. The per-launch token rides the page
-        too, so the capability bridge (<code>secureStore</code>, <code>fs</code>, …) works. With
-        {" "}
+        and the OTA boot beacon work against the local runtime. The page is rewritten as it streams,
+        so its first bytes and each streamed Suspense boundary reach the window when the dev server
+        sends them; the marker goes right after the page&apos;s <code>&lt;head&gt;</code>{" "}
+        (never inside a comment or a script). The per-launch token rides the page too, so the
+        capability bridge (<code>secureStore</code>, <code>fs</code>, …) works. With{" "}
         <code>--lan</code>{" "}
         it does so only when the dev URL carries the dev server&apos;s per-run session token (<code>
           ?__denext_dev=…
@@ -2149,8 +2152,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>--allow-run</code>: security only while <code>desktop.secureStore.legacy</code>
               {" "}
               is on ·{" "}
-              <code>--allow-run</code>: powershell.exe · none. Before runtime 3.0.0-denext.16 macOS
-              and Linux also bake an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
+              <code>--allow-run</code>: Windows PowerShell by absolute path (on every runtime: the
+              runtime&apos;s own store has no Windows backend; a script interpreter, so any code in
+              the app can run scripts through it) · none. Before runtime 3.0.0-denext.16 macOS and
+              Linux also bake an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
             </td>
             <td>full</td>
           </tr>
@@ -3386,13 +3391,17 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         GtkMessageDialog) and your button labels: <code>message</code>, <code>detail</code>,{" "}
         <code>title</code>, <code>buttons</code> (at most 16; none is one "OK"),{" "}
         <code>defaultId</code> (Return), <code>cancelId</code> (Escape) and <code>kind</code>{" "}
-        (<code>"info"</code>, <code>"warning"</code>,{" "}
-        <code>"error"</code>). The box is app-modal, so it works with no window open, from an{" "}
+        (<code>"info"</code>, <code>"warning"</code>, <code>"error"</code>). Without a{" "}
+        <code>window</code> the box is app-modal, so it works with no window open, from an{" "}
         <code>onBeforeQuit</code>{" "}
-        guard after the last window closed or in a tray app. It resolves the pressed button&apos;s
-        index; a box dismissed without a button resolves <code>cancelId</code>, or <code>null</code>
+        guard after the last window closed or in a tray app. Asking for a window (in a handler, the
+        calling one: <code>{`window: ctx.windowId`}</code>), pass it as{" "}
+        <code>window</code>: the box is then owned by and modal to that window (a sheet on macOS),
+        so on Windows it opens over the window instead of behind it and Return and Escape reach it;
+        a window that has closed meanwhile gets an app-modal box. It resolves the pressed
+        button&apos;s index; a box dismissed without a button resolves <code>cancelId</code>, or
         {" "}
-        without one. Bad options reject with{" "}
+        <code>null</code> without one. Bad options reject with{" "}
         <code>validation</code>; a runtime without native message boxes (<code>
           Deno.desktop.dialog.showMessageBox
         </code>, Deno Desktop runtime 3.0.0-denext.16) rejects with <code>unsupported</code>.{" "}
@@ -4389,6 +4398,49 @@ await bounce({ critical: true }); // until the app is focused`}
           hiding the Dock icon once the backend starts.
         </li>
       </ul>
+      <h3 id="desktop-tray-icons">Tray icons per OS, and a tray title</h3>
+      <p>
+        Each OS wants its own tray art: the macOS menu bar draws a black-and-transparent template
+        image (about 18 pt, so a 36 px PNG for Retina) that the system tints for light and dark menu
+        bars, while the Windows notification area shows full-colour art, ideally with a variant for
+        a dark taskbar. <code>icon</code> takes one image for every OS, or{" "}
+        <code>{"{ macos, windows, linux, default }"}</code>, each an image or{" "}
+        <code>{"{ icon, iconDark }"}</code>: the running OS&apos;s entry is shown, else{" "}
+        <code>default</code>. It works the same in <code>desktop.tray.icon</code>{" "}
+        (paths in the export),{" "}
+        <code>runDesktop({"{ tray: { icon } }"})</code>, the backend handle&apos;s{" "}
+        <code>update</code>, and <code>createTray</code> / <code>tray.update</code>{" "}
+        in a page (PNG bytes or base64). An entry&apos;s own <code>iconDark</code>{" "}
+        wins over a separate <code>iconDark</code>. A set that names neither the running OS nor{" "}
+        <code>default</code> is an error: <code>createTray</code> rejects{" "}
+        <code>validation</code>, and <code>desktop.tray</code> fails at launch.
+      </p>
+      <p>
+        <code>title</code>{" "}
+        is short text beside the icon in the macOS menu bar (a count, a timer), as Electron&apos;s
+        {" "}
+        <code>tray.setTitle</code>, and <code>null</code> removes it. It is shown where{" "}
+        <code>appCapabilities().trayTitle</code> is <code>true</code>{" "}
+        (a Deno Desktop runtime whose tray has{" "}
+        <code>setTitle</code>, on macOS); elsewhere it is accepted and not shown, so keep the same
+        information in the tooltip or menu too.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+tray: {
+  icon: {
+    macos: "/tray-template.png",                              // black + transparent
+    windows: { icon: "/tray.png", iconDark: "/tray-light.png" }, // dark taskbar variant
+    default: "/tray.png",                                     // Linux and the rest
+  },
+  title: "0",
+}
+
+// a page
+import { createTray } from "denext/desktop/app";
+const tray = await createTray({ icon: { macos: template, default: colour }, title: "3" });
+await tray.update({ title: String(unread) });`}
+      </Code>
       <h3 id="desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</h3>
       <p>
         On macOS an app that is installed under <code>/Applications</code>{" "}

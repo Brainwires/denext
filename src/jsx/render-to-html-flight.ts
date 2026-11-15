@@ -45,6 +45,7 @@ import {
   createSSRDispatcher,
   escapeHtml,
   flushServerInsertedHTML,
+  flushSettledHead,
   type HeadCollector,
   type IdHolder,
 } from "./render-to-string.ts";
@@ -165,6 +166,7 @@ export async function renderToHtmlFlight(
   try {
     const dual = await renderRootSettled(node as VNodeChild, ctx);
     flushServerInsertedHTML(sink.inserted, ctx.head);
+    await flushSettledHead(sink.settled, ctx.head, dual.html);
     return {
       html: dual.html,
       flight: dual.flight,

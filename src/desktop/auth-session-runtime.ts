@@ -20,6 +20,7 @@
  */
 
 import type { AuthSessionErrorCode } from "../mobile/auth-session.ts";
+import { WINDOWS_RUNDLL32 } from "./windows-programs.ts";
 import {
   type DesktopServeInfo,
   type DesktopTrust,
@@ -133,7 +134,7 @@ function isLoopbackRedirect(uri: string): boolean {
  */
 export function browserLaunchArgs(os: typeof Deno.build.os, url: string): [string, string[]] {
   if (os === "darwin") return ["open", [url]];
-  if (os === "windows") return ["rundll32.exe", ["url.dll,FileProtocolHandler", url]];
+  if (os === "windows") return [WINDOWS_RUNDLL32, ["url.dll,FileProtocolHandler", url]];
   return ["xdg-open", [url]];
 }
 

@@ -86,6 +86,16 @@ export function generateStaticParams() {
         {" "}
         as a buffered response, and works on <code>"use client"</code> (Flight) routes.
       </p>
+      <p>
+        The document is written as a stream from the start: the head, the scripts and the dev reload
+        script are part of it, never spliced into a finished string. What denext adds to a streamed
+        response afterwards (React Native mode&apos;s late style sheets, the{" "}
+        <code>denext desktop dev</code>{" "}
+        window&apos;s desktop global) goes through a first-party streaming HTML rewriter: each chunk
+        goes out as it arrives, a tag split across two chunks is still found, and nothing inside a
+        comment, a script or a style is taken for a tag. The first bytes and every streamed boundary
+        reach the browser when the render produces them.
+      </p>
       <Code lang="ts">
         {`// denext.config.ts — opt out if you need fully-buffered responses
 export default { streaming: false };`}

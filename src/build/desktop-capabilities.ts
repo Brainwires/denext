@@ -42,6 +42,11 @@ import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
+import {
+  WINDOWS_EXPLORER,
+  WINDOWS_POWERSHELL,
+  WINDOWS_RUNDLL32,
+} from "../desktop/windows-programs.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { dockHelperGrants } from "./desktop-dock-helper.ts";
 import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
@@ -229,7 +234,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // Keychain, items only the app may read), which needs an unscoped --allow-sys until the runtime
     // gates it on the capability list baked into app.json. macOS keeps `security` while
     // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
-    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`.
+    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`, baked
+    // as --allow-run of its absolute path (WINDOWS_POWERSHELL): the runtime has no Windows store of its own (its
+    // Deno.desktop.secureStore answers there only on macOS and Linux), and PowerShell is a script
+    // interpreter, so that grant is full trust (the manual line says so).
     os: {
       darwin: secureStorePermissionSet("darwin", LEGACY_PERMISSION_CONTEXT),
       linux: secureStorePermissionSet("linux", LEGACY_PERMISSION_CONTEXT),
@@ -241,7 +249,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
     manual: [
       "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (`libsecret-1.so.0`, loaded at run time: the .deb depends on libsecret-1-0, the .rpm on libsecret). Without one, or under the stock runtime, every call fails `backend_unavailable` with the reason, never a plain file.",
-      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
+      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run of Windows PowerShell (by absolute path, C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe): PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
     ],
   },
   fs: {
@@ -286,7 +294,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["openExternal", "openPath", "revealInFileManager", "moveToTrash"],
     os: {
       darwin: { run: ["open", "osascript"] },
-      windows: { run: ["explorer.exe", "rundll32.exe", "powershell.exe"] },
+      windows: { run: [WINDOWS_EXPLORER, WINDOWS_RUNDLL32, WINDOWS_POWERSHELL] },
       linux: { run: ["xdg-open", "gio", "dbus-send"] },
     },
     trust: "full",
@@ -305,7 +313,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // permission is only baked when the app opts in.
     os: {
       darwin: { run: ["open"] },
-      windows: { run: ["rundll32.exe"] },
+      windows: { run: [WINDOWS_RUNDLL32] },
       linux: { run: ["xdg-open"] },
     },
     trust: "full",
@@ -325,7 +333,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       // PowerShell), not FFI — the same argv-only pattern the other caps use. Linux uses only the
       // runtime's (xdg-desktop-portal's FileChooser, else GTK's): nothing to run.
       darwin: { run: ["osascript"] },
-      windows: { run: ["powershell.exe"] },
+      windows: { run: [WINDOWS_POWERSHELL] },
     },
     // FULL, not broad: `--allow-run=osascript` / `powershell.exe` are script interpreters, so any
     // code in the Deno process can run arbitrary commands through them.
@@ -491,11 +499,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     },
     trust: "full",
     notes:
-      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; not on Windows yet): --allow-run of the allowed shells only",
+      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; on Windows a ConPTY, from runtime 3.0.0-denext.21): --allow-run of the allowed shells only",
     manual: [
       "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
       'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
-      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later; before it every call rejects `unsupported`. On Windows the runtime has no terminals yet: spawnPty() rejects `unsupported` there.",
+      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later (on Windows 3.0.0-denext.21 or later, and Windows 10 1809 or later: a ConPTY); before it every call rejects `unsupported`. A ConPTY's output carries its own VT sequences even for plain text: render it with a terminal emulator (xterm.js).",
     ],
   },
   microphone: {

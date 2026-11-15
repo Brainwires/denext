@@ -82,7 +82,7 @@ export type {
 export type { CommandContext, CommandSpec } from "../cli/command.ts";
 
 // For running a Vite plugin's `generateBundle` emitter (`this.emitFile`) as a build step.
-export { viteEmitterPlugin } from "./vite-emitter.ts";
+export { viteBuildPlugin, viteEmitterPlugin } from "./vite-emitter.ts";
 export type {
   GenerateBundleHook,
   ViteEmittedFile,
@@ -90,7 +90,9 @@ export type {
   ViteEmitterContext,
   ViteEmitterDenextPlugin,
   ViteEmitterSetupContext,
+  VitePluginInput,
   VitePluginLike,
+  VitePluginObject,
 } from "./vite-emitter.ts";
 
 // ── Route matching ─────────────────────────────────────────────────────────

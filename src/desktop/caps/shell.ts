@@ -25,6 +25,7 @@
 import { withOwnModules } from "../../build/windows-powershell.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import { browserLaunchArgs } from "../auth-session-runtime.ts";
+import { WINDOWS_EXPLORER, WINDOWS_POWERSHELL } from "../windows-programs.ts";
 import { confineWithinRoots, refuseReservedDataPath } from "../path-scope.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import type { PickedPaths } from "../picked-paths.ts";
@@ -207,14 +208,14 @@ export function shellPathCommand(
     ];
   }
   if (os === "windows") {
-    if (action === "open") return ["explorer.exe", [path]];
-    if (action === "reveal") return ["explorer.exe", [`/select,${path}`]];
+    if (action === "open") return [WINDOWS_EXPLORER, [path]];
+    if (action === "reveal") return [WINDOWS_EXPLORER, [`/select,${path}`]];
     // NOT argv: `powershell.exe -Command` joins every trailing argument into the command TEXT, so
     // a path such as `…\a;Start-Process calc` would run. The path arrives in SHELL_PATH_ENV
     // (see shellPathEnv), which the script reads as data. `Add-Type` loads from Windows
     // PowerShell's own modules, whatever module path it inherited (withOwnModules).
     return [
-      "powershell.exe",
+      WINDOWS_POWERSHELL,
       [
         "-NoProfile",
         "-Command",

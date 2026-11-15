@@ -10,12 +10,20 @@
 
 import type { VNodeChildren } from "../jsx/types.ts";
 
+/** A settled-render callback: the rendered HTML in, head markup (or a promise of it) out. */
+export type SettledHeadCallback = (html: string) => VNodeChildren | Promise<VNodeChildren>;
+
 /** The per-render collectors. */
 export interface RenderScope {
   /** Signal values recorded during the render (`null` when not collecting). */
   signals: Record<string, unknown> | null;
   /** The active `useServerInsertedHTML` sink (`null`/`undefined` when none). */
   insertSink: ((cb: () => VNodeChildren) => void) | null | undefined;
+  /**
+   * The active settled-render sink (see `onRenderSettled` in server-inserted-html.ts): head
+   * markup computed once the tree has rendered, from its HTML, possibly asynchronously.
+   */
+  settledSink?: ((cb: SettledHeadCallback) => void) | null;
   /**
    * Whether this render produced a class component (see {@link markClassRendered}). The
    * document assembler turns it into the `#__denext_classes` marker that tells the

@@ -6,6 +6,7 @@
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import { ATTACHMENT_PATH, attachmentResponse } from "./app/downloads.ts";
+import { standInBrowser } from "./desktop/browser-stand-in.ts";
 
 /** The WebSocket the "websocket relay" check dials: answers with the `Origin` it was opened with. */
 const ECHO_SOCKET_PATH = "/_kitchen/ws";
@@ -13,6 +14,8 @@ const ECHO_SOCKET_PATH = "/_kitchen/ws";
 await runDesktop({
   importMetaUrl: import.meta.url,
   ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  // On Windows the window test's stand-in browser is in-process (see browser-stand-in.ts).
+  openBrowser: standInBrowser(),
   // Reached only through the runtime's loopback relay (the page's custom origin carries no
   // WebSockets), and only after the desktop runtime checked the exact app `Origin`.
   // The download checks' `Content-Disposition: attachment` response, from the app's own origin.

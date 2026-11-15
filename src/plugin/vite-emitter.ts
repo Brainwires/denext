@@ -14,7 +14,9 @@
 // (transform, resolveId, configureServer, …) — `denext migrate` flags plugins that rely on those.
 
 /**
- * `viteEmitterPlugin`: run a Vite plugin's `generateBundle` file emitter as a denext build step.
+ * `viteEmitterPlugin`: run a Vite plugin's `generateBundle` file emitter as a denext build step;
+ * `viteBuildPlugin`: run Vite plugins' build hooks (`configResolved`, `buildStart`,
+ * `generateBundle`, `writeBundle`, `closeBundle`) as one.
  * The same function `denext/plugin-kit` exports, on an entry light enough for
  * `denext.config.ts` (which a Deno Desktop app's `desktop.ts` imports at runtime): no bundler,
  * no npm package.
@@ -30,6 +32,8 @@
 export interface ViteEmitterBuildContext {
   /** The build output directory. */
   readonly outDir: string;
+  /** The project root (absolute), when the build passes it (a plugin build step's context does). */
+  readonly projectRoot?: string;
   /** The resolved project config (`spa.assetsDir` places the synthetic entry chunk). */
   readonly config: { readonly spa?: { readonly assetsDir?: string } };
   /** The client bundle's modules (absolute paths), when the build knows them. */
@@ -236,6 +240,185 @@ export function viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenext
           true,
         );
         await Promise.all(writes);
+      });
+    },
+  };
+}
+
+/** A Rollup / Vite hook: a function, or the `{ handler }` object form. */
+type HookValue = ((this: ViteEmitterContext, ...args: unknown[]) => unknown) | {
+  handler: (this: ViteEmitterContext, ...args: unknown[]) => unknown;
+};
+
+/** A Vite plugin as {@linkcode viteBuildPlugin} reads it: its build hooks, by name. */
+export interface VitePluginObject extends VitePluginLike {
+  /** `"pre"` plugins run first, `"post"` ones last. */
+  enforce?: "pre" | "post";
+  /** Any other hook. */
+  [hook: string]: unknown;
+}
+
+/** What {@linkcode viteBuildPlugin} takes: plugins, nested arrays, promises, or a module / config. */
+export type VitePluginInput =
+  | VitePluginObject
+  | null
+  | false
+  | undefined
+  | Promise<unknown>
+  | readonly unknown[]
+  | { default?: unknown; plugins?: unknown };
+
+/**
+ * The Vite / Rollup build hooks {@linkcode viteBuildPlugin} runs, in this order: `configResolved`
+ * (with a resolved-config stand-in), `buildStart`, `generateBundle`, `writeBundle`, `closeBundle`
+ * (each with `this.emitFile`, `this.warn`, `this.error`). The module-graph hooks below are not
+ * run, since denext bundles with esbuild, not Rollup; a plugin that has them is named in a warning.
+ */
+export const VITE_BUILD_HOOKS = [
+  "configResolved",
+  "buildStart",
+  "generateBundle",
+  "writeBundle",
+  "closeBundle",
+] as const;
+
+/** The hooks a Vite plugin may have that denext's build does not run. */
+export const VITE_UNSUPPORTED_HOOKS = [
+  "resolveId",
+  "load",
+  "transform",
+  "renderChunk",
+  "transformIndexHtml",
+  "moduleParsed",
+  "renderStart",
+  "augmentChunkHash",
+] as const;
+
+/** Flatten an input into its plugin objects (awaiting promises; a module's `default`, a config's `plugins`). */
+export async function flattenVitePlugins(input: unknown): Promise<VitePluginObject[]> {
+  const value = await input;
+  if (!value) return [];
+  if (Array.isArray(value)) return (await Promise.all(value.map(flattenVitePlugins))).flat();
+  if (typeof value !== "object") return [];
+  const o = value as Record<string, unknown>;
+  if ("default" in o && !("name" in o)) return flattenVitePlugins(o.default);
+  if ("plugins" in o && !("name" in o)) return flattenVitePlugins(o.plugins);
+  return [o as VitePluginObject];
+}
+
+/** The plugins in Vite's order: `enforce: "pre"`, then the rest, then `"post"`. */
+function vitePluginOrder(plugins: VitePluginObject[]): VitePluginObject[] {
+  const rank = (p: VitePluginObject) => p.enforce === "pre" ? 0 : p.enforce === "post" ? 2 : 1;
+  return plugins.filter((p) => appliesToBuild(p.apply)).sort((a, b) => rank(a) - rank(b));
+}
+
+/** A hook's function (its `handler` in the object form), if the plugin has it. */
+function hookFn(plugin: VitePluginObject, name: string) {
+  const hook = plugin[name] as HookValue | undefined;
+  if (!hook) return undefined;
+  return typeof hook === "function" ? hook : hook.handler;
+}
+
+/** The arguments each build hook is called with. */
+function hookArgs(name: string, build: ViteEmitterBuildContext): unknown[] {
+  const output = { dir: build.outDir, format: "es" };
+  if (name === "configResolved") return [resolvedConfig(build)];
+  if (name === "generateBundle") return [output, syntheticBundle(build), true];
+  if (name === "writeBundle") return [output, syntheticBundle(build)];
+  return [];
+}
+
+/**
+ * The resolved Vite config `configResolved` gets: a production build's fields a build plugin
+ * reads (`root`, `command`, `mode`, `isProduction`, `base`, `publicDir`, `env`, `build`, and Vite
+ * 6's `environments.client` / `environments.ssr` with their `build.outDir`, denext's output
+ * directory, where the server's files are its own sources).
+ */
+function resolvedConfig(build: ViteEmitterBuildContext): Record<string, unknown> {
+  const root = build.projectRoot ?? Deno.cwd();
+  const env = { MODE: "production", DEV: false, PROD: true, SSR: false, BASE_URL: "/" };
+  const buildOptions = { outDir: build.outDir, assetsDir: "assets", ssr: false, sourcemap: false };
+  return {
+    root,
+    base: "/",
+    command: "build",
+    mode: "production",
+    isProduction: true,
+    publicDir: `${root}/public`,
+    env,
+    build: buildOptions,
+    environments: {
+      client: { build: buildOptions },
+      ssr: { build: { ...buildOptions, ssr: true } },
+    },
+    plugins: [],
+    logger: {
+      info: (m: string) => console.log(m),
+      warn: (m: string) => console.warn(m),
+      error: (m: string) => console.error(m),
+    },
+  };
+}
+
+/** Warn once per plugin about the hooks of it denext does not run. */
+function warnUnsupported(plugin: VitePluginObject): void {
+  const missing = VITE_UNSUPPORTED_HOOKS.filter((h) => plugin[h] !== undefined);
+  if (missing.length === 0) return;
+  console.warn(
+    `denext: Vite plugin ${plugin.name ?? "(anonymous)"}: ${missing.join(", ")} not run ` +
+      "(denext bundles with esbuild); its build hooks run",
+  );
+}
+
+/** Run every plugin's build hooks in order (see {@linkcode VITE_BUILD_HOOKS}). */
+async function runViteBuildHooks(
+  plugins: VitePluginObject[],
+  build: ViteEmitterBuildContext,
+): Promise<void> {
+  for (const p of plugins) warnUnsupported(p);
+  for (const name of VITE_BUILD_HOOKS) {
+    for (const plugin of plugins) {
+      const fn = hookFn(plugin, name);
+      if (!fn) continue;
+      const writes: Promise<unknown>[] = [];
+      await fn.call(emitterContext(build, writes), ...hookArgs(name, build));
+      await Promise.all(writes);
+    }
+  }
+}
+
+/**
+ * Run Vite plugins' build hooks as one denext build step (see {@linkcode VITE_BUILD_HOOKS}): a
+ * Fresh 2 app's other Vite plugins, carried by `denext migrate`. `input` may be the plugins
+ * (nested arrays and promises included), a Vite config or a module exporting one, or a function
+ * returning any of those, called at build so a plugin package loads only then; a plugin that
+ * fails to load is skipped with a warning.
+ *
+ * @example
+ * ```ts
+ * // denext.config.ts
+ * import { viteBuildPlugin } from "denext/plugin-kit/vite-emitter";
+ * export default { plugins: [viteBuildPlugin(() => import("./vite.plugins.ts"))] };
+ * ```
+ *
+ * @param input The plugins, or what loads them.
+ * @returns A denext plugin named `vite:build`.
+ */
+export function viteBuildPlugin(
+  input: VitePluginInput | (() => VitePluginInput),
+): ViteEmitterDenextPlugin {
+  return {
+    name: "vite:build",
+    setup(ctx) {
+      ctx.addBuildStep(async (build) => {
+        let plugins: VitePluginObject[];
+        try {
+          plugins = await flattenVitePlugins(typeof input === "function" ? input() : input);
+        } catch (err) {
+          console.warn("denext: the Vite plugins could not be loaded; skipped:", err);
+          return;
+        }
+        await runViteBuildHooks(vitePluginOrder(plugins), build);
       });
     },
   };

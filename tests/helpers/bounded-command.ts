@@ -58,6 +58,12 @@ export interface BoundedOptions {
   readonly timeoutMs: number;
   /** How long the pipes may stay open once the child has exited (default 10 s). */
   readonly drainMs?: number;
+  /**
+   * Called once at the deadline, with the child's pid, before its tree is listed and killed: what
+   * the caller reads here (a trace the child writes) is still what the child was doing, not what
+   * the kill made it write on the way out.
+   */
+  readonly onDeadline?: (pid: number) => void | Promise<void>;
 }
 
 /** Kill `pid` and every descendant. */
@@ -424,7 +430,9 @@ export async function runBounded(
     if (!drained) await Promise.all(reads.map((r) => r.cancel()));
     return result(done, false, !drained);
   }
-  // What the tree was doing, before it is killed: the process that never finished, by name.
+  // What the tree was doing, before it is killed: the caller's own snapshot, then the process
+  // that never finished, by name.
+  await options.onDeadline?.(child.pid);
   tree = await processTree(child.pid, undefined, cmd);
   await killProcessTree(child.pid);
   // A grandchild the kill could not reach may still hold the pipes: stop reading, don't wait.

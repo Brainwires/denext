@@ -5,9 +5,10 @@
 // load it (or the bundler and CSS tooling it pulls in); cli.ts imports it when a verb runs and
 // hands it its own module URL, which every re-exec re-runs.
 
-import { join } from "@std/path";
+import { join, resolve as resolvePath } from "@std/path";
 import {
   childToolchainMarker,
+  discoveredConfig,
   entrypointArg,
   handsToolchainToChildren,
   heapFlagNotice,
@@ -17,6 +18,8 @@ import {
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   mergeRunFlags,
+  ownCommandLine,
+  parseRunCommandLine,
   pinnedConfigArgs,
   pinnedDenextCli,
   revocationCheckFor,
@@ -25,6 +28,7 @@ import {
   toolchainConfigArgs,
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
+import { appUnstableFlags, missingUnstableFlags } from "./unstable-flags.ts";
 import {
   loadDenoToolchainPin,
   resolveDenoToolchain,
@@ -200,6 +204,7 @@ async function maybeReexecForCss(
         "DENEXT_CSS_ACTIVE",
         () => restoreAppConfig(paths.configPath, paths.outDir),
         limits,
+        appUnstableFlags(dir),
       ),
   );
 }
@@ -403,6 +408,7 @@ function maybeReexecPinned(
             childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
           ),
           ...pinnedConfigArgs(dir),
+          ...appUnstableFlags(dir),
           ...cliNpmModeArgs(dir),
           ...minDepAgeArgs(),
         ],
@@ -547,7 +553,13 @@ async function toolchainChildFlags(
     ...await toolchainPermissionFlags(),
     ...limits,
     ...mergeRunFlags(
-      [...toolchainRuntimeFlags(marker), ...cliNpmModeArgs(dir), ...minDepAgeArgs()],
+      [
+        ...toolchainRuntimeFlags(marker),
+        // The app's `"unstable"` list: this child resolves the CLI's config, not the app's.
+        ...appUnstableFlags(dir),
+        ...cliNpmModeArgs(dir),
+        ...minDepAgeArgs(),
+      ],
       await toolchainConfigArgs(entrypointArg(entryUrl())),
     ),
   ];
@@ -617,6 +629,7 @@ async function reexecWithConfig(
   activeEnv: string,
   cleanup?: () => Promise<void>,
   limits: ChildLimits = NO_LIMITS,
+  unstable: readonly string[] = [],
 ): Promise<never> {
   const child = new Deno.Command(denoExecutable(), {
     args: [
@@ -624,6 +637,7 @@ async function reexecWithConfig(
       // sloppy-imports so the re-exec'd process can load Next.js app route modules
       // that use extensionless imports at runtime (permissive fallback).
       "--unstable-sloppy-imports",
+      ...unstable.filter((f) => f !== "--unstable-sloppy-imports"),
       ...limits.flags,
       ...toolchainRuntimeFlags(childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity())),
       ...await childPermissionFlags(),
@@ -688,7 +702,13 @@ async function maybeReexecForModules(
   // everything from Deno's global cache, so it needs nothing here.) The app's own
   // deps resolve via its own config regardless — see {@link ensureFrameworkNodeModules}.
   if (appCfg.nodeModulesDir === "manual") await ensureFrameworkNodeModules(paths.outDir);
-  return await reexecWithConfig(configPath, "DENEXT_MODULE_ACTIVE", undefined, limits);
+  return await reexecWithConfig(
+    configPath,
+    "DENEXT_MODULE_ACTIVE",
+    undefined,
+    limits,
+    appUnstableFlags(dir),
+  );
 }
 
 /**
@@ -831,6 +851,61 @@ async function limitsGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   return reran;
 }
 
+/** The variable an unstable-flags re-run gives its child: the parent's pid (one re-run at most). */
+const UNSTABLE_FLAGS_ENV = "DENEXT_UNSTABLE_FLAGS_FOR";
+
+/**
+ * The flags of the app's `"unstable"` list this process lacks: neither on its command line nor in
+ * the config file it resolved (a CLI run from a checkout resolves the checkout's deno.json).
+ * Empty where the command line cannot be read.
+ */
+async function lackedUnstableFlags(dir: string): Promise<string[]> {
+  const wanted = appUnstableFlags(dir);
+  if (wanted.length === 0) return [];
+  const argv = await ownCommandLine();
+  if (argv === null) return [];
+  const line = parseRunCommandLine(argv);
+  const scriptAt = line.script === undefined ? argv.length : argv.indexOf(line.script);
+  const flags = argv.slice(0, scriptAt).filter((t) => t.startsWith("--unstable"));
+  const cwd = Deno.cwd();
+  const own = line.noConfig
+    ? null
+    : line.config !== undefined
+    ? resolvePath(cwd, line.config)
+    : line.script === undefined
+    ? null
+    : discoveredConfig(line.script, cwd);
+  return missingUnstableFlags(wanted, flags, own);
+}
+
+/**
+ * The last gate before a verb that runs project code: when this process lacks a flag of the
+ * app's `deno.json` `"unstable"` list (`--unstable-kv` for an app that opens Deno KV), it re-runs
+ * once on this same Deno with them ({@linkcode toolchainChildFlags} carries the list). A compiled
+ * binary, a process that may not start its own Deno, and the re-run child itself continue as
+ * they are. Returns whether the process re-ran (it then exits with the child's code).
+ */
+async function unstableGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
+  if (!command.loadsModules || command.inspectsOnly?.(ctx)) return false;
+  if (isStandaloneBinary() || !mayRespawnSelf()) return false;
+  if (Deno.env.get(UNSTABLE_FLAGS_ENV) === String(Deno.ppid)) return false;
+  const dir = gateDir(command, ctx);
+  if ((await lackedUnstableFlags(dir)).length === 0) return false;
+  const runtime = ownRuntime();
+  const code = await spawnCliChild(
+    Deno.execPath(),
+    [
+      ...await toolchainChildFlags(runtime ?? "path", dir, []),
+      ...(Deno.env.get("DENEXT_CSS_ACTIVE") || Deno.env.get("DENEXT_MODULE_ACTIVE")
+        ? ["--unstable-sloppy-imports"]
+        : []),
+    ],
+    entrypointArg(entryUrl()),
+    { ...hopCrashReportEnv(runtime), [UNSTABLE_FLAGS_ENV]: String(Deno.pid) },
+  );
+  Deno.exit(code);
+}
+
 /**
  * Say once — by the process that runs the verb (after any re-exec), and once per state of the
  * project's config files — that a project verb shadows a Deno verb of the same name.
@@ -901,6 +976,7 @@ export async function runVerb(
     await applyNativeCheckEngine({ running }).catch(() => {});
   }
   if (await moduleGate(command, ctx)) return;
+  if (await unstableGate(command, ctx)) return;
   if (await limitsGate(command, ctx)) return;
   await noticeShadow(command, cwd);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —

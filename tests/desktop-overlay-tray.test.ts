@@ -262,6 +262,7 @@ Deno.test("trayCapabilitiesOf: Tray.capabilities() where the runtime has it, cli
     modifiers: false,
     position: false,
     popUpMenu: false,
+    title: false,
   });
   assertEquals(trayCapabilitiesOf(undefined, false).doubleClick, false);
   const throwing = Object.assign(function () {}, {

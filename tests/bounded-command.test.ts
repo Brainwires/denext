@@ -18,7 +18,7 @@ import {
   runBounded,
   toolhelpRow,
 } from "./helpers/bounded-command.ts";
-import { inChild, pendingSpawns } from "./helpers/isolated.ts";
+import { inChild, pendingSpawns, traceReport } from "./helpers/isolated.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
 /**
@@ -331,4 +331,31 @@ Deno.test("showsStalledGrandchild: the command line, or in the OS snapshot the c
   assert(
     !showsStalledGrandchild(`${head}5480  started 1 cpu 0.2s threads 9  deno.exe run child.ts`),
   );
+});
+
+Deno.test("runBounded: onDeadline runs once, while the child is still alive, before the tree is killed", async () => {
+  const calls: string[] = [];
+  let alive = "";
+  const r = await runBounded(Deno.execPath(), [
+    "eval",
+    "setInterval(() => {}, 1000); // denext-deadline-hook",
+  ], {
+    timeoutMs: 1_500,
+    onDeadline: async (pid) => {
+      calls.push(`deadline ${pid}`);
+      alive = await processTree(pid);
+    },
+  });
+  assert(r.timedOut);
+  assertEquals(calls, [`deadline ${r.pid}`]);
+  // Listed as running when the hook ran: the kill came after it.
+  assert(!alive.includes("are gone"), alive);
+  assertStringIncludes(alive, String(r.pid));
+});
+
+Deno.test("traceReport: the deadline's snapshot names the subprocess the kill would mark finished", () => {
+  const atDeadline = "t0 start #1 output(): deno eval x // denext-stalled-grandchild";
+  assertMatch(traceReport(atDeadline), /unfinished:\nt0 start #1 output\(\): deno eval x/);
+  // Read after the kill, the same trace has the end the dying child logged.
+  assertStringIncludes(traceReport(`${atDeadline}\nt1 end #1`), "unfinished:\n(none)");
 });

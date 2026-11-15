@@ -145,11 +145,11 @@ const PACKAGE_SCRIPTS: Record<string, string> = {
   linux: "package-linux.ts",
   windows: "package-windows.ts",
 };
-/** The opener the auth-session capability runs, replaced by a stand-in first on PATH. */
+/** The opener the auth-session capability runs, replaced by a stand-in first on PATH (macOS and
+ * Linux; Windows starts its opener by absolute path, so the app records the URL itself). */
 const BROWSER_OPENER: Record<string, string> = {
   darwin: "open",
   linux: "xdg-open",
-  windows: "rundll32.exe",
 };
 
 /** The flags `test:window` takes (anything else is an error). */
@@ -675,52 +675,20 @@ async function copyTree(from: string, to: string): Promise<void> {
 
 // --- the stand-in browser ----------------------------------------------------------------------
 
-/** The argument of the stand-in browser's warm-up run, which records nothing (its `WARM_UP`). */
-const BROWSER_STUB_WARM_UP = "--kitchen-sink-warm-up";
-
 /** Put a stand-in for the system browser opener in `<scratch>/bin` (first on the app's PATH): it
- * records the URL it is asked to open in `bin/browser.log` and opens nothing. */
+ * records the URL it is asked to open in `bin/browser.log` and opens nothing. On Windows the
+ * opener is started by absolute path, so the app records the URL itself instead
+ * (`KITCHEN_SINK_STAND_IN_BROWSER`, see `desktop/browser-stand-in.ts`). */
 async function installBrowserStub(): Promise<string> {
   const bin = join(SCRATCH, "bin");
   await Deno.mkdir(bin, { recursive: true });
+  if (OS === "windows") return bin;
   const opener = join(bin, BROWSER_OPENER[OS]);
-  if (OS === "windows") {
-    await run([
-      "deno",
-      "compile",
-      "--no-check",
-      "--allow-read",
-      "--allow-write",
-      "--output",
-      opener,
-      "e2e/browser-stub.ts",
-    ]);
-    // Run the new executable once before the app needs it: the first start of a freshly built,
-    // unsigned program can wait on the antivirus's verdict (Defender's cloud check holds it up to
-    // 10 s or more on a desktop that has it on), longer than a check waits for the browser to be
-    // asked. The verdict is kept for the file, so the app's launch of it is a plain start.
-    const started = performance.now();
-    const warm = await new Deno.Command(opener, {
-      args: [BROWSER_STUB_WARM_UP],
-      stdout: "null",
-      stderr: "piped",
-    })
-      .output();
-    if (!warm.success) {
-      throw new Error(
-        `the stand-in browser failed its warm-up run: ${
-          new TextDecoder().decode(warm.stderr).trim()
-        }`,
-      );
-    }
-    log(`the stand-in browser's first run took ${Math.round(performance.now() - started)} ms`);
-  } else {
-    await Deno.writeTextFile(
-      opener,
-      '#!/bin/sh\nfor a; do last="$a"; done\nprintf \'%s\\n\' "$last" >> "$(dirname "$0")/browser.log"\n',
-    );
-    await Deno.chmod(opener, 0o755);
-  }
+  await Deno.writeTextFile(
+    opener,
+    '#!/bin/sh\nfor a; do last="$a"; done\nprintf \'%s\\n\' "$last" >> "$(dirname "$0")/browser.log"\n',
+  );
+  await Deno.chmod(opener, 0o755);
   return bin;
 }
 
@@ -1288,10 +1256,12 @@ async function warnIfScreenLocked(): Promise<void> {
   }
 }
 
-/** The app's environment: the stand-in browser first on PATH. */
+/** The app's environment: the stand-in browser first on PATH (in-process on Windows). */
 function appEnv(bin: string): Record<string, string> {
   return {
     PATH: `${bin}${DELIMITER}${Deno.env.get("PATH") ?? ""}`,
+    // Windows: the app's in-process stand-in browser (desktop/browser-stand-in.ts).
+    ...(OS === "windows" ? { KITCHEN_SINK_STAND_IN_BROWSER: "1" } : {}),
     // The runtime's save dialogs (a page download's) open in this folder, the proposed name
     // filled in, so the runner's Return saves the file there (laufey's test hook).
     LAUFEY_TEST_DOWNLOAD_DIR: DOWNLOAD_DIR,

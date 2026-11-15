@@ -27,7 +27,12 @@ const completions = new WeakMap<Request, Promise<void>>();
  * by the server loop): it resolves once the response is delivered and rejects when it is not.
  */
 export function setResponseCompletion(request: Request, completed: Promise<void> | undefined) {
-  if (completed) completions.set(request, completed);
+  if (!completed) return;
+  // A response the client stopped reading rejects it (`Interrupted`; on HTTP/1.1 from runtime
+  // 3.0.0-denext.23, as on HTTP/2 before), and most requests never ask for it: without a handler
+  // here that rejection is unhandled and ends the process. Readers still see it.
+  completed.catch(() => {});
+  completions.set(request, completed);
 }
 
 /** The completion {@link setResponseCompletion} recorded for `request`, or `undefined`. */

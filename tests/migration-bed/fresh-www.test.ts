@@ -11,11 +11,10 @@
 //
 // Pin: 39b5f06 (the `2.3.3` release tag). `www/` is a member of the repo's Deno workspace;
 // `prepare` makes it a standalone app (the root import map folded into `www/deno.json`, the
-// workspace config removed), as a project created with `@fresh/init` is. `afterMigrateEdit`
-// applies the one hand fix `migrate --check` reports: the docs route picks a file path by Vite's
-// `import.meta.env.PROD` (migrate points it at `denext/fresh/env`, where it is true under
-// `denext start`), but the source runs in place, so the development branch is the right one. The `/@version/path` route proxies GitHub at
-// request time, so it is not asserted.
+// workspace config removed), as a project created with `@fresh/init` is. No hand fix: the docs
+// route's `import.meta.env.PROD` pick between Vite's bundle location and the source location is
+// reduced to the source one by migrate (denext runs the module in place), which the bed checks.
+// The `/@version/path` route proxies GitHub at request time, so it is not asserted.
 // NETWORK-REQUIRED (GitHub fetch + JSR/npm downloads): `deno task test:migration-bed`.
 
 import { join } from "@std/path";
@@ -32,15 +31,6 @@ async function standalone(app: string): Promise<void> {
   await Deno.remove(join(app, "..", "deno.lock"));
 }
 
-/** The docs route's build-output path pick (`import.meta.env.PROD`) → the in-place branch. */
-async function dropViteEnv(app: string): Promise<void> {
-  const file = join(app, "routes", "docs", "[...slug].tsx");
-  const source = await Deno.readTextFile(file);
-  const fixed = source.replace("importMetaEnv.PROD", "false");
-  if (fixed === source) throw new Error("fresh-www bed: the import.meta.env line moved");
-  await Deno.writeTextFile(file, fixed);
-}
-
 /** What a browser sends: the www handlers answer a non-HTML client differently. */
 const HTML = { accept: "text/html" };
 
@@ -51,7 +41,12 @@ const FRESH_WWW: Bed = {
   subdir: "www",
   install: [],
   prepare: standalone,
-  afterMigrateEdit: dropViteEnv,
+  files: [{
+    // migrate reduced the build-output path pick to the source location.
+    path: "routes/docs/[...slug].tsx",
+    contains: ["new URL(`../../../${entry.file}`, import.meta.url)"],
+    absent: ["env.PROD"],
+  }],
   kind: "fresh",
   routes: [
     // The home page: handler state for `_app`, a server-rendered island (JS off). The handler

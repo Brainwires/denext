@@ -716,8 +716,8 @@ as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.o
 guards, paused while a `host.confirm` box opened then is up, never for a session end, whose 5 s always run; the OS
 session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s result) quits again, typed, guards and pages
 included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
-other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind? })`
-is the OS message box, app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
+other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind?, window? })`
+is the OS message box (owned by and modal to `window`, e.g. a handler's `ctx.windowId`), app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
 3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
 `ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
 subframe from a privileged method; `kind` is `verified` only where the runtime marks frames
@@ -1761,7 +1761,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.18.0"` — The denext framework version.
+- `VERSION: "4.19.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2019,6 +2019,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopSidecarShutdownConfig` — DesktopSidecarConfig.shutdown.
 - `interface DesktopSize` — A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).
 - `interface DesktopTrayConfig` — The backend-owned tray icon (DesktopConfig.tray).
+- `interface DesktopTrayIconPair` — A tray icon with its dark-mode variant (DesktopTrayIconVariant).
+- `interface DesktopTrayIconSet` — DesktopTrayConfig.icon per OS; an OS left out takes default.
+- `type DesktopTrayIconVariant = string | DesktopTrayIconPair` — One OS's tray icon (DesktopTrayIconSet): a PNG path in the export, or it with a dark one.
 - `interface DesktopTrayMenuEntry` — One entry of a tray submenu (DesktopTrayMenuItem.submenu).
 - `interface DesktopTrayMenuItem` — One entry of a DesktopTrayConfig menu: an action (id + label), a separator (separator: true), a standard item (role) or a submenu (label + submenu, one level).
 - `interface DesktopTrayPanelConfig` — The tray panel (DesktopTrayConfig.panel).
@@ -2543,6 +2546,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setLiveViewStore(store: LiveViewStore | null): void` — Install the store parked live views are written to (the default is memoryLiveViewStore, per process). Call it once at startup, before the first socket connects; every instance of the app must share the store and DENEXT_LIVE_VIEW_SECRET.
 - `setRequestTimeout(ms: number): void` — Give the current request a deadline of its own, replacing the app's requestTimeout (30 s by default) — for a surface with its own time budget: an Edge Function's timeoutMs, a large upload or download, a long statement. 0 removes the deadline (the work must then bound itself). Counted from the request's start; a no-op outside a request.
 - `type SetSource = FrameworkMigrationSet | (() => FrameworkMigrationSet | undefined)` — A migration set, or a function that produces it when the CLI asks (undefined: none).
+- `type SettledHeadCallback = (html: string) => VNodeChildren | Promise<VNodeChildren>` — A settled-render callback: the rendered HTML in, head markup (or a promise of it) out.
 - `sidecarService(sidecar: SupervisableSidecar, options?: ServiceAdapterOptions): Service` — Supervise a Deno Desktop sidecar (app.sidecar(name) from runDesktop). The sidecar keeps its own restart-with-backoff; the supervisor steps in once that gives up (failed): it counts as a crash, so the strategy and intensity apply, and a restart starts it with a fresh attempt count.
 - `interface SignalSink` — The status a caught control signal asks for (0 = none caught).
 - `type SignInFailedReason = "invalid_credentials" | "invalid_mfa_code" | "invalid_passkey" | "rate_limited" | "access_denied" | "account_not_linked" | "adapter_error" | "invalid_state" | "invalid_request" | "config" | "oauth_failed" | "provider_error" | "invalid_nonce" | "invalid_token" | "captcha_failed"` — Why a sign-in attempt was refused, as signInFailed reports it — a closed set, so an app can switch over it exhaustively:
@@ -3148,7 +3152,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopTrayPanelHandle` — The tray panel as the backend drives it.
 - `interface DesktopTrayPanelSettings` — The panel at the tray icon, resolved (desktop.tray.panel).
 - `interface DesktopTraySettings` — The backend-owned tray, resolved (desktop.tray).
-- `interface DesktopTrayUpdate` — What update changes on the backend tray (null removes the tooltip / menu / dark icon).
+- `interface DesktopTrayUpdate` — What update changes on the backend tray (null removes the tooltip / title / menu / dark icon).
 - `interface DesktopTreeFile` — One listed file: its path relative to the bundle directory (/-separated), size and SHA-256.
 - `interface DesktopTreeIdentity` — The app a manifest is written for: the runtime refuses a manifest for another app or version.
 - `desktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>` — The manifest of a Windows bundle directory for identity: every regular file but the executable exe (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE images included, sorted by path.
@@ -3246,6 +3250,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SystemStatsApi` — What system is: the aggregate machine load.
 - `interface SystemStatsOptions` — Options for system.stats().
 - `interface SystemStatsSubscribeOptions extends SystemStatsOptions` — Options for system.onStats().
+- `interface TrayIconSet<I>` — A tray icon per OS; an OS left out takes default.
+- `type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }` — One OS's tray icon: the icon, or the icon with its dark-mode variant.
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
 - `interface WebViewEventMap` — The events a web view fires (WebViewHandle.on) and their payloads.
@@ -3495,6 +3501,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface TrayBounds` — Where a tray icon is on screen.
 - `type TrayEventType = "click" | "dblclick" | "contextmenu" | "auxclick" | "mouseenter" | "mouseleave"` — A tray icon event, by its DOM name.
 - `type TrayIcon = Uint8Array | string` — A tray icon's image: PNG bytes, or base64 PNG.
+- `interface TrayIconSet<I>` — A tray icon per OS; an OS left out takes default.
+- `type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }` — One OS's tray icon: the icon, or the icon with its dark-mode variant.
 - `interface TrayModifiers` — The modifier keys held during a tray event.
 - `interface TrayMouseDetail` — What a tray mouse event carries (the runtime's TrayMouseEvent, runtime 3.0.0-denext.6+).
 - `interface TrayOptions` — The settings of a tray icon (createTray).
@@ -4206,21 +4214,30 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `action<A, R>(fn: (...args: A) => R): (...args: A) => R` — Wrap fn so each call is batched and reads nothing reactively (@preact/signals-core's action).
 - `batch<T>(fn: () => T): T` — Apply several writes as one change: effects and re-renders run once, when the outermost batch ends.
-- `computed<T>(fn: () => T): ReadonlySignal<T>` — A signal derived from other signals: fn re-runs (lazily, when read) after one it read changed.
-- `effect(fn: () => unknown): EffectDispose` — Run fn now and again after any signal it read changes. fn may return a cleanup, run before the next run and on dispose.
+- `computed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T>` — A signal derived from other signals: fn re-runs (lazily, when read) after one it read changed.
+- `createModel<TModel, TFactoryArgs>(factory: ModelFactory<TModel, TFactoryArgs>): ModelConstructor<TModel, TFactoryArgs>` — A model constructor (@preact/signals-core's createModel): each new Model(...args) (or call) runs factory, wraps its functions in action, and owns the effects the factory created (outside an untracked callback); model[Symbol.dispose]() disposes them.
+- `interface DisposableLike` — Something using / [Symbol.dispose]() disposes.
+- `effect(fn: () => unknown, options?: EffectOptions): EffectDispose` — Run fn now and again after any signal it read changes. fn may return a cleanup, run before the next run and on dispose.
 - `type EffectDispose = (() => void) & { [Symbol.dispose](): void }` — The function effect returns: disposes the effect (also using-disposable).
+- `interface EffectOptions` — The options of effect and useSignalEffect.
 - `For<T>(props: ForProps<T>): VNode` — Render children for each item of each, or fallback when it is empty (@preact/signals/utils).
 - `interface ForProps<T>` — Props of For.
+- `type Model<TModel> = TModel & DisposableLike` — A model: signals, actions and nested objects of them, with [Symbol.dispose].
+- `type ModelConstructor<TModel, TFactoryArgs> = new (...args: TFactoryArgs) => Model<TModel>` — What createModel returns: new it (or call it) to build a model.
+- `type ModelFactory<TModel, TFactoryArgs> = (...args: TFactoryArgs) => TModel` — The factory createModel takes.
 - `interface ReadonlySignal<T>` — A signal that can be read but not written.
 - `Show<T>(props: ShowProps<T>): VNode` — Render children while when is truthy, else fallback (@preact/signals/utils).
 - `interface ShowProps<T>` — Props of Show.
-- `signal<T>(value: T): Signal<T>` — Create a signal.
+- `signal<T>(value: T, options?: SignalOptions<T>): Signal<T>` — Create a signal.
 - `class Signal<T>` — A reactive value. Read .value to use it (subscribing the computed, effect or component that reads it), assign .value to change it. peek() reads without subscribing.
+- `interface SignalOptions<T>` — The options of signal, computed, useSignal and useComputed.
 - `untracked<T>(fn: () => T): T` — Run fn without subscribing to the signals it reads.
-- `useComputed<T>(fn: () => T): ReadonlySignal<T>` — A computed signal owned by the component; fn is always the latest render's.
+- `useComputed<T>(fn: () => T, options?: SignalOptions<T>): ReadonlySignal<T>` — A computed signal owned by the component; fn is always the latest render's.
 - `useLiveSignal<T>(value: T): ReadonlySignal<T>` — A signal that follows value (a prop): updated whenever the component renders with a new one.
-- `useSignal<T>(value: T): Signal<T>` — A signal owned by the component (created once, kept across renders).
-- `useSignalEffect(fn: () => unknown): void` — An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.
+- `useModel<TModel>(factory: ModelConstructor<TModel, []> | (() => Model<TModel>)): Model<TModel>` — A model owned by the component (@preact/signals' useModel): built once from a createModel constructor (or a function returning a model), disposed on unmount.
+- `useSignal<T>(value: T, options?: SignalOptions<T>): Signal<T>` — A signal owned by the component (created once, kept across renders).
+- `useSignalEffect(fn: () => unknown, options?: EffectOptions): void` — An effect owned by the component: started after mount, disposed on unmount; fn is always the latest render's.
+- `useSignalRef<T>(value: T): Signal<T> & { current: T }` — A component-owned signal that is also a ref (@preact/signals/utils's useSignalRef): ref.current reads and writes ref.value, so <div ref={ref} /> sets the signal and a component that read ref.value re-renders.
 
 ### `denext/prisma-adapter`
 
@@ -4369,13 +4386,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `toBase64Url(bytes: Uint8Array): string` — Encode bytes as URL-safe base64 (no padding). Shared with the Remix session compat.
 - `TOO_LARGE: Symbol` — Sentinel returned by readCappedBody when the body exceeds the cap.
 - `verifyOrigin(request: Request, options: OriginCheckOptions): boolean` — Is this request from the app's own origin (or an explicitly allowed one)?
+- `viteBuildPlugin(input: VitePluginInput | (() => VitePluginInput)): ViteEmitterDenextPlugin` — Run Vite plugins' build hooks as one denext build step (see VITE_BUILD_HOOKS): a Fresh 2 app's other Vite plugins, carried by denext migrate. input may be the plugins (nested arrays and promises included), a Vite config or a module exporting one, or a function returning any of those, called at build so a plugin package loads only then; a plugin that fails to load is skipped with a warning.
 - `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset", with a fileName or a name).
 - `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
 - `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
 - `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
 - `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
 - `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `type VitePluginInput = VitePluginObject | null | false | undefined | Promise<unknown> | readonly unknown[] | { default?: unknown; plugins?: unknown }` — What viteBuildPlugin takes: plugins, nested arrays, promises, or a module / config.
 - `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
+- `interface VitePluginObject extends VitePluginLike` — A Vite plugin as viteBuildPlugin reads it: its build hooks, by name.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
 - `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
@@ -4384,14 +4404,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/plugin-kit/vite-emitter`
 
+- `flattenVitePlugins(input: unknown): Promise<VitePluginObject[]>` — Flatten an input into its plugin objects (awaiting promises; a module's default, a config's plugins).
 - `type GenerateBundleHook = ((this: ViteEmitterContext, options: unknown, bundle: unknown, isWrite: boolean) => unknown) | { handler: (this: ViteEmitterContext, options: unknown, bundle: unknown, isWrite: boolean) => unknown }` — A generateBundle hook: a function, or Rollup's { handler } object form.
+- `VITE_BUILD_HOOKS: "configResolved" | "buildStart" | "generateBundle" | "writeBundle" | "closeBundle"[]` — The Vite / Rollup build hooks viteBuildPlugin runs, in this order: configResolved (with a resolved-config stand-in), buildStart, generateBundle, writeBundle, closeBundle (each with this.emitFile, this.warn, this.error). The module-graph hooks below are not run, since denext bundles with esbuild, not Rollup; a plugin that has them is named in a warning.
+- `VITE_UNSUPPORTED_HOOKS: "resolveId" | "load" | "transform" | "renderChunk" | "transformIndexHtml" | "moduleParsed" | "renderStart" | "augmentChunkHash"[]` — The hooks a Vite plugin may have that denext's build does not run.
+- `viteBuildPlugin(input: VitePluginInput | (() => VitePluginInput)): ViteEmitterDenextPlugin` — Run Vite plugins' build hooks as one denext build step (see VITE_BUILD_HOOKS): a Fresh 2 app's other Vite plugins, carried by denext migrate. input may be the plugins (nested arrays and promises included), a Vite config or a module exporting one, or a function returning any of those, called at build so a plugin package loads only then; a plugin that fails to load is skipped with a warning.
 - `interface ViteEmittedFile` — A Rollup emitFile argument (only type: "asset", with a fileName or a name).
 - `interface ViteEmitterBuildContext` — The parts of a plugin build step's context the emitter uses (a subset of PluginBuildContext).
 - `interface ViteEmitterContext` — The plugin context (this) the hook runs with: the parts of Rollup's an emitter uses.
 - `interface ViteEmitterDenextPlugin` — The denext plugin viteEmitterPlugin returns (assignable to DenextPlugin).
 - `viteEmitterPlugin(vitePlugin: VitePluginLike): ViteEmitterDenextPlugin` — Wrap a Vite plugin whose generateBundle emits files (this.emitFile({ type: "asset", fileName, source })) as a denext plugin: the hook runs as a build step at denext build and denext export, and each file it emits is published at the site root.
 - `interface ViteEmitterSetupContext` — The setup context viteEmitterPlugin's plugin uses (a subset of PluginContext).
+- `type VitePluginInput = VitePluginObject | null | false | undefined | Promise<unknown> | readonly unknown[] | { default?: unknown; plugins?: unknown }` — What viteBuildPlugin takes: plugins, nested arrays, promises, or a module / config.
 - `interface VitePluginLike` — The slice of a Vite plugin viteEmitterPlugin runs.
+- `interface VitePluginObject extends VitePluginLike` — A Vite plugin as viteBuildPlugin reads it: its build hooks, by name.
 
 ### `denext/ui-kit`
 

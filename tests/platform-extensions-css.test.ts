@@ -339,13 +339,18 @@ const MARKS: Readonly<Record<Platform, string>> = {
   linux: "MARK_DESKTOP_MARK",
 };
 
-/** The targets the SPA dev server holds a bundled-loop build for (`<gen>` / `<gen>-<target>`). */
+/**
+ * The targets the SPA dev server holds a bundled-loop build for (`<gen>` / `<gen>-<target>`), each
+ * once: a target keeps the generation before its newest (a page loaded from it still gets its
+ * chunks), so a rebuild during the session (a late watch event on a loaded host) leaves two of its
+ * generation dirs.
+ */
 async function spaDevTargets(dir: string): Promise<string[]> {
-  const names: string[] = [];
+  const names = new Set<string>();
   for await (const e of Deno.readDir(join(dir, ".denext", "spa-dev"))) {
-    if (e.isDirectory) names.push(e.name.replace(/^\d+-?/, "") || "web");
+    if (e.isDirectory) names.add(e.name.replace(/^\d+-?/, "") || "web");
   }
-  return names.sort();
+  return [...names].sort();
 }
 
 // The bundled loop builds each session's target (`denext mobile dev` / `desktop dev` against a

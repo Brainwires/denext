@@ -4,8 +4,9 @@
 // resolves relative to this entry (works from the packaged app too). Native
 // capabilities come from `desktop.capabilities` in `denext.config.ts` (default deny), and a
 // backend reverse proxy from `spa.proxy`. Both arrive through `.deno-desktop/config.json`, the
-// runtime part of the config that every export, build and `denext desktop` command rewrites, so
-// the config module is never compiled into the app.
+// runtime part of the config that every export (`denext export`, `denext desktop build`),
+// `denext desktop run` / `dev` and the package scripts rewrite, so the config module is never
+// compiled into the app.
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 

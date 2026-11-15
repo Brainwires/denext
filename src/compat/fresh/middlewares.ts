@@ -7,6 +7,8 @@ import type { Context } from "./context.ts";
 import { CONTINUE_HEADER } from "./constants.ts";
 import { HttpError } from "./http-error.ts";
 import type { MiddlewareFn as Mw } from "./types.ts";
+import type { VNode } from "../../jsx/types.ts";
+import { setElementHook } from "../preact/options.ts";
 
 /**
  * Fresh's static-file middleware. denext serves `public/` itself (the migration moved
@@ -158,8 +160,9 @@ export interface CSPOptions {
   /** Directives that add to or replace the defaults (`"img-src 'self' https://cdn.example"`). */
   csp?: string[];
   /**
-   * Fresh: replace `'unsafe-inline'` with a per-request nonce. denext allows its own inline
-   * styles by hash and runs no inline script, so this drops `'unsafe-inline'`.
+   * Replace `'unsafe-inline'` with a per-request nonce, as Fresh does: `script-src` and
+   * `style-src` list `'nonce-…'`, and every `<script>` and `<style>` element the page creates
+   * (through Preact's JSX runtime, `h` or `createElement`) without a `nonce` gets this one.
    */
   useNonce?: boolean;
 }
@@ -241,8 +244,9 @@ export function mergeCsp(policy: string | undefined, options: CSPOptions = {}): 
 function mergeDirectives(
   policy: string | undefined,
   { defaults, own, useNonce }: FreshDirectives,
+  nonce?: string,
 ): string {
-  const inline = (d: string) => useNonce ? d.replaceAll(" 'unsafe-inline'", "") : d;
+  const inline = (d: string) => useNonce ? withNonce(d, nonce) : d;
   if (policy === undefined) return [...defaults, ...own].map(inline).join("; ");
   const merged = new Map<string, string[]>();
   for (const d of policy.split(";").map((p) => p.trim()).filter(Boolean)) {
@@ -259,7 +263,43 @@ function mergeDirectives(
         : sources,
     );
   }
+  if (nonce) addNonce(merged, nonce);
   return [...merged].map(([name, sources]) => [name, ...sources].join(" ")).join("; ");
+}
+
+/** The directives Fresh's nonce goes in (where its defaults carry `'unsafe-inline'`). */
+const NONCE_DIRECTIVES = ["script-src", "style-src"];
+
+/** A directive with `'unsafe-inline'` replaced by the nonce (dropped when there is none). */
+function withNonce(d: string, nonce: string | undefined): string {
+  return d.replaceAll(" 'unsafe-inline'", nonce ? ` 'nonce-${nonce}'` : "");
+}
+
+/** List the nonce in `script-src` / `style-src` of a merged policy. */
+function addNonce(merged: Map<string, string[]>, nonce: string): void {
+  for (const name of NONCE_DIRECTIVES) {
+    const sources = merged.get(name);
+    if (sources && !sources.includes("'none'")) sources.push(`'nonce-${nonce}'`);
+  }
+}
+
+/** Each request's nonce under `csp({ useNonce: true })`, by its request context. */
+const NONCES = new WeakMap<object, string>();
+
+/** A fresh per-request nonce (128 random bits, hex). */
+function mintNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Give a `<script>` / `<style>` element this request's nonce, as Fresh's renderer does. */
+function inlineNonce(vnode: VNode): void {
+  if (vnode.type !== "script" && vnode.type !== "style") return;
+  const props = vnode.props as Record<string, unknown> | null;
+  if (!props || props.nonce) return;
+  const rc = requestContext();
+  const nonce = rc ? NONCES.get(rc) : undefined;
+  if (nonce) props.nonce = nonce;
 }
 
 /** The server's current request context, through the bridge it installs (none in a browser). */
@@ -284,18 +324,21 @@ export function csp<State>(options: CSPOptions = {}): Mw<State> {
   const reportTo = options.reportTo;
   const header = reportOnly ? "content-security-policy-report-only" : "content-security-policy";
   const directives = freshDirectives(options);
-  const standalone = mergeDirectives(undefined, directives);
+  if (directives.useNonce) setElementHook(inlineNonce);
   return async (ctx) => {
+    const before = requestContext();
+    const nonce = directives.useNonce && before ? mintNonce() : undefined;
+    if (nonce) NONCES.set(before!, nonce);
     const res = await ctx.next();
     if (reportTo) res.headers.set("reporting-endpoints", `csp-endpoint="${reportTo}"`);
     const rc = requestContext();
     if (!res.headers.has(CONTINUE_HEADER) || !rc) {
-      res.headers.set(header, standalone);
+      res.headers.set(header, mergeDirectives(undefined, directives, nonce));
       return res;
     }
     // The page renders after this middleware: adjust the policy denext computes for it.
     rc.cspTransform = (policy) => {
-      const merged = mergeDirectives(policy, directives);
+      const merged = mergeDirectives(policy, directives, nonce);
       if (!reportOnly) return merged;
       // Report-only: denext's own policy stays enforced; the merged one is only reported.
       rc.outgoingHeaders.set(header, merged);

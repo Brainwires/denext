@@ -71,7 +71,12 @@ Render `<Cart />` from a page. `{count}` renders the signal's value and updates 
 | `Show`                      | `<Show when fallback>`: renders its children while `when` (a signal or a value) is truthy, else `fallback`. The children may be a function that receives the value.                                                                                 |
 | `For`                       | `<For each fallback>{(item, index) => …}</For>`: renders each item of `each` (a signal or an array), or `fallback` when it is empty.                                                                                                                |
 
-Not provided: `useSignalRef` and `createModel` (`denext migrate --check` reports them).
+`createModel` builds a model (signals, actions and nested objects of them) whose functions run as
+actions and whose effects `model[Symbol.dispose]()` disposes; `useModel` keeps one per component
+and disposes it on unmount. `useSignalRef` is a component-owned signal whose `current` is its
+value, so it works as a `ref`. `signal`, `computed`, `useSignal` and `useComputed` take Preact's
+options (`name`, and `watched` / `unwatched`, called when the signal gains its first subscriber and
+loses its last); `effect` and `useSignalEffect` take `{ name }`.
 
 ## How it reacts
 

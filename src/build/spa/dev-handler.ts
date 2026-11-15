@@ -52,8 +52,28 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * A client asset (the entry bundle, a split chunk, the stylesheet) from the current build;
- * `pathname` is under `prefix` (`spa.assetsDir`'s, or `/_denext/client/`).
+ * `path` from the first of `dirs` that has it: the current generation's build, then the one before
+ * it, which a page loaded just before a rebuild still loads its chunks from.
+ *
+ * @param dirs The build dirs to look in, newest first (`null` entries are skipped).
+ * @param path The asset's path under a build dir (`/chunk-AB12.js`).
+ * @returns The file's response, or `null` when no dir has it.
+ */
+export async function serveFromGenerations(
+  dirs: readonly (string | null)[],
+  path: string,
+): Promise<Response | null> {
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const asset = await serveStatic(dir, path);
+    if (asset) return asset;
+  }
+  return null;
+}
+
+/**
+ * A client asset (the entry bundle, a split chunk, the stylesheet) from the current build, else
+ * the one before it; `pathname` is under `prefix` (`spa.assetsDir`'s, or `/_denext/client/`).
  */
 async function serveClientAsset(
   st: SpaDevState,
@@ -61,10 +81,10 @@ async function serveClientAsset(
   pathname: string,
   prefix: string,
 ): Promise<Response> {
-  let dir: string;
+  let built: { dir: string; previous: string | null };
   try {
     // The session's target's build (its platform files), as the shell that loads it.
-    dir = (await ensureBuilt(st, devPlatformOf(request))).dir;
+    built = await ensureBuilt(st, devPlatformOf(request));
   } catch (err) {
     console.error("denext: SPA bundle error", err);
     const body = `console.error(${
@@ -72,7 +92,10 @@ async function serveClientAsset(
     });`;
     return new Response(body, { status: 500, headers: jsHeaders });
   }
-  const asset = await serveStatic(dir, "/" + pathname.slice(prefix.length));
+  const asset = await serveFromGenerations(
+    [built.dir, built.previous],
+    "/" + pathname.slice(prefix.length),
+  );
   if (asset) {
     asset.headers.set("cache-control", "no-store");
     return asset;

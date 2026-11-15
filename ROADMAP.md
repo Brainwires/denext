@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.18.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.19.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -102,9 +102,6 @@ Not blocking 5.0; each item says why.
 
 ## Framework compatibility surfaces
 
-- **Fresh partial navigation:** the gaps left in KNOWN-LIMITATIONS (merging an answer's
-  `<script>` / `<style>` into the head, history across reloads). _Why 5.x: fixable gaps, none
-  blocking._
 - **Preact compat:** render-to-string streaming (the parity gate lists it). _Why 5.x: a small,
   independent gap._
 

@@ -4,7 +4,7 @@
 // covered by the migrate.test.ts family; here we drive the CLI verbs' orchestration +
 // their console reporting.
 
-import { assert, assertRejects, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { codemodCommand, migrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
@@ -233,9 +233,10 @@ Deno.test("migrate on a Fresh app reports the generated tree, Tailwind and the f
     const out = cap.logs.join("\n");
     assertStringIncludes(out, "Fresh 2.x detected");
     assertStringIncludes(out, "tailwind: ./assets/styles.css → ./assets/styles.gen.css");
-    assertStringIncludes(out, "won't migrate (1)");
-    // Partials migrate now (app/_fresh/partial.ts); the one won't-migrate item is the Vite plugin.
-    assertStringIncludes(out, "vite.config.ts: x()");
+    // Partials migrate (app/_fresh/partial.ts), and the app's other Vite plugin moves to
+    // vite.plugins.ts (run by viteBuildPlugin): a review note, nothing left as won't-migrate.
+    assertStringIncludes(out, "vite.config.ts: x(): moved to vite.plugins.ts");
+    assertEquals(out.includes("won't migrate"), false);
     assertStringIncludes(out, "partial.ts");
     assertStringIncludes(out, "Fresh modules unchanged");
     // A root `_layout` runs inside the `_app` wrapper, both from app/layout.tsx.
@@ -257,7 +258,7 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
       `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
     "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
     "src/index.jsx":
-      `import { options, render } from "preact";\noptions.diffed = () => {};\nrender(<p />, document.body);\n`,
+      `import { options, render } from "preact";\noptions._catchError = () => {};\nrender(<p />, document.body);\n`,
   };
   for (const [rel, text] of Object.entries(files)) {
     await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
@@ -275,8 +276,9 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
       out,
       "Preact (vite) — SPA mode with Preact mapped to denext · routers: preact-router",
     );
-    assertStringIncludes(out, "won't migrate (1)");
-    assertStringIncludes(out, "preact options hooks");
+    // Preact's internal options hooks are a review note (the public ones are called).
+    assertStringIncludes(out, "preact internal options hooks:");
+    assertEquals(out.includes("won't migrate"), false);
     assertStringIncludes(out, "Source unchanged: `preact`");
   } finally {
     await Deno.remove(dir, { recursive: true });

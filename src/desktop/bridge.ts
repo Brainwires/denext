@@ -105,6 +105,12 @@ export interface DesktopBridgeOptions {
    */
   readonly getWindow?: (windowId: string) => unknown;
   /**
+   * The runtime window of an OPEN app window by id, or `undefined` (no fallback to the main
+   * window): the window a host's `confirm({ window })` box is owned by and modal to. Without it
+   * every box is app-modal.
+   */
+  readonly getOpenWindow?: (windowId: string) => unknown;
+  /**
    * The window a per-window token names, or `undefined` for none (the request is refused: a
    * closed window's page). Without it every request is the main window's.
    */
@@ -619,7 +625,10 @@ export function createDesktopBridge(
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
     // A box up while the quit guards are asked stops their deadline (not a session end's).
-    confirm: (confirmOptions) => lifecycle.whileGuardAsks(desktopConfirm(confirmOptions)),
+    confirm: (confirmOptions) =>
+      lifecycle.whileGuardAsks(
+        desktopConfirm(confirmOptions, { getWindow: options.getOpenWindow }),
+      ),
     openWindow: (windowOptions) => {
       if (!options.openWindow) {
         throw new DesktopCapError("unsupported", "openWindow needs the desktop runtime's windows", {

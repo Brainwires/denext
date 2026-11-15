@@ -295,6 +295,26 @@ Deno.test("docs: the desktop page lists every capability `denext desktop add` kn
   }
 });
 
+Deno.test("SECURITY: every program a Windows capability bakes is an absolute path, never found through PATH", () => {
+  // A bare `powershell.exe` / `explorer.exe` / `rundll32.exe` grant was resolved through PATH, so
+  // a same-named program in a user-writable folder listed before System32 was the one allowed (and
+  // the one the capability ran, fed its script). Every capability on at once, as an app can.
+  for (const legacy of [true, false]) {
+    for (const bakedCapabilities of [true, false]) {
+      const run = desktopPermissionFlags(Object.keys(DESKTOP_CAPABILITIES), "windows", {
+        legacy,
+        bakedCapabilities,
+        macRuntimeStore: true,
+      }).filter((f) => f.startsWith("--allow-run"));
+      assertEquals(run.length, 1, "the capabilities run programs on Windows");
+      assert(run[0].startsWith("--allow-run="), `never an unscoped run: ${run[0]}`);
+      for (const program of run[0].slice("--allow-run=".length).split(",")) {
+        assert(/^[A-Za-z]:\\/.test(program), `${program} is not an absolute Windows path`);
+      }
+    }
+  }
+});
+
 /** Wrap a `desktop.capabilities` object as a whole config (desktopBuildFlags takes the config). */
 function caps(capabilities: Record<string, unknown>): unknown {
   return { desktop: { capabilities } };
@@ -325,7 +345,7 @@ Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay t
   // secure-store on Windows uses WinRT PasswordVault via powershell.exe (not on other OSes).
   assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-run=powershell.exe",
+    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   ]);
   // keep-awake's Windows backend is FFI, not a program.
   assertEquals(desktopBuildFlags(caps({ keepAwake: true }), "windows"), [
@@ -451,7 +471,7 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-write",
     "--allow-sys=osRelease",
-    "--allow-run=explorer.exe,powershell.exe,rundll32.exe",
+    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe,C:\\Windows\\System32\\rundll32.exe,C:\\Windows\\explorer.exe",
     "--allow-ffi=kernel32.dll",
   ]);
   // A capability that needs the unscoped --allow-sys widens the scoped one: a partial
@@ -465,7 +485,7 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-write",
     "--allow-sys",
-    "--allow-run=explorer.exe,powershell.exe,rundll32.exe",
+    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe,C:\\Windows\\System32\\rundll32.exe,C:\\Windows\\explorer.exe",
     "--allow-ffi=kernel32.dll",
   ]);
 });
@@ -499,7 +519,7 @@ Deno.test("desktopBuildFlags: auth-session bakes the per-OS browser opener", () 
   ]);
   assertEquals(desktopBuildFlags(caps({ authSession: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-run=rundll32.exe",
+    "--allow-run=C:\\Windows\\System32\\rundll32.exe",
   ]);
   assertEquals(desktopBuildFlags(caps({ authSession: true }), "linux"), [
     ...DESKTOP_BASELINE_FLAGS,
@@ -701,7 +721,9 @@ Deno.test("desktop add secure-store: a first enablement writes desktop.secureSto
     report.permissions.darwin.includes("--allow-run=security"),
     JSON.stringify(report.permissions),
   );
-  assertEquals(report.permissions.windows, ["--allow-run=powershell.exe"]);
+  assertEquals(report.permissions.windows, [
+    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  ]);
   // A second run leaves both as they are.
   const again = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
   assertEquals(again.kept, ["secure-store"]);
@@ -779,7 +801,7 @@ Deno.test("desktopBuildFlags: secure-store bakes --allow-sys and `security` only
   for (const options of [pinned, baked]) {
     assertEquals(desktopBuildFlags(legacy(false), "windows", options), [
       ...DESKTOP_BASELINE_FLAGS,
-      "--allow-run=powershell.exe",
+      "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     ]);
   }
   // The catalog's static lists are an older runtime's and the default config's.

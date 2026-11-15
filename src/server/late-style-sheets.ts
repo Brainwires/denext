@@ -8,7 +8,7 @@
 // boundary again, or never, for a Server Component the client never runs.
 //
 // So a streamed response is passed through {@linkcode streamLateStyleSheets}: before each
-// chunk that carries a boundary's `<template data-dnx-r>`, it writes the rules the registered
+// boundary's `<template data-dnx-r>`, it writes the rules the registered
 // sheets gained since the head (or the previous chunk) was sent — each rule once per response
 // — as an inert JSON block, then one inline script, a framework constant
 // ({@linkcode LATE_STYLES_RUNTIME_BODY}), that inserts them into the head's `<style id>` sheet
@@ -25,6 +25,7 @@
 // shell's policy could not list. An app with no registered sheet streams unchanged.
 
 import { hasServerStyleSheets, readServerStyleSheets } from "../runtime/server-style-sheets.ts";
+import { rewriteHtmlStream } from "./html-stream-rewriter.ts";
 
 /**
  * The inline runtime that applies each streamed rules block (the text a CSP `'sha256-…'` is
@@ -107,14 +108,13 @@ function lateRulesMarkup(rules: Record<string, LateRule[]>): string {
   return `<script type="application/json" data-dnx-rules>${json}</script>${LATE_STYLES_RUNTIME}`;
 }
 
-/** Where a streamed boundary's content starts in a chunk. */
-const HOLE = "<template data-dnx-r=";
-
 /**
  * `stream` (a streamed document whose head and shell are `shellPrefix`) with the rules the
  * registered style sheets gain while its boundaries render written ahead of the boundaries that
  * stream after them (see the module comment). Returns `stream` itself when no sheet is
- * registered.
+ * registered. The boundaries are found by the streaming tokenizer
+ * (./html-stream-rewriter.ts): a `<template data-dnx-r>` split across two chunks is still found,
+ * and one inside a script, a style or a comment is not taken for a boundary.
  *
  * @param stream The streamed document.
  * @param shellPrefix The head + shell it flushes first (what the head's sheets already hold).
@@ -125,24 +125,13 @@ export function streamLateStyleSheets(
 ): ReadableStream<Uint8Array> {
   if (!hasServerStyleSheets()) return stream;
   const sent = sentRules(shellPrefix);
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  return stream.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        let text = decoder.decode(chunk, { stream: true });
-        const at = text.indexOf(HOLE);
-        if (at >= 0) {
-          // Read now: every boundary in this chunk has rendered, so its rules are in the sheet.
-          const rules = takeLateRules(sent);
-          if (rules) text = text.slice(0, at) + lateRulesMarkup(rules) + text.slice(at);
-        }
-        if (text) controller.enqueue(encoder.encode(text));
-      },
-      flush(controller) {
-        const rest = decoder.decode();
-        if (rest) controller.enqueue(encoder.encode(rest));
-      },
-    }),
-  );
+  return rewriteHtmlStream(stream, {
+    startTag(tag) {
+      if (tag.name !== "template" || !tag.hasAttribute("data-dnx-r")) return;
+      // Read now: the boundary has rendered (its template is in the stream), so its rules are in
+      // the sheet.
+      const rules = takeLateRules(sent);
+      if (rules) tag.before(lateRulesMarkup(rules));
+    },
+  });
 }

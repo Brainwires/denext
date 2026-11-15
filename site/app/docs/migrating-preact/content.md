@@ -43,7 +43,8 @@ denext task dev
 - **SPA mode**: `mode: "spa"` in `denext.config.ts`, as for any [Vite SPA](/docs/migrating#3b-migrating-a-vite-cra-or-generic-react-spa),
   with a `resolveAlias` block mapping `preact`, `preact/hooks`, `preact/compat`,
   `preact/jsx-runtime`, `preact/jsx-dev-runtime`, `preact-render-to-string`,
-  `preact-render-to-string/stream`, `@preact/signals`, `@preact/signals/utils` and
+  `preact-render-to-string/stream`, `preact-render-to-string/jsx`,
+  `preact-render-to-string/stream-node`, `@preact/signals`, `@preact/signals/utils` and
   `@preact/signals-core` (and preact-iso's entry points, when the app uses it) to their
   `denext/*` targets, so an npm package that imports Preact gets denext's, not its own copy.
 - **The import map** in `deno.json` holds the same aliases, plus `preact/debug` and
@@ -68,27 +69,34 @@ denext task dev
 | `denext/preact/hooks`            | The hooks, plus Preact's `useErrorBoundary`: the component that calls it is an error boundary for what it renders. A render, effect or event-handler error below re-renders it with `[error, resetError]`, the callback gets `(error, errorInfo)` once that render commits, and `resetError()` renders the children again. While it shows an error, an error its error UI throws goes to the boundary above. A production build includes this boundary support when the app's own sources name `useErrorBoundary` or import preact-iso (a library that calls the hook needs the app to name it once); a server render never catches here. |
 | `denext/preact/compat`           | `preact/compat`: the React API plus `createPortal`, `render`, `hydrate`, `flushSync`, `unstable_batchedUpdates`, `unmountComponentAtNode`, `findDOMNode`, `createFactory`, `isFragment` and `isMemo`. `render(vnode, parent, callback)` / `hydrate(vnode, parent, callback)` render synchronously into one root per container (a second `render` re-renders it, `unmountComponentAtNode(parent)` removes it) and then call `callback`; `flushSync(fn, arg)` calls `fn(arg)` and flushes. `findDOMNode` returns a mounted class instance's first DOM node.                                                                                 |
 | `denext/preact/jsx-runtime`      | Preact's automatic JSX runtime (`jsxImportSource: "preact"`), with signals bound as DOM props, plus Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`, `jsxEscape`): see [Precompiled JSX](#precompiled-jsx).                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `denext/preact/render-to-string` | preact-render-to-string's `renderToString` (also the default export and `render`), `renderToStaticMarkup`, `renderToStringAsync` and `renderToReadableStream`, rendered by denext's server renderer in Preact's markup (see below).                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `denext/preact/render-to-string` | preact-render-to-string's `renderToString` (also the default export and `render`), `renderToStaticMarkup`, `renderToStringAsync` and `renderToReadableStream`, rendered by denext's server renderer in Preact's markup (see below). `denext/preact/render-to-string/jsx` is its `/jsx` entry (`render`, `shallowRender`) and `denext/preact/render-to-string/stream-node` its `/stream-node` entry (`renderToPipeableStream`).                                                                                                                                                                                                            |
 | `denext/signals`                 | Preact Signals: see [Preact Signals](/docs/signals).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `denext/preact-iso`              | preact-iso's contract on denext's hooks and `<Suspense>`: `LocationProvider` (same-origin link clicks and back / forward navigate on the client), `useLocation`, `Router`, `Route`, `useRoute`, `exec`, `lazy` (with `.preload()`), `ErrorBoundary`, `hydrate`, `prerender` (returns `{ html, links }`) and `locationStub`.                                                                                                                                                                                                                                                                                                               |
 
 ### Preact's `options` hooks
 
-denext calls the hooks it can honour; the rest can be set but are never called, because
-denext's reconciler does not run Preact's diff.
+denext calls the hooks at the points Preact's diff does. Each one receives denext's element, not
+Preact's internal vnode.
 
-| Hook                                                                                      | On denext                                                                                                                                       |
-| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `options.vnode(vnode)`                                                                    | Called for each element `h`, `createElement`, `cloneElement` (from `denext/preact` and `denext/preact/compat`) and Preact's JSX runtime create. |
-| `options.event(e)`                                                                        | Called before each handler of an intrinsic element those create; a returned value is passed to the handler in the event's place.                |
-| `options.attr(name, value)`                                                               | Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML.                                                               |
-| `options.useDebugValue(value)`                                                            | Called by `useDebugValue` from `denext/preact/hooks`, with the formatted value.                                                                 |
-| `diffed`, `unmount`, `requestAnimationFrame`, `debounceRendering`, `__suspenseDidResolve` | Never called (a no-op).                                                                                                                         |
-| The internal hooks (`__b`, `__r`, `__c`, `__e`, `__h`, `_diff`, `_render`, `_commit`, …)  | Never called (a no-op), so `preact/debug` and `preact/devtools` map to an empty module.                                                         |
+| Hook                                                                           | On denext                                                                                                                                          |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `options.vnode(vnode)`                                                         | Called for each element `h`, `createElement`, `cloneElement` (from `denext/preact` and `denext/preact/compat`) and Preact's JSX runtime create.    |
+| `options.event(e)`                                                             | Called before each handler of an intrinsic element those create; a returned value is passed to the handler in the event's place.                   |
+| `options.attr(name, value)`                                                    | Called by `jsxAttr` (precompiled JSX); a returned string is the attribute's HTML.                                                                  |
+| `options.useDebugValue(value)`                                                 | Called by `useDebugValue` from `denext/preact/hooks`, with the formatted value.                                                                    |
+| `options._render(vnode)` (mangled `__r`)                                       | Called before each component renders in the browser.                                                                                               |
+| `options.diffed(vnode)`                                                        | Called for each component, element and text node a commit rendered or changed, once its DOM is in place, children first, before layout effects.    |
+| `options._commit(vnode, queue)` (mangled `__c`)                                | Called once per commit, after its layout effects, with the root element and an empty queue.                                                        |
+| `options.unmount(vnode)`                                                       | Called for each component, element and text node removed, parent first; the effect cleanups follow, children first (React's order).                |
+| `options.debounceRendering(cb)`                                                | Schedules the render a state update needs (by default a microtask, as in Preact).                                                                  |
+| `options.requestAnimationFrame(cb)`                                            | Schedules the `useEffect` flush after a commit (`preact/test-utils`-style synchronous flushing works).                                             |
+| `options._diff(vnode)` (mangled `__b`)                                         | Called as each element is created through those entry points, after `options.vnode` (denext has no per-vnode diff to run it before).               |
+| `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `__suspenseDidResolve` | Not called (a no-op); `preact/debug` and `preact/devtools` map to an empty module, since the devtools bridge reads Preact's internal vnode fields. |
 
-The element `options.vnode` receives is denext's (`type`, `props`, `key`, with the `ref` in
-`props`), not Preact's internal vnode. Elements denext's own components create (outside the
-Preact entry points) do not pass through these hooks.
+The element every hook receives is denext's (`type`, `props`, `key`, with the `ref` in `props`),
+not Preact's internal vnode (`_children`, `_component`, `_dom`). Elements denext's own components
+create (outside the Preact entry points) do not pass through `options.vnode`; the render, diff,
+commit and unmount hooks see every component and element.
 
 ### Precompiled JSX
 
@@ -117,8 +125,16 @@ Where it differs from preact-render-to-string:
 - camelCase SVG presentation attributes are always hyphenated (`stroke-width`), as browsers need.
 - An `<input>` with both `value` and `defaultValue` writes `value` once (Preact writes both).
 - The `context` argument (a legacy context object) is ignored.
-- `renderToReadableStream` sends the document once every boundary has resolved; it does not
-  stream fallbacks first. `preact-render-to-string/jsx` and `/stream-node` are not mapped.
+- `renderToReadableStream` (and `/stream-node`'s `renderToPipeableStream`, whose `onShellReady`
+  and `onAllReady` both fire once the document is ready) sends the document once every boundary
+  has resolved; it does not stream fallbacks first.
+
+`denext/preact/render-to-string/jsx` writes the pretty-printed, JSX-like markup snapshot tests
+compare against, as preact-render-to-string's `/jsx` entry does: one attribute per line once
+they span several, a non-string value as `name={…}` in pretty-format's form (`Object { "a": 1 }`,
+`[Function onClick]`), `false` attributes dropped, two-space indents, and `shallowRender` writing
+nested components as `<Name … />`. Its options (`jsx`, `xml`, `pretty`, `shallow`, `functions`,
+`functionNames`, `skipFalseAttributes`, `sortAttributes`, `allAttributes`) are the same.
 
 ### `denext/preact-iso`
 
@@ -148,18 +164,16 @@ you check the navigation and redirects.
 `denext migrate --check` reports `source: "preact"`, with each finding naming the files it was
 found in.
 
-| Won't migrate                                                                                                | What to do                                                                                     |
-| ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| preact-cli's `preact.config.js` (its webpack config)                                                         | Port what it adds to `denext.config.ts`.                                                       |
-| `preact-render-to-string/jsx`, `/stream-node`                                                                | Render with `renderToString` / `renderToReadableStream` from `denext/preact/render-to-string`. |
-| Preact's `options.diffed` / `unmount` / `debounceRendering` / `requestAnimationFrame` and the internal hooks | denext never calls them (see [the `options` hooks](#preacts-options-hooks)).                   |
-| `useSignalRef` / `createModel` from `@preact/signals`                                                        | Not in `denext/signals`.                                                                       |
+| Won't migrate                                        | What to do                               |
+| ---------------------------------------------------- | ---------------------------------------- |
+| preact-cli's `preact.config.js` (its webpack config) | Port what it adds to `denext.config.ts`. |
 
-| Review                           | What to do                                                                                                                                         |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preact-router`, `wouter-preact` | They run on the aliases; check the navigation and redirects.                                                                                       |
-| preset-vite's `prerender`        | denext's SPA mode renders in the browser and does not prerender. For HTML at build time, move the pages to the App Router and run `denext export`. |
-| `wmr.config.mjs`                 | WMR plugins are not run; port them to `denext.config.ts`.                                                                                          |
+| Review                                                 | What to do                                                                                                                                         |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preact-router`, `wouter-preact`                       | They run on the aliases; check the navigation and redirects.                                                                                       |
+| Preact's internal `options` hooks (`__e`, `__h`, `__`) | Not called; the other hooks get denext's elements (see [the `options` hooks](#preacts-options-hooks)).                                             |
+| preset-vite's `prerender`                              | denext's SPA mode renders in the browser and does not prerender. For HTML at build time, move the pages to the App Router and run `denext export`. |
+| `wmr.config.mjs`                                       | WMR plugins are not run; port them to `denext.config.ts`.                                                                                          |
 
 The same list is in [Known limitations](/docs/limitations).
 

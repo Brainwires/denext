@@ -2152,7 +2152,8 @@ async function migrateFreshProject(dir: string, options: MigrateOptions): Promis
   });
   await mfs.writeTextFile(configPath, JSON.stringify(merged, null, 2) + "\n");
   written.unshift(configPath);
-  await ensureGitignore(dir, [".denext/", "out/", "_fresh/"], written);
+  const pluginOut = fresh.configImports.length ? ["public/_fresh-plugins/"] : [];
+  await ensureGitignore(dir, [".denext/", "out/", "_fresh/", ...pluginOut], written);
   await ensureVscodeDeno(dir, written);
   const configExists = !(await writeIfWritable(
     join(dir, "denext.config.ts"),
@@ -2183,12 +2184,14 @@ function freshConfigSource(fresh: FreshMigrateInfo): string {
         JSON.stringify(fresh.tailwind.output)
       } },\n`
     : "";
+  const carried = fresh.configEntries.map((line) => `  ${line}\n`).join("");
+  const imports = fresh.configImports.map((line) => `${line}\n`).join("");
   return `${GEN_MARKER}
 import type { DenextConfig } from "denext/server";
-
+${imports}
 // A Fresh ${fresh.version}.x app on denext: its routes run through middleware.ts and app/.
 export default {
-${tailwind}} satisfies DenextConfig;
+${tailwind}${carried}} satisfies DenextConfig;
 `;
 }
 
@@ -3070,9 +3073,10 @@ function nextConfigSource(o: {
 /** Source text for the generated `deno desktop` entry (`desktop.ts`). */
 function spaDesktopSource(): string {
   // The entry reads `.deno-desktop/config.json`: the runtime part of denext.config.ts
-  // (`desktop`, `spa.proxy`) that every export, build and `denext desktop` command rewrites, so
-  // ADDING a backend proxy to the config later just works (no desktop.ts hand-edit or
-  // re-migration) and the config module, with any plugin it imports, never ships in the app.
+  // (`desktop`, `spa.proxy`) that every export, `denext desktop run` / `dev` and the package
+  // scripts rewrite, so ADDING a backend proxy to the config later just works (no desktop.ts
+  // hand-edit or re-migration) and the config module, with any plugin it imports, never ships in
+  // the app.
   return GEN_MARKER + "\n" +
     `// Entry for \`deno desktop\` — serves the static export in \`out/\` inside a native\n` +
     `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +

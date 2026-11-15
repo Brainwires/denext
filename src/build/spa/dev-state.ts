@@ -8,7 +8,7 @@ import {
   sharedBuildTarget,
 } from "../platform-extensions.ts";
 import { ensureDir } from "@std/fs";
-import { join, resolve } from "@std/path";
+import { basename, join, resolve } from "@std/path";
 import {
   domListsEnabled,
   featureFlags,
@@ -69,6 +69,14 @@ export interface SpaTargetBuild {
    * and plain (deno bundle) paths are served identically.
    */
   dir: string | null;
+  /**
+   * The generation built before the latest one, kept on disk: a page loaded from it still asks
+   * for its chunks after a rebuild (esbuild names chunks by content, so the new build may not
+   * have them).
+   */
+  previous: string | null;
+  /** The latest finished build's dir (what {@linkcode dir} was before an invalidation). */
+  latest: string | null;
   /** Whether the build emitted a stylesheet. */
   hasStyles: boolean;
   /** The build in flight, if any. */
@@ -154,16 +162,24 @@ function genDirName(gen: number, platform: Platform): string {
 }
 
 /**
- * Prune `platform`'s prior generations — a long dev session (many edits) would otherwise
- * accumulate a full bundle copy per change. Builds are serialized per target and only the
- * current generation is served, so removing that target's others is safe; another target's
- * builds are its own, and stay.
+ * Prune `platform`'s older generations — a long dev session (many edits) would otherwise
+ * accumulate a full bundle copy per change. Builds are serialized per target; the current
+ * generation and the one before it (whose page may still be loading its chunks) are kept, the
+ * rest of that target's go; another target's builds are its own, and stay.
+ *
+ * @param root The `spa-dev` directory.
+ * @param keep The generation dir names to keep.
+ * @param platform The target whose generations are pruned.
  */
-async function pruneGenerations(root: string, keep: string, platform: Platform): Promise<void> {
+export async function pruneGenerations(
+  root: string,
+  keep: readonly string[],
+  platform: Platform,
+): Promise<void> {
   const own = platform === "web" ? /^\d+$/ : new RegExp(`^\\d+-${platform}$`);
   try {
     for await (const e of Deno.readDir(root)) {
-      if (e.isDirectory && e.name !== keep && own.test(e.name)) {
+      if (e.isDirectory && !keep.includes(e.name) && own.test(e.name)) {
         await Deno.remove(join(root, e.name), { recursive: true }).catch(() => {});
       }
     }
@@ -183,8 +199,14 @@ async function buildGeneration(
   await ensureDir(dir);
   const res = await bundleSpaInto(st.paths, st.entryPath, dir, false, true, platform);
   build.hasStyles = res.hasStyles;
+  build.previous = build.latest !== dir ? build.latest : build.previous;
+  build.latest = dir;
   build.dir = dir;
-  await pruneGenerations(root, name, platform);
+  await pruneGenerations(
+    root,
+    build.previous ? [name, basename(build.previous)] : [name],
+    platform,
+  );
   return dir;
 }
 
@@ -206,7 +228,7 @@ function spaBuildTarget(st: SpaDevState, platform: Platform): Promise<Platform> 
 function buildOf(st: SpaDevState, platform: Platform): SpaTargetBuild {
   let build = st.builds.get(platform);
   if (!build) {
-    build = { dir: null, hasStyles: false, building: null };
+    build = { dir: null, previous: null, latest: null, hasStyles: false, building: null };
     st.builds.set(platform, build);
   }
   return build;
@@ -224,10 +246,10 @@ function buildOf(st: SpaDevState, platform: Platform): SpaTargetBuild {
 export async function ensureBuilt(
   st: SpaDevState,
   platform: Platform = "web",
-): Promise<{ dir: string; hasStyles: boolean }> {
+): Promise<{ dir: string; previous: string | null; hasStyles: boolean }> {
   const target = await spaBuildTarget(st, platform);
   const build = buildOf(st, target);
-  if (build.dir) return { dir: build.dir, hasStyles: build.hasStyles };
+  if (build.dir) return { dir: build.dir, previous: build.previous, hasStyles: build.hasStyles };
   if (!build.building) {
     const gen = st.generation;
     build.building = st.pluginsReady.then(() => buildGeneration(st, build, gen, target))
@@ -236,7 +258,7 @@ export async function ensureBuilt(
       });
   }
   const dir = await build.building;
-  return { dir, hasStyles: build.hasStyles };
+  return { dir, previous: build.previous, hasStyles: build.hasStyles };
 }
 
 /** Drop every target's build: the next request for each rebuilds it (a source edit). */

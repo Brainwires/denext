@@ -8,6 +8,193 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-11-15
+
+### Added
+
+- **`runDesktop({ openBrowser })` chooses how `openAuthSession` opens the system browser.** It gets
+  the checked `https:` authorization URL, for the loopback flow and for a custom-scheme callback
+  outside macOS's own auth session. The default stays the OS's own opener, started by absolute
+  path on Windows (`C:\Windows\System32\rundll32.exe`), never looked up on `PATH`; a test can
+  record the URL instead of opening a browser.
+- **A tray title.** `desktop.tray.title`, `runDesktop({ tray: { title } })`, the backend tray
+  handle's `update({ title })` and `createTray({ title })` / `tray.update({ title })` from
+  `denext/desktop/app` set the short text beside a tray icon in the macOS menu bar (Electron's
+  `tray.setTitle`; `null` removes it). It shows where the Deno Desktop runtime's tray has
+  `setTitle`, which `appCapabilities().trayTitle` reports; elsewhere it is accepted and ignored.
+- **A tray icon per OS.** A tray's `icon` (in `desktop.tray`, `runDesktop({ tray })`, the backend
+  handle's `update`, and `createTray` / `tray.update`) takes `{ macos, windows, linux, default }`,
+  each an icon or `{ icon, iconDark }`, so a macOS template image and Windows full-colour art with
+  a dark-taskbar variant live side by side; the running OS's entry is shown, else `default`, and an
+  entry's own `iconDark` wins. One icon for every OS still works. A set naming neither the OS nor
+  `default` is refused (`validation` from `createTray`, an error at launch for `desktop.tray`).
+- **Fresh conformance beds and a Fresh comparison page.** The migration beds now run
+  `denext migrate` on the two apps `@fresh/init` scaffolds (Vite with Tailwind, and Fresh's own
+  builder), on Deno's node_test_viewer (stable Fresh 2 with Vite, Tailwind 4 and Deno KV) and on
+  Deno SaaSKit (a Fresh 1.x app with five plugins), besides Fresh's own website, and each is
+  built, served and hydrated with nothing left as won't-migrate (`wontMigrate: []` on a bed;
+  `serve: false` stops a bed after the build). Fresh's website migrates with no hand edit. A migrated Fresh 1.x
+  app's imports of `$fresh/src/server/defines.ts`, `/types.ts` and `src/runtime/utils.ts` resolve
+  to `denext/fresh`. The new [Fresh and denext](https://denext.dev/docs/fresh-vs-denext) page
+  lists what Fresh does, where each part lives on denext, and what denext adds.
+- **`viteBuildPlugin` runs Vite plugins' build hooks.** From `denext/plugin-kit/vite-emitter`
+  (and `denext/plugin-kit`): `configResolved`, `buildStart`, `generateBundle`, `writeBundle` and
+  `closeBundle` in Rollup's order, with `this.emitFile`, for plugins given directly, as a Vite
+  config or module, or through a loader called at build; `apply: "serve"` plugins are skipped,
+  `enforce` order is kept, and the module-graph hooks it cannot run are named in a warning.
+  `denext migrate --from fresh` moves a Vite config's other plugins to `vite.plugins.ts` and runs
+  them through it instead of reporting them.
+- **Fresh 1.x plugins run.** A `fresh.config.ts` with plugins stays (Fresh's Tailwind plugin
+  removed), and `denext/fresh/server` runs their `routes` (sorted with the file routes),
+  `middlewares` (by directory, like `_middleware` files) and `render` / `renderAsync` hooks (an
+  async hook starts before the page renders and resumes with its HTML; `styles` and `links` go
+  into the head). `freshPlugins()` from the new `denext/fresh/plugins` bundles each plugin's
+  `entrypoints` into `public/_fresh-plugins/`, which a page whose hook returned `scripts` loads.
+  `denext migrate` marks the islands a local plugin declares `"use client"` and keeps
+  `$fresh/plugins/` mapped to the app's Fresh release. Preact's `options._diff` / `__b` is called
+  as an element is created (what twind's plugin hooks).
+- **`onRenderSettled`**: an internal settled-render head hook every document renderer awaits
+  after the tree renders, with its HTML (what Fresh's render hooks run through).
+- **Fresh partial navigation merges `<script>` and `<style>` and keeps scroll positions, as Fresh
+  does.** A data `<script>` in the answer's head (JSON-LD, …) is added or updated by type and `id`
+  (never an executable one), a `<style>` without an `id` is added (through a constructed style
+  sheet when the page's policy does not cover its text), each history entry keeps its scroll
+  position for back / forward, and an entry made before a reload applies the refetched regions in
+  their own modes, as Fresh's `popstate` handler does, instead of replacing them.
+- **Fresh's `new App({ basePath })`, `csp({ useNonce: true })` and `import.meta.env.PROD`
+  behave as in Fresh.** The generated `middleware.ts` mounts every route under the `App`'s
+  `basePath` (a path outside it renders the not-found page with a 404; `ctx.url` stays the full
+  URL). `useNonce` mints a nonce per request, lists it in `script-src` / `style-src` in place of
+  `'unsafe-inline'`, and gives it to each `<script>` / `<style>` element the page creates through
+  Preact's entry points. `denext migrate` reduces a `PROD` / `DEV` choice between Vite's bundle
+  location and the source location to the source one, which denext runs from under `dev` and
+  `start`; Fresh's own website now migrates with no hand edit.
+- **Islands a Fresh app registers in code migrate in place.** `app.island(fileOrUrl, exportName,
+  Component)` and `app.islands(…)` in `main.ts`, `builder.registerIsland()` in `dev.ts` and
+  `fresh({ islandSpecifiers })` each make their module a `"use client"` one where it is; a package
+  module gets a `"use client"` re-export under `app/_fresh/islands/` that `deno.json` points the
+  app at. `App` records `island()` / `islands()` instead of ignoring them.
+- **`fresh({ … })` options carry over.** `routeDir`, `islandsDir`, `staticDir` (several, the
+  earlier one winning a shared path), `serverEntry`, `clientEntry`, `ignore` and
+  `islandSpecifiers` are read from the Vite config and applied by the migration; a Fresh 1.x
+  `fresh.config.ts`'s `staticDir`, `router.basePath` and `router.trailingSlash` too (the last two
+  as `basePath` / `trailingSlash` in `denext.config.ts`). A client entry's stylesheets now resolve
+  relative to the entry.
+- **`denext migrate --from fresh` merges files that already exist.** A `static/` file identical to
+  the `public/` file at its path is dropped, a `robots.txt` / `humans.txt` / `ads.txt` /
+  `app-ads.txt` / `security.txt` gets the lines it lacks appended, `client.ts`'s code is appended
+  to an existing `instrumentation-client.ts` unless the two declare the same name, and a generated
+  file the app already has with the same content is no longer reported. Only a file that really
+  differs is left in place and reported.
+- **`preact-render-to-string/jsx` and `/stream-node`.** `denext/preact/render-to-string/jsx`
+  writes the pretty-printed, JSX-like markup snapshot tests compare against (`render`, the default
+  export, and `shallowRender`, with the `/jsx` entry's options), and
+  `denext/preact/render-to-string/stream-node` has `renderToPipeableStream` (`pipe`, `abort`,
+  `onShellReady`, `onAllReady`, `onError`). `denext migrate` maps both specifiers there for Fresh and
+  Preact apps instead of reporting them, and the parity gate checks both against
+  preact-render-to-string's own surface.
+- **`createModel`, `useModel` and `useSignalRef` in `denext/signals`, and Preact Signals' options.**
+  `createModel(factory)` builds models whose functions are actions and whose effects
+  `[Symbol.dispose]()` disposes (an effect created in `untracked()` stays the caller's; a nested
+  model's effects are its parent's too); `useModel` keeps one per component; `useSignalRef` is a
+  signal usable as a `ref`. `signal`, `computed`, `useSignal` and `useComputed` take `{ name,
+  watched, unwatched }`, `effect` and `useSignalEffect` take `{ name }`. A computed or effect
+  created inside `untracked()` now tracks its own reads, as in Preact.
+- **Preact's `options` hooks are called.** The reconciler calls `options._render` / `__r` before
+  each component renders, `diffed` for each vnode a commit rendered or changed (children first,
+  DOM in place), `_commit` / `__c` once per commit, `unmount` for each removed vnode (parent
+  first), and schedules an update's render through `debounceRendering` and the `useEffect` flush
+  through `requestAnimationFrame` when an app sets them. Without a Preact entry loaded, each call
+  site is one null check.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.23.** It adds WebRTC media
+  (`addTransceiver()`, `addTrack()`, senders and receivers with every codec browsers negotiate,
+  `MediaStream`), certificates (`RTCPeerConnection.generateCertificate()`), the DTLS and ICE
+  transports, DTMF and candidate pairs, and `Deno.webrtc` for servers: encoded media tracks a
+  program feeds, RTP reading, certificate export and import, and shared-port networks with 1:1 NAT,
+  ICE-lite, ICE over TCP and mDNS host names. It also fixes `info.completed` resolving for a
+  cut-short HTTP/1.1 stream, a `WebSocket.close()` that waited forever on a silent peer, concurrent
+  HTTP/2 `fetch()` calls failing on refused streams, a `node:http2` crash on GOAWAY,
+  `existsSync()` throwing for a special path (`vite build` under scoped permissions), `deno
+  compile` overflowing its stack on deeply nested npm files and a white window from a per-machine
+  Windows install whose app name had no ASCII letters, and the language server starts faster in
+  workspaces with npm dependencies. The [runtime reference](https://denext.dev/docs/runtime-reference)
+  lists each change.
+
+### Fixed
+
+- **A SPA dev page loaded just before a rebuild still gets its chunks.** The bundled dev loop
+  (`DENEXT_DEV_UNBUNDLED=0`, `denext mobile dev` / `desktop dev` against a SPA) served a client
+  asset from the newest build only and removed the one before, so a page whose entry came from
+  that build got 404s for the chunks it had not fetched yet (esbuild names chunks by content). The
+  build before the newest is now kept and serves what the newest lacks.
+- **Security: a Deno Desktop app on Windows no longer runs whichever `powershell.exe`,
+  `explorer.exe` or `rundll32.exe` comes first on `PATH`.** The `secure-store`, `dialogs`, `shell`
+  and `auth-session` capabilities spawned those programs by bare name, and the package baked the
+  same bare names as `--allow-run`, so a same-named program in a user-writable folder listed before
+  `System32` was both the one allowed and the one run, handed the capability's script (the secure
+  store's secrets on stdin) or URL. They now spawn and bake Windows' own copies by absolute path
+  (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, `C:\Windows\explorer.exe`,
+  `C:\Windows\System32\rundll32.exe`), as the `pty` defaults already did. Repackage to pick it up;
+  a Windows installed outside `C:\Windows` refuses these calls instead of running another program.
+- **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
+  `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
+  (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
+  could open behind the app's window, where Return and Escape never reached it. A window that has
+  closed gets an app-modal box, never the main window in its place.
+- **`denext desktop package --arch`.** `--arch x86_64 | arm64 | both` (and `universal` for macOS)
+  picks the architecture to package, `--target-os windows` included; it was an unknown flag, so a
+  Windows Arm64 package could only be built through `-- --arch arm64`. An architecture the target
+  OS's script does not build is refused before the export starts.
+- **An App Router or Pages Router export of a desktop app rewrites `.deno-desktop/config.json`.**
+  `denext export` and `denext desktop build` left it as it was unless the app was in SPA mode, so a
+  capability or `spa.proxy` added to the config reached a bare `deno desktop` build only after
+  `denext desktop run` / `dev` or a package script. The scaffolded `desktop.ts` comment no longer
+  says `denext build` rewrites it (it does not; export after editing the config).
+- **Terminals (`pty`) on Windows.** denext's Deno Desktop runtime opens a ConPTY on Windows from
+  3.0.0-denext.21 (the pinned runtime is later), so `denext desktop doctor` no longer warns that a Windows
+  build has no terminals, `denext desktop add pty` no longer says so, and the doctor checks the
+  Windows floor (`FIRST_WINDOWS_PTY_RUNTIME`) instead. Under an older runtime `spawnPty()` still
+  rejects `unsupported`, now naming that runtime in `error.data.requires`.
+- **`denext desktop add secure-store` names the Windows PowerShell grant.** The
+  Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
+  runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
+  lets any code in the app's process run scripts as the user. The capability's notes, the
+  permission table on the desktop docs page and the source now say so.
+- **`render()` from `denext/testing` mounts a controlled `<select>`.** Its in-memory DOM had no
+  `select.options`, so rendering `<select value="a">` threw `el.options is not iterable`. A
+  `<select>` there now has `options` (inside an `<optgroup>` too), `selectedOptions`,
+  `selectedIndex` and a `value` that follows the selected option and selects one when assigned,
+  and an `<option>` has `selected` and a `value` that falls back to its text, as in a browser;
+  `fireEvent.change` and `userEvent.selectOptions` select the option they name.
+- **Injections into a streamed page rewrite it as it flows.** A first-party streaming HTML
+  rewriter (element and end-tag handlers over an incremental tokenizer, in the shape of
+  `HTMLRewriter`; plain TypeScript, no dependency) now carries what denext adds to a streamed
+  response. `denext desktop dev`'s live-reload proxy no longer reads the dev server's whole page
+  before adding the desktop global: the window gets the first bytes when the dev server sends them
+  (about 2 ms instead of the time to the last Suspense boundary, 400 ms in the test), and each
+  streamed boundary as it renders. The global lands after the real `<head>` even when the tag is
+  split across chunks, and a `<head>` inside a comment or a script is no longer taken for it.
+  React Native mode's late style sheets find each streamed boundary the same way: one split
+  across two chunks still gets its rules ahead of it, and boundary text inside a script no longer
+  gets a rules block.
+- **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
+  `start`, `build` and every other verb that runs project code ran it with the flags of the
+  config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so
+  an app with `"unstable": ["kv"]` that opens Deno KV failed with `Deno.openKv is not a
+  function`. Each re-run child (the toolchain re-exec, a pinned denext's child, the CSS /
+  module-config re-exec, the limits re-run) now gets `--unstable-<name>` for each entry, and a
+  last gate re-runs a process that still lacks one once with them.
+- **A middleware `rewrite(path)` keeps the request's query string.** `rewrite("/home")` on
+  `/a?x=1` serves `/home?x=1`; a destination with its own `?query` is served as written.
+- **A component from a package that bundles its own Preact gets its context.** Real Preact calls
+  a component whose `contextType` is one of its contexts (its `Context.Consumer`) with the
+  context's value as the second argument; denext now passes the context's default value there,
+  so a JSR icon set importing `npm:preact` (SaaSKit's `@preact-icons`) renders instead of
+  throwing.
+
 ## [4.18.0] - 2026-11-14
 
 ### Added
@@ -22262,7 +22449,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.18.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.19.0...development
+[4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0
 [4.16.0]: https://jsr.io/@denext/denext@4.16.0

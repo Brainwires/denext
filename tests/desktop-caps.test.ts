@@ -759,12 +759,12 @@ Deno.test("shellPathCommand: per-OS argv passes the path as a discrete arg (no i
   );
   assertEquals(shellPathCommand("linux", "open", p), ["xdg-open", [p]]);
   assertEquals(shellPathCommand("linux", "trash", p), ["gio", ["trash", p]]);
-  assertEquals(shellPathCommand("windows", "open", p), ["explorer.exe", [p]]);
+  assertEquals(shellPathCommand("windows", "open", p), ["C:\\Windows\\explorer.exe", [p]]);
   // Windows trash: `powershell.exe -Command` joins trailing argv into the command TEXT, so the
   // path must never be in argv at all — it travels in an env var the script reads as data.
   const evil = "C:\\app\\data\\a;Start-Process calc;$(calc)";
   const [wcmd, wargs] = shellPathCommand("windows", "trash", evil);
-  assertEquals(wcmd, "powershell.exe");
+  assertEquals(wcmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   assert(wargs.every((a) => !a.includes("calc")), "the path is not in the powershell argv");
   assertEquals(shellPathEnv("windows", "trash", evil), { [SHELL_PATH_ENV]: evil });
   assertEquals(shellPathEnv("darwin", "trash", p), undefined);
@@ -1136,7 +1136,7 @@ Deno.test("secureStoreCommand: per-OS argv; the secret is stdin on every OS, nev
   // travels in the stdin JSON — powershell.exe -Command joins trailing argv into the command text,
   // so service/key/secret must never appear in argv.
   const win = secureStoreCommand("windows", "set", "svc", "tok", "QjY0");
-  assertEquals(win.cmd, "powershell.exe");
+  assertEquals(win.cmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   assert(win.args.includes("-Command"));
   assert(
     !win.args.some((a) => a.includes("svc") || a.includes("tok") || a.includes("QjY0")),
@@ -1510,7 +1510,7 @@ Deno.test("dialogs: per-OS program is spawned with the path/name as discrete arg
     assertEquals(lin.calls, []);
     const win = capturingDialogs("windows", folder);
     await call(win.cap, "openFile", {});
-    assertEquals(win.calls[0][0], "powershell.exe");
+    assertEquals(win.calls[0][0], "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     // saveFile: the suggested name is its own argv element, never spliced into the script string.
     const out = join(dir, "notes.txt");
     const save = capturingDialogs("darwin", out);
@@ -1577,7 +1577,7 @@ Deno.test("dialogs SECURITY: the Windows suggested name travels in env, never th
     });
     const name = "a; Start-Process calc; $(calc).txt";
     await call(cap, "saveFile", { data: "x", suggestedName: name });
-    assertEquals(calls[0][0], "powershell.exe");
+    assertEquals(calls[0][0], "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     assert(calls[0][1].every((a) => !a.includes("calc")), "name is not in argv");
     assertEquals(calls[0][2]?.[DIALOG_NAME_ENV], name);
   } finally {

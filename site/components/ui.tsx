@@ -18,6 +18,7 @@ export const NAV: {
       { slug: "migrating", label: "Migrating from Next.js" },
       { slug: "migrating-remix", label: "Migrating from Remix" },
       { slug: "migrating-fresh", label: "Migrating from Fresh" },
+      { slug: "fresh-vs-denext", label: "Fresh and denext" },
       { slug: "migrating-preact", label: "Migrating from Preact" },
       { slug: "migrating-lustre", label: "Migrating from Lustre" },
       { slug: "fixed", label: "Fixed in denext" },

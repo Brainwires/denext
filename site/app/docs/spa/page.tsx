@@ -505,9 +505,11 @@ await runDesktop({
       <p>
         The config it reads is the slice of <code>denext.config.ts</code> (<code>desktop</code>,
         {" "}
-        <code>spa.proxy</code>) that every export, build and <code>denext desktop</code>{" "}
-        command rewrites, so adding a proxy later needs no edit here and the config module never
-        ships in the app. The <code>resolveDesktopCapabilities</code> spread serves{" "}
+        <code>spa.proxy</code>) that every export (<code>denext desktop build</code> included),{" "}
+        <code>denext desktop run</code> / <code>dev</code>{" "}
+        and the package scripts rewrite, so adding a proxy later needs no edit here and the config
+        module never ships in the app. The <code>resolveDesktopCapabilities</code> spread serves
+        {" "}
         <code>spa.proxy</code> and the native capabilities <code>denext desktop add</code>{" "}
         enables from this window, as a <code>denext create --desktop</code> entry does; see{" "}
         <a href="/docs/desktop#desktop-capabilities">Desktop apps › Native capabilities</a>.
