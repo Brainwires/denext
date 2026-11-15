@@ -357,10 +357,10 @@ A sandbox claim is only as good as the tests behind it. Three things back this o
   address, `io_uring`, `ptrace`, `/proc/<pid>/mem`, Unix sockets by path and abstract name, signals,
   mounts, user namespaces, the session bus, and on macOS LaunchServices and AppleEvents. It prints
   one line per attempt.
-- **A kernel matrix.** The corpus runs on Linux virtual machines booting 5.15, 6.1, 6.8 and 6.12
-  or newer, on x86_64 and aarch64, plus inside Docker's default profile and with Landlock compiled
-  in but disabled. On macOS it runs on every version the CI runners have. Each kernel has its
-  expected results.
+- **A kernel matrix.** The corpus runs on arm64 Linux virtual machines booting 5.15, 6.1, 6.8,
+  6.12 and 7.3; on x86_64 Linux 6.8, both directly and inside Docker's default profile; and on
+  macOS, arm64 and x86_64. A run with Landlock compiled in but turned off is planned. Each kernel
+  has its expected results.
 - **A published guarantee matrix.** A [draft](/docs/kernel-sandbox-guarantees) is up now.
   Platform × kernel × mode, each cell saying whether a permission is enforced by the kernel, by the kernel more
   coarsely (and how), or by Deno only. It's generated from the same policy data

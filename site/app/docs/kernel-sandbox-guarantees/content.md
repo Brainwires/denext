@@ -95,9 +95,15 @@ reaches the operating system:
 3. through an addon inside an npm package;
 4. through an `--allow-run` child.
 
-That's 184 checks across 27 matrix cells. The corpus runs on Linux 5.15, 6.1, 6.8
-and 6.12 or newer, and on macOS. Each kernel has its expected results, and any difference from the
-matrix fails the run.
+That's 184 checks across 27 matrix cells. Where it runs:
+
+- **Linux on arm64:** lab virtual machines booting 5.15, 6.1, 6.8, 6.12 and 7.3.
+- **Linux on x86_64:** 6.8 on the CI runners, both directly and inside a Docker container with
+  Docker's default seccomp profile.
+- **macOS:** arm64 and x86_64 on the CI runners.
+- **Planned:** a Linux run with Landlock compiled into the kernel but turned off.
+
+Each kernel has its expected results, and any difference from the matrix fails the run.
 
 ## Vulnerability or documented gap?
 
