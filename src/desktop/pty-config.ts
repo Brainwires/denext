@@ -9,6 +9,8 @@
  * @module
  */
 
+import { WINDOWS_POWERSHELL } from "./windows-programs.ts";
+
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type PtyOs = "darwin" | "windows" | "linux";
 
@@ -51,7 +53,7 @@ export const PTY_DEFAULT_SHELLS: Readonly<Record<PtyOs, readonly string[]>> = {
     "/bin/sh",
   ],
   windows: [
-    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    WINDOWS_POWERSHELL,
     "C:\\Windows\\System32\\cmd.exe",
   ],
 };

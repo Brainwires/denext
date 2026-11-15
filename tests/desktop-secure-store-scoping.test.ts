@@ -256,7 +256,7 @@ function windowsVault() {
   const items = new Map<string, string>();
   const payloads: Array<{ op: string; service: string; key: string }> = [];
   const run: SecureRunner = (cmd, args, stdin) => {
-    assertEquals(cmd, "powershell.exe");
+    assertEquals(cmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     assertEquals(args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
     const p = JSON.parse(stdin ?? "{}") as {
       op: string;
@@ -295,7 +295,9 @@ Deno.test("secureStore (Windows): the vault resource is <service>/page or <servi
   assertEquals(vault.items.get(item(`${SVC}/ext/notes`, "token")), b64("notes"));
   assertEquals(vault.items.has(item(SVC, "token")), false);
   // Windows declares PowerShell only.
-  assertEquals(host.capability.methods.get.permissions, { run: ["powershell.exe"] });
+  assertEquals(host.capability.methods.get.permissions, {
+    run: ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
+  });
 });
 
 // ---- the bridge: ctx.secureStore and host.secureStore -----------------------------------------
@@ -425,7 +427,7 @@ Deno.test("secureStore: the declared method permissions are what packaging bakes
   }
 });
 
-Deno.test("secure-store (Windows): the powershell.exe grant is baked on every runtime and named as full trust", () => {
+Deno.test("secure-store (Windows): the Windows PowerShell grant is baked on every runtime and named as full trust", () => {
   // The runtime's own store has no Windows backend, so Windows always runs PowerShell.
   for (const bakedCapabilities of [false, true]) {
     assertEquals(
@@ -434,14 +436,14 @@ Deno.test("secure-store (Windows): the powershell.exe grant is baked on every ru
         bakedCapabilities,
         macRuntimeStore: true,
       }),
-      ["--allow-run=powershell.exe"],
+      ["--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
     );
   }
   // `denext desktop add secure-store` says what that grant gives away: a script interpreter.
   const entry = DESKTOP_CAPABILITIES["secure-store"];
   assertEquals(entry.trust, "full");
   const windows = entry.manual!.find((m) => m.includes("PasswordVault"))!;
-  assertStringIncludes(windows, "--allow-run=powershell.exe");
+  assertStringIncludes(windows, "--allow-run of Windows PowerShell (by absolute path");
   assertStringIncludes(windows, "script interpreter");
   assertStringIncludes(windows, "any script");
 });

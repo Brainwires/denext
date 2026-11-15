@@ -2150,10 +2150,10 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>--allow-run</code>: security only while <code>desktop.secureStore.legacy</code>
               {" "}
               is on ·{" "}
-              <code>--allow-run</code>: powershell.exe (on every runtime: the runtime&apos;s own
-              store has no Windows backend; a script interpreter, so any code in the app can run
-              scripts through it) · none. Before runtime 3.0.0-denext.16 macOS and Linux also bake
-              an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
+              <code>--allow-run</code>: Windows PowerShell by absolute path (on every runtime: the
+              runtime&apos;s own store has no Windows backend; a script interpreter, so any code in
+              the app can run scripts through it) · none. Before runtime 3.0.0-denext.16 macOS and
+              Linux also bake an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
             </td>
             <td>full</td>
           </tr>

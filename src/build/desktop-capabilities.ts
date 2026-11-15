@@ -42,6 +42,11 @@ import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
+import {
+  WINDOWS_EXPLORER,
+  WINDOWS_POWERSHELL,
+  WINDOWS_RUNDLL32,
+} from "../desktop/windows-programs.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { dockHelperGrants } from "./desktop-dock-helper.ts";
 import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
@@ -230,7 +235,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // gates it on the capability list baked into app.json. macOS keeps `security` while
     // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
     // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`, baked
-    // as --allow-run=powershell.exe: the runtime has no Windows store of its own (its
+    // as --allow-run of its absolute path (WINDOWS_POWERSHELL): the runtime has no Windows store of its own (its
     // Deno.desktop.secureStore answers there only on macOS and Linux), and PowerShell is a script
     // interpreter, so that grant is full trust (the manual line says so).
     os: {
@@ -244,7 +249,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
     manual: [
       "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (`libsecret-1.so.0`, loaded at run time: the .deb depends on libsecret-1-0, the .rpm on libsecret). Without one, or under the stock runtime, every call fails `backend_unavailable` with the reason, never a plain file.",
-      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run=powershell.exe: PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
+      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run of Windows PowerShell (by absolute path, C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe): PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
     ],
   },
   fs: {
@@ -289,7 +294,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["openExternal", "openPath", "revealInFileManager", "moveToTrash"],
     os: {
       darwin: { run: ["open", "osascript"] },
-      windows: { run: ["explorer.exe", "rundll32.exe", "powershell.exe"] },
+      windows: { run: [WINDOWS_EXPLORER, WINDOWS_RUNDLL32, WINDOWS_POWERSHELL] },
       linux: { run: ["xdg-open", "gio", "dbus-send"] },
     },
     trust: "full",
@@ -308,7 +313,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // permission is only baked when the app opts in.
     os: {
       darwin: { run: ["open"] },
-      windows: { run: ["rundll32.exe"] },
+      windows: { run: [WINDOWS_RUNDLL32] },
       linux: { run: ["xdg-open"] },
     },
     trust: "full",
@@ -328,7 +333,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       // PowerShell), not FFI — the same argv-only pattern the other caps use. Linux uses only the
       // runtime's (xdg-desktop-portal's FileChooser, else GTK's): nothing to run.
       darwin: { run: ["osascript"] },
-      windows: { run: ["powershell.exe"] },
+      windows: { run: [WINDOWS_POWERSHELL] },
     },
     // FULL, not broad: `--allow-run=osascript` / `powershell.exe` are script interpreters, so any
     // code in the Deno process can run arbitrary commands through them.

@@ -91,6 +91,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Security: a Deno Desktop app on Windows no longer runs whichever `powershell.exe`,
+  `explorer.exe` or `rundll32.exe` comes first on `PATH`.** The `secure-store`, `dialogs`, `shell`
+  and `auth-session` capabilities spawned those programs by bare name, and the package baked the
+  same bare names as `--allow-run`, so a same-named program in a user-writable folder listed before
+  `System32` was both the one allowed and the one run, handed the capability's script (the secure
+  store's secrets on stdin) or URL. They now spawn and bake Windows' own copies by absolute path
+  (`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, `C:\Windows\explorer.exe`,
+  `C:\Windows\System32\rundll32.exe`), as the `pty` defaults already did. Repackage to pick it up;
+  a Windows installed outside `C:\Windows` refuses these calls instead of running another program.
 - **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
   `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
   (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
@@ -110,7 +119,7 @@ and this project adheres to
   build has no terminals, `denext desktop add pty` no longer says so, and the doctor checks the
   Windows floor (`FIRST_WINDOWS_PTY_RUNTIME`) instead. Under an older runtime `spawnPty()` still
   rejects `unsupported`, now naming that runtime in `error.data.requires`.
-- **`denext desktop add secure-store` names the Windows `--allow-run=powershell.exe` grant.** The
+- **`denext desktop add secure-store` names the Windows PowerShell grant.** The
   Windows store is WinRT PasswordVault driven through Windows PowerShell on every runtime (the
   runtime's own store has no Windows backend), and PowerShell is a script interpreter: the grant
   lets any code in the app's process run scripts as the user. The capability's notes, the

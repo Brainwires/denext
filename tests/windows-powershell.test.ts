@@ -38,7 +38,7 @@ Deno.test("withOwnModules: the module-path reset, then the script", () => {
 
 Deno.test("shell trash on Windows: the script resets the module path first", () => {
   const [cmd, args] = shellPathCommand("windows", "trash", "C:\\app\\data\\a.txt");
-  assertEquals(cmd, "powershell.exe");
+  assertEquals(cmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   const script = commandScript(args);
   assertResetsFirst(script);
   assertStringIncludes(script, "Add-Type -AssemblyName Microsoft.VisualBasic");
@@ -47,7 +47,7 @@ Deno.test("shell trash on Windows: the script resets the module path first", () 
 Deno.test("secure store on Windows: every op's script resets the module path first", () => {
   for (const op of ["get", "set", "delete"] as const) {
     const c = secureStoreCommand("windows", op, "svc", "key", op === "set" ? "QjY0" : undefined);
-    assertEquals(c.cmd, "powershell.exe");
+    assertEquals(c.cmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     const script = commandScript(c.args);
     assertResetsFirst(script);
     assertStringIncludes(script, "ConvertFrom-Json");
@@ -61,7 +61,7 @@ Deno.test("dialogs on Windows: every panel's script resets the module path first
     os: "windows",
     api: null,
     run: (cmd, args) => {
-      assertEquals(cmd, "powershell.exe");
+      assertEquals(cmd, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
       seen.push(args);
       return Promise.resolve({ code: 1, stdout: "" }); // cancelled
     },
