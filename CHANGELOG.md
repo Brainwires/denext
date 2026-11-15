@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **A tray title.** `desktop.tray.title`, `runDesktop({ tray: { title } })`, the backend tray
+  handle's `update({ title })` and `createTray({ title })` / `tray.update({ title })` from
+  `denext/desktop/app` set the short text beside a tray icon in the macOS menu bar (Electron's
+  `tray.setTitle`; `null` removes it). It shows where the Deno Desktop runtime's tray has
+  `setTitle`, which `appCapabilities().trayTitle` reports; elsewhere it is accepted and ignored.
+- **A tray icon per OS.** A tray's `icon` (in `desktop.tray`, `runDesktop({ tray })`, the backend
+  handle's `update`, and `createTray` / `tray.update`) takes `{ macos, windows, linux, default }`,
+  each an icon or `{ icon, iconDark }`, so a macOS template image and Windows full-colour art with
+  a dark-taskbar variant live side by side; the running OS's entry is shown, else `default`, and an
+  entry's own `iconDark` wins. One icon for every OS still works. A set naming neither the OS nor
+  `default` is refused (`validation` from `createTray`, an error at launch for `desktop.tray`).
 - **Fresh conformance beds and a Fresh comparison page.** The migration beds now run
   `denext migrate` on the two apps `@fresh/init` scaffolds (Vite with Tailwind, and Fresh's own
   builder), on Deno's node_test_viewer (stable Fresh 2 with Vite, Tailwind 4 and Deno KV) and on

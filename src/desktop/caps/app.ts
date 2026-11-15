@@ -82,6 +82,7 @@ import {
   type TrayMouseDetail,
   trayMouseDetail,
 } from "../tray-events.ts";
+import { resolveTrayIcon, trayIconProblem } from "../tray-icons.ts";
 
 /** The most tray icons the page may hold. */
 const MAX_TRAYS = 8;
@@ -95,6 +96,8 @@ export interface TrayLike extends EventTarget {
   setIcon(png: Uint8Array): void;
   setIconDark?(png: Uint8Array | null): void;
   setTooltip(text: string | null): void;
+  /** The text beside the icon (macOS' status item title), where the runtime has it. */
+  setTitle?(text: string | null): void;
   setMenu(menu: DesktopMenuItem[] | null): void;
   getBounds?(): { x: number; y: number; width: number; height: number } | null;
   /** Open the tray's menu at the icon (runtime `3.0.0-denext.6`+); `false` where it can't. */
@@ -539,13 +542,31 @@ function trayMenuFor(os: string, items: DesktopMenuItem[]): DesktopMenuItem[] {
   });
 }
 
-/** Apply the optional `icon` / `iconDark` / `tooltip` / `menu` of `a` to a tray. */
-function applyTray(s: AppState, live: LiveTray, a: Record<string, unknown>): void {
+/**
+ * `a` with a per-OS `icon` (`{ macos, windows, linux, default }`, each a base64 PNG or `{ icon,
+ * iconDark }`) replaced by the running OS's `icon` / `iconDark`; unchanged with one icon.
+ */
+function osTrayArgs(s: AppState, a: Record<string, unknown>): Record<string, unknown> {
+  if (a.icon === undefined || typeof a.icon === "string") return a;
+  const problem = trayIconProblem(a.icon, (v) => typeof v === "string" ? null : "must be a PNG");
+  if (problem) throw invalid(`icon${problem[0]} ${problem[1]}`);
+  const resolved = resolveTrayIcon(a.icon, a.iconDark, s.os);
+  if (!resolved) throw invalid(`icon names no icon for ${s.os}: add that OS or default`);
+  return { ...a, icon: resolved.icon, iconDark: resolved.iconDark };
+}
+
+/** Apply the optional `icon` / `iconDark` / `tooltip` / `title` / `menu` of `args` to a tray. */
+function applyTray(s: AppState, live: LiveTray, args: Record<string, unknown>): void {
+  const a = osTrayArgs(s, args);
   if (a.icon !== undefined) live.tray.setIcon(png(a.icon, "icon"));
   if (a.iconDark !== undefined) {
     live.tray.setIconDark?.(a.iconDark === null ? null : png(a.iconDark, "iconDark"));
   }
   if (a.tooltip !== undefined) live.tray.setTooltip(shortText(a.tooltip, "tooltip"));
+  if (a.title !== undefined) {
+    const title = shortText(a.title, "title");
+    if (typeof live.tray.setTitle === "function") live.tray.setTitle(title);
+  }
   if (a.menu !== undefined) applyTrayMenu(s, live, a.menu);
 }
 
@@ -635,10 +656,11 @@ function liveTray(
   args: Record<string, unknown>,
   owner: string | undefined,
 ): LiveTray {
-  const icon = png(args.icon, "icon");
+  const a = osTrayArgs(s, args);
+  const icon = png(a.icon, "icon");
   const live: LiveTray = { tray: newTray(s, s.Tray!), ids: new Set(), owner };
   live.tray.setIcon(icon);
-  applyTray(s, live, { ...args, icon: undefined });
+  applyTray(s, live, { ...a, icon: undefined });
   forwardTrayEvents(s, live.tray, id, owner);
   live.tray.addEventListener("menuclick", (e) => {
     const item = clickedId(e);
@@ -796,6 +818,7 @@ function trayAndDockCapabilities(s: AppState, trayAvailable: boolean) {
     trayModifiers: events.modifiers,
     trayPosition: events.position,
     trayPopUpMenu: events.popUpMenu,
+    trayTitle: events.title,
   };
 }
 

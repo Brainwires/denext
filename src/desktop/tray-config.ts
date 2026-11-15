@@ -9,6 +9,8 @@
  * @module
  */
 
+import { trayIconProblem, type TrayIconSet } from "./tray-icons.ts";
+
 /** The panel at the tray icon, resolved (`desktop.tray.panel`). */
 export interface DesktopTrayPanelSettings {
   /** The page it shows: a path of the app. */
@@ -23,12 +25,14 @@ export interface DesktopTrayPanelSettings {
 
 /** The backend-owned tray, resolved (`desktop.tray`). */
 export interface DesktopTraySettings {
-  /** The icon: a PNG path in the export (`"/tray.png"`). */
-  readonly icon: string;
+  /** The icon: a PNG path in the export (`"/tray.png"`), or one per OS. */
+  readonly icon: string | TrayIconSet<string>;
   /** The dark-mode icon (a path in the export). */
   readonly iconDark?: string;
   /** The tooltip. */
   readonly tooltip?: string;
+  /** The text beside the icon (macOS' menu bar). */
+  readonly title?: string;
   /** The menu, as `denext/desktop/app` menus are written (checked when it is set). */
   readonly menu?: readonly unknown[];
   /** The panel at the icon. */
@@ -41,8 +45,18 @@ export const DEFAULT_PANEL_SIZE = { width: 360, height: 480 } as const;
 const PANEL_GAP = 6;
 /** The longest app path accepted. */
 const MAX_PATH = 2048;
-/** The longest tooltip accepted. */
+/** The longest tooltip (or title) accepted. */
 const MAX_TOOLTIP = 256;
+
+/** What is wrong with a tray icon path, or `null`. */
+function iconPathProblem(icon: unknown): string | null {
+  return isAppPath(icon) ? null : 'must be a PNG path in the export, like "/tray.png"';
+}
+
+/** Whether `value` is unset or a string up to {@linkcode MAX_TOOLTIP} characters. */
+function shortTextOk(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= MAX_TOOLTIP);
+}
 
 /**
  * Whether `url` is a path of the app (`/panel`, `/vm?id=1`): absolute, not protocol-relative, with
@@ -93,19 +107,19 @@ function panelProblem(panel: unknown): [string, string] | null {
  */
 export function desktopTrayProblem(tray: unknown): [string, string] | null {
   if (typeof tray !== "object" || tray === null || Array.isArray(tray)) {
-    return ["tray", "must be { icon, iconDark?, tooltip?, menu?, panel? }"];
+    return ["tray", "must be { icon, iconDark?, tooltip?, title?, menu?, panel? }"];
   }
   const t = tray as Record<string, unknown>;
-  if (!isAppPath(t.icon)) {
-    return ["tray.icon", 'must be a PNG path in the export, like "/tray.png"'];
-  }
+  const icon = trayIconProblem(t.icon, iconPathProblem);
+  if (icon) return [`tray.icon${icon[0]}`, icon[1]];
   if (t.iconDark !== undefined && !isAppPath(t.iconDark)) {
     return ["tray.iconDark", "must be a PNG path in the export"];
   }
-  if (
-    t.tooltip !== undefined && (typeof t.tooltip !== "string" || t.tooltip.length > MAX_TOOLTIP)
-  ) {
+  if (!shortTextOk(t.tooltip)) {
     return ["tray.tooltip", `must be a string up to ${MAX_TOOLTIP} characters`];
+  }
+  if (!shortTextOk(t.title)) {
+    return ["tray.title", `must be a string up to ${MAX_TOOLTIP} characters`];
   }
   if (t.menu !== undefined && !Array.isArray(t.menu)) {
     return ["tray.menu", "must be an array of menu items"];
@@ -125,9 +139,10 @@ export function resolveDesktopTraySettings(desktop: unknown): DesktopTraySetting
   const problem = desktopTrayProblem(tray);
   if (problem) throw new Error(`desktop: invalid desktop.${problem[0]}: ${problem[1]}`);
   const t = tray as {
-    icon: string;
+    icon: string | TrayIconSet<string>;
     iconDark?: string;
     tooltip?: string;
+    title?: string;
     menu?: unknown[];
     panel?: { url: string; width?: number; height?: number; hideOnBlur?: boolean };
   };
@@ -136,6 +151,7 @@ export function resolveDesktopTraySettings(desktop: unknown): DesktopTraySetting
     icon: t.icon,
     ...(t.iconDark !== undefined ? { iconDark: t.iconDark } : {}),
     ...(t.tooltip !== undefined ? { tooltip: t.tooltip } : {}),
+    ...(t.title !== undefined ? { title: t.title } : {}),
     ...(t.menu !== undefined ? { menu: t.menu } : {}),
     ...(p
       ? {

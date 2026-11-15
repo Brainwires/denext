@@ -79,6 +79,8 @@ export interface TrayCapabilities {
   readonly position: boolean;
   /** `popUpMenu()` opens the tray's menu (not on Linux, where the tray host opens it). */
   readonly popUpMenu: boolean;
+  /** `setTitle()` shows text beside the icon (macOS' menu bar). */
+  readonly title: boolean;
 }
 
 const BUTTONS = new Set(["left", "right", "middle"]);
@@ -159,6 +161,12 @@ export function parseTrayMouseDetail(value: unknown): TrayMouseDetail | null {
   };
 }
 
+/** Whether instances of `Tray` (a constructor) have the method `name`. */
+function hasMethod(Tray: unknown, name: string): boolean {
+  const proto = (Tray as { prototype?: Record<string, unknown> } | undefined)?.prototype;
+  return typeof proto?.[name] === "function";
+}
+
 /**
  * What the tray delivers here: the runtime's `Deno.Tray.capabilities()` when it has one, else
  * what a runtime before `3.0.0-denext.6` delivers (clicks and double clicks wherever a tray icon can
@@ -190,5 +198,8 @@ export function trayCapabilitiesOf(Tray: unknown, available: boolean): TrayCapab
     modifiers: flag("modifiers", false),
     position: flag("position", false),
     popUpMenu: flag("popUpMenu", false),
+    // A runtime's probe may not name it yet: then the method itself says.
+    title: available && (raw?.title === true ||
+      (raw?.title === undefined && hasMethod(Tray, "setTitle"))),
   };
 }

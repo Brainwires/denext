@@ -4389,6 +4389,49 @@ await bounce({ critical: true }); // until the app is focused`}
           hiding the Dock icon once the backend starts.
         </li>
       </ul>
+      <h3 id="desktop-tray-icons">Tray icons per OS, and a tray title</h3>
+      <p>
+        Each OS wants its own tray art: the macOS menu bar draws a black-and-transparent template
+        image (about 18 pt, so a 36 px PNG for Retina) that the system tints for light and dark menu
+        bars, while the Windows notification area shows full-colour art, ideally with a variant for
+        a dark taskbar. <code>icon</code> takes one image for every OS, or{" "}
+        <code>{"{ macos, windows, linux, default }"}</code>, each an image or{" "}
+        <code>{"{ icon, iconDark }"}</code>: the running OS&apos;s entry is shown, else{" "}
+        <code>default</code>. It works the same in <code>desktop.tray.icon</code>{" "}
+        (paths in the export),{" "}
+        <code>runDesktop({"{ tray: { icon } }"})</code>, the backend handle&apos;s{" "}
+        <code>update</code>, and <code>createTray</code> / <code>tray.update</code>{" "}
+        in a page (PNG bytes or base64). An entry&apos;s own <code>iconDark</code>{" "}
+        wins over a separate <code>iconDark</code>. A set that names neither the running OS nor{" "}
+        <code>default</code> is an error: <code>createTray</code> rejects{" "}
+        <code>validation</code>, and <code>desktop.tray</code> fails at launch.
+      </p>
+      <p>
+        <code>title</code>{" "}
+        is short text beside the icon in the macOS menu bar (a count, a timer), as Electron&apos;s
+        {" "}
+        <code>tray.setTitle</code>, and <code>null</code> removes it. It is shown where{" "}
+        <code>appCapabilities().trayTitle</code> is <code>true</code>{" "}
+        (a Deno Desktop runtime whose tray has{" "}
+        <code>setTitle</code>, on macOS); elsewhere it is accepted and not shown, so keep the same
+        information in the tooltip or menu too.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+tray: {
+  icon: {
+    macos: "/tray-template.png",                              // black + transparent
+    windows: { icon: "/tray.png", iconDark: "/tray-light.png" }, // dark taskbar variant
+    default: "/tray.png",                                     // Linux and the rest
+  },
+  title: "0",
+}
+
+// a page
+import { createTray } from "denext/desktop/app";
+const tray = await createTray({ icon: { macos: template, default: colour }, title: "3" });
+await tray.update({ title: String(unread) });`}
+      </Code>
       <h3 id="desktop-tray-dock-recents">Tray apps and the Dock&apos;s recent apps</h3>
       <p>
         On macOS an app that is installed under <code>/Applications</code>{" "}
