@@ -131,6 +131,7 @@ export const NAV: {
       { slug: "limitations", label: "Known limitations" },
       { slug: "security", label: "Security posture" },
       { slug: "permissions", label: "Permissions" },
+      { slug: "kernel-sandbox", label: "Kernel sandbox" },
     ],
   },
   {
