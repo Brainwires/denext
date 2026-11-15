@@ -91,6 +91,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`host.confirm` can be owned by the window it asks for.** A new `window` option (`"main"`,
+  `"panel"` or an `openWindow` id; in a handler, `ctx.windowId`) makes the box modal to that window
+  (a sheet on macOS). Before, every box was app-modal with no owner, so on Windows the task dialog
+  could open behind the app's window, where Return and Escape never reached it. A window that has
+  closed gets an app-modal box, never the main window in its place.
 - **An app's `deno.json` `"unstable"` list reaches the process that runs it.** `denext dev`,
   `start`, `build` and every other verb that runs project code ran it with the flags of the
   config the CLI resolved — a CLI run from a checkout resolves the checkout's own deno.json — so

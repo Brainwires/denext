@@ -250,6 +250,14 @@ export interface DesktopConfirmOptions {
   readonly cancelId?: number;
   /** The icon (default `"info"`). */
   readonly kind?: "info" | "warning" | "error";
+  /**
+   * The app window the box belongs to: `"main"`, `"panel"` or an id `openWindow` returned — in a
+   * handler, the calling window ({@linkcode DesktopCapCtx.windowId}). The box is then owned by and
+   * modal to that window (a sheet on macOS): on Windows it opens over it, never behind it, and
+   * Return / Escape reach it. Without one (or naming a window that is no longer open) the box is
+   * app-modal and needs no window.
+   */
+  readonly window?: string;
 }
 
 /**
@@ -370,7 +378,9 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
   /**
    * Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):
    * app-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}
-   * guard after the last window closed, a tray app. Resolves the pressed button's index; a box
+   * guard after the last window closed, a tray app. Asking on behalf of a window (a handler's
+   * `ctx.windowId`), pass it as {@linkcode DesktopConfirmOptions.window}: the box is then owned by
+   * and modal to that window, so on Windows it cannot open behind it. Resolves the pressed button's index; a box
    * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
    * resolves `cancelId`, or `null` without one. Rejects with a `validation`
    * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without

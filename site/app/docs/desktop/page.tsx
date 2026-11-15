@@ -3386,13 +3386,17 @@ console.log(app.windows.lastSession()); // [{ key, url, bounds }, …] from the 
         GtkMessageDialog) and your button labels: <code>message</code>, <code>detail</code>,{" "}
         <code>title</code>, <code>buttons</code> (at most 16; none is one "OK"),{" "}
         <code>defaultId</code> (Return), <code>cancelId</code> (Escape) and <code>kind</code>{" "}
-        (<code>"info"</code>, <code>"warning"</code>,{" "}
-        <code>"error"</code>). The box is app-modal, so it works with no window open, from an{" "}
+        (<code>"info"</code>, <code>"warning"</code>, <code>"error"</code>). Without a{" "}
+        <code>window</code> the box is app-modal, so it works with no window open, from an{" "}
         <code>onBeforeQuit</code>{" "}
-        guard after the last window closed or in a tray app. It resolves the pressed button&apos;s
-        index; a box dismissed without a button resolves <code>cancelId</code>, or <code>null</code>
+        guard after the last window closed or in a tray app. Asking for a window (in a handler, the
+        calling one: <code>{`window: ctx.windowId`}</code>), pass it as{" "}
+        <code>window</code>: the box is then owned by and modal to that window (a sheet on macOS),
+        so on Windows it opens over the window instead of behind it and Return and Escape reach it;
+        a window that has closed meanwhile gets an app-modal box. It resolves the pressed
+        button&apos;s index; a box dismissed without a button resolves <code>cancelId</code>, or
         {" "}
-        without one. Bad options reject with{" "}
+        <code>null</code> without one. Bad options reject with{" "}
         <code>validation</code>; a runtime without native message boxes (<code>
           Deno.desktop.dialog.showMessageBox
         </code>, Deno Desktop runtime 3.0.0-denext.16) rejects with <code>unsupported</code>.{" "}

@@ -1921,6 +1921,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       onWillNavigate: (fn: DesktopWillNavigateHandler) => navigation.add(fn),
       appSupportDir: options.appSupportDir,
       getWindow: (id) => registry?.get(id)?.window ?? appWindow,
+      // A host confirm's owner: an open window only, never the main one in its place.
+      getOpenWindow: (id) =>
+        registry ? registry.get(id)?.window : id === "main" ? appWindow : undefined,
       ...(registry
         ? {
           resolveWindow: (t: string) => registry.resolveToken(t),
