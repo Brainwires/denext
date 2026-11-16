@@ -102,6 +102,12 @@ and this project adheres to
 
 ### Fixed
 
+- **An in-memory build drops the unused SQLite bridge on Windows with a short-named temp folder.**
+  A build with `write: false` (dev, tests) compared esbuild's outputs against its metafile under
+  two spellings of the working folder (a Windows 8.3 short name such as `NIGHTN~1` beside its
+  realpath), so nothing matched and the unreachable `openSqlite` bridge and its wasm stayed in the
+  output for any user whose name is longer than 8 characters.
+
 - **A Deno Desktop capability's unexpected failure is logged in the app's own log.** Outside
   `denext desktop dev` the page still gets only "the capability failed" (the error could carry a
   path), and the error itself, named by its capability and method, now goes to the app's stderr,
