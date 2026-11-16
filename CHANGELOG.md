@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **`deno task revocations sign` splits `--force` into two flags** (maintainers).
+  `--skip-published-check` signs when the published list can't be read or verified, and
+  `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
+  only its own case, so skipping the published-list check never also allows un-revoking a
+  release; a bare `--force` on `sign` is refused with a message naming both.
+
 ## [4.19.0] - 2026-11-15
 
 ### Added

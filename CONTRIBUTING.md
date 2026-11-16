@@ -622,9 +622,11 @@ deno task revocations verify
 
 `sign` prints what the list does to the checked-out pins before it reads the key, and refuses an
 entries file that leaves out an entry the published list has (that would un-revoke it) unless
-`--force`. It refuses as well when the published list can't be read or verified (offline, or a
-copy the compiled-in keys don't verify), since nothing then shows what the file leaves out;
-`--force` signs without that check. Without `--no-publish` it publishes at once.
+`--allow-unrevoke`. It refuses as well when the published list can't be read or verified
+(offline, or a copy the compiled-in keys don't verify), since nothing then shows what the file
+leaves out; `--skip-published-check` signs without that check. Each flag allows only its own case:
+skipping the published-list check never also allows dropping a published revocation. A bare
+`--force` is refused with a message naming both. Without `--no-publish` it publishes at once.
 
 **Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
 There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign

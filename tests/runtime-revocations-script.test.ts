@@ -240,13 +240,25 @@ Deno.test("add appends (or replaces) an entry above the published sequence; resi
     // `sign` takes a hand-edited entries file.
     const edited = join(dir, "edited.json");
     await Deno.writeTextFile(edited, JSON.stringify({ revoked: [] }));
-    // It replaces the published entries wholesale: leaving one out (un-revoking it) needs --force.
+    // It replaces the published entries wholesale: leaving one out (un-revoking it) needs
+    // --allow-unrevoke; --skip-published-check (the other escape hatch) never allows it.
     await assertRejects(
       () => main(["sign", edited, "--out", out, "--no-publish"], f.deps),
       Error,
       "cli 3.0.0-denext.3, which the entries file leaves out",
     );
-    await main(["sign", edited, "--out", out, "--no-publish", "--force"], f.deps);
+    await assertRejects(
+      () => main(["sign", edited, "--out", out, "--no-publish", "--skip-published-check"], f.deps),
+      Error,
+      "--allow-unrevoke signs anyway",
+    );
+    // Bare --force no longer covers both cases: it refuses, naming the two flags.
+    await assertRejects(
+      () => main(["sign", edited, "--out", out, "--no-publish", "--force"], f.deps),
+      Error,
+      "--skip-published-check",
+    );
+    await main(["sign", edited, "--out", out, "--no-publish", "--allow-unrevoke"], f.deps);
     assertEquals(
       (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
         now: NOW.getTime(),
@@ -547,7 +559,7 @@ Deno.test("sign: the committed list signed with a test key — the shipped verif
   try {
     const out = join(dir, "signed.json");
     // Nothing is published for this key: the first signing skips the published-entries check.
-    await main(["sign", COMMITTED, "--out", out, "--no-publish", "--force"], f.deps);
+    await main(["sign", COMMITTED, "--out", out, "--no-publish", "--skip-published-check"], f.deps);
     assertStringIncludes(f.logged.join("\n"), "70 revoked; the checked-out pins:");
     assert(!f.logged.some((l) => l.includes("WARNING")), f.logged.join("\n"));
     assertEquals(f.web, [], "--no-publish publishes nothing");
@@ -685,7 +697,7 @@ Deno.test("expiry: the release gate warns before the published list lapses, neve
   assertEquals(warned.length, 2);
 });
 
-Deno.test("sign: a published list that can't be read or verified is refused unless --force", async () => {
+Deno.test("sign: a published list that can't be read or verified is refused unless --skip-published-check", async () => {
   const f = await withKey();
   const dir = await Deno.makeTempDir();
   try {
@@ -707,8 +719,21 @@ Deno.test("sign: a published list that can't be read or verified is refused unle
       "the published list could not be verified",
     );
     await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
-    // --force signs anyway, and says the check was skipped.
-    await main(["sign", entries, "--out", out, "--no-publish", "--force"], f.deps);
+    // --allow-unrevoke does not skip the check; neither does bare --force, which names both flags.
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish", "--allow-unrevoke"], f.deps),
+      Error,
+      "--skip-published-check signs without that check",
+    );
+    const forced = await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish", "--force"], f.deps),
+      Error,
+    );
+    assertStringIncludes((forced as Error).message, "--skip-published-check");
+    assertStringIncludes((forced as Error).message, "--allow-unrevoke");
+    await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
+    // --skip-published-check signs anyway, and says the check was skipped.
+    await main(["sign", entries, "--out", out, "--no-publish", "--skip-published-check"], f.deps);
     assert(
       f.logged.some((l) => l.includes("without the published-entries check")),
       f.logged.join("\n"),
