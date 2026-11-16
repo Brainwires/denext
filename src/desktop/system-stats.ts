@@ -29,7 +29,7 @@ export type { SystemStats, SystemStatsOptions, SystemStatsSubscribeOptions };
 
 /** Why `systemStats` cannot run under this runtime. */
 const NO_RUNTIME_REASON =
-  "this Deno Desktop runtime has no Deno.desktop.systemStats (denext's Deno Desktop runtime from 3.0.0-denext.16 has it)";
+  "this Deno Desktop runtime has no Deno.desktop.systemStats (denext's pinned Deno Desktop runtime has it)";
 
 /** Why `systemStats` cannot run on this OS. */
 const NO_OS_REASON = "this Deno Desktop runtime has no system stats on this OS";

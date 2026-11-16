@@ -137,7 +137,10 @@ Deno.test("compilePermissionFlags: the split only on the toolchain's own denort,
     assertEquals(compilePermissionFlags(compile, own, warn, version)[0], "--allow-net");
   }
   assertEquals(warnings.length, 3);
-  assert(warnings[0].includes("netConnect / netListen need denext's Deno 3.0.0-rc.2"));
+  assert(
+    warnings[0].includes("netConnect / netListen need a denext Deno with split network grants"),
+  );
+  assert(!warnings[0].includes("3.0.0-rc.2"), "names the capability, not a release");
   // Nothing asked for: no warning.
   compilePermissionFlags({ permissions: { sys: ["*"] } }, false, warn, "2.9.7");
   assertEquals(warnings.length, 3);

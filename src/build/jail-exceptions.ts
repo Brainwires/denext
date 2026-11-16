@@ -122,7 +122,7 @@ export interface JailExceptionEntry {
 const HOME_CACHE =
   "The jail's HOME is a scratch directory removed after the script, so a download into the " +
   "default cache under your home is lost: set the cache variable to the directory the exception " +
-  "lists under `write` (on runtimes before 3.0.0-rc.6, to a directory in the project and list " +
+  "lists under `write` (on a runtime without `~` grants, to a directory in the project and list " +
   "that under `write`) for the install and the app, or skip the download here and install the " +
   "browser after the install.";
 
@@ -258,8 +258,8 @@ export const JAIL_SCRIPT_EXCEPTIONS: readonly JailExceptionEntry[] = [
     exception: {},
     caveat: "bcrypt 6 ships prebuilt binaries that `node-gyp-build` loads at run time, so leave " +
       "its install script unapproved. Approving it works where the OS confines lifecycle scripts " +
-      "(macOS, Linux with Landlock) from runtime 3.0.0-denext.1, which lets the install check " +
-      "load the package's own binary; elsewhere, and on older runtimes, the approved check fails. " +
+      "(macOS, Linux with Landlock) and the runtime does so (denext's toolchain does), which lets " +
+      "the install check load the package's own binary; elsewhere the approved check fails. " +
       NODE_GYP,
   },
   {
@@ -483,7 +483,7 @@ export const JAIL_NOT_NEEDED: readonly { readonly name: string; readonly why: st
     name: "bufferutil",
     why: "`node-gyp-build` loads a bundled prebuilt binary at run time, so leave its install " +
       "script unapproved. Approving it works where the OS confines lifecycle scripts (macOS, " +
-      "Linux with Landlock) from runtime 3.0.0-denext.1; elsewhere, and on older runtimes, the " +
+      "Linux with Landlock) and the runtime does so (denext's toolchain does); elsewhere the " +
       "approved install check can't load the binary and fails",
   },
 ];

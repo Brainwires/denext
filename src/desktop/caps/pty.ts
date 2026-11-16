@@ -171,7 +171,7 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Why the capability cannot run under this runtime. */
 const PTY_UNSUPPORTED_REASON =
-  `the pty capability needs Deno.openPty, which denext's Deno Desktop runtime has from ${FIRST_PTY_RUNTIME}`;
+  "the pty capability needs a Deno Desktop runtime with Deno.openPty (denext's pinned runtime has it)";
 
 /**
  * Whether the runtime refuses `key` in a child's environment under a scoped `--allow-run`: a name
@@ -372,8 +372,8 @@ function ownedHost(host: DesktopExtensionHost): OwnedResourcesHost {
  */
 const PTY_PLATFORM_UNSUPPORTED_REASON =
   "the pty capability is not available here: this Deno Desktop runtime has no terminals on " +
-  `this OS (on Windows they need runtime ${FIRST_WINDOWS_PTY_RUNTIME} or later and Windows 10 ` +
-  "1809 or later)";
+  "this OS (on Windows they need a runtime with ConPTY support, as denext's pinned one has, and " +
+  "Windows 10 1809 or later)";
 
 /**
  * Open the PTY; the runtime's refusal is `forbidden`, an OS it has no terminals on

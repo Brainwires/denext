@@ -1,7 +1,7 @@
-// Home page. Uses a hook, so denext server-renders it AND hydrates it into an
-// interactive component — all styled with Tailwind utility classes.
-import { useState } from "denext";
+// Home page: a Server Component styled with Tailwind utility classes. The counter is a
+// "use client" component (./counter.tsx), so only it hydrates; the rest ships as HTML.
 import type { PageProps } from "denext/server";
+import { Counter } from "./counter.tsx";
 
 export const metadata = { title: "denext + Tailwind — Home" };
 
@@ -12,8 +12,6 @@ const FEATURES: Array<[string, string]> = [
 ];
 
 export default function Home(_props: PageProps) {
-  const [count, setCount] = useState(0);
-
   return (
     <section class="space-y-12">
       <div class="space-y-4">
@@ -31,16 +29,7 @@ export default function Home(_props: PageProps) {
         </p>
       </div>
 
-      <div class="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={() => setCount((c) => c + 1)}
-          class="rounded-lg bg-sky-500 px-5 py-2.5 font-medium text-white shadow-lg shadow-sky-500/20 transition hover:bg-sky-400 active:scale-95"
-        >
-          Clicked {count} {count === 1 ? "time" : "times"}
-        </button>
-        <span class="text-sm text-slate-500">← hydrated &amp; interactive</span>
-      </div>
+      <Counter />
 
       <div class="grid gap-4 sm:grid-cols-3">
         {FEATURES.map(([title, body]) => (

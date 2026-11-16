@@ -133,8 +133,8 @@ export function crashReportCheck(
     return {
       name,
       ok: false,
-      detail: `${CRASH_REPORT_URL_ENV} is set but unsupported: ${on} (they need denext's Deno ` +
-        "toolchain 3.0.0-denext.5 or later)",
+      detail: `${CRASH_REPORT_URL_ENV} is set but unsupported: ${on} (they need a denext Deno ` +
+        "toolchain that sends crash reports: `denext upgrade`)",
       critical: false,
     };
   }
@@ -263,7 +263,7 @@ function selftestRefusal(value: string | undefined, runtime: string | undefined)
     return runtime === undefined
       ? "stock Deno sends no crash reports: run this on denext's Deno toolchain " +
         "(unset DENEXT_DENO=stock)"
-      : `denext's Deno ${runtime} sends no crash reports (they arrived in 3.0.0-denext.5): ` +
+      : `denext's Deno ${runtime} sends no crash reports (a newer toolchain does): ` +
         "upgrade denext";
   }
   return null;

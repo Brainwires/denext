@@ -89,9 +89,10 @@ Deno.test("serveTlsOptions: several certificates resolve by server name", () => 
   assertThrows(() => exact.resolveCertificate("other.test"), Error, `"other.test"`);
 });
 
-Deno.test("serveTlsOptions: several certificates need runtime 3.0.0-denext.3 and --unstable-net", () => {
+Deno.test("serveTlsOptions: several certificates need SNI certificate resolution and --unstable-net", () => {
   const stock = assertThrows(() => serveTlsOptions(TWO, { ...deps, runtime: undefined }));
-  assertStringIncludes((stock as Error).message, "3.0.0-denext.3, and this is a stock Deno");
+  assertStringIncludes((stock as Error).message, "resolves certificates by host name");
+  assertStringIncludes((stock as Error).message, "and this is a stock Deno");
   const older = assertThrows(() => serveTlsOptions(TWO, { ...deps, runtime: "3.0.0-denext.2" }));
   assertStringIncludes((older as Error).message, "this is runtime 3.0.0-denext.2");
   const flag = assertThrows(() => serveTlsOptions(TWO, { ...deps, unstableNet: false }));

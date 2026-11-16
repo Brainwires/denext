@@ -22,9 +22,10 @@ export default {
       // works however you open the docs (localhost, 127.0.0.1, a LAN IP, a deployed host). Add
       // `servers: [{ url: "https://api.example.com" }]` to point a published doc at a real host —
       // just note that a cross-origin host needs CORS on the API for "Try it out" to reach it.
-      // The docs renderer. `swagger` (Swagger UI, from unpkg) and `scalar` (Scalar, from
-      // jsDelivr) are interactive ("try it"); `builtin` (the default) is a server-rendered,
-      // zero-JavaScript reference page that needs no CDN. Swap this one line to compare them.
+      // The docs renderer. `swagger` (Swagger UI) and `scalar` (Scalar) are interactive ("try
+      // it"), both served from copies vendored in `@denext/openapi` (no CDN; `cdn: DOCS_CDN.*`
+      // opts into one); `builtin` (the default) is a server-rendered, zero-JavaScript reference
+      // page. Swap this one line to compare them.
       ui: "swagger",
       // Declare the bearer-token scheme ONCE here → Swagger UI shows an "Authorize" button. Log
       // in at POST /api/login (username "demo", password "denext"), paste the returned token into
@@ -32,16 +33,15 @@ export default {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "tok_… (opaque)" },
       },
-      // WHICH scheme each operation needs is declared per endpoint via `security` on the
-      // definition (see app/api/**/route.ts) — so reads are public and writes are protected on the
-      // same path. You could instead set a project-wide default here, e.g.
+      // WHICH operations need it follows from the builder each route uses (app/api/**/route.ts):
+      // `defineApi(...)` is public, `authed.define(...)` enforces the token and documents the
+      // requirement (`documentsSecurity` in lib/auth.ts) — so reads are public and writes are
+      // protected on the same path. A document-wide default can be set here instead, e.g.
       //   security: (route) => route.routePath === "/api/login" ? [] : [{ bearerAuth: [] }],
-      // which any per-endpoint `security` overrides.
+      // (documentation only: enforcement stays with the route's middleware).
     }),
   ],
-  // denext ships NO Content-Security-Policy by default, so the CDN-loaded Swagger/Scalar
-  // bundles just work. If you turn CSP on (`csp: "strict"`), the CDN UIs need their host
-  // allowed and Swagger's runtime-injected styles make it awkward — prefer `ui: "builtin"`
-  // (strict-CSP clean) there, or add the CDN host:
-  //   csp: { scriptSrc: ["https://unpkg.com"], styleSrc: ["https://unpkg.com"], imgSrc: ["data:"] }
+  // The docs page answers with its own Content-Security-Policy, fitted to the renderer it serves
+  // (the vendored files are `'self'`), so the app's strict default CSP needs no change. Only a
+  // `cdn` override names another origin, and the docs page's policy allows that one itself.
 } satisfies DenextConfig;

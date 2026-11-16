@@ -49,7 +49,6 @@ import {
 } from "../desktop/windows-programs.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { dockHelperGrants } from "./desktop-dock-helper.ts";
-import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
 import { DESKTOP_STRICT_RUNTIME_ENV } from "./desktop-runtime-env.ts";
 import {
   desktopPermissionsMode,
@@ -186,7 +185,7 @@ const PASSKEY_RP_IDS_MANUAL =
 
 /** The by-hand note every media-capture capability prints: which windows get the device. */
 const MEDIA_CAPTURE_RUNTIME_MANUAL = (kind: string) =>
-  `${kind}: only the packaged app (\`denext desktop package\`) has it: its laufey-launch.json grants getUserMedia to the app origin alone (mediaCapture), which needs Deno Desktop runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} or later — packaging refuses an older runtime, which cannot restrict capture to the app's origin (\`denext doctor\` says so). An unpackaged window (\`denext desktop run\` / \`dev\`) gets no grant (from that runtime it refuses every request); build the capture UI in the browser (\`denext dev\`), where the browser asks.`;
+  `${kind}: only the packaged app (\`denext desktop package\`) has it: its laufey-launch.json grants getUserMedia to the app origin alone (mediaCapture), which needs a Deno Desktop runtime with media-capture grants (denext's pinned runtime has them) — packaging refuses a runtime without them, which cannot restrict capture to the app's origin (\`denext doctor\` says so). An unpackaged window (\`denext desktop run\` / \`dev\`) gets no grant (a runtime with media-capture grants refuses every request there); build the capture UI in the browser (\`denext dev\`), where the browser asks.`;
 
 /** One DNS label of a hostname: letters, digits and inner hyphens, 1–63 characters. */
 const DNS_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;
@@ -262,10 +261,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // confines the page to the app dirs; the process-level grant is broad.
     trust: "broad",
     notes:
-      "app files under the OS app-support / cache folders (survive relaunch); broad --allow-write baked (the app's folders alone from runtime 3.0.0-denext.8 with desktop.app.identifier)",
+      "app files under the OS app-support / cache folders (survive relaunch); broad --allow-write baked (the app's folders alone where the runtime expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE, as the pinned runtime does, with desktop.app.identifier)",
     manual: [
       'fs: `directory: "documents"` needs "$DOCUMENTS" in desktop.capabilities.fs.read/write (it maps to ~/Documents/<app>); add it by hand if you use it.',
-      "fs: the packaged binary bakes a broad --allow-write (the per-user app-support path can't be baked) unless the runtime expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (3.0.0-denext.8, with desktop.app.identifier), which scopes it to the app's folders; the runtime cap layer confines writes to the app's folders. downloadToFile fetches in the Deno process, so each download host needs net in desktop.extraPermissions (beyond the loopback baseline).",
+      "fs: the packaged binary bakes a broad --allow-write (the per-user app-support path can't be baked) unless the runtime expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (the pinned runtime does, with desktop.app.identifier), which scopes it to the app's folders; the runtime cap layer confines writes to the app's folders. downloadToFile fetches in the Deno process, so each download host needs net in desktop.extraPermissions (beyond the loopback baseline).",
     ],
   },
   sqlite: {
@@ -276,7 +275,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // BROAD for the same reason as `fs`: the app-support path can't be baked, so --allow-write is broad.
     trust: "broad",
     notes:
-      "node:sqlite database files in the app-support folder (broad --allow-write baked; the folder alone from runtime 3.0.0-denext.8 with desktop.app.identifier)",
+      "node:sqlite database files in the app-support folder (broad --allow-write baked; the folder alone where the runtime expands $DENO_DESKTOP_DATA, as the pinned runtime does, with desktop.app.identifier)",
   },
   "context-menu": {
     key: "contextMenu",
@@ -459,7 +458,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // to an app whose .deno-desktop/app.json bakes the capability (NotCapable otherwise).
     trust: "none",
     notes:
-      "aggregate CPU / GPU / memory load in percent, no per-process data (pinned runtime from 3.0.0-denext.16; every call is `unsupported` under an older one)",
+      "aggregate CPU / GPU / memory load in percent, no per-process data (needs a runtime with Deno.desktop.systemStats, as the pinned one has; every call is `unsupported` under one without it)",
   },
   updates: {
     key: "updates",
@@ -499,11 +498,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     },
     trust: "full",
     notes:
-      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.12; on Windows a ConPTY, from runtime 3.0.0-denext.21): --allow-run of the allowed shells only",
+      "terminals for the page over Deno.openPty (a runtime with Deno.openPty, as the pinned one has; on Windows a ConPTY): --allow-run of the allowed shells only",
     manual: [
       "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
       'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
-      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.12 or later (on Windows 3.0.0-denext.21 or later, and Windows 10 1809 or later: a ConPTY); before it every call rejects `unsupported`. A ConPTY's output carries its own VT sequences even for plain text: render it with a terminal emulator (xterm.js).",
+      "pty: needs a Deno Desktop runtime with Deno.openPty (denext's pinned runtime has it; on Windows it also needs the runtime's ConPTY support and Windows 10 1809 or later); without it every call rejects `unsupported`. A ConPTY's output carries its own VT sequences even for plain text: render it with a terminal emulator (xterm.js).",
     ],
   },
   microphone: {
@@ -514,10 +513,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // the packaged launch file grants it to the app origin alone.
     trust: "none",
     notes:
-      "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.10+)",
+      "the page's getUserMedia gets the microphone, for the app origin only (a runtime with media-capture grants, as the pinned one has)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("microphone"),
-      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."; { speechRecognitionUsageDescription } adds NSSpeechRecognitionUsageDescription for the window\'s own speech recognition); a signed build gets the com.apple.security.device.audio-input entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Microphone, "Let desktop apps access your microphone") the window refuses the device and appCapabilities().microphoneAccess reads "denied" with the reason (Deno Desktop runtime from 3.0.0-denext.16). Linux asks nobody.',
+      'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."; { speechRecognitionUsageDescription } adds NSSpeechRecognitionUsageDescription for the window\'s own speech recognition); a signed build gets the com.apple.security.device.audio-input entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Microphone, "Let desktop apps access your microphone") the window refuses the device and appCapabilities().microphoneAccess reads "denied" with the reason (where the runtime reports device access, as the pinned one does; "unknown" elsewhere). Linux asks nobody.',
     ],
   },
   camera: {
@@ -526,10 +525,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["navigator.mediaDevices.getUserMedia({ video }) (the page's own)"],
     trust: "none",
     notes:
-      "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.10+)",
+      "the page's getUserMedia gets the camera, for the app origin only (a runtime with media-capture grants, as the pinned one has)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("camera"),
-      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Camera, "Let desktop apps access your camera") the window refuses the device and appCapabilities().cameraAccess reads "denied" with the reason (Deno Desktop runtime from 3.0.0-denext.16). Linux asks nobody.',
+      'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows has no prompt: with its privacy switch off (Settings › Privacy & security › Camera, "Let desktop apps access your camera") the window refuses the device and appCapabilities().cameraAccess reads "denied" with the reason (where the runtime reports device access, as the pinned one does; "unknown" elsewhere). Linux asks nobody.',
     ],
   },
   passkeys: {
@@ -543,7 +542,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     manual: [
       "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile — set desktop.macos = { provisioningProfile, entitlements } — and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
       PASSKEY_RP_IDS_MANUAL,
-      "passkeys: the packaged app's laufey-launch.json carries desktop.capabilities.passkeys.rpIds as passkeyRpIds, enforced natively; from runtime 3.0.0-denext.1 (strictPolicy) a launch file without it refuses every request. Linux has no OS passkey API: USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn), the browser otherwise.",
+      "passkeys: the packaged app's laufey-launch.json carries desktop.capabilities.passkeys.rpIds as passkeyRpIds, enforced natively; under a runtime with the strict launch policy (strictPolicy, as the pinned one has) a launch file without it refuses every request. Linux has no OS passkey API: USB security keys work natively where the runtime carries libwebauthn (the pinned one does), the browser otherwise.",
     ],
   },
 };
@@ -1828,7 +1827,7 @@ function strictProblem(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions)
     : options.dataScope
     ? null
     : "the Deno Desktop runtime this build uses does not expand $DENO_DESKTOP_DATA / " +
-      "$DENO_DESKTOP_CACHE (3.0.0-denext.8 or later). Build on denext's pinned runtime";
+      "$DENO_DESKTOP_CACHE. Build on denext's pinned runtime, which does";
   return runtime === null ? null : `${lead}${runtime}, or use desktop.permissions: "default"`;
 }
 

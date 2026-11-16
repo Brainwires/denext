@@ -165,8 +165,8 @@ function openClient(url: string, options: DenoSqlOptions): DenoSqlClient {
   const SQL = denoSqlConstructor();
   if (!SQL) {
     throw new Error(
-      "denext/prisma-adapter: this Deno has no Deno.SQL — run the app on denext's Deno runtime " +
-        "(3.0.0-rc.1 or later; `denext dev` / `denext start` use it).",
+      "denext/prisma-adapter: this Deno has no Deno.SQL — run the app on denext's Deno toolchain " +
+        "(it has Deno.SQL; `denext dev` / `denext start` use it).",
     );
   }
   return new SQL(url, options);

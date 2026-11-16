@@ -17,8 +17,8 @@ denext task start    # serve the production build
 
 - **Tailwind, zero-config** — one `@import "tailwindcss";` line in
   `styles/tailwind.css`; wired up in `denext.config.ts`.
-- **`/` (home)** — uses `useState`, so it server-renders **and** hydrates into
-  an interactive counter.
+- **`/` (home)** — a Server Component that renders a `"use client"` counter
+  (`app/counter.tsx`): the page server-renders, and only the counter hydrates.
 - **`/about`** — purely static (no hooks, no handlers), so denext ships it as
   **zero-JavaScript** HTML — still fully Tailwind-styled. View source: no
   `<script>` tags.
@@ -29,7 +29,8 @@ denext task start    # serve the production build
 denext.config.ts        tailwind: { input, output }
 styles/tailwind.css     @import "tailwindcss";
 app/layout.tsx          imports ./globals.css (compiled output)
-app/page.tsx            interactive (hydrates)
+app/page.tsx            server-rendered home page
+app/counter.tsx         "use client" counter (hydrates)
 app/about/page.tsx      static (zero JS)
 ```
 

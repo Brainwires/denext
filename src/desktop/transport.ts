@@ -154,9 +154,8 @@ export function resolveDesktopTrust(
     return {
       trust: {
         kind: "refuse",
-        reason: `this Deno Desktop runtime is older than ${DESKTOP_RELAY_MARKING_RUNTIME} (it ` +
-          "does not mark requests from its WebSocket relay, so they can't be told from the " +
-          "page's). Rebuild with the runtime denext pins (unset DENORT_DESKTOP_BIN, " +
+        reason: "this Deno Desktop runtime does not mark requests from its WebSocket relay, " +
+          "so they can't be told from the page's. Rebuild with the runtime denext pins (unset DENORT_DESKTOP_BIN, " +
           "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR), or, on a stock Deno CLI " +
           "(DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock",
       },
@@ -208,9 +207,8 @@ export function desktopRuntimeSkewWarning(
   if (trust.kind !== "memory" || (publishedWsUrl !== undefined && publishedWsUrl !== "")) {
     return undefined;
   }
-  return `this Deno Desktop runtime is older than ${DESKTOP_MINIMUM_RUNTIME}, the oldest denext ` +
-    `supports (it publishes no ${DESKTOP_WS_URL_ENV}, which came in ` +
-    `${DESKTOP_RELAY_TOKEN_RUNTIME}), so the page's WebSockets (Live, desktopWebSocketUrl) fail, ` +
+  return `this Deno Desktop runtime is older than the oldest denext supports (it publishes no ` +
+    `${DESKTOP_WS_URL_ENV}), so the page's WebSockets (Live, desktopWebSocketUrl) fail, ` +
     "full-app updates are refused and a sidecar's spawnSelf() children need permissions.run. " +
     "Repackage the app with the runtime denext pins (unset DENORT_DESKTOP_BIN, LAUFEY_DEV_DIR " +
     "and DENEXT_DESKTOP_RUNTIME_DIR).";

@@ -48,7 +48,8 @@ export function resultColumns(rows: SqlRows<unknown>): SqlColumn[] {
   if (!Array.isArray(rows.columns)) {
     throw new Error(
       "denext/prisma-adapter: this Deno.SQL reports no result-set columns (result.columns) — " +
-        "the Prisma adapter needs denext's Deno runtime 3.0.0-rc.1 or later.",
+        "the Prisma adapter needs a Deno.SQL that reports them (denext's Deno toolchain does: " +
+        "`denext upgrade`).",
     );
   }
   return rows.columns;

@@ -198,7 +198,8 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.10", () => {
 
   const problem = mediaCaptureRuntimeProblem(BOTH, false, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "desktop.capabilities.microphone / camera");
-  assertStringIncludes(problem!, "3.0.0-denext.10");
+  assertStringIncludes(problem!, "media-capture grants");
+  assert(!problem!.includes(FIRST_MEDIA_CAPTURE_RUNTIME), "names the capability, not a release");
   assertStringIncludes(problem!, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "cannot restrict capture to the app's origin");
   assert(!problem!.includes("\n"));
@@ -212,7 +213,8 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.10", () => {
   } catch (e) {
     refused = e as Error;
   }
-  assertStringIncludes(refused!.message, "needs Deno Desktop runtime 3.0.0-denext.10 or later");
+  assertStringIncludes(refused!.message, "needs a Deno Desktop runtime with media-capture grants");
+  assertStringIncludes(refused!.message, "Build on denext's pinned runtime, which has them");
   assertStringIncludes(refused!.message, "the stock runtime");
   assert(!refused!.message.includes("\n"));
   assertMediaCaptureRuntime(BOTH, true, "runtime 3.0.0-denext.10");
@@ -254,7 +256,7 @@ Deno.test("media capture: the packaged launch file grants the app origin; Info.p
     const err = await assertRejects(
       () => writeLaufeyLaunchConfig(entry, "darwin", old, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
+      "needs a Deno Desktop runtime with media-capture grants to package",
     );
     assert(!err.message.includes("\n"));
     const oldPlist = await Deno.readTextFile(join(old, "Contents", "Info.plist"));
@@ -392,7 +394,7 @@ Deno.test("media capture: a signed build gets the device entitlements; the confi
     const refused = await assertRejects(
       () => desktopMacosSigning(entry, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
+      "needs a Deno Desktop runtime with media-capture grants to package",
     );
     assert(!refused.message.includes("\n"));
     // Without either capability the runtime does not matter.
@@ -575,7 +577,7 @@ Deno.test("media capture: speechRecognitionUsageDescription validation", () => {
 Deno.test("media capture: `desktop add microphone camera` writes both keys", async () => {
   assertEquals(DESKTOP_CAPABILITIES.microphone.key, "microphone");
   assertEquals(DESKTOP_CAPABILITIES.camera.trust, "none");
-  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "3.0.0-denext.10");
+  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "media-capture grants");
   const { dir } = await project({ desktop: { capabilities: {} } });
   try {
     const report = await addDesktopCapabilities({

@@ -239,7 +239,8 @@ export function desktopDataTokenRuntimeProblem(
   }
   if (!supportsDesktopDataToken(version)) {
     return `the pinned Deno Desktop runtime is ${version}, and expanding $DENO_DESKTOP_DATA / ` +
-      "$DENO_DESKTOP_CACHE needs 3.0.0-denext.8 or later. Upgrade denext (`denext upgrade`)";
+      "$DENO_DESKTOP_CACHE needs a runtime that expands them, which it is not. Upgrade denext " +
+      "(`denext upgrade`): its pinned runtime does";
   }
   if (!compilerBakesAppIdentifier(compiler)) {
     return `the app is compiled by stock Deno ${compiler.deno}, which does not write ` +

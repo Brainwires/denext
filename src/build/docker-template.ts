@@ -276,7 +276,7 @@ ENV PATH=/deno-dir/toolchain-bin:$PATH
 function idleTrimLayer(options: DockerOptions): string {
   if (!options.idleTrim) return "";
   return `# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
-# GC, then malloc_trim; denext's Deno toolchain from runtime 3.0.0-rc.5). Opt out with
+# GC, then malloc_trim; denext's Deno toolchain). Opt out with
 # \`start: { idleTrim: false }\` in denext.config and regenerate, or \`-e DENO_UNSTABLE_IDLE_TRIM=0\`.
 ENV DENO_UNSTABLE_IDLE_TRIM=1
 

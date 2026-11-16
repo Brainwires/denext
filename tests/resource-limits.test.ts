@@ -372,7 +372,7 @@ Deno.test("resource limits: a stale marker is compared with the serving process'
   const old = gate({ runtime: "3.0.0-rc.1", applied: FLAGS.join(" ") });
   assertEquals(await maybeReexecForLimits(old.d), false);
   assertEquals(old.seen.spawned, []);
-  assertStringIncludes(old.seen.warned.join("\n"), "predates runtime 3.0.0-rc.2");
+  assertStringIncludes(old.seen.warned.join("\n"), "(3.0.0-rc.1) has no resource-limit flags");
 });
 
 Deno.test("resource limits: on stock Deno, an unknown Deno or without --allow-run, a warning", async () => {

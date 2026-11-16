@@ -612,8 +612,8 @@ Deno.test("adapter: an unknown user type's kind may be missing", async () => {
   assertEquals(err.cause, { kind: "UnsupportedNativeDataType", type: "x" });
 });
 
-Deno.test("adapter: a runtime without result columns says which runtime it needs", async () => {
-  assertThrows(() => resultColumns(rows([])), Error, "3.0.0-rc.1");
+Deno.test("adapter: a runtime without result columns says what it needs", async () => {
+  assertThrows(() => resultColumns(rows([])), Error, "needs a Deno.SQL that reports them");
   const { client } = fakeClient({ "select 1": rows([[1]]) });
   const db = new DenoSqlAdapter(client, sqliteDriver("iso8601"), () => Promise.resolve());
   await assertRejects(() => db.queryRaw(query("select 1")), Error, "result.columns");
