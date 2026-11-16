@@ -18,6 +18,7 @@ import { isFrameworkPath, linkedFrameworkDir } from "./framework-watch.ts";
 import { hasPathSegment, inNodeModules } from "../path-segments.ts";
 import { createPlatformScanner, keepPlatformScanner } from "../platform-extensions.ts";
 import { watchProjectStructure } from "../platform-watch.ts";
+import { ContentBaseline } from "./content-baseline.ts";
 
 /**
  * Keep one platform-file scan for the session (every rebuild's redirects come from it) and
@@ -149,7 +150,9 @@ async function flushBatch(
  * self-triggered rebuild→reload→rebuild loop when `spa.entry` sits at the project root
  * (so its dir contains outDir). So is a write denext itself made in the tree (the CSS
  * crawl's transient `deno.json` rewrite — see `self-writes.ts`): the file still holds what
- * denext wrote, so it is dropped too. Changed paths accumulate across a 60 ms debounce
+ * denext wrote, so it is dropped too. So is an event for a file whose bytes are the ones it held
+ * at the watcher's start or at its last event ({@linkcode ContentBaseline}): macOS can deliver a
+ * file written just before the start well after it. Changed paths accumulate across a 60 ms debounce
  * window so the flush can decide Fast Refresh vs a full reload for the whole batch.
  *
  * @param st The dev session.
@@ -160,18 +163,21 @@ export function watch(st: SpaDevState, observe?: (batch: string[]) => void): voi
   const { paths } = st;
   watchPlatformFiles(st);
   const framework = linkedFrameworkDir();
-  const watched = existingPaths([
-    resolve(st.entryPath, ".."),
-    paths.publicDir,
-    ...(framework ? [framework] : []),
-  ]);
+  const sources = existingPaths([resolve(st.entryPath, ".."), paths.publicDir]);
+  const watched = [...sources, ...existingPaths(framework ? [framework] : [])];
   if (watched.length === 0) return;
-  const watcher = Deno.watchFs(watched, { recursive: true });
-  installShutdown(st, watcher);
   const ignored = (p: string): boolean =>
     p.startsWith(paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
-  watchBatches(watcher, ignored, (batch) => {
+  // The project's files as they are now, recorded before the watch opens: a late event for a
+  // file written before the start (or any rewrite with the same bytes) holds the same content
+  // and is no edit. A file first seen later is learned on its first event, which counts.
+  const baseline = new ContentBaseline();
+  baseline.snapshot(sources, ignored);
+  const watcher = Deno.watchFs(watched, { recursive: true });
+  installShutdown(st, watcher);
+  const unchanged = (p: string): boolean => ignored(p) || !baseline.changed(p);
+  watchBatches(watcher, unchanged, (batch) => {
     observe?.(batch);
     void flushBatch(st, batch, framework);
   });

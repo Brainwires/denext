@@ -8,16 +8,6 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Fixed
-
-- **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
-  in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
-  resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
-  they still pinned the previous one, and said to wait. They now read the same 24-hour default,
-  and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
-  version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
-  `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
-
 ### Changed
 
 - **`deno task revocations sign` splits `--force` into two flags** (maintainers).
@@ -25,6 +15,23 @@ and this project adheres to
   `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
   only its own case, so skipping the published-list check never also allows un-revoking a
   release; a bare `--force` on `sign` is refused with a message naming both.
+
+### Fixed
+
+- **A SPA's `denext dev` no longer rebuilds for a file whose content did not change.** The
+  watcher records each project file's content (SHA-256) before it opens, and learns a file it had
+  not seen on its first event; an event for a file holding the bytes it had then is dropped. On
+  a loaded Mac, FSEvents could deliver the project's own just-written files (a scaffold's, a
+  checkout's) after the dev server started, each starting a new build generation right away. A
+  rewrite with the same bytes is dropped the same way; a real edit still counts on its first
+  event.
+- **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
+  in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
+  resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
+  they still pinned the previous one, and said to wait. They now read the same 24-hour default,
+  and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
+  version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
+  `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
 
 ## [4.19.0] - 2026-11-15
 
