@@ -19,8 +19,8 @@
  * Overlay windows (a desktop companion, a HUD) use {@linkcode setWindowOpacity},
  * {@linkcode setIgnoreMouseEvents}, {@linkcode setHitRegion},
  * {@linkcode setVisibleOnAllWorkspaces} and {@linkcode setSkipTaskbar}; the last three need
- * runtime 3.0.0-denext.6 or later (reported in {@linkcode windowCapabilities}; an older runtime
- * rejects them `unsupported`).
+ * a runtime that has them (reported in {@linkcode windowCapabilities}; an older runtime rejects
+ * them `unsupported`).
  *
  * Coordinates and sizes are the runtime's: CSS pixels for sizes, and screen positions in points on
  * macOS and Linux and in physical pixels on Windows' WebView2 backend.
@@ -162,7 +162,7 @@ export interface WindowCapabilities {
   readonly fileDrop: boolean;
   /** {@linkcode startFileDrag} works. */
   readonly fileDragOut: boolean;
-  /** {@linkcode shareFromWindow} shows a share sheet (macOS, Windows; runtime 2.9.7-denext.20). */
+  /** {@linkcode shareFromWindow} shows a share sheet (macOS, Windows, on a runtime that has one). */
   readonly share: boolean;
   /** Native file dialogs (`pickDocument` / `saveFile` / `pickFolder` in `denext/mobile`). */
   readonly fileDialogs: boolean;
@@ -172,16 +172,16 @@ export interface WindowCapabilities {
   readonly dipGeometry: boolean;
   /**
    * Linux: `"wayland"` (windows cannot be placed), `"x11"`, `"tty"` or `"unknown"`; `null` on macOS
-   * and Windows. `"unknown"` before runtime 2.9.7-denext.10 (no `platformFeatures()` probe).
+   * and Windows. `"unknown"` on a runtime without the `platformFeatures()` probe.
    */
   readonly sessionType: "wayland" | "x11" | "tty" | "unknown" | null;
   /**
    * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
-   * keyring, a team-signed macOS app's own keychain item from runtime 2.9.7-denext.20) or
+   * keyring, a team-signed macOS app's own keychain item on denext's Deno Desktop runtime) or
    * `"basic"` (obfuscated with a fixed key, not protected by the OS: an ad-hoc signed or unsigned
    * macOS build, where CEF runs with Chromium's mock keychain, and Linux when the login keyring was
-   * locked with no one to unlock it); `null` on the WebView backends, `"unknown"` before runtime
-   * 2.9.7-denext.10.
+   * locked with no one to unlock it); `null` on the WebView backends, `"unknown"` on a runtime
+   * without the `platformFeatures()` probe.
    */
   readonly cookieEncryption: "os" | "basic" | "unknown" | null;
   /** {@linkcode setIgnoreMouseEvents} works. */
@@ -207,16 +207,17 @@ export interface WindowCapabilities {
   readonly nonActivating: boolean;
   /**
    * `setVisibleOnAllWorkspaces` also shows the window over other apps' full-screen windows (macOS,
-   * at a `"status"` level or above; runtime 3.0.0-denext.6).
+   * at a `"status"` level or above, on a runtime that can).
    */
   readonly visibleOnFullScreen: boolean;
   /**
    * An `overlay: true` window ({@linkcode openWindow}) is a wlr-layer-shell surface (wlroots
-   * compositors, KDE Plasma and COSMIC on Wayland; runtime 3.0.0-denext.6).
+   * compositors, KDE Plasma and COSMIC on Wayland, on a runtime with overlay windows).
    */
   readonly layerShell: boolean;
   /**
-   * `setActivationPolicy` in `denext/desktop/app` works (macOS; runtime 3.0.0-denext.6).
+   * `setActivationPolicy` in `denext/desktop/app` works (macOS, on a runtime with activation
+   * policies).
    */
   readonly activationPolicy: boolean;
   /** {@linkcode onWindowFocus} / {@linkcode onWindowBlur} fire. */
@@ -284,7 +285,7 @@ export interface TitleBarPreferences {
   /**
    * Where the answer came from: Linux reads xdg-desktop-portal's Settings first (`"portal"`), then
    * GSettings (`"gsettings"`), else GTK's defaults (`"default"`); `"os"` on macOS and Windows;
-   * `"unknown"` before runtime 2.9.7-denext.12 (the OS's usual layout then).
+   * `"unknown"` on a runtime that can't read them (the OS's usual layout then).
    */
   readonly source: "portal" | "gsettings" | "default" | "os" | "unknown";
 }
@@ -765,8 +766,8 @@ export async function getTitleBarPreferences(): Promise<TitleBarPreferences> {
 
 /**
  * Call `handler` with the new preferences whenever the user changes them (moves the window buttons,
- * picks another double-click action, colour scheme or accent colour). Needs runtime
- * 2.9.7-denext.12; earlier the handler is never called.
+ * picks another double-click action, colour scheme or accent colour). Needs a runtime that reads
+ * them (`source` is not `"unknown"`); elsewhere the handler is never called.
  *
  * @param handler Called with the current preferences.
  * @returns A function that unsubscribes.
@@ -923,9 +924,9 @@ function registerGuardHandler<T>(set: Set<T>, handler: T): () => void {
  * through. While a handler is registered the runtime holds every close and calls the handlers; the
  * window closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops
  * answering cannot keep the window open: a close requested again after 5 seconds without an answer
- * goes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (`reason: "quit"`): Cmd+Q, the
- * Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends
- * the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a
+ * goes through. On denext's Deno Desktop runtime the OS's own quits ask too (`reason: "quit"`):
+ * Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime
+ * Cmd+Q ends the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a
  * session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end
  * is pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in
  * {@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.
@@ -953,8 +954,8 @@ export function onCloseRequested(handler: CloseRequestHandler): () => void {
  * tray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or
  * resolves) `false`. Plain closes of this window are not held. The before-quit handlers run before
  * the {@linkcode onCloseRequested} ones (which get `reason: "quit"`); a refusal here asks no close
- * handler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout
- * on macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;
+ * handler. On denext's Deno Desktop runtime the OS's own quits ask too (Cmd+Q, the Dock's Quit and a
+ * logout on macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;
  * on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is
  * pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
  * handler is never called.
@@ -1096,7 +1097,7 @@ export async function startFileDrag(
 /**
  * Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),
  * Windows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`
- * `"not_supported"`). Needs denext's pinned runtime, 2.9.7-denext.20 or later (`share` in
+ * `"not_supported"`). Needs a denext Deno Desktop runtime with share sheets (`share` in
  * {@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read
  * rejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to
  * the web where it can't.
@@ -1174,8 +1175,8 @@ function engineHasDragRegions(): boolean {
 }
 
 /**
- * Screen-position units per CSS pixel. A runtime that reports `dipGeometry` (denext's pinned runtime
- * since 2.9.7-denext.5) moves windows in CSS pixels on every backend; older WebView2 hosts moved
+ * Screen-position units per CSS pixel. A runtime that reports `dipGeometry` (denext's Deno Desktop
+ * runtime) moves windows in CSS pixels on every backend; older WebView2 hosts moved
  * them in physical pixels.
  */
 function legacyPositionScale(): number {
@@ -1372,7 +1373,7 @@ export interface OpenWindowOptions {
   /** On every Space / virtual desktop (where the runtime can). */
   readonly visibleOnAllWorkspaces?: boolean;
   /**
-   * A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with
+   * A desktop overlay surface (on a runtime with overlay windows): on a Wayland compositor with
    * wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every
    * workspace and out of the task list, placed with `setBounds` (`layerShell` in
    * {@linkcode windowCapabilities}); an ordinary window elsewhere.
@@ -1383,14 +1384,14 @@ export interface OpenWindowOptions {
    * Electron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with
    * its timers slowed (about once a second on macOS); its events, messages and sockets are still
    * handled. `false`: its timers keep their rate, for a hidden window that does the app's
-   * background work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on
-   * macOS froze a page created hidden about a second after it loaded). The system WebView on
+   * background work. Creation time only; denext's Deno Desktop runtime honours it (an older one
+   * ignores it, and on macOS froze a page created hidden about a second after it loaded). The system WebView on
    * Windows and Linux and the CEF backend throttle a hidden page without freezing it either way.
    */
   readonly backgroundThrottling?: boolean;
   /**
    * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
-   * shown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first.
+   * shown with the handle's `show()`; an older runtime may flash it first.
    */
   readonly show?: boolean;
   /**

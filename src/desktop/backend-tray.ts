@@ -57,7 +57,7 @@ export interface DesktopTrayOptions {
   readonly panel?: { url: string; width?: number; height?: number; hideOnBlur?: boolean };
   /**
    * Called on a click on the icon with the primary button (before the pages hear of it), with the
-   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`). On macOS a tray with a menu and no
+   * runtime's detail, or `null` on a runtime without it. On macOS a tray with a menu and no
    * panel opens its menu on a plain left click, as Electron's does; a handler here (or one added
    * with the handle's `onClick`) takes the left click instead.
    */
@@ -65,7 +65,7 @@ export interface DesktopTrayOptions {
   /** Called on a double click. */
   readonly onDoubleClick?: (detail: TrayMouseDetail | null) => void;
   /**
-   * Called on a right click (runtime `3.0.0-denext.6`+, where `trayRightClick` is reported). The OS
+   * Called on a right click (where the runtime reports `trayRightClick`; never elsewhere). The OS
    * opens the tray's menu on a right click by itself; this is for doing something else as well.
    */
   readonly onContextMenu?: (detail: TrayMouseDetail | null) => void;
@@ -127,11 +127,12 @@ export interface DesktopTrayHandle {
   onDoubleClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
   /**
    * Call `handler` on each `type` event (`contextmenu`, `auxclick`, `mouseenter`, `mouseleave`,
-   * … — runtime `3.0.0-denext.6`+), with its detail. Returns the unsubscribe.
+   * … — a runtime with tray mouse events: `trayRightClick`, `trayMiddleClick`, `trayHover`), with
+   * its detail. Returns the unsubscribe.
    */
   on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void;
   /**
-   * Open the tray's menu at the icon now (runtime `3.0.0-denext.6`+), for another gesture than the
+   * Open the tray's menu at the icon now (`trayPopUpMenu`), for another gesture than the
    * right click (which opens it by itself): a Control-click, say. `false` without a menu, on an
    * older runtime, or where the OS can't (Linux: the tray host opens it).
    */

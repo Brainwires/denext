@@ -19,7 +19,7 @@
  * Use it with Prisma 7's `prisma-client` generator (`runtime = "deno"`); `denext migrate` wires
  * all of it.
  *
- * Needs denext's Deno runtime 3.0.0-rc.1 or later: the adapter reads each result column's
+ * Needs denext's Deno with result-set column metadata: the adapter reads each result column's
  * type from `Deno.SQL`'s `result.columns`, which earlier runtimes do not report
  * ({@linkcode denoSqlHasColumns} tells).
  *

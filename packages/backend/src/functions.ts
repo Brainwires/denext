@@ -80,7 +80,7 @@ export interface FunctionsOptions {
   maxBodyBytes?: number;
   /**
    * Each function worker's JavaScript heap cap, in megabytes (`new Worker(…, { deno: { memoryMb }
-   * })`, denext's Deno from runtime 3.0.0-rc.2). A worker over it is terminated: its in-flight
+   * })`, denext's Deno; stock Deno has no such option). A worker over it is terminated: its in-flight
    * requests answer `546 WORKER_LIMIT`, as Supabase's edge runtime does, and the next request
    * starts a fresh one. Memory outside the heap is not counted. Needs Deno's worker options:
    * list `"worker-options"` in `deno.json`'s `unstable` (the plugin refuses to start otherwise).
@@ -287,7 +287,7 @@ const WORKER_URL = new URL("./functions-worker.ts", import.meta.url);
 /** What a caller is told when the function threw or its worker died. */
 const WORKER_ERROR_MESSAGE = "Function exited due to an error (please check logs)";
 
-/** The runtime's error for a worker past its `deno.memoryMb` (denext's Deno from 3.0.0-rc.2). */
+/** The runtime's error for a worker past its `deno.memoryMb` (denext's Deno). */
 const MEMORY_LIMIT = /reaching memory limit/;
 
 /** Supabase's answer for a function stopped by a resource limit. */

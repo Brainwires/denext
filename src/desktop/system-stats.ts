@@ -167,7 +167,8 @@ export function createSystemStats(api: () => DesktopAppApi | undefined): SystemS
 /**
  * The machine's aggregate CPU, GPU and memory load, for the desktop app's own process
  * (`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add
- * system-stats`) and denext's Deno Desktop runtime from 3.0.0-denext.16.
+ * system-stats`) and a Deno Desktop runtime with `Deno.desktop.systemStats` (`unsupported` without
+ * it).
  *
  * @example
  * ```ts

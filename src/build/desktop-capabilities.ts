@@ -74,8 +74,8 @@ export interface DesktopPermissionSet {
   readonly run?: readonly string[];
   /**
    * `--allow-read`: paths. This narrows nothing unless `desktop.permissions` is `"strict"`, since
-   * the baseline read grant is broad. Under strict mode (runtime 3.0.0-denext.8, with
-   * `desktop.app.identifier`) `$APPDATA[/…]` and `$CACHE[/…]` are baked as the tokens the runtime
+   * the baseline read grant is broad. Under strict mode (a runtime that expands the folder
+   * tokens, with `desktop.app.identifier`) `$APPDATA[/…]` and `$CACHE[/…]` are baked as the tokens the runtime
    * expands at launch, an absolute path stays as it is, and anything else (`*`, `$DOCUMENTS`, a
    * relative path) keeps the grant unscoped.
    */
@@ -682,14 +682,14 @@ const DESKTOP_LISTEN_BASELINE = ["127.0.0.1", "localhost"] as const;
 /** Options for {@linkcode desktopBuildFlags}. */
 export interface DesktopBuildFlagOptions {
   /**
-   * The runtime has the direction-split network flags (denext's pinned Deno Desktop runtime and
-   * toolchain, 3.0.0-rc.2 or later; see `desktopNetSplit`): bake `--allow-net-connect` +
+   * The runtime has the direction-split network flags (denext's Deno Desktop runtime and
+   * toolchain; `desktopNetSplit` detects it): bake `--allow-net-connect` +
    * `--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags).
    */
   readonly netSplit?: boolean;
   /**
-   * The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop
-   * runtime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied
+   * The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's Deno Desktop
+   * runtime; `desktopCacheTokenRuntime` detects it): a program sidecar copied
    * into the app's cache folder gets `--allow-run` over that copy alone, when
    * `desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every
    * `--allow-run` path, so the app could not write the copy it then runs.
@@ -714,8 +714,8 @@ export interface DesktopBuildFlagOptions {
    */
   readonly appEntry?: string;
   /**
-   * The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop
-   * runtime, 3.0.0-denext.10 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`
+   * The runtime checks a program sidecar's recorded hash at spawn (denext's Deno Desktop
+   * runtime; `desktopSidecarIntegrityRuntime` detects it), so its `--allow-run`
    * records the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,
    * and `cacheScope` not `false`. Default:
    * `desktopSidecarIntegrityRuntime()`.
@@ -723,7 +723,7 @@ export interface DesktopBuildFlagOptions {
   readonly sidecarIntegrity?: boolean;
   /**
    * The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission
-   * (denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):
+   * (denext's Deno Desktop runtime; `desktopDataTokenRuntime` detects it):
    * the app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a
    * sidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an
    * unscoped `--allow-write`, when `desktop.app.identifier` names them. Default:
@@ -956,15 +956,15 @@ function isProjectProgram(exec: string): boolean {
 }
 
 /**
- * The token denext's Deno Desktop runtime (from 3.0.0-denext.8) expands at launch, at the start of
- * a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's cache folder:
+ * The token denext's Deno Desktop runtime expands at launch (`desktopCacheTokenRuntime`), at the
+ * start of a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's cache folder:
  * `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md item 189).
  */
 export const DESKTOP_CACHE_TOKEN = "$DENO_DESKTOP_CACHE";
 
 /**
- * The token denext's Deno Desktop runtime (from 3.0.0-denext.8) expands at launch, at the start of
- * a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's data folder:
+ * The token denext's Deno Desktop runtime expands at launch (`desktopDataTokenRuntime`), at the
+ * start of a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's data folder:
  * `desktopAppDirs(<desktop.app.identifier>).data` — macOS `~/Library/Application Support/<id>`,
  * Windows `%APPDATA%\<id>`, Linux `$XDG_DATA_HOME|~/.local/share/<id>` (Brainwires/deno DENEXT.md
  * item 191). A value with a `..` component, or with no folder to expand to, is dropped from an
@@ -1464,11 +1464,11 @@ function writeGrantCovering(program: string, writes: readonly string[]): string 
  * `options.cacheScope` (default off), and `desktop.app.identifier` is set (the runtime keys the
  * folder by the identifier baked into the binary; without one it would drop the entry).
  *
- * Off by default although runtime 3.0.0-denext.8 expands the token
+ * Off by default even where the runtime expands the token
  * (`desktopCacheTokenRuntime`): Deno adds every `--allow-run` path to the deny-write
  * list, so a run grant on the copy's own path leaves the app unable to write the copy, and the
- * program sidecar never starts (`NotCapable` on its rename into place). From runtime
- * 3.0.0-denext.10 the program is baked with its recorded hash instead ({@linkcode sidecarProgramBake}):
+ * program sidecar never starts (`NotCapable` on its rename into place). On a runtime that
+ * checks sidecar hashes (`desktopSidecarIntegrityRuntime`) the program is baked with its recorded hash instead ({@linkcode sidecarProgramBake}):
  * the runtime writes it itself, so the folder's denial is what is wanted there.
  */
 function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
@@ -1664,7 +1664,7 @@ function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): str
  * - the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a
  *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
  *   runtime cap layer confines it) — or, on a runtime that expands `$DENO_DESKTOP_DATA` /
- *   `$DENO_DESKTOP_CACHE` (3.0.0-denext.8, `dataScope`) in an app with `desktop.app.identifier`,
+ *   `$DENO_DESKTOP_CACHE` (`dataScope`) in an app with `desktop.app.identifier`,
  *   `--allow-write` scoped to those folders (and any absolute `extraPermissions.write` path) unless
  *   a write has no token (a picked path, `$DOCUMENTS`); an unscoped `--allow-sys` when a capability needs it
  *   (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`
@@ -1673,8 +1673,8 @@ function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): str
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
  *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
  *   (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and
- *   `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (the
- *   pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead:
+ *   `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (a
+ *   runtime with the direction-split net flags) the network grant is baked by direction instead:
  *   `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,
  *   `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server
  *   picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;
@@ -1779,8 +1779,8 @@ export function desktopBuildFlags(
  * desktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The
  * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
  * this module's own dependency graph (nor a build-time import of user code). The network grant is
- * split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or
- * later, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});
+ * split by direction when the build runs on denext's runtime and toolchain with the split flags,
+ * read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});
  * `DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
@@ -1835,7 +1835,7 @@ function strictProblem(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions)
 /**
  * Why `desktop.permissions: "strict"` cannot be honoured in this build, with the fix, else `null`
  * (strict not requested, or honourable): `desktop.app.identifier` is unset, or the runtime does
- * not expand `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` (a runtime older than 3.0.0-denext.8,
+ * not expand `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` (an older runtime,
  * `DENEXT_DESKTOP_RUNTIME=stock`, a `DENEXT_DESKTOP_RUNTIME_DIR` build). A packaging build throws
  * this ({@linkcode desktopBuildFlags}); `denext desktop run` / `dev` print it as a warning and bake
  * the default grants.

@@ -818,9 +818,9 @@ export interface RunDesktopOptions {
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
    * key when it was opened with one), or `null` with no window open. The clicks never reach the
-   * pages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from
-   * runtime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only
-   * while the main window is open. A throw or a rejection is logged.
+   * pages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive on a
+   * runtime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the main
+   * window is open. A throw or a rejection is logged.
    */
   onWindowMenuItem?: DesktopWindowMenuItemHandler;
   /**
@@ -897,8 +897,8 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
   setDockVisible(visible: boolean): boolean;
   /**
    * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
-   * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
-   * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
+   * (neither: a tray app) or `"prohibited"` (a runtime with `Deno.dock.setActivationPolicy`; on an
+   * older runtime `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
    * app to the front. A tray app stays accessory and shows its window with the window's
    * `focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps
    * once its running tile goes away. On Windows and Linux `"regular"` shows the main window's taskbar entry and

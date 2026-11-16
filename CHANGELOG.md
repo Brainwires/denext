@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs: runtime gates are described by capability, not by runtime release.** AGENTS.md,
+  README.md, KNOWN-LIMITATIONS.md, FEATURES.md, the docs pages (desktop, config, database,
+  deployment targets, security, permissions, backend, environment, troubleshooting and others) and
+  the public JSDoc behind the [API reference](https://denext.dev/docs/api) no longer say "runtime
+  3.0.0-denext.N and later": each gate names what has the feature and how to detect it
+  (`appCapabilities()`, `windowCapabilities()`, `Deno.desktop.*`, `denoSqlHasColumns()`) or what
+  happens on a runtime without it. Release numbers stay in this changelog and on the pages whose
+  subject is versions (runtime reference, toolchain, desktop runtime); a docs test fails on a new
+  one anywhere else, with a commented allowlist for dated records.
+
 ### Fixed
 
 - **Docs: the example READMEs match their examples.** Every `examples/*/README.md` was checked

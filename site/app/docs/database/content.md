@@ -12,14 +12,14 @@ isn't tested.
 
 ## TL;DR
 
-| Option            | Setup                                      | npm?        | Tested with denext                 | Best for                          |
-| ----------------- | ------------------------------------------ | ----------- | ---------------------------------- | --------------------------------- |
-| **`node:sqlite`** | built into Deno                            | **none**    | ✅ (via the better-sqlite3 compat) | single-instance apps, the default |
-| **Deno KV**       | built into Deno                            | **none**    | ⚠️ not in denext CI                | edge/serverless, simple KV data   |
-| **Postgres**      | `postgresClient()` (`Deno.SQL`)            | **none**    | ✅ CI against Postgres 17          | multi-instance / large apps       |
-| **MySQL, others** | a Deno or `npm:` driver                    | driver only | ⚠️ not in denext CI                | an existing database              |
-| **Drizzle ORM**   | `better-sqlite3` shim → compat             | ORM only    | ✅ full app + e2e                  | typed SQL over SQLite             |
-| **Prisma**        | `denext/prisma-adapter` (SQLite, Postgres) | ORM only    | ⚠️ runtime 3.0.0-rc.1+ (see below) | typed models + migrations         |
+| Option            | Setup                                      | npm?        | Tested with denext                      | Best for                          |
+| ----------------- | ------------------------------------------ | ----------- | --------------------------------------- | --------------------------------- |
+| **`node:sqlite`** | built into Deno                            | **none**    | ✅ (via the better-sqlite3 compat)      | single-instance apps, the default |
+| **Deno KV**       | built into Deno                            | **none**    | ⚠️ not in denext CI                     | edge/serverless, simple KV data   |
+| **Postgres**      | `postgresClient()` (`Deno.SQL`)            | **none**    | ✅ CI against Postgres 17               | multi-instance / large apps       |
+| **MySQL, others** | a Deno or `npm:` driver                    | driver only | ⚠️ not in denext CI                     | an existing database              |
+| **Drizzle ORM**   | `better-sqlite3` shim → compat             | ORM only    | ✅ full app + e2e                       | typed SQL over SQLite             |
+| **Prisma**        | `denext/prisma-adapter` (SQLite, Postgres) | ORM only    | ⚠️ needs `Deno.SQL` columns (see below) | typed models + migrations         |
 
 ## SQLite via `node:sqlite` (recommended default, zero-npm)
 
@@ -237,7 +237,7 @@ through `node_modules`, **not** your `deno.json` import map — so an import-map
 alias can't reach it. You install the compat _as_ `better-sqlite3` instead. The
 two ORMs need slightly different mechanisms because of how they depend on it.
 
-On denext's Deno toolchain (2.9.7-denext.22 and later) there is a shorter path:
+On denext's Deno toolchain there is a shorter path:
 the runtime serves the real `better-sqlite3` package's API over the same
 built-in SQLite engine, so a `better-sqlite3` dependency (no `--allow-scripts`,
 no addon build) is enough for Drizzle, Knex and Kysely. This runs as is under
@@ -350,8 +350,8 @@ const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undef
 const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
 ```
 
-**It requires denext's Deno runtime 3.0.0-rc.1 or later**, as denext's pinned toolchain is. The adapter reads
-each result column's type from `Deno.SQL`'s `result.columns`, which earlier
+**It requires denext's Deno runtime with `result.columns`**, as denext's toolchain has. The adapter reads
+each result column's type from `Deno.SQL`'s `result.columns`, which older
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
 from the same module tells.
@@ -395,7 +395,7 @@ Its tests: a type round-trip matrix against Postgres 17 and SQLite
 app with Prisma on SQLite (the Epic Stack, `tests/migration-bed/epic-stack.test.ts`) with
 `--prisma-adapter auto`, checks the wiring against goldens, seeds it and renders pages that read
 the seeded users through the adapter. An app that also imports `better-sqlite3` itself (the Epic
-Stack's cache database) keeps the `links` shim for it beside the adapter. They need runtime 3.0.0-rc.1 or later
+Stack's cache database) keeps the `links` shim for it beside the adapter. They need a runtime whose `Deno.SQL` reports columns
 (an older runtime skips them); a fake `Deno.SQL` checks the adapter on any runtime
 (`tests/prisma-adapter.test.ts`).
 
@@ -536,7 +536,7 @@ Prisma 6 schema's `directUrl` becomes the config's `url`, the one the CLI
 migrates through (the Prisma 7 upgrade guide's mapping), and the app keeps
 reading the pooled `url` variable.
 
-On denext's Deno runtime 3.0.0-rc.1 and later, migrate wires a Postgres
+On a runtime where `denoSqlHasColumns()` holds (denext's Deno), migrate wires a Postgres
 datasource to `denext/prisma-adapter` instead (above): no `pg` dependency.
 
 A `cockroachdb` datasource takes the Postgres path: CockroachDB speaks the

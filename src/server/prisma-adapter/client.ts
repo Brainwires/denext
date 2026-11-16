@@ -1,7 +1,7 @@
 /**
  * The slice of `Deno.SQL` the Prisma adapter drives, restated structurally: the result-set
- * column metadata (`result.columns`) first shipped in denext's runtime 3.0.0-rc.1, so
- * the runtime type declarations of older toolchains do not have it.
+ * column metadata (`result.columns`) is denext's Deno's, so the runtime type declarations
+ * of older toolchains do not have it.
  *
  * @module
  */
@@ -37,7 +37,7 @@ export interface SqlRows<T> extends Array<T> {
   count: number;
   /** The statement's command (`"SELECT"`, `"INSERT"`, …). */
   command?: string;
-  /** The result's columns, in order (runtime 3.0.0-rc.1 and later). */
+  /** The result's columns, in order (where `denoSqlHasColumns()`; absent on an older runtime). */
   columns?: SqlColumn[];
   /** SQLite: the rowid of the last inserted row. */
   lastInsertRowid?: number | bigint;
@@ -98,7 +98,7 @@ export function denoSqlConstructor(): DenoSqlConstructor | undefined {
 
 /**
  * Whether this runtime's `Deno.SQL` reports result-set column metadata (`result.columns`),
- * which the Prisma adapter needs: denext's Deno runtime 3.0.0-rc.1 and later. Probes an
+ * which the Prisma adapter needs (denext's Deno does; an older runtime does not). Probes an
  * in-memory SQLite database, so it needs no permission and touches no file.
  */
 export async function denoSqlHasColumns(): Promise<boolean> {

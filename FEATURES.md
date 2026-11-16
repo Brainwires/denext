@@ -749,7 +749,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
   resolves to `{ window, trust, emit }` for pushing OS events to the page. —
   `src/desktop/extension.ts`, `src/build/desktop.ts`.
-- **Terminals in a desktop app** — the `pty` capability (runtime 3.0.0-denext.12+,
+- **Terminals in a desktop app** — the `pty` capability (where the runtime has
   `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `attachPty` /
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
   to its window (`onWindowClose: "kill" | "detach"`, `replayBytes` replayed on attach), and
@@ -757,12 +757,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `--allow-run`). On Windows a terminal is a ConPTY, under a runtime whose `Deno.openPty`
   runs there (else `unsupported`). — `src/desktop/caps/pty.ts`.
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
-  origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
+  origin call `getUserMedia` in a packaged app (on a runtime that grants capture); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
   `usageDescription`), and with Windows' privacy switch off the window refuses the device
   (`checkPermission` reads `blocked`). — `src/build/desktop-media-capture.ts`,
   `src/build/desktop-capabilities.ts`.
-- **System stats** — the `systemStats` capability (runtime 3.0.0-denext.16):
+- **System stats** — the `systemStats` capability (where the runtime has `Deno.desktop.systemStats`):
   `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` give the machine's
   aggregate CPU, GPU and memory load in percent, sampled natively with no Deno permission
   and no per-process data. — `src/desktop/caps/system-stats.ts`,
@@ -776,7 +776,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Native message boxes for extensions** — `host.confirm({ message, detail, buttons,
   defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
   TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window
-  open (runtime 3.0.0-denext.16). — `src/desktop/extension.ts`.
+  open (`unsupported` on a runtime without it). — `src/desktop/extension.ts`.
 - **App-level desktop hooks** — `desktop.menu.window.items` add the app's own Window-menu items
   (`runDesktop({ onWindowMenuItem })` / `host.onWindowMenuItem(fn)`); `runDesktop({
   onSecondInstance })`, `app.onSecondInstance(fn)` and `host.onSecondInstance(fn)` hear a

@@ -1553,7 +1553,7 @@ There is nothing to `download` or `deploy`: the functions ship inside the app, w
 | `verifyJwt`    | `true`            | Require a valid caller before a function runs.                                                        |
 | `timeoutMs`    | 150 000           | The longest one request may run; past it the function's request is aborted and the caller gets `504`. |
 | `maxBodyBytes` | 20 MiB            | The largest request body passed to a function.                                                        |
-| `memoryMb`     | none              | Each function worker's heap cap in megabytes (runtime 3.0.0-rc.2+; needs `"worker-options"`, below).  |
+| `memoryMb`     | none              | Each function worker's heap cap in megabytes (denext's Deno; needs `"worker-options"`, below).        |
 | `env`          | `{}`              | Variables every function reads from `Deno.env`, over the process's own.                               |
 | `url`          | see above         | The URL functions read as `SUPABASE_URL` (default: `canonicalOrigin`, else the server's own address). |
 | `functions`    | `{}`              | Per function, by name: `verifyJwt`, `timeoutMs`, `env`, `permissions`, `memoryMb`.                    |
@@ -1563,7 +1563,7 @@ code, such as a `while (true) {}`) is terminated and replaced: the requests it w
 get `504`, and the next call starts on a fresh worker.
 
 `memoryMb` caps each function worker's JavaScript heap (`new Worker(…, { deno: { memoryMb } })`,
-denext's Deno from runtime 3.0.0-rc.2), for every function or one (`functions: { report: {
+denext's Deno), for every function or one (`functions: { report: {
 memoryMb: 256 } }`). A worker over it is terminated: the requests it was serving get `546
 WORKER_LIMIT`, as on Supabase, and the next call starts a fresh worker. Memory outside the heap
 (`ArrayBuffer`s, native code) is not counted. Like `permissions`, it needs `"unstable":

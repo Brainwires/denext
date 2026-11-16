@@ -353,7 +353,7 @@ services behind a bearer token. [Project UI › The stack dashboard](/docs/ui#th
 ### Desktop windows — the navigation guard
 
 A Deno Desktop window holds the app's capabilities and storage, so under denext's
-pinned runtime (from `2.9.7-denext.18`) a top-level navigation to any other
+Deno Desktop runtime a top-level navigation to any other
 origin — a link, `location = …`, a form, a server redirect, `window.open()` —
 never loads in the window: an `http(s)` destination opens in the system browser
 and anything else is dropped. Only the app origin, the dev server in a
@@ -627,8 +627,8 @@ Partytown on any page of the origin. denext closes both:
   `DENEXT_HTML_REWRITER=1` and denext's Deno with `HTMLRewriter` turned on
   (`--unstable-html-rewriter`, or `"unstable": ["html-rewriter"]` in `deno.json`) it streams
   through the rewriter instead, with the same bytes. That is opt-in because it is slower on
-  today's runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through
-  the rewriter, a 17 KB one 48 µs against 6.5 ms. It is kept for runtimes where it pays off.
+  today's runtimes: a 600-byte shell took 8 µs as a string and 1.7 ms through the rewriter, a
+  17 KB one 48 µs against 6.5 ms. It is kept for runtimes where it pays off.
   A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no

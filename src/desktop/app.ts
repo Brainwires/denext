@@ -9,8 +9,8 @@
  *   runtime too; denext's pinned runtime adds accelerators on every OS and menu icons / tooltips
  *   (see {@linkcode appCapabilities}).
  * - {@linkcode setUserActivity} / {@linkcode onUserActivityContinued} (Handoff and Spotlight) go to
- *   the same capability and need denext's pinned runtime 2.9.7-denext.20 or later on macOS;
- *   elsewhere `setUserActivity` resolves `false`.
+ *   the same capability and need a denext Deno Desktop runtime with user activities on macOS;
+ *   elsewhere (and on an older runtime) `setUserActivity` resolves `false`.
  * - {@linkcode registerShortcut} needs `denext desktop add global-shortcuts`, and
  *   {@linkcode setLaunchAtLogin} `denext desktop add launch-at-login`; both need denext's pinned
  *   runtime (elsewhere they reject `unavailable`).
@@ -118,8 +118,8 @@ export interface AppMenuAction {
   readonly icon?: string;
   /**
    * An action that deletes or discards: drawn in red on macOS, Linux (WebKitGTK) and the CEF
-   * backend's menus, as a normal item in Windows' menus (`appCapabilities().destructive`; runtime
-   * 2.9.7-denext.20).
+   * backend's menus, as a normal item in Windows' menus (`appCapabilities().destructive` says
+   * whether the runtime draws it; an older runtime draws a normal item).
    */
   readonly destructive?: boolean;
 }
@@ -141,7 +141,7 @@ export interface AppMenuRoleItem {
 /** One entry of an application, tray or Dock menu. */
 export type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | "separator";
 
-/** A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer). */
+/** A session fact the runtime could not report (a runtime without that probe, or no answer). */
 export type PlatformUnknown = "unknown";
 
 /**
@@ -167,7 +167,7 @@ export interface AppCapabilities {
   readonly icons: boolean;
   /** Menu item tooltips are shown. */
   readonly tooltips: boolean;
-  /** Destructive menu items are drawn as such (red; runtime 2.9.7-denext.20). */
+  /** Destructive menu items are drawn as such (red; `false` on a runtime that can't). */
   readonly destructive: boolean;
   /**
    * {@linkcode setMenu}, {@linkcode setMenuItemState} and {@linkcode setWindowMenuAppItems} work
@@ -194,7 +194,7 @@ export interface AppCapabilities {
   readonly sessionType: "wayland" | "x11" | "tty" | PlatformUnknown | null;
   /**
    * CEF's cookie store: `"os"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux
-   * keyring, and from runtime 2.9.7-denext.20 a team-signed macOS app's own
+   * keyring, and on denext's Deno Desktop runtime a team-signed macOS app's own
    * `"<app id> Safe Storage"` keychain item) or `"basic"` (obfuscated with a fixed key, not
    * protected by the OS): an ad-hoc signed or unsigned macOS build, where CEF runs with Chromium's
    * mock keychain and its constant key, and Linux when the login keyring was locked with no one to
@@ -207,7 +207,7 @@ export interface AppCapabilities {
    * Where the badge shows: `"dock"` (the macOS Dock tile), `"launcher-entry"` (Linux: a count on
    * the app's launcher, where a dock reads it: Ubuntu's dock, Dash to Dock, Plasma's task manager)
    * or `"title"` (a `"(N) "` prefix on the window titles: Windows, Linux without such a dock, and a
-   * badge that isn't a number), as the runtime probed it (runtime 2.9.7-denext.11 and later).
+   * badge that isn't a number), as the runtime probed it; `"unknown"` where it can't say.
    */
   readonly badgeShows: "dock" | "launcher-entry" | "title" | PlatformUnknown;
   /** Linux, when `badgeShows` is `"title"`: why no launcher shows the count (the runtime's). */
@@ -217,8 +217,8 @@ export interface AppCapabilities {
    * (unprivileged user namespaces), `"setuid"` (the `chrome-sandbox` helper the `.deb` / `.rpm`
    * installs), `"chromium"` (on; the runtime's probe could not run, so Chromium picked the layer) or
    * `"off"` (neither: a tarball or AppImage on Ubuntu 23.10 and later, or root; see
-   * `desktop.linux.requireSandbox`). `null` on other platforms and backends; `"unknown"` before
-   * runtime 2.9.7-denext.12.
+   * `desktop.linux.requireSandbox`). `null` on other platforms and backends; `"unknown"` on a
+   * runtime without the sandbox probe.
    */
   readonly sandbox: "namespace" | "setuid" | "chromium" | "off" | PlatformUnknown | null;
   /** Why the runtime chose that sandbox mode (its `laufey: sandbox:` line), or `null`. */
@@ -226,7 +226,7 @@ export interface AppCapabilities {
   /**
    * Linux: the chooser a file dialog uses: `"portal"` (xdg-desktop-portal's FileChooser, the
    * desktop's own dialog) or `"gtk"` (GTK's chooser: the portal offers none). `null` elsewhere;
-   * `"unknown"` before runtime 2.9.7-denext.12.
+   * `"unknown"` on a runtime without the file-chooser probe.
    */
   readonly fileChooser: "portal" | "gtk" | PlatformUnknown | null;
   /** Why GTK's, when `fileChooser` is `"gtk"` (the runtime's reason), or `null`. */
@@ -235,7 +235,7 @@ export interface AppCapabilities {
    * Linux: the compositor blurs behind translucent windows, KWin's Blur effect on KDE Plasma:
    * `"kwin-wayland"` or `"kwin-x11"`; `null` when it doesn't (and on macOS / Windows). Probed on
    * every call (the effect can be turned on and off). The WebView backend can put it behind a
-   * window; CEF can't. `"unknown"` before runtime 3.0.0-rc.1.
+   * window; CEF can't. `"unknown"` on a runtime without the blur probe.
    */
   readonly windowBlur: "kwin-wayland" | "kwin-x11" | PlatformUnknown | null;
   /** Linux, when `windowBlur` is `null`: why (the runtime's reason), or `null`. */
@@ -243,8 +243,8 @@ export interface AppCapabilities {
   /**
    * Linux: `"security-keys"` when passkeys with USB security keys work natively (the runtime's
    * libwebauthn library is beside its host and can list HID devices); `null` when they don't, and
-   * on macOS / Windows (their OS passkey API; see `passkeysSupported()`). `"unknown"` before
-   * runtime 3.0.0-rc.1, where a Linux window signs in with a passkey through the browser.
+   * on macOS / Windows (their OS passkey API; see `passkeysSupported()`). `"unknown"` on a runtime
+   * without native Linux passkeys, where a Linux window signs in with a passkey through the browser.
    */
   readonly passkeys: "security-keys" | PlatformUnknown | null;
   /** Linux, when `passkeys` is `null`: why (the runtime's reason), or `null`. */
@@ -256,7 +256,7 @@ export interface AppCapabilities {
    * the page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`
    * capability on, and `checkPermission("microphone")` reads `"blocked"`. `null` when no switch is
    * set, and on macOS / Linux. Probed on every call (the user can flip a switch while the app
-   * runs). `"unknown"` before runtime 3.0.0-denext.16.
+   * runs). `"unknown"` on a runtime that can't read the switches.
    */
   readonly microphoneAccess: "allowed" | "denied" | PlatformUnknown | null;
   /** Windows, when `microphoneAccess` is `"denied"`: which switch refuses and where it is. */
@@ -275,23 +275,23 @@ export interface AppCapabilities {
   readonly backendTray: boolean;
   /** The backend tray has a panel ({@linkcode toggleTrayPanel}). */
   readonly trayPanel: boolean;
-  /** {@linkcode setActivationPolicy} works (macOS; runtime 3.0.0-denext.6). */
+  /** {@linkcode setActivationPolicy} works (macOS, on a runtime with activation policies). */
   readonly activationPolicy: boolean;
   /** A tray's `click` fires (`Deno.Tray.capabilities()`; every runtime with a tray). */
   readonly trayClick: boolean;
   /** A tray's `dblclick` fires. */
   readonly trayDoubleClick: boolean;
-  /** A tray's `contextmenu` fires on a right click (runtime 3.0.0-denext.6). */
+  /** A tray's `contextmenu` fires on a right click (`false` on a runtime without tray mouse events). */
   readonly trayRightClick: boolean;
-  /** A tray's `auxclick` fires on a middle click (runtime 3.0.0-denext.6). */
+  /** A tray's `auxclick` fires on a middle click (`false` on a runtime without tray mouse events). */
   readonly trayMiddleClick: boolean;
-  /** A tray's `mouseenter` / `mouseleave` fire (macOS, Windows; runtime 3.0.0-denext.6). */
+  /** A tray's `mouseenter` / `mouseleave` fire (macOS, Windows, on a runtime with tray mouse events). */
   readonly trayHover: boolean;
-  /** A tray event's detail carries the modifier keys (runtime 3.0.0-denext.6). */
+  /** A tray event's detail carries the modifier keys (`false` on a runtime without the detail). */
   readonly trayModifiers: boolean;
-  /** A tray event's detail carries the cursor position (runtime 3.0.0-denext.6). */
+  /** A tray event's detail carries the cursor position (`false` on a runtime without the detail). */
   readonly trayPosition: boolean;
-  /** A tray's `popUpMenu()` opens its menu (macOS, Windows; runtime 3.0.0-denext.6). */
+  /** A tray's `popUpMenu()` opens its menu (macOS, Windows, on a runtime that can). */
   readonly trayPopUpMenu: boolean;
   /**
    * A tray's `title` shows beside its icon (macOS' menu bar; a runtime whose `Deno.Tray` has
@@ -323,11 +323,10 @@ const SECRET_STATES = [
 
 /**
  * What the application menu, tray and Dock can do on this OS and runtime, plus the session facts
- * the runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the
- * tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);
- * the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and
- * native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches
- * (the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads `"unknown"`.
+ * the runtime probed (`Deno.desktop.platformFeatures()`, where the runtime has it): the tray host,
+ * the Secret Service, the session type and the cookie store, the badge, the Linux CEF sandbox and
+ * file chooser, the Linux window blur and native Linux passkeys, and Windows' microphone and camera
+ * privacy switches. A fact the runtime cannot report (an older one probes fewer) reads `"unknown"`.
  *
  * @returns The capabilities.
  */
@@ -388,9 +387,9 @@ export async function appCapabilities(): Promise<AppCapabilities> {
 
 /**
  * Call `handler` with fresh {@linkcode appCapabilities} whenever the runtime says what the session
- * provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went
- * away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray
- * icon again when `tray` turns `true`. Older runtimes never call it.
+ * provides may have changed (Linux: a tray host started or went away, as when the GNOME
+ * AppIndicator extension is enabled while the app runs). Create the tray icon again when `tray`
+ * turns `true`. A runtime without `Deno.desktop.platformFeatures()` never calls it.
  *
  * @param handler Called with the capabilities as they are now.
  * @returns A function that unsubscribes.
@@ -494,8 +493,8 @@ export async function setWindowMenuAppItems(
 /**
  * Show a badge: on the Dock icon on macOS, and as a `"(N) "` prefix of the window titles on
  * Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges
- * (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same
- * title prefix; `appCapabilities().badgeShows` says which. `null`, `""` or `0` removes it.
+ * (Ubuntu's dock, Dash to Dock, Plasma's task manager; a runtime that probes them), else as the
+ * same title prefix; `appCapabilities().badgeShows` says which. `null`, `""` or `0` removes it.
  *
  * @param badge The text or count.
  * @returns A promise that settles once it is shown.
@@ -541,8 +540,8 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
  * that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on
  * quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it
  * gets none. `desktop.app.activationPolicy` (or
- * `desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6
- * (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
+ * `desktop.app.dock: false`) sets the one the app starts in. Needs a runtime with activation
+ * policies (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
  * `"accessory"` show / hide the Dock icon as {@linkcode setDockVisible} does.
  *
  * Windows and Linux have no policy: there `"regular"` shows the main window's taskbar entry and the
@@ -566,8 +565,8 @@ export async function setActivationPolicy(policy: ActivationPolicy): Promise<boo
 /**
  * The app's macOS activation policy.
  *
- * @returns The policy, or `null` where there is none (Windows, Linux, a runtime before
- *   3.0.0-denext.6).
+ * @returns The policy, or `null` where there is none (Windows, Linux, a runtime without
+ *   activation policies: `appCapabilities().activationPolicy` is `false`).
  */
 export async function getActivationPolicy(): Promise<ActivationPolicy | null> {
   const out = await desktopRpc<{ policy?: unknown }>("app", "getActivationPolicy", {});
@@ -640,8 +639,8 @@ export interface AppTray {
   getBounds(): Promise<TrayBounds | null>;
   /**
    * Call `handler` on each click of the primary button (`"click"`) and each double click
-   * (`"doubleClick"`), with the runtime's detail (button, modifiers, position, `double`; runtime
-   * 3.0.0-denext.6, else `null`). A right click is a `contextmenu` event ({@linkcode AppTray.on}).
+   * (`"doubleClick"`), with the runtime's detail (button, modifiers, position, `double`), or `null`
+   * on a runtime without it (`trayModifiers` / `trayPosition` in {@linkcode appCapabilities}). A right click is a `contextmenu` event ({@linkcode AppTray.on}).
    * Returns the unsubscribe.
    */
   onClick(
@@ -650,15 +649,15 @@ export interface AppTray {
   /**
    * Call `handler` on each `type` event, by its DOM name: `click` (the primary button), `dblclick`,
    * `contextmenu` (a right click), `auxclick` (a middle click), `mouseenter` / `mouseleave` (hover;
-   * macOS, Windows). All but `click` / `dblclick` need runtime 3.0.0-denext.6 (`trayRightClick`,
-   * `trayMiddleClick`, `trayHover` in {@linkcode appCapabilities}). Returns the unsubscribe.
+   * macOS, Windows). All but `click` / `dblclick` need a runtime with tray mouse events
+   * (`trayRightClick`, `trayMiddleClick`, `trayHover` in {@linkcode appCapabilities}). Returns the unsubscribe.
    */
   on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void;
   /**
    * Open the tray's menu at the icon now (Electron's `popUpContextMenu`): from another gesture than
    * the right click, which opens it by itself (a Control-click on macOS, a left click in an app that
-   * wants its menu there, a shortcut). Resolves `false` without a menu, on a runtime before
-   * 3.0.0-denext.6, or where the OS can't (Linux, where the tray host opens the menu itself;
+   * wants its menu there, a shortcut). Resolves `false` without a menu, on a runtime without
+   * it, or where the OS can't (Linux, where the tray host opens the menu itself;
    * `trayPopUpMenu`).
    */
   popUpMenu(): Promise<boolean>;
@@ -1053,9 +1052,9 @@ export interface ContinuedUserActivity {
 
 /**
  * Make `activity` the app's current user activity, for Handoff (the user's other devices offer to
- * continue it) and Spotlight (`searchable: true` indexes it). macOS only, under denext's pinned
- * runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves
- * `false` and nothing happens.
+ * continue it) and Spotlight (`searchable: true` indexes it). macOS only, under a denext Deno Desktop
+ * runtime with user activities; elsewhere (Windows, Linux, an older runtime) it resolves `false`
+ * and nothing happens.
  *
  * @param activity The activity.
  * @returns Whether the OS took it. It rejects `validation` for a malformed activity.
@@ -1109,7 +1108,7 @@ const continued = pullQueue("app", "activity", parseActivity, "takeActivities");
 
 /**
  * Call `handler` with each user activity the user continues: Handoff from another device, or a
- * Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to
+ * Spotlight result (macOS, on a runtime with user activities; never called elsewhere). The one that launched the app is delivered to
  * the first handler. Treat its fields as untrusted input, as a deep link's.
  *
  * @param handler Called with each activity.

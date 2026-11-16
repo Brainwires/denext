@@ -75,9 +75,9 @@ export interface DeployServer {
   /** The build directory the server reads, and writes its durable cache to, project-relative. */
   buildDir: string;
   /**
-   * Whether a server started on denext's pinned Deno toolchain should run with its idle trim
+   * Whether a server started on denext's Deno toolchain should run with its idle trim
    * (`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):
-   * the pinned toolchain has it (3.0.0-rc.5 or later) and the project does not opt out
+   * the toolchain has the idle trim (stock Deno has none) and the project does not opt out
    * (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A
    * `--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1.
    */
@@ -85,7 +85,7 @@ export interface DeployServer {
   /**
    * The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,
    * `--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on
-   * denext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`
+   * denext's Deno (stock Deno has no such flags): a generator puts them on the server's `deno run`
    * (a `--compile` executable has them baked in already). Absent in a manifest from before denext
    * 4.10.
    */
@@ -94,8 +94,8 @@ export interface DeployServer {
    * `start.tls` — the server serves HTTPS itself — with each certificate's host names and the
    * environment variables naming its PEM files (never the paths or the files), for a generator to
    * pass those variables through, make the files readable and probe health over `https:`; `null`
-   * when the server serves plain HTTP. Several certificates need denext's Deno from runtime
-   * 3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3.
+   * when the server serves plain HTTP. Several certificates need denext's Deno with per-name
+   * certificates and the unstable net APIs on. Absent in a manifest from before denext 4.10.3.
    */
   tls?: DeployServerTls | null;
 }
@@ -167,8 +167,8 @@ export interface DeployPermissions {
   /** Whether the app opted into `--allow-all` (`compile.permissions: "all"`). */
   allowAll: boolean;
   /**
-   * The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno from
-   * 3.0.0-rc.2: `--allow-net-connect` / `--allow-net-listen`). `["*"]` is a direction left
+   * The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno:
+   * `--allow-net-connect` / `--allow-net-listen`). `["*"]` is a direction left
    * unscoped. `listen` is `["*"]` unless `compile.permissions.netListen` names addresses: an
    * adapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),
    * so nothing else in the process can open a listener. `null` under `allowAll`.

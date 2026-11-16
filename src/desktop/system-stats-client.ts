@@ -16,7 +16,7 @@
  * reloading its page ends its subscriptions.
  *
  * `stats()` rejects `unavailable` off desktop or when the capability is not enabled, `unsupported`
- * under a Deno Desktop runtime without system stats (3.0.0-denext.13 and older), and `forbidden`
+ * under a Deno Desktop runtime without system stats (no `Deno.desktop.systemStats`), and `forbidden`
  * when the packaged app does not bake the capability. `onStats()` reports those to its `onError`.
  *
  * Client-safe: web APIs only, nothing runs at import.
@@ -134,7 +134,7 @@ function onStats(
 
 /**
  * The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add
- * system-stats`, denext's Deno Desktop runtime from 3.0.0-denext.16).
+ * system-stats`, a Deno Desktop runtime with `Deno.desktop.systemStats`; `unsupported` without it).
  */
 export const system: SystemStatsClient = {
   stats: async (options) =>
