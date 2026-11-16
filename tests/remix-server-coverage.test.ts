@@ -38,6 +38,8 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { DEFAULT_SEGMENT_CONFIG } from "../src/server/segment-config.ts";
+import { handleAction } from "../src/server/action-handler.ts";
+import { actionEndpoint } from "../src/runtime/server-action.ts";
 
 // ── Data helpers ──────────────────────────────────────────────────────────────
 
@@ -148,6 +150,42 @@ Deno.test("bindAction: runs the action with submitted FormData and unwraps its j
 
   // No action → no bound ref.
   assertEquals(bindAction(undefined, "routes/x", {}), undefined);
+});
+
+/** POST `fd` to the action endpoint of `id` the way the hydrated client does. */
+async function postAction(id: string, fd: FormData): Promise<Response> {
+  const request = new Request(`http://app.test${actionEndpoint(id)}`, {
+    method: "POST",
+    headers: { origin: "http://app.test", host: "app.test", "x-denext-action": "1" },
+    body: fd,
+  });
+  return await runWithContext(createRequestContext(request), () => handleAction(request));
+}
+
+Deno.test("bindAction: a form rendered for one URL posts with that render's params", async () => {
+  const seen: Array<{ id: string; url: string }> = [];
+  const action = ({ request, params }: { request: Request; params: Record<string, string> }) => {
+    seen.push({ id: params.id, url: new URL(request.url).pathname });
+    return json({ id: params.id });
+  };
+  const render = (path: string, params: Record<string, string>) =>
+    runWithContext(
+      createRequestContext(new Request(`http://app.test${path}`)),
+      () => bindAction(action, "routes/items.$id:render-order", params)!,
+    );
+  const first = render("/items/1", { id: "1" });
+  const firstId = (first as unknown as { denextActionId: string }).denextActionId;
+  render("/items/2", { id: "2" }); // a later render, by another visitor
+  const fd = new FormData();
+  fd.append("k", "v");
+  const res = await postAction(firstId, fd);
+  assertEquals(res.status, 200);
+  assertEquals(seen, [{ id: "1", url: "/items/1" }]);
+
+  // The bare route id, without the params its render sealed, names no action.
+  const bare = await postAction("remix:routes/items.$id:render-order#action", fd);
+  assertEquals(bare.status, 409);
+  assertEquals(seen.length, 1);
 });
 
 Deno.test("bindAction: a thrown redirect from the action becomes denext's redirect signal", async () => {

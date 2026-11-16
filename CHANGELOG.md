@@ -57,6 +57,13 @@ and this project adheres to
 
 ### Fixed
 
+- **Remix compat: a route action runs with the params of the render that produced its form.**
+  The action is registered once per route and each render seals its params and page path (now
+  the action's `request.url`) into the form's action id; the plain `remix:<route>#action` id is no
+  longer callable by itself.
+- **Remix compat: the `shouldRevalidate` prior-data echo is read on client soft navigations
+  only.** A document request renders from its loaders whatever headers it carries, and a render
+  that reuses echoed data is marked per-request, so it is never stored as a shared page.
 - **An anonymous account converts only from the session that asked for the code.** An email
   code, magic link or SMS code requested from an anonymous session records that session's user,
   and redeeming it converts that user only; a code requested without that session is a plain

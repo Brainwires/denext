@@ -151,6 +151,7 @@ Deno.test("shouldRevalidate: a client revalidation SKIPS the loader, reusing the
   // A client revalidation echoing prior data for `root`.
   const req = new Request("http://x/notes", {
     headers: {
+      "x-denext-nav": "1",
       [REVALIDATE_HEADER]: "root,routes/notes",
       [LOADER_DATA_HEADER]: JSON.stringify({ root: { user: "ada" } }),
       [FROM_HEADER]: "/notes",
@@ -177,6 +178,7 @@ Deno.test("shouldRevalidate: the loader RUNS when it returns true, or on a non-r
   // (a) shouldRevalidate returns true → loader runs even with echoed data present.
   const req = new Request("http://x/notes", {
     headers: {
+      "x-denext-nav": "1",
       [REVALIDATE_HEADER]: "root",
       [LOADER_DATA_HEADER]: JSON.stringify({ root: { old: 1 } }),
     },
@@ -203,6 +205,7 @@ Deno.test("shouldRevalidate: a route the client didn't echo data for still reval
   const req = new Request("http://x/new", {
     // `routes/new` is a freshly-entered route (no prior client data) → not in the echo → must load.
     headers: {
+      "x-denext-nav": "1",
       [REVALIDATE_HEADER]: "root",
       [LOADER_DATA_HEADER]: "{}",
       [FROM_HEADER]: "/old",
@@ -229,7 +232,9 @@ Deno.test("shouldRevalidate: a route the client didn't echo data for still reval
 Deno.test("shouldRevalidate: the echo can arrive via the soft-nav POST body (over-large data)", async () => {
   let loaderCalls = 0;
   // A large echo travels in the POST body (stashed as ctx.softNavBody) instead of a header.
-  const ctx = createRequestContext(new Request("http://x/notes", { method: "POST" }));
+  const ctx = createRequestContext(
+    new Request("http://x/notes", { method: "POST", headers: { "x-denext-nav": "1" } }),
+  );
   ctx.softNavBody = { from: "/notes", params: {}, data: { root: { big: "kept" } } };
   const vnode = await runWithContext(
     ctx,
@@ -251,6 +256,47 @@ Deno.test("shouldRevalidate: the echo can arrive via the soft-nav POST body (ove
     "body echo is used, unbounded by header size",
   );
   assertEquals(loaderCalls, 0);
+});
+
+Deno.test("shouldRevalidate: the echo is read only on a soft navigation", async () => {
+  let loaderCalls = 0;
+  const opts = {
+    id: "root",
+    loader: () => {
+      loaderCalls++;
+      return { fresh: true };
+    },
+    Route: Probe,
+    params: {},
+    shouldRevalidate: () => false,
+  };
+  const echo = {
+    [REVALIDATE_HEADER]: "root",
+    [LOADER_DATA_HEADER]: JSON.stringify({ root: { from: "header" } }),
+    [FROM_HEADER]: "/notes",
+    [PARAMS_HEADER]: "{}",
+  };
+  // A document GET carrying the echo headers, but not a soft navigation: the loader runs.
+  const plainCtx = createRequestContext(new Request("http://x/notes", { headers: echo }));
+  const plain = await runWithContext(plainCtx, () => RemixRoute(opts));
+  assertEquals(plain.props.loaderData, { fresh: true }, "the header data is not rendered");
+  assertEquals(loaderCalls, 1);
+
+  // A body echo on a request that is not a soft navigation is ignored too.
+  const postCtx = createRequestContext(new Request("http://x/notes", { method: "POST" }));
+  postCtx.softNavBody = { from: "/notes", params: {}, data: { root: { from: "body" } } };
+  const posted = await runWithContext(postCtx, () => RemixRoute(opts));
+  assertEquals(posted.props.loaderData, { fresh: true });
+  assertEquals(loaderCalls, 2);
+
+  // The soft navigation keeps the echo, and the render that used it is per-request.
+  const navCtx = createRequestContext(
+    new Request("http://x/notes", { headers: { ...echo, "x-denext-nav": "1" } }),
+  );
+  const nav = await runWithContext(navCtx, () => RemixRoute(opts));
+  assertEquals(nav.props.loaderData, { from: "header" });
+  assertEquals(loaderCalls, 2);
+  assertEquals(navCtx.usedDynamicApi, true, "a render from the echo is never shared");
 });
 
 Deno.test("Link maps Remix `to` to denext `href`", async () => {
