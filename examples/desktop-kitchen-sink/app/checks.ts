@@ -52,6 +52,7 @@ import {
   onDesktopEvent,
 } from "denext/desktop/client";
 import {
+  focusWindow,
   getScreens,
   getTitleBarPreferences,
   getWindows,
@@ -71,6 +72,7 @@ import {
   windowCapabilities,
 } from "denext/desktop/window";
 import { tiledReason } from "./geometry.ts";
+import { refocusMain } from "./refocus.ts";
 import { SECONDARY_MENU_ID, SECONDARY_QUERY, SECONDARY_TITLE } from "./second/secondary-window.tsx";
 import {
   ATTACHMENT_NAME,
@@ -1503,6 +1505,9 @@ const appChecks: Check[] = [
       } finally {
         stop();
         await win.close().catch(() => {});
+        // Closing leaves the focus where the window manager puts it (xfwm4 under Xvfb: nowhere),
+        // and the next check (maximize) then timed out once: take it back and wait for it.
+        await refocusMain({ focus: focusWindow, hasFocus: () => document.hasFocus() });
       }
       return `title "${SECONDARY_TITLE}"; click → ${got[0]} (${win.id})`;
     },

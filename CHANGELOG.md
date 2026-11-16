@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The kitchen-sink window test refocuses its main window after the secondary-window check.**
+  That check closed the window it opened and left the keyboard focus wherever the window manager
+  put it, so the next check's maximize request timed out once on Linux (xfwm4 under Xvfb). It now
+  asks for the main window's focus (`focusWindow()`) and waits for `document.hasFocus()` before
+  the next check runs, asking again each second for up to 5 s.
+
 ## [4.19.0] - 2026-11-15
 
 ### Added
