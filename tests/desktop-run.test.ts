@@ -133,7 +133,7 @@ Deno.test("runDesktop (pinned runtime): a runtime older than denext.7 is refused
       deno: { desktop: { authSession: { start() {}, capabilities: () => ({}) } } },
     });
     assertEquals(runtime.trust.kind, "refuse");
-    assert(errors.some((e) => e.includes("older than 2.9.7-denext.7")));
+    assert(errors.some((e) => e.includes("does not mark requests from its WebSocket relay")));
     assert(errors.some((e) => e.includes("every desktop endpoint is refused")));
     // No token, even for the page's own document over the memory transport.
     const res = await served.handler(get("http+memory://app/"), {
