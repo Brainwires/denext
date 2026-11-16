@@ -25,8 +25,14 @@ dependencies can do through Deno, and they make an attacker work harder. They ar
 that holds against code that is determined to get out, and they are not a replacement for running
 the process as a low-privilege user, in a container, or behind a firewall.
 
-Kernel enforcement (Landlock on Linux, Seatbelt on macOS) of the same grants is **planned** for
-denext's Deno. Until it ships, every permission on this site means "least-privilege guardrail".
+Kernel enforcement of the same grants is **in development** for denext's Deno: Landlock and
+seccomp on Linux, Seatbelt on macOS, a job object on Windows, and a supervisor for rules too fine
+for the kernel. The full system, with automatic enforcement, lands in denext 5.0; denext 4.20
+ships an opt-in preview of its settings and reports (`--kernel-sandbox=warn`,
+`--kernel-sandbox-report`), off unless you ask for it, which enforces nothing yet: `enforce` and
+`broker` refuse to start. The [Kernel sandbox](/docs/kernel-sandbox) section describes the design
+as it is built. Until enforcement ships, every permission on this site means "least-privilege
+guardrail".
 One part already runs under the OS: an approved dependency's install script runs in the
 [lifecycle-script jail](/docs/toolchain#supply-chain-lifecycle-script-jail), which uses Landlock
 and seccomp on Linux and `sandbox-exec` on macOS where they are available. That covers install

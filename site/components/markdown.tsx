@@ -4,7 +4,7 @@
 // on the server at build/export time (Server Component, zero client JavaScript),
 // so the emitted HTML is fully static.
 
-import { DocsShell } from "./ui.tsx";
+import { DocsShell, type NavChild } from "./ui.tsx";
 import { renderDoc } from "../lib/markdown.ts";
 import { tocFromHtml } from "../lib/toc.ts";
 
@@ -19,15 +19,17 @@ function MarkdownBody({ html }: { html: string }) {
  * title uses its leading H1); pass `active` to override the sidebar highlight when it
  * differs from the frontmatter slug, `title`/`lead` to override the heading, and
  * `sourcePath` (repo-relative) for a file rendered from outside the site, so its
- * relative links are rewritten to docs routes / GitHub URLs.
+ * relative links are rewritten to docs routes / GitHub URLs, and `navChildren` to nest a
+ * section's own pages under the active sidebar item.
  */
 export async function MarkdownDoc(
-  { url, active, title, lead, sourcePath }: {
+  { url, active, title, lead, sourcePath, navChildren }: {
     url: string | URL;
     active?: string;
     title?: string;
     lead?: string;
     sourcePath?: string;
+    navChildren?: NavChild[];
   },
 ) {
   const src = await Deno.readTextFile(url);
@@ -38,6 +40,7 @@ export async function MarkdownDoc(
       title={title ?? frontmatter.title ?? ""}
       lead={lead ?? frontmatter.lead}
       toc={tocFromHtml(html)}
+      navChildren={navChildren}
     >
       <MarkdownBody html={html} />
     </DocsShell>
