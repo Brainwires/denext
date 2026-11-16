@@ -657,7 +657,7 @@ the backup key (store it in the keychain as the `active` item), compile a new ba
   tree; CI does not use `--allow-dirty`.
 - **Versions are immutable.** A published version can't be replaced — a mistake
   means bumping to the next patch.
-- **Minimum-dependency-age.** For the first two days (Deno 2.9.7's default), Deno holds the new
+- **Minimum-dependency-age.** For the first 24 hours (Deno's default, 1440 minutes), Deno holds the new
   version: importing it outside a project needs `--min-dep-age=0`, and `DENEXT_MIN_DEP_AGE=0`
   forwards that override to denext's children. Users keep the hold: `denext create` /
   `migrate` / `upgrade` pin the newest version old enough for it (the previous release, on

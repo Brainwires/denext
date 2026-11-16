@@ -37,7 +37,7 @@ import {
 import { currentDenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
 import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
-import { resolveProject } from "../build/paths.ts";
+import { resolveProject, resolveProjectLayout } from "../build/paths.ts";
 import { runsFromCheckout } from "../build/checkout-file.ts";
 import {
   buildAppCss,
@@ -689,7 +689,9 @@ async function maybeReexecForModules(
 ): Promise<boolean> {
   if (Deno.env.get("DENEXT_MODULE_ACTIVE") || Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
   if (!runsFromCheckout(entryUrl())) return false;
-  const paths = await resolveProject(dir);
+  // The layout only: importing denext.config.ts here would fail on the very app-only alias this
+  // re-exec exists to resolve ({@linkcode configNeedsAppImportMap}).
+  const paths = await resolveProjectLayout(dir);
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
   const appCfg = await readConfig(paths.configPath);
   const frameworkConfig = join(frameworkRoot(), "deno.json");
@@ -772,13 +774,40 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.
-  const cssGate = command.name !== "start" || !(await startServesCss(dir));
   const minify = command.name !== "dev";
-  if (cssGate && await maybeReexecForCss(dir, minify, command.name !== "doctor", css)) {
-    return true;
+  let cssReexec: boolean;
+  try {
+    const cssGate = command.name !== "start" || !(await startServesCss(dir));
+    cssReexec = cssGate && await maybeReexecForCss(dir, minify, command.name !== "doctor", css);
+  } catch (error) {
+    // The CSS gate (and `start`'s check of it) imports denext.config.ts; under a checkout's CLI a config that imports through
+    // an app-only alias loads only in the module re-exec's child, whose own CSS gate then runs.
+    if (!(await configNeedsAppImportMap(dir, error))) throw error;
+    if (await maybeReexecForModules(dir, modules)) return true;
+    throw error;
   }
+  if (cssReexec) return true;
   if (await maybeReexecForModules(dir, modules)) return true;
   return false;
+}
+
+/**
+ * Whether `error` is denext.config.ts (or a module it imports) failing on an import-map key of
+ * the app's deno.json that this process cannot resolve: a source checkout's CLI runs under the
+ * framework's config, so an app-only alias (`"@/": "./"`) reaches it only through
+ * {@linkcode maybeReexecForModules}. The published CLI and a compiled binary's pinned child read the
+ * project's deno.json and never get here.
+ *
+ * @param dir The project directory.
+ * @param error What loading the config threw.
+ */
+async function configNeedsAppImportMap(dir: string, error: unknown): Promise<boolean> {
+  if (!runsFromCheckout(entryUrl())) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("not in import map")) return false;
+  const { configPath } = await resolveProjectLayout(dir);
+  const keys = unresolvedImportKeys(await readConfig(configPath), resolvesInThisProcess);
+  return keys.some((key) => message.includes(`Import "${key}`));
 }
 
 /**

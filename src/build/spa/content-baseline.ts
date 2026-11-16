@@ -15,6 +15,35 @@ import { isScannedDir } from "../platform-extensions.ts";
 const MAX_HASH_BYTES = 2 * 1024 * 1024;
 /** At most this many files are hashed at the watcher's start (the rest are learned lazily). */
 const MAX_SNAPSHOT_FILES = 5000;
+/**
+ * At most this many bytes are read at the watcher's start: the snapshot runs synchronously before
+ * the dev server watches, so a `public/` full of images must not hold the start for seconds.
+ */
+const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+
+/** How much {@linkcode ContentBaseline.snapshot} records at most. */
+export interface SnapshotLimits {
+  /** Files hashed (default 5000). */
+  readonly files?: number;
+  /** Bytes read (default 64 MiB). */
+  readonly bytes?: number;
+}
+
+/** What a snapshot may still record. */
+interface Budget {
+  files: number;
+  bytes: number;
+}
+
+/** A regular file's size, or null when it is gone or not a file. */
+function fileSize(path: string): number | null {
+  try {
+    const info = Deno.statSync(path);
+    return info.isFile ? info.size : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The SHA-256 (hex) of a regular file's bytes, or null when it is gone, not a file, or too big. */
 function hashFile(path: string): string | null {
@@ -82,36 +111,50 @@ export class ContentBaseline {
   /**
    * Record the content of every file under `roots` that `ignored` lets through, skipping the
    * folders a platform-file scan skips (node_modules, dot-folders, build output) and stopping at
-   * {@linkcode MAX_SNAPSHOT_FILES}. Run it BEFORE the watcher opens: a write after it then always
-   * differs from what was recorded.
+   * {@linkcode MAX_SNAPSHOT_FILES} files or {@linkcode MAX_SNAPSHOT_BYTES} bytes (a file left out
+   * is learned on its first event, which counts). Run it BEFORE the watcher opens: a write after
+   * it then always differs from what was recorded.
    *
    * @param roots The watched folders.
    * @param ignored The watcher's own filter (paths it never reports).
+   * @param limits Smaller budgets (tests).
    */
-  snapshot(roots: readonly string[], ignored: (path: string) => boolean): void {
+  snapshot(
+    roots: readonly string[],
+    ignored: (path: string) => boolean,
+    limits: SnapshotLimits = {},
+  ): void {
     const stack = [...roots];
-    let budget = MAX_SNAPSHOT_FILES;
-    while (stack.length > 0 && budget > 0) {
-      budget = this.#captureDir(stack.pop()!, ignored, stack, budget);
+    const budget: Budget = {
+      files: limits.files ?? MAX_SNAPSHOT_FILES,
+      bytes: limits.bytes ?? MAX_SNAPSHOT_BYTES,
+    };
+    while (stack.length > 0 && budget.files > 0 && budget.bytes > 0) {
+      this.#captureDir(stack.pop()!, ignored, stack, budget);
     }
   }
 
-  /** Record `dir`'s files (within `budget`) and queue its scanned subfolders; the budget left. */
+  /** Record `dir`'s files (within `budget`, which it spends) and queue its scanned subfolders. */
   #captureDir(
     dir: string,
     ignored: (path: string) => boolean,
     stack: string[],
-    budget: number,
-  ): number {
+    budget: Budget,
+  ): void {
     for (const e of readDir(dir)) {
       const path = join(dir, e.name);
       if (ignored(path)) continue;
       if (e.isDirectory && isScannedDir(e.name)) stack.push(path);
-      else if (e.isFile && budget > 0) {
-        this.capture(path);
-        budget--;
-      }
+      else if (e.isFile && budget.files > 0) this.#captureWithin(path, budget);
     }
-    return budget;
+  }
+
+  /** Record one file when it fits what is left of `budget` (a too-big file is never hashed). */
+  #captureWithin(path: string, budget: Budget): void {
+    const size = fileSize(path);
+    if (size === null || size > MAX_HASH_BYTES || size > budget.bytes) return;
+    this.capture(path);
+    budget.files--;
+    budget.bytes -= size;
   }
 }

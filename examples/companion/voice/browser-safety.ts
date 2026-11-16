@@ -1,8 +1,9 @@
 // The rules Loopy's browser keeps, as pure functions over what the page reported (unit-tested):
 //
 // - only http(s) URLs are opened;
-// - opening a host not visited this session with more than a little query or fragment data asks
-//   the user first (a page could make the model open https://bad.example/?q=<conversation>);
+// - opening a host the user has not allowed this session with more than a little data after the
+//   host (path, query, fragment) asks the user first (a page could make the model open
+//   https://bad.example/?q=<conversation>, or https://bad.example/<conversation>);
 // - it never types into a password, payment-card or one-time-code field, and never into a file
 //   input (no uploads);
 // - a click on anything that submits — a form's submit button, a button in a form that posts, or
@@ -77,19 +78,22 @@ export function checkUrl(raw: unknown): { url: string } | { error: string } {
 }
 
 /**
- * The most query plus fragment data (characters after `?` and after `#`) a URL to a host Loopy
- * has not visited this session may carry before the user is asked. Ordinary links and short
- * searches fit; a conversation, a memory or a page's text copied into a URL does not.
+ * The most data after the host (the path after its leading `/`, plus the characters after `?` and
+ * after `#`) a URL to a host the user has not allowed this session may carry before the user is
+ * asked. Ordinary links and short searches fit; a conversation, a memory or a page's text copied
+ * into a URL does not.
  */
 export const URL_DATA_LIMIT = 64;
 
 /**
- * Whether opening `url` asks the user first: its host (with the port) is not one Loopy opened
- * this session and its query and fragment together carry more than {@linkcode URL_DATA_LIMIT}
- * characters, the shape a page's instructions would use to send the conversation somewhere.
+ * Whether opening `url` asks the user first: its host (with the port) is not one the user allowed
+ * this session and its path, query and fragment together carry more than
+ * {@linkcode URL_DATA_LIMIT} characters, the shape a page's instructions would use to send the
+ * conversation somewhere. A host opened without data is not allowed by that: a page could have the
+ * model open `https://bad.example/` first and then send the data there.
  *
  * @param url A URL {@linkcode checkUrl} accepted.
- * @param visited The hosts opened this session (`URL.host`, lower-case).
+ * @param visited The hosts the user allowed this session (`URL.host`, lower-case).
  * @returns Whether to ask.
  */
 export function openNeedsConsent(url: string, visited: ReadonlySet<string>): boolean {
@@ -100,7 +104,9 @@ export function openNeedsConsent(url: string, visited: ReadonlySet<string>): boo
     return true;
   }
   if (visited.has(parsed.host)) return false;
-  return parsed.search.slice(1).length + parsed.hash.slice(1).length > URL_DATA_LIMIT;
+  const data = parsed.pathname.slice(1).length + parsed.search.slice(1).length +
+    parsed.hash.slice(1).length;
+  return data > URL_DATA_LIMIT;
 }
 
 /** The words of an attribute: separators and camelCase split, lower-case. */

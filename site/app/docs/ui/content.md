@@ -1305,7 +1305,11 @@ server starts `denext ui --no-open --port 0 --json` as a child process, presents
 once (the handshake), and keeps the session cookie; every change is sent with a same-origin
 `Origin` and the CSRF token derived from that cookie. So the loopback bind, the token handshake,
 the origin and CSRF gates and `--read-only` apply exactly as they do to a browser, and project
-code still never runs in the UI's process (nor the UI in the MCP server's).
+code still never runs in the UI's process (nor the UI in the MCP server's). The child itself
+runs on the MCP server's own denext CLI with `--no-config` (a source checkout's CLI keeps its own
+`deno.json`), from a working directory outside the project, so no project setting decides how it
+starts; the panels that run project code start
+their own children with the project's config, as they do under a plain `denext ui`.
 
 On top of that, a change is sent in two steps:
 

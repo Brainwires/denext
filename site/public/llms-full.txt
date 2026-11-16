@@ -644,7 +644,9 @@ https://denext.dev/docs/navigation-native
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
 `keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `system-stats`, `microphone`, `camera`; written to
 `desktop.capabilities`; `microphone` / `camera` work only in a packaged app on a runtime that grants capture
-(an older one refuses `getUserMedia`; test capture UI in a browser under `denext dev`), and Linux's webview backend has no
+(an older one refuses `getUserMedia`; test capture UI in a browser under `denext dev`); a page that uses
+`webkitSpeechRecognition` on macOS needs `microphone: { speechRecognitionUsageDescription }`, else macOS ends the app;
+and Linux's webview backend has no
 WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code

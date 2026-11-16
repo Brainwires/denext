@@ -213,10 +213,11 @@ back by number. The rules are enforced in code (`voice/browser-safety.ts`, `voic
 `voice/confirm.ts`):
 
 - only `http:` and `https:` addresses open;
-- opening a host Loopy hasn't opened this session asks first when the address carries more than 64
-  characters of query or fragment data (`URL_DATA_LIMIT`), so a page can't have the model send the
-  conversation out as `https://bad.example/?q=…`; ordinary links and short searches never ask, and
-  once the user says Yes the host counts as visited;
+- opening a host the user hasn't allowed this session asks first when the address carries more than
+  64 characters after the host (path, query and fragment together, `URL_DATA_LIMIT`), so a page
+  can't have the model send the conversation out as `https://bad.example/?q=…` or
+  `https://bad.example/…`; ordinary links and short searches never ask, and once the user says Yes
+  the host is allowed for the session (opening it without data first does not allow it);
 - page content goes back to the model wrapped in `<untrusted_page_data>` and labelled as data, not
   instructions (a page can't close the block early);
 - it never types into password, payment-card or one-time-code fields (by `type`, `autocomplete`,
@@ -264,8 +265,8 @@ file, the memory database, the browser profile).
 **The microphone in the desktop app.** Only the packaged app has it:
 `desktop.capabilities.microphone` grants `getUserMedia` to the window's own origin in the packaged
 app's launch file, which needs a runtime that enforces that grant (`denext desktop package` refuses
-one that doesn't). A `denext task desktop` window is refused every
-request, so Loopy says so and points at the packaged app or the browser. Package it with:
+one that doesn't). A `denext task desktop` window is refused every request, so Loopy says so and
+points at the packaged app or the browser. Package it with:
 
 ```sh
 denext task desktop:package    # from this directory; dist/: the app bundle for this OS (no installers)
@@ -286,14 +287,13 @@ than Space.
 
 ## Where it works
 
-On denext's Deno Desktop runtime: the transparent, frameless
-overlay on macOS and Windows' WebView2 (the CEF backend, which Loopy uses on Linux for WebRTC,
-paints it opaque); clicks passing through everywhere but Loopy, its bubble and its buttons
-(`setHitRegion`); no Dock icon on macOS from the first frame; the tray; every animation; reading
-aloud; the inbox and `--wait` replies; the Claude Code hooks. On macOS, Windows and Linux X11 it
-also never takes the focus, stays on top (at the `"status"` level and on every Space, over
-full-screen apps too, on macOS; Windows and Linux have one floating level), stays off the taskbar
-(Windows, Linux) and sits in the bottom-right corner.
+On denext's Deno Desktop runtime: the transparent, frameless overlay on macOS and Windows' WebView2
+(the CEF backend, which Loopy uses on Linux for WebRTC, paints it opaque); clicks passing through
+everywhere but Loopy, its bubble and its buttons (`setHitRegion`); no Dock icon on macOS from the
+first frame; the tray; every animation; reading aloud; the inbox and `--wait` replies; the Claude
+Code hooks. On macOS, Windows and Linux X11 it also never takes the focus, stays on top (at the
+`"status"` level and on every Space, over full-screen apps too, on macOS; Windows and Linux have one
+floating level), stays off the taskbar (Windows, Linux) and sits in the bottom-right corner.
 
 Linux on Wayland is narrower, because a Wayland window can't ask to be placed, kept on top, shown on
 every workspace, left off the taskbar or kept from taking the focus:
