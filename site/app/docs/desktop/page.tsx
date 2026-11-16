@@ -4768,7 +4768,10 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
           <code>Info.plist</code>: the text macOS shows when it asks the user, from{" "}
           <code>{"{ usageDescription }"}</code>{" "}
           (default: &quot;&lt;app&gt; uses your microphone.&quot;). Without it macOS would end the
-          app the first time the page captures;
+          app the first time the page captures, and the webview backend&apos;s WKWebView does not
+          expose <code>navigator.mediaDevices</code> at all: a packaged macOS app without the{" "}
+          <code>microphone</code> or <code>camera</code> capability sees it as{" "}
+          <code>undefined</code>, so feature-detect it before calling <code>getUserMedia</code>;
         </li>
         <li>
           on macOS, <code>NSSpeechRecognitionUsageDescription</code> in <code>Info.plist</code> when
