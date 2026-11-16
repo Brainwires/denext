@@ -5,10 +5,11 @@
 
 import { assert, assertEquals, assertNotEquals, assertThrows } from "@std/assert";
 import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials, emailOtp, phoneOtp } from "../src/server/auth/providers.ts";
+import { credentials, emailOtp, magicLink, phoneOtp } from "../src/server/auth/providers.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import { sessionClaims } from "../packages/backend/src/rls.ts";
 import {
+  call,
   type NativeHarness,
   nativeHarness,
   post,
@@ -131,6 +132,91 @@ Deno.test("a pending (MFA-owed) anonymous session never converts", async () => {
   assertNotEquals(after?.user.id, session.user.id, "a new user, not the anonymous one");
   assertEquals((await h.adapter.getUser(session.user.id))?.isAnonymous, true);
   assert(!h.events.includes("userConverted"));
+});
+
+/** The stored anonymous user is untouched: still anonymous, no address, no number. */
+async function assertStillAnonymous(h: NativeHarness, id: string) {
+  const stored = await h.adapter.getUser(id);
+  assertEquals([stored?.isAnonymous, stored?.email, stored?.phone], [true, undefined, undefined]);
+  assert(!h.events.includes("userConverted"));
+}
+
+Deno.test("an email code issued outside the anonymous session signs in without converting it", async () => {
+  const h = setup();
+  const { cookie, session } = await anonymous(h);
+  await post(h, "/auth/callback/email-otp", { email: "other@x.test" }); // no cookie
+  const code = h.mail.at(-1)!.token;
+  const done = await post(h, "/auth/callback/email-otp", { email: "other@x.test", code }, {
+    cookie,
+  });
+  assertEquals(done.res.status, 200);
+  assertNotEquals((await sessionOf(h, done.cookie))?.user.id, session.user.id);
+  await assertStillAnonymous(h, session.user.id);
+  const later = await proveEmail(h, "other@x.test");
+  assertNotEquals((await sessionOf(h, later.cookie))?.user.id, session.user.id);
+});
+
+Deno.test("an email code issued outside the anonymous session is refused under allowSignUp: false", async () => {
+  const h = setup({ providers: [emailOtp({ allowSignUp: false })] });
+  const { cookie: other } = await anonymous(h);
+  const { cookie, session } = await anonymous(h);
+  // Requested from another anonymous session (so it is sent), redeemed from this one.
+  await post(h, "/auth/callback/email-otp", { email: "other@x.test" }, { cookie: other });
+  const code = h.mail.at(-1)!.token;
+  const done = await post(h, "/auth/callback/email-otp", { email: "other@x.test", code }, {
+    cookie,
+  });
+  assertEquals(done.res.status, 401);
+  await assertStillAnonymous(h, session.user.id);
+});
+
+Deno.test("a magic link issued outside the anonymous session signs in without converting it", async () => {
+  const h = setup({ providers: [magicLink({ confirm: false })] });
+  const { cookie, session } = await anonymous(h);
+  await post(h, "/auth/callback/email", { email: "other@x.test" }); // no cookie
+  const link = new URL(h.mail.at(-1)!.url);
+  const done = await call(h, "GET", link.pathname + link.search, undefined, { cookie });
+  assertEquals(done.res.status, 303);
+  assertNotEquals((await sessionOf(h, done.cookie))?.user.id, session.user.id);
+  await assertStillAnonymous(h, session.user.id);
+});
+
+Deno.test("a magic link issued inside the anonymous session converts it", async () => {
+  const h = setup({ providers: [magicLink({ confirm: false })] });
+  const { cookie, session } = await anonymous(h);
+  await post(h, "/auth/callback/email", { email: "mine@x.test" }, { cookie });
+  const link = new URL(h.mail.at(-1)!.url);
+  const done = await call(h, "GET", link.pathname + link.search, undefined, { cookie });
+  assertEquals(done.res.status, 303);
+  assertEquals((await sessionOf(h, done.cookie))?.user.id, session.user.id);
+  const stored = await h.adapter.getUser(session.user.id);
+  assertEquals([stored?.isAnonymous, stored?.email], [false, "mine@x.test"]);
+});
+
+Deno.test("a phone code issued outside the anonymous session signs in without converting it", async () => {
+  const h = setup();
+  const { cookie, session } = await anonymous(h);
+  await post(h, "/auth/callback/phone", { phone: NUMBER }); // no cookie
+  const code = h.sms.at(-1)!.otp;
+  const done = await post(h, "/auth/callback/phone", { phone: NUMBER, code }, { cookie });
+  assertEquals(done.res.status, 200);
+  assertNotEquals((await sessionOf(h, done.cookie))?.user.id, session.user.id);
+  await assertStillAnonymous(h, session.user.id);
+  const later = await provePhone(h, NUMBER);
+  assertNotEquals((await sessionOf(h, later.cookie))?.user.id, session.user.id);
+});
+
+Deno.test("a code issued for one anonymous session does not convert another", async () => {
+  const h = setup();
+  const first = await anonymous(h);
+  const second = await anonymous(h);
+  await post(h, "/auth/callback/email-otp", { email: "a@x.test" }, { cookie: first.cookie });
+  const code = h.mail.at(-1)!.token;
+  await post(h, "/auth/callback/email-otp", { email: "a@x.test", code }, {
+    cookie: second.cookie,
+  });
+  await assertStillAnonymous(h, first.session.user.id);
+  await assertStillAnonymous(h, second.session.user.id);
 });
 
 Deno.test("denextAuth: anonymous: true without an adapter is refused at construction", () => {

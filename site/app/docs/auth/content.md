@@ -1265,7 +1265,9 @@ when a request carrying a complete (not second-factor-owed) anonymous session re
 link or code, or a phone code, for an address or number **no account has**, the proof is
 attached to the anonymous user — same id, the verified email or phone added, `isAnonymous`
 cleared — and `userConverted` fires (with the `signIn` that follows, `isNewUser: false`).
-`allowSignUp: false` does not block a conversion, since it creates no user, and a send from an
+The link or code must have been requested from that same anonymous session: one requested
+without it is an ordinary sign-in to the address or number (a new account where sign-up is
+allowed), and the anonymous user is left as it was. `allowSignUp: false` does not block a conversion, since it creates no user, and a send from an
 anonymous session goes out under it for the same reason. An identifier that **already has an
 account** signs into that account instead; the anonymous user is left as it was — nothing is
 merged — so move any data it owned yourself if you want to keep it. A pending session never

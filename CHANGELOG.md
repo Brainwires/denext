@@ -57,6 +57,10 @@ and this project adheres to
 
 ### Fixed
 
+- **An anonymous account converts only from the session that asked for the code.** An email
+  code, magic link or SMS code requested from an anonymous session records that session's user,
+  and redeeming it converts that user only; a code requested without that session is a plain
+  sign-in to the address or number (a new account where the provider allows sign-up).
 - **A sign-in `callbackUrl` is trimmed and checked as one origin.** A `callbackUrl` (credentials,
   email code, magic link, MFA and passkey sign-ins, and the magic-link confirm page) has its
   control characters and whitespace removed before its scheme is read; a value with a scheme is

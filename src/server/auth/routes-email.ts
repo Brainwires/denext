@@ -39,7 +39,7 @@
  * @module
  */
 
-import type { AuthAdapter } from "./adapter.ts";
+import type { AuthAdapter, VerificationTokenRecord } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { captchaRefusal } from "./captcha.ts";
 import {
@@ -51,7 +51,7 @@ import {
   tokenLink,
 } from "./email.ts";
 import { type AttemptKeys, subjectBucketKeys } from "./rate-limit.ts";
-import { convertOrCreateUser, hasConvertibleSession } from "./routes-anonymous.ts";
+import { conversionBinding, convertOrCreateUser } from "./routes-anonymous.ts";
 import { isSsoUser } from "./sso-user.ts";
 import {
   errorLocation,
@@ -130,12 +130,14 @@ async function magicLinkMessage(
   identifier: string,
   origin: string,
   callbackUrl: string | undefined,
+  data: string | undefined,
 ): Promise<VerificationRequestParams> {
   const ttl = ctx.options.email.magicMaxAge;
   const { token, expiresAt } = await issueVerificationToken(ctx.config, {
     identifier,
     purpose: "magic",
     ttl,
+    ...(data === undefined ? {} : { data }),
   });
   const path = `${ctx.options.prefix}callback/${encodeURIComponent(provider.id)}`;
   const url = new URL(tokenLink(origin, path, token, identifier));
@@ -151,6 +153,7 @@ async function codeMessage(
   provider: EmailProvider,
   identifier: string,
   origin: string,
+  data: string | undefined,
 ): Promise<VerificationRequestParams> {
   const { otpMaxAge, otpDigits } = ctx.options.email;
   const { token, expiresAt } = await issueVerificationCode(ctx.config, {
@@ -158,6 +161,7 @@ async function codeMessage(
     purpose: "otp",
     ttl: otpMaxAge,
     digits: otpDigits,
+    ...(data === undefined ? {} : { data }),
   });
   const url = new URL(pageWith(ctx.config, noticePage(ctx.config), { email: identifier }), origin);
   return { identifier, url: url.href, token, purpose: "otp", expiresAt, provider: provider.id };
@@ -182,8 +186,10 @@ async function sendSignInEmail(
         "`hooks.sendEmail`) — no sign-in email was sent.",
     );
   }
-  // An anonymous session converts on redeem, so its proof is sent even without sign-up.
-  const signUp = provider.allowSignUp || await hasConvertibleSession(ctx);
+  // An anonymous session converts on redeem, so its proof is sent even without sign-up — bound
+  // to that session's user, the only one the redeem may convert.
+  const binding = await conversionBinding(ctx);
+  const signUp = provider.allowSignUp || binding !== undefined;
   const result = send && identifier
     ? await sendThrottled(ctx.config, {
       adapter,
@@ -194,8 +200,8 @@ async function sendSignInEmail(
       shouldSend: (user) => user !== undefined || signUp,
       issue: (origin) =>
         provider.mode === "magic"
-          ? magicLinkMessage(ctx, provider, identifier, origin, fields.callbackUrl)
-          : codeMessage(ctx, provider, identifier, origin),
+          ? magicLinkMessage(ctx, provider, identifier, origin, fields.callbackUrl, binding)
+          : codeMessage(ctx, provider, identifier, origin, binding),
     })
     : undefined;
   return sentAnswer(ctx, result);
@@ -243,6 +249,7 @@ async function findOrCreateUser(
   provider: EmailProvider,
   adapter: EmailSignInAdapter,
   identifier: string,
+  record: VerificationTokenRecord,
 ): Promise<ResolvedSignIn | null> {
   const existing = await adapter.getUserByEmail(identifier);
   // An SSO user signs in through its identity provider only — and its address is not free for
@@ -255,7 +262,7 @@ async function findOrCreateUser(
     };
   }
   const proof = { email: identifier, emailVerified: nowSeconds() };
-  return await convertOrCreateUser(ctx, adapter, proof, provider);
+  return await convertOrCreateUser(ctx, adapter, proof, provider, record);
 }
 
 /** Redeem a link token or a code under the failure budget, then sign the mailbox's owner in. */
@@ -270,7 +277,7 @@ async function redeem(
   return await redeemAndSignIn(ctx, provider.id, {
     keys: redeemKeys(ctx, provider, identifier),
     consume: () => redeemSecret(ctx.config, provider, identifier, input.secret),
-    resolve: (proven) => findOrCreateUser(ctx, provider, adapter, proven),
+    resolve: (proven, record) => findOrCreateUser(ctx, provider, adapter, proven, record),
     callbackUrl: input.callbackUrl,
     asJson,
     amr: [provider.mode === "magic" ? "email" : "otp"],
