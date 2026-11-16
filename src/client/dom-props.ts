@@ -416,10 +416,10 @@ function parseEvent(prop: string): ParsedEvent {
 function guardedListener(handler: EventListener, onError: ErrorRouter): EventListener {
   return (event) => {
     // A state update enqueued synchronously in a DOM event handler is urgent and
-    // must keep its priority even while an async transition is pending — see
-    // event-priority.ts + the reconciler's scheduleUpdate. (No-op unless an async
-    // transition is in flight.)
-    beginEventDispatch();
+    // must keep its priority even while an async transition is pending, and one from a
+    // discrete event (a click, a key press) runs its effects before the next input — see
+    // event-priority.ts + the reconciler's scheduleUpdate.
+    const d = beginEventDispatch(event.type);
     try {
       addSyntheticEventMembers(event);
       const r = handler(event) as unknown;
@@ -429,7 +429,7 @@ function guardedListener(handler: EventListener, onError: ErrorRouter): EventLis
     } catch (err) {
       onError(err);
     } finally {
-      endEventDispatch();
+      endEventDispatch(d);
     }
   };
 }

@@ -194,7 +194,7 @@ function run(event: Event, calls: unknown[], type?: string): void {
   if (!calls.length) return;
   const e = event as unknown as Record<string, unknown>;
   const own = SHADOWED.map((k) => Object.getOwnPropertyDescriptor(e, k));
-  beginEventDispatch();
+  const d = beginEventDispatch(event.type);
   addSyntheticEventMembers(event);
   if (type) shadow(e, "type", type);
   let el: unknown = null;
@@ -218,7 +218,7 @@ function run(event: Event, calls: unknown[], type?: string): void {
   } finally {
     // `type` only when shadowed: a derived enter/leave event keeps its own.
     SHADOWED.forEach((k, i) => (i < 2 || type) && restore(e, k, own[i]));
-    endEventDispatch();
+    endEventDispatch(d);
   }
 }
 

@@ -86,10 +86,21 @@ Effects are split exactly as React splits them:
   synchronously during commit, so DOM measurements and style injection see the
   committed tree with no flicker.
 - **Passive phase (scheduled, after paint):** `useEffect` and
-  `useSyncExternalStore` subscriptions run on a task scheduled after the commit.
+  `useSyncExternalStore` subscriptions (cleanups first, then setups) run on a
+  `MessageChannel` task scheduled after the commit, as React's Scheduler does.
   They are flushed before the next render and inside `flushSync`/`act`, so
   ordering is deterministic. (In tests, assert a `useEffect` side effect only
   after a `flushSync()` or `await act(...)` — the same requirement as React.)
+- **Discrete events (React 18's timing):** a commit caused by a click, key press,
+  pointer down / up, input, focus change, submit or another of React's discrete
+  events runs its `useEffect`s at the end of that commit, still after its layout
+  effects, and any pending `useEffect`s (cleanups included) run before a
+  discrete event's handlers start. An effect a click sets up (a `window`
+  listener that closes a menu) is therefore in place before the next input
+  event, which a browser handles ahead of timers. Updates in a transition, from a timer or a fetch, or from
+  continuous events (`mousemove`, `scroll`, `wheel`, `pointermove`, …) keep the
+  deferred timing. A Preact app (one that loads `denext/preact`) keeps Preact's
+  after-paint `useEffect` timing for every update.
 
 ### Concurrent rendering
 
