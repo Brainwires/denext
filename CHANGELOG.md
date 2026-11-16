@@ -93,7 +93,15 @@ and this project adheres to
   GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
   code to that address as well as the new one, and the change applies once both are redeemed (the
   first answers GoTrue's "Confirmation link accepted" message); `secureEmailChange: false`
-  confirms from the new address alone, and an account with no confirmed address still does.
+  confirms from the new address alone, and an account with no confirmed address still does. The
+  two codes redeemed at the same moment apply the change exactly once, on every adapter: the
+  second redemption is decided by single-use token rows, never by a read followed by a write.
+- **`denext dev` no longer prints "deno.json changed — restart the dev server" for its own
+  writes.** In an App Router app with stylesheets whose `deno.json` carries the css→shim
+  redirects (an app with npm dependencies), each CSS graph crawl strips them for its `deno info`
+  run and puts the file back; the watcher of `deno.json` now drops denext's own writes, as the
+  SPA watcher already did, so the notice appears only for a real edit. A notice names each
+  changed file once.
 - **`denext migrate` checks the next.config evaluator's result before writing it.** The evaluator
   prints its result through a writer it holds from before the config is imported, a result with
   more than one line fails the evaluation, and `migrate` (like `denext ui`'s next.config panel)
