@@ -1305,12 +1305,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
   `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
   `mobile dev|build`,
-  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
+  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-denext.N` release built from Deno
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need (`migration`, `db` and `gen` run project code too, as they
   import `denext.config.*`, but under `deno run` stay on the Deno that started them and hand the
-  toolchain to their children); the `deno` on PATH is never replaced (every API, flag
-  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
+  toolchain to their children); the `deno` on PATH is never replaced (every API, flag,
+  env var and behavior fix it adds over Deno 2.9.8: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
   `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
   prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
