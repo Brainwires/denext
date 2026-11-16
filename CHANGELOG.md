@@ -97,6 +97,13 @@ and this project adheres to
 
 ### Fixed
 
+- **An app whose import map reaches denext through a symlink bundles each framework module once.**
+  The modules the app's `deno.json` names directly (`mod.ts`, `src/jsx/jsx-runtime.ts`, …) loaded
+  under the linked spelling, as the app's config resolves them, while the framework's own imports
+  reached the same files under the real path, so a native client bundle carried them twice: a
+  second JSX runtime (+469 B in the shared chunks, a second element builder beside the first).
+  The merged bundle config now pins each of those files to one spelling, so the app's shared
+  chunks match the real-path build byte for byte.
 - **Effects from a click or key press run before the next input event, as in React 18.** A
   commit caused by a discrete event (click, key down / up, pointer down / up, input, focus change,
   submit, …; React's discrete set) now runs its `useEffect` cleanups and setups at the end of that

@@ -41,7 +41,12 @@ import {
 } from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
-import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
+import {
+  appDenextRootFor,
+  foldAppDenext,
+  JSR_DENEXT_ROOT,
+  pinLinkedEntryModules,
+} from "./app-framework-root.ts";
 import { VERSION } from "../version.ts";
 
 /**
@@ -1665,6 +1670,7 @@ export async function prepareConfig(
     "denext/client-runtime": frameworkFileUrl("src/client/client-runtime.ts"),
     "denext/devtools": frameworkFileUrl("src/devtools.ts"),
     ...foldAppDenext(frameworkRootUrl(), appRoot),
+    ...pinLinkedEntryModules(frameworkRootUrl(), appRoot, appImports),
     ...appImports,
     ...opts.importMap,
   };
