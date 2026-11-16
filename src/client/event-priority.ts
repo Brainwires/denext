@@ -17,9 +17,11 @@ let discrete = 0;
 // effects are flushed before one is dispatched, so an effect a click set up (a `window`
 // listener closing a menu) is in place before the next input event — the browser runs input
 // tasks ahead of the timer the effects would otherwise wait for.
-// Prefixes suffice (`key` is keydown / keyup / keypress, `select` selectstart / selectionchange).
+// Prefixes suffice (`key` is keydown / keyup / keypress, `select` selectstart / selectionchange),
+// and `change$` covers change, ratechange, volumechange, fullscreenchange and hashchange (a few
+// other `*change` events only flush their effects sooner).
 const DISCRETE =
-  /^((dbl|aux)?click|contextmenu|key|(pointer|mouse)(down|up)|(pointer|touch)cancel|touch(start|end)|(before)?input|change|focus|blur|submit|reset|composition|copy|cut|paste|drag(start|end)|drop|select|invalid|cancel|close|play$|pause|ratechange|seeked|volumechange|resize|fullscreenchange|hashchange|popstate)/;
+  /^((dbl|aux)?click|contextmenu|key|(pointer|mouse)(down|up)|(pointer|touch)cancel|touch(start|end)|(before)?input|focus|blur|submit|reset|composition|copy|cut|paste|drag(start|end)|drop|select|invalid|cancel|close|play$|pause|seeked|resize|popstate)|change$/;
 
 /** Flushes pending passive effects before a discrete event; installed by the root module. */
 let beforeDiscrete: (() => void) | null = null;
