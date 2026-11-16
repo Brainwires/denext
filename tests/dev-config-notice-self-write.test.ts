@@ -70,8 +70,6 @@ async function cssApp(): Promise<{ dir: string; config: string; original: string
 
 Deno.test({
   name: "dev: the CSS crawl's own deno.json writes print no restart notice; an edit does",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const { dir, config, original } = await cssApp();
     const controller = new AbortController();
