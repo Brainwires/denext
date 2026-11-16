@@ -34,6 +34,25 @@ and this project adheres to
   runner 8 s after it opens, holds the quit past the guards' 5 s deadline. The menu click is the
   runtime's `menuclick` event (no unattended pointer opens a native menu), so the menu item's
   native rendering stays a manual check.
+- **The backend posts notifications: `app.notify()` and an extension's `host.notify()`.** What
+  `runDesktop()` resolves with and an extension's `host` take `notify({ title, body?, tag?, data?,
+  actions?, silent? })`, which posts an OS notification through the same path a page's
+  `Notification` takes (the `notifications` capability: the runtime's notifications, or the Deno
+  `Notification` where the runtime cannot schedule), so `desktop.ts` and an extension no longer
+  call `Deno.desktop.notifications` themselves. It resolves `{ tag, close() }`; a notification with
+  the same tag is replaced (default a fresh `app-<uuid>`; `denext-…` tags are denext's own and
+  refused), and its clicks reach `onNotificationClick` with that tag and `data`, never a page.
+  It rejects with a `DesktopCapError`: `not_enabled` while the `notifications` capability is off,
+  `unsupported` where the runtime has no native notifications (and in a sidecar's child),
+  `validation` for bad options (JSON `data` up to 4 KiB, no top-level `denext` key).
+- **A speech recognition usage string for a Deno Desktop app's microphone.**
+  `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
+  `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows
+  before the window's own speech recognition (WebKit's `webkitSpeechRecognition`) may run; macOS
+  ends an app that starts it without one. It is written only when set, needs no entitlement, and
+  is validated like `usageDescription` (a non-empty string with no control characters; the camera
+  does not take it). The microphone's `NSMicrophoneUsageDescription` and the signed build's
+  `com.apple.security.device.audio-input` entitlement were already written.
 
 ### Changed
 
@@ -70,8 +89,6 @@ and this project adheres to
 
 ### Fixed
 
-<<<<<<< HEAD
-
 - **`/auth/v1` email changes are confirmed from both addresses (`secureEmailChange`).** As in
   GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
   code to that address as well as the new one, and the change applies once both are redeemed (the
@@ -99,28 +116,12 @@ and this project adheres to
   `pages.afterSignIn` applies. `safeRedirectLocation()` keeps a value relative unless it was an
   absolute `http(s)://` URL as given, and `signInWithPasskey({ callbackUrl })` normalizes the value
   in the browser as `signIn` does.
-- # **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UIchild behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from aworking directory outside the project; the panels that run project code still start their ownchildren with the project's config. A compiled binary decides an unknown verb (or`<verb> --help`) before it hands the invocation to the denext the project pins, and hands it overonly to discover the project's verbs.
-- **Fresh partial navigation merges the new page's own head tags, and back / forward restores
-  them.** A `<meta>` or stylesheet `<link>` a page renders (Fresh's `<Head>` included) is hoisted
-  out of the Flight tree into the document head, so a partial answer reached the browser without
-  them and only its `<title>` changed. A partial request's answer now carries those tags beside
-  the tree (`head`, only when the request has `fresh-partial`; other soft navigations are
-  unchanged) and the client merges them as Fresh does. Back and forward between partial
-  navigations now restore each entry's title and `<meta>` values with its regions, where the
-  title and description used to stay the last page's. A real-browser run in e2e.yml covers the
-  head merge, the view transition, an island keeping its state and back / forward.
-- **A plugin's dev `watch` globs outside `app/` reload on an edit.** The dev server opened its
-  folder watch before an async plugin `setup` finished, so a prepare step's globs over another
-  directory (`@denext/graphql`'s schema module outside `app/`, or the directories of the modules
-  a config-built schema reaches) were never watched, and the project-wide watcher dropped the
-  files the app's module graph doesn't reach: the schema answered as it was until a restart. The
-  project-wide watcher now delivers every file a registered prepare step's globs match, whenever
-  the plugin registered it. A real-browser run in e2e.yml edits a schema built in
-  `denext.config.ts` and the module it loads with `import()`, and queries the new field from the
-  page without a restart.
-
->>>>>>> origin/test/420-browser-runs
-
+- **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UI
+  child behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from a
+  working directory outside the project; the panels that run project code still start their own
+  children with the project's config. A compiled binary decides an unknown verb (or
+  `<verb> --help`) before it hands the invocation to the denext the project pins, and hands it over
+  only to discover the project's verbs.
 - **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
   when the host is one it hasn't opened this session and the URL's query and fragment carry more
   than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page
@@ -140,25 +141,6 @@ and this project adheres to
   and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
   version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
   `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
-- **The backend posts notifications: `app.notify()` and an extension's `host.notify()`.** What
-  `runDesktop()` resolves with and an extension's `host` take `notify({ title, body?, tag?, data?,
-  actions?, silent? })`, which posts an OS notification through the same path a page's
-  `Notification` takes (the `notifications` capability: the runtime's notifications, or the Deno
-  `Notification` where the runtime cannot schedule), so `desktop.ts` and an extension no longer
-  call `Deno.desktop.notifications` themselves. It resolves `{ tag, close() }`; a notification with
-  the same tag is replaced (default a fresh `app-<uuid>`; `denext-…` tags are denext's own and
-  refused), and its clicks reach `onNotificationClick` with that tag and `data`, never a page.
-  It rejects with a `DesktopCapError`: `not_enabled` while the `notifications` capability is off,
-  `unsupported` where the runtime has no native notifications (and in a sidecar's child),
-  `validation` for bad options (JSON `data` up to 4 KiB, no top-level `denext` key).
-- **A speech recognition usage string for a Deno Desktop app's microphone.**
-  `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
-  `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows
-  before the window's own speech recognition (WebKit's `webkitSpeechRecognition`) may run; macOS
-  ends an app that starts it without one. It is written only when set, needs no entitlement, and
-  is validated like `usageDescription` (a non-empty string with no control characters; the camera
-  does not take it). The microphone's `NSMicrophoneUsageDescription` and the signed build's
-  `com.apple.security.device.audio-input` entitlement were already written.
 - **`denext desktop package` asks Gatekeeper to accept each notarized macOS installer.** After a
   `.dmg` or a signed `.pkg` is notarized, stapled and its ticket validated, the package step runs
   `spctl --assess --type open --context context:primary-signature` on the image and
@@ -202,6 +184,24 @@ and this project adheres to
   default. The unused `deno-wrap.sh` of next-compat-feasibility is removed. The desktop kitchen
   sink's `app/manual-checks.tsx` type-checks again (its backdrop check keeps a
   `WindowCapabilities`).
+- **Fresh partial navigation merges the new page's own head tags, and back / forward restores
+  them.** A `<meta>` or stylesheet `<link>` a page renders (Fresh's `<Head>` included) is hoisted
+  out of the Flight tree into the document head, so a partial answer reached the browser without
+  them and only its `<title>` changed. A partial request's answer now carries those tags beside
+  the tree (`head`, only when the request has `fresh-partial`; other soft navigations are
+  unchanged) and the client merges them as Fresh does. Back and forward between partial
+  navigations now restore each entry's title and `<meta>` values with its regions, where the
+  title and description used to stay the last page's. A real-browser run in e2e.yml covers the
+  head merge, the view transition, an island keeping its state and back / forward.
+- **A plugin's dev `watch` globs outside `app/` reload on an edit.** The dev server opened its
+  folder watch before an async plugin `setup` finished, so a prepare step's globs over another
+  directory (`@denext/graphql`'s schema module outside `app/`, or the directories of the modules
+  a config-built schema reaches) were never watched, and the project-wide watcher dropped the
+  files the app's module graph doesn't reach: the schema answered as it was until a restart. The
+  project-wide watcher now delivers every file a registered prepare step's globs match, whenever
+  the plugin registered it. A real-browser run in e2e.yml edits a schema built in
+  `denext.config.ts` and the module it loads with `import()`, and queries the new field from the
+  page without a restart.
 
 ## [4.19.0] - 2026-11-15
 
