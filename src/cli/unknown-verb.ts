@@ -42,19 +42,24 @@ export async function unknownVerbAction(
 }
 
 /**
- * Decide about a name only after a compiled binary has offered it to the denext the project pins:
- * a verb only that newer denext has must not be "unknown" in an older binary. The hand-off ends
- * this process when it happens, and the pinned CLI then decides for itself, so a pin to a denext
- * from before this check imports the config whatever the name.
+ * Decide about a name FIRST, and only then, when the decision is to import the config, let a
+ * compiled binary hand the invocation to the denext the project pins (with the project's config,
+ * as discovering its verbs needs). A typo or `<verb> --help` is decided here and handed to nothing:
+ * the hand-off runs the pinned CLI under the project's `deno.json`, whose `imports` apply to that
+ * CLI's own modules, so making it for a name that never imports the config would run a
+ * repository's code all the same. A verb only a newer pinned denext has is therefore unknown to an
+ * older binary; that denext's own CLI (or `denext upgrade`) runs it.
  *
- * @param handOff Re-runs the invocation on the pinned denext, when there is one to run on.
  * @param decide The decision, as {@linkcode unknownVerbAction} makes it.
+ * @param handOff Re-runs the invocation on the pinned denext, when there is one to run on (it ends
+ *   the process when it does).
  * @returns The decision.
  */
-export async function afterPinHandOff<T>(
-  handOff: () => Promise<void>,
+export async function handOffToDiscover<T extends string>(
   decide: () => Promise<T>,
+  handOff: () => Promise<void>,
 ): Promise<T> {
-  await handOff();
-  return await decide();
+  const action = await decide();
+  if (action === "discover") await handOff();
+  return action;
 }

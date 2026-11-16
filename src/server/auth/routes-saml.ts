@@ -157,7 +157,7 @@ export async function startSamlSignIn(
     });
     const rawReturn = ctx.url.searchParams.get("callbackUrl");
     const returnTo = rawReturn
-      ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/")
+      ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/", ctx.url)
       : undefined;
     // `verifier` is unused by SAML; the AuthnRequest ID rides in `nonce`.
     await setTx(ctx, {

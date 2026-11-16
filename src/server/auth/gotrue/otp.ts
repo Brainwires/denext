@@ -60,6 +60,15 @@ export interface OtpData {
   data?: Record<string, unknown>;
   /** An email / phone change: the new value. */
   newValue?: string;
+  /**
+   * A two-address email change (confirmed from both addresses): the id both codes share, which
+   * address this one was sent to, and the address the change moves away from.
+   */
+  changeId?: string;
+  /** A two-address email change: `current` (the account's address) or `new`. */
+  half?: "current" | "new";
+  /** A two-address email change: the account's address when the change was requested. */
+  oldValue?: string;
   /** A sign-up confirmation: the fingerprint of the password that sign-up chose. */
   pw?: string;
 }
@@ -218,6 +227,43 @@ export async function redeemTokenHash(
   return data ? { address: identifier.slice(prefix.length), data } : null;
 }
 
+/** The MAC domain of a two-address email change's per-address confirmation marker. */
+const CHANGE_DOMAIN = "denext.gotrue.email-change.v1";
+
+/**
+ * Record that one address of a two-address email change confirmed it, and say whether the other
+ * address already had: `true` once both have (the change may be applied), `false` while the
+ * other is still owed (GoTrue's `email_change_confirm_status` 0 → 1 → 2). The marker is a
+ * verification-token row keyed on the change's id, consumed by the second confirmation.
+ *
+ * @param ctx The context.
+ * @param changeId The id both of the change's codes carry.
+ * @param half Which address this confirmation came from.
+ * @returns Whether both addresses have now confirmed.
+ */
+export async function confirmEmailChangeHalf(
+  ctx: GoTrueContext,
+  changeId: string,
+  half: "current" | "new",
+): Promise<boolean> {
+  const identifier = `gotrue:email_change_confirmed:${changeId}`;
+  const marker = (which: string) => sha256Hex(`${CHANGE_DOMAIN}:${changeId}:${which}`);
+  const other = await ctx.adapter.useVerificationToken!({
+    identifier,
+    purpose: "otp",
+    tokenHash: await marker(half === "current" ? "new" : "current"),
+  });
+  if (other && other.expires > nowSeconds()) return true;
+  await ctx.adapter.createVerificationToken!({
+    identifier,
+    purpose: "otp",
+    tokenHash: await marker(half),
+    expires: nowSeconds() + otpExpiry(ctx),
+    data: JSON.stringify({ action: "email_change_confirmed" }),
+  });
+  return false;
+}
+
 /** The verification link for a code. */
 export function verifyLink(
   ctx: GoTrueContext,
@@ -260,6 +306,8 @@ interface AuthEmailInput {
   issued: IssuedOtp;
   redirectTo: string;
   user?: AdapterUser;
+  /** An email change's new address, when the mail goes to the current one. */
+  newEmail?: string;
 }
 
 /**
@@ -283,7 +331,7 @@ async function sendOverSmtp(ctx: GoTrueContext, input: AuthEmailInput, link: str
     siteUrl: ctx.siteUrl,
     redirectTo: input.redirectTo,
     email: input.user?.email ?? input.email,
-    ...(input.action === "email_change" ? { newEmail: input.email } : {}),
+    ...(input.action === "email_change" ? { newEmail: input.newEmail ?? input.email } : {}),
     data: input.user ? userMetadataOf(input.user) : {},
   });
 }

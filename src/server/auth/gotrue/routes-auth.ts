@@ -51,6 +51,7 @@ import {
 import { fail, GoTrueError } from "./errors.ts";
 import {
   canSendSms,
+  confirmEmailChangeHalf,
   issueOtp,
   type OtpData,
   type OtpKind,
@@ -512,13 +513,26 @@ export async function otp(ctx: GoTrueContext): Promise<Response> {
 
 // ── verify ───────────────────────────────────────────────────────────────────
 
+/**
+ * GoTrue's answer to the first half of a two-address email change (`singleConfirmationAccepted`):
+ * the code was accepted, and the other address still has to confirm.
+ */
+const SINGLE_CONFIRMATION =
+  "Confirmation link accepted. Please proceed to confirm link sent to the other email";
+
+/** A redeemed code whose effect waits on another confirmation (a two-address email change). */
+const PENDING = { pending: true } as const;
+
+/** What a redeemed code verified: the user (to start a session for), or still pending. */
+type Verification = { user: AdapterUser; method: string } | typeof PENDING;
+
 /** The verified user after a redeemed code, with the code's effect applied. */
 async function applyVerification(
   ctx: GoTrueContext,
   type: string,
   address: string,
   data: OtpData,
-): Promise<{ user: AdapterUser; method: string }> {
+): Promise<Verification> {
   const kind = VERIFY_KINDS[type];
   const user = data.userId
     ? await ctx.adapter.getUser(data.userId)
@@ -541,8 +555,10 @@ async function applyVerification(
       if (user.phone !== address) throw fail.otpExpired();
       return { user: await confirmAddress(ctx, user, "phone", data.pw), method: "otp" };
     case "email_change":
-    case "phone_change":
-      return { user: await applyChange(ctx, user, kind, address, data), method: "otp" };
+    case "phone_change": {
+      const changed = await applyChange(ctx, user, kind, address, data);
+      return changed ? { user: changed, method: "otp" } : PENDING;
+    }
     default:
       throw fail.otpExpired();
   }
@@ -572,15 +588,39 @@ async function confirmAddress(
   );
 }
 
-/** A confirmed email / phone change (an anonymous user becomes permanent). */
+/**
+ * Whether a two-address email change's code confirms it for good: the code must match the address it
+ * was sent to and the account must still have the address the change moves away from; then the
+ * change applies once both addresses have confirmed (`false` while the other is owed).
+ */
+async function bothAddressesConfirm(
+  ctx: GoTrueContext,
+  user: AdapterUser,
+  address: string,
+  data: OtpData & { changeId: string },
+): Promise<boolean> {
+  const sentTo = data.half === "current" ? data.oldValue : data.half === "new" ? data.newValue : "";
+  if (!sentTo || sentTo !== address || user.email?.toLowerCase() !== data.oldValue) {
+    throw fail.otpExpired();
+  }
+  return await confirmEmailChangeHalf(ctx, data.changeId, data.half!);
+}
+
+/**
+ * A confirmed email / phone change (an anonymous user becomes permanent), or `null` while a
+ * two-address email change still waits on its other address.
+ */
 async function applyChange(
   ctx: GoTrueContext,
   user: AdapterUser,
   kind: "email_change" | "phone_change",
   address: string,
   data: OtpData,
-): Promise<AdapterUser> {
-  if (!data.newValue || data.newValue !== address) throw fail.otpExpired();
+): Promise<AdapterUser | null> {
+  if (kind === "email_change" && data.changeId !== undefined) {
+    const twoAddress = data as OtpData & { changeId: string };
+    if (!(await bothAddressesConfirm(ctx, user, address, twoAddress))) return null;
+  } else if (!data.newValue || data.newValue !== address) throw fail.otpExpired();
   // The first verified address of an account that had none (an anonymous user): a password
   // set after the change was requested — by whoever held the session — is not kept.
   if (user.emailVerified === undefined && user.phoneVerified === undefined) {
@@ -624,8 +664,9 @@ export async function verifyPost(ctx: GoTrueContext): Promise<Response> {
     redeemed = data ? { address: address.toLowerCase(), data } : null;
   }
   if (!redeemed) throw fail.otpExpired();
-  const { user, method } = await applyVerification(ctx, type!, redeemed.address, redeemed.data);
-  return ok(await startSession(ctx.session, user, amr(method)));
+  const verified = await applyVerification(ctx, type!, redeemed.address, redeemed.data);
+  if ("pending" in verified) return ok({ msg: SINGLE_CONFIRMATION, code: 200 });
+  return ok(await startSession(ctx.session, verified.user, amr(verified.method)));
 }
 
 function fragment(params: Record<string, string | number>): string {
@@ -658,12 +699,21 @@ export async function verifyGet(ctx: GoTrueContext): Promise<Response> {
     ctx,
     redeemed.data.redirectTo ?? ctx.url.searchParams.get("redirect_to"),
   );
-  let result: { user: AdapterUser; method: string };
+  let verified: Verification;
   try {
-    result = await applyVerification(ctx, type, redeemed.address, redeemed.data);
+    verified = await applyVerification(ctx, type, redeemed.address, redeemed.data);
   } catch {
     return refuse(target, !!redeemed.data.codeChallenge);
   }
+  if ("pending" in verified) {
+    const message = fragment({ message: SINGLE_CONFIRMATION });
+    return redirect(
+      redeemed.data.codeChallenge
+        ? `${target}${target.includes("?") ? "&" : "?"}${message}`
+        : `${target.split("#")[0]}#${message}`,
+    );
+  }
+  const result = verified;
   if (redeemed.data.codeChallenge) {
     const code = await createFlowCode(ctx, redeemed.data.codeChallenge, {
       userId: result.user.id,

@@ -30,13 +30,13 @@
  * @module
  */
 
-import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, VerificationTokenRecord } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { captchaRefusal } from "./captcha.ts";
 import { markPhoneVerified, throttledDispatch } from "./email.ts";
 import { normalizePhoneNumber } from "./phone.ts";
 import { subjectBucketKeys } from "./rate-limit.ts";
-import { convertOrCreateUser, hasConvertibleSession } from "./routes-anonymous.ts";
+import { conversionBinding, convertOrCreateUser } from "./routes-anonymous.ts";
 import { readSignInForm, redeemAndSignIn, sentAnswer } from "./routes-passwordless.ts";
 import { type AuthRouteContext, isSameOrigin, json, wantsJson } from "./routes-shared.ts";
 import { deliverSmsCode, smsSenderOf } from "./sms.ts";
@@ -104,6 +104,7 @@ async function textCode(
   ctx: AuthRouteContext,
   phone: string,
   user: AdapterUser | undefined,
+  data: string | undefined,
 ): Promise<void> {
   const send = smsSenderOf(ctx.config);
   if (!send) return;
@@ -113,6 +114,7 @@ async function textCode(
     purpose: "sms",
     ttl: otpMaxAge,
     digits: otpDigits,
+    ...(data === undefined ? {} : { data }),
   });
   const message = {
     phone,
@@ -143,8 +145,10 @@ async function sendSignInCode(
         "no sign-in code was sent.",
     );
   }
-  // An anonymous session converts on redeem, so its proof is sent even without sign-up.
-  const signUp = provider.allowSignUp || await hasConvertibleSession(ctx);
+  // An anonymous session converts on redeem, so its proof is sent even without sign-up — bound
+  // to that session's user, the only one the redeem may convert.
+  const binding = await conversionBinding(ctx);
+  const signUp = provider.allowSignUp || binding !== undefined;
   const result = phone && smsSenderOf(ctx.config)
     ? await throttledDispatch(ctx.config, {
       identifier: phone,
@@ -153,7 +157,7 @@ async function sendSignInCode(
       tokens: adapter,
       lookup: (identifier) => adapter.getUserByPhone(identifier),
       shouldSend: (user) => user !== undefined || signUp,
-      dispatch: (user) => textCode(ctx, phone, user),
+      dispatch: (user) => textCode(ctx, phone, user, binding),
     })
     : undefined;
   return sentAnswer(ctx, result);
@@ -171,6 +175,7 @@ async function findOrCreateUser(
   provider: PhoneProvider,
   adapter: PhoneSignInAdapter,
   phone: string,
+  record: VerificationTokenRecord,
 ): Promise<ResolvedSignIn | null> {
   const existing = await adapter.getUserByPhone(phone);
   // An SSO user signs in through its identity provider only — and its number is not free for a
@@ -181,7 +186,7 @@ async function findOrCreateUser(
     return { user: toAuthUser(verified), isNewUser: false };
   }
   const proof = { phone, phoneVerified: nowSeconds() };
-  return await convertOrCreateUser(ctx, adapter, proof, provider);
+  return await convertOrCreateUser(ctx, adapter, proof, provider, record);
 }
 
 /** Redeem a code under the failure budget, then sign the number's owner in. */
@@ -198,7 +203,7 @@ async function redeem(
     keys: subjectBucketKeys("mfa", `sms:${phone}`, ctx.request, ctx.config),
     consume: () =>
       redeemVerificationCode(ctx.config, { identifier: phone, purpose: "sms", token: code }),
-    resolve: (proven) => findOrCreateUser(ctx, provider, adapter, proven),
+    resolve: (proven, record) => findOrCreateUser(ctx, provider, adapter, proven, record),
     callbackUrl: fields.callbackUrl,
     asJson: wantsJson(ctx.request),
     amr: ["sms"],

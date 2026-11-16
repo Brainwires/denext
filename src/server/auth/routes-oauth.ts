@@ -206,7 +206,7 @@ export async function handleSignin(ctx: AuthRouteContext): Promise<Response> {
     // the transaction cookie (defense in depth; the callback coerces again).
     const rawReturn = ctx.url.searchParams.get("callbackUrl");
     const returnTo = rawReturn
-      ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/")
+      ? sameOriginRedirect(ctx.config, rawReturn, ctx.config.pages?.afterSignIn || "/", ctx.url)
       : undefined;
     const formPost = provider.responseMode === "form_post";
     const verifier = pkce?.verifier ?? "";

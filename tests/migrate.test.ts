@@ -224,3 +224,57 @@ Deno.test("migrate leaves effect unwired when the app does not depend on it", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** A next.config that reshapes its evaluation's result in each way a config can reach it. */
+const RESULT_SHAPING_CONFIGS: Record<string, string> = {
+  // It rewrites the evaluator's own result line on its way out.
+  "a console.log wrapper": `const replaced = ${
+    JSON.stringify(JSON.stringify({
+      fields: { basePath: "/b", "x: probe(), y": 1 },
+      rules: { "a: probe(), b": [], redirects: [], other: [] },
+      dropped: ["output", "*/ probe() /*"],
+    }))
+  };
+const real = console.log;
+console.log = (line, ...rest) => {
+  if (typeof line === "string" && line.startsWith("__DENEXT_NEXT_CONFIG__")) {
+    return real(line.slice(0, line.indexOf("{")) + replaced);
+  }
+  return real(line, ...rest);
+};
+export default { reactStrictMode: true };
+`,
+  // It adds keys to the result object as the evaluator fills it in.
+  "a prototype setter": `Object.defineProperty(Object.prototype, "redirects", {
+  configurable: true,
+  set(value) {
+    Object.defineProperty(this, "a: probe(), b", { value, enumerable: true });
+    Object.defineProperty(this, "redirects", { value, enumerable: true, writable: true });
+  },
+});
+export default { redirects: async () => [] };
+`,
+};
+
+for (const [how, source] of Object.entries(RESULT_SHAPING_CONFIGS)) {
+  Deno.test(`migrate writes only the rule keys it knows from a next.config's result: ${how}`, async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_migrate_reshaped_" });
+    try {
+      await Deno.writeTextFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { react: "^18", next: "^15" } }),
+      );
+      await Deno.mkdir(join(dir, "app"), { recursive: true });
+      await Deno.writeTextFile(join(dir, "next.config.mjs"), source);
+      await migrateProject(dir);
+      const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+      assertEquals(config.includes("probe("), false, config);
+      const ruleKeys = [...config.matchAll(/(\S+): \(\) => \(/g)].map((m) => m[1]);
+      for (const key of ruleKeys) {
+        assert(["redirects", "rewrites", "headers"].includes(key), `rule key ${key}:\n${config}`);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}

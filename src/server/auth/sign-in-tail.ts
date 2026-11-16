@@ -83,7 +83,9 @@ export async function finishSignIn(
     provider,
     isNewUser: options.isNewUser ?? false,
   });
-  return asJson ? json({ ok: true, user }) : redirect(afterSignIn(ctx.config, options.returnTo));
+  return asJson
+    ? json({ ok: true, user })
+    : redirect(afterSignIn(ctx.config, options.returnTo, ctx.url));
 }
 
 /**
@@ -104,6 +106,6 @@ export function mfaStepLocation(
   const pages = ctx.config.pages;
   const step = new URL(sameOriginRedirect(ctx.config, pages?.mfa || pages?.signIn, "/"), ctx.url);
   if (error) step.searchParams.set("error", error);
-  step.searchParams.set("callbackUrl", afterSignIn(ctx.config, returnTo));
+  step.searchParams.set("callbackUrl", afterSignIn(ctx.config, returnTo, ctx.url));
   return step.origin === ctx.url.origin ? step.pathname + step.search : step.href;
 }

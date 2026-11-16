@@ -70,6 +70,39 @@ and this project adheres to
 
 ### Fixed
 
+- **`/auth/v1` email changes are confirmed from both addresses (`secureEmailChange`).** As in
+  GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
+  code to that address as well as the new one, and the change applies once both are redeemed (the
+  first answers GoTrue's "Confirmation link accepted" message); `secureEmailChange: false`
+  confirms from the new address alone, and an account with no confirmed address still does.
+- **`denext migrate` checks the next.config evaluator's result before writing it.** The evaluator
+  prints its result through a writer it holds from before the config is imported, a result with
+  more than one line fails the evaluation, and `migrate` (like `denext ui`'s next.config panel)
+  keeps only the fields, rules and dropped keys it reads itself, quoting each key it writes.
+- **Remix compat: a route action runs with the params of the render that produced its form.**
+  The action is registered once per route and each render seals its params and page path (now
+  the action's `request.url`) into the form's action id; the plain `remix:<route>#action` id is no
+  longer callable by itself.
+- **Remix compat: the `shouldRevalidate` prior-data echo is read on client soft navigations
+  only.** A document request renders from its loaders whatever headers it carries, and a render
+  that reuses echoed data is marked per-request, so it is never stored as a shared page.
+- **An anonymous account converts only from the session that asked for the code.** An email
+  code, magic link or SMS code requested from an anonymous session records that session's user,
+  and redeeming it converts that user only; a code requested without that session is a plain
+  sign-in to the address or number (a new account where the provider allows sign-up).
+- **A sign-in `callbackUrl` is trimmed and checked as one origin.** A `callbackUrl` (credentials,
+  email code, magic link, MFA and passkey sign-ins, and the magic-link confirm page) has its
+  control characters and whitespace removed before its scheme is read; a value with a scheme is
+  kept, as its path, only on `canonicalOrigin` or the request's own origin, else
+  `pages.afterSignIn` applies. `safeRedirectLocation()` keeps a value relative unless it was an
+  absolute `http(s)://` URL as given, and `signInWithPasskey({ callbackUrl })` normalizes the value
+  in the browser as `signIn` does.
+- **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UI
+  child behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from a
+  working directory outside the project; the panels that run project code still start their own
+  children with the project's config. A compiled binary decides an unknown verb (or
+  `<verb> --help`) before it hands the invocation to the denext the project pins, and hands it over
+  only to discover the project's verbs.
 - **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
   when the host is one it hasn't opened this session and the URL's query and fragment carry more
   than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page

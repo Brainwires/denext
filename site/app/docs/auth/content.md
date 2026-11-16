@@ -1265,7 +1265,9 @@ when a request carrying a complete (not second-factor-owed) anonymous session re
 link or code, or a phone code, for an address or number **no account has**, the proof is
 attached to the anonymous user — same id, the verified email or phone added, `isAnonymous`
 cleared — and `userConverted` fires (with the `signIn` that follows, `isNewUser: false`).
-`allowSignUp: false` does not block a conversion, since it creates no user, and a send from an
+The link or code must have been requested from that same anonymous session: one requested
+without it is an ordinary sign-in to the address or number (a new account where sign-up is
+allowed), and the anonymous user is left as it was. `allowSignUp: false` does not block a conversion, since it creates no user, and a send from an
 anonymous session goes out under it for the same reason. An identifier that **already has an
 account** signs into that account instead; the anonymous user is left as it was — nothing is
 merged — so move any data it owned yourself if you want to keep it. A pending session never
@@ -2431,12 +2433,12 @@ A credentials or email sign-in that still owes a second factor resolves
 `{ ok: true, mfa: "required" }` instead of `{ ok: true, user }` — send the user on to your
 `pages.mfa` page.
 
-A `callbackUrl` handed to `signIn` or `signOut` is coerced to a **same-origin path**
-before anything navigates: these helpers assign it to `location.href` (or hand it to the
-server to reflect back), and a `callbackUrl` is routinely read straight out of the current
-query. An absolute URL on the page's own origin keeps its path, query and hash; a foreign
-absolute, a protocol-relative `//host/…` and a `javascript:` value all fall back to the
-default. The server coerces again — this is the half that guards the purely client-side
+A `callbackUrl` handed to `signIn`, `signOut` or `signInWithPasskey` is coerced to a
+**same-origin path** before anything navigates: these helpers assign it to `location.href`
+(or hand it to the server to reflect back), and a `callbackUrl` is routinely read straight
+out of the current query. Control characters and whitespace are removed first. An absolute
+URL on the page's own origin keeps its path, query and hash; a foreign absolute, a
+protocol-relative `//host/…` and a `javascript:` value all fall back to the default. The server coerces again — this is the half that guards the purely client-side
 navigation that never reaches it.
 
 A network failure, a non-JSON body or an error status from the session endpoint all read
@@ -2943,6 +2945,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `refreshTokenReuseInterval`        | `10`                             | Seconds a used refresh token may be presented again                                                                      |
 | `disableSignup`                    | `false`                          | Refuse new sign-ups (invites and the admin API still create users)                                                       |
 | `autoconfirm` / `phoneAutoconfirm` | `false`                          | Sign in at sign-up without confirming the email / phone                                                                  |
+| `secureEmailChange`                | `true`                           | An email change of a confirmed account is confirmed from the current address and the new one                             |
 | `anonymousUsers`                   | `false`                          | Allow `signInAnonymously()` (default: `denextAuth({ anonymous })`)                                                       |
 | `minPasswordLength`                | `8`                              | Password policy (`weak_password`)                                                                                        |
 | `otpLength` / `otpExpiry`          | `6` / `3600`                     | Email and SMS codes                                                                                                      |
@@ -3386,9 +3389,10 @@ restricts the `Chain ID`, `domains` allows message domains besides the app's own
   (with `strictAudience`), `exp` — required, so a token that omits it is rejected rather
   than treated as non-expiring — `nbf`, `iat` and `nonce`. The `redirect_uri` is pinned to
   `canonicalOrigin`, so a spoofed `Host` header can't steal the code.
-- **Open redirects.** Every `callbackUrl` is attacker-supplied, so an absolute URL is
-  admitted only when its origin matches `canonicalOrigin` (and then only its path is
-  kept); anything else falls back to the configured default.
+- **Open redirects.** Every `callbackUrl` comes from the request, so its control
+  characters and whitespace are removed, then a value with a scheme is admitted only when
+  its origin is `canonicalOrigin` or the request's own (and then only its path is kept);
+  anything else falls back to the configured default.
 - **Enumeration resistance.** A wrong password, an unknown account, a denied
   `signIn` callback and a refused account link are all the same generic `401`; a
   rate-limited attempt is the same generic `429`; an unknown bearer token, a revoked one

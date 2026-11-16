@@ -3694,6 +3694,9 @@ export function fillDestination(destination: string, params: Record<string, stri
  * protocol-relative (`//host`) or backslash (`/\host`) prefix — which browsers
  * resolve cross-origin — cannot escape the current origin.
  *
+ * A value is treated as absolute only when it starts with `http(s)://` as given; one
+ * that becomes absolute only after its control characters are stripped is a path.
+ *
  * SEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully
  * qualified `http(s)://…` value is returned as-is (no host allowlist), so it is an
  * open redirect if built from untrusted input. Only pass an absolute URL that is
@@ -3709,7 +3712,10 @@ export function safeRedirectLocation(location: string): string {
   // leading-slash collapse below and resolve as protocol-relative `//evil.com`. A bare
   // `\r`/`\n` would also make `new Response(…, { headers: { location } })` throw.
   const clean = location.replace(CONTROL_CHARS, "");
-  if (/^https?:\/\//i.test(clean)) return clean;
+  // Only a value that was ALREADY absolute stays absolute: stripping must never turn
+  // ` https://x` or `https:\t//x` (which the scheme test would not have matched) into
+  // an absolute URL — it is pinned to the current origin like any other path.
+  if (/^https?:\/\//i.test(location) && /^https?:\/\//i.test(clean)) return clean;
   // Collapse a leading run of `/` or `\` to a single `/` (neutralizes `//`, `/\`).
   return "/" + clean.replace(/^[/\\]+/, "");
 }

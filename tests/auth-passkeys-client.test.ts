@@ -178,6 +178,38 @@ Deno.test("signInWithPasskey: an assertion is encoded and the server's vetted UR
   );
 });
 
+Deno.test("signInWithPasskey: callbackUrl is normalized to a same-origin path before it is sent", async () => {
+  const cases: Array<[string, string | undefined]> = [
+    [" https://other.test/x", undefined],
+    ["https:\t//other.test", undefined],
+    ["//other.test/x", undefined],
+    ["/\t/other.test/x", undefined],
+    ["/\\other.test/x", undefined],
+    ["javascript:alert(1)", undefined],
+    ["/dashboard?t=1", "/dashboard?t=1"],
+  ];
+  for (const [callbackUrl, expected] of cases) {
+    await withBrowser(
+      {
+        "/auth/passkey/authenticate/options": [200, { challenge: "AAAA", ceremonyId: "c" }],
+        "/auth/passkey/authenticate": [200, { ok: true, url: "/home" }],
+      },
+      {
+        get: () => ({
+          id: "AQ",
+          rawId: buf(1),
+          type: "public-key",
+          response: { clientDataJSON: buf(1), authenticatorData: buf(1), signature: buf(1) },
+        }),
+      },
+      async (seen) => {
+        assertEquals(await signInWithPasskey({ callbackUrl }), { ok: true });
+        assertEquals(seen.posts[1].body.callbackUrl, expected, JSON.stringify(callbackUrl));
+      },
+    );
+  }
+});
+
 Deno.test("passkey helpers: an auth server on another origin is called there, with credentials", async () => {
   const AUTH = "https://auth.app.test";
   await withBrowser(

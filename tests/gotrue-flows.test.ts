@@ -203,6 +203,98 @@ Deno.test("a phone change is confirmed by an SMS code", async () => {
   });
 });
 
+/** A confirmed password user and its access token. */
+async function confirmedUser(app: SupabaseAuthApp, email: string): Promise<string> {
+  await app.fetch(`${ORIGIN}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: { apikey: app.secretKey, "content-type": "application/json" },
+    body: JSON.stringify({ email, password: "a password!", email_confirm: true }),
+  });
+  return (await password(app, email, "a password!")).json.access_token;
+}
+
+/** The stored email of the user `token` belongs to (read with the secret key). */
+async function emailOf(app: SupabaseAuthApp, token: string): Promise<string> {
+  return (await api(app, "/user", { token })).json.email;
+}
+
+const SINGLE_CONFIRMATION =
+  "Confirmation link accepted. Please proceed to confirm link sent to the other email";
+
+Deno.test("an email change is confirmed from both the current and the new address", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur@example.com");
+    const put = await api(app, "/user", {
+      token,
+      method: "PUT",
+      body: { email: "nxt@example.com" },
+    });
+    assertEquals(put.status, 200);
+    const mails = app.emails.slice(-2);
+    assertEquals(mails.map((m) => m.identifier), ["cur@example.com", "nxt@example.com"]);
+    const [current, next] = mails.map((m) => m.token);
+
+    // The new address alone does not move the account.
+    const first = await api(app, "/verify", {
+      body: { type: "email_change", email: "nxt@example.com", token: next },
+    });
+    assertEquals(first.status, 200);
+    assertEquals(first.json.msg, SINGLE_CONFIRMATION);
+    assertEquals(first.json.access_token, undefined, "no session yet");
+    assertEquals(await emailOf(app, token), "cur@example.com");
+
+    // The current address confirms it too: now the change applies.
+    const second = await api(app, "/verify", {
+      body: { type: "email_change", email: "cur@example.com", token: current },
+    });
+    assertEquals(second.status, 200);
+    assertEquals(second.json.user.email, "nxt@example.com");
+    assertExists(second.json.access_token);
+  });
+});
+
+Deno.test("an email change confirmed only from the current address stays pending", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur2@example.com");
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt2@example.com" } });
+    const current = app.emails.at(-2)!.token;
+    const only = await api(app, "/verify", {
+      body: { type: "email_change", email: "cur2@example.com", token: current },
+    });
+    assertEquals(only.json.msg, SINGLE_CONFIRMATION);
+    assertEquals(await emailOf(app, token), "cur2@example.com");
+  });
+});
+
+Deno.test("an email change link from one address answers with the pending message", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur3@example.com");
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt3@example.com" } });
+    const link = await api(app, app.emails.at(-1)!.url);
+    assertEquals(link.status, 303);
+    const location = link.headers.get("location")!;
+    assertEquals(
+      new URLSearchParams(location.split("#")[1]).get("message"),
+      SINGLE_CONFIRMATION,
+    );
+    assertEquals(await emailOf(app, token), "cur3@example.com");
+  });
+});
+
+Deno.test("secureEmailChange: false confirms an email change from the new address alone", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur4@example.com");
+    const sent = app.emails.length;
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt4@example.com" } });
+    assertEquals(app.emails.length, sent + 1, "one mail, to the new address");
+    assertEquals(app.emails.at(-1)!.identifier, "nxt4@example.com");
+    const done = await api(app, "/verify", {
+      body: { type: "email_change", email: "nxt4@example.com", token: code(app) },
+    });
+    assertEquals(done.json.user.email, "nxt4@example.com");
+  }, { secureEmailChange: false });
+});
+
 // ---- OAuth through a fake provider ----------------------------------------------------------
 
 function fakeProvider(): OAuthProvider {

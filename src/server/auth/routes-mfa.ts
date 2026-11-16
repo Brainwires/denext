@@ -209,7 +209,7 @@ async function handleStepUp(ctx: AuthRouteContext): Promise<Response | null> {
   const fresh = await completeStepUp(ctx, session, result.method);
   return asJson
     ? json({ ok: true, user: fresh.user })
-    : redirect(afterSignIn(ctx.config, callbackUrl));
+    : redirect(afterSignIn(ctx.config, callbackUrl, ctx.url));
 }
 
 /** `POST {basePath}/mfa/enroll` — mint an unconfirmed TOTP secret and its URI. */

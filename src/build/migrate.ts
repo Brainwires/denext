@@ -39,6 +39,7 @@ import {
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import {
   CONFIG_PLUGIN_CALLS,
+  EMIT_RESULT,
   evalNextConfigProgram,
   LOAD_NEXT_CONFIG,
   machineEnvIn,
@@ -1203,7 +1204,7 @@ if (cfg && typeof cfg === "object") {
 }
 // The stubbed plugins' calls (createNextIntlPlugin's request config path).
 out.plugins = ${CONFIG_PLUGIN_CALLS};
-console.log(${JSON.stringify(NEXT_EVAL_MARKER)} + JSON.stringify(out));
+${EMIT_RESULT}(${JSON.stringify(NEXT_EVAL_MARKER)}, out);
 // Exit NOW: a config wrapper (fumadocs-mdx's createMDX, a plugin spawning a watcher) may keep
 // the event loop alive or crash asynchronously after the config object was already handed
 // over — that must not turn a successful evaluation into a failed one.
@@ -1272,11 +1273,55 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
-  const value = result.value as Pick<
-    NextConfigTranslation,
-    "fields" | "rules" | "dropped" | "plugins"
-  >;
-  return { ...base, ...withoutMachineEnv(value), plugins: value.plugins ?? [] };
+  const value = evaluatedTranslation(result.value);
+  return { ...base, ...withoutMachineEnv(value), plugins: value.plugins };
+}
+
+/** The `fields` keys {@link NEXT_EVAL_PROGRAM} copies: the passthrough keys, and two it lifts. */
+const NEXT_EVAL_FIELDS: ReadonlySet<string> = new Set([
+  ...NEXT_PASSTHROUGH_KEYS,
+  "cacheLife",
+  "nextScriptWorkers",
+]);
+/** The rule functions, as a set. */
+const NEXT_RULE_SET: ReadonlySet<string> = new Set(NEXT_RULE_FNS);
+
+/** Whether `value` is a plain object (not null, not an array). */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * What the evaluator's result line may contribute, checked key by key: the config ran in the
+ * child that printed it, so the line is the config's to shape. Only the fields, rule functions and
+ * dropped keys {@link NEXT_EVAL_PROGRAM} itself reads are kept (a key is written into the
+ * generated config, so one outside them could carry code), and only well-formed plugin calls.
+ */
+function evaluatedTranslation(
+  value: unknown,
+): Pick<NextConfigTranslation, "fields" | "rules" | "dropped"> & { plugins: ConfigPluginCall[] } {
+  const out = isPlainRecord(value) ? value : {};
+  const only = (group: unknown, keys: ReadonlySet<string>) =>
+    Object.fromEntries(
+      Object.entries(isPlainRecord(group) ? group : {}).filter(([key, v]) =>
+        keys.has(key) && v !== undefined
+      ),
+    );
+  const dropped = Array.isArray(out.dropped)
+    ? [...new Set(out.dropped.filter((k): k is string => typeof k === "string"))]
+      .filter((k) => NEXT_DROP_KEYS.has(k))
+    : [];
+  const plugins = Array.isArray(out.plugins)
+    ? out.plugins.filter((p): p is ConfigPluginCall =>
+      isPlainRecord(p) && typeof p.name === "string"
+    )
+    : [];
+  return {
+    fields: only(out.fields, NEXT_EVAL_FIELDS),
+    rules: only(out.rules, NEXT_RULE_SET),
+    dropped,
+    plugins,
+  };
 }
 
 /**
@@ -2993,7 +3038,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
   const ruleEntries = Object.entries(next.rules);
   if (ruleEntries.length) {
     notes.push(`  // redirects/rewrites/headers inlined from ${next.file} at migrate time.`);
-    for (const [fn, arr] of ruleEntries) bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
+    for (const [fn, arr] of ruleEntries) {
+      bodyLines.push(`  ${propertyKey(fn)}: () => (${JSON.stringify(arr)}),`);
+    }
   }
   if (next.dropped.length) notes.push(...droppedKeyNotes(next.dropped));
   for (const [key, vars] of Object.entries(next.machineEnv ?? {})) {

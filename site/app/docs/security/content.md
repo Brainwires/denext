@@ -283,10 +283,15 @@ define it**: denext reads the config's text first, and imports it unless it can 
 `defineConfig` hides the keys, so those import too, since a project's real verb must not silently
 stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
 config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
-reviewed, type only the verbs listed above as running none of it. A compiled binary also offers an unknown
-verb to the denext the project pins before this read, so a verb only that newer denext has keeps
-working, and a repository can pin an older denext, which imports the config for any unknown verb. A
+reviewed, type only the verbs listed above as running none of it. A compiled binary makes this read
+itself and hands the invocation to the denext the project pins (under the project's `deno.json`)
+only when the read says to import the config; a typo and `<verb> --help` stay in the binary, so a
+verb only a newer pinned denext has runs through that denext's own CLI. A
 verb named by the listing the last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+The `denext ui` process that `denext mcp`'s `denext_ui_*` tools start runs with `--no-config`, on
+this denext's own CLI rather than the project's pin, from a directory outside the project, so the
+project's `deno.json` can't replace a module of it; the panels listed above as running project code
+start their own children with the project's config.
 `deno run jsr:@denext/denext/cli …` is different: Deno applies the working
 directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
 so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,

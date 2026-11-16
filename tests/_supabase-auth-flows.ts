@@ -276,9 +276,19 @@ const FLOWS: Array<[string, Step, GoTrueOptions?, Partial<AuthConfig>?]> = [
     assertEquals(change.error, null);
     assertEquals(change.data.user.new_email, "new@example.com");
     assertEquals(app.emails.at(-1)!.identifier, "new@example.com");
-    const done = await supabase.auth.verifyOtp({
+    // A confirmed account confirms the change from its current address too.
+    const fromCurrent = app.emails.at(-2)!;
+    assertEquals(fromCurrent.identifier, "upd@example.com");
+    const half = await supabase.auth.verifyOtp({
       email: "new@example.com",
       token: lastCode(app),
+      type: "email_change",
+    });
+    assertEquals(half.error, null);
+    assertEquals(half.data.session, null, "one address does not apply the change");
+    const done = await supabase.auth.verifyOtp({
+      email: "upd@example.com",
+      token: fromCurrent.token,
       type: "email_change",
     });
     assertEquals(done.error, null);
