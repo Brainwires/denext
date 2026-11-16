@@ -73,6 +73,18 @@ import {
 } from "denext/desktop/window";
 import { tiledReason } from "./geometry.ts";
 import { refocusMain } from "./refocus.ts";
+import {
+  type HookLog,
+  HOOKS_CHECKS,
+  HOOKS_PHASE,
+  mainFrameMustBeVerified,
+  NAVIGATE_PATH,
+  QUIT_GUARD_DEADLINE_MS,
+  SECOND_FLAG,
+  secondLaunchesWith,
+  WINDOW_ITEM,
+  WINDOW_ITEM_NATIVE_PREFIX,
+} from "../desktop/hooks.ts";
 import { SECONDARY_MENU_ID, SECONDARY_QUERY, SECONDARY_TITLE } from "./second/secondary-window.tsx";
 import {
   ATTACHMENT_NAME,
@@ -1248,8 +1260,253 @@ const DEV_SIGNATURE: Record<string, string> = {
 /** The version the window test packages as the update (`e2e/window-test.ts`). */
 const UPDATE_VERSION = "99.0.0";
 
+// --- the hooks phase: the backend hooks in the real window ------------------------------------
+
+/** What `kitchen.hooksLog` answers (desktop/hooks.ts `HookLog`, plus the runtime's facts). */
+type HooksLog = HookLog & { navigationEvents: boolean; marksFrames: boolean };
+
+const hooksLog = (): Promise<HooksLog> => kitchen.hooksLog({});
+
+/** Two paths name the same folder (Windows: any case, either slash; no trailing separator). */
+function samePath(a: string, b: string, os: string): boolean {
+  const norm = (p: string) => {
+    const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
+    return os === "windows" ? s.toLowerCase() : s;
+  };
+  return norm(a) === norm(b);
+}
+
+/**
+ * Call `kitchen.hooksMainOnly` from a same-origin `srcdoc` frame holding the page's token (what a
+ * subframe that learned the token could do): the frame header is the one denext's bridge client
+ * sends from a frame (`top !== self`), and where the runtime marks frames it tells the frame
+ * itself. Resolves the HTTP status and the error envelope.
+ */
+function subFrameCall(token: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    frame.srcdoc = `<script>
+      addEventListener("message", async (e) => {
+        let out;
+        try {
+          const res = await fetch(e.data.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-denext-desktop-token": e.data.token,
+              "x-denext-desktop-frame": top === self ? "main" : "sub",
+            },
+            body: JSON.stringify({ cap: "kitchen", method: "hooksMainOnly", args: {} }),
+          });
+          out = { status: res.status, body: (await res.text()).slice(0, 2000) };
+        } catch (err) {
+          out = { status: 0, body: "fetch failed: " + String(err && err.message || err) };
+        }
+        parent.postMessage({ kitchenSubFrame: out }, "*");
+      });
+      parent.postMessage({ kitchenSubFrameReady: true }, "*");
+    </script>`;
+    const timer = setTimeout(() => done(new Error("the sub-frame never answered")), 10_000);
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== frame.contentWindow) return;
+      if (e.data?.kitchenSubFrameReady) {
+        frame.contentWindow?.postMessage({ url: `${location.origin}${RPC_PATH}`, token }, "*");
+      } else if (e.data?.kitchenSubFrame) done(undefined, e.data.kitchenSubFrame);
+    };
+    const done = (err?: Error, value?: { status: number; body: string }) => {
+      clearTimeout(timer);
+      removeEventListener("message", onMessage);
+      frame.remove();
+      if (err) reject(err);
+      else resolve(value!);
+    };
+    addEventListener("message", onMessage);
+    document.body.append(frame);
+  });
+}
+
+/** One backend poster's outcome (`kitchen.hooksNotify`). */
+type Posted = { ok: true; tag: string } | { ok: false; code: string; message: string };
+
+const hooksChecks: Check[] = [
+  [HOOKS_CHECKS.windowMenu, async () => {
+    // A synthetic OS click (no unattended pointer can open a native menu): the runtime's
+    // "menuclick" with the item's native id, as a real click on the Window menu sends it. The
+    // backend routes it only when the item is in its Window menu (built from
+    // desktop.menu.window.items); that the native menu shows it needs a person (manual checks).
+    const item = WINDOW_ITEM_NATIVE_PREFIX + WINDOW_ITEM.id;
+    await kitchen.synthetic({ kind: "window", type: "menuclick", detail: { id: item } });
+    await kitchen.synthetic({
+      kind: "window",
+      type: "menuclick",
+      detail: { id: `${WINDOW_ITEM_NATIVE_PREFIX}not-configured` },
+    });
+    await waitFor(
+      async () => (await hooksLog()).menu.length >= 2,
+      "both backend handlers to hear the click",
+      5000,
+      async () => JSON.stringify((await hooksLog()).menu),
+    );
+    await sleep(300); // a duplicate would arrive by now
+    const { menu } = await hooksLog();
+    for (const source of ["runDesktop", "host"]) {
+      const got = menu.filter((m) => m.source === source);
+      eq(got.length, 1, `${source}'s onWindowMenuItem calls (${JSON.stringify(menu)})`);
+      eq(got[0].id, WINDOW_ITEM.id, `${source}'s item id`);
+      eq(got[0].keyWindow?.id, "main", `${source}'s keyWindow.id`);
+    }
+    return `once each, keyWindow ${JSON.stringify(menu[0].keyWindow)}`;
+  }],
+  [HOOKS_CHECKS.secondInstance, async ({ setup }) => {
+    if (!setup.autorun) throw new Skip("start a second instance of the app with an argument");
+    const nonce = crypto.randomUUID().slice(0, 8);
+    const second = await kitchen.secondInstance(
+      { id: "hooks", args: [`${SECOND_FLAG}=${nonce}`] },
+      { timeoutMs: 60_000 },
+    ) as { code: number | null; cwd?: string; timedOut?: boolean };
+    eq(second.code, 0, "the second process's exit code (it hands over and exits)");
+    await waitFor(
+      async () => secondLaunchesWith(await hooksLog(), nonce).length >= 2,
+      "both backend handlers to hear the second launch",
+      10_000,
+      async () => JSON.stringify((await hooksLog()).second),
+    );
+    const got = secondLaunchesWith(await hooksLog(), nonce);
+    for (const source of ["runDesktop", "host"]) {
+      const mine = got.filter((r) => r.source === source);
+      eq(mine.length, 1, `${source}'s onSecondInstance calls`);
+      assert(
+        second.cwd && samePath(mine[0].cwd, second.cwd, setup.os),
+        `${source}'s cwd: expected ${second.cwd}, got ${mine[0].cwd}`,
+      );
+    }
+    return `args ${JSON.stringify(got[0].args)}, cwd ${got[0].cwd}`;
+  }],
+  [HOOKS_CHECKS.willNavigate, async ({ setup }) => {
+    const before = await hooksLog();
+    if (!before.navigationEvents) {
+      throw new Skip(
+        "this Deno Desktop runtime reports no navigation events (Deno.desktop.navigationEvents), " +
+          "so onWillNavigate is never called",
+      );
+    }
+    if (!setup.updateUrls) throw new Skip("not started by the window test (no loopback server)");
+    // Another origin's page (the runner's loopback server, which answers, so WebKitGTK's
+    // response-time decision is reached too): unrefused, the navigation guard would hand it to
+    // the stand-in browser; refused, nothing loads and nothing opens.
+    const url = new URL(NAVIGATE_PATH, setup.updateUrls.good).href;
+    await kitchen.hooksArmNavigation({ url });
+    const here = location.href;
+    location.href = url;
+    const seen = await waitFor(
+      async () => (await hooksLog()).navigation.find((n) => n.url === url),
+      "onWillNavigate to see the navigation",
+      10_000,
+      async () => JSON.stringify((await hooksLog()).navigation),
+    );
+    eq(seen.prevented, true, "preventDefault() called");
+    eq(seen.window, "main", "the event's window");
+    await sleep(1500);
+    eq(location.href, here, "the page's URL after the refused navigation");
+    const opened = ((await kitchen.browserLog({})).lines as string[] | null) ?? [];
+    assert(!opened.includes(url), "the refused navigation was handed to the browser");
+    return `refused (kind ${seen.kind})`;
+  }],
+  [HOOKS_CHECKS.caller, async ({ setup }) => {
+    const main = await kitchen.hooksCaller({}) as {
+      origin: string;
+      frame: { kind: string; origin: string; verified: boolean };
+      window: string;
+    } | null;
+    assert(main, "ctx.caller is missing");
+    eq(main.frame.kind, "main", "ctx.caller.frame.kind from the page");
+    eq(main.window, "main", "ctx.caller.window");
+    if (setup.appOrigin) eq(main.origin, setup.appOrigin, "ctx.caller.origin");
+    const { marksFrames } = await hooksLog();
+    if (mainFrameMustBeVerified(marksFrames, setup.os, setup.backend)) {
+      eq(main.frame.verified, true, "ctx.caller.frame.verified (the runtime marks frames here)");
+    }
+    // The same main-only method answers the page...
+    eq(
+      (await kitchen.hooksMainOnly({}))?.frame?.kind,
+      "main",
+      "the main-only method from the page",
+    );
+    // ...and refuses a sub-frame holding the token.
+    const sub = await subFrameCall(pageToken());
+    let envelope: {
+      error?: { code?: string; data?: { frame?: { kind?: string; verified?: boolean } } };
+    };
+    try {
+      envelope = JSON.parse(sub.body);
+    } catch {
+      throw new Error(`the sub-frame's call: ${sub.status} ${sub.body}`);
+    }
+    eq(sub.status, 403, `the sub-frame's call status (${sub.body})`);
+    eq(envelope.error?.code, "forbidden", `the sub-frame's refusal code (${sub.body})`);
+    const frame = envelope.error?.data?.frame;
+    eq(frame?.kind, "sub", `ctx.caller.frame.kind from the sub-frame (${sub.body})`);
+    return `main (verified ${main.frame.verified}); sub-frame refused (verified ${frame?.verified})`;
+  }],
+  [HOOKS_CHECKS.notify, async ({ setup }) => {
+    const r = await kitchen.hooksNotify({}) as { runtime: Posted; host: Posted; refused: Posted };
+    eq(
+      r.refused.ok ? "posted" : r.refused.code,
+      "validation",
+      "a denext- tag (documented refusal)",
+    );
+    const outcome = async (name: string, p: Posted): Promise<string> => {
+      if (p.ok) return `${name} posted ${p.tag}`;
+      // Documented: `unsupported` where the runtime has no native notifications (never denext's).
+      if (p.code === "unsupported" && !setup.pinnedRuntime) return `${name} unsupported`;
+      // An OS that has not authorized the app's notifications (a hosted macOS runner) refuses.
+      const os = await raw("notifications").permission({ request: false }).catch(() => null);
+      const state = String(os?.state ?? "unknown");
+      if (state !== "granted") {
+        throw new Skip(
+          `the OS has not authorized notifications for this app (authorization: ${state}): ` +
+            `${name} rejected ${p.code}: ${p.message}`,
+        );
+      }
+      throw new Error(`${name} rejected ${p.code}: ${p.message}`);
+    };
+    return [await outcome("notify()", r.runtime), await outcome("host.notify()", r.host)].join(
+      "; ",
+    );
+  }],
+  // Last: a box no one answered keeps the quit pending.
+  [HOOKS_CHECKS.quitDeadline, async () => {
+    await kitchen.hooksArmQuit({});
+    // The guard asks the runner to answer, then opens its box; the runner presses its default
+    // button ("Stay") after 8 s. A deadline that counted on would quit the app at 5 s, and the
+    // phase would end without a report (the runner names this check then).
+    const quitting = await quitApp().then(String, (err) => `rejected ${err?.code ?? err}`);
+    const quit = await waitFor(
+      async () => (await hooksLog()).quit,
+      "the quit guard's box to be answered",
+      40_000,
+      () => "no answer (the box is still up, or the guard never ran)",
+    );
+    if (quit.error?.startsWith("unsupported:")) {
+      throw new Skip(`host.confirm has no native message box in this runtime (${quit.error})`);
+    }
+    eq(quit.error, null, "host.confirm's rejection");
+    eq(quit.answer, 0, "the box's answer (button 0, Stay)");
+    eq(quit.allowed, false, "the guard's answer");
+    assert(
+      quit.boxMs > QUIT_GUARD_DEADLINE_MS,
+      `the box was up ${quit.boxMs} ms: not past the ${QUIT_GUARD_DEADLINE_MS} ms guard deadline`,
+    );
+    await sleep(1000);
+    return `box up ${quit.boxMs} ms, answered Stay; the app kept running (quitApp() → ${quitting})`;
+  }],
+];
+
 /** Checks for one update phase: run on that launch only, then the app installs or quits. */
 export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
+  // The backend hooks (desktop/hooks.ts), on their own launch: the runner starts it with them.
+  [HOOKS_PHASE]: hooksChecks,
   // `e2e/lan-dev-test.ts`: the page comes from `denext dev` on this machine's LAN address,
   // through `denext desktop dev --lan`'s proxy, and must still hold the desktop bridge.
   "lan-dev": [

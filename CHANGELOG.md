@@ -21,6 +21,19 @@ and this project adheres to
   changes for a run that doesn't ask for it. The new [Kernel sandbox](https://denext.dev/docs/kernel-sandbox)
   section describes the design, the guarantee matrix, the threat model and each OS; the full
   sandbox, with automatic enforcement, lands in denext 5.0.
+- **The desktop window test covers the backend hooks in a real window.** The kitchen sink's
+  packaged-window test (`desktop-window.yml`, on Linux, macOS arm64, macOS Intel and Windows) has a
+  new "hooks" launch: a `desktop.menu.window.items` click reaches `runDesktop({ onWindowMenuItem })`
+  and `host.onWindowMenuItem` once each with the key window; a second launch reaches
+  `onSecondInstance` and `host.onSecondInstance` with its `args` and `cwd` and exits;
+  `runDesktop({ onWillNavigate })` sees a page-started top-level navigation and `preventDefault()`
+  refuses it (skipped, with the reason, where the runtime reports no navigation events);
+  `ctx.caller` names the main frame for the page's call and a same-origin sub-frame's call is
+  refused; `notify()` from `runDesktop`'s result and `host.notify()` post, and a `denext-` tag is
+  refused as `validation`; and a `host.onBeforeQuit` guard's `host.confirm` box, answered by the
+  runner 8 s after it opens, holds the quit past the guards' 5 s deadline. The menu click is the
+  runtime's `menuclick` event (no unattended pointer opens a native menu), so the menu item's
+  native rendering stays a manual check.
 
 ### Changed
 

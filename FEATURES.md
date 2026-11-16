@@ -823,7 +823,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Desktop kitchen sink, window-tested** — `examples/desktop-kitchen-sink`
   turns on every capability, packages the app on the pinned runtime and asserts
   each from the page (deep links, a second instance, a real update installed and
-  rolled back) on Linux, macOS and Windows in CI. —
+  rolled back, and the backend hooks: Window-menu items, `onSecondInstance`,
+  `onWillNavigate`, `ctx.caller`, `notify()`, a quit guard's `host.confirm` box)
+  on Linux, macOS and Windows in CI. —
   `.github/workflows/desktop-window.yml`.
 - **Deno Desktop self-updater** — `denext/desktop/updater`
   (`checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate`,
