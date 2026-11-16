@@ -102,6 +102,12 @@ and this project adheres to
 
 ### Fixed
 
+- **On Windows, a closed console window, logoff or system shutdown lets `denext start` drain.**
+  The shutdown listener now returns a promise that settles as the process ends, so a runtime that
+  waits on it (denext's) holds Windows' console handler while in-flight requests, the `services/`
+  stop and `onShutdown()` run, up to Windows' own limit (about 5 seconds for a closed console, 20
+  for logoff or shutdown). `denext serve`, `ui`, `dashboard` and compiled apps share it.
+
 - **An in-memory build drops the unused SQLite bridge on Windows with a short-named temp folder.**
   A build with `write: false` (dev, tests) compared esbuild's outputs against its metafile under
   two spellings of the working folder (a Windows 8.3 short name such as `NIGHTN~1` beside its
