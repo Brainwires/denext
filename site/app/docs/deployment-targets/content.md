@@ -250,7 +250,7 @@ submission it was making is lost. See
 ## Idle memory trim
 
 A long-running server's resident memory after a load burst is mostly memory glibc's allocator
-keeps after the JavaScript heap has let go of it. denext's Deno from runtime `3.0.0-rc.5` can hand
+keeps after the JavaScript heap has let go of it. denext's Deno can hand
 it back: once the event loop has gone a second without work, it runs a full V8 GC and then
 `malloc_trim(0)`. denext turns that on for the production server only:
 
@@ -288,16 +288,15 @@ value is read as evaluated: `denext start` and `generate docker` take what the l
 recorded in `.denext/deploy-manifest.json` (so `idleTrim: isProd ? false : true` works), and only
 before a first build read the file's text, comments ignored. A `build --compile` binary has the
 trim baked in, and a flag baked into a binary can't be removed when it runs, so
-`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead. Under the pinned
-runtime (from `3.0.0-denext.16`, which reads `DENO_UNSTABLE_IDLE_TRIM` again each time a trim is
-due) the binary sets `DENO_UNSTABLE_IDLE_TRIM=0` for itself. On an older runtime it falls back to
+`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead. On a runtime that
+reads `DENO_UNSTABLE_IDLE_TRIM` again each time a trim is due (the toolchain's) the binary sets `DENO_UNSTABLE_IDLE_TRIM=0` for itself. On an older runtime it falls back to
 waking its event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is
 never idle long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
 ## Resource limits
 
 `start: { limits }` in `denext.config.ts` caps the production server process, enforced by denext's
-Deno from runtime `3.0.0-rc.2`. Each limit ends the whole process with its own exit code and one
+Deno. Each limit ends the whole process with its own exit code and one
 line on stderr, for a supervisor (Docker's restart policy, systemd's `Restart=always`, Kubernetes)
 to start it again:
 
@@ -371,7 +370,7 @@ removes both variables from its own environment, so nothing it starts inherits t
 
 `build --compile` bakes the limits into the executable, and denort reads them only from the
 binary's own metadata: it takes no `--max-*` flag at run time (every argument goes to the program)
-and no variable that lifts or changes them. From denext's Deno 3.0.0-denext.8, the binary's
+and no variable that lifts or changes them. Where the runtime has `Deno.disarmResourceLimits`, the binary's
 generated main module lifts them for `./app job <name>` and `./app db migrate` before it dispatches
 (`Deno.disarmResourceLimits(import.meta)`, which the runtime takes only with the main module's own
 `import.meta` while it evaluates, so neither the app's code, a dependency nor whoever starts the
@@ -390,7 +389,7 @@ outside the JavaScript heap is not counted, and sampling can overshoot by a 20 m
 
 ## Crash reports
 
-denext's Deno from runtime `3.0.0-denext.5` can report its own crashes. Set
+denext's Deno can report its own crashes. Set
 `DENEXT_CRASH_REPORT_URL` in the server's environment and, when the CLI or a compiled program
 (`denort`) panics, it sends one JSON report (`schema: 2`) there: an `https:` endpoint gets one
 POST (waited on for about 5 s at most, no retries, the answer ignored) and a
@@ -460,10 +459,10 @@ client that sends no name at all (one connecting to an IP address). A handshake 
 matches is refused. The config validator rejects a malformed name, an environment variable name
 that isn't one, and a name two certificates both list.
 
-| Certificates | Runtime                                                                                |
-| ------------ | -------------------------------------------------------------------------------------- |
-| one          | any Deno: it is served for every name (`Deno.serve`'s `cert` / `key`)                  |
-| several      | denext's Deno from runtime `3.0.0-denext.3`, with `"unstable": ["net"]` in `deno.json` |
+| Certificates | Runtime                                                               |
+| ------------ | --------------------------------------------------------------------- |
+| one          | any Deno: it is served for every name (`Deno.serve`'s `cert` / `key`) |
+| several      | denext's Deno, with `"unstable": ["net"]` in `deno.json`              |
 
 Several certificates use the runtime's `resolveCertificate`, which picks one per connection by the
 name the client asks for (SNI) and caches it per name. It is behind the unstable net APIs, so the
@@ -580,7 +579,7 @@ export default {
 `permissions: "all"` bakes `--allow-all`, and only when you ask for it. `denext build --compile`
 prints the flags it baked.
 
-**Scoping the network by direction.** denext's Deno (3.0.0-rc.2 and later) splits `--allow-net`
+**Scoping the network by direction.** denext's Deno splits `--allow-net`
 into `--allow-net-connect` (outbound: `fetch`, WebSocket, database clients) and
 `--allow-net-listen` (`Deno.serve`, `Deno.listen`, `node:net` servers). Name either direction in
 `compile.permissions` and the binary bakes the pair instead of `--allow-net`; an unset direction
@@ -682,8 +681,7 @@ binary" tab of `denext ui`'s [Desktop panel](/docs/ui#desktop) shows the same.
 `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
 `x86_64-pc-windows-msvc` or `aarch64-pc-windows-msvc` (Windows on Arm). The binary's
 runtime is the `denort` of denext's [Deno toolchain](/docs/toolchain) for that
-target (`2.9.7-denext.20` and later; Windows on Arm `2.9.7-denext.21` and later):
-the same release as the CLI, pinned by SHA-256 in denext and downloaded into the
+target: the same release as the CLI, pinned by SHA-256 in denext and downloaded into the
 toolchain cache on first use, so the binary carries the toolchain's patches.
 `Deno.SQL` is there (`postgresClient(url)` and `backend({ postgres: {} })` work
 as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
@@ -692,9 +690,8 @@ as under `denext start`). With `DENEXT_DENO=stock` (or another `deno` through
 
 A compiled binary behaves as `denext start` does: its `request.signal` aborts
 only when a response is not delivered, and it prints no `request.signal` notice
-on its first request. That is the toolchain's default from `3.0.0-rc.5`; an
-older toolchain compiles in `--unstable-no-legacy-abort` (kept from
-`2.9.7-denext.21`).
+on its first request. That is the toolchain's default; an
+older toolchain compiles in `--unstable-no-legacy-abort`.
 
 **What does not compile:**
 

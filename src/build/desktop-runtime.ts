@@ -1758,12 +1758,12 @@ export async function resolveDesktopRuntimeEnv(
 
 /**
  * The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime
- * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime before
- * `3.0.0-rc.5` gets `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata
- * (from 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not
- * delivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under
- * `denext start` and a `build --compile` binary. From `3.0.0-rc.5` that is the runtime's default,
- * so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A
+ * build) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime whose
+ * default is still `Deno.serve`'s legacy abort (decided from the pin's version) gets
+ * `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata, so the app's
+ * server aborts `request.signal` only when a response is not delivered and prints no `Deno.serve`
+ * legacy-behavior notice on its first request, as under `denext start` and a `build --compile`
+ * binary. A runtime where that is the default gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A
  * flag already in `denoFlags` (`desktop.denoFlags`) is not repeated.
  *
  * @param runtimeEnv The `deno desktop` child's runtime env (`DENORT_DESKTOP_BIN` set: not stock).

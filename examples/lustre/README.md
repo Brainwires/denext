@@ -1,26 +1,34 @@
 # Lustre (Gleam) in a denext app
 
-One Lustre counter, written in Gleam (`gleam/src/counter.gleam`), used three ways on one page:
+One Lustre counter, written in Gleam (`gleam/src/counter.gleam`), used three
+ways on one page:
 
-- **an island** (`lustreIsland`, [`app/counter-island.tsx`](./app/counter-island.tsx)): the server
-  renders the counter's first view, and the browser's Lustre adopts that markup and runs it;
-- **a custom element** (`lustreElement`, [`app/counter-element.tsx`](./app/counter-element.tsx)):
-  `<lustre-counter>`, its shadow root prerendered as Declarative Shadow DOM and adopted by Lustre
+- **an island** (`lustreIsland`,
+  [`app/counter-island.tsx`](./app/counter-island.tsx)): the server renders the
+  counter's first view, and the browser's Lustre adopts that markup and runs it;
+- **a custom element** (`lustreElement`,
+  [`app/counter-element.tsx`](./app/counter-element.tsx)): `<lustre-counter>`,
+  its shadow root prerendered as Declarative Shadow DOM and adopted by Lustre
   once the element registers;
-- **a server component** (`defineLustreView`, [`app/counter-view.ts`](./app/counter-view.ts)): the
-  model lives on the server, and Lustre's patches travel over denext's Live socket.
+- **a server component** (`defineLustreView`,
+  [`app/counter-view.ts`](./app/counter-view.ts)): the model lives on the
+  server, and Lustre's patches travel over denext's Live socket.
 
-A fourth section, the ticker ([`gleam/src/ticker.gleam`](./gleam/src/ticker.gleam),
-[`app/ticker.tsx`](./app/ticker.tsx)), is an island that can be hidden: its effect starts a timer,
-and once the island unmounts the stopped app takes none of the timer's messages.
+A fourth section, the ticker
+([`gleam/src/ticker.gleam`](./gleam/src/ticker.gleam),
+[`app/ticker.tsx`](./app/ticker.tsx)), is an island that can be hidden: its
+effect starts a timer, and once the island unmounts the stopped app takes none
+of the timer's messages.
 
-The `gleam()` plugin in [`denext.config.ts`](./denext.config.ts) compiles `gleam/` at dev startup,
-on every `.gleam` change and at build, with denext's pinned Gleam (downloaded on first use), and
-writes the `.denext/lustre*.ts` modules the app imports. Lustre comes from Hex, so the first build
-needs the network.
+The `gleam()` plugin in [`denext.config.ts`](./denext.config.ts) compiles
+`gleam/` at dev startup, on every `.gleam` change and at build, with denext's
+own Gleam compiler (downloaded and verified on first use; no Erlang needed), and
+writes the `.denext/lustre*.ts` modules the app imports. Lustre comes from Hex,
+so the first build needs the network.
 
 ```sh
-deno task dev     # or: deno task build && deno task start
+# from this directory
+denext task dev     # or: denext task build && denext task start
 ```
 
 The [Gleam guide](https://denext.dev/docs/gleam#lustre) explains each helper.

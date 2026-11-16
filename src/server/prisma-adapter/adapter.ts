@@ -42,7 +42,7 @@ export interface Driver {
 /**
  * The columns of a result: `Deno.SQL`'s `result.columns`, which the adapter needs.
  *
- * @throws {Error} On a runtime before 3.0.0-rc.1, whose results have none.
+ * @throws {Error} On a runtime whose results have none (`denoSqlHasColumns()` is `false`).
  */
 export function resultColumns(rows: SqlRows<unknown>): SqlColumn[] {
   if (!Array.isArray(rows.columns)) {

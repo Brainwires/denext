@@ -63,7 +63,8 @@ UI are left out of the hash.
 
 ## One-time setup
 
-1. Install the OTA plugin with a public key, and keep the private key as a secret:
+1. In the Capacitor project, install the OTA plugin with a public key, and keep the private key as
+   a secret:
 
    ```sh
    denext ota keygen ota.key                       # ota.key → the DENEXT_OTA_SIGNING_KEY secret
@@ -164,6 +165,8 @@ themselves can also be one `denext mobile build ios --release` / `denext mobile 
 pipeline on `examples/mobile`, dispatched before a release (`.github/workflows/mobile-build.yml`).
 
 ## Try the pieces locally
+
+In the Capacitor project (the folder with `capacitor.config.*`), after `denext export`:
 
 ```sh
 denext mobile fingerprint                       # the fingerprint alone

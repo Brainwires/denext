@@ -999,8 +999,8 @@ export interface DesktopCapabilitiesConfig {
   launchAtLogin?: boolean;
   /**
    * The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in
-   * `denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime from
-   * 3.0.0-denext.16 (`unsupported` before it). Percentages only, no per-process data; it bakes no
+   * `denext/desktop/client` and `denext/desktop`) through `Deno.desktop.systemStats` in denext's Deno
+   * Desktop runtime (`unsupported` on a runtime without it). Percentages only, no per-process data; it bakes no
    * Deno permission (the runtime serves it to an app whose launch config lists the capability).
    */
   systemStats?: boolean;
@@ -1014,8 +1014,8 @@ export interface DesktopCapabilitiesConfig {
   keepAwake?: boolean;
   /**
    * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
-   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later,
-   * 3.0.0-denext.21 or later on Windows; `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime; `unsupported` on a runtime
+   * without it, or whose `Deno.openPty` has no terminals on this OS, as an older one on Windows). A page starts only a program on the {@link DesktopPtyConfig.shells}
    * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
    * window that started it. `true` takes the defaults.
    */
@@ -1034,7 +1034,7 @@ export interface DesktopCapabilitiesConfig {
    * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
    * may request and is required; anything else answers `invalid_rp` without reaching the OS.
    * The list is also written to the packaged app's `laufey-launch.json` (`"passkeyRpIds"`), so the
-   * webview backend enforces it natively; from runtime 3.0.0-denext.1 (`"strictPolicy"`) a launch
+   * webview backend enforces it natively; under a runtime that reads `"strictPolicy"` a launch
    * file without it refuses every ceremony. `false` (or leaving it out) disables it.
    */
   passkeys?: false | DesktopPasskeysConfig;
@@ -1044,9 +1044,9 @@ export interface DesktopCapabilitiesConfig {
    * where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with
    * `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
    * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
-   * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
-   * 3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older
-   * one. macOS still asks the user once. The options take `usageDescription` and
+   * build the `com.apple.security.device.audio-input` entitlement. It needs a Deno Desktop runtime
+   * that reads `"mediaCapture"` and so enforces the grant: `denext desktop package` refuses an
+   * older one. macOS still asks the user once. The options take `usageDescription` and
    * `speechRecognitionUsageDescription` (macOS's `NSSpeechRecognitionUsageDescription`, written
    * only when given: the text macOS shows before a page's speech recognition may run).
    */
@@ -1197,8 +1197,8 @@ export interface DesktopConfig {
      * scheme) or `"*"` (every document). Default: none — the bridge serves only the app origin
      * (`desktop.app.origin`, `app://localhost` when unset). Written, after the app origin, to the
      * packaged app's `laufey-launch.json` `"bridgeOrigins"`; a binding still answers such a
-     * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's pinned
-     * runtime. From runtime 3.0.0-denext.1 the launch file also sets `"strictPolicy": true`, under
+     * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's Deno
+     * Desktop runtime. Where the runtime reads `"strictPolicy"` the launch file also sets it, under
      * which a launch file without `bridgeOrigins` gives the bridge to no document (fails closed);
      * denext's packaging always writes the key.
      */
@@ -1211,8 +1211,8 @@ export interface DesktopConfig {
      * user's browser instead. Subframes are not affected (the CSP's `frameSrc` decides). Default:
      * none — only the app origin (`desktop.app.origin`, `app://localhost` when unset; the loopback
      * origin under the stock runtime) loads in the window. Written to `.deno-desktop/app.json`;
-     * the guard needs denext's pinned runtime (2.9.7-denext.18 or later), which refuses an
-     * `app.json` with this key before then.
+     * the guard needs denext's Deno Desktop runtime (an older one refuses an `app.json` with this
+     * key).
      */
     allowedNavigationOrigins?: string[];
     /**
@@ -1227,7 +1227,7 @@ export interface DesktopConfig {
     /**
      * Show the app's icon in the macOS Dock (default `true`). `false` makes it an accessory app (a
      * menu-bar / tray app or a desktop companion), so give it a {@link DesktopConfig.tray} or
-     * another way back in. From runtime `3.0.0-denext.6` it is the `"accessory"` activation policy
+     * another way back in. On a runtime with activation policies it is the `"accessory"` policy
      * from the first frame (`activationPolicy`); on an older runtime the backend hides the icon
      * once it starts, so it shows briefly at launch. On Windows and Linux
      * the app's windows are kept off the taskbar instead where the runtime can
@@ -1247,7 +1247,7 @@ export interface DesktopConfig {
      */
     dock?: boolean | "while-window-open";
     /**
-     * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
+     * The macOS activation policy the app starts in (a runtime with activation policies):
      * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
      * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
      * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
@@ -1372,8 +1372,8 @@ export interface DesktopConfig {
   extraPermissions?: DesktopExtraPermissions;
   /**
    * How narrow the packaged binary's baked read and environment grants are. `"default"` (or unset):
-   * `--allow-read` and `--allow-env` unscoped, as before. `"strict"` (needs Deno Desktop runtime
-   * 3.0.0-denext.8 and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache
+   * `--allow-read` and `--allow-env` unscoped, as before. `"strict"` (needs a Deno Desktop runtime
+   * that expands the app-folder tokens, and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache
    * folders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)
    * plus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`
    * scoped to the variables denext's desktop runtime reads (never a signing or credential variable
@@ -1625,7 +1625,7 @@ export interface DesktopLinuxAppImageConfig {
 /** {@link DesktopConfig.windows}: Windows launch settings of the packaged app. */
 export interface DesktopWindowsConfig {
   /**
-   * How the CEF window reaches the network (runtime 2.9.7-denext.20): `"system"` (the default) uses
+   * How the CEF window reaches the network (denext's Deno Desktop runtime): `"system"` (the default) uses
    * the OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as
    * the window is created; `"direct"` uses no proxy at all, so a slow WPAD / PAC lookup never holds
    * the page's requests (its Live WebSocket to the loopback relay included) at startup. Choose
@@ -1884,8 +1884,8 @@ export interface DesktopMenuConfig {
      * control characters), `label` and an optional `accelerator` (`"CommandOrControl+Shift+W"`).
      * A click goes to the backend once, never to the pages: `runDesktop({ onWindowMenuItem })` and
      * an extension's `host.onWindowMenuItem` get the item's `id` and the key window (`null` with no
-     * window open). With no window open the clicks arrive from runtime 3.0.0-denext.16; on an
-     * older runtime only while the main window is open.
+     * window open). With no window open the clicks arrive on a runtime with `Deno.desktop`'s
+     * app-level menu clicks; on an older runtime only while the main window is open.
      */
     items?: readonly DesktopWindowMenuItemConfig[];
   };
@@ -2179,8 +2179,8 @@ export interface DesktopWindowConfig {
    * entry, placeable, and with `focusable: false` never focused; that is the only way to get those
    * on Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every
    * other OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).
-   * Creation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs denext's Deno
-   * Desktop runtime 3.0.0-denext.7 or later (ignored with a warning before). Default `false`.
+   * Creation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs a Deno Desktop
+   * runtime with overlay windows (ignored with a warning elsewhere). Default `false`.
    */
   overlay?: boolean;
 }
@@ -2192,8 +2192,8 @@ export interface StartConfig {
    * the event loop has gone a second without work, a full V8 GC and then `malloc_trim(0)` (at most
    * once per idle period, 10 s apart, and after the first only when the resident memory grew by
    * 16 MB). On by default for `denext start`, the `build --compile` executable, and the Docker
-   * image and systemd unit the generators write, when they run on denext's Deno from runtime
-   * 3.0.0-rc.5 — never for `dev`, tests or jobs. It does anything on glibc Linux only. `false`
+   * image and systemd unit the generators write, when they run on a denext Deno with the idle
+   * trim (never stock Deno) — never for `dev`, tests or jobs. It does anything on glibc Linux only. `false`
    * turns it off, as does `DENEXT_IDLE_TRIM=0` in the environment. See
    * {@link https://denext.dev/docs/deployment-targets#idle-memory-trim}.
    *
@@ -2201,8 +2201,8 @@ export interface StartConfig {
    */
   idleTrim?: boolean;
   /**
-   * Process resource limits for the production server, enforced by denext's Deno from runtime
-   * 3.0.0-rc.2 (`--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production
+   * Process resource limits for the production server, enforced by denext's Deno (its
+   * `--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production
    * server starts: `denext start` (on the process it starts), baked into the `build --compile`
    * executable, and written into the Docker image's command and the systemd unit's `ExecStart` —
    * never for `dev`, tests or `denext job` (a compiled executable enforces them on whatever it
@@ -2218,7 +2218,7 @@ export interface StartConfig {
    * serves. The certificate and key files' paths come from the environment variables each entry
    * names (`certFileEnv`, `keyFileEnv`), never from the config, and are read when the server
    * starts. One certificate serves every name, on any Deno. Several pick one per connection by
-   * the name the client asks for (SNI), which needs denext's Deno from runtime 3.0.0-denext.3 and
+   * the name the client asks for (SNI), which needs denext's Deno with per-name certificates and
    * `"unstable": ["net"]` in `deno.json`; elsewhere the server refuses to start and says why.
    * Applies to `denext start` and a `build --compile` server, never to `dev`. See
    * {@link https://denext.dev/docs/deployment-targets#https-without-a-proxy}.
@@ -2306,11 +2306,12 @@ export interface CompileConfig {
   sign?: boolean | CompileSignConfig;
   /**
    * The resource limits baked into the executable, in place of {@link StartConfig.limits}
-   * (`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno from runtime 3.0.0-rc.2).
+   * (`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno).
    * Omitted, the binary takes `start.limits`; `false` bakes none, so a binary built from an app
    * with `start.limits` (for `denext start` and the Docker image) runs unlimited. The binary
    * enforces them on `./app` and `./app start`, and lifts them for `job` and `db` as it does
-   * `start.limits` (runtime 3.0.0-denext.8). Same shape and checks as `start.limits`.
+   * `start.limits` (on a runtime with `Deno.disarmResourceLimits`; an older one keeps them and
+   * prints a notice). Same shape and checks as `start.limits`.
    */
   limits?: StartLimits | false;
 }
@@ -2349,7 +2350,7 @@ export interface CompilePermissions {
    * `--allow-net`'s host syntax (`api.example.com`, `db:5432`, `*.example.com`); `["*"]` is
    * unscoped. Setting this or {@linkcode CompilePermissions.netListen} bakes the network grant
    * split by direction instead of the baseline's unscoped `--allow-net`, under denext's Deno
-   * 3.0.0-rc.2 or later (the toolchain compiling onto its own `denort`); an unset direction is
+   * (the toolchain compiling onto its own `denort`, which has the direction-split flags); an unset direction is
    * unscoped, and an empty list is refused (it would be unscoped too). Elsewhere the binary keeps
    * `--allow-net`, with a warning.
    *
@@ -2390,14 +2391,14 @@ export interface DesktopExtraPermissions {
   read?: string[];
   /**
    * `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be
-   * scoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with
+   * scoped) — except under a Deno Desktop runtime that expands the app-folder tokens, in an app with
    * `desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as
    * written (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`).
    */
   write?: string[];
   /**
-   * `--allow-net` hosts, e.g. the updater's feed host. Under denext's pinned runtime (3.0.0-rc.2 or
-   * later), which bakes the network grant split by direction, each host is granted both ways;
+   * `--allow-net` hosts, e.g. the updater's feed host. Under denext's Deno Desktop runtime, which
+   * bakes the network grant split by direction, each host is granted both ways;
    * {@linkcode DesktopExtraPermissions.netConnect} / {@linkcode DesktopExtraPermissions.netListen}
    * grant one direction.
    */

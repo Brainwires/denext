@@ -525,18 +525,18 @@ async function writeMacBundleKeys(
 /** Options for {@linkcode writeLaufeyLaunchConfig}. */
 export interface LaufeyLaunchWriteOptions {
   /**
-   * Whether the runtime reads `"strictPolicy"` (default `strictLaunchRuntime()`: denext's pinned
-   * runtime from `3.0.0-denext.1`, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build).
+   * Whether the runtime reads `"strictPolicy"` (default `strictLaunchRuntime()`: denext's Deno
+   * Desktop runtime, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build).
    */
   readonly strict?: boolean;
   /**
-   * Whether the runtime reads `"activationPolicy"` (default `activationPolicyRuntime()`: denext's
-   * pinned runtime from `3.0.0-denext.6`).
+   * Whether the runtime reads `"activationPolicy"` (default `activationPolicyRuntime()`, which
+   * detects a runtime with activation policies).
    */
   readonly activationPolicy?: boolean;
   /**
-   * Whether the runtime reads `"mediaCapture"` (default `mediaCaptureRuntime()`: denext's pinned
-   * runtime from `3.0.0-denext.10`). Without it a config with the microphone or camera on is
+   * Whether the runtime reads `"mediaCapture"` (default `mediaCaptureRuntime()`, which detects a
+   * runtime with media capture). Without it a config with the microphone or camera on is
    * refused.
    */
   readonly mediaCapture?: boolean;

@@ -2,7 +2,10 @@
 
 A minimal [denext](../../) app styled with **Tailwind CSS v4** — no npm, no
 PostCSS config. denext downloads and runs the Tailwind standalone binary itself,
-compiling `styles/tailwind.css` → `app/globals.css` on `dev`/`build`.
+compiling `styles/tailwind.css` → `app/globals.css` on `dev`/`build`. The first
+run downloads the binary, so it needs the network.
+
+From this directory (or `denext task example:tailwind` for `dev`):
 
 ```sh
 denext task dev      # → http://localhost:3000  (Tailwind recompiles on change)

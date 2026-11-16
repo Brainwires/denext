@@ -349,7 +349,7 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         the same resolution, types and lint plugin as the CLI. Any editor that speaks the Deno
         language server works the same way. The settings also hold{" "}
         <code>"deno.unstable": ["tsgo-lsp"]</code>, which runs the language server on its TypeScript
-        7 backend (the native build denext's Deno toolchain ships). From runtime 3.0.0-rc.3 that
+        7 backend (the native build denext's Deno toolchain ships). On the current toolchain that
         backend is also the runtime&apos;s own default, with no setting or an empty list; a{" "}
         <code>deno.unstable</code> list naming other features but not <code>"tsgo-lsp"</code>, or
         {" "}

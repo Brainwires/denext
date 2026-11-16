@@ -9,8 +9,10 @@ counter logic is plain code over a fake-able host, tested without a window.
 
 ## Run it
 
+From this directory:
+
 ```sh
-denext task desktop    # export + open the windows (denext's pinned Deno Desktop runtime)
+denext task desktop    # build + open the windows (needs denext's Deno Desktop runtime)
 denext task dev        # the page in a browser (the desktop calls say "unavailable")
 ```
 
@@ -21,7 +23,7 @@ denext task dev        # the page in a browser (the desktop calls say "unavailab
 - Close the "notes" window, then Cmd/Ctrl+Shift+T (Reopen Closed Window): the window comes back at
   its last frame, and its counter with the ticks it missed.
 - Quit (Cmd+Q) and launch again: the windows open at the last quit come back
-  (`desktop.app.restoreWindows`); the counters start afresh (a quit stops them, as `onAppQuit`).
+  (`desktop.app.restoreWindows`); the counters start afresh (the extension stops them on quit).
 
 ## Where things are
 

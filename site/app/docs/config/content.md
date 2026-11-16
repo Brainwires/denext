@@ -321,17 +321,17 @@ itself (it reads neither the config keys nor the env vars for them).
   `malloc_trim(0)`, handing the memory a load burst left behind back to the OS
   (at most once per idle period, never twice within 10 s). On for
   `denext start`, the `build --compile` binary and the generated Docker image /
-  systemd unit on denext's Deno from runtime 3.0.0-rc.5; never for `dev`, tests
+  systemd unit on denext's Deno; never for `dev`, tests
   or jobs; glibc Linux only. See
   [Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
   `start.limits` — `{ memory?, cpuSeconds?, deadlineSeconds? }`: process
-  resource limits on denext's Deno from runtime 3.0.0-rc.2. `memory` caps the
+  resource limits on denext's Deno. `memory` caps the
   main thread's JavaScript heap (a number of megabytes, or `"512m"` / `"2g"`; at
   least 32 MB; exit 137), `cpuSeconds` the process CPU time (exit 152) and
   `deadlineSeconds` its wall-clock lifetime (exit 124), each a whole number of
   seconds from 1 up. Applied by `denext start` (to the process that serves,
   never a CLI re-run before it), baked into the `build --compile` binary (whose
-  `job` and `db` lift them from denext's Deno 3.0.0-denext.8; on an older runtime
+  `job` and `db` lift them where the runtime can disarm them; on an older runtime
   they run under them) and written
   into the generated Docker image / systemd unit; never for `dev`, tests or
   `denext job`; not applied on stock Deno (a warning says so). See
@@ -341,8 +341,8 @@ itself (it reads neither the config keys nor the env vars for them).
   (exact, a one-label `*.` wildcard, or `"*"` for any other name and a client
   without SNI) and names the environment variables holding its PEM certificate
   and key files' paths, read when the server starts. One certificate works on
-  any Deno; several are picked per connection by SNI on denext's Deno from
-  runtime 3.0.0-denext.3 with `"unstable": ["net"]` in `deno.json`. See
+  any Deno; several are picked per connection by SNI on denext's Deno
+  with `"unstable": ["net"]` in `deno.json`. See
   [Deployment targets › HTTPS without a proxy](/docs/deployment-targets#https-without-a-proxy).
 
 ```ts
@@ -715,8 +715,8 @@ every `--platform` target included.
   databases), and `permissions` adds `--allow-*` beyond the least-privilege
   baseline (`write`, `run`, `ffi`, `sys`; `"all"` bakes `--allow-all`). Its `netConnect` /
   `netListen` (host lists in `--allow-net` syntax, `":3000"` for a port) bake the network grant
-  split by direction (`--allow-net-connect` / `--allow-net-listen`) on denext's Deno 3.0.0-rc.2 and
-  later, an unset direction unscoped; elsewhere the binary keeps `--allow-net` with a warning. `sign` (`true`, or `{ entitlements?,
+  split by direction (`--allow-net-connect` / `--allow-net-listen`) on denext's Deno, which has
+  those flags, an unset direction unscoped; elsewhere the binary keeps `--allow-net` with a warning. `sign` (`true`, or `{ entitlements?,
   notarize?, timestampUrl? }`) code-signs the binary with the `DENEXT_*` credentials in the
   environment, and only warns when they are missing. See
   [Deployment targets](/docs/deployment-targets#a-single-binary-with-denext-build---compile)

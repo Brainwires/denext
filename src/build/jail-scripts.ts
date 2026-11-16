@@ -79,9 +79,10 @@ export function jailHostListsSupported(
 export const JAIL_HARDENED_RELEASE = "3.0.0-denext.1";
 
 /**
- * The first release of denext's Deno that allows a declared download host's redirect targets with
- * it (a declared `github.com` reaches the hosts GitHub hands a release download to; the
- * runtime's `DECLARED_HOST_REDIRECTS`). Before it denext lists those hosts under the entry's `net`.
+ * Where denext's Deno allows a declared download host's redirect targets with it (a declared
+ * `github.com` reaches the hosts GitHub hands a release download to; the runtime's
+ * `DECLARED_HOST_REDIRECTS`): the version gate behind `jailRuntime(version).declaredRedirects`.
+ * On a runtime without it denext lists those hosts under the entry's `net`.
  */
 export const JAIL_DECLARED_REDIRECTS_RELEASE = "3.0.0-denext.19";
 
@@ -820,7 +821,7 @@ export function entryException(
 /**
  * The hosts the entry's declared download hosts redirect to, as a `net` list on a runtime that
  * needs `knownPackages` for a declared host but doesn't allow its redirect targets with it
- * (3.0.0-denext.1 up to {@linkcode JAIL_DECLARED_REDIRECTS_RELEASE}); empty elsewhere.
+ * (`runtime.knownPackages` without `runtime.declaredRedirects`); empty elsewhere.
  */
 function redirectHosts(entry: JailExceptionEntry, runtime: JailRuntime): string[] {
   if (!runtime.knownPackages || runtime.declaredRedirects) return [];

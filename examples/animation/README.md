@@ -5,10 +5,16 @@ and [`@react-spring/web`](https://react-spring.dev) — **co-existing in one
 project**, both running on denext's single React. Each is server-rendered to its
 initial state and animates after hydration.
 
+From the repo root:
+
 ```sh
 denext task example:animation          # build once, serve
 denext task example:animation --dev    # rebuild on each request
 ```
+
+From this directory, `denext task start` and `denext task dev` run the same server. The first run
+installs `motion` and `@react-spring/web` into this folder's `node_modules`, so it needs network
+access.
 
 Open <http://localhost:3003> — the motion card animates in on load (hover it to
 scale); the react-spring card is a squishy pressable (press and hold it).

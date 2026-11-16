@@ -14,8 +14,9 @@ SQL, and the form works with **no client JavaScript**.
 ## Run it
 
 ```sh
+# from this directory
 denext task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim
-denext task dev        # http://localhost:3000   (or: denext task build && denext task start)
+denext task dev       # http://localhost:3000   (or: denext task build && denext task start)
 ```
 
 By default it uses an in-memory database (seeded on boot). Set `DB_PATH` to

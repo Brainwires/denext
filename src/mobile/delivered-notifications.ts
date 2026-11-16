@@ -11,7 +11,7 @@
  *   the notification's group key (`threadId` for a local notification); a `tag` is its tag (FCM's
  *   `android.notification.tag` for a push FCM draws).
  * - Deno Desktop (`notifications` capability, pinned runtime): on macOS and Windows the OS's
- *   notification centre (runtime 2.9.7-denext.20); on Linux, whose notification servers keep no
+ *   notification centre (where the runtime's notification capabilities report `delivered`); on Linux, whose notification servers keep no
  *   list, the ones the capability posted during this run whose time has come and that denext has
  *   not removed (see the docs' limits).
  * - Web: the notifications `scheduleNotification` showed in this page that are still open, plus
@@ -277,7 +277,7 @@ function wireOf(raw: RawDelivered): { id: string; tag?: string } {
  *   local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in
  *   a binary built before, until the command is re-run and a new binary shipped).
  * - Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the
- *   OS's notification centre still shows (runtime 2.9.7-denext.20), local ones the app scheduled
+ *   OS's notification centre still shows (where the runtime reads it), local ones the app scheduled
  *   through denext. On Linux, whose notification servers keep no list, the ones denext posted
  *   during this run whose time has come and that were not removed through denext: one the user
  *   dismissed is still listed, and one from an earlier run is not.

@@ -7,10 +7,14 @@ barrel-climber** (an homage to the arcade climb-and-dodge genre) — climb the
 staggered girders, hop the barrels the ape rolls at you, and rescue the cat at
 the top.
 
+From the repo root:
+
 ```sh
 denext task example:game          # build once, serve → http://localhost:3005
 denext task example:game --dev    # rebuild on each request
 ```
+
+From this directory, `denext task start` and `denext task dev` do the same.
 
 Controls: **← →** move · **↑ ↓** ladders · **Space** jump (plus on-screen touch
 controls on mobile).
@@ -19,9 +23,8 @@ controls on mobile).
 
 - **A real, heavy npm library on denext.** `three` is imported normally and runs
   client-side; SSR renders the shell, and a `useEffect` boots the WebGL scene
-  after hydration. Vanilla Three.js is used imperatively — **not**
-  react-three-fiber, which needs `react-reconciler` (denext has its own
-  reconciler).
+  after hydration. Vanilla Three.js is used imperatively, not through
+  react-three-fiber.
 - **React owns the state, the library owns the surface.** denext/React renders
   the HUD, overlays, and touch controls and holds the score/lives/game-state;
   the engine (`app/engine.ts`) owns the canvas, physics, and render loop. They

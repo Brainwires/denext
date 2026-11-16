@@ -26,7 +26,7 @@ Nothing here imports `next` itself.
 
 ## What each surface supports
 
-| Sign-in                        | Web                                         | Deno Desktop (pinned runtime)                                                                                      | Capacitor shell                                                  |
+| Sign-in                        | Web                                         | Deno Desktop (denext's runtime)                                                                                    | Capacitor shell                                                  |
 | ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | Email + code                   | yes (keyed e2e)                             | yes                                                                                                                | yes (on-device check)                                            |
 | Email + password               | yes (keyed e2e)                             | yes                                                                                                                | yes                                                              |
@@ -98,7 +98,7 @@ Clerk (cookies, passkeys) and the browser's secure-context APIs need HTTPS off `
 the dev server on your Mac's MagicDNS name with `tailscale serve`:
 
 ```sh
-# on the Mac
+# on the Mac, in examples/clerk
 echo "DENEXT_CLERK_DEV_HOST=mac.tail1234.ts.net" >> .env.local   # your machine's name
 denext task dev                       # http://localhost:3000
 tailscale serve --bg 3000           # https://mac.tail1234.ts.net → localhost:3000
@@ -122,6 +122,7 @@ from other devices; passkeys and some Clerk features need HTTPS).
 ## Deno Desktop
 
 ```sh
+# from examples/clerk
 denext task build && denext task start   # the API the window calls (http://127.0.0.1:3000)
 DENEXT_APP_NAME=ClerkExample denext task desktop:package   # dist/ClerkExample.app (macOS)
 open dist/ClerkExample.app
@@ -150,9 +151,11 @@ so `<ClerkProvider>` signs in natively — the client JWT in the Keychain / Keys
 in the OS's auth session back to `denextclerk://app/`, passkeys through Clerk's hosted page. The
 shell serves the static export itself (`capacitor://localhost` on iOS, `https://localhost` on
 Android), so `/api/*` calls go to `NEXT_PUBLIC_CLERK_API_ORIGIN` with a bearer token, and the
-server's `cors` lets those origins in.
+server's `cors` lets those origins in. Building needs Xcode (iOS, on a Mac) or the Android SDK
+(Android).
 
 ```sh
+# from examples/clerk
 deno install
 # The API the app calls: the Mac over Tailscale (tailscale serve --bg 3000 + denext task start).
 echo "NEXT_PUBLIC_CLERK_API_ORIGIN=https://mac.tail1234.ts.net" >> .env.local

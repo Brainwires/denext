@@ -9,10 +9,16 @@ has a DOM "Recenter" button drawn over it (the slot's `overlay`), and the
 header's "Open sheet" covers the page with a sheet, to show how a covered view
 behaves.
 
-In a desktop browser (`denext task dev`) the slots render their children, the web
-fallback: a placeholder for the maps and a `<video>` element.
+In a desktop browser (`denext task dev`) the slots render their children, the
+web fallback: a placeholder for the maps and a `<video>` element.
 
 ## Run it
+
+You need Node.js with npm (the Capacitor packages), Xcode for the iOS tasks and
+the Android SDK (Android Studio) for `android`. `ios` signs with your Apple
+developer team: set `DENEXT_IOS_TEAM` to its Team ID (the build passes
+`-allowProvisioningUpdates`); `ios:check` needs no team. Run everything from
+this directory (`examples/native-views`).
 
 ```sh
 npm install            # the Capacitor packages (package.json)
@@ -44,10 +50,11 @@ servers are for light use; point a production app at its own tile source.
 ### Regenerating the native files
 
 Every file denext writes into `ios/` and `android/` starts with a
-`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
-fails when a committed one is behind the template denext writes today (or was edited
-by hand). After a template change, re-run the installers: they upgrade an unedited
-file in place and leave the rest of the project alone.
+`denext-<family>-template: <n>` marker, and
+`tests/examples-native-templates.test.ts` fails when a committed one is behind
+the template denext writes today (or was edited by hand). After a template
+change, re-run the installers: they upgrade an unedited file in place and leave
+the rest of the project alone.
 
 ```sh
 deno run -A --node-modules-dir=none ../../cli.ts mobile add native-map context-menu \
@@ -102,4 +109,7 @@ card by a frame or two during a fast fling.
 `NV_PROBE=1 denext task export` builds a version that posts every native view
 event and, each second, each slot's DOM box next to where the native side put
 its view (the plugin's `__frame` debug command) to `http://172.20.10.2:3999/nv`
-(`src/probe.ts`). A normal build compiles the probe out (`feature("NV_PROBE")`).
+(`src/probe.ts`; the Mac's address on an iPhone's Personal Hotspot). Nothing in
+the repository listens there: run your own collector, or change `COLLECTOR` in
+`src/probe.ts`. A normal build compiles the probe out (`feature("NV_PROBE")`,
+set from the `NV_PROBE` environment variable in `denext.config.ts`).

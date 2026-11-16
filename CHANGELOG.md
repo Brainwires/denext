@@ -45,6 +45,15 @@ and this project adheres to
   `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
   only its own case, so skipping the published-list check never also allows un-revoking a
   release; a bare `--force` on `sign` is refused with a message naming both.
+- **Docs: runtime gates are described by capability, not by runtime release.** AGENTS.md,
+  README.md, KNOWN-LIMITATIONS.md, FEATURES.md, the docs pages (desktop, config, database,
+  deployment targets, security, permissions, backend, environment, troubleshooting and others) and
+  the public JSDoc behind the [API reference](https://denext.dev/docs/api) no longer say "runtime
+  3.0.0-denext.N and later": each gate names what has the feature and how to detect it
+  (`appCapabilities()`, `windowCapabilities()`, `Deno.desktop.*`, `denoSqlHasColumns()`) or what
+  happens on a runtime without it. Release numbers stay in this changelog and on the pages whose
+  subject is versions (runtime reference, toolchain, desktop runtime); a docs test fails on a new
+  one anywhere else, with a commented allowlist for dated records.
 
 ### Fixed
 
@@ -98,6 +107,12 @@ and this project adheres to
   put it, so the next check's maximize request timed out once on Linux (xfwm4 under Xvfb). It now
   asks for the main window's focus (`focusWindow()`) and waits for `document.hasFocus()` before
   the next check runs, asking again each second for up to 5 s.
+- **Docs: the example READMEs match their examples.** Every `examples/*/README.md` was checked
+  against the example's files: wrong or missing tasks and `denext` verbs, commands that did not say
+  which directory they run in, stale API names and config keys, release numbers, and missing
+  prerequisites and environment variables are fixed, and marketing phrasing is gone. A test checks
+  that every `deno task` / `denext task` a README names exists in the deno.json it runs against
+  (a root task only where the README says it runs from the repo root).
 
 ## [4.19.0] - 2026-11-15
 

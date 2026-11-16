@@ -11,6 +11,8 @@ toolchain and runtime without restructuring it into the App Router.
 
 ## Run it
 
+From this directory (`examples/spa`):
+
 ```
 denext task dev      # dev server + live reload
 denext task build    # production build → .denext/
@@ -43,14 +45,13 @@ export default {
 
 ## Package as a desktop app
 
-The `out/` from `denext task export` is a static app any host can serve — and
-it's byte-compatible with what [`deno desktop`](../native) wraps in a native
-window:
+The `out/` from `denext task export` is a static app any host can serve, and it
+is what `deno desktop` wraps in a native window. This example has no desktop
+entry; add a `desktop.ts` like [`examples/native`](../native)'s (it calls
+`runDesktop()` from `denext/desktop` over `out/`), then:
 
 ```
-denext task export
-denext desktop run          # wraps out/ in a native window (see examples/native
-                            # for a hand-written desktop.ts over `Deno.serve`)
+denext desktop run          # exports, builds and opens out/ in a native window
 ```
 
 ## Bundle size vs React
@@ -58,11 +59,11 @@ denext desktop run          # wraps out/ in a native window (see examples/native
 Because denext ships its **own** small React-equivalent instead of React +
 ReactDOM, the client download is a fraction of the size. Benchmarked on **this
 example's app**, the same code bundled with the same bundler (`deno bundle`,
-minified), raw and gzipped, against React 19.3.1 + ReactDOM 19.3.1 (what `npm:react@19`
-resolves today). "First load" is the entry and every chunk it imports
-statically; "everything loadable" adds the chunks it can `import()` on demand
-(the class-component runtime, Fragment refs, the iOS scroll fix). A chunk no
-import can reach is not counted: `denext build` does not write it.
+minified), raw and gzipped, against React 19.3.1 + ReactDOM 19.3.1 (what
+`npm:react@19` resolves today). "First load" is the entry and every chunk it
+imports statically; "everything loadable" adds the chunks it can `import()` on
+demand (the class-component runtime, Fragment refs, the iOS scroll fix). A chunk
+no import can reach is not counted: `denext build` does not write it.
 
 |                         | denext raw | denext gzip | React 19 raw | React 19 gzip |
 | ----------------------- | ---------: | ----------: | -----------: | ------------: |
@@ -75,7 +76,7 @@ with everything loadable.
 Reproduce it yourself:
 
 ```
-deno run -A bench.ts
+denext run -A bench.ts      # from this directory; fetches npm React the first time
 ```
 
 > React Compiler doesn't change this: it's a **re-render** optimization (a build

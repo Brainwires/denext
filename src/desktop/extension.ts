@@ -119,8 +119,8 @@ export interface DesktopCapCtx {
    * `Deno.UnsafeCallback` runs on the JavaScript thread while the UI thread waits for it, so it must
    * not wait for the UI thread itself.
    *
-   * Over `Deno.desktop.runOnMainThread`, so it needs denext's pinned Deno Desktop runtime
-   * (2.9.7-denext.6 or later): elsewhere it rejects with a {@linkcode DesktopCapError} whose code is
+   * Over `Deno.desktop.runOnMainThread`, so it needs a denext Deno Desktop runtime that has it:
+   * elsewhere it rejects with a {@linkcode DesktopCapError} whose code is
    * `unsupported`. It also rejects, without calling `fn`, once the app is quitting.
    *
    * @param fn The native function to call on the UI thread.
@@ -340,7 +340,8 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * (`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or
    * `null` with no window open). Each click is delivered once to each subscriber (and to
    * `runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive
-   * from runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw
+   * on a runtime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the
+   * main window is open. A throw
    * or a rejection is logged. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
@@ -397,7 +398,7 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
    * resolves `cancelId`, or `null` without one. Rejects with a `validation`
    * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
-   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While
+   * native message boxes (no `Deno.desktop.dialog.showMessageBox`). While
    * the box is up during the quit guards' turn their deadline does not count (see
    * {@linkcode DesktopExtensionHost.onBeforeQuit}).
    */

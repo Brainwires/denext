@@ -28,9 +28,9 @@ export interface SidecarPermissions {
   readonly write?: readonly string[];
   /** `--allow-net` hosts (the loopback baseline is always there); both directions. */
   readonly net?: readonly string[];
-  /** Outbound hosts only (`--allow-net-connect` under the pinned runtime, 3.0.0-rc.2+). */
+  /** Outbound hosts only (`--allow-net-connect` on a runtime with the direction-split net flags). */
   readonly netConnect?: readonly string[];
-  /** Listen addresses only (`--allow-net-listen` under the pinned runtime, 3.0.0-rc.2+). */
+  /** Listen addresses only (`--allow-net-listen` on a runtime with the direction-split net flags). */
   readonly netListen?: readonly string[];
   /** `--allow-run` programs; `["*"]` is unscoped. */
   readonly run?: readonly string[];

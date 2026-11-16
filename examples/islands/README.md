@@ -2,7 +2,7 @@
 
 Each card on the page is the **same** `"use client"` component, carved out with
 a different directive. denext hydrates each island on its own schedule instead
-of all at once — full 6/6 Astro directive parity, plus resumability Astro lacks.
+of all at once. The six directives are Astro's.
 
 ## Run it
 
@@ -37,7 +37,8 @@ Open the **DevTools console**, then:
    interaction and the triggering click is replayed to the now-live handler (the
    counter reaches 1).
 5. A usage-site directive overrides a module's own `export const hydrate = "…"`
-   default. Precedence: usage-site `client:*` > module default > eager.
+   default (this page sets none). Precedence: usage-site `client:*` > module
+   default > eager.
 
 Each island logs `island:<label> hydrated` exactly once, on its own schedule —
 proof that hydration is per-island, not the whole page at once.

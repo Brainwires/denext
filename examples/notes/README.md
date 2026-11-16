@@ -26,6 +26,8 @@ would fail.
 
 ## Run it
 
+From this directory (`examples/notes`):
+
 ```sh
 denext task dev      # http://localhost:3000
 # or, production:
@@ -34,8 +36,9 @@ denext task build && denext task start
 
 Demo accounts (seeded on first run): `demo@denext.dev` and `alice@denext.dev`,
 password `password`. The database is a `notes.db` file by default; set
-`NOTES_DB=:memory:` for an ephemeral one, and `SESSION_SECRET` to a strong
-secret in production.
+`NOTES_DB=:memory:` for an ephemeral one (or another path). Set `SESSION_SECRET`
+to a strong secret in production; unset, the app signs sessions with a
+hard-coded development secret.
 
 ## Testing an app like this
 

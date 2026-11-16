@@ -47,7 +47,7 @@ export interface TrayModifiers {
   readonly meta: boolean;
 }
 
-/** What a tray mouse event carries (the runtime's `TrayMouseEvent`, runtime `3.0.0-denext.6`+). */
+/** What a tray mouse event carries (the runtime's `TrayMouseEvent`, where it has one). */
 export interface TrayMouseDetail {
   /** The button. */
   readonly button: "left" | "right" | "middle";

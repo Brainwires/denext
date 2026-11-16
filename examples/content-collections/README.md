@@ -10,6 +10,7 @@ every entry, builds a store and **generates the types** — live under `denext d
 are server-side, so the whole blog ships **zero client JavaScript**.
 
 ```sh
+# from this directory
 denext task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry
 ```
 
@@ -19,9 +20,10 @@ post omits it, and `draft-post.md` is filtered out of the index and 404s on its 
 ## The `denext content` verb
 
 ```sh
-deno run -A ../../cli.ts content build .      # rebuild the store + generated types
-deno run -A ../../cli.ts content list .       # every collection and its entry ids
-deno run -A ../../cli.ts content validate .   # exit 1 if any entry fails its schema — a CI gate
+# from this directory (the verb works on the current directory)
+deno run -A ../../cli.ts content build      # rebuild the store + generated types
+deno run -A ../../cli.ts content list       # every collection and its entry ids
+deno run -A ../../cli.ts content validate   # exit 1 if any entry fails its schema — a CI gate
 ```
 
 In a real app these are `denext content build | list | validate`.

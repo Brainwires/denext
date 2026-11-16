@@ -8,11 +8,12 @@ scripts — a build, a test run, a [Claude Code hook](./claude-code/) — post m
 ## Run it
 
 ```sh
-denext task desktop    # export + open Loopy's window (denext's pinned Deno Desktop runtime)
+# from this directory
+denext task desktop    # export + open Loopy's window (needs denext's Deno Desktop runtime)
 denext task dev        # the same page in a browser, with demo buttons for every move
 ```
 
-Then, from another terminal:
+Then, from another terminal in this directory:
 
 ```sh
 denext task say "Tests passed" --mood success
@@ -262,12 +263,12 @@ file, the memory database, the browser profile).
 
 **The microphone in the desktop app.** Only the packaged app has it:
 `desktop.capabilities.microphone` grants `getUserMedia` to the window's own origin in the packaged
-app's launch file, which needs Deno Desktop runtime 3.0.0-denext.10 or later (denext's pin is newer;
-`denext desktop package` refuses an older one). A `denext task desktop` window is refused every
+app's launch file, which needs a runtime that enforces that grant (`denext desktop package` refuses
+one that doesn't). A `denext task desktop` window is refused every
 request, so Loopy says so and points at the packaged app or the browser. Package it with:
 
 ```sh
-denext task desktop:package    # dist/: the app bundle for this OS (no installers for an example)
+denext task desktop:package    # from this directory; dist/: the app bundle for this OS (no installers)
 ```
 
 - **macOS** asks once, with the `usageDescription` from `denext.config.ts` (Info.plist
@@ -285,7 +286,7 @@ than Space.
 
 ## Where it works
 
-On denext's pinned Deno Desktop runtime (3.0.0-denext.7 and later): the transparent, frameless
+On denext's Deno Desktop runtime: the transparent, frameless
 overlay on macOS and Windows' WebView2 (the CEF backend, which Loopy uses on Linux for WebRTC,
 paints it opaque); clicks passing through everywhere but Loopy, its bubble and its buttons
 (`setHitRegion`); no Dock icon on macOS from the first frame; the tray; every animation; reading
@@ -298,14 +299,14 @@ Linux on Wayland is narrower, because a Wayland window can't ask to be placed, k
 every workspace, left off the taskbar or kept from taking the focus:
 
 - **KDE Plasma and wlroots compositors** (Sway, Hyprland, …), with `libgtk-layer-shell0` installed
-  (Kubuntu does not install it by default) and runtime 3.0.0-denext.7 or later: `overlay: true`
+  (Kubuntu does not install it by default) and a runtime with layer-shell overlays: `overlay: true`
   makes Loopy a layer-shell surface, so it is on top, on every workspace, off the task manager and
   never focused. A layer surface can be placed (`windowCapabilities().setPosition` says so for it),
   so Loopy goes to the bottom-right corner. GDK reports the whole display as the work area on
   Wayland, so Loopy keeps 64 px clear of every edge (`WAYLAND_PANEL_INSET` in `lib/placement.ts`),
   room for a taskbar it can't see, and counts its position from the display's top-left (a layer
-  surface's margins). Before 3.0.0-denext.7 Loopy is an ordinary window there, opens where KWin puts
-  it with a title bar around it, and at 800 × 600 on every Linux desktop.
+  surface's margins). On a runtime without layer-shell overlays Loopy is an ordinary window there,
+  opens where KWin puts it with a title bar around it, and at 800 × 600 on every Linux desktop.
 - **GNOME** (Mutter has no layer-shell): an ordinary window, where Mutter puts it, focused when it
   opens, under the windows you raise, on one workspace and in the dock.
 

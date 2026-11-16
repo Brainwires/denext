@@ -22,9 +22,9 @@ boundary streams in out-of-order as its data resolves. This example deliberately
 pins the page path to **buffered** SSR (`streaming: false` in
 [`denext.config.ts`](./denext.config.ts)) so the two delivery modes contrast
 cleanly: `/dashboard` awaits every Suspense boundary and delivers complete HTML
-(great for SEO and a flash-free first paint), while `/stream` shows progressive,
-out-of-order delivery via `renderToReadableStream` from a route handler. (Drop
-the `streaming: false` line to let pages stream by default. A raw
+(good for SEO and a first paint without a flash), while `/stream` shows
+progressive, out-of-order delivery via `renderToReadableStream` from a route
+handler. (Drop the `streaming: false` line to let pages stream by default. A raw
 `renderToReadableStream` route handler like `/stream` doesn't carry a
 framework-generated CSP; set one at the edge if you need it for those routes.)
 
