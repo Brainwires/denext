@@ -540,39 +540,35 @@ const pendingPassive: Fiber[] = [];
 /** The task that will flush the queued passive effects: -1 for a channel / rAF task. */
 let passiveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushingPassive = false;
-/** The channel the passive flush is posted on; closed once a flush schedules no other. */
-let passiveChannel: MessageChannel | undefined;
+/** The port the passive flush is posted to; its channel closes once a flush schedules no other. */
+let passivePort: MessagePort | undefined;
 
 function schedulePassiveFlush(): void {
   if (passiveTimer !== undefined) return;
+  // Each scheduled callback is `flushPassiveEffects` itself: it clears the mark (a fired
+  // timer's clearTimeout is a no-op), and nothing can fire while a flush is running.
   // Preact's `options.requestAnimationFrame` schedules the `useEffect` flush when an app set it.
   const raf = preactOptions?.requestAnimationFrame;
   if (raf) {
     passiveTimer = -1 as unknown as ReturnType<typeof setTimeout>;
-    raf(() => {
-      passiveTimer = undefined;
-      flushPassiveEffects();
-    });
+    raf(flushPassiveEffects);
     return;
   }
-  if (typeof MessageChannel !== "function") {
-    passiveTimer = setTimeout(() => {
-      passiveTimer = undefined;
-      flushPassiveEffects();
-    }, 0);
+  if (typeof MessageChannel === "undefined") {
+    passiveTimer = setTimeout(flushPassiveEffects, 0);
     return;
   }
   passiveTimer = -1 as unknown as ReturnType<typeof setTimeout>;
-  if (!passiveChannel) {
+  if (!passivePort) {
     // Lazily, and closed when idle: an open port with a listener keeps Deno's loop alive.
-    const c = passiveChannel = new MessageChannel();
-    c.port1.onmessage = () => {
-      passiveTimer = undefined;
+    const { port1, port2 } = new MessageChannel();
+    passivePort = port2;
+    port1.onmessage = () => {
       flushPassiveEffects();
-      if (passiveTimer === undefined) c.port1.close(), c.port2.close(), passiveChannel = undefined;
+      if (passiveTimer === undefined) port1.close(), port2.close(), passivePort = undefined;
     };
   }
-  passiveChannel.port2.postMessage(null);
+  passivePort.postMessage(0);
 }
 
 /** Whether a commit queued passive effects (useEffect) that have not run yet. */
