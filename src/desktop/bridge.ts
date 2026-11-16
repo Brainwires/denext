@@ -509,7 +509,7 @@ export function runOnDesktopMainThread(
     return Promise.reject(
       new DesktopCapError(
         "unsupported",
-        "ctx.runOnMainThread needs denext's pinned Deno Desktop runtime (2.9.7-denext.6 or later)",
+        "ctx.runOnMainThread needs a Deno Desktop runtime with Deno.desktop.runOnMainThread (denext's pinned runtime has it)",
         { status: 501 },
       ),
     );

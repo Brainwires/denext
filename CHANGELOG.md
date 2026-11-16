@@ -159,6 +159,31 @@ and this project adheres to
   prerequisites and environment variables are fixed, and marketing phrasing is gone. A test checks
   that every `deno task` / `denext task` a README names exists in the deno.json it runs against
   (a root task only where the README says it runs from the repo root).
+- **CLI messages describe a runtime gate by what is missing, not by a release number.** The
+  warnings, errors and doctor findings that said a feature needs "runtime 3.0.0-denext.10+" or
+  "a release that pins runtime 2.9.7-denext.11 or later" now name the capability (media-capture
+  grants, `Deno.openPty`, ConPTY terminals on Windows, `$DENO_DESKTOP_DATA` expansion, split
+  network grants, resource-limit flags, SNI certificate resolution, `Deno.SQL` result columns,
+  crash reports, the lifecycle-script jail) and how to get it (`denext upgrade`: the pinned
+  runtime has it). That covers `denext desktop add`'s capability catalog (notes and by-hand
+  steps for `fs`, `sqlite`, `system-stats`, `pty`, `microphone`, `camera`, `passkeys`),
+  `denext doctor` / `desktop doctor`, `desktop run` / `package`, `build --compile`, `start`, the
+  Prisma adapter, the desktop transport's refusals and the generated Dockerfile's idle-trim
+  comment. Version constants and the comparisons behind them are unchanged, as is a pty error's
+  `data.requires`. A test scans every shipped source line for a release number or an
+  interpolated version constant in user-facing text.
+- **Example fixes.** The pages-router example maps `@denext/pages-router/head`, which its pages
+  import (a test now checks that every example maps each `@denext/*` module it imports). The
+  prisma example's `prisma.config.ts` reads `DB_PATH` as `lib/db.ts` does, so `db push` and the
+  app open the same file. The tailwind example's home page is a Server Component rendering a
+  `"use client"` counter (`app/counter.tsx`) instead of calling `useState` itself. The
+  offline-sync example's `src/config.ts` says that only `denext start` proxies `/api` (not
+  `denext dev`), and the openapi example's config comments match the plugin (vendored renderers,
+  the docs page's own CSP, security decided by the route's builder). The scroll-bench
+  `build-apks.sh` takes its SSH host as a required argument (or `SCROLL_BENCH_HOST`) with no
+  default. The unused `deno-wrap.sh` of next-compat-feasibility is removed. The desktop kitchen
+  sink's `app/manual-checks.tsx` type-checks again (its backdrop check keeps a
+  `WindowCapabilities`).
 
 ## [4.19.0] - 2026-11-15
 

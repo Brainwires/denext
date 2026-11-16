@@ -74,7 +74,7 @@ page lists every cell. Android: `adb shell am start -a android.intent.action.VIE
 
 `./build-apks.sh <host> [out-dir]` exports the web app here and builds both release APKs on a
 Linux host over SSH (JDK 21, `~/Android/Sdk`), x86_64 only, signed with a throwaway key made on
-the host. Pass your own host: the default is a lab machine. Locally it needs `ssh`, `rsync`, a
+the host. The host is required (or `SCROLL_BENCH_HOST`); there is no default. Locally it needs `ssh`, `rsync`, a
 `deno` on `PATH` and `web/node_modules` (`(cd web && denext task install)`). The placeholder
 images come from `denext task images` (committed).
 

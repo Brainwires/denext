@@ -233,11 +233,11 @@ export function withLimitFlags(
  */
 export function supportsLimitsWhy(runtime: string | undefined): string {
   if (runtime === undefined) {
-    return "they need denext's Deno toolchain from runtime 3.0.0-rc.2, and this server runs on " +
+    return "they need denext's Deno toolchain (resource-limit flags), and this server runs on " +
       "stock Deno (unset DENEXT_DENO=stock)";
   }
   if (runtime === "path") return "a DENEXT_DENO=<path> Deno's version is unknown";
-  return `this Deno (${runtime}) predates runtime 3.0.0-rc.2 — \`denext toolchain install\``;
+  return `this Deno (${runtime}) has no resource-limit flags — \`denext toolchain install\``;
 }
 
 /** The warning when configured limits can't be applied to the server process. */
@@ -265,7 +265,7 @@ export function compileLimitFlags(
   if (flags.length > 0 && baked.length === 0) {
     warn(limitsNotAppliedWarning(
       flags,
-      "only denext's Deno toolchain from runtime 3.0.0-rc.2 bakes them into an executable " +
+      "only a denext Deno toolchain with resource-limit flags bakes them into an executable " +
         "(`denext toolchain install`, and no DENEXT_DENO=stock)",
     ));
   }

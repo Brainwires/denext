@@ -132,8 +132,9 @@ denext?** — reproducibly.
     bash examples/next-compat-feasibility/verify-dropin.sh
   ```
 
-`deno-wrap.sh` injected `--unstable-sloppy-imports` into denext's child `deno`
-calls until punch-list item #1 below was fixed. Nothing runs it any more.
+A `deno-wrap.sh` shim once injected `--unstable-sloppy-imports` into denext's
+child `deno` calls; punch-list item #1 below made it unnecessary, and it has been
+removed.
 
 ### Recorded result (historical)
 

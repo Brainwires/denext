@@ -77,7 +77,8 @@ export default {
   client entry file, required), `rootId`, `title`, `head`, `loading`, `shell` (a
   prerendered static shell that takes typing before the bundle runs; see
   [SPA › Prerendered shell](/docs/spa#shell)), `lang`, `env`,
-  `proxy` (dev proxy to a backend), `csp` (a `CspSetting` for the shell),
+  `proxy` (a reverse proxy to a local backend under `denext start` and the desktop window; not
+  `denext dev`), `csp` (a `CspSetting` for the shell),
   `precompress`, `ota`, `viteManifest` (write a Vite-shaped `.vite/manifest.json`
   of the export's content-hashed files), `assetsDir` (Vite's `build.assetsDir`: serve
   and export the client under `/assets/` instead of `/_denext/client/`; not under

@@ -736,8 +736,9 @@ function appJsonBody(
   );
   if (settings.overlay === true && !overlayKnown) {
     console.warn(
-      "  desktop.window.overlay needs denext's Deno Desktop runtime 3.0.0-denext.7 or later: " +
-        "the window opens as an ordinary one.",
+      "  desktop.window.overlay needs a Deno Desktop runtime that opens the first window as an " +
+        "overlay (denext's pinned runtime does: `denext upgrade`); the window opens as an " +
+        "ordinary one.",
     );
   }
   const wanted = definedEntries({

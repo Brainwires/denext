@@ -174,7 +174,7 @@ Deno.test("strict: an older runtime or no identifier fails the build, naming the
   assertThrows(
     () => desktopBuildFlags(app("strict"), "linux", { dataScope: false }),
     Error,
-    "3.0.0-denext.8",
+    "does not expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE. Build on denext's pinned runtime",
   );
   assertThrows(
     () => desktopBuildFlags(app("strict", {}, null), "linux", SCOPE),
@@ -183,7 +183,7 @@ Deno.test("strict: an older runtime or no identifier fails the build, naming the
   );
   for (
     const [config, options, why] of [
-      [app("strict"), { dataScope: false }, "3.0.0-denext.8"],
+      [app("strict"), { dataScope: false }, "does not expand $DENO_DESKTOP_DATA"],
       [app("strict", {}, null), SCOPE, "desktop.app.identifier is not set"],
     ] as const
   ) {

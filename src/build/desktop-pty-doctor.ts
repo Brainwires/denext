@@ -78,10 +78,9 @@ export function ptyDoctorCheck(
     findings.push({
       check: "pty",
       level: "warning",
-      message:
-        `the pinned runtime ${runtimeVersion} has no Deno.openPty (from ${FIRST_PTY_RUNTIME}): ` +
+      message: `the pinned runtime ${runtimeVersion} has no Deno.openPty: ` +
         "every pty call rejects `unsupported`",
-      fix: `upgrade denext to a release that pins runtime ${FIRST_PTY_RUNTIME} or later`,
+      fix: "upgrade denext (`denext upgrade`): its pinned runtime has Deno.openPty",
     });
   }
   if (os === "windows" && runtimeSupported && !supportsPtyOn(runtimeVersion, "windows")) {
@@ -89,9 +88,9 @@ export function ptyDoctorCheck(
       check: "pty",
       level: "warning",
       message: `the pinned runtime ${runtimeVersion} has no terminals on Windows (its ` +
-        `Deno.openPty throws NotSupported there until ${FIRST_WINDOWS_PTY_RUNTIME}): every ` +
+        "Deno.openPty throws NotSupported there, with no ConPTY support): every " +
         "spawnPty() there rejects `unsupported`",
-      fix: `upgrade denext to a release that pins runtime ${FIRST_WINDOWS_PTY_RUNTIME} or later`,
+      fix: "upgrade denext (`denext upgrade`): its pinned runtime has ConPTY terminals on Windows",
     });
   }
   if (config.shells.length === 0) {
@@ -133,6 +132,8 @@ export function ptyDoctorCheck(
  */
 export function ptyFactLine(pty: DoctorPty): string {
   const run = pty.runAllow.length > 0 ? `--allow-run=${pty.runAllow.join(",")}` : "no shell";
-  const runtime = pty.runtimeSupported ? "Deno.openPty available" : `needs ${pty.runtimeFloor}`;
+  const runtime = pty.runtimeSupported
+    ? "Deno.openPty available"
+    : "the pinned runtime starts no terminals here (`denext upgrade`)";
   return `  pty       ${run}; onWindowClose ${pty.onWindowClose}; ${runtime}`;
 }

@@ -100,7 +100,6 @@ import {
   explainJailFailures,
   grantsSomething,
   homeName,
-  JAIL_DEFAULT_RELEASE,
   JAIL_DOCS_URL,
   type JailConfinement,
   jailConfinement,
@@ -776,7 +775,7 @@ function missingJailDetail(
 ): string {
   const why = setting.state === "on"
     ? `${setting.source} turns it on`
-    : `on by default from runtime ${JAIL_DEFAULT_RELEASE}`;
+    : "on by default on denext's Deno toolchain";
   const verb = missing.length === 1 ? "needs" : "need";
   return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
     `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
@@ -809,7 +808,7 @@ function passingJailDetail(
   return on
     ? `exceptions configured for ${list}`
     : `${list} will need an exception once dependencies' install scripts run jailed (on by ` +
-      `default from runtime ${JAIL_DEFAULT_RELEASE}): ${JAIL_DOCS_URL}`;
+      `default on denext's Deno toolchain; \`denext upgrade\`): ${JAIL_DOCS_URL}`;
 }
 
 /**
@@ -921,7 +920,8 @@ export async function desktopLaunchPolicyCheck(
         "DENEXT_DESKTOP_RUNTIME / DENEXT_DESKTOP_RUNTIME_DIR; a package run with other values " +
         "may differ)",
       fix:
-        "upgrade denext once it pins that runtime (`denext upgrade`), or turn the capability off",
+        "build on denext's pinned runtime, which has media-capture grants (`denext upgrade`), or " +
+        "turn the capability off",
     });
   }
   const replaced = denoJsonMediaCaptureProblem(

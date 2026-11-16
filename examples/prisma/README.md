@@ -28,9 +28,8 @@ the datasource URL lives in `prisma.config.ts`, the adapter class is
 `PrismaBetterSqlite3`, and `db push` no longer runs `prisma generate` (setup
 runs both).
 
-The database is `prisma/dev.db`. `lib/db.ts` reads `DB_PATH` to open another
-file, but `prisma.config.ts` (what `db push` writes to) is fixed to
-`prisma/dev.db`, so a different `DB_PATH` needs that URL changed too.
+The database is `prisma/dev.db`. Set `DB_PATH` to use another file: both
+`lib/db.ts` (the app) and `prisma.config.ts` (what `db push` writes to) read it.
 
 ## Why the extra setup (vs. the Drizzle example)
 

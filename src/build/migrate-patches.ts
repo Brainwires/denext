@@ -404,7 +404,7 @@ export async function carryPackageManagerPatches(
       ...d,
       from: rel(dir, d.file),
       reason: "the Deno that installs the packages doesn't apply deno.json's patchedDependencies " +
-        "(denext's Deno from runtime 3.0.0-denext.3 does): `denext patch create` records the " +
+        "(denext's Deno toolchain does): `denext patch create` records the " +
         "change for denext to apply at boot",
     }));
     return {

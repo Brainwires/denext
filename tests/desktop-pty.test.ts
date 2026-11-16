@@ -661,7 +661,8 @@ Deno.test("pty: without Deno.openPty every method rejects unsupported with the r
       ] as const
     ) {
       const err = await rejectsCode(call(cap, method, args), "unsupported");
-      assert(err.message.includes(FIRST_PTY_RUNTIME), method);
+      assert(err.message.includes("Deno.openPty"), method);
+      assert(!err.message.includes(FIRST_PTY_RUNTIME), method);
       assertEquals((err.data as { requires: string }).requires, FIRST_PTY_RUNTIME);
     }
   });
@@ -682,7 +683,8 @@ Deno.test("pty.spawn: NotSupported names the Windows runtime floor in its data",
   });
   const err = await rejectsCode(spawn(t.cap), "unsupported");
   assertEquals((err.data as { requires: string }).requires, FIRST_WINDOWS_PTY_RUNTIME);
-  assertStringIncludes(err.message, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(err.message, "ConPTY");
+  assert(!err.message.includes(FIRST_WINDOWS_PTY_RUNTIME), "names the capability, not a release");
   assert(!err.message.includes("yet"), "no 'not on Windows yet': the runtime has terminals there");
 });
 
@@ -706,17 +708,18 @@ Deno.test("doctor pty: Windows under the pinned runtime has terminals (no Window
   assertStringIncludes(ptyFactLine(pinned.pty!), "Deno.openPty available");
   const older = ptyDoctorCheck({ capabilities: { pty: true } }, "windows", "3.0.0-denext.20")!;
   assertEquals(older.findings.length, 1);
-  assertStringIncludes(older.findings[0].message, FIRST_WINDOWS_PTY_RUNTIME);
-  assertStringIncludes(older.findings[0].fix, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(older.findings[0].message, "ConPTY");
+  assertStringIncludes(older.findings[0].fix, "ConPTY terminals on Windows");
   assertEquals(older.pty!.runtimeSupported, false);
-  assertStringIncludes(ptyFactLine(older.pty!), `needs ${FIRST_WINDOWS_PTY_RUNTIME}`);
+  assertEquals(older.pty!.runtimeFloor, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(ptyFactLine(older.pty!), "starts no terminals here");
 });
 
 Deno.test("desktop add pty: the catalog no longer says Windows has no terminals", () => {
   const entry = DESKTOP_CAPABILITIES.pty;
   assert(!entry.notes.includes("not on Windows yet"), entry.notes);
   assert(!entry.manual!.some((m) => m.includes("no terminals yet")));
-  assert(entry.manual!.some((m) => m.includes(FIRST_WINDOWS_PTY_RUNTIME)));
+  assert(entry.manual!.some((m) => m.includes("ConPTY support")));
 });
 
 Deno.test("FIRST_PTY_RUNTIME: Deno.openPty from 3.0.0-denext.12 (no .11 release)", () => {
@@ -826,10 +829,11 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
     runtimeFloor: FIRST_PTY_RUNTIME,
   });
   assertEquals(old.findings.map((f) => f.level), ["warning"]);
-  assert(old.findings[0].message.includes(FIRST_PTY_RUNTIME));
+  assert(old.findings[0].message.includes("has no Deno.openPty"));
   assertEquals(
     ptyFactLine(old.pty!),
-    `  pty       --allow-run=/bin/zsh,/bin/bash,/bin/sh; onWindowClose kill; needs ${FIRST_PTY_RUNTIME}`,
+    "  pty       --allow-run=/bin/zsh,/bin/bash,/bin/sh; onWindowClose kill; " +
+      "the pinned runtime starts no terminals here (`denext upgrade`)",
   );
 
   const detach = { capabilities: { pty: { onWindowClose: "detach" } } };
@@ -861,7 +865,7 @@ Deno.test("doctor pty: the baked run list, the runtime, detach without keepAlive
   // Windows under a runtime before its ConPTY: no terminals there, and no Windows program listed.
   assertEquals(none.findings.map((f) => f.check), ["pty", "pty"]);
   assertStringIncludes(none.findings[0].message, "no terminals on Windows");
-  assertStringIncludes(none.findings[0].message, FIRST_WINDOWS_PTY_RUNTIME);
+  assertStringIncludes(none.findings[0].message, "no ConPTY support");
   assertStringIncludes(none.findings[1].message, "lists no program for windows");
   const bad = ptyDoctorCheck(
     { capabilities: { pty: { shells: ["sh"] } } },

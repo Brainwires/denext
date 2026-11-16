@@ -140,7 +140,7 @@ export function serveTlsOptions(
   if (runtime === undefined || !supportsResolveCertificate(runtime)) {
     throw new Error(
       `denext start: start.tls lists ${tls.certificates.length} certificates; a certificate per ` +
-        `host name needs denext's Deno from runtime 3.0.0-denext.3, and this is ` +
+        `host name needs a Deno whose TLS server resolves certificates by host name (denext's pinned toolchain does), and this is ` +
         `${runtime === undefined ? "a stock Deno" : `runtime ${runtime}`}. Run it with ` +
         "`denext start` on the pinned toolchain, or list one certificate.",
     );

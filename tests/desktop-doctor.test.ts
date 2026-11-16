@@ -443,7 +443,8 @@ Deno.test("desktop doctor: notification clicks, scheduled notifications and the 
   assertEquals(older.runtime.linuxNotifications, false);
   assertEquals(older.findings.map((f) => `${f.level}:${f.check}`), ["warning:runtime"]);
   assertStringIncludes(older.findings[0].message, "predates Linux notification cold starts");
-  assertStringIncludes(older.findings[0].fix, "2.9.7-denext.11");
+  assertStringIncludes(older.findings[0].fix, "denext upgrade");
+  assertStringIncludes(older.findings[0].fix, "Linux notification cold starts");
   assert(!older.checks.includes("badge"));
   // The runtime under its own version (3.0.0-rc.1 on) is newer than every 2.9.7-denext.N.
   for (const version of ["3.0.0-rc.1", "3.0.0-rc.10", "3.0.0"]) {

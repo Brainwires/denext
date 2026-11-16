@@ -23,7 +23,6 @@
 // ({@linkcode assertMediaCaptureRuntime}), and nothing here is written for it.
 
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
-import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
 
 /** The devices a page may capture. */
 export type DesktopMediaKind = "microphone" | "camera";
@@ -240,9 +239,9 @@ export function mediaCaptureRuntimeProblem(
 ): string | null {
   const kinds = enabledKinds(config);
   if (kinds.length === 0 || supported) return null;
-  return `desktop.capabilities.${kinds.join(" / ")} needs Deno Desktop runtime ` +
-    `${FIRST_MEDIA_CAPTURE_RUNTIME} or later to package (this build uses ${runtime}): an older ` +
-    "runtime cannot restrict capture to the app's origin";
+  return `desktop.capabilities.${kinds.join(" / ")} needs a Deno Desktop runtime with ` +
+    `media-capture grants to package (this build uses ${runtime}, which has none): a runtime ` +
+    "without them cannot restrict capture to the app's origin";
 }
 
 /**
@@ -262,7 +261,8 @@ export function assertMediaCaptureRuntime(
   const problem = mediaCaptureRuntimeProblem(config, supported, runtime);
   if (problem) {
     throw new Error(
-      `${problem}. Upgrade denext once it pins that runtime (\`denext upgrade\`), or turn the ` +
+      `${problem}. Build on denext's pinned runtime, which has them (unset ` +
+        "DENEXT_DESKTOP_RUNTIME / DENEXT_DESKTOP_RUNTIME_DIR, `denext upgrade`), or turn the " +
         "capability off.",
     );
   }

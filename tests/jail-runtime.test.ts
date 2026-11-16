@@ -168,7 +168,7 @@ Deno.test("jail failures: an unreviewed package's advice names the hosts its log
   // A runtime without host lists: install on one that has them rather than grant everything.
   assertStringIncludes(
     explainJailFailures([linux], RC5).join("\n"),
-    `runtime ${RC5} takes no host list, so install it on ${RC6} or later`,
+    `runtime ${RC5} takes no host list, so install it on denext's current toolchain`,
   );
   // On Windows a resolver failure is not the jail's: only the clamp's hosts count.
   assertEquals(jailFailures(log, "windows")[0].hosts, ["evil.example.com"]);
@@ -181,7 +181,7 @@ Deno.test("jail failures: 'Requires ffi access' says to leave the package unappr
   assertEquals(f.signs, ["ffi"]);
   const text = explainJailFailures([f], RC6).join("\n");
   assertStringIncludes(text, "(stopped: loading a native addon)");
-  assertStringIncludes(text, `runtime ${RC6} (before 3.0.0-denext.1)`);
+  assertStringIncludes(text, `runtime ${RC6}, which predates OS-confined lifecycle scripts`);
   assertStringIncludes(text, 'leave "addon-pkg" unapproved (out of "allowScripts" in deno.json)');
   assertFalse(text.includes("fix:"), "no exception grants a native addon");
   assertFalse(text.includes("is not in denext's reviewed list"));
