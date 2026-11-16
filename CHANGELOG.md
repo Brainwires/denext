@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Changed
 
+- **The `denext job install` round trip gates a release** (maintainers). Its three e2e.yml legs,
+  `job-install (linux)`, `(macos)` and `(windows)`, are in `E2E_JOBS`, so `deno task release`
+  refuses a commit where one of them is red or did not run. The round trip now also checks that
+  `denext job install --status` reports the installed entry (by job name, in the backend it was
+  installed to) and nothing after the uninstall.
 - **`deno task revocations sign` splits `--force` into two flags** (maintainers).
   `--skip-published-check` signs when the published list can't be read or verified, and
   `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
