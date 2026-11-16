@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **The backend posts notifications: `app.notify()` and an extension's `host.notify()`.** What
+  `runDesktop()` resolves with and an extension's `host` take `notify({ title, body?, tag?, data?,
+  actions?, silent? })`, which posts an OS notification through the same path a page's
+  `Notification` takes (the `notifications` capability: the runtime's notifications, or the Deno
+  `Notification` where the runtime cannot schedule), so `desktop.ts` and an extension no longer
+  call `Deno.desktop.notifications` themselves. It resolves `{ tag, close() }`; a notification with
+  the same tag is replaced (default a fresh `app-<uuid>`; `denext-…` tags are denext's own and
+  refused), and its clicks reach `onNotificationClick` with that tag and `data`, never a page.
+  It rejects with a `DesktopCapError`: `not_enabled` while the `notifications` capability is off,
+  `unsupported` where the runtime has no native notifications (and in a sidecar's child),
+  `validation` for bad options (JSON `data` up to 4 KiB, no top-level `denext` key).
 - **A speech recognition usage string for a Deno Desktop app's microphone.**
   `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
   `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows

@@ -50,10 +50,11 @@ import type { DesktopEventAppendOptions } from "../desktop/bridge-events.ts";
 import { desktopHeadless, headlessWindow } from "../desktop/headless.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
-import type {
-  DesktopCapability,
-  DesktopEmitOptions,
-  DesktopSecureStore,
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopEmitOptions,
+  type DesktopSecureStore,
 } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
@@ -183,6 +184,13 @@ import {
   type DesktopNotificationClickListener,
   type NotificationClickHooks,
 } from "../desktop/notification-clicks.ts";
+export type {
+  DesktopNotify,
+  DesktopNotifyAction,
+  DesktopNotifyOptions,
+  DesktopPostedNotification,
+} from "../desktop/notify.ts";
+import type { DesktopNotify } from "../desktop/notify.ts";
 export {
   defineDesktopExtension,
   type DesktopCaller,
@@ -936,6 +944,16 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
    * in a sidecar's child).
    */
   onNotificationClick(fn: DesktopNotificationClickListener): () => void;
+  /**
+   * Post an OS notification now, as a page's `Notification` does and through the same path (the
+   * `notifications` capability, which must be enabled): `notify({ title, body?, tag?, data?,
+   * actions?, silent? })` resolves `{ tag, close() }`, and its clicks reach
+   * {@linkcode RunDesktopOptions.onNotificationClick} / {@linkcode DesktopRuntime.onNotificationClick}
+   * with that tag and data, never a page. Rejects with a `DesktopCapError`: `not_enabled` while the
+   * capability is off, `unsupported` where the Deno Desktop runtime has no native notifications
+   * (and in a sidecar's child), `validation` for bad options.
+   */
+  readonly notify: DesktopNotify;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -2085,6 +2103,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onSecondInstance: (fn) => windows.onSecondInstance(fn),
     onWillNavigate: (fn) => navigation.add(fn),
     onNotificationClick: (fn) => notificationClicks.add(fn),
+    notify: bridge.notify,
     trust,
     emit: (cap, event, data, emitOptions) =>
       bridge.emit(
@@ -2163,6 +2182,12 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
     window: undefined,
     ...noDesktopWindows(),
     onNotificationClick: () => () => {},
+    notify: () =>
+      Promise.reject(
+        new DesktopCapError("unsupported", "a sidecar's child posts no notifications", {
+          status: 501,
+        }),
+      ),
     trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
     emit: () => {},
     sidecar: (name) => {

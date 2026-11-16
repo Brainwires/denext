@@ -711,11 +711,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `secureStore` (Keychain, PasswordVault, libsecret), `fs` / `sqlite` in the
   app's folders, the OS's own open/save panels, the OS clipboard (text, HTML,
   PNG), native notifications (scheduled, repeating, action buttons, launch
-  clicks) and the web `Notification` API on top of them, native context menus,
+  clicks) and the web `Notification` API on top of them (the backend posts its own with
+  `app.notify()` / `host.notify()`), native context menus,
   `shell`, `keep-awake`, `device`, global shortcuts, launch at login and native
   passkeys (`{ rpIds }` required). Picked files and folders travel as scoped
   handles, never paths. — `src/desktop/caps/mod.ts`,
-  `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
+  `src/desktop/notification-shim.ts`, `src/desktop/notify.ts`, `src/cli/commands/desktop-add.ts`.
 - **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
   on this machine, with a fix for each gap: the pinned runtime and its cache,
   the `deno` version, and on Linux the session's tray host (a StatusNotifierWatcher,
