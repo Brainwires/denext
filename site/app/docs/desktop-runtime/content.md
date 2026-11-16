@@ -352,6 +352,40 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   Moriuchi) and [littledivy/laufey#81](https://github.com/littledivy/laufey/pull/81) (Sasivarnan R),
   all open and cherry-picked with their authorship. Ours is planned.
 
+### The macOS hidden mode
+
+- **What:** `macosHiddenMode` on a `BrowserWindow` (and `desktop.initialWindow.macosHiddenMode`
+  in deno.json or `.deno-desktop/app.json`): `"invisible"` (the default) hides a window by keeping
+  it ordered in but invisible (transparent, clicks passing through, never key or main, out of
+  window cycling, Mission Control, the Window menu and screen sharing); `"orderOut"` really removes
+  it. A full-screen window is always ordered out. While an invisible-hidden window is open the app
+  holds an App Nap activity, and occlusion is ignored for its view. Creation time only; other
+  platforms ignore it.
+- **Why:** macOS throttles the page of a window that is ordered out, whatever the page asks, so a
+  hidden window doing the app's background work with `backgroundThrottling: false` lost its timer
+  rate. Kept ordered in and invisible, it keeps full rate; `"orderOut"` is there for a window
+  that should leave the screen completely and may be throttled.
+- **Layer:** laufey (`MacosHiddenMode`), Deno runtime.
+
+### Embedded web views: keyboard and focus
+
+- **What:** for a `Deno.WebView` (`createWebView`): `blur()` returns the keyboard to the window's
+  page without activating the app or reordering windows; a `forwardKeys` entry starting with `!`
+  (`"!CmdOrCtrl+W"`, the `!` counted in the 64 characters) is matched before the app menu's
+  accelerators, where plain entries come after them; `"key"` events carry `type: "keydown"` or
+  `"keyup"` (a forwarded keydown's keyup, and a keyup for every key still down when the view loses
+  the focus); `"focus-change"` carries `reason: "hidden"` or `"blur"` when the app took the focus
+  away, and hiding a focused view gives the keyboard back to the page. `webViewCapabilities()`
+  reports `blur`, `keyUp` and `forwardKeysBeforeMenu`. `evaluate()` runs in the isolated world
+  even under a page CSP that refuses `eval` (on WKWebView and WebKitGTK through the engine's own
+  evaluate, where a promise result isn't awaited).
+- **Why:** an app that embeds another site needs to take the keyboard back (an address bar, a
+  shortcut that closes the view), to see a forwarded key's release so a held shortcut doesn't
+  stick, and to keep a shortcut such as Cmd+W for itself even when the menu binds it.
+- **Layer:** laufey, Deno runtime. `denext/desktop/window` passes `forwardKeys` entries through,
+  so a `!` entry works there; `blur()`, keyups, the `reason` and the three capability keys are
+  the runtime's own API ([Desktop apps](/docs/desktop#desktop-web-views-keys)).
+
 ### Title bar preferences
 
 - **What:** `Deno.desktop.titleBarPreferences()` and its `titlebarpreferenceschanged` event: how
