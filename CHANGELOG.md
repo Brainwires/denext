@@ -108,6 +108,18 @@ and this project adheres to
   realpath), so nothing matched and the unreachable `openSqlite` bridge and its wasm stayed in the
   output for any user whose name is longer than 8 characters.
 
+- **A plugin's prepare step re-runs in dev for a project reached through a symlink.** macOS's
+  file watcher names a changed file through its real path (`/private/var/…` for a project under
+  `/var/…`, the real folder of a symlinked checkout), while the step's `watch` globs were resolved
+  against the project folder as given, so an edit to a watched file (content-collections' entries,
+  a GraphQL schema) never regenerated its output. The changed path is now matched, and handed to
+  the step, in the project's own spelling, and the SPA dev server keeps recognizing a write into
+  the build output under either spelling.
+
+- **The dev server's server-only leak error names a module relative to a symlinked project.** It
+  printed the module's absolute real path (`/private/var/…/lib/db.ts`) instead of `lib/db.ts`
+  when the project folder was spelled through a symlink.
+
 - **A Deno Desktop capability's unexpected failure is logged in the app's own log.** Outside
   `denext desktop dev` the page still gets only "the capability failed" (the error could carry a
   path), and the error itself, named by its capability and method, now goes to the app's stderr,

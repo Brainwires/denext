@@ -7,7 +7,7 @@
 // the app's own?" and "is this the framework's source?" both answered no, and every build-time
 // feature scan read the whole framework and installed every gated runtime. Canonicalise both sides.
 
-import { basename, dirname, join, normalize, resolve } from "@std/path";
+import { basename, dirname, join, normalize, resolve, SEPARATOR } from "@std/path";
 
 /**
  * The real, absolute spelling of a local path: symlinks resolved, `.` / `..` and doubled
@@ -31,4 +31,26 @@ export function canonicalPath(path: string): string {
       dir = parent;
     }
   }
+}
+
+/**
+ * A respelling of paths under `root`'s real path into `root`'s own spelling. A file watcher names
+ * a changed file through the real path (macOS's FSEvents reports `/private/var/…` for a watch on
+ * `/var/…`, and any symlinked checkout resolves the same way), while globs, prefixes and keys are
+ * built from the root as the caller spelled it; a path outside the real root is returned as is.
+ *
+ * @param root The directory as the caller spells it (absolute).
+ * @returns A function that maps a path under the root's real path to the root's spelling.
+ */
+export function rootSpelling(root: string): (path: string) => string {
+  const given = normalize(resolve(root));
+  let real = given;
+  try {
+    real = Deno.realPathSync(given);
+  } catch { /* no root on disk: one spelling only */ }
+  if (real === given) return (path) => path;
+  return (path) =>
+    path === real || path.startsWith(real.endsWith(SEPARATOR) ? real : real + SEPARATOR)
+      ? join(given, path.slice(real.length))
+      : path;
 }

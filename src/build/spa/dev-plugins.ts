@@ -16,6 +16,7 @@ import {
 import { withBuildDirLock } from "../project-locks.ts";
 import { outsideLockTasks } from "../file-lock.ts";
 import { isSelfWrite } from "../self-writes.ts";
+import { rootSpelling } from "../canonical-path.ts";
 import { hasPathSegment, inNodeModules } from "../path-segments.ts";
 import { broadcastFrame, invalidateBuilds, type SpaDevState } from "./dev-state.ts";
 import { watchBatches } from "./dev-watch.ts";
@@ -70,9 +71,12 @@ function watchPrepareInputs(st: SpaDevState): void {
       watcher.close();
     } catch { /* already closed */ }
   }, { once: true });
-  // A step writes into the build output: never a source edit (no regenerate → reload loop).
+  // A step writes into the build output: never a source edit (no regenerate → reload loop). The
+  // watcher may name it through the project's real path (macOS's `/private/var`), so the output
+  // directory is compared in the project's own spelling.
+  const respell = rootSpelling(st.paths.projectDir);
   const ignored = (p: string) =>
-    p.startsWith(st.paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
+    respell(p).startsWith(st.paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
   // Each batch is its own rebuild, outside every lock task (see `outsideLockTasks`).
   watchBatches(watcher, ignored, (batch) => void outsideLockTasks(() => regenerate(st, batch)));
