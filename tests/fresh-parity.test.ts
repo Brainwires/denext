@@ -231,6 +231,12 @@ export default function Recipe() {
   ]);
 }`,
   "routes/go.ts": `export const handler = { GET(ctx) { return ctx.redirect("/recipe"); } };`,
+  "routes/bare.ts": `import { h } from "${JSX}";
+import { Partial } from "../app/_fresh/runtime.ts";
+export const config = { skipAppWrapper: true };
+export default function Bare() {
+  return h(Partial, { name: "recipe" }, h("h2", null, "Water"));
+}`,
   "app/_fresh/runtime.ts": `export * from "${RUNTIME}";
 export { Partial } from "./partial.ts";`,
   "app/_fresh/partial.ts": `"use client";
@@ -238,12 +244,14 @@ export { Partial } from "${PARTIAL}";`,
   "middleware.ts": `import { freshMiddleware } from "${SERVER}";
 import * as r0 from "./routes/recipe.ts";
 import * as r1 from "./routes/go.ts";
+import * as r2 from "./routes/bare.ts";
 export default freshMiddleware({
   middlewares: [],
   layouts: [],
   routes: [
     { id: "recipe", pattern: "/recipe", mod: r0, page: true, middlewares: [], layouts: [] },
     { id: "go", pattern: "/go", mod: r1, page: false, middlewares: [], layouts: [] },
+    { id: "bare", pattern: "/bare", mod: r2, page: true, middlewares: [], layouts: [] },
   ],
 });
 export const config = { matcher: ["/((?!_denext/).*)"] };`,
@@ -252,6 +260,9 @@ export default function Root({ children }) { return h("html", null, h("body", nu
   "app/recipe/page.ts": `import { freshPage } from "${SERVER}";
 import * as mod from "../../routes/recipe.ts";
 export default freshPage(mod, { id: "recipe" });`,
+  "app/bare/page.ts": `import { freshPage } from "${SERVER}";
+import * as mod from "../../routes/bare.ts";
+export default freshPage(mod, { id: "bare" });`,
   "app/go/route.ts": `import { freshRouteHandler } from "${SERVER}";
 import * as mod from "../../routes/go.ts";
 export const GET = freshRouteHandler(mod, { id: "go" });`,
@@ -283,6 +294,11 @@ Deno.test("partial requests: ctx.isPartial, the redirect keeps fresh-partial, th
     const soft = await client.get("/recipe?plain=1", { headers: { "x-denext-nav": "1" } });
     assertEquals(soft.headers.get("x-denext-flight"), "1");
     assertEquals(JSON.parse(soft.text).head, undefined);
+    // A partial answer for a page that hoists no tags carries no head either.
+    const bare = await client.get("/bare?fresh-partial=true", { headers: { "x-denext-nav": "1" } });
+    assertEquals(bare.headers.get("x-denext-flight"), "1");
+    assertStringIncludes(JSON.stringify(JSON.parse(bare.text).flight), "Water");
+    assertEquals(JSON.parse(bare.text).head, undefined);
   });
 });
 
