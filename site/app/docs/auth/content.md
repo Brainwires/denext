@@ -2945,6 +2945,7 @@ The `/auth/v1` options (`backend({ supabase: { auth } })`):
 | `refreshTokenReuseInterval`        | `10`                             | Seconds a used refresh token may be presented again                                                                      |
 | `disableSignup`                    | `false`                          | Refuse new sign-ups (invites and the admin API still create users)                                                       |
 | `autoconfirm` / `phoneAutoconfirm` | `false`                          | Sign in at sign-up without confirming the email / phone                                                                  |
+| `secureEmailChange`                | `true`                           | An email change of a confirmed account is confirmed from the current address and the new one                             |
 | `anonymousUsers`                   | `false`                          | Allow `signInAnonymously()` (default: `denextAuth({ anonymous })`)                                                       |
 | `minPasswordLength`                | `8`                              | Password policy (`weak_password`)                                                                                        |
 | `otpLength` / `otpExpiry`          | `6` / `3600`                     | Email and SMS codes                                                                                                      |

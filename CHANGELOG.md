@@ -57,6 +57,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`/auth/v1` email changes are confirmed from both addresses (`secureEmailChange`).** As in
+  GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
+  code to that address as well as the new one, and the change applies once both are redeemed (the
+  first answers GoTrue's "Confirmation link accepted" message); `secureEmailChange: false`
+  confirms from the new address alone, and an account with no confirmed address still does.
 - **`denext migrate` checks the next.config evaluator's result before writing it.** The evaluator
   prints its result through a writer it holds from before the config is imported, a result with
   more than one line fails the evaluation, and `migrate` (like `denext ui`'s next.config panel)
