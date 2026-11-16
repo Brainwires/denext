@@ -1,8 +1,9 @@
 // A per-file coverage ratchet over an lcov report: every module under RATCHETED keeps at least the
 // line / branch / function coverage scripts/coverage-baseline.json records for it, so a file's
 // coverage can only go up. coverage-floor.ts holds a few surfaces to a fixed 85%; this holds the
-// rest of the CLI, the server, the compat layer, the DevTools panel's panes and the plugin
-// packages to where they are.
+// rest of the CLI, the server, the compat layer, the DevTools panel's panes, the Deno Desktop
+// runtime (also under the fixed floor: the ratchet keeps each file at what it reached above it),
+// the project UI (`denext ui`) and the plugin packages to where they are.
 //
 //   deno run --allow-read scripts/coverage-ratchet.ts coverage/lcov.info            # check
 //   deno run --allow-read --allow-write scripts/coverage-ratchet.ts coverage/lcov.info --update
@@ -23,6 +24,8 @@ export const RATCHETED: readonly string[] = [
   "src/server",
   "src/compat",
   "src/client/devtools-panel",
+  "src/desktop",
+  "src/ui",
   "packages",
 ];
 
