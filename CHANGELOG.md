@@ -57,6 +57,12 @@ and this project adheres to
 
 ### Fixed
 
+- **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UI
+  child behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from a
+  working directory outside the project; the panels that run project code still start their own
+  children with the project's config. A compiled binary decides an unknown verb (or
+  `<verb> --help`) before it hands the invocation to the denext the project pins, and hands it over
+  only to discover the project's verbs.
 - **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
   when the host is one it hasn't opened this session and the URL's query and fragment carry more
   than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page
