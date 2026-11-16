@@ -123,17 +123,21 @@ and this project adheres to
   `<verb> --help`) before it hands the invocation to the denext the project pins, and hands it over
   only to discover the project's verbs.
 - **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
-  when the host is one it hasn't opened this session and the URL's query and fragment carry more
-  than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page
-  can't have the model open `https://bad.example/?q=<the conversation>`. Ordinary browsing (no
-  data, a short search, a host already opened) does not ask.
+  when the host is one the user hasn't allowed this session and the URL's path, query and fragment
+  together carry more than 64 characters (`URL_DATA_LIMIT` in
+  `examples/companion/voice/browser-safety.ts`), so a page can't have the model open
+  `https://bad.example/?q=<the conversation>` or `https://bad.example/<the conversation>`. Only a
+  Yes allows a host: opening it without data first does not, so a page can't open the host plainly
+  and then send the data there. Ordinary browsing (no data, a short search or path, a host the
+  user allowed) does not ask.
 - **A SPA's `denext dev` no longer rebuilds for a file whose content did not change.** The
   watcher records each project file's content (SHA-256) before it opens, and learns a file it had
   not seen on its first event; an event for a file holding the bytes it had then is dropped. On
   a loaded Mac, FSEvents could deliver the project's own just-written files (a scaffold's, a
   checkout's) after the dev server started, each starting a new build generation right away. A
   rewrite with the same bytes is dropped the same way; a real edit still counts on its first
-  event.
+  event. The start-time record stops at 5,000 files or 64 MiB read, so a large `public/` doesn't
+  hold the dev server's start; a file it left out counts on its first event, as before.
 - **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
   in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
   resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
@@ -193,6 +197,14 @@ and this project adheres to
   navigations now restore each entry's title and `<meta>` values with its regions, where the
   title and description used to stay the last page's. A real-browser run in e2e.yml covers the
   head merge, the view transition, an island keeping its state and back / forward.
+- **A source checkout's CLI loads a `denext.config.ts` that imports through an app-only alias**
+  (contributors). A config that imported a module through a key only the app's `deno.json` maps
+  (`import { schema } from "@/gql/schema.ts"` for `graphql({ schema })`, with `"@/": "./"`) failed
+  with `Import "@/…" not a dependency and not in import map` under a checkout's `cli.ts`: the
+  stylesheet gate imported the config before the re-run that applies the app's import map. That
+  re-run now comes first when the config needs the map, and its child builds the stylesheets as
+  before. The published CLI and the compiled binary were not affected: both run with the
+  project's `deno.json`.
 - **A plugin's dev `watch` globs outside `app/` reload on an edit.** The dev server opened its
   folder watch before an async plugin `setup` finished, so a prepare step's globs over another
   directory (`@denext/graphql`'s schema module outside `app/`, or the directories of the modules

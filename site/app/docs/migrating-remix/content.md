@@ -364,8 +364,9 @@ single denext React.
   and a thrown `Response` behave as in Remix; response cookies set by a thrown
   redirect are forwarded.
 - **`<Form>` and `useSubmit`** are backed by denext Server Actions. A mutating
-  `<Form>` with no explicit `action` binds to the current route's action;
-  submitting sets `useNavigation()` to `submitting`, stores the result for
+  `<Form>` with no explicit `action` binds to the current route's action, which
+  runs with the params of the render that produced the form (its `request.url`
+  is that page's URL, as in Remix); submitting sets `useNavigation()` to `submitting`, stores the result for
   `useActionData`, and triggers a revalidation that carries the form method and
   action into `shouldRevalidate`. `method="get"` is a soft search navigation.
   The DOM `action` attribute is the Server Action's endpoint URL, so the form
@@ -489,7 +490,9 @@ The CLI prints up to twelve notes and a count of the rest.
   `shouldRevalidate` returns `false` the server skips that loader's work and
   renders from the echoed data. First paint, hard navigations, routes without
   `shouldRevalidate`, and an explicit `true` always run the loader, so nothing
-  is ever stale.
+  is ever stale: a document request ignores an echo whatever headers it
+  carries, and a render that reused echoed data is per-request, never stored as
+  a shared page.
 - **`useBlocker` guards in-app navigations and browser back/forward, not a
   hard unload.** A registered blocker vetoes `<Link>`, `useNavigate`, and
   `<Form>` navigations and undoes a popstate until `proceed()`; one active

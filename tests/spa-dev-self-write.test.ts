@@ -260,3 +260,20 @@ Deno.test("ContentBaseline.snapshot: the watched files, never ignored or skipped
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("ContentBaseline.snapshot: stops at its byte budget (the rest is learned lazily)", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    for (const name of ["a.png", "b.png", "c.png"]) {
+      await Deno.writeFile(join(dir, name), new Uint8Array(1000));
+    }
+    const baseline = new ContentBaseline();
+    baseline.snapshot([dir], () => false, { bytes: 2500 });
+    assertEquals(baseline.size, 2, "a third 1000-byte file would pass the 2500-byte budget");
+    const capped = new ContentBaseline();
+    capped.snapshot([dir], () => false, { files: 1 });
+    assertEquals(capped.size, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

