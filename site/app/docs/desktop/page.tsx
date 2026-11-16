@@ -3479,6 +3479,21 @@ export default defineDesktopExtension({
         backend throttle a hidden page without freezing it either way. The main window is the one
         the runtime starts with, which is always throttled.
       </p>
+      <p id="desktop-macos-hidden-mode">
+        On macOS&apos;s system WebView, how a window is hidden decides whether that holds:{" "}
+        <code>macosHiddenMode</code> (in <code>openWindow</code>, <code>windows.open</code> or{" "}
+        <code>desktop.window</code>, at creation only) is <code>"invisible"</code>{" "}
+        by default, which keeps a hidden window ordered in but invisible (transparent, clicks
+        passing through, out of window cycling and Mission Control), so a{" "}
+        <code>backgroundThrottling: false</code> page keeps its timers&apos; rate;{" "}
+        <code>"orderOut"</code>{" "}
+        really removes the window, and macOS then throttles its page. Other platforms ignore it.
+        {" "}
+        <code>desktop.window.macosHiddenMode</code>{" "}
+        is also written to the packaged app&apos;s start window, so the main window takes it over
+        hidden the same way. It needs a Deno Desktop runtime with the macOS hidden mode: under one
+        without it the option has no effect, and packaging warns about the config key.
+      </p>
       <h4 id="desktop-window-menu">The standard window items</h4>
       <p>
         <code>desktop.menu.window</code>{" "}

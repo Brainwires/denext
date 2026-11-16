@@ -52,6 +52,7 @@ import {
   desktopPasskeyRpIds,
   desktopRuntimeLabel,
   initialOverlayRuntime,
+  macosHiddenModeRuntime,
   mediaCaptureRuntime,
   PASSKEY_RP_IDS_FIX,
   readProjectDenoJson,
@@ -716,7 +717,8 @@ export function desktopBakedCapabilities(config: unknown): string[] {
  * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key) and
  * `initialWindow` (the window the runtime starts with, only when `desktop.window` hides it at
  * launch or makes it frameless, transparent, non-activating or, on a runtime that reads it, a
- * layer-shell overlay). The identifier rides along whenever it is valid, since the runtime needs
+ * layer-shell overlay, or, on a runtime with the macOS hidden mode, ordered out when hidden). The
+ * identifier rides along whenever it is valid, since the runtime needs
  * it to register schemes on Linux and next to `singleInstance`; `name` (`desktop.app.name`, the
  * title of an untitled window) rides along on a runtime that reads it (`3.0.0-denext.7`+), which
  * otherwise titles it with the bundle's file name (`MyApp-arm64`). `capabilities` (the enabled
@@ -728,6 +730,7 @@ function appJsonBody(
   updatePublicKey?: string,
   overlayKnown: boolean = initialOverlayRuntime(),
   bakedKnown: boolean = desktopBakedCapabilitiesRuntime(),
+  hiddenModeKnown: boolean = macosHiddenModeRuntime(),
 ): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
@@ -741,13 +744,20 @@ function appJsonBody(
         "ordinary one.",
     );
   }
+  if (settings.macosHiddenMode === "orderOut" && !hiddenModeKnown) {
+    console.warn(
+      "  desktop.window.macosHiddenMode needs a Deno Desktop runtime that chooses how a hidden " +
+        "window is hidden on macOS (`denext upgrade` once the pinned runtime has it); this one " +
+        "hides windows its own way, and the setting has no effect.",
+    );
+  }
   const wanted = definedEntries({
     origin: identity?.origin,
     deepLinks: nonEmpty(normalizeDesktopDeepLinks(app?.deepLinks)),
     singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
-    initialWindow: desktopInitialWindow(settings, overlayKnown),
+    initialWindow: desktopInitialWindow(settings, overlayKnown, hiddenModeKnown),
     capabilities: bakedKnown ? nonEmpty(desktopBakedCapabilities(config)) : undefined,
   });
   if (Object.keys(wanted).length === 0) return null;
@@ -949,6 +959,9 @@ function configIdentity(config: unknown): Record<string, string> {
  * @param bakedKnown Whether the runtime reads app.json's `capabilities` (default
  *   `desktopBakedCapabilitiesRuntime()`: denext's pinned runtime from
  *   `FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME`).
+ * @param hiddenModeKnown Whether the runtime reads app.json's `initialWindow.macosHiddenMode`
+ *   (default `macosHiddenModeRuntime()`: denext's pinned runtime from
+ *   `FIRST_MACOS_HIDDEN_MODE_RUNTIME`).
  * @returns What changed (`deepLinks` only when schemes are configured).
  */
 export async function syncDesktopAppConfigAt(
@@ -956,12 +969,14 @@ export async function syncDesktopAppConfigAt(
   config: unknown,
   overlayKnown: boolean = initialOverlayRuntime(),
   bakedKnown: boolean = desktopBakedCapabilitiesRuntime(),
+  hiddenModeKnown: boolean = macosHiddenModeRuntime(),
 ): Promise<DesktopAppSyncReport> {
   const body = appJsonBody(
     config,
     await desktopUpdatePublicKey(config),
     overlayKnown,
     bakedKnown,
+    hiddenModeKnown,
   );
   const appJson = await syncAppJson(root, body);
   const runtimeConfig = await syncRuntimeConfig(root, config);

@@ -684,7 +684,8 @@ from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts anoth
 icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app stays accessory and a
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
-focusable: false, … })` and the overlay calls
+focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
+default keeps it in, invisible, at full timer rate) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);

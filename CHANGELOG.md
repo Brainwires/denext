@@ -24,6 +24,16 @@ and this project adheres to
   measures every frame while a CSS transition or animation runs on the element or an ancestor,
   for moves made only by a `transform`, and nothing while none runs. Each needs a Deno Desktop
   runtime that reports the capability.
+- **`macosHiddenMode`: how a hidden window is hidden on macOS.** `openWindow({ macosHiddenMode })`,
+  `windows.open({ macosHiddenMode })` in `desktop.ts` and `desktop.window.macosHiddenMode` take
+  `"invisible"` (the default: a hidden window stays ordered in but invisible, transparent and
+  click-through, so a `backgroundThrottling: false` page keeps its timers' rate) or `"orderOut"`
+  (the window is really removed, and macOS throttles its page) on the system WebView; other
+  platforms ignore it. `desktop.window.macosHiddenMode: "orderOut"` is also written to
+  `.deno-desktop/app.json`'s `initialWindow`, so the window the app starts with is hidden the same
+  way. Any other value is a config error, or a `validation` error from `openWindow`. Needs Deno
+  Desktop runtime `3.0.0-denext.25` (`FIRST_MACOS_HIDDEN_MODE_RUNTIME`): on an older one the
+  window option has no effect, and packaging leaves the app.json key out with a warning.
 - **The kernel sandbox, as an opt-in preview.** The Deno toolchain and Desktop runtime denext pins
   take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
   command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,

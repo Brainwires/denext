@@ -345,6 +345,27 @@ export function supportsInitialOverlay(version: string): boolean {
 }
 
 /**
+ * The first Deno Desktop runtime with the macOS hidden mode (Brainwires/deno DENEXT.md item 446,
+ * laufey 0.8.1): `new Deno.BrowserWindow({ macosHiddenMode })` and `initialWindow.macosHiddenMode`
+ * in `.deno-desktop/app.json` choose how a hidden window is hidden on macOS's system WebView
+ * (`"invisible"`, the default, keeps it ordered in so a `backgroundThrottling: false` page keeps
+ * its timers' rate; `"orderOut"` really removes it). An older runtime ignores the window option and
+ * refuses the app.json key, so the packager writes it only from here on.
+ */
+export const FIRST_MACOS_HIDDEN_MODE_RUNTIME = "3.0.0-denext.25";
+
+/**
+ * Whether the Deno Desktop runtime `version` has the macOS hidden mode (from
+ * {@linkcode FIRST_MACOS_HIDDEN_MODE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the packager may write `initialWindow.macosHiddenMode`.
+ */
+export function supportsMacosHiddenMode(version: string): boolean {
+  return compareDenoVersions(version, FIRST_MACOS_HIDDEN_MODE_RUNTIME) >= 0;
+}
+
+/**
  * The first release of denext's Deno whose `process.execArgv` holds the run's Deno flags under
  * `deno run` / `deno serve` (`[]` in a compiled program and under `deno test`), so a child started
  * as `deno run ...process.execArgv <script>` gets the parent's scoped grants, unstable features and
