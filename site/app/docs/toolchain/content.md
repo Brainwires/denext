@@ -683,7 +683,7 @@ Deno holds a package version published less than its _minimum dependency age_ ag
 resolution: a compromised release is refused while it is fresh. The window is the root
 `deno.json`'s `minimumDependencyAge` (minutes, an ISO-8601 duration such as `"P3D"`, a fixed date,
 or `{ "age": …, "exclude": [...] }`), else `.npmrc`'s `min-release-age`, else Deno's default
-(Deno 2.9 holds two days, although its error hint says 24 hours). denext's own packages wait
+(24 hours). denext's own packages wait
 like every other dependency: denext never switches the hold off on your behalf, and only forwards
 a `--min-dep-age` you set yourself (`DENEXT_MIN_DEP_AGE`) to the Deno processes it starts.
 

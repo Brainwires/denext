@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
+  in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
+  resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
+  they still pinned the previous one, and said to wait. They now read the same 24-hour default,
+  and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
+  version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
+  `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
+
 ### Changed
 
 - **`deno task revocations sign` splits `--force` into two flags** (maintainers).

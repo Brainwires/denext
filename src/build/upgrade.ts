@@ -22,7 +22,7 @@
 // - **An unreachable registry is an error.** A version whose config JSR didn't serve is never
 //   taken as "incompatible": the plan fails with the reason instead.
 // - **Only versions Deno will resolve.** A version published more recently than the project's
-//   minimum dependency age (`src/build/dep-age.ts`; two days by default) is never picked; the
+//   minimum dependency age (`src/build/dep-age.ts`; 24 hours by default) is never picked; the
 //   plan names the newest one it skipped and when it becomes eligible.
 // - **The edit is textual.** Only the version inside each matched specifier changes, so the
 //   file keeps its comments, order and formatting (a `deno.jsonc` included).
