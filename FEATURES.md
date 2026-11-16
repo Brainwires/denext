@@ -708,7 +708,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Native desktop capabilities** — the `denext/mobile` calls reach the OS
   through a token-gated bridge once `denext desktop add <capability>` lists them
   in `desktop.capabilities` (which also derives the packaged app's permissions):
-  `secureStore` (Keychain, PasswordVault, libsecret), `fs` / `sqlite` in the
+  `secureStore` (Keychain, Credential Manager, libsecret), `fs` / `sqlite` in the
   app's folders, the OS's own open/save panels, the OS clipboard (text, HTML,
   PNG), native notifications (scheduled, repeating, action buttons, launch
   clicks) and the web `Notification` API on top of them (the backend posts its own with

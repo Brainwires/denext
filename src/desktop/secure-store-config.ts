@@ -34,6 +34,13 @@ export interface SecureStorePermissionContext {
    * change the permissions (`security` is baked exactly while `legacy` is on).
    */
   readonly macRuntimeStore: boolean;
+  /**
+   * The runtime has its own Windows secure store (`supportsWindowsSecureStore`: the Credential
+   * Manager, in the app's own process). With it Windows needs what Linux needs (no program); without
+   * it (an older or the stock runtime) Windows stores through Windows PowerShell and the WinRT
+   * PasswordVault. Optional: unset reads as `false` (an older runtime).
+   */
+  readonly windowsRuntimeStore?: boolean;
 }
 
 /**
@@ -78,15 +85,18 @@ export function secureStoreConfigProblem(value: unknown): [string, string] | nul
 /**
  * The Deno permissions the `secureStore` capability needs on `os`:
  *
- * - `sys: ["*"]` (Linux, macOS) only while the runtime does not gate its store on the baked
- *   capability list: an older runtime's `Deno.desktop.secureStore` needs an unscoped `--allow-sys`.
+ * - `sys: ["*"]` (Linux, macOS, Windows with the runtime's store) only while the runtime does not
+ *   gate its store on the baked capability list: an older runtime's `Deno.desktop.secureStore`
+ *   needs an unscoped `--allow-sys`.
  * - macOS `run: ["security"]` only while the legacy move is on (whatever the runtime): with
  *   `legacy: false` the capability never runs `security`, so it is never baked.
- * - Windows: Windows PowerShell by absolute path ({@linkcode WINDOWS_POWERSHELL}, never a bare
- *   `powershell.exe` found through `PATH`; WinRT PasswordVault), whatever the runtime: its own
- *   `Deno.desktop.secureStore` has no Windows backend. PowerShell is a script interpreter, so this
- *   `--allow-run` is full trust for any code in the process (`denext desktop add secure-store`
- *   and the docs say so); the capability runs only its constant script.
+ * - Windows, where the runtime has its own Windows store
+ *   ({@linkcode SecureStorePermissionContext.windowsRuntimeStore}): what Linux gets (no program).
+ * - Windows under an older or the stock runtime: Windows PowerShell by absolute path
+ *   ({@linkcode WINDOWS_POWERSHELL}, never a bare `powershell.exe` found through `PATH`; WinRT
+ *   PasswordVault). PowerShell is a script interpreter, so this `--allow-run` is full trust for any
+ *   code in the process (`denext desktop add secure-store` and the docs say so); the capability
+ *   runs only its constant script.
  *
  * @param os The target OS.
  * @param ctx The config and runtime facts.
@@ -96,9 +106,9 @@ export function secureStorePermissionSet(
   os: SecureStoreOs,
   ctx: SecureStorePermissionContext,
 ): { run?: string[]; sys?: string[] } {
-  if (os === "windows") return { run: [WINDOWS_POWERSHELL] };
+  if (os === "windows" && !ctx.windowsRuntimeStore) return { run: [WINDOWS_POWERSHELL] };
   const sys = ctx.bakedCapabilities ? {} : { sys: ["*"] };
-  if (os === "linux") return sys;
+  if (os !== "darwin") return sys;
   const security = ctx.legacy ? { run: ["security"] } : {};
   return { ...security, ...sys };
 }

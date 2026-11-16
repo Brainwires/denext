@@ -99,6 +99,21 @@ and this project adheres to
   keep-awake driver, the partial-download files). The compat `server-only` / `client-only` modules
   are imported plainly by their test, so the sharded CI merge no longer reports them as never
   loaded.
+- **The Deno Desktop secure store on Windows uses the runtime's own store, without PowerShell.**
+  Under runtime 3.0.0-denext.25 (laufey 0.8.1) `secureStore` on Windows is the Credential Manager,
+  written by the app's own process (DPAPI-encrypted, named per app id, values up to 64 KiB), so a
+  packaged app no longer bakes `--allow-run` of Windows PowerShell, a script interpreter that gave
+  any code in the app full trust: Windows bakes what Linux does. Values keep the same base64 form;
+  an item an older denext wrote to the WinRT PasswordVault moves over when the app looks it up
+  during its first run of the updated build (with `desktop.app.identifier` set), and a key first
+  read later stays in the PasswordVault. Under an older or the stock runtime Windows keeps the
+  PasswordVault through PowerShell. `desktopBuildFlags` takes `windowsSecureStore` (default: the
+  pinned runtime's), and `supportsWindowsSecureStore` gates it.
+- **The Window menu denext merges into is titled "Window" on macOS.** Runtime 3.0.0-denext.25 adds
+  Close Window (Cmd+W) to every macOS menu bar that has no close item, at the top of the submenu
+  titled exactly "Window" (else in one of its own), so a page's `setAppMenu` with a `"window"` or
+  `"&Window"` submenu, which `desktop.menu.window` merges into, would have shown two Window menus.
+  denext adds no Close Window or Cmd+W of its own.
 
 ### Fixed
 

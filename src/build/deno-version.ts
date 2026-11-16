@@ -480,6 +480,26 @@ export function supportsMacSecureStore(version: string): boolean {
 }
 
 /**
+ * The first Deno Desktop runtime whose `Deno.desktop.secureStore` serves Windows (laufey 0.8.1: the
+ * Credential Manager, written by the app's own process, DPAPI-encrypted, values up to 64 KiB; items
+ * an older denext wrote to the WinRT PasswordVault move over on their lookups during the first run
+ * of the updated app). Under an older or the stock runtime the Windows secure store is the
+ * PasswordVault through Windows PowerShell.
+ */
+export const FIRST_WINDOWS_SECURE_STORE_RUNTIME = "3.0.0-denext.25";
+
+/**
+ * Whether the Deno Desktop runtime `version` has its own Windows secure store (from
+ * {@linkcode FIRST_WINDOWS_SECURE_STORE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether Windows needs no PowerShell for the secure store.
+ */
+export function supportsWindowsSecureStore(version: string): boolean {
+  return compareDenoVersions(version, FIRST_WINDOWS_SECURE_STORE_RUNTIME) >= 0;
+}
+
+/**
  * The first Deno Desktop runtime whose webview backend decides a page's microphone and camera
  * requests (laufey API {@linkcode MEDIA_CAPTURE_LAUFEY_API}, `feat/media-capture-permission`): it
  * reads `"mediaCapture"` in `laufey-launch.json`, grants `getUserMedia` to the origins listed there

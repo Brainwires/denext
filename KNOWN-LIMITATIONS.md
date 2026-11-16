@@ -873,7 +873,15 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   Linux items are namespaced per app id; an item an older build stored under the
   shared attributes moves over only when the app looks it up during its first run of the updated
   build (as on macOS, a key first read later stays behind, no longer visible to the app), and an
-  app without `desktop.app.identifier` sees none of them.
+  app without `desktop.app.identifier` sees none of them. On Windows, where the runtime has its
+  own Windows store (the Credential Manager, DPAPI-encrypted, no PowerShell), values are limited to
+  64 KiB and a logon session with no credential store (a service, an SSH key logon) rejects
+  `backend_unavailable`; an item an older denext wrote to the WinRT PasswordVault moves over only
+  when the app looks it up during its first run of the updated build, with
+  `desktop.app.identifier` set and the app having run here before (a key first read later stays in
+  the PasswordVault, which the app no longer reads: nothing there is reachable without PowerShell).
+  Under an older or the stock runtime Windows keeps the PasswordVault through Windows PowerShell,
+  whose `--allow-run` is full trust.
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF
