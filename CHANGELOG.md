@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The kernel sandbox, as an opt-in preview.** The Deno toolchain and Desktop runtime denext pins
+  take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
+  command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,
+  `DENO_KERNEL_SANDBOX=off|warn` (which only lowers the mode), `deno compile --kernel-sandbox`
+  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. The preview is
+  settings and reports: nothing is enforced, `auto` (the default) changes nothing, `warn` prints
+  how many rules only Deno's checks would hold, the report prints the compiled policy and every
+  gap, and `enforce` / `broker` refuse to start because no enforcer is built in yet. Nothing
+  changes for a run that doesn't ask for it. The new [Kernel sandbox](https://denext.dev/docs/kernel-sandbox)
+  section describes the design, the guarantee matrix, the threat model and each OS; the full
+  sandbox, with automatic enforcement, lands in denext 5.0.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.24.** Besides the kernel
+  sandbox preview it tightens the Linux lifecycle-script jail's socket filter
+  (GHSA-9363-h8qp-jg52) and ports upstream fixes: `Deno.serve` closing after an early response to
+  an unread body and honoring `Connection: close`, header values with CR / LF refused, an abort
+  still cancelling a collected `fetch()` body, WebSocket close code 1006 for an abnormal closure
+  and a client refusing a wrong `Sec-WebSocket-Accept`, dynamic imports awaiting cached async
+  modules, a BOM stripped from `.env` and `.npmrc`, symlinked entrypoints for `run` / `serve`,
+  `deno compile --exclude` matched against canonical paths, `*.localhost` resolving to localhost,
+  timestamps on read-only files on Windows, and on the desktop the backend's process tree ended
+  with a Windows dev run and the WebGPU surface created on the UI thread. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists the changes.
+
 ## [4.19.0] - 2026-11-15
 
 ### Added
