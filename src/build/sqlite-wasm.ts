@@ -147,20 +147,37 @@ function unreachableBridgeOutputs(metafile: esbuild.Metafile): string[] {
   return [...dead].filter((o) => o === bridge || !importedBy(o, dead));
 }
 
+/**
+ * Whether a path names one of the `dead` outputs (relative to esbuild's working dir), with the
+ * working dir spelled any of the ways in `bases` (its realpath and the spelling the caller passed,
+ * which differ for a Windows 8.3 short name or a symlinked directory).
+ *
+ * @param dead The dead outputs, relative to the working dir.
+ * @param bases The working dir's spellings.
+ * @returns A predicate over an output's path (absolute, or relative to any of `bases`).
+ */
+export function deadOutputMatcher(
+  dead: readonly string[],
+  bases: readonly string[],
+): (path: string) => boolean {
+  const abs = new Set(bases.flatMap((b) => dead.map((o) => resolve(b, o))));
+  return (path) => bases.some((b) => abs.has(resolve(b, path)));
+}
+
 /** Remove the dead bridge outputs from disk (or from `outputFiles`) and from the metafile. */
 async function pruneUnreachableBridge(result: esbuild.BuildResult, cwd: string): Promise<void> {
   if (!result.metafile) return;
   const dead = unreachableBridgeOutputs(result.metafile);
   if (dead.length === 0) return;
-  // Metafile paths are relative to esbuild's working dir, which esbuild realpaths.
+  // Metafile paths are relative to esbuild's working dir, which esbuild realpaths, while the
+  // in-memory outputs keep `cwd`'s own spelling (a Windows 8.3 short name such as NIGHTN~1
+  // differs from its realpath): match an output against the dead set under both spellings.
   const base = await Deno.realPath(cwd).catch(() => cwd);
-  const abs = new Set(dead.map((o) => resolve(base, o)));
   if (result.outputFiles) {
-    result.outputFiles = result.outputFiles.filter((f) =>
-      !abs.has(resolve(base, f.path)) && !abs.has(resolve(cwd, f.path))
-    );
+    const isDead = deadOutputMatcher(dead, [base, cwd]);
+    result.outputFiles = result.outputFiles.filter((f) => !isDead(f.path));
   } else {
-    await Promise.all([...abs].map((p) => Deno.remove(p).catch(() => {})));
+    await Promise.all(dead.map((o) => Deno.remove(resolve(base, o)).catch(() => {})));
   }
   for (const o of dead) delete result.metafile.outputs[o];
 }

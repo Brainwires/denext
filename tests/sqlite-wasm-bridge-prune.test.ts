@@ -3,9 +3,9 @@
 // so the bridge prunes its own chunk and the engine's files when no output imports it.
 
 import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { join, resolve } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
-import { registerSqliteWasmBridge } from "../src/build/sqlite-wasm.ts";
+import { deadOutputMatcher, registerSqliteWasmBridge } from "../src/build/sqlite-wasm.ts";
 
 /** A temp app with a fake `@sqlite.org/sqlite-wasm` and a `denext/mobile`-shaped module. */
 async function fixture(): Promise<string> {
@@ -88,4 +88,17 @@ Deno.test("sqlite bridge: an in-memory build (write: false) drops the dead outpu
     await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("sqlite bridge: a dead output matches under either spelling of the working dir (Windows 8.3)", () => {
+  // esbuild's metafile is relative to the realpath (C:\Users\NIGHTNESS\…), the in-memory
+  // outputs keep the caller's spelling (C:\Users\NIGHTN~1\…): the same file under two names.
+  const long = resolve("/Users/NIGHTNESS/t");
+  const short = resolve("/Users/NIGHTN~1/t");
+  const isDead = deadOutputMatcher(["out/sqlite3-X.wasm"], [long, short]);
+  assert(isDead(join(short, "out", "sqlite3-X.wasm")), "the short spelling");
+  assert(isDead(join(long, "out", "sqlite3-X.wasm")), "the long spelling");
+  assert(!isDead(join(short, "out", "deeplink.js")), "a live output");
+  // With one spelling only (the old code's realpath), the short-named output is missed.
+  assert(!deadOutputMatcher(["out/sqlite3-X.wasm"], [long])(join(short, "out", "sqlite3-X.wasm")));
 });

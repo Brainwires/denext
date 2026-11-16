@@ -4,7 +4,10 @@
 // code, and a real hook after that prose is never hidden.
 
 import { assert, assertEquals, assertFalse } from "@std/assert";
+import { join } from "@std/path";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 import {
+  formatServerOnlyLeaks,
   serverOnlySignals,
   sourceMayContainJsx,
   stripLiteralsAndComments,
@@ -94,4 +97,34 @@ Deno.test("strip: jsx:false reads a .ts type assertion as code, not an element",
 Deno.test("strip: an unterminated literal blanks to the end (never fabricates a signal)", () => {
   assertFalse(strip(`const a = "useState(`).includes("useState"));
   assertFalse(strip("const a = `onClick=").includes("onClick"));
+});
+
+Deno.test({
+  name: dirLinkTestName(
+    "formatServerOnlyLeaks names a module by its real path relative to a symlinked project",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
+  // The dev crawl and the bundle's sources name a module by its real path; the project dir is
+  // the caller's spelling (macOS's `/var` for `/private/var`, a symlinked checkout).
+  const tmp = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_leak_fmt_" }));
+  try {
+    const real = join(tmp, "real");
+    await Deno.mkdir(join(real, "lib"), { recursive: true });
+    await Deno.writeTextFile(join(real, "lib", "db.ts"), 'import "node:fs";\n');
+    const link = join(tmp, "link");
+    await symlinkDir(real, link);
+    const module = join(real, "lib", "db.ts");
+    const text = formatServerOnlyLeaks(
+      new Map([[module, {
+        leak: { module, signals: ["node-import" as const] },
+        entries: ["the route of /"],
+      }]]),
+      link,
+    );
+    assert(text.includes(`  ${join("lib", "db.ts")} — `), text);
+    assertFalse(text.includes(module), "not the absolute real path");
+  } finally {
+    await Deno.remove(tmp, { recursive: true });
+  }
 });

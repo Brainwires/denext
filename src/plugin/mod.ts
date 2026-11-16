@@ -26,6 +26,7 @@ import type { DeployAdapter } from "../deploy/adapter.ts";
 import type { DeployAssetGroup, DeployRoute } from "../deploy/manifest.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../cli/deno-verbs.ts";
 import { hashedAssetFileName } from "./asset-name.ts";
+import { rootSpelling } from "../build/canonical-path.ts";
 import { dirname, globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
@@ -770,8 +771,10 @@ export function getPluginPrepareWatchDirs(projectRoot: string): string[] {
  * opened (an async `setup`) still has its globs' files delivered.
  */
 export function matchesPluginPrepareWatch(projectRoot: string, path: string): boolean {
+  // The watcher may name the file through the root's real path; the globs use the root as given.
+  const spelled = rootSpelling(projectRoot)(path);
   return prepareSteps.some(({ watch }) =>
-    watch.some((g) => globToRegExp(resolveGlob(projectRoot, g), { globstar: true }).test(path))
+    watch.some((g) => globToRegExp(resolveGlob(projectRoot, g), { globstar: true }).test(spelled))
   );
 }
 
@@ -786,12 +789,18 @@ export async function runMatchingPrepareSteps(
   changedPaths: readonly string[],
 ): Promise<boolean> {
   let ran = false;
+  // A watcher names a changed file through the project root's real path (macOS's `/var` →
+  // `/private/var`, a symlinked checkout), while the globs are resolved against the root as
+  // given: respell each path under the root first, so the globs match and a step is told the
+  // paths in the root's own spelling.
+  const respell = rootSpelling(context.projectRoot);
+  const spelled = changedPaths.map(respell);
   for (const { step, watch, plugin } of prepareSteps) {
     if (watch.length === 0) continue;
     const patterns = watch.map((g) =>
       globToRegExp(resolveGlob(context.projectRoot, g), { globstar: true })
     );
-    const changed = changedPaths.filter((p) => patterns.some((re) => re.test(p)));
+    const changed = spelled.filter((p) => patterns.some((re) => re.test(p)));
     if (changed.length === 0) continue;
     ran = true;
     try {
