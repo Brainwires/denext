@@ -1265,7 +1265,17 @@ const UPDATE_VERSION = "99.0.0";
 /** What `kitchen.hooksLog` answers (desktop/hooks.ts `HookLog`, plus the runtime's facts). */
 type HooksLog = HookLog & { navigationEvents: boolean; marksFrames: boolean };
 
-const hooksLog = (): Promise<HooksLog> => kitchen.hooksLog({});
+/**
+ * The backend's hook log. Bounded: a bridge call that never answers (a page whose top-level
+ * navigation is pending, say) fails the check with its own message instead of hanging the phase.
+ */
+const hooksLog = (): Promise<HooksLog> =>
+  Promise.race([
+    kitchen.hooksLog({}) as Promise<HooksLog>,
+    sleep(5000).then(() => {
+      throw new Error("kitchen.hooksLog did not answer within 5000 ms");
+    }),
+  ]);
 
 /** Two paths name the same folder (Windows: any case, either slash; no trailing separator). */
 function samePath(a: string, b: string, os: string): boolean {

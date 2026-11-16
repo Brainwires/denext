@@ -178,6 +178,8 @@ export function navigationGuard(log: HookLog): NavigationGuard {
     handler: (event) => {
       const prevented = armed !== null && event.url === armed;
       if (prevented) event.preventDefault();
+      // In the app's log too: a hung or unloaded page can't report what the hook saw.
+      console.log(`kitchen: will-navigate ${event.kind} ${event.url} (prevented: ${prevented})`);
       log.navigation.push({ url: event.url, window: event.window, kind: event.kind, prevented });
     },
   };

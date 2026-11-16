@@ -462,6 +462,7 @@ async function runHandlerWithDeadline(
   makeCtx: (signal: AbortSignal) => DesktopCapCtx,
   input: unknown,
   dev: boolean,
+  label: string,
 ): Promise<{ result: unknown } | Response> {
   const timeoutMs = method.timeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS;
   const abort = new AbortController();
@@ -476,6 +477,9 @@ async function runHandlerWithDeadline(
       return fail(408, "timeout", "the capability timed out");
     }
     if (err instanceof DesktopCapError) return fail(err.status, err.code, err.message, err.data);
+    // The page gets no detail outside dev (it could carry a path); the app's own log does, so a
+    // packaged app's unexpected failure can still be diagnosed.
+    console.error(`denext: desktop ${label} failed:`, err);
     return fail(
       500,
       "internal",
@@ -670,6 +674,7 @@ export function createDesktopBridge(
   const invokeMethod = async (
     cap: DesktopCapability,
     method: CapMethod,
+    methodName: string,
     args: unknown,
     request: Request,
     windowId: string,
@@ -686,6 +691,7 @@ export function createDesktopBridge(
         makeCtx(cap, lifeline(signal), windowId, callerOf(request, trust, windowId, marksFrames)),
       inp.input,
       dev,
+      `${cap.name}.${methodName}`,
     );
     if (ran instanceof Response) return ran;
     const out = await checkOutput(method, ran.result);
@@ -708,7 +714,7 @@ export function createDesktopBridge(
     if (!found) {
       return fail(404, "unavailable", `capability ${call.cap}.${call.method} is not enabled`);
     }
-    return await invokeMethod(found.cap, found.method, call.args, request, windowId);
+    return await invokeMethod(found.cap, found.method, call.method, call.args, request, windowId);
   };
 
   /**
