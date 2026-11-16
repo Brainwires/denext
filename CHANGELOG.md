@@ -97,6 +97,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A Deno Desktop capability's unexpected failure is logged in the app's own log.** Outside
+  `denext desktop dev` the page still gets only "the capability failed" (the error could carry a
+  path), and the error itself, named by its capability and method, now goes to the app's stderr,
+  so a packaged app's failure can be diagnosed.
+
 - **An app whose import map reaches denext through a symlink bundles each framework module once.**
   The modules the app's `deno.json` names directly (`mod.ts`, `src/jsx/jsx-runtime.ts`, …) loaded
   under the linked spelling, as the app's config resolves them, while the framework's own imports
