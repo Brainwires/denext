@@ -231,8 +231,9 @@ else writes `coverage/`.
 
 **The per-file coverage ratchet.** Besides the aggregate 85% and the fixed per-file floors
 (`scripts/coverage-floor.ts`), `deno task test:coverage` holds every module under `src/cli`,
-`src/server`, `src/compat` and `packages/` to the line / branch / function coverage
-`scripts/coverage-baseline.json` records for it (`scripts/coverage-ratchet.ts`): a file may not
+`src/server`, `src/compat`, `src/client/devtools-panel`, `src/desktop`, `src/ui` and `packages/` to
+the line / branch / function coverage `scripts/coverage-baseline.json` records for it
+(`scripts/coverage-ratchet.ts`): a file may not
 drop below its numbers (by more than one line, branch or function), and a file new to the
 baseline needs 85%. The numbers only go up. When a run beats them, it lists the files; record
 them from CI's report without re-running the suite locally:

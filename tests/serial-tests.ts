@@ -45,6 +45,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/desktop-app-dirs.test.ts",
   "tests/desktop-deno-flags.test.ts",
   "tests/desktop-doctor.test.ts",
+  // Points PATH at a stand-in `caffeinate` / `systemd-inhibit` (the keep-awake driver).
+  "tests/desktop-keep-awake-driver.test.ts",
   "tests/desktop-pinned-runtime.test.ts",
   "tests/desktop-run.test.ts",
   "tests/desktop-security.test.ts",
@@ -116,7 +118,17 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/tanstack-code-split.test.ts",
   "tests/toolchain-audit.test.ts",
   "tests/toolchain-download-timeouts.test.ts",
+  // Sets and restores DENEXT_SECRET_KEY (the admin endpoint's key).
+  "tests/ui-app-admin.test.ts",
+  // Points DENO_BIN at a stand-in `deno` (the database child runner).
+  "tests/ui-database-kit.test.ts",
   "tests/ui-desktop-feature.test.ts",
+  // Points DENO_BIN at a stand-in `deno` (the dev server the panel starts).
+  "tests/ui-dev-start.test.ts",
+  // Point PATH at a stand-in `docker` / opener / `security`.
+  "tests/ui-logs-sources.test.ts",
+  "tests/ui-open.test.ts",
+  "tests/ui-signing.test.ts",
 ];
 
 /** Helpers that change process-wide state: a test file importing one is serial too. */

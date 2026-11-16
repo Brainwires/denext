@@ -86,6 +86,14 @@ and this project adheres to
   happens on a runtime without it. Release numbers stay in this changelog and on the pages whose
   subject is versions (runtime reference, toolchain, desktop runtime); a docs test fails on a new
   one anywhere else, with a commented allowlist for dated records.
+- **The coverage ratchet covers `src/desktop` and `src/ui`, and its floors match what CI
+  measures** (maintainers). `scripts/coverage-baseline.json` records each Deno Desktop runtime and
+  project UI module, the files whose numbers CI's report beats are raised to them, and new tests
+  lift the weakest `denext ui` and desktop modules (the services and dev-server panels, the logs
+  readers, the third-party options reader, the browser opener, the database child runner, the
+  keep-awake driver, the partial-download files). The compat `server-only` / `client-only` modules
+  are imported plainly by their test, so the sharded CI merge no longer reports them as never
+  loaded.
 
 ### Fixed
 

@@ -252,6 +252,76 @@ Deno.test("dev-stop: the real probe reads the identity a dev-state endpoint publ
   }
 });
 
+Deno.test("dev-stop: an identity naming a project directory that no longer exists is a mismatch", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_dev_stop_" });
+  try {
+    const devJson = await publish(dir, { origin: "http://127.0.0.1:3000", port: 3000, pid: PID });
+    const rec = recorder({
+      probe: () => Promise.resolve({ pid: PID, projectDir: join(dir, "gone-since") }),
+    });
+    assertEquals((await stopDevServer(dir, rec.deps)).status, "mismatch");
+    assertEquals(rec.kills, [], "nothing proves it is this project's server");
+    assert(await exists(devJson));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dev-stop: a platform with no tree kill gets the graceful signal, then says to stop the pid by hand", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_dev_stop_" });
+  try {
+    const devJson = await publish(dir, { origin: "http://127.0.0.1:3000", port: 3000, pid: PID });
+    const rec = recorder({
+      os: "freebsd",
+      probe: () => Promise.resolve({ pid: PID, projectDir: dir }), // never drains
+    });
+    const outcome = await stopDevServer(dir, rec.deps);
+    assertEquals(outcome.status, "unsupported");
+    assert(outcome.message.includes(`Stop pid ${PID} yourself`), outcome.message);
+    assertEquals(rec.kills, [[PID, "SIGTERM"]], "the graceful signal is still tried");
+    assertEquals(rec.runs, [], "no helper exists to run");
+    assert(await exists(devJson), "a server still running keeps its file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name:
+    "dev-stop: a SIGTERM the process refuses goes straight to the tree kill (the real helper), and a file the server already removed is fine",
+  ignore: Deno.build.os === "windows", // runs the host's real `pkill`
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "denext_dev_stop_" });
+    try {
+      const devJson = await publish(dir, { origin: "http://127.0.0.1:3000", port: 3000, pid: PID });
+      const signals: [number, Deno.Signal][] = [];
+      let killed = false;
+      const outcome = await stopDevServer(dir, {
+        os: Deno.build.os,
+        graceMs: 50,
+        // SIGTERM throws (Deno.kill's "not ours to signal"); SIGKILL lands.
+        kill: (pid, signal) => {
+          signals.push([pid, signal]);
+          if (signal === "SIGTERM") throw new Deno.errors.PermissionDenied("not permitted");
+          killed = true;
+        },
+        // No `run` seam: the module's own helper runs `pkill -KILL -P <pid>`, which finds no
+        // children of a pid nothing has — its non-zero exit is ignored by design.
+        probe: async () => {
+          if (!killed) return { pid: PID, projectDir: dir };
+          await Deno.remove(devJson).catch(() => {}); // the server cleaned up after itself
+          return null;
+        },
+      });
+      assertEquals(outcome.status, "stopped");
+      assertEquals(signals, [[PID, "SIGTERM"], [PID, "SIGKILL"]]);
+      assertEquals(await exists(devJson), false);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
 /** The seams, with every signal and helper run recorded instead of delivered. */
 function recorder(
   overrides: Partial<StopDevServerDeps> = {},

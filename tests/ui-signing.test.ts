@@ -6,6 +6,7 @@
 // lacking) a particular tool.
 
 import { assert, assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import {
   hasCommand,
   identityCommand,
@@ -75,4 +76,54 @@ Deno.test("a missing program is false, not a throw", async () => {
   assertEquals(await hasCommand("denext-definitely-not-installed-xyz"), false);
   // And something every POSIX box has, to prove the probe can say yes at all.
   if (Deno.build.os !== "windows") assert(await hasCommand("sh"));
+});
+
+/** Run `fn` with PATH set to `path` only, restoring it after. */
+async function withPath(path: string, fn: () => Promise<void>): Promise<void> {
+  const before = Deno.env.get("PATH");
+  Deno.env.set("PATH", path);
+  try {
+    await fn();
+  } finally {
+    if (before === undefined) Deno.env.delete("PATH");
+    else Deno.env.set("PATH", before);
+  }
+}
+
+Deno.test({
+  name:
+    "listing identities runs `security` from PATH (a stand-in here, never the keychain) and keeps only Developer ID",
+  ignore: Deno.build.os === "windows", // the stand-in is a shell script
+  async fn() {
+    const bin = await Deno.makeTempDir({ prefix: "dnx-fake-security-" });
+    try {
+      const out = REAL.replaceAll("\n", "\\n");
+      await Deno.writeTextFile(join(bin, "security"), `#!/bin/sh\nprintf '${out}\\n'\n`);
+      await Deno.chmod(join(bin, "security"), 0o755);
+      await withPath(bin, async () => {
+        const found = await listSigningIdentities("darwin");
+        assertEquals(found.map((i) => i.team), ["WT957SC7MJ"]);
+      });
+      // A failing `security` (a locked keychain) offers nothing.
+      await Deno.writeTextFile(join(bin, "security"), `#!/bin/sh\necho locked >&2\nexit 51\n`);
+      await withPath(bin, async () => {
+        assertEquals(await listSigningIdentities("darwin"), []);
+      });
+    } finally {
+      await Deno.remove(bin, { recursive: true });
+    }
+  },
+});
+
+Deno.test("with no `security` (or no shell) on PATH, nothing is offered and nothing throws", async () => {
+  const empty = await Deno.makeTempDir({ prefix: "dnx-no-security-" });
+  try {
+    await withPath(empty, async () => {
+      assertEquals(await listSigningIdentities("darwin"), []);
+      // The lookup's own shell is missing too: still false, not a throw.
+      assertEquals(await hasCommand("sh", "linux"), false);
+    });
+  } finally {
+    await Deno.remove(empty, { recursive: true });
+  }
 });
