@@ -362,17 +362,40 @@ jobs:
   # unpacked, then binary-smoke.sh runs and (on the native architecture) the verbs that read
   # framework files at run time (tests/integration/cli-binary-smoke.test.ts). A failure skips the
   # release, as a failed build leg does.
-  smoke:
+  # Picks the aarch64 Linux smoke leg's runner (Brainwires/.github's pick-runners action): our
+  # Linux arm64 pool while it has a free slot, else GitHub's ubuntu-24.04-arm at once. On GitHub's
+  # image (it must not wait in the queue it shortens); it never fails (the leg's `|| <image>`).
+  smoke_runners:
+    name: pick smoke runners
     needs: binaries
     if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+    outputs:
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@067b448d5eb4f03857159feba626dca848c52176 # pick-runners
+        with:
+          jobs: smoke_linux_arm=linux-arm64
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+  smoke:
+    needs: [binaries, smoke_runners]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && needs.binaries.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }
           - { os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }
-    # Stays on GitHub-hosted: no Linux arm64 pool for ubuntu-24.04-arm, and the macOS leg runs x86_64 under Rosetta, not verified on the self-hosted macOS image.
-    runs-on: ${{ matrix.os }}
+    # The aarch64 Linux leg runs where smoke_runners put it (our Linux arm64 pool, else
+    # ubuntu-24.04-arm). The macOS leg stays on GitHub-hosted: it runs x86_64 under Rosetta, not
+    # verified on the self-hosted macOS image.
+    runs-on: ${{ matrix.os == 'ubuntu-24.04-arm' && (fromJSON(needs.smoke_runners.outputs.plan || '{}').smoke_linux_arm || 'ubuntu-24.04-arm') || matrix.os }}
     permissions:
       contents: read
     steps:
@@ -436,7 +459,7 @@ jobs:
       plan: ${{ steps.pick.outputs.plan }}
     steps:
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@e3d63ffff8379e00e4d09f1d99b7b63647da1d74 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@067b448d5eb4f03857159feba626dca848c52176 # pick-runners
         with:
           # package-managers runs after `release` (on a final version only): it takes its runner.
           jobs: >-
