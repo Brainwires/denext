@@ -28,6 +28,13 @@ variants.
 
 ## Run it
 
+You need Node.js with npm (the Expo packages and the Capacitor CLI install from
+npm), and for the iOS tasks a Mac with Xcode. `ios` signs with your Apple
+developer team: set `DENEXT_IOS_TEAM` to its 10-character Team ID (Xcode must be
+signed in to that account; the build passes `-allowProvisioningUpdates`).
+`ios:check` needs no team. Run everything from this directory
+(`examples/expo-app`).
+
 ```sh
 npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's
 denext task dev                    # the app in a browser: http://localhost:3000
@@ -72,11 +79,12 @@ for the Lab tab.
 
 ### Regenerating the native files
 
-Every file denext writes into `ios/` and `android/` starts with a
-`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
-fails when a committed one is behind the template denext writes today (or was edited
-by hand). After a template change, re-run the installers: they upgrade an unedited
-file in place and leave the rest of the project alone.
+Every file denext writes into `ios/` (the example has no Android project) starts
+with a `denext-<family>-template: <n>` marker, and
+`tests/examples-native-templates.test.ts` fails when a committed one is behind
+the template denext writes today (or was edited by hand). After a template
+change, re-run the installers: they upgrade an unedited file in place and leave
+the rest of the project alone.
 
 ```sh
 deno run -A --node-modules-dir=none ../../cli.ts mobile add storage
@@ -95,9 +103,8 @@ After `denext task cap:sync` and `denext task ios`:
 2. **Lab → self-test.** The card at the top reads `ALL PASS: n/n passed` in a
    few seconds. On the phone nothing is SKIPped (the safe-area check runs only
    in the iOS shell).
-3. **Relaunch.** Kill and reopen the app, go to Lab: "AsyncStorage across
-   launches" shows a higher run number, and the note typed before is still in
-   the text field.
+3. **Relaunch.** Kill and reopen the app, go to Lab: the "Launches: n" line
+   shows a higher number, and the note typed before is still in the text field.
 4. **Keyboard.** Tap the note field: the keyboard opens and the field stays
    visible above it.
 5. **Try it.** Haptic buzzes; Alert shows a system dialog and the chosen button

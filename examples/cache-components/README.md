@@ -10,8 +10,8 @@ The single page renders in two lifetimes:
 
 - **Static shell** — the page chrome plus a [`use cache`](./lib/data.ts) data
   helper (`getCachedStamp`). Its body runs **once** and is cached, so the
-  timestamp it renders is stable across requests. The shell (with this island)
-  is prerendered and cached in the page cache.
+  timestamp it renders is stable across requests. The shell is prerendered and
+  cached in the page cache.
 - **Dynamic hole** — a Suspense boundary wrapping a component that calls
   `connection()` (a dynamic signal). During the prerender it **postpones**,
   becoming a per-request hole; on every request it is re-rendered (a fresh
@@ -25,10 +25,14 @@ page.
 ## Run
 
 ```sh
+# from this directory
 denext task dev      # http://localhost:3000
 # or
 denext task build && denext task start
 ```
+
+The page cache runs only in the production server (`denext task start`), so the `MISS` / `HIT`
+header and the stable shell show there; `denext task dev` renders every request fresh.
 
 ## How it works
 

@@ -8,12 +8,20 @@ iOS and Android.
 
 ## Run it
 
+From this directory (`examples/rn-desktop`). `deno.json` sets
+`nodeModulesDir: "manual"`, so `node_modules` is filled by an install step:
+`npm install` (needs Node.js) or `denext install`.
+
 ```
-npm install            # react-native-web (the app's own dependency; denext ships none)
-denext task dev        # in the browser
-denext task desktop    # export + open in a native window
-denext task desktop:dev  # live reload inside the window
+npm install                # react-native-web (the app's own dependency; denext ships none)
+denext task dev            # in the browser
+denext task desktop        # export + open in a native window (denext desktop run)
+denext task desktop:dev    # live reload inside the window
+denext task desktop:package  # installers for this OS in ./dist/ (scripts/package-*.ts)
 ```
+
+The desktop tasks download and SHA-256-verify denext's Deno Desktop runtime on
+first use; the keychain, context menu and clipboard calls need it.
 
 ## How it's wired
 

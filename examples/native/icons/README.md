@@ -2,8 +2,8 @@
 
 This example ships a full icon set — `app.icns` (macOS), `app.ico` (Windows),
 and `app.png` (Linux) — already wired into the `desktop` block of `deno.json`,
-so `denext task desktop:package` picks them up. Replace them with your own artwork
-to rebrand.
+so `denext task desktop:package` (and its `:linux` / `:windows` variants) picks
+them up. Replace them with your own artwork to rebrand.
 
 `deno desktop` uses a default icon unless you provide your own. The wiring in
 `deno.json` looks like:

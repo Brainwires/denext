@@ -20,12 +20,14 @@ With the plugin registered, a `pages/` tree is routed alongside `app/`.
 ## What it shows
 
 - **File routing** (`pages/index.tsx`, `pages/about.tsx`,
-  `pages/blog/[slug].tsx`, `pages/ssg/[id].tsx`) — index, static, and dynamic
-  routes.
+  `pages/blog/[slug].tsx`, `pages/ssg/[id].tsx`, `pages/product/[id].tsx`) —
+  index, static, and dynamic routes.
 - **Data fetching** — `getServerSideProps` (`pages/blog/[slug].tsx`,
   per-request, server-side — including the JSON fetch a soft navigation makes)
   and `getStaticProps` + `getStaticPaths` with `revalidate` ISR
-  (`pages/ssg/[id].tsx`).
+  (`pages/ssg/[id].tsx`), and a `fallback: true` route whose unknown ids render
+  a shell (`router.isFallback` from `useRouter`) until their props arrive
+  (`pages/product/[id].tsx`).
 - **Custom `_app`** (`pages/_app.tsx`) — wraps every page; its `.shell` node is
   shared across routes, so a correct soft navigation reconciles it in place
   rather than remounting.

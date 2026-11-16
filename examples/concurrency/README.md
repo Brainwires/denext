@@ -4,10 +4,14 @@ A runnable demo of denext's **fiber concurrency** — the things the earlier
 cooperative scheduler could _not_ do: **time-slicing** and **mid-flight
 interruption**.
 
+From the repo root:
+
 ```sh
 denext task example:concurrency          # build once, serve
 denext task example:concurrency --dev    # rebuild on each request
 ```
+
+From this directory, `denext task start` and `denext task dev` run the same server.
 
 Open <http://localhost:3003>.
 

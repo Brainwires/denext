@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs: the example READMEs match their examples.** Every `examples/*/README.md` was checked
+  against the example's files: wrong or missing tasks and `denext` verbs, commands that did not say
+  which directory they run in, stale API names and config keys, release numbers, and missing
+  prerequisites and environment variables are fixed, and marketing phrasing is gone. A test checks
+  that every `deno task` / `denext task` a README names exists in the deno.json it runs against
+  (a root task only where the README says it runs from the repo root).
+
 ## [4.19.0] - 2026-11-15
 
 ### Added

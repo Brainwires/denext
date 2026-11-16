@@ -7,6 +7,8 @@ under `src/routes/`, server functions, a server route, and a root route whose
 
 ## Run it
 
+From this directory (`examples/tanstack-start`):
+
 ```sh
 denext task install   # installs the TanStack packages into node_modules (once)
 denext task dev       # http://localhost:3000

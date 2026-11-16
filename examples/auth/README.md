@@ -62,8 +62,8 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
   and sessions — so someone who registered an address they don't own loses the
   account the moment its owner signs in (pre-account-hijacking protection).
 - **TOTP two-factor authentication** — `/account/security` enrols an authenticator
-  app (`enrollTotp`: the base32 secret and the `otpauth://` URI as text — denext
-  ships no QR renderer), confirms it with a first code (`confirmTotp`, which mints
+  app (`enrollTotp`: the base32 secret and the `otpauth://` URI, shown as text
+  here; `totpQrSvg(uri)` from `denext/server` renders the QR code), confirms it with a first code (`confirmTotp`, which mints
   ten backup codes shown **once**) and turns it off with a current code
   (`verifySecondFactor` + `disableTotp`, throttled). An enrolled user's sign-in —
   password or magic link — stops at `/mfa` (`pages.mfa`) holding a **pending**
@@ -81,10 +81,12 @@ disabled (`tests/auth-example.test.ts` drives the app that way in CI).
 ## Run it
 
 ```sh
+# from this directory
 denext task dev      # http://localhost:3000
 # or, production:
+denext task build
 AUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \
-  denext task build && denext task start
+  denext task start
 ```
 
 Demo account: `demo@denext.dev` / `password` — seeded on first run and, as the

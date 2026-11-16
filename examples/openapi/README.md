@@ -1,12 +1,17 @@
 # examples/openapi
 
-`@denext/openapi` in one app: a tiny pet store defined with `defineApi` + **Zod**, which the
-plugin turns — with no extra annotation — into an **OpenAPI 3.1** document at `/openapi.json`, an
-interactive **Swagger UI** at `/docs`, and an `openapi.json` file written by `denext task build`.
+`@denext/openapi` in one app: a tiny pet store defined with `defineApi` +
+**Zod**, which the plugin turns — with no extra annotation — into an **OpenAPI
+3.1** document at `/openapi.json`, an interactive **Swagger UI** at `/docs`, and
+an `openapi.json` file written by `denext task build`.
+
+From this directory (`examples/openapi`):
 
 ```sh
 denext task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json
 ```
+
+Then, in another terminal (the commands use `jq`):
 
 ```sh
 # the document
@@ -32,8 +37,9 @@ curl -s localhost:3000/api/pets -X POST -H "authorization: Bearer $TOKEN" \
 denext task openapi:types    # writes lib/api-types.gen.ts (committed; regenerate after changing an API)
 ```
 
-`lib/api-types.gen.ts` is what a **separate** frontend or script uses: openapi-typescript-style
-`paths`/`components`, plus denext's `ApiSchema`, which makes the client from JSR fully typed there:
+`lib/api-types.gen.ts` is what a **separate** frontend or script uses:
+openapi-typescript-style `paths`/`components`, plus denext's `ApiSchema`, which
+makes the client from JSR fully typed there:
 
 ```ts
 import { createApiClient } from "jsr:@denext/denext";
@@ -44,19 +50,22 @@ const pets = await api("/api/pets", "GET", { query: { species: "cat" } }); // ty
 
 ## Login & the Authorize button
 
-The config declares a bearer scheme (`securitySchemes`), so **Swagger UI shows an "Authorize"
-button**. Which operations need it is decided by **which builder each handler uses** — there is no
-`security` written on any definition:
+The config declares a bearer scheme (`securitySchemes`), so **Swagger UI shows
+an "Authorize" button**. Which operations need it is decided by **which builder
+each handler uses** — there is no `security` written on any definition:
 
-- `defineApi(...)` → **public** (no lock): the reads `GET /api/pets`, `GET /api/pets/{id}`, and
-  `POST /api/login`.
-- `authed.define(...)` → **protected** (locked): the writes `POST`/`PATCH`/`DELETE`.
+- `defineApi(...)` → **public** (no lock): the reads `GET /api/pets`,
+  `GET /api/pets/{id}`, and `POST /api/login`.
+- `authed.define(...)` → **protected** (locked): the writes
+  `POST`/`PATCH`/`DELETE`.
 
-`authed` is `createApi().use(requireBearer(authConfig, { scope: "pets:write" }))` — denext's
+`authed` is
+`createApi().use(requireBearer(authConfig, { scope: "pets:write" }))` — denext's
 **first-party** bearer middleware from `denext/server`, which already carries
-`documentsSecurity(…, [{ bearerAuth: [] }])`. So applying it does two things at once: it
-**enforces** the token (401 without one, 403 without the scope) and **documents** the requirement
-(the lock). One declaration, no repetition, and the doc can't drift from what's enforced.
+`documentsSecurity(…, [{ bearerAuth: [] }])`. So applying it does two things at
+once: it **enforces** the token (401 without one, 403 without the scope) and
+**documents** the requirement (the lock). One declaration, no repetition, and
+the doc can't drift from what's enforced.
 
 The tokens themselves are first-party too (`lib/auth.ts`):
 
@@ -69,47 +78,57 @@ const { token } = await issueApiToken(authConfig, {
 });
 ```
 
-`issueApiToken` returns `tok_` + 256 bits of entropy **once** and stores only its SHA-256 in the
-configured `AuthAdapter` (here `inMemoryAuthAdapter()`; use `sqliteAuthAdapter({ path })` to keep
-tokens across restarts). Verification is a hash lookup, and unknown / expired / revoked tokens all
-get the same 401. Inside a protected handler the token's identity is on the context:
-`ctx.token` (id, name, scopes, expiry), `ctx.user` (the adapter user) and `ctx.session` — the same
-shape `requireSession()` provides, so a handler works under either credential.
+`issueApiToken` returns `tok_` + 256 bits of entropy **once** and stores only
+its SHA-256 in the configured `AuthAdapter` (here `inMemoryAuthAdapter()`; use
+`sqliteAuthAdapter({ path })` to keep tokens across restarts). Verification is a
+hash lookup, and unknown / expired / revoked tokens all get the same 401. Inside
+a protected handler the token's identity is on the context: `ctx.token` (id,
+name, scopes, expiry), `ctx.user` (the adapter user) and `ctx.session` — the
+same shape `requireSession()` provides, so a handler works under either
+credential.
 
 To use it in `/docs`: expand **`POST /api/login`** → Try it out → send
-`{"username":"demo","password":"denext"}`, copy the `token`, click **Authorize** (top right),
-paste it, and every locked operation now sends `Authorization: Bearer <token>`.
+`{"username":"demo","password":"denext"}`, copy the `token`, click **Authorize**
+(top right), paste it, and every locked operation now sends
+`Authorization: Bearer <token>`.
 
-Because `denext.config.ts` also registers `denextAuth(authConfig)`, the management endpoints are
-mounted as well: a **cookie-signed-in** user can `POST /auth/tokens` to mint one, `GET /auth/tokens`
-to list them (redacted) and `DELETE /auth/tokens/:id` to revoke one. Those three never accept a
-bearer token as the credential — a leaked token can't mint or revoke another.
+Because `denext.config.ts` also registers `denextAuth(authConfig)`, the
+management endpoints are mounted as well: a **cookie-signed-in** user can
+`POST /auth/tokens` to mint one, `GET /auth/tokens` to list them (redacted) and
+`DELETE /auth/tokens/:id` to revoke one. Those three never accept a bearer token
+as the credential — a leaked token can't mint or revoke another.
 
-This is a demo store — the account is hardcoded and the adapter is in-memory, not for production.
+This is a demo store — the account is hardcoded and the adapter is in-memory,
+not for production.
 
 ## The docs renderer
 
-`denext.config.ts` sets `ui: "swagger"`. Three renderers are available — swap the one line:
+`denext.config.ts` sets `ui: "swagger"`. Three renderers are available — swap
+the one line:
 
-- `"swagger"` — Swagger UI, vendored in `@denext/openapi` and served from the app's origin
-  (interactive "try it").
-- `"scalar"` — Scalar API Reference, vendored and served from the app's origin the same way
-  (interactive).
-- `"builtin"` — a server-rendered, zero-JavaScript reference page (the default; strict-CSP
-  clean, no CDN). `examples/typed-api` shows this one.
+- `"swagger"` — Swagger UI, vendored in `@denext/openapi` and served from the
+  app's origin (interactive "try it").
+- `"scalar"` — Scalar API Reference, vendored and served from the app's origin
+  the same way (interactive).
+- `"builtin"` — a server-rendered, zero-JavaScript reference page (the default;
+  strict-CSP clean, no CDN). `examples/typed-api` shows this one.
 
-Each docs page answers with its own CSP, and none of the three names another origin: nothing
-loads from a CDN unless `cdn` asks for one (`builtin` also needs no inline styles).
+Each docs page answers with its own CSP, and none of the three names another
+origin: nothing loads from a CDN unless `cdn` asks for one (`builtin` also needs
+no inline styles).
 
 ## Why Zod
 
-Zod ≥ 4.2 implements [Standard JSON Schema](https://standardschema.dev/json-schema), so every
-parameter, request body, and response is described **in full** in the document. Any Standard
-Schema that does the same (ArkType, Valibot via `@valibot/to-json-schema`) or TypeBox works too;
-a schema without a JSON-Schema export shows up as `{}` plus a build-time lint warning. Zod is the
-only npm dependency here — denext's own runtime stays zero-npm.
+Zod ≥ 4.2 implements
+[Standard JSON Schema](https://standardschema.dev/json-schema), so every
+parameter, request body, and response is described **in full** in the document.
+Any Standard Schema that does the same (ArkType, Valibot via
+`@valibot/to-json-schema`) or TypeBox works too; a schema without a JSON-Schema
+export shows up as `{}` plus a build-time lint warning. Zod is the only npm
+dependency here — denext's own runtime stays zero-npm.
 
 ## Security
 
-The document describes your API. When that should not be public, set `expose: "dev"` (served only
-under `denext dev`) or an `authorize` gate. See `../../packages/openapi`.
+The document describes your API. When that should not be public, set
+`expose: "dev"` (served only under `denext dev`) or an `authorize` gate. See
+`../../packages/openapi`.

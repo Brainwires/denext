@@ -21,7 +21,7 @@ ignores (only exit code 2 blocks).
    project's `.claude/settings.json` (or `.claude/settings.local.json` to keep it to yourself), or
    your user settings if you want Loopy for every project — and replace `/path/to/denext` with this
    checkout's path. Merge it with any `hooks` you already have.
-3. Check it without Claude Code:
+3. Check it without Claude Code, from `examples/companion`:
 
    ```sh
    echo '{"hook_event_name":"Stop","cwd":"/tmp/demo"}' | deno run --allow-read --allow-env --allow-net=127.0.0.1 scripts/loopy-say.ts --from-hook

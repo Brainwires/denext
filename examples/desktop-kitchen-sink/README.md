@@ -19,7 +19,8 @@ desktop code.
 ## Run it
 
 ```
-denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.8)
+# from this directory
+denext task desktop            # export + open the window (needs denext's Deno Desktop runtime)
 denext task desktop:package    # write scripts/package-*.ts from the scaffold, then package
 denext task test:window        # package, launch and assert every check (exits 1 on a failure)
 denext task drive start        # launch the last build in drive mode (the manual checks, scripted)
@@ -45,9 +46,9 @@ token. It needs a LAN IPv4 address and, on Linux, a session with a Secret Servic
 | `--results <file>`    | Also write the results document to `<file>`                                                                                                                                          |
 | `--json`              | Print only the results document on stdout (the progress goes to stderr)                                                                                                              |
 
-Without `--runtime-dir` or `--stock-runtime` the runtime is denext's pinned one
-(`src/build/desktop-runtime-pin.json`), and the output's first lines name its version and the
-backend. An unknown flag is an error. `KITCHEN_SINK_TIMEOUT_MS` (default 240000) bounds each launch.
+Without `--runtime-dir` or `--stock-runtime` the runtime is the one denext downloads and verifies
+(`src/build/desktop-runtime-pin.json` names it), and the output's first lines name its version and
+the backend. An unknown flag is an error. `KITCHEN_SINK_TIMEOUT_MS` (default 240000) bounds each launch.
 
 The results document (`e2e/.run/results.json`, `--results`, `--json`) is the machine-readable run:
 
@@ -56,7 +57,7 @@ The results document (`e2e/.run/results.json`, `--results`, `--json`) is the mac
   "schema": 1,
   "os": "linux", "arch": "x86_64", "target": "x86_64-unknown-linux-gnu",
   "backend": "cef",
-  "runtime": { "mode": "pinned", "version": "3.0.0-rc.5", "dir": null },
+  "runtime": { "mode": "pinned", "version": "…", "dir": null },
   "flags": { "noPackage": false, "backend": "cef", … },
   "ok": false,
   "summary": { "pass": 70, "skip": 3, "fail": 1, "problems": 1 },
@@ -143,7 +144,7 @@ to `<folder>/events.jsonl`. The CLI's folder is `e2e/.drive` (`--dir`).
 
 - **macOS**: a logged-in session. The clipboard checks put your clipboard text back afterwards.
 - **Linux**: a window manager (maximize is a window-manager request on X11), an unlocked Secret
-  Service for `secureStore` (the pinned runtime reaches it through libsecret, `libsecret-1-0` on
+  Service for `secureStore` (denext's runtime reaches it through libsecret, `libsecret-1-0` on
   Debian / Ubuntu; there is no `secret-tool` path) and a notification server.
   `e2e/linux-session.sh deno task test:window` runs it headless (Xvfb, xfwm4, a private D-Bus
   session, gnome-keyring, dunst), with `XDG_DATA_HOME` / `XDG_CONFIG_HOME` pointed at a scratch
@@ -195,7 +196,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     desktop-file-utils i3-wm openbox xfwm4 weston sway libwebkit2gtk-4.1-0 libgtk-3-0 \
     libsoup-3.0-0 libayatana-appindicator3-1 libnss3 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
     libgbm1 libasound2t64 libglib2.0-bin ca-certificates curl unzip git fonts-dejavu-core
-# Deno 2.9.8 exactly (the pinned runtime's): copy the binary in, or install it with deno's script.
+# The Deno that denext's desktop runtime is built from (`denext toolchain status` names it).
+# Copy the binary in, or install it with deno's script.
 COPY deno /usr/local/bin/deno
 RUN useradd -m u
 USER u
@@ -210,7 +212,7 @@ docker run --rm --security-opt seccomp=unconfined --shm-size=1g -v "$PWD:/src" \
 
 | Area             | Through                                                             | Asserted                                                                                                                                                                                                                                                                                                                               |
 | ---------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime          | `runtimePlatform()`, `Deno.desktop`                                 | a desktop window on denext's pinned runtime                                                                                                                                                                                                                                                                                            |
+| Runtime          | `runtimePlatform()`, `Deno.desktop`                                 | a desktop window on denext's Deno Desktop runtime                                                                                                                                                                                                                                                                                      |
 | App origin       | `desktop.app.origin`                                                | `location.origin` is `kitchensink://app`                                                                                                                                                                                                                                                                                               |
 | Bridge events    | the `echo` diagnostic capability                                    | an event the runtime pushes reaches the page                                                                                                                                                                                                                                                                                           |
 | Preload          | `desktop.preload`                                                   | ran before the page's scripts, after the `__denext` global                                                                                                                                                                                                                                                                             |
@@ -257,8 +259,8 @@ notification permission (answer it once); while it is refused, the scheduling ch
 
 ## How it's wired
 
-- `denext.config.ts` enables every capability and the pinned-runtime features (`app.origin`,
-  `deepLinks`, `singleInstance`, `preload`, window size limits).
+- `denext.config.ts` enables every capability and the features that need denext's runtime
+  (`app.origin`, `deepLinks`, `singleInstance`, `preload`, window size limits).
 - `desktop/kitchen.ts` is the app's own desktop extension (`defineDesktopExtension`). It is the test
   harness: it tells the page whether the runner started it, writes the report, reads files from disk
   so the page can prove the native path ran, loads the Node-API addon and runs the updater checks.
