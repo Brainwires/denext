@@ -44,7 +44,8 @@ async function sources(): Promise<Map<string, string>> {
         }
         await visit(path);
       } else if (/\.tsx?$/.test(e.name) && !/[._]test\.tsx?$|\.d\.ts$/.test(e.name)) {
-        out.set(relative(ROOT, path), await Deno.readTextFile(path));
+        // POSIX keys on every OS (the allowlist and the messages name them so).
+        out.set(relative(ROOT, path).replaceAll("\\", "/"), await Deno.readTextFile(path));
       }
     }
   }

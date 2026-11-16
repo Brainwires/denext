@@ -8,7 +8,7 @@
 import { assertEquals } from "@std/assert";
 import { walk } from "@std/fs";
 import { parse } from "@std/jsonc";
-import { dirname, fromFileUrl, join, relative } from "@std/path";
+import { dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const EXAMPLES = join(ROOT, "examples");
@@ -27,7 +27,7 @@ function tasksAt(dir: string): Set<string> | null {
 
 /** The tasks of the nearest deno.json at or above `dir`, staying inside examples/. */
 function nearestTasks(dir: string): Set<string> {
-  for (let d = dir; d.startsWith(EXAMPLES + "/"); d = dirname(d)) {
+  for (let d = dir; d.startsWith(EXAMPLES + SEPARATOR); d = dirname(d)) {
     const tasks = tasksAt(d);
     if (tasks) return tasks;
   }
@@ -52,7 +52,7 @@ export function readmeTaskOffenders(
       const ok = name.startsWith("example:")
         ? rootTasks.has(name)
         : local.has(name) || (fromRoot && rootTasks.has(name));
-      if (!ok) offenders.push(`${relative(ROOT, readme)}: ${name}`);
+      if (!ok) offenders.push(`${relative(ROOT, readme).replaceAll("\\", "/")}: ${name}`);
     }
   }
   return offenders;
@@ -63,7 +63,7 @@ Deno.test("example READMEs name tasks that exist where they run", async () => {
   const offenders: string[] = [];
   let readmes = 0;
   for await (
-    const e of walk(EXAMPLES, { match: [/\/README\.md$/], skip: [/node_modules/] })
+    const e of walk(EXAMPLES, { match: [/[\\/]README\.md$/], skip: [/node_modules/] })
   ) {
     readmes++;
     offenders.push(...readmeTaskOffenders(e.path, await Deno.readTextFile(e.path), rootTasks));
