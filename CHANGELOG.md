@@ -21,6 +21,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop package` asks Gatekeeper to accept each notarized macOS installer.** After a
+  `.dmg` or a signed `.pkg` is notarized, stapled and its ticket validated, the package step runs
+  `spctl --assess --type open --context context:primary-signature` on the image and
+  `spctl --assess --type install` on the package, the checks a downloader's Mac makes, and fails
+  the run when Gatekeeper refuses one, so "ready to distribute" is never printed for an installer
+  it would block. Only a Developer-ID-signed, notarized run takes the step; unsigned and ad-hoc
+  builds are unchanged, and no script needs regenerating (the step lives in denext).
 - **The kitchen-sink window test refocuses its main window after the secondary-window check.**
   That check closed the window it opened and left the keyboard focus wherever the window manager
   put it, so the next check's maximize request timed out once on Linux (xfwm4 under Xvfb). It now

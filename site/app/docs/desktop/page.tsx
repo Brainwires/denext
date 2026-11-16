@@ -787,7 +787,13 @@ denext task desktop:package --arch universal`}
         are notarized and stapled too, submitted together: a disk image is code of its own to
         Gatekeeper, which refuses an unsigned one (<code>source=no usable signature</code> from{" "}
         <code>spctl -a -t open --context context:primary-signature</code>) whatever app it holds.
-        Every stapled ticket is checked with <code>xcrun stapler validate</code>.
+        Every stapled ticket is checked with{" "}
+        <code>xcrun stapler validate</code>, and then Gatekeeper is asked about each installer the
+        way a downloader&apos;s Mac asks:{" "}
+        <code>spctl --assess --type open --context context:primary-signature</code> for the{" "}
+        <code>.dmg</code> and <code>spctl --assess --type install</code> for the{" "}
+        <code>.pkg</code>. A refusal fails the run instead of shipping an installer Gatekeeper
+        blocks.
       </p>
       <p>
         The script&apos;s last line names what each kind of artifact is, and says{" "}
