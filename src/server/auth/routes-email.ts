@@ -139,7 +139,9 @@ async function magicLinkMessage(
   });
   const path = `${ctx.options.prefix}callback/${encodeURIComponent(provider.id)}`;
   const url = new URL(tokenLink(origin, path, token, identifier));
-  if (callbackUrl) url.searchParams.set("callbackUrl", afterSignIn(ctx.config, callbackUrl));
+  if (callbackUrl) {
+    url.searchParams.set("callbackUrl", afterSignIn(ctx.config, callbackUrl, ctx.url));
+  }
   return { identifier, url: url.href, token, purpose: "magic", expiresAt, provider: provider.id };
 }
 
@@ -392,7 +394,9 @@ async function confirmPage(
   const fields = [
     hidden("email", email),
     hidden("token", input.secret),
-    ...(input.callbackUrl ? [hidden("callbackUrl", input.callbackUrl)] : []),
+    ...(input.callbackUrl
+      ? [hidden("callbackUrl", afterSignIn(ctx.config, input.callbackUrl, ctx.url))]
+      : []),
   ].join("");
   const html = "<!doctype html>" +
     '<html lang="en"><head><meta charset="utf-8">' +

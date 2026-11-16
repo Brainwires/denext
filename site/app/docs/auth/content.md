@@ -2431,12 +2431,12 @@ A credentials or email sign-in that still owes a second factor resolves
 `{ ok: true, mfa: "required" }` instead of `{ ok: true, user }` — send the user on to your
 `pages.mfa` page.
 
-A `callbackUrl` handed to `signIn` or `signOut` is coerced to a **same-origin path**
-before anything navigates: these helpers assign it to `location.href` (or hand it to the
-server to reflect back), and a `callbackUrl` is routinely read straight out of the current
-query. An absolute URL on the page's own origin keeps its path, query and hash; a foreign
-absolute, a protocol-relative `//host/…` and a `javascript:` value all fall back to the
-default. The server coerces again — this is the half that guards the purely client-side
+A `callbackUrl` handed to `signIn`, `signOut` or `signInWithPasskey` is coerced to a
+**same-origin path** before anything navigates: these helpers assign it to `location.href`
+(or hand it to the server to reflect back), and a `callbackUrl` is routinely read straight
+out of the current query. Control characters and whitespace are removed first. An absolute
+URL on the page's own origin keeps its path, query and hash; a foreign absolute, a
+protocol-relative `//host/…` and a `javascript:` value all fall back to the default. The server coerces again — this is the half that guards the purely client-side
 navigation that never reaches it.
 
 A network failure, a non-JSON body or an error status from the session endpoint all read
@@ -3386,9 +3386,10 @@ restricts the `Chain ID`, `domains` allows message domains besides the app's own
   (with `strictAudience`), `exp` — required, so a token that omits it is rejected rather
   than treated as non-expiring — `nbf`, `iat` and `nonce`. The `redirect_uri` is pinned to
   `canonicalOrigin`, so a spoofed `Host` header can't steal the code.
-- **Open redirects.** Every `callbackUrl` is attacker-supplied, so an absolute URL is
-  admitted only when its origin matches `canonicalOrigin` (and then only its path is
-  kept); anything else falls back to the configured default.
+- **Open redirects.** Every `callbackUrl` comes from the request, so its control
+  characters and whitespace are removed, then a value with a scheme is admitted only when
+  its origin is `canonicalOrigin` or the request's own (and then only its path is kept);
+  anything else falls back to the configured default.
 - **Enumeration resistance.** A wrong password, an unknown account, a denied
   `signIn` callback and a refused account link are all the same generic `401`; a
   rate-limited attempt is the same generic `429`; an unknown bearer token, a revoked one

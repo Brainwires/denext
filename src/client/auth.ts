@@ -14,6 +14,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { createContext } from "../runtime/context.ts";
+import { sameOriginPath } from "./same-origin-path.ts";
 import {
   type Context,
   useCallback,
@@ -259,39 +260,6 @@ export function useSession(): ClientSession {
 /** The current path + query, or `"/"` when there is no `location` (SSR, tests). */
 function currentUrl(): string {
   return typeof location === "undefined" ? "/" : location.pathname + location.search;
-}
-
-/**
- * Coerce a caller-supplied `callbackUrl` to a **same-origin path**, because these helpers
- * navigate to it: `signOut({ callbackUrl })` assigns it to `location.href`, and `signIn`
- * hands it to the server which reflects it back as a `Location`. A `callbackUrl` is
- * routinely read straight out of the current URL's query, so it is attacker-influenced —
- * `javascript:…` would execute, `//evil.test/x` is protocol-relative and `https://evil.test`
- * absolute, and all three are open redirects (the `javascript:` one an XSS).
- *
- * An absolute URL on the page's OWN origin keeps only its path + query + hash; anything
- * else falls back. The server coerces again (`sameOriginRedirect`) — this is the half that
- * protects the purely client-side navigation, which never reaches the server at all.
- *
- * @param requested The caller's `callbackUrl`, if any.
- * @param fallback Where to go when `requested` is absent or foreign.
- * @returns A same-origin path, always starting with a single `/`.
- */
-function sameOriginPath(requested: string | undefined, fallback: string): string {
-  if (!requested) return fallback;
-  const origin = typeof location === "undefined" ? undefined : location.origin;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(requested)) {
-    // Absolute (or scheme-like: `javascript:`, `data:`) — admitted only on our own origin.
-    try {
-      const url = new URL(requested);
-      if (origin && url.origin === origin) return url.pathname + url.search + url.hash;
-    } catch { /* not a URL at all */ }
-    return fallback;
-  }
-  // Protocol-relative (`//evil.test/x`) is a foreign origin dressed as a path; a value
-  // that is not rooted at all is not a path we are willing to guess at either.
-  if (!requested.startsWith("/") || requested.startsWith("//")) return fallback;
-  return requested;
 }
 
 /**

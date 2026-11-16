@@ -77,7 +77,7 @@ export async function handleSignout(ctx: AuthRouteContext): Promise<Response> {
   const ended = await readAuthSession(ctx.config);
   await clearAuthSession(ctx.config);
   await emitAuthEvent(ctx.options, "signOut", { session: ended });
-  const back = afterSignOut(ctx.config, ctx.url.searchParams.get("callbackUrl"));
+  const back = afterSignOut(ctx.config, ctx.url.searchParams.get("callbackUrl"), ctx.url);
   // A session a SAML provider with Single Logout started: on to the IdP to end its session too.
   const idp = await samlLogoutUrl(ctx, ended, back);
   if (idp) return wantsJson(ctx.request) ? json({ ok: true, url: idp }) : redirect(idp);

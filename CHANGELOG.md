@@ -57,6 +57,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A sign-in `callbackUrl` is trimmed and checked as one origin.** A `callbackUrl` (credentials,
+  email code, magic link, MFA and passkey sign-ins, and the magic-link confirm page) has its
+  control characters and whitespace removed before its scheme is read; a value with a scheme is
+  kept, as its path, only on `canonicalOrigin` or the request's own origin, else
+  `pages.afterSignIn` applies. `safeRedirectLocation()` keeps a value relative unless it was an
+  absolute `http(s)://` URL as given, and `signInWithPasskey({ callbackUrl })` normalizes the value
+  in the browser as `signIn` does.
 - **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UI
   child behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from a
   working directory outside the project; the panels that run project code still start their own

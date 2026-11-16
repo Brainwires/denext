@@ -486,7 +486,7 @@ async function signInOwner(
   });
   const payload = await answer.json() as Record<string, unknown>;
   return json(
-    payload.mfa ? payload : { ...payload, url: afterSignIn(ctx.config, callbackUrl) },
+    payload.mfa ? payload : { ...payload, url: afterSignIn(ctx.config, callbackUrl, ctx.url) },
     answer.status,
   );
 }
@@ -512,7 +512,7 @@ async function handleAuthenticate(ctx: AuthRouteContext): Promise<Response | nul
   const callbackUrl = typeof body.callbackUrl === "string" ? body.callbackUrl : undefined;
   if (!pending) return await signInOwner(ctx, pk, verified, callbackUrl);
   const fresh = await completeStepUp(ctx, pending, "hwk");
-  return json({ ok: true, user: fresh.user, url: afterSignIn(ctx.config, callbackUrl) });
+  return json({ ok: true, user: fresh.user, url: afterSignIn(ctx.config, callbackUrl, ctx.url) });
 }
 
 // ---- management -----------------------------------------------------------------------
