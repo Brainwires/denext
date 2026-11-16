@@ -185,7 +185,10 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   WKWebView `decidePolicyForNavigationAction` (main frame), WebView2 `NavigationStarting` (main
   frame only), each asked again per redirect. WebKitGTK's navigation policy names no frame, so its
   backend refuses the main frame's response instead (after any redirect): the request has been
-  sent, but nothing from the response is shown or run. The Deno runtime passes the allowed origins
+  sent, but nothing from the response is shown or run. While an `onWillNavigate` handler is
+  subscribed and leaves a navigation to the guard, WebKitGTK decides a page with no child frames
+  at the navigation action instead, before anything loads; with no handler the guard still
+  refuses at the response. The Deno runtime passes the allowed origins
   at startup; denext writes `allowedNavigationOrigins` into `app.json`.
 - **Upstream:** planned.
 

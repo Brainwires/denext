@@ -5951,8 +5951,10 @@ export default {
               same-origin POST&apos;s method and body and loads a cross-origin one by URL.
             </li>
             <li>
-              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides at the
-              response: the request has already been sent, every <code>kind</code> is{" "}
+              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides a page
+              with no child frames at the navigation action, before anything loads. For a page with
+              child frames, a redirect, a reload or back / forward it decides at the response: the
+              request has already been sent. Either way every <code>kind</code> is{" "}
               <code>"other"</code> with no{" "}
               <code>initiator</code>, and back / forward and reloads are reported too.
             </li>

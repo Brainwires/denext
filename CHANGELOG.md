@@ -78,8 +78,10 @@ and this project adheres to
   (`DENO_PERMISSION_BROKER_PATH`) that speaks protocol v2 hands back opened files on Unix, `--seed=0`
   seeds `Math.random`, `Deno.resolveDns()` and `node:dns` work with a zoned link-local name server,
   a lockfile package name starting with a multi-byte character no longer panics, `--trace-exit`
-  exits when `Error.prepareStackTrace` throws, and the desktop CEF host makes no DNS-over-HTTPS
-  (secure DNS) connections, even when the system resolver is a DoH provider. It carries security
+  exits when `Error.prepareStackTrace` throws, the desktop CEF host makes no DNS-over-HTTPS
+  (secure DNS) connections, even when the system resolver is a DoH provider, and on Linux's
+  webview backend `onWillNavigate` decides a page with no child frames before anything loads, so
+  a navigation it refuses leaves the page running. It carries security
   hardening, tightens the Linux lifecycle-script jail's socket filter (GHSA-9363-h8qp-jg52) and
   ports upstream fixes: `Deno.serve` closing after an early response to
   an unread body and honoring `Connection: close`, header values with CR / LF refused, an abort

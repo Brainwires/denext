@@ -792,8 +792,9 @@ back / forward, reloads, sub-frames, popups, `about:blank` or the runtime's own)
 only on a runtime that reports navigation events (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`);
 on one that doesn't the hook is never called. While it is subscribed, CEF and WebView2 cancel each navigation and start it again
 as a new history entry (WebView2 as a GET, so a form POST loses its body; CEF keeps a same-origin POST);
-WebKitGTK decides at the response (the request already sent; `kind` `"other"`, no `initiator`, back /
-forward and reloads included). `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
+WebKitGTK decides a page with no child frames at the navigation action, before the load, and a page with
+child frames, a redirect, a reload or back / forward at the response (the request already sent); there every
+`kind` is `"other"` with no `initiator`, and back / forward and reloads are included. `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext toolchain status` names it), and the runtime takes its own version: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
