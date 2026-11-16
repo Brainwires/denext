@@ -711,11 +711,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `secureStore` (Keychain, PasswordVault, libsecret), `fs` / `sqlite` in the
   app's folders, the OS's own open/save panels, the OS clipboard (text, HTML,
   PNG), native notifications (scheduled, repeating, action buttons, launch
-  clicks) and the web `Notification` API on top of them, native context menus,
+  clicks) and the web `Notification` API on top of them (the backend posts its own with
+  `app.notify()` / `host.notify()`), native context menus,
   `shell`, `keep-awake`, `device`, global shortcuts, launch at login and native
   passkeys (`{ rpIds }` required). Picked files and folders travel as scoped
   handles, never paths. — `src/desktop/caps/mod.ts`,
-  `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
+  `src/desktop/notification-shim.ts`, `src/desktop/notify.ts`, `src/cli/commands/desktop-add.ts`.
 - **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
   on this machine, with a fix for each gap: the pinned runtime and its cache,
   the `deno` version, and on Linux the session's tray host (a StatusNotifierWatcher,
@@ -759,7 +760,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
   origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
-  `usageDescription`), and with Windows' privacy switch off the window refuses the device
+  `usageDescription`; `speechRecognitionUsageDescription` adds macOS's
+  `NSSpeechRecognitionUsageDescription` for the window's own speech recognition), and with
+  Windows' privacy switch off the window refuses the device
   (`checkPermission` reads `blocked`). — `src/build/desktop-media-capture.ts`,
   `src/build/desktop-capabilities.ts`.
 - **System stats** — the `systemStats` capability (runtime 3.0.0-denext.16):

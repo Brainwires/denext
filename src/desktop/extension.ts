@@ -23,6 +23,7 @@ import type {
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
 import type { DesktopAppMenusApi } from "./app-menus.ts";
 import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
+import type { DesktopNotifyOptions, DesktopPostedNotification } from "./notify.ts";
 
 export type { StandardSchemaV1 };
 
@@ -361,6 +362,18 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * unsubscribe.
    */
   onNotificationClick(fn: DesktopNotificationClickListener): () => void;
+  /**
+   * Post an OS notification now, as a page's `Notification` does and through the same path (the
+   * `notifications` capability): `title`, and optionally `body`, `tag` (another with the same tag
+   * replaces it; default a fresh `app-<uuid>`, never `denext-…`), JSON `data` (at most 4 KiB),
+   * `actions` (`{ id, title }` buttons) and `silent`. Its clicks reach
+   * {@linkcode DesktopExtensionHost.onNotificationClick} (and `runDesktop({ onNotificationClick })`)
+   * with that tag and data, never a page. Resolves `{ tag, close() }`. Rejects with a
+   * {@linkcode DesktopCapError}: `not_enabled` while the `notifications` capability is off,
+   * `unsupported` where the Deno Desktop runtime has no native notifications, `validation` for
+   * bad options.
+   */
+  notify(options: DesktopNotifyOptions): Promise<DesktopPostedNotification>;
   /**
    * Call `fn` before every top-level navigation of every window, ahead of the navigation guard
    * (`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`

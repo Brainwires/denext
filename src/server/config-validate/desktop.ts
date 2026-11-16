@@ -666,35 +666,46 @@ function hasXmlIllegal(text: string): boolean {
   return !text.isWellFormed();
 }
 
-/** `desktop.capabilities.microphone` / `camera`: a boolean, or `{ usageDescription?: string }`. */
+/**
+ * `desktop.capabilities.microphone` / `camera`: a boolean, or `{ usageDescription?: string }`
+ * (the microphone also `speechRecognitionUsageDescription?: string`).
+ */
 function validateMediaCapture(key: string, value: unknown, fail: Fail): void {
   if (value === undefined || typeof value === "boolean") return;
+  const options = key === "microphone"
+    ? ["usageDescription", "speechRecognitionUsageDescription"]
+    : ["usageDescription"];
   if (!isPlainObject(value)) {
-    fail(`desktop.capabilities.${key}`, "must be a boolean or { usageDescription?: string }");
+    fail(
+      `desktop.capabilities.${key}`,
+      `must be a boolean or { ${options.map((o) => `${o}?: string`).join(", ")} }`,
+    );
   }
   // Any other key would still turn the device on (`{ enabled: false }`), or be silently ignored
   // (`{ origins }`: the grant is the app origin alone).
   for (const other of Object.keys(value as Record<string, unknown>)) {
-    if (other !== "usageDescription") {
+    if (!options.includes(other)) {
       fail(
         `desktop.capabilities.${key}.${other}`,
-        "is not an option (only usageDescription; the grant is always the app's own origin, and " +
-          "`false` turns the device off)",
+        `is not an option (only ${options.join(" / ")}; the grant is always the app's own ` +
+          "origin, and `false` turns the device off)",
       );
     }
   }
-  const text = (value as Record<string, unknown>).usageDescription;
-  if (text !== undefined && (typeof text !== "string" || text.trim() === "")) {
-    fail(
-      `desktop.capabilities.${key}.usageDescription`,
-      "must be a non-empty string (what macOS shows when it asks the user)",
-    );
-  }
-  if (typeof text === "string" && hasXmlIllegal(text)) {
-    fail(
-      `desktop.capabilities.${key}.usageDescription`,
-      "must not contain control characters other than tab and newline (Info.plist is XML)",
-    );
+  for (const option of options) {
+    const text = (value as Record<string, unknown>)[option];
+    if (text !== undefined && (typeof text !== "string" || text.trim() === "")) {
+      fail(
+        `desktop.capabilities.${key}.${option}`,
+        "must be a non-empty string (what macOS shows when it asks the user)",
+      );
+    }
+    if (typeof text === "string" && hasXmlIllegal(text)) {
+      fail(
+        `desktop.capabilities.${key}.${option}`,
+        "must not contain control characters other than tab and newline (Info.plist is XML)",
+      );
+    }
   }
 }
 

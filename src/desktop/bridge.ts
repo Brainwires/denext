@@ -74,6 +74,7 @@ import type {
 import { desktopConfirm } from "./message-box.ts";
 import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
+import { desktopBackendNotifier, type DesktopNotify } from "./notify.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -256,6 +257,11 @@ export interface DesktopBridge {
    * then says which window reloaded.
    */
   navigationStarted(): Promise<void>;
+  /**
+   * Post an OS notification from the backend through the `notifications` capability (what
+   * `DesktopRuntime.notify` and an extension's `host.notify` are): `not_enabled` while it is off.
+   */
+  readonly notify: DesktopNotify;
   /** The event log (tests). */
   readonly events: DesktopEventLog;
 }
@@ -604,6 +610,8 @@ export function createDesktopBridge(
     secureStore: secureStoreOf(cap),
   });
 
+  // The backend's notifications go through the enabled `notifications` capability, if any.
+  const notify = desktopBackendNotifier(registry.values());
   // Each capability's process-level host, handed once to its `setup` before any page can call.
   const lifecycle = options.lifecycle ?? NO_LIFECYCLE;
   setUpCapabilities(registry.values(), (cap) => ({
@@ -621,6 +629,7 @@ export function createDesktopBridge(
     ...hostAppMenus(options.appMenus),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
     onNotificationClick: (fn) => options.onNotificationClick?.(fn) ?? (() => {}),
+    notify,
     onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
@@ -749,6 +758,7 @@ export function createDesktopBridge(
     navigationStarted: async () => {
       if ((options.windowCount?.() ?? 1) <= 1) await pageLoaded("main");
     },
+    notify,
     events,
   };
 }

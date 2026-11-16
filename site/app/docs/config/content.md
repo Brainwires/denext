@@ -458,7 +458,9 @@ See [Writing a plugin](/docs/plugins).
   (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
   `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
   `updates`, `pty` (`true` or `{ onWindowClose, replayBytes, shells }`), `microphone` and `camera`
-  (`true` or `{ usageDescription }`), and `extensions` (module paths of your
+  (`true` or `{ usageDescription }`; the microphone also takes
+  `speechRecognitionUsageDescription`, macOS's `NSSpeechRecognitionUsageDescription`), and
+  `extensions` (module paths of your
   `defineDesktopExtension` modules).
   The desktop runtime serves only what is
   listed, and the scaffolded packaging scripts derive the binary's `--allow-*`

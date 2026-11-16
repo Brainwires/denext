@@ -16938,8 +16938,8 @@
             {
               "kind": "property",
               "name": "microphone",
-              "signature": "microphone?: boolean | DesktopMediaCaptureConfig",
-              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin, except on Linux,\nwhere WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with\n`allow=\"microphone\"` gets it). The packaged app's `laufey-launch.json` carries the grant\n(`\"mediaCapture\"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS\nbuild the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime\n3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older\none. macOS still asks the user once. The options take `usageDescription` only."
+              "signature": "microphone?: boolean | DesktopMicrophoneConfig",
+              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin, except on Linux,\nwhere WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with\n`allow=\"microphone\"` gets it). The packaged app's `laufey-launch.json` carries the grant\n(`\"mediaCapture\"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS\nbuild the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime\n3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older\none. macOS still asks the user once. The options take `usageDescription` and\n`speechRecognitionUsageDescription` (macOS's `NSSpeechRecognitionUsageDescription`, written\nonly when given: the text macOS shows before a page's speech recognition may run)."
             },
             {
               "kind": "property",
@@ -17552,6 +17552,32 @@
               "name": "window",
               "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean; items?: readonly DesktopWindowMenuItemConfig[] }",
               "doc": "The \"Window\" submenu's items."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMicrophoneConfig",
+          "slug": "DesktopMicrophoneConfig",
+          "kind": "interface",
+          "signature": "interface DesktopMicrophoneConfig",
+          "doc": "desktop.capabilities.microphone options.",
+          "docFull": "`desktop.capabilities.microphone` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "usageDescription",
+              "signature": "usageDescription?: string",
+              "doc": "What macOS shows when it asks the user for the microphone (`NSMicrophoneUsageDescription`).\nDefault: \"<app name> uses your microphone.\"."
+            },
+            {
+              "kind": "property",
+              "name": "speechRecognitionUsageDescription",
+              "signature": "speechRecognitionUsageDescription?: string",
+              "doc": "What macOS shows when a page's speech recognition (WebKit's `webkitSpeechRecognition`) asks\nthe user (`NSSpeechRecognitionUsageDescription` in `Info.plist`). Written only when set: macOS\nends an app that starts speech recognition without it. It needs no entitlement of its own."
             }
           ]
         },
@@ -46285,6 +46311,12 @@
           "members": [
             {
               "kind": "property",
+              "name": "notify",
+              "signature": "readonly notify: DesktopNotify",
+              "doc": "Post an OS notification from the backend through the `notifications` capability (what\n`DesktopRuntime.notify` and an extension's `host.notify` are): `not_enabled` while it is off."
+            },
+            {
+              "kind": "property",
               "name": "events",
               "signature": "readonly events: DesktopEventLog",
               "doc": "The event log (tests)."
@@ -47216,6 +47248,12 @@
             },
             {
               "kind": "method",
+              "name": "notify",
+              "signature": "notify(options: DesktopNotifyOptions): Promise<DesktopPostedNotification>",
+              "doc": "Post an OS notification now, as a page's `Notification` does and through the same path (the\n`notifications` capability): `title`, and optionally `body`, `tag` (another with the same tag\nreplaces it; default a fresh `app-<uuid>`, never `denext-…`), JSON `data` (at most 4 KiB),\n`actions` (`{ id, title }` buttons) and `silent`. Its clicks reach\n{@linkcode DesktopExtensionHost.onNotificationClick} (and `runDesktop({ onNotificationClick })`)\nwith that tag and data, never a page. Resolves `{ tag, close() }`. Rejects with a\n{@linkcode DesktopCapError}: `not_enabled` while the `notifications` capability is off,\n`unsupported` where the Deno Desktop runtime has no native notifications, `validation` for\nbad options."
+            },
+            {
+              "kind": "method",
               "name": "onWillNavigate",
               "signature": "onWillNavigate(fn: DesktopWillNavigateHandler): () => void",
               "doc": "Call `fn` before every top-level navigation of every window, ahead of the navigation guard\n(`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`\n(`\"link\"`, `\"script\"`, `\"redirect\"`, `\"window-open\"`, `\"other\"`) and the `initiator` when the\nengine says: `event.preventDefault()` refuses it, `event.allow()` loads it in place although\nthe guard would send it to the browser (a refusal wins). Decide synchronously; a throw is\nlogged and decides nothing. Never called on a runtime without the hook (one that publishes no\n`Deno.desktop.navigationEvents`). Returns the unsubscribe."
@@ -48048,6 +48086,94 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopNotify",
+          "slug": "DesktopNotify",
+          "kind": "typeAlias",
+          "signature": "type DesktopNotify = (options: DesktopNotifyOptions) => Promise<DesktopPostedNotification>",
+          "doc": "Post an OS notification from the backend. Rejects with a DesktopCapError: not_enabled while the notifications capability is off, unsupported where the Deno Desktop runtime has no native notifications, validation for bad options.",
+          "docFull": "Post an OS notification from the backend. Rejects with a {@linkcode DesktopCapError}:\n`not_enabled` while the `notifications` capability is off, `unsupported` where the Deno Desktop\nruntime has no native notifications, `validation` for bad options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopNotifyAction",
+          "slug": "DesktopNotifyAction",
+          "kind": "interface",
+          "signature": "interface DesktopNotifyAction",
+          "doc": "An action button on a backend notification.",
+          "docFull": "An action button on a backend notification.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "What a click on it reports as the click's `action` (at most 1024 UTF-8 bytes)."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title: string",
+              "doc": "The button's label."
+            }
+          ]
+        },
+        {
+          "name": "DesktopNotifyOptions",
+          "slug": "DesktopNotifyOptions",
+          "kind": "interface",
+          "signature": "interface DesktopNotifyOptions",
+          "doc": "What DesktopNotify posts.",
+          "docFull": "What {@linkcode DesktopNotify} posts.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title: string",
+              "doc": "The title (up to 4096 characters)."
+            },
+            {
+              "kind": "property",
+              "name": "body",
+              "signature": "readonly body?: string",
+              "doc": "The body text (default none)."
+            },
+            {
+              "kind": "property",
+              "name": "tag",
+              "signature": "readonly tag?: string",
+              "doc": "The notification's tag: posting another with the same tag replaces it, and its clicks carry\nit (`onNotificationClick`'s `click.tag`). 1–256 UTF-8 bytes, never starting with `denext-`\n(denext's own tags). Default: a fresh `app-<uuid>`."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data?: unknown",
+              "doc": "JSON data the click brings back (`click.data`), at most 4 KiB as JSON; an object may not have\na top-level `denext` key (denext's own notifications keep theirs there)."
+            },
+            {
+              "kind": "property",
+              "name": "actions",
+              "signature": "readonly actions?: readonly DesktopNotifyAction[]",
+              "doc": "Action buttons; a click on one reports its `id` as the click's `action`."
+            },
+            {
+              "kind": "property",
+              "name": "silent",
+              "signature": "readonly silent?: boolean",
+              "doc": "Post it without a sound."
+            }
+          ]
+        },
+        {
           "name": "desktopNpmArgs",
           "slug": "desktopNpmArgs",
           "kind": "function",
@@ -48655,6 +48781,32 @@
           ]
         },
         {
+          "name": "DesktopPostedNotification",
+          "slug": "DesktopPostedNotification",
+          "kind": "interface",
+          "signature": "interface DesktopPostedNotification",
+          "doc": "A posted backend notification.",
+          "docFull": "A posted backend notification.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "tag",
+              "signature": "readonly tag: string",
+              "doc": "Its tag (the one given, or the one denext picked)."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): void",
+              "doc": "Remove it: from the OS's notification centre once shown, or before it shows."
+            }
+          ]
+        },
+        {
           "name": "DesktopProxyFn",
           "slug": "DesktopProxyFn",
           "kind": "typeAlias",
@@ -48765,6 +48917,12 @@
               "name": "tray",
               "signature": "readonly tray?: DesktopTrayHandle",
               "doc": "The backend tray (`desktop.tray` / `runDesktop({ tray })`), or `undefined` when the app has none\nor the session has no tray host (the window was shown instead)."
+            },
+            {
+              "kind": "property",
+              "name": "notify",
+              "signature": "readonly notify: DesktopNotify",
+              "doc": "Post an OS notification now, as a page's `Notification` does and through the same path (the\n`notifications` capability, which must be enabled): `notify({ title, body?, tag?, data?,\nactions?, silent? })` resolves `{ tag, close() }`, and its clicks reach\n{@linkcode RunDesktopOptions.onNotificationClick} / {@linkcode DesktopRuntime.onNotificationClick}\nwith that tag and data, never a page. Rejects with a `DesktopCapError`: `not_enabled` while the\ncapability is off, `unsupported` where the Deno Desktop runtime has no native notifications\n(and in a sidecar's child), `validation` for bad options."
             },
             {
               "kind": "property",

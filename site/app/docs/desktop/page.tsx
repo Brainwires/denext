@@ -787,7 +787,13 @@ denext task desktop:package --arch universal`}
         are notarized and stapled too, submitted together: a disk image is code of its own to
         Gatekeeper, which refuses an unsigned one (<code>source=no usable signature</code> from{" "}
         <code>spctl -a -t open --context context:primary-signature</code>) whatever app it holds.
-        Every stapled ticket is checked with <code>xcrun stapler validate</code>.
+        Every stapled ticket is checked with{" "}
+        <code>xcrun stapler validate</code>, and then Gatekeeper is asked about each installer the
+        way a downloader&apos;s Mac asks:{" "}
+        <code>spctl --assess --type open --context context:primary-signature</code> for the{" "}
+        <code>.dmg</code> and <code>spctl --assess --type install</code> for the{" "}
+        <code>.pkg</code>. A refusal fails the run instead of shipping an installer Gatekeeper
+        blocks.
       </p>
       <p>
         The script&apos;s last line names what each kind of artifact is, and says{" "}
@@ -4201,6 +4207,27 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
         as untrusted. Without denext&apos;s pinned runtime (and in a sidecar&apos;s child) none of
         these is ever called.
       </p>
+      <p id="desktop-backend-notify">
+        The backend posts its own with <code>app.notify(options)</code> on what{" "}
+        <code>runDesktop()</code> resolves with, or an extension&apos;s{" "}
+        <code>host.notify(options)</code>, through the same path a page&apos;s{" "}
+        <code>Notification</code> takes (the runtime&apos;s notifications, or the Deno{" "}
+        <code>Notification</code> where the runtime cannot schedule), so the{" "}
+        <code>notifications</code> capability must be on, as for the page. The options are{" "}
+        <code>title</code>, and optionally <code>body</code>, <code>tag</code>{" "}
+        (another with the same tag replaces it; default a fresh <code>app-&lt;uuid&gt;</code>; never
+        {" "}
+        <code>denext-…</code>, denext&apos;s own tags), JSON <code>data</code>{" "}
+        (at most 4 KiB, no top-level <code>denext</code> key), <code>actions</code>{" "}
+        (<code>{"{ id, title }"}</code> buttons) and <code>silent</code>. It resolves{" "}
+        <code>{"{ tag, close() }"}</code>, and its clicks reach the hooks above with that tag and
+        data, never a page. It rejects with a <code>DesktopCapError</code>: <code>not_enabled</code>
+        {" "}
+        while the capability is off, <code>unsupported</code>{" "}
+        where the Deno Desktop runtime has no native notifications (and in a sidecar&apos;s child),
+        {" "}
+        <code>validation</code> for bad options.
+      </p>
       <Code lang="ts">
         {`const app = await runDesktop({
   ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
@@ -4209,11 +4236,10 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
   },
 });
 // Elsewhere in the backend, a notification only it knows about:
-await Deno.desktop.notifications.schedule({
+await app.notify({
   title: "Sync failed",
-  at: Date.now(),
   tag: "sync-failed",
-  actions: [{ action: "retry", title: "Retry" }],
+  actions: [{ id: "retry", title: "Retry" }],
 });`}
       </Code>
       <h3 id="desktop-web-notification">The web Notification API</h3>
@@ -4744,6 +4770,16 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
           <code>{"{ usageDescription }"}</code>{" "}
           (default: &quot;&lt;app&gt; uses your microphone.&quot;). Without it macOS would end the
           app the first time the page captures;
+        </li>
+        <li>
+          on macOS, <code>NSSpeechRecognitionUsageDescription</code> in <code>Info.plist</code> when
+          {" "}
+          <code>microphone</code> sets{" "}
+          <code>{"{ speechRecognitionUsageDescription }"}</code>: the text macOS shows before the
+          window&apos;s own speech recognition (WebKit&apos;s <code>webkitSpeechRecognition</code>)
+          {" "}
+          may run. It is written only when set and needs no entitlement. denext has no native speech
+          recognition API of its own;
         </li>
         <li>
           on a signed macOS build, the Hardened Runtime entitlements{" "}

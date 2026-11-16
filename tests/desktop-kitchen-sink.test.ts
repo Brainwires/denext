@@ -314,3 +314,52 @@ Deno.test("kitchen sink drive mode: a command file is checked, and a bad one sti
     ]
   ) assert(cmd in DRIVE_COMMANDS, cmd);
 });
+
+import { refocusMain } from "../examples/desktop-kitchen-sink/app/refocus.ts";
+
+Deno.test("kitchen sink: after a secondary window closes, the main window is refocused and awaited", async () => {
+  let focused = false;
+  let asked = 0;
+  const waited = await refocusMain({
+    focus: () => {
+      asked++;
+      // The window manager grants the focus a little later, as xfwm4 does.
+      setTimeout(() => (focused = true), 30);
+      return Promise.resolve();
+    },
+    hasFocus: () => focused,
+    timeoutMs: 2000,
+    pollMs: 5,
+  });
+  assertEquals(asked, 1, "focus asked once");
+  assertEquals(waited, true, "reports the focus came back");
+});
+
+Deno.test("kitchen sink: a window manager that never refocuses is reported, never thrown", async () => {
+  let asked = 0;
+  const waited = await refocusMain({
+    focus: () => {
+      asked++;
+      return Promise.reject(new Error("unsupported"));
+    },
+    hasFocus: () => false,
+    timeoutMs: 50,
+    pollMs: 5,
+  });
+  assert(asked >= 1);
+  assertEquals(waited, false);
+});
+
+Deno.test("kitchen sink: an already focused main window is not asked again", async () => {
+  let asked = 0;
+  const waited = await refocusMain({
+    focus: () => {
+      asked++;
+      return Promise.resolve();
+    },
+    hasFocus: () => true,
+    timeoutMs: 50,
+  });
+  assertEquals(asked, 0);
+  assertEquals(waited, true);
+});

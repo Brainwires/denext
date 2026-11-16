@@ -96,7 +96,10 @@ export async function desktopSignMacosDmg(
   return desktopMacosArtifact(dmg, "dmg", "developer-id");
 }
 
-/** Notarize, staple and validate one artifact (an .app goes up as a zip, removed afterwards). */
+/**
+ * Notarize, staple and validate one artifact (an .app goes up as a zip, removed afterwards), then
+ * ask Gatekeeper to accept an installer ({@linkcode gatekeeperAssessArgs}).
+ */
 async function notarizeOne(
   artifact: DesktopMacosArtifact,
   credentials: NotaryCredentials,
@@ -116,7 +119,34 @@ async function notarizeOne(
   }
   await run(["xcrun", "stapler", "staple", artifact.path]);
   await run(["xcrun", "stapler", "validate", artifact.path]);
+  const assess = gatekeeperAssessArgs(artifact);
+  if (assess) await run(assess);
   return { ...artifact, notarized: true, stapled: true };
+}
+
+/**
+ * The Gatekeeper assessment of a stapled installer, as a downloader's Mac makes it: `spctl -t open`
+ * for a .dmg (the check that answers "no usable signature" for an unsigned image, read from the
+ * image's own signature), `-t install` for a .pkg. `undefined` for an .app, whose ticket
+ * `stapler validate` already checked.
+ */
+function gatekeeperAssessArgs(artifact: DesktopMacosArtifact): string[] | undefined {
+  if (artifact.kind === "dmg") {
+    return [
+      "spctl",
+      "--assess",
+      "--type",
+      "open",
+      "--context",
+      "context:primary-signature",
+      "-v",
+      artifact.path,
+    ];
+  }
+  if (artifact.kind === "pkg") {
+    return ["spctl", "--assess", "--type", "install", "-v", artifact.path];
+  }
+  return undefined;
 }
 
 /**

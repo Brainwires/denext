@@ -669,7 +669,7 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 `runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
-buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`);
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`, and posts its own with `app.notify({ title, body?, tag?, data?, actions?, silent? })` / `host.notify(…)`, `{ tag, close() }`, `not_enabled` without the capability);
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
 `deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
 on macOS and Windows (on Linux, what denext posted this run). `context-menu`
@@ -2008,6 +2008,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopMediaCaptureConfig` — desktop.capabilities.microphone / camera options.
 - `interface DesktopMenuConfig` — The application menu's standard window items and the app's own menus (DesktopConfig.menu).
+- `interface DesktopMicrophoneConfig` — desktop.capabilities.microphone options.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
 - `interface DesktopPtyConfig` — desktop.capabilities.pty options.
@@ -3112,6 +3113,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopNotaryCredentials(): NotaryCredentials | undefined` — The notary credentials in the environment: DENEXT_NOTARY_PROFILE (a keychain profile), else an App Store Connect API key (DENEXT_NOTARY_KEY + DENEXT_NOTARY_KEY_ID, with DENEXT_NOTARY_ISSUER for a team key) — what denext build --compile --sign reads too.
 - `interface DesktopNotificationClick` — A click on one of the app's notifications, as the backend's hooks receive it.
 - `type DesktopNotificationClickListener = (click: DesktopNotificationClick) => void | Promise<void>` — A backend hook on notification clicks: a throw or a rejection is logged.
+- `type DesktopNotify = (options: DesktopNotifyOptions) => Promise<DesktopPostedNotification>` — Post an OS notification from the backend. Rejects with a DesktopCapError: not_enabled while the notifications capability is off, unsupported where the Deno Desktop runtime has no native notifications, validation for bad options.
+- `interface DesktopNotifyAction` — An action button on a backend notification.
+- `interface DesktopNotifyOptions` — What DesktopNotify posts.
 - `desktopNpmArgs(entryUrl: string): Promise<string[]>` — desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.
 - `interface DesktopOpenWindowOptions` — The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).
 - `desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>` — Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).
@@ -3127,6 +3131,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopPeMachine(head: Uint8Array): string | null` — The machine a PE image is built for, read from its header (MZ, e_lfanew → PE\0\0, then the file header's Machine): "x86_64", "arm64", "x86", or 0x<hex> for another one. An Arm64X DLL reports "arm64".
 - `interface DesktopPermissions` — The Deno permissions a capability method needs, as --allow-* scopes. The union of every enabled capability's descriptor is what the package scripts bake into the desktop binary instead of -A (least-privilege packaging), and what denext doctor reports. An ffi or run entry means full-trust native code: least-privilege is moot for that surface once it is on.
 - `interface DesktopPickedPathOptions` — Options for DesktopCapCtx.pickedPath.
+- `interface DesktopPostedNotification` — A posted backend notification.
 - `type DesktopProxyFn = (request: Request, url: URL) => Response | Promise<Response>` — Forward a request the desktop window received to the denext dev server. Injected into createDesktopHandler so tests exercise the dev path with a spy and never spawn a real dev server; runDesktop wires it to proxyToBackend.
 - `desktopRequireTool(tool: string, format: string, explicit: boolean): Promise<boolean>` — desktopToolGate for a tool that must be on PATH (the reason carries the install hint).
 - `desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>` — Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted. A deno command runs on this script's own Deno (Deno.execPath()), not the first deno on PATH.

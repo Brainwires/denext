@@ -67,6 +67,37 @@ and this project adheres to
   and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
   version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
   `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
+- **The backend posts notifications: `app.notify()` and an extension's `host.notify()`.** What
+  `runDesktop()` resolves with and an extension's `host` take `notify({ title, body?, tag?, data?,
+  actions?, silent? })`, which posts an OS notification through the same path a page's
+  `Notification` takes (the `notifications` capability: the runtime's notifications, or the Deno
+  `Notification` where the runtime cannot schedule), so `desktop.ts` and an extension no longer
+  call `Deno.desktop.notifications` themselves. It resolves `{ tag, close() }`; a notification with
+  the same tag is replaced (default a fresh `app-<uuid>`; `denext-…` tags are denext's own and
+  refused), and its clicks reach `onNotificationClick` with that tag and `data`, never a page.
+  It rejects with a `DesktopCapError`: `not_enabled` while the `notifications` capability is off,
+  `unsupported` where the runtime has no native notifications (and in a sidecar's child),
+  `validation` for bad options (JSON `data` up to 4 KiB, no top-level `denext` key).
+- **A speech recognition usage string for a Deno Desktop app's microphone.**
+  `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
+  `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows
+  before the window's own speech recognition (WebKit's `webkitSpeechRecognition`) may run; macOS
+  ends an app that starts it without one. It is written only when set, needs no entitlement, and
+  is validated like `usageDescription` (a non-empty string with no control characters; the camera
+  does not take it). The microphone's `NSMicrophoneUsageDescription` and the signed build's
+  `com.apple.security.device.audio-input` entitlement were already written.
+- **`denext desktop package` asks Gatekeeper to accept each notarized macOS installer.** After a
+  `.dmg` or a signed `.pkg` is notarized, stapled and its ticket validated, the package step runs
+  `spctl --assess --type open --context context:primary-signature` on the image and
+  `spctl --assess --type install` on the package, the checks a downloader's Mac makes, and fails
+  the run when Gatekeeper refuses one, so "ready to distribute" is never printed for an installer
+  it would block. Only a Developer-ID-signed, notarized run takes the step; unsigned and ad-hoc
+  builds are unchanged, and no script needs regenerating (the step lives in denext).
+- **The kitchen-sink window test refocuses its main window after the secondary-window check.**
+  That check closed the window it opened and left the keyboard focus wherever the window manager
+  put it, so the next check's maximize request timed out once on Linux (xfwm4 under Xvfb). It now
+  asks for the main window's focus (`focusWindow()`) and waits for `document.hasFocus()` before
+  the next check runs, asking again each second for up to 5 s.
 
 ## [4.19.0] - 2026-11-15
 
