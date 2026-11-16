@@ -8,7 +8,9 @@
 //   (laufey API 53), which refuses every other request (`NotAllowedError`).
 // - macOS `Info.plist` `NSMicrophoneUsageDescription` / `NSCameraUsageDescription`: the text
 //   macOS shows when it asks the user (TCC). Without it macOS ends the app the first time the page
-//   captures.
+//   captures. `microphone: { speechRecognitionUsageDescription }` adds
+//   `NSSpeechRecognitionUsageDescription`, which macOS asks for before a page's speech recognition
+//   (WebKit's `webkitSpeechRecognition`) may run; it needs no entitlement of its own.
 // - macOS Hardened Runtime entitlements `com.apple.security.device.audio-input` /
 //   `com.apple.security.device.camera`: without them a signed, hardened app is refused the device.
 //   On the main executable only: TCC checks the responsible process, which for a CEF helper
@@ -40,19 +42,35 @@ const KINDS: Readonly<
   },
 };
 
+/** The Info.plist key for the microphone's speech recognition text. */
+const SPEECH_RECOGNITION_PLIST_KEY = "NSSpeechRecognitionUsageDescription";
+
 /** The kinds, in the order they are written. */
 const DESKTOP_MEDIA_KINDS: readonly DesktopMediaKind[] = ["microphone", "camera"];
 
 /** One enabled kind: the text macOS shows when it asks the user (`undefined`: the default). */
 export interface DesktopMediaGrant {
   readonly usageDescription?: string;
+  /** The microphone only: `NSSpeechRecognitionUsageDescription` (`undefined`: not written). */
+  readonly speechRecognitionUsageDescription?: string;
+}
+
+/** The option keys each kind takes. */
+const OPTION_KEYS: Readonly<Record<DesktopMediaKind, readonly string[]>> = {
+  microphone: ["usageDescription", "speechRecognitionUsageDescription"],
+  camera: ["usageDescription"],
+};
+
+/** A trimmed, non-empty string, else `undefined`. */
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
 /**
  * The enabled kinds of `desktop.capabilities` (`microphone` / `camera`: `true` or
- * `{ usageDescription }`; `false`, absent or an invalid value is off, an object with any other key
- * too: a package script reads the config unvalidated, and `{ enabled: false }` must not turn the
- * device on).
+ * `{ usageDescription }`, the microphone also `{ speechRecognitionUsageDescription }`; `false`,
+ * absent or an invalid value is off, an object with any other key too: a package script reads the
+ * config unvalidated, and `{ enabled: false }` must not turn the device on).
  *
  * @param config The project config.
  * @returns The enabled kinds with their usage text.
@@ -69,12 +87,15 @@ export function desktopMediaCapture(
     if (value === true) out[kind] = {};
     else if (
       typeof value === "object" && value !== null && !Array.isArray(value) &&
-      Object.keys(value).every((k) => k === "usageDescription")
+      Object.keys(value).every((k) => OPTION_KEYS[kind].includes(k))
     ) {
-      const text = (value as { usageDescription?: unknown }).usageDescription;
-      out[kind] = typeof text === "string" && text.trim() !== ""
-        ? { usageDescription: text.trim() }
-        : {};
+      const options = value as Record<string, unknown>;
+      const usage = text(options.usageDescription);
+      const speech = text(options.speechRecognitionUsageDescription);
+      out[kind] = {
+        ...(usage ? { usageDescription: usage } : {}),
+        ...(speech ? { speechRecognitionUsageDescription: speech } : {}),
+      };
     }
   }
   return out;
@@ -168,8 +189,9 @@ function plistString(entries: ReadonlyArray<[string, PlistNode]>, key: string): 
 
 /**
  * `Info.plist` with the enabled kinds' usage descriptions: the config's text, else one naming the
- * bundle (`CFBundleDisplayName`, else `CFBundleName`). A description the plist already has is
- * replaced; a kind that is off is left as it is.
+ * bundle (`CFBundleDisplayName`, else `CFBundleName`), and the microphone's
+ * `NSSpeechRecognitionUsageDescription` when the config gives that text. A description the plist
+ * already has is replaced; a kind (or the speech text) that is off is left as it is.
  *
  * @param text The `Info.plist` XML.
  * @param config The project config.
@@ -183,14 +205,15 @@ export function withMediaUsageDescriptions(text: string, config: unknown): strin
   if (root.kind !== "dict") throw new Error("Info.plist is not a dict");
   const name = plistString(root.entries, "CFBundleDisplayName") ??
     plistString(root.entries, "CFBundleName");
-  const keys = new Set(kinds.map((k) => KINDS[k].plistKey));
+  const written: Array<[string, string]> = kinds.map((kind) => [
+    KINDS[kind].plistKey,
+    enabled[kind]?.usageDescription ?? defaultUsageDescription(kind, name),
+  ]);
+  const speech = enabled.microphone?.speechRecognitionUsageDescription;
+  if (speech) written.push([SPEECH_RECOGNITION_PLIST_KEY, speech]);
+  const keys = new Set(written.map(([k]) => k));
   const entries: Array<[string, PlistNode]> = root.entries.filter(([k]) => !keys.has(k));
-  for (const kind of kinds) {
-    entries.push([KINDS[kind].plistKey, {
-      kind: "string",
-      text: enabled[kind]?.usageDescription ?? defaultUsageDescription(kind, name),
-    }]);
-  }
+  for (const [key, value] of written) entries.push([key, { kind: "string", text: value }]);
   return renderPlist({ kind: "dict", entries });
 }
 

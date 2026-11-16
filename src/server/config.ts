@@ -1046,9 +1046,11 @@ export interface DesktopCapabilitiesConfig {
    * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
    * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
    * 3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older
-   * one. macOS still asks the user once. The options take `usageDescription` only.
+   * one. macOS still asks the user once. The options take `usageDescription` and
+   * `speechRecognitionUsageDescription` (macOS's `NSSpeechRecognitionUsageDescription`, written
+   * only when given: the text macOS shows before a page's speech recognition may run).
    */
-  microphone?: boolean | DesktopMediaCaptureConfig;
+  microphone?: boolean | DesktopMicrophoneConfig;
   /**
    * The page's `getUserMedia({ video })` gets the camera, as `microphone` does the microphone
    * (`NSCameraUsageDescription`, `com.apple.security.device.camera`).
@@ -1092,6 +1094,21 @@ export interface DesktopMediaCaptureConfig {
    * `NSCameraUsageDescription`). Default: "<app name> uses your microphone." / "… camera.".
    */
   usageDescription?: string;
+}
+
+/** `desktop.capabilities.microphone` options. */
+export interface DesktopMicrophoneConfig {
+  /**
+   * What macOS shows when it asks the user for the microphone (`NSMicrophoneUsageDescription`).
+   * Default: "<app name> uses your microphone.".
+   */
+  usageDescription?: string;
+  /**
+   * What macOS shows when a page's speech recognition (WebKit's `webkitSpeechRecognition`) asks
+   * the user (`NSSpeechRecognitionUsageDescription` in `Info.plist`). Written only when set: macOS
+   * ends an app that starts speech recognition without it. It needs no entitlement of its own.
+   */
+  speechRecognitionUsageDescription?: string;
 }
 
 /** `desktop.capabilities.passkeys` options. */

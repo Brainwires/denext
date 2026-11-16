@@ -4746,6 +4746,16 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
           app the first time the page captures;
         </li>
         <li>
+          on macOS, <code>NSSpeechRecognitionUsageDescription</code> in <code>Info.plist</code> when
+          {" "}
+          <code>microphone</code> sets{" "}
+          <code>{"{ speechRecognitionUsageDescription }"}</code>: the text macOS shows before the
+          window&apos;s own speech recognition (WebKit&apos;s <code>webkitSpeechRecognition</code>)
+          {" "}
+          may run. It is written only when set and needs no entitlement. denext has no native speech
+          recognition API of its own;
+        </li>
+        <li>
           on a signed macOS build, the Hardened Runtime entitlements{" "}
           <code>com.apple.security.device.audio-input</code> /{" "}
           <code>com.apple.security.device.camera</code> (a <code>false</code> in{" "}

@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A speech recognition usage string for a Deno Desktop app's microphone.**
+  `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
+  `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows
+  before the window's own speech recognition (WebKit's `webkitSpeechRecognition`) may run; macOS
+  ends an app that starts it without one. It is written only when set, needs no entitlement, and
+  is validated like `usageDescription` (a non-empty string with no control characters; the camera
+  does not take it). The microphone's `NSMicrophoneUsageDescription` and the signed build's
+  `com.apple.security.device.audio-input` entitlement were already written.
+
 ### Fixed
 
 - **The kitchen-sink window test refocuses its main window after the secondary-window check.**

@@ -2006,6 +2006,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopMediaCaptureConfig` — desktop.capabilities.microphone / camera options.
 - `interface DesktopMenuConfig` — The application menu's standard window items and the app's own menus (DesktopConfig.menu).
+- `interface DesktopMicrophoneConfig` — desktop.capabilities.microphone options.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
 - `interface DesktopPtyConfig` — desktop.capabilities.pty options.

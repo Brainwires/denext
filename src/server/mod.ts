@@ -322,6 +322,7 @@ export {
   type DesktopMacosConfig,
   type DesktopMediaCaptureConfig,
   type DesktopMenuConfig,
+  type DesktopMicrophoneConfig,
   type DesktopPasskeysConfig,
   type DesktopPermissionsConfig,
   type DesktopPtyConfig,

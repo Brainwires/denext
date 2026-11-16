@@ -759,7 +759,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
   origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
-  `usageDescription`), and with Windows' privacy switch off the window refuses the device
+  `usageDescription`; `speechRecognitionUsageDescription` adds macOS's
+  `NSSpeechRecognitionUsageDescription` for the window's own speech recognition), and with
+  Windows' privacy switch off the window refuses the device
   (`checkPermission` reads `blocked`). — `src/build/desktop-media-capture.ts`,
   `src/build/desktop-capabilities.ts`.
 - **System stats** — the `systemStats` capability (runtime 3.0.0-denext.16):

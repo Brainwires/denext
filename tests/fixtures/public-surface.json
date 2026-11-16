@@ -704,6 +704,7 @@
     "DesktopMacosConfig:interface",
     "DesktopMediaCaptureConfig:interface",
     "DesktopMenuConfig:interface",
+    "DesktopMicrophoneConfig:interface",
     "DesktopPasskeysConfig:interface",
     "DesktopPermissionsConfig:interface",
     "DesktopPtyConfig:interface",
