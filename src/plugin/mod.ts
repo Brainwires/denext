@@ -765,6 +765,17 @@ export function getPluginPrepareWatchDirs(projectRoot: string): string[] {
 }
 
 /**
+ * Whether `path` (absolute) matches a registered prepare step's `watch` glob. The dev server's
+ * project-wide watcher asks it per edit: a plugin whose setup finished after the folder watch
+ * opened (an async `setup`) still has its globs' files delivered.
+ */
+export function matchesPluginPrepareWatch(projectRoot: string, path: string): boolean {
+  return prepareSteps.some(({ watch }) =>
+    watch.some((g) => globToRegExp(resolveGlob(projectRoot, g), { globstar: true }).test(path))
+  );
+}
+
+/**
  * Re-run each prepare step whose `watch` globs match one of `changedPaths` (absolute), telling it
  * the matching paths ({@linkcode PluginPrepareContext.changed}). Returns true if any step ran — the
  * dev server uses that to trigger a reload after regeneration. A step with no `watch` globs never

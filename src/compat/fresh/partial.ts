@@ -19,14 +19,16 @@
  * page's Flight payload, parsed through the app's client registry (the islands in a swapped
  * region hydrate as on any navigation).
  *
- * As in Fresh, the answer's head is merged into the page's before the regions swap: its
+ * As in Fresh, the answer's head is merged into the page's before the regions swap (the tags its
+ * tree rendered, which the server hoists out of the Flight tree and sends beside it): its
  * `<title>`, each `<meta>` (by `name`, `property`, `http-equiv` or `itemprop`; `charset` is left
  * alone) updated or added, each stylesheet `<link>` the page lacks added and loaded first, each
  * data `<script>` (JSON-LD and the like; never an executable one) added or updated, and each
  * `<style>` without an `id` added; nothing the page has is removed. Under an element with
  * `f-view-transition`, the swap runs inside `document.startViewTransition` where the browser has
  * it. Browser back / forward between the entries partial navigation made restores each region as
- * that entry left it (an `append` / `prepend` history included) and the entry's scroll position;
+ * that entry left it (an `append` / `prepend` history included), its title and `<meta>` values,
+ * and the entry's scroll position;
  * an entry this page load holds no record of (after a reload) is fetched as a partial request
  * whose regions apply in their modes, as Fresh's `popstate` handler does.
  *
@@ -374,6 +376,23 @@ function mergeHead(nodes: VNode[]): Promise<void>[] {
   return waits;
 }
 
+/**
+ * The `<meta>` and `<link>` tags the server hoisted out of the answer's tree (the payload's
+ * `head`, HTML), as elements {@link mergeHead} merges. Parsed inert, in a `<template>`.
+ */
+function hoistedHead(html: string | undefined): VNode[] {
+  if (!html) return [];
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const out: VNode[] = [];
+  for (const el of template.content.querySelectorAll("meta, link")) {
+    const props: Record<string, string> = {};
+    for (const attr of el.attributes) props[attr.name] = attr.value;
+    out.push(h(el.localName, props));
+  }
+  return out;
+}
+
 /** A partial request's parsed answer. */
 interface PartialAnswer {
   found: FoundPartial[];
@@ -390,8 +409,12 @@ interface PartialAnswer {
 async function readAnswer(res: Response): Promise<PartialAnswer | null> {
   const parse = flightParser;
   if (!parse || res.headers.get("x-denext-flight") !== "1") return null;
-  const payload = JSON.parse(await res.text()) as { flight: unknown; title?: string | null };
-  const head: VNode[] = [];
+  const payload = JSON.parse(await res.text()) as {
+    flight: unknown;
+    title?: string | null;
+    head?: string;
+  };
+  const head: VNode[] = hoistedHead(payload.head);
   const found = collectPartials(await parse(payload.flight), [], head);
   return { found, head, title: payload.title ?? null };
 }
@@ -506,13 +529,14 @@ function sameOrigin(url: URL): boolean {
 }
 
 /**
- * Commit an answer: merge its head (waiting for new stylesheets), record the regions of the entry
- * a push leaves, swap the regions (in a view transition when asked), then the history entry.
+ * Commit an answer: record the regions and head of the entry a push leaves, merge its head
+ * (waiting for new stylesheets), swap the regions (in a view transition when asked), then the history entry.
  */
 async function commitAnswer(req: PartialRequest, url: URL, answer: PartialAnswer): Promise<void> {
-  await Promise.all(mergeHead(answer.head));
+  // The entry a push leaves is recorded before the head merges: its title and metas as it showed.
   const entry = markEntry();
   if (req.navigate && !req.replace && url.href !== location.href) remember(entry);
+  await Promise.all(mergeHead(answer.head));
   await swap(() => {
     applyFound(answer.found);
     if (answer.title) document.title = answer.title;
@@ -555,8 +579,15 @@ function restoreScroll(state: unknown): void {
 /** The `history.state` key naming an entry partial navigation made or marked. */
 const ENTRY_KEY = "denextFreshEntry";
 
-/** Each region's updates, by name: what an entry showed when the page left it. */
-type RegionsSnapshot = Map<string, RegionState | null>;
+/**
+ * What an entry showed when the page left it: each region's updates, by name, and the head a
+ * partial answer merges (the title and every keyed `<meta>`'s attributes).
+ */
+interface RegionsSnapshot {
+  regions: Map<string, RegionState | null>;
+  title: string;
+  metas: [string, string][][];
+}
 
 /** The entries this page load left, newest last (bounded). */
 const SNAPSHOTS = new Map<string, RegionsSnapshot>();
@@ -597,19 +628,31 @@ function markEntry(): string {
 
 /** Record what the mounted regions show, as the entry `id`'s. */
 function remember(id: string): void {
-  const snap: RegionsSnapshot = new Map();
-  for (const [name, region] of ACTIVE) snap.set(name, region.snapshot());
+  const regions = new Map<string, RegionState | null>();
+  for (const [name, region] of ACTIVE) regions.set(name, region.snapshot());
+  const metas = [...document.head?.querySelectorAll("meta") ?? []]
+    .filter((m) => META_KEYS.some((k) => m.hasAttribute(k)))
+    .map((m) => [...m.attributes].map((a): [string, string] => [a.name, a.value]));
+  const snap: RegionsSnapshot = { regions, title: document.title, metas };
   SNAPSHOTS.delete(id);
   SNAPSHOTS.set(id, snap);
   if (SNAPSHOTS.size > MAX_SNAPSHOTS) SNAPSHOTS.delete(SNAPSHOTS.keys().next().value!);
 }
 
-/** Show a recorded entry's regions again; false when this page no longer holds them. */
+/**
+ * Show a recorded entry's regions and head (its title, its `<meta>` values) again; false when
+ * this page no longer holds its regions.
+ */
 function restoreRegions(snap: RegionsSnapshot): boolean {
-  for (const [name, state] of snap) {
+  for (const [name, state] of snap.regions) {
     if (!ACTIVE.get(name)?.canRestore(state)) return false;
   }
-  for (const [name, state] of snap) ACTIVE.get(name)!.restore(state);
+  for (const [name, state] of snap.regions) ACTIVE.get(name)!.restore(state);
+  const head = document.head;
+  if (head) {
+    for (const attrs of snap.metas) mergeMeta(head, attrs);
+  }
+  document.title = snap.title;
   return true;
 }
 

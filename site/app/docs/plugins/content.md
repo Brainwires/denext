@@ -199,8 +199,10 @@ ctx.addPrepareStep(
 
 A step whose globs match a dev change is re-run before the reload, so the reloaded page sees
 the fresh output; on that re-run its context's `changed` lists the edited files its globs matched
-(absolute paths; absent at startup and at build). A step with no `watch` globs runs only at
-startup/build. A throwing step is logged, never fatal.
+(absolute paths; absent at startup and at build). The globs may cover any project directory,
+not only `app/`, and an async `setup` that registers its step after the dev server started is
+watched all the same. A step with no `watch` globs runs only at startup/build. A throwing step is
+logged, never fatal.
 
 A failure a plugin meets outside a request, such as a reload after an edit, can reach the browser
 too: under `denext dev` (App Router) `ctx.reportDevError(title, error)` shows it in the dev error

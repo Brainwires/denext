@@ -57,6 +57,24 @@ and this project adheres to
 
 ### Fixed
 
+- **Fresh partial navigation merges the new page's own head tags, and back / forward restores
+  them.** A `<meta>` or stylesheet `<link>` a page renders (Fresh's `<Head>` included) is hoisted
+  out of the Flight tree into the document head, so a partial answer reached the browser without
+  them and only its `<title>` changed. A partial request's answer now carries those tags beside
+  the tree (`head`, only when the request has `fresh-partial`; other soft navigations are
+  unchanged) and the client merges them as Fresh does. Back and forward between partial
+  navigations now restore each entry's title and `<meta>` values with its regions, where the
+  title and description used to stay the last page's. A real-browser run in e2e.yml covers the
+  head merge, the view transition, an island keeping its state and back / forward.
+- **A plugin's dev `watch` globs outside `app/` reload on an edit.** The dev server opened its
+  folder watch before an async plugin `setup` finished, so a prepare step's globs over another
+  directory (`@denext/graphql`'s schema module outside `app/`, or the directories of the modules
+  a config-built schema reaches) were never watched, and the project-wide watcher dropped the
+  files the app's module graph doesn't reach: the schema answered as it was until a restart. The
+  project-wide watcher now delivers every file a registered prepare step's globs match, whenever
+  the plugin registered it. A real-browser run in e2e.yml edits a schema built in
+  `denext.config.ts` and the module it loads with `import()`, and queries the new field from the
+  page without a restart.
 - **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
   when the host is one it hasn't opened this session and the URL's query and fragment carry more
   than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page

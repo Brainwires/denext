@@ -93,11 +93,89 @@ export default function EnvIsland() {
  *
  * @param dir An empty directory.
  */
-export async function writeFreshParityApp(dir: string): Promise<void> {
-  for (const [rel, body] of Object.entries(FILES)) {
+export function writeFreshParityApp(dir: string): Promise<void> {
+  return writeAndMigrate(dir, FILES);
+}
+
+/** Write `files` into `dir` and migrate the Fresh app they make (the framework from here). */
+async function writeAndMigrate(dir: string, files: Record<string, string>): Promise<void> {
+  for (const [rel, body] of Object.entries(files)) {
     const path = join(dir, rel);
     await Deno.mkdir(dirname(path), { recursive: true });
     await Deno.writeTextFile(path, body);
   }
   await migrateProject(dir, { denextLocalPath: REPO, from: "fresh" });
+}
+
+/**
+ * A second Fresh 2 app for partial navigation between two pages: `/` and `/b` render the same
+ * shell (an `f-client-nav` + `f-view-transition` root, a counter island, two links) around a
+ * `<Partial name="main">`, and each sets its own `<Head>`: a title, a `description` meta and a
+ * page stylesheet. Driven in a browser by tests/e2e/fresh-partials.e2e.test.ts.
+ */
+const NAV_FILES: Record<string, string> = {
+  "deno.json": FILES["deno.json"],
+  "main.ts": `import { App, staticFiles } from "fresh";
+import { AppWrapper } from "./components/AppWrapper.tsx";
+export const app = new App().use(staticFiles()).appWrapper(AppWrapper).fsRoutes();
+`,
+  "components/AppWrapper.tsx": `export function AppWrapper({ Component }) {
+  return (
+    <html>
+      <head><meta charset="utf-8" /></head>
+      <body><Component /></body>
+    </html>
+  );
+}
+`,
+  "components/Shell.tsx": `import { Head, Partial } from "fresh/runtime";
+import Counter from "../islands/Counter.tsx";
+export function Shell({ name, children }) {
+  return (
+    <div f-client-nav f-view-transition>
+      <Head>
+        <title>{"Page " + name}</title>
+        <meta name="description" content={"about " + name} />
+        <link rel="stylesheet" href={"/" + name + ".css"} />
+      </Head>
+      <nav><a id="to-a" href="/">a</a> <a id="to-b" href="/b">b</a></nav>
+      <Counter />
+      <Partial name="main">{children}</Partial>
+    </div>
+  );
+}
+`,
+  "routes/index.tsx": `import { Shell } from "../components/Shell.tsx";
+export default function A() {
+  return <Shell name="a"><p id="content">content a</p></Shell>;
+}
+`,
+  "routes/b.tsx": `import { Shell } from "../components/Shell.tsx";
+export default function B() {
+  return <Shell name="b"><p id="content">content b</p></Shell>;
+}
+`,
+  "islands/Counter.tsx": `import { useEffect, useState } from "preact/hooks";
+export default function Counter() {
+  const [n, setN] = useState(0);
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+  return (
+    <button type="button" id="inc" class={ready ? "ready" : ""} onClick={() => setN(n + 1)}>
+      {String(n)}
+    </button>
+  );
+}
+`,
+  "static/a.css": `#content { color: rgb(1, 2, 3); }\n`,
+  "static/b.css": `#content { letter-spacing: 1px; }\n`,
+};
+
+/**
+ * Write the two-page navigation app into `dir` and migrate it (`denext migrate`).
+ *
+ * @param dir An empty directory.
+ */
+export function writeFreshNavApp(dir: string): Promise<void> {
+  return writeAndMigrate(dir, NAV_FILES);
 }

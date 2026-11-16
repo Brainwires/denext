@@ -28,6 +28,9 @@ class El {
   hasAttribute(name: string): boolean {
     return name in this.attrs;
   }
+  get attributes(): { name: string; value: string }[] {
+    return Object.entries(this.attrs).map(([name, value]) => ({ name, value }));
+  }
   setAttribute(name: string, value: string): void {
     this.attrs[name] = value;
   }

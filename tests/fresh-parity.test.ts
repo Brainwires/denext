@@ -220,9 +220,16 @@ import { page } from "${FRESH}";
 import { Partial } from "../app/_fresh/runtime.ts";
 export const config = { skipAppWrapper: true };
 export const handler = {
-  GET(ctx) { return ctx.isPartial ? page() : ctx.redirect("/#partials"); },
+  GET(ctx) {
+    return ctx.isPartial || ctx.url.searchParams.has("plain") ? page() : ctx.redirect("/#partials");
+  },
 };
-export default function Recipe() { return h(Partial, { name: "recipe" }, h("h2", null, "Lemonade")); }`,
+export default function Recipe() {
+  return h("div", null, [
+    h("meta", { key: "m", name: "description", content: "lemon" }),
+    h(Partial, { key: "p", name: "recipe" }, h("h2", null, "Lemonade")),
+  ]);
+}`,
   "routes/go.ts": `export const handler = { GET(ctx) { return ctx.redirect("/recipe"); } };`,
   "app/_fresh/runtime.ts": `export * from "${RUNTIME}";
 export { Partial } from "./partial.ts";`,
@@ -270,6 +277,12 @@ Deno.test("partial requests: ctx.isPartial, the redirect keeps fresh-partial, th
     assertStringIncludes(payload, "#Partial", "the region is a client reference");
     assertStringIncludes(payload, '"recipe"');
     assertStringIncludes(payload, "Lemonade");
+    // The tags the tree rendered are hoisted out of the Flight tree, so they travel beside it,
+    // for the client's head merge; another soft navigation carries none.
+    assertStringIncludes(JSON.parse(nav.text).head, '<meta name="description" content="lemon">');
+    const soft = await client.get("/recipe?plain=1", { headers: { "x-denext-nav": "1" } });
+    assertEquals(soft.headers.get("x-denext-flight"), "1");
+    assertEquals(JSON.parse(soft.text).head, undefined);
   });
 });
 
