@@ -40,6 +40,37 @@ if (typeof cfg === "function") cfg = await cfg("phase-production-build", { defau
 cfg = await cfg;
 `;
 
+/** The name of the function a program prints its result with ({@linkcode EMIT_RESULT}). */
+const EMIT_RESULT_FN = "__denextEmitResult";
+
+/**
+ * A JavaScript expression, for a program's translation code, naming the function that prints its
+ * result: `EMIT_RESULT(marker, value)` writes `marker` and `value` as JSON on one line, once. It
+ * holds stdout's writer, `JSON.stringify` and a `TextEncoder` taken before the config is imported,
+ * so a config that replaces `console.log` (or those) afterwards never sees the line or the
+ * per-run marker in it. Use it instead of `console.log`; the caller still checks what it reads.
+ */
+export const EMIT_RESULT = EMIT_RESULT_FN;
+
+/** The program's first lines: {@linkcode EMIT_RESULT}, defined before anything else runs. */
+const RESULT_WRITER = `
+const ${EMIT_RESULT_FN} = (() => {
+  const stdout = Deno.stdout;
+  const writeSync = stdout.writeSync.bind(stdout);
+  const stringify = JSON.stringify;
+  const encoder = new TextEncoder();
+  const encode = encoder.encode.bind(encoder);
+  const subarray = Function.prototype.call.bind(Uint8Array.prototype.subarray);
+  let emitted = false;
+  return (marker, value) => {
+    if (emitted) return;
+    emitted = true;
+    let bytes = encode("\\n" + marker + stringify(value) + "\\n");
+    while (bytes.byteLength > 0) bytes = subarray(bytes, writeSync(bytes));
+  };
+})();
+`;
+
 /** Where the evaluator's plugin stand-ins record their calls (a `globalThis` key). */
 const PLUGIN_CALLS_KEY = "denext.nextConfigPluginCalls";
 
@@ -117,7 +148,8 @@ export interface NextConfigEvalOptions {
   /**
    * The program piped to `deno run -` (so it never exists as a file or a `data:` URL). It
    * receives the config's `file:` URL as `Deno.args[0]` and prints its JSON result on one line
-   * behind `marker`. It should `Deno.exit(0)` once it has: a config wrapper may keep the event
+   * behind `marker`, with {@linkcode EMIT_RESULT} (`console.log` works, but the config can replace
+   * it). It should `Deno.exit(0)` once it has: a config wrapper may keep the event
    * loop alive or crash asynchronously long after it handed the object over.
    */
   readonly program: string;
@@ -237,15 +269,16 @@ function failure(reason: string, stderr: Uint8Array): NextConfigEvalResult {
 }
 
 /**
- * Read the result back from the child's stdout: the FIRST line behind the per-run `marker`
- * (nonce included, so the evaluated config can't print a line that matches), parsed as JSON
- * regardless of the exit code — the config may have printed its result before a plugin's
- * background work crashed the process. Output before the marker line is ignored.
+ * Read the result back from the child's stdout: the ONE line behind the per-run `marker` (nonce
+ * included), parsed as JSON regardless of the exit code — the config may have printed its result
+ * before a plugin's background work crashed the process. Other output is ignored; a second line
+ * behind the marker means something besides the program printed one, and fails the evaluation.
  */
 function readMarker(stdout: Uint8Array, marker: string): unknown {
-  const line = new TextDecoder().decode(stdout).split("\n").find((l) => l.startsWith(marker));
-  if (line === undefined) throw new Error("no result line");
-  return JSON.parse(line.slice(marker.length));
+  const lines = new TextDecoder().decode(stdout).split("\n").filter((l) => l.startsWith(marker));
+  if (lines.length === 0) throw new Error("no result line");
+  if (lines.length > 1) throw new Error("more than one result line");
+  return JSON.parse(lines[0].slice(marker.length));
 }
 
 /** Variables the evaluator keeps besides `NEXT_PUBLIC_*`: the mode, and where Deno's cache is. */
@@ -382,10 +415,12 @@ export async function evalNextConfigProgram(
   const readFlags = allowReadFlags(grants.paths);
   const signal = AbortSignal.timeout(timeoutMs);
   // A per-run nonce on the marker. It exists only in the piped program, which the evaluated
-  // config can't read (no file, no argv, no env), so a config that prints its own marker
-  // line — to plant keys or code in what the caller writes — can't forge the result.
+  // config can't read (no file, no argv, no env), so a line the config prints behind the bare
+  // marker is not read. That narrows what a config can do to the result; it guarantees nothing
+  // about it (the config runs in the same process as the program), so the caller still checks
+  // every key it reads back before it writes one anywhere.
   const marker = `${options.marker}${crypto.randomUUID()}:`;
-  const program = MASK_MACHINE_ENV + STUB_REQUIRE_CACHE +
+  const program = RESULT_WRITER + MASK_MACHINE_ENV + STUB_REQUIRE_CACHE +
     options.program.replaceAll(options.marker, marker);
   // stdout carries the result; stderr is discarded unless the evaluation fails, then the
   // evaluator runs once more with it piped for the error text (see quietThenExplain: a quiet

@@ -10,6 +10,7 @@ import {
 } from "../src/build/eval-config-isolation.ts";
 import {
   CONFIG_PLUGIN_CALLS,
+  EMIT_RESULT,
   evalNextConfigProgram,
   LOAD_NEXT_CONFIG,
   type NextConfigEvalResult,
@@ -519,6 +520,24 @@ Deno.test("a config that prints its own marker line can't forge the result (per-
     'export default { basePath: "/real" };\n';
   await withConfig("next.config.mjs", src, async (dir) => {
     assertEquals(valueOf(await evalIn(dir, "next.config.mjs")), { basePath: "/real" });
+  });
+});
+
+Deno.test("EMIT_RESULT prints past a replaced console.log, and a second result line fails", async () => {
+  const src = 'const real = console.log;\nconsole.log = () => real("swallowed");\n' +
+    'export default { basePath: "/real" };\n';
+  await withConfig("next.config.mjs", src, async (dir) => {
+    const emit = program(`${EMIT_RESULT}(${JSON.stringify(MARKER)}, cfg);\nDeno.exit(0);`);
+    assertEquals(valueOf(await evalIn(dir, "next.config.mjs", emit)), { basePath: "/real" });
+    const twice = program(
+      `${EMIT_RESULT}(${JSON.stringify(MARKER)}, cfg);\n` +
+        `Deno.stdout.writeSync(new TextEncoder().encode(${JSON.stringify(MARKER)} + "{}\\n"));\n` +
+        "Deno.exit(0);",
+    );
+    assertStringIncludes(
+      reasonOf(await evalIn(dir, "next.config.mjs", twice)),
+      "more than one result line",
+    );
   });
 });
 

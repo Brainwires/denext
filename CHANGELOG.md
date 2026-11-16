@@ -57,6 +57,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext migrate` checks the next.config evaluator's result before writing it.** The evaluator
+  prints its result through a writer it holds from before the config is imported, a result with
+  more than one line fails the evaluation, and `migrate` (like `denext ui`'s next.config panel)
+  keeps only the fields, rules and dropped keys it reads itself, quoting each key it writes.
 - **Remix compat: a route action runs with the params of the render that produced its form.**
   The action is registered once per route and each render seals its params and page path (now
   the action's `request.url`) into the form's action id; the plain `remix:<route>#action` id is no

@@ -665,6 +665,28 @@ Deno.test("/config/next evaluates a real next.config in a subprocess (piped, not
   }
 });
 
+Deno.test("/config/next shows only the honored keys and rules the evaluator reads", async () => {
+  const dir = await project();
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), '{ "dependencies": { "next": "15.0.0" } }');
+    // The config adds keys to the evaluator's result object as it is filled in.
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      'Object.defineProperty(Object.prototype, "basePath", {\n  configurable: true,\n' +
+        "  set(value) {\n" +
+        '    Object.defineProperty(this, "extraKey", { value, enumerable: true });\n' +
+        '    Object.defineProperty(this, "basePath", { value, enumerable: true, writable: true });\n' +
+        "  },\n});\n" +
+        'export default { basePath: "/shop" };\n',
+    );
+    const payload = await (await call(dir, "/api/config/next")).json();
+    assertEquals(payload.failed, false);
+    assertEquals(Object.keys(payload.honored), ["basePath"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /**
  * A home-directory and a temp-directory variable this machine sets (Windows sets no `HOME` and,
  * outside a POSIX shell, no `TMPDIR`): a config reads them only when they are there.
