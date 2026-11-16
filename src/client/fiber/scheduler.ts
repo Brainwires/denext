@@ -12,6 +12,7 @@ import { devHydrationActive } from "./fiber-utils.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { transitionScope } from "../../runtime/async-context-mode.ts";
 import { inDiscreteEvent, inEventDispatch } from "../event-priority.ts";
+import { postTask } from "./post-task.ts";
 import {
   type Fiber,
   ForceRenderBit,
@@ -353,26 +354,16 @@ const transitionDoneCallbacks: Array<() => void> = [];
 // pump through __pumpForTests() and must never construct it. It is closed again once a
 // slice schedules no further one (the sliced render finished or stopped), so a non-browser
 // process that ran a transition (a component test) is not held open by it either.
-let yieldChannel: MessageChannel | undefined;
-
 let continuationScheduled = false;
 
 export function scheduleContinuation(): void {
   if (continuationScheduled) return;
   continuationScheduled = true;
   if (manualSlicing) return; // pumped via __pumpForTests()
-  if (!yieldChannel) {
-    const channel = yieldChannel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      continuationScheduled = false;
-      resumeConcurrentImpl();
-      // Slicing went idle: let the channel go.
-      if (!continuationScheduled) {
-        channel.port1.close(), channel.port2.close(), yieldChannel = undefined;
-      }
-    };
-  }
-  yieldChannel.port2.postMessage(null);
+  postTask(() => {
+    continuationScheduled = false;
+    resumeConcurrentImpl();
+  });
 }
 
 export function scheduleTransitionFlush(): void {
