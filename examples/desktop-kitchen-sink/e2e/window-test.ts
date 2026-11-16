@@ -11,7 +11,14 @@
 // partial file), and an `<a download>` blob export and a `Content-Disposition: attachment` response
 // whose save dialogs the runner answers (Return in the folder LAUFEY_TEST_DOWNLOAD_DIR points them
 // at: xdotool or System Events; on Windows UI Automation presses the dialog's Save button), each
-// file checked where it landed. Then the full-app
+// file checked where it landed. A third launch, the hooks phase (KITCHEN_SINK_HOOKS=1), has
+// desktop.ts and the `kitchen` extension subscribe the backend hooks (desktop/hooks.ts): the page
+// clicks a `desktop.menu.window.items` item (the runtime's menuclick event), asks for a second
+// launch with an argument, starts a top-level navigation that onWillNavigate refuses, calls the
+// extension from the page and from a same-origin sub-frame (ctx.caller), posts backend
+// notifications, and arms a quit guard whose host.confirm box the runner answers 8 s after it opens
+// (Return / its Stay button), past the guards' 5 s deadline; an app that quits before reporting
+// names the check it was in. Then the full-app
 // update itself: a
 // copy of the app downloads, verifies and installs a second build (99.0.0, same throwaway key), the
 // new version's trial launch deliberately does not confirm, and the next launch must roll it back.
@@ -96,6 +103,14 @@ import {
 import pin from "../../../src/build/desktop-runtime-pin.json" with { type: "json" };
 import { parseFlags } from "./cli-args.ts";
 import {
+  HOOKS_CHECK_NAMES,
+  HOOKS_CHECKS,
+  HOOKS_ENV,
+  HOOKS_PHASE,
+  QUIT_BOX,
+  QUIT_BOX_ANSWER_AFTER_MS,
+} from "../desktop/hooks.ts";
+import {
   DOWNLOAD_PATH,
   DOWNLOAD_TEXT,
   type RunnerDownloads,
@@ -117,6 +132,8 @@ const TIMEOUT_MS = Number(Deno.env.get("KITCHEN_SINK_TIMEOUT_MS") ?? 240_000);
 const MIN_CHECKS = 55;
 /** The checks the navigation phase reports (app/navigation.tsx `NAVIGATION_CHECKS`). */
 const NAVIGATION_CHECKS = 6;
+/** The hooks phase's checks, by name (desktop/hooks.ts `HOOKS_CHECKS`, run by app/checks.ts). */
+export const HOOKS_PHASE_CHECKS: readonly string[] = HOOKS_CHECK_NAMES;
 /** The checks each full-app update phase reports (app/checks.ts `PHASE_CHECKS`). */
 const UPDATE_PHASES = { "update-install": 2, "update-trial": 1, "update-rollback": 2 } as const;
 /** The version the update build is packaged as (app/checks.ts `UPDATE_VERSION`). */
@@ -891,14 +908,24 @@ export interface SaveDialogKeys {
  * @param app The app's process name (its executable's name without `.exe`).
  * @param automationId The button's AutomationId.
  * @param waitSeconds How long to wait for the dialog to appear.
+ * @param buttonNames The button's names, when not Save / Cancel (a message box's own labels: a
+ * task dialog's custom buttons carry their label as their name).
  */
 export function windowsDialogButtonScript(
   app: string,
   automationId: "1" | "2",
   waitSeconds: number,
+  buttonNames?: readonly string[],
 ): string {
   if (!/^[A-Za-z0-9._-]+$/.test(app)) throw new Error(`not a process name: ${app}`);
-  const names = automationId === "1" ? "'Save', '&Save'" : "'Cancel'";
+  for (const name of buttonNames ?? []) {
+    if (!/^[A-Za-z0-9& ]+$/.test(name)) throw new Error(`not a button name: ${name}`);
+  }
+  const names = buttonNames
+    ? buttonNames.map((n) => `'${n}'`).join(", ")
+    : automationId === "1"
+    ? "'Save', '&Save'"
+    : "'Cancel'";
   return [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
@@ -1015,6 +1042,25 @@ export function saveDialogKeys(os: string, app = "KitchenSink"): SaveDialogKeys 
     default:
       return null;
   }
+}
+
+/**
+ * How the runner answers the hooks phase's quit box (`host.confirm`, whose default and cancel
+ * button is "Stay"): Return in the focused box with `xdotool` or System Events, and on Windows the
+ * task dialog's own "Stay" button through UI Automation (else `IDCANCEL`, which resolves the
+ * box's `cancelId`, "Stay" too); `null` elsewhere.
+ */
+export function messageBoxKeys(os: string, app = "KitchenSink"): readonly string[] | null {
+  if (os === "windows") {
+    return [
+      "powershell",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      encodePowerShell(windowsDialogButtonScript(app, "2", 8, [QUIT_BOX.buttons[0]])),
+    ];
+  }
+  return saveDialogKeys(os, app)?.accept ?? null;
 }
 
 /** This OS's save dialog keys when they can be pressed here, else why not. */
@@ -1201,7 +1247,7 @@ function linuxSessionType(): "wayland" | "x11" | "tty" | null {
 
 /** What the app reads at launch to know the runner started it (see `desktop/kitchen.ts`). */
 async function writeRunnerState(
-  phase: "main" | "navigation" | "update" | "trusted",
+  phase: "main" | "navigation" | "hooks" | "update" | "trusted",
   updateBase: string,
 ): Promise<void> {
   const dir = desktopAppDirs(APP_ID).data;
@@ -1256,9 +1302,13 @@ async function warnIfScreenLocked(): Promise<void> {
   }
 }
 
-/** The app's environment: the stand-in browser first on PATH (in-process on Windows). */
-function appEnv(bin: string): Record<string, string> {
+/**
+ * The app's environment: the stand-in browser first on PATH (in-process on Windows), and on the
+ * hooks launch the variable that makes `desktop.ts` subscribe the backend hooks.
+ */
+function appEnv(bin: string, hooks = false): Record<string, string> {
   return {
+    ...(hooks ? { [HOOKS_ENV]: "1" } : {}),
     PATH: `${bin}${DELIMITER}${Deno.env.get("PATH") ?? ""}`,
     // Windows: the app's in-process stand-in browser (desktop/browser-stand-in.ts).
     ...(OS === "windows" ? { KITCHEN_SINK_STAND_IN_BROWSER: "1" } : {}),
@@ -1326,22 +1376,32 @@ async function serveSecondInstances(exe: string, env: Record<string, string>): P
     clearTimeout(timer);
     await Promise.race([second.done, sleep(2000)]);
     log(`the second instance (${m[1]}) exited with ${code}`);
-    await Deno.writeTextFile(join(SCRATCH, `second-${m[1]}.done.json`), JSON.stringify({ code }));
+    // The second process ran in ROOT (see `launch`): the hooks check compares it with the event.
+    await Deno.writeTextFile(
+      join(SCRATCH, `second-${m[1]}.done.json`),
+      JSON.stringify({ code, cwd: ROOT }),
+    );
   }
 }
 
-/** Wait for `phase`'s report, serving second instances meanwhile; `null` on a timeout. */
+/**
+ * Wait for `phase`'s report, serving second instances, save dialogs and message boxes meanwhile;
+ * `null` on a timeout, or as soon as `app` (when given) exited without one.
+ */
 async function waitForReport(
   phase: string,
   exe: string,
   env: Record<string, string>,
   until: number,
+  app?: Launched,
 ): Promise<Report | null> {
   const file = join(SCRATCH, `kitchen-sink-report-${phase}.json`);
   while (Date.now() < until) {
     if (await exists(file)) return JSON.parse(await Deno.readTextFile(file)) as Report;
+    if (app?.exit) return (await exists(file)) ? JSON.parse(await Deno.readTextFile(file)) : null;
     await serveSecondInstances(exe, env);
     await serveSaveDialogs();
+    await serveMessageBoxes(basename(exe).replace(/\.exe$/i, ""));
     await sleep(250);
   }
   return null;
@@ -1428,6 +1488,91 @@ async function navigationPhase(exe: string, bin: string, updateBase: string) {
     problems.push("navigation: the app did not quit within 20 s of reporting");
   } else if (app.exit!.code !== 0) {
     problems.push(`navigation: the app exited with ${app.exit!.code}`);
+  }
+  await Promise.race([app.done, sleep(2000)]);
+  return { report, problems };
+}
+
+/**
+ * Answer the message boxes the app asks about (`box-<id>.request.json`, written by the hooks
+ * phase's quit guard right before its `host.confirm` box opens): wait the request's `afterMs`,
+ * then press the box's default button ({@linkcode messageBoxKeys}). Each answer goes back in
+ * `box-<id>.done.json` (how the press went), for the logs.
+ */
+async function serveMessageBoxes(app: string): Promise<void> {
+  for await (const e of Deno.readDir(SCRATCH)) {
+    const m = /^box-([a-z0-9-]+)\.request\.json$/.exec(e.name);
+    if (!m) continue;
+    const request = join(SCRATCH, e.name);
+    const { afterMs } = JSON.parse(await Deno.readTextFile(request)) as { afterMs?: number };
+    await Deno.remove(request);
+    const wait = Math.min(Math.max(Number(afterMs) || 0, 0), 30_000);
+    log(`the app opened its ${m[1]} message box: answering it in ${wait} ms`);
+    await sleep(wait);
+    const keys = messageBoxKeys(OS, app);
+    const detail = keys ? await press(keys) : `no message box driver for ${OS}`;
+    log(`  pressed: ${detail}`);
+    await Deno.writeTextFile(join(SCRATCH, `box-${m[1]}.done.json`), JSON.stringify({ detail }));
+  }
+}
+
+/**
+ * Why the hooks launch is wrong when the app exited (`code`) before reporting, from the progress
+ * marker (`<n> <check name>`): during the quit check that is the guard deadline cutting the box
+ * off, which is exactly what the check is there to catch.
+ */
+export function hooksEarlyExitProblem(progress: string, code: number | null): string {
+  const at = progress.replace(/^\d+\s+/, "").trim();
+  const exited = `the app exited (code ${code ?? "unknown"}) before reporting`;
+  if (!at) return `hooks: ${exited}, before its first check`;
+  if (at === HOOKS_CHECKS.quitDeadline) {
+    return `hooks: ${exited} during "${at}": the quit went on while the onBeforeQuit guard's ` +
+      `host.confirm box was up, so the 5 s guard deadline cut the host.confirm box off (it must ` +
+      `not count while the box is up; the runner answers it after ${QUIT_BOX_ANSWER_AFTER_MS} ms)`;
+  }
+  return `hooks: ${exited} during "${at}"`;
+}
+
+/**
+ * The hooks phase: the backend hooks in the real window. `desktop.ts` subscribes
+ * `runDesktop({ onWindowMenuItem, onSecondInstance, onWillNavigate })` and the `kitchen` extension
+ * `host.onWindowMenuItem` / `host.onSecondInstance` / `host.onBeforeQuit` (KITCHEN_SINK_HOOKS=1,
+ * phase `hooks`); the page (app/checks.ts `PHASE_CHECKS.hooks`) drives each, the runner starts the
+ * second launch and answers the quit guard's box past the guards' deadline, and the page reports
+ * and quits.
+ */
+async function hooksPhase(exe: string, bin: string, updateBase: string) {
+  await writeRunnerState("hooks", updateBase);
+  await Deno.remove(join(SCRATCH, "progress.marker")).catch(() => {});
+  const env = appEnv(bin, true);
+  const logFile = join(SCRATCH, "hooks.log");
+  const app = launch(exe, [], env, logFile);
+  log(`hooks: launched pid ${app.child.pid}`);
+  const report = await waitForReport(HOOKS_PHASE, exe, env, Date.now() + TIMEOUT_MS, app);
+  if (!report) {
+    const at = await Deno.readTextFile(join(SCRATCH, "progress.marker")).catch(() => "");
+    if (app.exit) {
+      await Promise.race([app.done, sleep(2000)]);
+      return {
+        report: null,
+        problems: [`${hooksEarlyExitProblem(at, app.exit.code)} (app log: ${logFile})`],
+      };
+    }
+    kill(app);
+    return {
+      report: null,
+      problems: [
+        `hooks: no report within ${TIMEOUT_MS} ms` +
+        (at ? `; the page was at ${at}` : "; the page started no check") + ` (app log: ${logFile})`,
+      ],
+    };
+  }
+  const problems: string[] = [];
+  if (!(await waitGone(app))) {
+    kill(app);
+    problems.push("hooks: the app did not quit within 20 s of reporting");
+  } else if (app.exit!.code !== 0) {
+    problems.push(`hooks: the app exited with ${app.exit!.code}`);
   }
   await Promise.race([app.done, sleep(2000)]);
   return { report, problems };
@@ -1760,6 +1905,13 @@ function judge(reports: Report[], extra: string[]): { results: RunResult[]; prob
     if (want !== undefined && report.expected.length !== want) {
       problems.push(`${report.phase}: ${report.expected.length} checks (expected ${want})`);
     }
+    if (
+      report.phase === HOOKS_PHASE && report.expected.join("\n") !== HOOKS_PHASE_CHECKS.join("\n")
+    ) {
+      problems.push(
+        `${report.phase}: the app's checks differ from HOOKS_CHECKS (desktop/hooks.ts)`,
+      );
+    }
     const names = TRUSTED_PHASES[report.phase];
     if (names && report.expected.join("\n") !== names.join("\n")) {
       problems.push(`${report.phase}: the app's checks differ from TRUSTED_PHASES in the runner`);
@@ -1952,6 +2104,9 @@ async function main(): Promise<void> {
       const nav = await navigationPhase(exe, bin, updates.base);
       if (nav.report) reports.push(nav.report);
       extra.push(...nav.problems);
+      const hooks = await hooksPhase(exe, bin, updates.base);
+      if (hooks.report) reports.push(hooks.report);
+      extra.push(...hooks.problems);
       if (update) {
         const up = await updatePhases(exe, bin, updates.base);
         reports.push(...up.reports);

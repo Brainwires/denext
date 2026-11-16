@@ -32,9 +32,20 @@
 // - `driveSetup` / `driveNext` / `driveResult` / `driveEvent` / `driveReady` back the drive mode
 //   (`app/drive/protocol.ts`): a command queue and its answers in a folder, so the manual checks
 //   run with no one at the screen; `nativeDialog` opens the runtime's own file dialog and closes it
-//   through its AbortSignal, so a dialog is exercised without a person to cancel it.
+//   through its AbortSignal, so a dialog is exercised without a person to cancel it;
+// - on the hooks launch (phase `hooks`, see `hooks.ts`), `setup` subscribes `host.onWindowMenuItem`,
+//   `host.onSecondInstance` and a `host.onBeforeQuit` guard whose `host.confirm` box the runner
+//   answers past the guards' deadline; `hooksLog` hands the page what every backend hook saw,
+//   `hooksArmNavigation` / `hooksArmQuit` arm the will-navigate refusal and the quit guard,
+//   `hooksCaller` / `hooksMainOnly` return `ctx.caller` (the second refusing a sub-frame), and
+//   `hooksNotify` posts through `runDesktop`'s result's `notify` and `host.notify`.
 
-import { defineDesktopExtension } from "denext/desktop";
+import {
+  defineDesktopExtension,
+  DesktopCapError,
+  type DesktopExtensionHost,
+  runtimeHasNavigationEvents,
+} from "denext/desktop";
 import {
   appUpdateStatus,
   checkForAppUpdate,
@@ -53,6 +64,18 @@ import {
   parseDriveCommand,
 } from "../app/drive/protocol.ts";
 import type { RunnerDownloads } from "../app/downloads.ts";
+import {
+  type BackendNotify,
+  callerRefusal,
+  createQuitGuard,
+  hookLog,
+  HOOKS_PHASE,
+  navigation,
+  QUIT_BOX_ANSWER_AFTER_MS,
+  runtimeNotifier,
+  secondInstanceRecorder,
+  windowMenuRecorder,
+} from "./hooks.ts";
 
 /** The file the runner writes into the app's data folder before each launch. */
 const RUNNER_FILE = "kitchen-sink-runner.json";
@@ -265,9 +288,106 @@ async function rawRequest(port: number, request: string): Promise<string> {
   }
 }
 
+/** The host `setup` received (the hooks methods post, confirm and quit through it). */
+let extensionHost: DesktopExtensionHost | undefined;
+
+/** Whether the runner started this launch as the hooks phase (its state file, read raw). */
+async function hooksLaunch(dataDir: string): Promise<boolean> {
+  try {
+    const s = JSON.parse(await Deno.readTextFile(join(dataDir, RUNNER_FILE))) as {
+      phase?: unknown;
+    };
+    return s.phase === HOOKS_PHASE;
+  } catch {
+    return false;
+  }
+}
+
+/** The hooks launch's quit guard: armed by the page, its box answered by the runner. */
+const quitGuard = createQuitGuard(hookLog, {
+  confirm: (options) => {
+    if (!extensionHost) throw new DesktopCapError("unsupported", "no extension host");
+    return extensionHost.confirm({ ...options, buttons: [...options.buttons] });
+  },
+  requestAnswer: async () => {
+    const dir = extensionHost ? await outDir(extensionHost.appSupportDir) : undefined;
+    if (!dir) return;
+    await writeWhole(
+      join(dir, "box-quit.request.json"),
+      JSON.stringify({ afterMs: QUIT_BOX_ANSWER_AFTER_MS }),
+    );
+  },
+});
+
+/** Post one backend notification through `notify` and close it: what it resolved or rejected. */
+async function postOnce(notify: BackendNotify | undefined, tag: string) {
+  if (!notify) return { ok: false as const, code: "missing", message: "no poster" };
+  try {
+    const posted = await notify({ title: "Kitchen sink", body: "a backend notification", tag });
+    posted.close();
+    return { ok: true as const, tag: posted.tag };
+  } catch (err) {
+    const e = err as { code?: unknown; message?: unknown };
+    return { ok: false as const, code: String(e.code ?? "unknown"), message: String(e.message) };
+  }
+}
+
 export default defineDesktopExtension({
   name: "kitchen",
+  setup: (host) => {
+    extensionHost = host;
+    void hooksLaunch(host.appSupportDir).then((hooks) => {
+      if (!hooks) return;
+      host.onWindowMenuItem(windowMenuRecorder(hookLog, "host"));
+      host.onSecondInstance(secondInstanceRecorder(hookLog, "host"));
+      host.onBeforeQuit(quitGuard.guard);
+    });
+  },
   methods: {
+    hooksLog: {
+      handler: () => ({
+        ...hookLog,
+        navigationEvents: runtimeHasNavigationEvents(),
+        marksFrames: (desktop() as { marksFrames?: unknown } | undefined)?.marksFrames === true,
+      }),
+    },
+    hooksArmNavigation: {
+      handler: (args) => {
+        navigation.arm(stringField(args, "url"));
+        return { armed: true };
+      },
+    },
+    hooksArmQuit: {
+      handler: () => {
+        quitGuard.arm();
+        return { armed: true };
+      },
+    },
+    hooksCaller: { handler: (_args, ctx) => ctx.caller ?? null },
+    hooksMainOnly: {
+      handler: (_args, ctx) => {
+        if (!ctx.caller) throw new DesktopCapError("forbidden", "no caller", { status: 403 });
+        const refusal = callerRefusal(ctx.caller);
+        if (refusal) {
+          throw new DesktopCapError("forbidden", refusal, {
+            status: 403,
+            data: { frame: ctx.caller.frame },
+          });
+        }
+        return ctx.caller;
+      },
+    },
+    hooksNotify: {
+      handler: async () => {
+        const host = extensionHost;
+        return {
+          runtime: await postOnce(runtimeNotifier.notify, "kitchen-backend-runtime"),
+          host: await postOnce(host?.notify.bind(host), "kitchen-backend-host"),
+          // Documented: a `denext-` tag is denext's own, refused as `validation`.
+          refused: await postOnce(host?.notify.bind(host), "denext-kitchen"),
+        };
+      },
+    },
     setup: {
       handler: async (_args, ctx) => {
         const state = await readRunnerState(ctx.appSupportDir);

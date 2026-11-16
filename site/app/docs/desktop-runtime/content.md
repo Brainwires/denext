@@ -1059,7 +1059,9 @@ Each layer has its own gate, and a release runs all of them:
 - **denext, from the page.** The
   [desktop kitchen sink](https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink)
   turns on every capability, calls each one from the page and asserts the results, including a
-  real update installed, left unconfirmed and rolled back. Its window test
+  real update installed, left unconfirmed and rolled back, and the backend hooks (Window-menu
+  items, a second launch, will-navigate, `ctx.caller`, `notify()` and a quit guard's message box
+  outlasting the guards' deadline) on a launch of their own. Its window test
   (`.github/workflows/desktop-window.yml`) runs on Linux, macOS arm64, macOS Intel and Windows,
   when dispatched before a release and on every push that touches the desktop code; a check that can't run on a hosted
   runner must say why.

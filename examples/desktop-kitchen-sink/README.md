@@ -9,8 +9,13 @@ DevTools switch, deep links and opened files, a second instance, the preload, th
 a Node-API addon, the bridge's gate, custom-scheme auth sessions, passkeys, the Clerk bridge, links
 between the export's pages (soft navigations, back, and a full-page load that keeps the bridge), a
 platform-specific file (`components/PlatformBadge.desktop.tsx`, imported through the `@/` alias,
-rendered and hydrated instead of the plain web file) and the full-app updater (a real update
-installed, left unconfirmed and rolled back).
+rendered and hydrated instead of the plain web file), the full-app updater (a real update installed,
+left unconfirmed and rolled back) and, on a launch of their own, the backend hooks
+(`desktop/hooks.ts`): a Window-menu item of the app's own reaching `onWindowMenuItem` and
+`host.onWindowMenuItem`, a second launch reaching `onSecondInstance` with its `args` and `cwd`,
+`onWillNavigate` refusing a navigation, `ctx.caller` refusing a sub-frame, `notify()` from the
+backend, and an `onBeforeQuit` guard's `host.confirm` box holding the quit past the guards' 5 s
+deadline (the runner answers it after 8 s).
 
 CI runs it on Linux, macOS (Apple silicon and Intel) and Windows
 (`.github/workflows/desktop-window.yml`): dispatched before a release, and on pushes that touch the

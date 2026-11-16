@@ -1,8 +1,10 @@
 # The desktop kitchen sink's window test (examples/desktop-kitchen-sink) on every desktop OS: package
 # the app with denext's pinned Deno Desktop runtime, open it in a real window and assert every check
 # the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
-# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, and
-# a full-app update installed, left unconfirmed and rolled back).
+# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, a
+# full-app update installed, left unconfirmed and rolled back, and on a launch of their own the
+# backend hooks: Window-menu items, a second launch, will-navigate, ctx.caller, notify() and an
+# onBeforeQuit guard's host.confirm box, which the runner answers past the guards' 5 s deadline).
 #
 # Windows also runs the Authenticode phases: "sign" packages builds signed with two throwaway
 # self-signed certificates and checks the signer of every PE file, and, because the hosted runner
