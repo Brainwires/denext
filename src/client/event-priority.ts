@@ -17,11 +17,9 @@ let discrete = 0;
 // effects are flushed before one is dispatched, so an effect a click set up (a `window`
 // listener closing a menu) is in place before the next input event — the browser runs input
 // tasks ahead of the timer the effects would otherwise wait for.
-// Prefixes suffice (`key` is keydown / keyup / keypress, `select` selectstart / selectionchange),
-// and `change$` covers change, ratechange, volumechange, fullscreenchange and hashchange (a few
-// other `*change` events only flush their effects sooner).
+// Exactly React's DiscreteEventPriority set (tests/discrete-passive-flush.test.ts pins it).
 const DISCRETE =
-  /^((dbl|aux)?click|contextmenu|key|(pointer|mouse)(down|up)|(pointer|touch)cancel|touch(start|end)|(before)?input|focus|blur|submit|reset|composition|copy|cut|paste|drag(start|end)|drop|select|invalid|cancel|close|play$|pause|seeked|resize|popstate)|change$/;
+  /^(cancel|(aux|dbl)?click|close|contextmenu|copy|cut|drag(end|start)|drop|focus(in|out)?|(before)?input|invalid|key(down|press|up)|mouse(down|up)|paste|pause|play|pointer(cancel|down|up)|(rate|volume|fullscreen|hash|selection)?change|reset|resize|seeked|submit|touch(cancel|end|start)|composition(start|end|update)|textInput|(before|after)?blur|popstate|select(start)?)$/;
 
 /** Flushes pending passive effects before a discrete event; installed by the root module. */
 let beforeDiscrete: (() => void) | null = null;
@@ -48,7 +46,7 @@ export function beginEventDispatch(type: string): boolean {
 /** Leave a DOM event handler's synchronous execution (`d`: what begin returned). */
 export function endEventDispatch(d: boolean): void {
   if (depth > 0) depth--;
-  if (d && discrete > 0) discrete--;
+  if (d) discrete--;
 }
 
 /** True while a DOM event handler is running synchronously. */
