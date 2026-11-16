@@ -212,6 +212,10 @@ back by number. The rules are enforced in code (`voice/browser-safety.ts`, `voic
 `voice/confirm.ts`):
 
 - only `http:` and `https:` addresses open;
+- opening a host Loopy hasn't opened this session asks first when the address carries more than 64
+  characters of query or fragment data (`URL_DATA_LIMIT`), so a page can't have the model send the
+  conversation out as `https://bad.example/?q=…`; ordinary links and short searches never ask, and
+  once the user says Yes the host counts as visited;
 - page content goes back to the model wrapped in `<untrusted_page_data>` and labelled as data, not
   instructions (a page can't close the block early);
 - it never types into password, payment-card or one-time-code fields (by `type`, `autocomplete`,

@@ -18,6 +18,11 @@ and this project adheres to
 
 ### Fixed
 
+- **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
+  when the host is one it hasn't opened this session and the URL's query and fragment carry more
+  than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page
+  can't have the model open `https://bad.example/?q=<the conversation>`. Ordinary browsing (no
+  data, a short search, a host already opened) does not ask.
 - **A SPA's `denext dev` no longer rebuilds for a file whose content did not change.** The
   watcher records each project file's content (SHA-256) before it opens, and learns a file it had
   not seen on its first event; an event for a file holding the bytes it had then is dropped. On
