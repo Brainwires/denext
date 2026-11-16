@@ -528,15 +528,20 @@ function runEffectPass(queue: Array<Fiber | CommitEffect>, i: number, teardown: 
 
 // ---- Passive effects (useEffect): scheduled after commit -------------------
 // React runs passive effects on a task after paint, separate from the synchronous
-// layout phase. denext schedules them on a macrotask and flushes them
-// synchronously at the points React does: before starting the next render, and
-// inside flushSync/act. Class lifecycle and useLayoutEffect stay in the layout
-// phase (synchronous), so their observable timing is unchanged.
+// layout phase. denext schedules them on a MessageChannel task, as React's Scheduler
+// does (a setTimeout only where MessageChannel is missing: a timer can starve behind
+// input tasks and a busy loop), and flushes them synchronously at the points React
+// does: at the end of a commit a discrete event (a click, a key press) caused, before
+// such an event is dispatched, before starting the next render, and inside
+// flushSync/act. Cleanups ride the same flush as setups (all cleanups, then all
+// setups). Class lifecycle and useLayoutEffect stay in the layout phase (synchronous).
 
 const pendingPassive: Fiber[] = [];
-/** The macrotask that will flush the queued passive effects, if one is scheduled. */
+/** The task that will flush the queued passive effects: -1 for a channel / rAF task. */
 let passiveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushingPassive = false;
+/** The channel the passive flush is posted on; closed once a flush schedules no other. */
+let passiveChannel: MessageChannel | undefined;
 
 function schedulePassiveFlush(): void {
   if (passiveTimer !== undefined) return;
@@ -550,10 +555,24 @@ function schedulePassiveFlush(): void {
     });
     return;
   }
-  passiveTimer = setTimeout(() => {
-    passiveTimer = undefined;
-    flushPassiveEffects();
-  }, 0);
+  if (typeof MessageChannel !== "function") {
+    passiveTimer = setTimeout(() => {
+      passiveTimer = undefined;
+      flushPassiveEffects();
+    }, 0);
+    return;
+  }
+  passiveTimer = -1 as unknown as ReturnType<typeof setTimeout>;
+  if (!passiveChannel) {
+    // Lazily, and closed when idle: an open port with a listener keeps Deno's loop alive.
+    const c = passiveChannel = new MessageChannel();
+    c.port1.onmessage = () => {
+      passiveTimer = undefined;
+      flushPassiveEffects();
+      if (passiveTimer === undefined) c.port1.close(), c.port2.close(), passiveChannel = undefined;
+    };
+  }
+  passiveChannel.port2.postMessage(null);
 }
 
 /** Whether a commit queued passive effects (useEffect) that have not run yet. */
@@ -565,7 +584,7 @@ export function hasPendingPassiveEffects(): boolean {
 export function flushPassiveEffects(): void {
   if (flushingPassive) return;
   // Flushed now (flushSync, act, the next render): the scheduled task has nothing left to do.
-  // (A `requestAnimationFrame`-scheduled flush, marked -1, finds the queue empty.)
+  // (A channel- or `requestAnimationFrame`-scheduled flush, marked -1, finds the queue empty.)
   if ((passiveTimer as unknown) !== -1) clearTimeout(passiveTimer);
   passiveTimer = undefined;
   if (pendingPassive.length === 0) return;

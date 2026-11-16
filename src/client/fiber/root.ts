@@ -6,6 +6,7 @@ import { activeRoots, currentDocument, fiberToRoot } from "./state.ts";
 import type { RootHandle } from "./state.ts";
 import { walk } from "./fiber-utils.ts";
 import {
+  duringRender,
   flushRoots,
   reclaimTransitions,
   runTransitionDone,
@@ -27,9 +28,14 @@ import { createFiber, type Fiber, NoLane, SyncLane, TransitionLane } from "./fib
 import { listenOn } from "./events.ts";
 import { bootMomentumSafeScroll } from "../momentum-boot.ts";
 import { nextMacrotask } from "../../runtime/next-macrotask.ts";
+import { setBeforeDiscreteEvent } from "../event-priority.ts";
+import { preactOptions } from "./preact-options-seam.ts";
 
 // Wire the work loop into the scheduler (see `FlushHandlers` for why it is injected).
 setFlushHandlers(renderRoot, beginConcurrentRender, resumeConcurrent);
+// Pending passive effects run before a discrete event is dispatched (React's
+// `flushPassiveEffects` ahead of a discrete event), except mid-render and in a Preact app.
+setBeforeDiscreteEvent(() => duringRender || preactOptions || flushPassiveEffects());
 
 /**
  * Render `children` into a different DOM `container` while keeping their place in

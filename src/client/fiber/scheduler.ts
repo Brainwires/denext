@@ -11,7 +11,7 @@ import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { transitionScope } from "../../runtime/async-context-mode.ts";
-import { inEventDispatch } from "../event-priority.ts";
+import { inDiscreteEvent, inEventDispatch } from "../event-priority.ts";
 import {
   type Fiber,
   ForceRenderBit,
@@ -172,7 +172,13 @@ export function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   }
   const handle = rootHandleOf(fiber);
   if (!handle) return;
-  if (lane & SyncLane) handle.reveal = false; // urgent work joins it: no longer a pure reveal
+  if (lane & SyncLane) {
+    handle.reveal = false; // urgent work joins it: no longer a pure reveal
+    // A click's / key press's update commits its passive effects before returning, as React's
+    // SyncLane does, so they beat the next input event. A Preact app keeps Preact's after-paint
+    // `useEffect` timing.
+    if (!preactOptions && inDiscreteEvent()) handle.syncPassive = true;
+  }
   handle.pendingLanes |= lane;
   if (duringRender) return; // picked up by the render-again loop
   if (lane & TransitionLane) scheduleTransitionFlush();

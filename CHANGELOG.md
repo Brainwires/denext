@@ -89,6 +89,17 @@ and this project adheres to
 
 ### Fixed
 
+- **Effects from a click or key press run before the next input event, as in React 18.** A
+  commit caused by a discrete event (click, key down / up, pointer down / up, input, focus change,
+  submit, …; React's discrete set) now runs its `useEffect` cleanups and setups at the end of that
+  commit, after its layout effects, and pending `useEffect`s are flushed before a discrete event's
+  handlers run. Other commits schedule the flush on a `MessageChannel` task, as React's Scheduler
+  does, instead of a 0 ms timer. The flush used to wait for a timer, which a browser runs after
+  input tasks and a busy loop can starve, so an outside click or Escape could beat the effect that
+  adds the `window` listener closing a menu, a key press could miss the input an effect focuses,
+  and a dependency change's cleanup (an iframe's removal) landed a commit late. Transitions, timer
+  and fetch updates, and continuous events (`mousemove`, `scroll`, `wheel`, …) still run their
+  effects after the commit's task; a Preact app keeps Preact's after-paint timing.
 - **`/auth/v1` email changes are confirmed from both addresses (`secureEmailChange`).** As in
   GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
   code to that address as well as the new one, and the change applies once both are redeemed (the
