@@ -385,6 +385,7 @@ import {
 import {
   HOOKS_PHASE_CHECKS,
   hooksEarlyExitProblem,
+  launchesSince,
   messageBoxKeys,
 } from "../examples/desktop-kitchen-sink/e2e/window-test.ts";
 
@@ -523,4 +524,27 @@ Deno.test("kitchen sink hooks: an app that quits before reporting names the chec
   );
   assertStringIncludes(hooksEarlyExitProblem(`1 ${HOOKS_CHECK_NAMES[0]}`, 1), HOOKS_CHECK_NAMES[0]);
   assertStringIncludes(hooksEarlyExitProblem("", null), "before its first check");
+});
+
+Deno.test("kitchen sink update: a rollback with no report names the launches since the relaunch", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(
+      await launchesSince("2026-01-01T00:00:00.000Z", dir),
+      "no launch recorded since the relaunch",
+    );
+    const write = (pid: number, at: string, update: unknown) =>
+      Deno.writeTextFile(`${dir}/launch-${pid}.json`, JSON.stringify({ at, update }));
+    await write(10, "2026-01-01T00:00:00.000Z", { version: "99.0.0", trial: true });
+    await write(11, "2026-01-01T00:01:00.000Z", { version: "1.0.0", rolledBackFrom: "99.0.0" });
+    await Deno.writeTextFile(`${dir}/launch-12.json`, "{");
+    await Deno.writeTextFile(`${dir}/other.json`, "{}");
+    const text = await launchesSince("2026-01-01T00:00:30.000Z", dir);
+    assertEquals(
+      text,
+      'launches since the relaunch: pid 11 at 2026-01-01T00:01:00.000Z: {"version":"1.0.0","rolledBackFrom":"99.0.0"}; launch-12.json: unreadable',
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

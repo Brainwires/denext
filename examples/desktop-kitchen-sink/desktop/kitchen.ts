@@ -332,10 +332,40 @@ async function postOnce(notify: BackendNotify | undefined, tag: string) {
   }
 }
 
+/**
+ * Under the window test: one `launch-<pid>.json` per launch in the runner's folder, with the
+ * updater's view of it, so a launch that never reports (a rolled-back relaunch the updater
+ * started, whose output nobody captures) still leaves a trace of having started, and as what.
+ */
+async function recordLaunch(dataDir: string): Promise<void> {
+  try {
+    const dir = await outDir(dataDir);
+    if (!dir) return;
+    const status = appUpdateStatus();
+    await writeWhole(
+      join(dir, `launch-${Deno.pid}.json`),
+      JSON.stringify({
+        at: new Date().toISOString(),
+        update: status && {
+          version: status.version,
+          phase: status.phase,
+          trial: status.trial,
+          updatedFrom: status.updatedFrom,
+          rolledBackFrom: status.rolledBackFrom,
+          rejected: status.rejected,
+        },
+      }),
+    );
+  } catch (err) {
+    console.error("kitchen: could not record this launch:", err);
+  }
+}
+
 export default defineDesktopExtension({
   name: "kitchen",
   setup: (host) => {
     extensionHost = host;
+    void recordLaunch(host.appSupportDir);
     void hooksLaunch(host.appSupportDir).then((hooks) => {
       if (!hooks) return;
       host.onWindowMenuItem(windowMenuRecorder(hookLog, "host"));

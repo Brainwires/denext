@@ -197,3 +197,17 @@ Deno.test("autoConfirm: the default deps read Deno.desktop.updater and log to st
     else delete (Deno as unknown as Record<string, unknown>).desktop;
   }
 });
+
+Deno.test("autoConfirm: a launch after an update or a rollback says so in the app's log", () => {
+  const rolled = fake(() => ({ trial: false, version: "1.0.0", rolledBackFrom: "99.0.0" }));
+  assertEquals(appUpdateAutoConfirm(undefined, rolled), undefined);
+  assertEquals(rolled.logs, ["app update: 1.0.0 is running again; 99.0.0 was rolled back"]);
+  const updated = fake(() => ({ trial: true, version: "99.0.0", updatedFrom: "1.0.0" }));
+  assert(appUpdateAutoConfirm(undefined, updated));
+  assertEquals(updated.logs, [
+    "app update: 99.0.0 is running, updated from 1.0.0 (on trial until confirmed)",
+  ]);
+  const plain = fake(() => ({ trial: false, version: "1.0.0" }));
+  appUpdateAutoConfirm(undefined, plain);
+  assertEquals(plain.logs, []);
+});

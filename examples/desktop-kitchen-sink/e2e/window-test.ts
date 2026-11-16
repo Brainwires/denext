@@ -1407,6 +1407,34 @@ async function waitForReport(
   return null;
 }
 
+/**
+ * The launches the app recorded (`launch-<pid>.json`, the kitchen extension's) since `since`, for
+ * a "no report" message: which processes started, and what the updater said each one was.
+ */
+export async function launchesSince(since: string, dir = SCRATCH): Promise<string> {
+  const seen: string[] = [];
+  let names: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) names.push(e.name);
+  } catch {
+    names = [];
+  }
+  for (const name of names.filter((n) => /^launch-\d+\.json$/.test(n)).sort()) {
+    const text = await Deno.readTextFile(join(dir, name)).catch(() => "");
+    try {
+      const rec = JSON.parse(text) as { at?: string; update?: unknown };
+      if (typeof rec.at === "string" && rec.at >= since) {
+        seen.push(`pid ${name.slice(7, -5)} at ${rec.at}: ${JSON.stringify(rec.update ?? null)}`);
+      }
+    } catch {
+      seen.push(`${name}: unreadable`);
+    }
+  }
+  return seen.length
+    ? `launches since the relaunch: ${seen.join("; ")}`
+    : "no launch recorded since the relaunch";
+}
+
 /** Wait (up to 20 s) for a child or a pid to be gone; `false` if it is still running. */
 async function waitGone(target: Launched | number): Promise<boolean> {
   const until = Date.now() + 20_000;
@@ -1622,6 +1650,7 @@ async function updatePhases(exe: string, bin: string, updateBase: string) {
   if (!(await waitGone(trial.pid))) problems.push("update-trial: the app did not quit");
 
   log("update: relaunching the unconfirmed version; it must roll back");
+  const relaunchedAt = new Date().toISOString();
   const third = launch(installExe, [], env, join(SCRATCH, "rollback.log"));
   const rollback = await waitForReport("update-rollback", exe, env, until);
   if (!(await waitGone(third))) {
@@ -1630,7 +1659,12 @@ async function updatePhases(exe: string, bin: string, updateBase: string) {
   } else if (third.exit!.code !== 0) {
     problems.push(`update-rollback: the unconfirmed launch exited with ${third.exit!.code}`);
   }
-  if (!rollback) return { reports, problems: [...problems, "update-rollback: no report"] };
+  if (!rollback) {
+    return {
+      reports,
+      problems: [...problems, `update-rollback: no report (${await launchesSince(relaunchedAt)})`],
+    };
+  }
   reports.push(rollback);
   if (!(await waitGone(rollback.pid))) problems.push("update-rollback: the app did not quit");
   return { reports, problems };

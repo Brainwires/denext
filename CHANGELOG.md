@@ -56,6 +56,11 @@ and this project adheres to
 
 ### Changed
 
+- **A Deno Desktop launch after a full-app update or a rollback says so in the app's log.**
+  `desktop: app update: 99.0.0 is running, updated from 1.0.0 (on trial until confirmed)` or
+  `… 1.0.0 is running again; 99.0.0 was rolled back`, from the runtime's update status at startup,
+  so a field report shows where an update stopped.
+
 - **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.24.** Besides the kernel
   sandbox preview it tightens the Linux lifecycle-script jail's socket filter
   (GHSA-9363-h8qp-jg52) and ports upstream fixes: `Deno.serve` closing after an early response to
