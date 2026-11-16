@@ -13,7 +13,9 @@ import {
   jsrRangeAdmits,
   lockedVersion,
   lockfilePath,
+  pinLinkedEntryModules,
 } from "../src/build/app-framework-root.ts";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 import { frameworkFileUrl, frameworkRootUrl, prepareConfig } from "../src/build/bundle.ts";
 
 const CHECKOUT = { root: "file:///src/denext/", version: "3.4.2" };
@@ -146,6 +148,42 @@ Deno.test("foldAppDenext maps another copy's root onto the running framework's",
   // Roots that nest would fold the running framework into itself.
   assertEquals(foldAppDenext(CHECKOUT.root, "file:///src/"), {});
   assertEquals(foldAppDenext(CHECKOUT.root, `${CHECKOUT.root}vendor/`), {});
+});
+
+// The running checkout reached through a link: the files the app's map names would load under
+// the link (as the app's deno.json resolves them) AND under the real root (the framework's own
+// relative imports), bundled twice. Each is pinned to the linked spelling from both roots.
+Deno.test({
+  name: dirLinkTestName("pinLinkedEntryModules pins a linked checkout's named files"),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_pin_linked_" });
+  try {
+    const real = join(dir, "real");
+    await Deno.mkdir(join(real, "src"), { recursive: true });
+    await symlinkDir(real, join(dir, "link"));
+    const running = toFileUrl(real).href + "/";
+    const app = toFileUrl(join(dir, "link")).href + "/";
+    const imports = {
+      "denext": `${app}mod.ts`,
+      "denext/jsx-runtime": `${app}src/jsx-runtime.ts`,
+      "denext/sub/": `${app}src/`, // a prefix entry names no one file
+      "@std/assert": "jsr:@std/assert@1",
+      "~/": "file:///elsewhere/",
+    };
+    assertEquals(pinLinkedEntryModules(running, app, imports), {
+      [`${running}mod.ts`]: `${app}mod.ts`,
+      [`${app}mod.ts`]: `${app}mod.ts`,
+      [`${running}src/jsx-runtime.ts`]: `${app}src/jsx-runtime.ts`,
+      [`${app}src/jsx-runtime.ts`]: `${app}src/jsx-runtime.ts`,
+    });
+    // The same root, another copy, or a remote root: nothing to pin.
+    assertEquals(pinLinkedEntryModules(running, running, imports), {});
+    assertEquals(pinLinkedEntryModules(running, "file:///other/denext/", imports), {});
+    assertEquals(pinLinkedEntryModules(running, `${JSR_DENEXT_ROOT}3.3.0/`, imports), {});
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 /** The merged config prepareConfig writes for an app config. */

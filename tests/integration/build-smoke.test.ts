@@ -672,16 +672,54 @@ Deno.test({
     await Deno.writeTextFile(join(app, "deno.json"), JSON.stringify(config));
     const clientDir = join((await build(app)).outDir, "client");
     await assertGatedRuntimeAbsent(clientDir);
-    assertBelowBudget(await sharedChunkSizes(clientDir));
+    // One instance of each runtime module: the app's own deno.json reached the JSX runtime under
+    // the link while the framework's relative imports reached it under the real path, so it was
+    // bundled twice (+469 B), a second `$$typeof` element path beside the first. The shared
+    // chunks then match examples/hello's own build byte for byte.
+    const helloDir = join((await build(EXAMPLE)).outDir, "client");
+    assertEquals(await runtimeMarkerCounts(helloDir), ONE_OF_EACH, "examples/hello (control)");
+    assertEquals(await runtimeMarkerCounts(clientDir), ONE_OF_EACH, "the symlink-mapped build");
+    const sizes = await sharedChunkSizes(clientDir);
+    assertBelowBudget(sizes);
+    assertEquals(sharedTotal(sizes), sharedTotal(await sharedChunkSizes(helloDir)));
   } finally {
     await Deno.remove(made.dir, { recursive: true });
   }
 });
 
+/** The byte total of `sizes` (from {@linkcode sharedChunkSizes}). */
+function sharedTotal(sizes: string[]): number {
+  return sizes.reduce((n, s) => n + Number(s.split(" ")[1]), 0);
+}
+
 /** The shared-chunk total of `sizes` (from {@linkcode sharedChunkSizes}) is under budget. */
 function assertBelowBudget(sizes: string[]): void {
-  const total = sizes.reduce((n, s) => n + Number(s.split(" ")[1]), 0);
+  const total = sharedTotal(sizes);
   assert(total < SHARED_BUDGET, budgetMessage(total));
+}
+
+/**
+ * Markers that appear once per copy of a runtime module in minified output: the hooks
+ * dispatcher's registry, the JSX runtime's dev symbol and its element builder (`key ?? null`).
+ */
+const RUNTIME_MARKERS: Readonly<Record<string, RegExp>> = {
+  dispatcher: /Symbol\.for\("denext\.currentDispatcher"\)/g,
+  jsxDev: /Symbol\.for\("denext\.jsxDev"\)/g,
+  elementBuilder: /\$\$typeof:\w+,type:\w+,props:\w+,key:\w+\.key\?\?null/g,
+};
+
+/** {@link RUNTIME_MARKERS}, each counted once. */
+const ONE_OF_EACH = Object.fromEntries(Object.keys(RUNTIME_MARKERS).map((k) => [k, 1]));
+
+/** How often each {@link RUNTIME_MARKERS} entry occurs across every client `.js` file. */
+async function runtimeMarkerCounts(clientDir: string): Promise<Record<string, number>> {
+  let text = "";
+  for (const name of await fileNames(clientDir)) {
+    if (name.endsWith(".js")) text += await Deno.readTextFile(join(clientDir, name)) + "\n";
+  }
+  return Object.fromEntries(
+    Object.entries(RUNTIME_MARKERS).map(([k, re]) => [k, [...text.matchAll(re)].length]),
+  );
 }
 
 /**

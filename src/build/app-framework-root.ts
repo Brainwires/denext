@@ -24,7 +24,8 @@
 // app's copy: Deno links it (a "linked package") because the build's import-map entries point
 // into it.
 
-import { dirname, resolve } from "@std/path";
+import { dirname, fromFileUrl, resolve } from "@std/path";
+import { canonicalPath } from "./canonical-path.ts";
 
 /** A published denext version's module root on JSR (`<root><version>/`). */
 export const JSR_DENEXT_ROOT = "https://jsr.io/@denext/denext/";
@@ -142,6 +143,38 @@ export function lockedVersion(lock: unknown, spec: string): string | undefined {
  */
 export function foldAppDenext(running: string, app: string): Record<string, string> {
   return running.startsWith(app) || app.startsWith(running) ? {} : { [app]: running };
+}
+
+/**
+ * When the app's denext root is the running checkout reached through a symlink (an import map
+ * naming the checkout through a link), the import-map entries that give each module the app's
+ * import map names directly ONE spelling. Those modules (`mod.ts`, `src/jsx/jsx-runtime.ts`, …)
+ * load under the link, as the app's own `deno.json` resolves them, while the framework's
+ * relative imports reach the same files under the real root ({@linkcode foldAppDenext} sends
+ * everything else there), so each was bundled twice: a second JSX runtime beside the first. Each
+ * file the app names maps to its linked spelling from both roots (the exact key wins over the
+ * fold's prefix). Empty when the roots are the same, or are different copies (whose entry
+ * modules are the app's own code).
+ *
+ * @param running The running framework's root URL.
+ * @param app The root the app's `denext` reaches ({@linkcode appDenextRoot}).
+ * @param imports The app's import map, values absolutized.
+ * @returns The exact-URL entries.
+ */
+export function pinLinkedEntryModules(
+  running: string,
+  app: string,
+  imports: Record<string, string>,
+): Record<string, string> {
+  if (running === app || !running.startsWith("file:") || !app.startsWith("file:")) return {};
+  if (canonicalPath(fromFileUrl(running)) !== canonicalPath(fromFileUrl(app))) return {};
+  const out: Record<string, string> = {};
+  for (const value of Object.values(imports)) {
+    if (typeof value !== "string" || !value.startsWith(app) || value.endsWith("/")) continue;
+    out[running + value.slice(app.length)] = value;
+    out[value] = value;
+  }
+  return out;
 }
 
 /**
