@@ -35,6 +35,38 @@ and this project adheres to
   timestamps on read-only files on Windows, and on the desktop the backend's process tree ended
   with a Windows dev run and the WebGPU surface created on the UI thread. The
   [runtime reference](https://denext.dev/docs/runtime-reference) lists the changes.
+- **The `denext job install` round trip gates a release** (maintainers). Its three e2e.yml legs,
+  `job-install (linux)`, `(macos)` and `(windows)`, are in `E2E_JOBS`, so `deno task release`
+  refuses a commit where one of them is red or did not run. The round trip now also checks that
+  `denext job install --status` reports the installed entry (by job name, in the backend it was
+  installed to) and nothing after the uninstall.
+- **`deno task revocations sign` splits `--force` into two flags** (maintainers).
+  `--skip-published-check` signs when the published list can't be read or verified, and
+  `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
+  only its own case, so skipping the published-list check never also allows un-revoking a
+  release; a bare `--force` on `sign` is refused with a message naming both.
+
+### Fixed
+
+- **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
+  when the host is one it hasn't opened this session and the URL's query and fragment carry more
+  than 64 characters (`URL_DATA_LIMIT` in `examples/companion/voice/browser-safety.ts`), so a page
+  can't have the model open `https://bad.example/?q=<the conversation>`. Ordinary browsing (no
+  data, a short search, a host already opened) does not ask.
+- **A SPA's `denext dev` no longer rebuilds for a file whose content did not change.** The
+  watcher records each project file's content (SHA-256) before it opens, and learns a file it had
+  not seen on its first event; an event for a file holding the bytes it had then is dropped. On
+  a loaded Mac, FSEvents could deliver the project's own just-written files (a scaffold's, a
+  checkout's) after the dev server started, each starting a new build generation right away. A
+  rewrite with the same bytes is dropped the same way; a real edit still counts on its first
+  event.
+- **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
+  in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
+  resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
+  they still pinned the previous one, and said to wait. They now read the same 24-hour default,
+  and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
+  version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
+  `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
 
 ## [4.19.0] - 2026-11-15
 

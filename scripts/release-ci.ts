@@ -59,12 +59,20 @@ export const DESKTOP_CI_JOBS: readonly string[] = [
 
 /**
  * The e2e.yml jobs a release needs green on the commit it is cut from: real-browser hydration,
- * HMR and the `denext ui` panels (`e2e`), the migration beds, the timer stress runs and the
- * no-Deno install. A dispatch of one job (`-f job=e2e`) skips the others and can't vouch.
- * (`job-install`'s legs run in e2e.yml too, and join this list once they have been green on a
- * train.)
+ * HMR and the `denext ui` panels (`e2e`), the migration beds, the timer stress runs, the
+ * no-Deno install and the `denext job install` round trip on each OS (matrix legs by their full
+ * names: a real scheduler entry installed, reported by `--status`, fired and uninstalled). A
+ * dispatch of one job (`-f job=e2e`) skips the others and can't vouch.
  */
-export const E2E_JOBS: readonly string[] = ["e2e", "migration-beds", "timer-stress", "no-deno"];
+export const E2E_JOBS: readonly string[] = [
+  "e2e",
+  "migration-beds",
+  "timer-stress",
+  "no-deno",
+  "job-install (linux)",
+  "job-install (macos)",
+  "job-install (windows)",
+];
 
 /**
  * The desktop-window.yml jobs a release needs green on the commit it is cut from: a real packaged

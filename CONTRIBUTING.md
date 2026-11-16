@@ -420,8 +420,9 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    when its `paths` filter matches, so dispatch it as well:
    `gh workflow run desktop-ci.yml --ref development`, and wait for it.
    And it needs the newest e2e.yml run on HEAD to have run every job green
-   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno`; a one-job
-   `-f job=…` dispatch skips the rest and doesn't count) and the newest
+   (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`, `no-deno` and the
+   `denext job install` round trip's legs `job-install (linux)` / `(macos)` /
+   `(windows)`; a one-job `-f job=…` dispatch skips the rest and doesn't count) and the newest
    desktop-window.yml run on HEAD green (`DESKTOP_WINDOW_JOBS`: a real window on
    every desktop OS). Dispatch both: `gh workflow run e2e.yml --ref development`
    and `gh workflow run desktop-window.yml --ref development`.
@@ -622,9 +623,11 @@ deno task revocations verify
 
 `sign` prints what the list does to the checked-out pins before it reads the key, and refuses an
 entries file that leaves out an entry the published list has (that would un-revoke it) unless
-`--force`. It refuses as well when the published list can't be read or verified (offline, or a
-copy the compiled-in keys don't verify), since nothing then shows what the file leaves out;
-`--force` signs without that check. Without `--no-publish` it publishes at once.
+`--allow-unrevoke`. It refuses as well when the published list can't be read or verified
+(offline, or a copy the compiled-in keys don't verify), since nothing then shows what the file
+leaves out; `--skip-published-check` signs without that check. Each flag allows only its own case:
+skipping the published-list check never also allows dropping a published revocation. A bare
+`--force` is refused with a message naming both. Without `--no-publish` it publishes at once.
 
 **Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
 There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign

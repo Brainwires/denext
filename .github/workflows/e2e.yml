@@ -249,8 +249,9 @@ jobs:
 
   # `denext job install` for real (tests/integration/job-install-roundtrip.test.ts): a throwaway
   # app's every-minute job installed into the OS scheduler — launchd, a systemd user timer (else the
-  # crontab), Task Scheduler — started through the scheduler's own run-now, its marker file checked,
-  # then uninstalled and checked gone. The test is opt-in (DENEXT_JOB_INSTALL_E2E=1) and removes the
+  # crontab), Task Scheduler — read back by `denext job install --status`, started through the
+  # scheduler's own run-now, its marker file checked, then uninstalled and checked gone (from
+  # `--status` too). Each leg gates a release (scripts/release-ci.ts E2E_JOBS). The test is opt-in (DENEXT_JOB_INSTALL_E2E=1) and removes the
   # entry on failure too. macOS and Windows must use their scheduler (DENEXT_JOB_INSTALL_E2E_BACKEND);
   # a Linux container with no systemd user manager falls back to the crontab, and with neither (or
   # no cron daemon to fire it) the test says what it skipped in a notice.

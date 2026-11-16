@@ -551,7 +551,7 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>migrate</code> and <code>upgrade</code> apply: <code>minimumDependencyAge</code> in
         {" "}
         <code>deno.json</code>, <code>min-release-age</code> in <code>.npmrc</code>,{" "}
-        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s two days; an <code>npm:</code>{" "}
+        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s 24 hours; an <code>npm:</code>{" "}
         entry in its <code>exclude</code>{" "}
         lifts it for that package). When the registry cannot be reached it installs the pins and
         says their age was not checked.

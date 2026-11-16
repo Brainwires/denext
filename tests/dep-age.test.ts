@@ -108,8 +108,9 @@ Deno.test("parseAge reads every form Deno accepts", () => {
 });
 
 Deno.test("effectiveRule: --min-dep-age (env) > deno.json > .npmrc > Deno's default", () => {
+  // Deno's own default: 1440 minutes (libs/resolver/factory.rs), not the two days denext assumed.
   assertEquals(DEFAULT, {
-    cutoff: new Date(NOW.getTime() - 48 * HOUR),
+    cutoff: new Date(NOW.getTime() - 24 * HOUR),
     exclude: [],
     source: "default",
   });
@@ -147,9 +148,17 @@ Deno.test("isExcluded: exact and prefix entries, jsr: only", () => {
 Deno.test("heldUntil: relative rules end age after publishing; a fixed date never does", () => {
   assertEquals(
     heldUntil(DEFAULT, "@denext/denext", hoursAgo(3), NOW),
-    new Date(NOW.getTime() + 45 * HOUR),
+    new Date(NOW.getTime() + 21 * HOUR),
   );
-  assertEquals(heldUntil(DEFAULT, "@denext/denext", hoursAgo(49), NOW), null);
+  assertEquals(heldUntil(DEFAULT, "@denext/denext", hoursAgo(25), NOW), null);
+  // The 4.16.0 case: Deno resolved it ~31 h after publishing, so denext pins it too.
+  assertEquals(heldUntil(DEFAULT, "@denext/denext", hoursAgo(31), NOW), null);
+  // Deno lets a version in only when it was published strictly before the cutoff
+  // (deno_graph's `created_at < cutoff`): one published exactly at it is still held.
+  assertEquals(
+    heldUntil(DEFAULT, "@denext/denext", hoursAgo(24), NOW),
+    NOW,
+  );
   assertEquals(heldUntil(DEFAULT, "@denext/denext", undefined, NOW), null);
   const fixed = effectiveRule({ config: "2026-10-01", now: NOW });
   assert(heldUntil(fixed, "@denext/denext", hoursAgo(3), NOW)!.getTime() >= 8.64e15);

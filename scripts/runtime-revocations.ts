@@ -8,12 +8,15 @@
 //   deno task revocations init [--no-publish]           the first list (nothing revoked)
 //   deno task revocations add --component cli|desktop --version <v> --reason <text>
 //       [--targets <triple,…>] [--advisory <https url>] [--fixed-in <text>] [--no-publish]
-//   deno task revocations sign <entries.json> [--no-publish] [--force]
+//   deno task revocations sign <entries.json> [--no-publish] [--skip-published-check]
+//       [--allow-unrevoke]
 //       sign a whole list from an entries file (security/runtime-revocations.json is the one in
 //       the repository): the entries are put in canonical form first, what they do to the
 //       checked-out pins is printed, and a published entry the file leaves out is refused (it
-//       would be un-revoked) unless --force; so is a published list that can't be read or
-//       verified, as nothing then shows what the file leaves out
+//       would be un-revoked) unless --allow-unrevoke; a published list that can't be read or
+//       verified is refused too, as nothing then shows what the file leaves out, unless
+//       --skip-published-check. Each flag allows only its own case (one never implies the
+//       other); a bare --force is refused, naming both
 //   deno task revocations canonical <entries.json> [--check]
 //       rewrite an entries file in canonical form (fields in a fixed order, targets sorted,
 //       entries by component then newest version first); --check only refuses one that isn't
@@ -624,21 +627,30 @@ async function resign(deps: RevocationsDeps, flags: Record<string, string | bool
   await writeAndPublish(deps, await signFresh(deps, current.revoked, current), flags);
 }
 
-/** A published entry `entries` leave out, refused unless `force` (signing it would un-revoke it). */
+/**
+ * A published entry `entries` leave out, refused unless `allowUnrevoke` (signing it would
+ * un-revoke it).
+ */
 function refuseDropped(
   current: RuntimeRevocationList | null,
   entries: readonly RuntimeRevocation[],
-  force: boolean,
+  allowUnrevoke: boolean,
 ): void {
   const kept = new Set(entries.map((e) => `${e.component} ${e.version}`));
   const dropped = (current?.revoked ?? []).filter((e) => !kept.has(`${e.component} ${e.version}`));
-  if (dropped.length === 0 || force) return;
+  if (dropped.length === 0 || allowUnrevoke) return;
   fail(
     `the published list #${current!.sequence} revokes ${
       dropped.map((e) => `${e.component} ${e.version}`).join(", ")
-    }, which the entries file leaves out (signing it would un-revoke them); --force signs anyway`,
+    }, which the entries file leaves out (signing it would un-revoke them); ` +
+      "--allow-unrevoke signs anyway",
   );
 }
+
+/** `sign`'s old `--force` covered two different risks; it now refuses, naming the split flags. */
+const SIGN_FORCE_SPLIT = "`sign --force` is gone: --skip-published-check signs when the " +
+  "published list can't be read or verified, and --allow-unrevoke signs an entries file that " +
+  "leaves out a published revocation (each allows only its own case)";
 
 /**
  * `sign <entries.json>`: a whole list from an entries file, in canonical form, signed above the
@@ -649,19 +661,21 @@ async function sign(deps: RevocationsDeps, file: string, flags: Record<string, s
   const impact = pinImpact(entries, deps.pins ?? checkedOutPins());
   deps.log(`${file}: ${entries.length} revoked; the checked-out pins:`);
   for (const line of impact.lines) deps.log(line);
-  const current = await publishedForSign(deps, flags.force === true);
-  refuseDropped(current, entries, flags.force === true);
+  if (flags.force !== undefined) fail(SIGN_FORCE_SPLIT);
+  const current = await publishedForSign(deps, flags["skip-published-check"] === true);
+  refuseDropped(current, entries, flags["allow-unrevoke"] === true);
   await writeAndPublish(deps, await signFresh(deps, entries, current), flags);
 }
 
 /**
  * The published list `sign` compares the entries file with. One that can't be read or verified
- * is refused unless `force`: without it nothing shows that the file keeps every published
- * revocation, and signing would silently un-revoke the ones it leaves out.
+ * is refused unless `skipCheck` (`--skip-published-check`): without it nothing shows that the
+ * file keeps every published revocation, and signing would silently un-revoke the ones it leaves
+ * out.
  */
 async function publishedForSign(
   deps: RevocationsDeps,
-  force: boolean,
+  skipCheck: boolean,
 ): Promise<RuntimeRevocationList | null> {
   let why: string;
   try {
@@ -671,13 +685,14 @@ async function publishedForSign(
   } catch (err) {
     why = `the published list could not be verified (${err instanceof Error ? err.message : err})`;
   }
-  if (!force) {
+  if (!skipCheck) {
     fail(
       `${why}, so nothing shows the entries file keeps every published revocation; ` +
-        "--force signs without that check (the first list: `deno task revocations init`)",
+        "--skip-published-check signs without that check (the first list: " +
+        "`deno task revocations init`)",
     );
   }
-  deps.log(`${why}: signing without the published-entries check (--force)`);
+  deps.log(`${why}: signing without the published-entries check (--skip-published-check)`);
   return null;
 }
 

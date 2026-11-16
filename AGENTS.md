@@ -1441,7 +1441,8 @@ install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release
 ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
 too (`gh workflow run desktop-ci.yml --ref development`). It refuses as well unless the newest
 e2e.yml run on HEAD ran every job green (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`,
-`no-deno`; a one-job `-f job=…` dispatch doesn't count) and the newest desktop-window.yml run on HEAD
+`no-deno` and the `denext job install` round trip's three legs, `job-install (linux)` / `(macos)` /
+`(windows)`; a one-job `-f job=…` dispatch doesn't count) and the newest desktop-window.yml run on HEAD
 (a real packaged window on Linux, macOS arm64 / x64 and Windows; `DESKTOP_WINDOW_JOBS`) is green:
 e2e runs only on a dispatch and desktop-window only when its `paths` filter matches, so dispatch
 both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-window.yml --ref

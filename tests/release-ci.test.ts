@@ -286,7 +286,15 @@ function namedJobs(
 }
 
 Deno.test("e2e gate: e2e.yml's newest run on HEAD must have run every job, green", async () => {
-  assertEquals(E2E_JOBS, ["e2e", "migration-beds", "timer-stress", "no-deno"]);
+  assertEquals(E2E_JOBS, [
+    "e2e",
+    "migration-beds",
+    "timer-stress",
+    "no-deno",
+    "job-install (linux)",
+    "job-install (macos)",
+    "job-install (windows)",
+  ]);
   const green = fakeGh([run(1, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
     1: namedJobs(E2E_JOBS, "success"),
   });
@@ -316,6 +324,15 @@ Deno.test("e2e gate: e2e.yml's newest run on HEAD must have run every job, green
     }).gh,
   );
   assertStringIncludes(red.reason, "e2e: failure");
+  // A red `denext job install` round trip on one OS refuses the release too.
+  const job = await e2eVerdict(
+    SHA,
+    fakeGh([run(4, "workflow_dispatch", "2026-10-06T10:00:00Z")], {
+      4: namedJobs(E2E_JOBS, "success", { "job-install (macos)": "failure" }),
+    }).gh,
+  );
+  assert(!job.ok);
+  assertStringIncludes(job.reason, "job-install (macos): failure");
   const none = await e2eVerdict(SHA, fakeGh([], {}).gh);
   assert(!none.ok);
   assertStringIncludes(none.reason, "no e2e.yml run");
@@ -430,6 +447,11 @@ Deno.test("e2e + desktop window gates: every required job is named in its workfl
     if (leg) assertStringIncludes(e2e, `label: ${leg[2]},`, job);
   }
   assertStringIncludes(e2e, "name: job-install (${{ matrix.label }})");
+  // The round trip it runs also checks what `denext job install --status` reports.
+  const roundTrip = await Deno.readTextFile(
+    new URL("./integration/job-install-roundtrip.test.ts", import.meta.url),
+  );
+  assertStringIncludes(roundTrip, '"--status"');
   const win = await Deno.readTextFile(
     new URL("../.github/workflows/desktop-window.yml", import.meta.url),
   );
