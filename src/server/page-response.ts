@@ -39,6 +39,7 @@ import { pageCacheTiming } from "./cache.ts";
 import { serveStreamed } from "./page-stream.ts";
 import { CHILDREN_SLOT, readSlotState, recordSlotState } from "./slot-state.ts";
 import { pageRequestMiddlewareOf } from "./page-request-middleware.ts";
+import { PARTIAL_SEARCH_PARAM } from "../compat/fresh/constants.ts";
 
 /** What the routing stage hands over once a page matched. */
 export interface MatchedPageRequest {
@@ -198,6 +199,7 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
     data: navData(pr),
     islands: rendered.islands,
     signalState: rendered.signalState,
+    head: freshPartialHead(pr.state.request, rendered),
   });
   // Deferred values left as holes follow the payload, each as it settles (nav-deferred.ts).
   const values = pr.navValues?.pending.size ? pr.navValues : undefined;
@@ -212,6 +214,16 @@ function flightNavResponse(pr: PageRequest, rendered: RenderedPage): Response | 
       },
     }),
   );
+}
+
+/**
+ * The head tags a Fresh partial request's answer carries: the page tree's `<meta>` / `<link>`
+ * are hoisted out of the Flight tree into the document head, so a client merging the answer's
+ * head (`denext/fresh/partial`) needs them beside it. Other navigations send none.
+ */
+function freshPartialHead(request: Request, rendered: RenderedPage): string | undefined {
+  if (!new URL(request.url).searchParams.has(PARTIAL_SEARCH_PARAM)) return undefined;
+  return rendered.metadata.head || undefined;
 }
 
 /**

@@ -12,6 +12,7 @@ import {
 import type { DenextConfig } from "../src/server/config.ts";
 import type { DenextPlugin, PluginContext } from "../src/plugin/mod.ts";
 import { join } from "@std/path";
+import { outsideEdits } from "../src/build/dev-server/watch.ts";
 
 const ROOT = "/proj";
 const ctx: PluginPrepareContext = {
@@ -72,6 +73,19 @@ Deno.test("addPrepareStep: runMatchingPrepareSteps runs only when a changed path
   // A matching change re-runs the step.
   assertEquals(await runMatchingPrepareSteps(ctx, ["/proj/content/blog/hello.md"]), true);
   assertEquals(runs, 1);
+  resetPlugins();
+});
+
+Deno.test("dev watcher: a file a prepare step's globs match is delivered, registered after the watch opened", async () => {
+  resetPlugins();
+  // The folder watch opened over app/ only (the filter is built before any plugin set up).
+  const outside = outsideEdits(ROOT, [join(ROOT, "app")]);
+  const sdl = join(ROOT, "gql", "schema.graphql");
+  const notes = join(ROOT, "notes", "todo.graphql");
+  assertEquals(outside([sdl, notes]), [], "no plugin watches them yet");
+  await setup(["gql/**/*.{ts,graphql}"], () => {});
+  // A plugin whose (async) setup finished later: its files reach the change set.
+  assertEquals(outside([sdl, notes, join(ROOT, "app", "page.graphql")]), [sdl]);
   resetPlugins();
 });
 

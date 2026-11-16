@@ -83,6 +83,12 @@ export interface FlightNavPayload {
   islands?: IslandPayload[];
   /** Serialized signal state for the new route's islands. Omitted when none. */
   signalState?: Record<string, unknown>;
+  /**
+   * The head tags the page's tree rendered (its `<meta>` and `<link>`, hoisted out of the Flight
+   * tree into the document head), sent only to a Fresh partial request (the `fresh-partial`
+   * query parameter), whose client merges them into the page's head as Fresh does.
+   */
+  head?: string;
 }
 
 /**

@@ -6,7 +6,11 @@ import { cachedGraphHas, resetModuleGraphCache } from "../module-graph.ts";
 import { clearLiveCacheResults } from "../../server/cache.ts";
 import { forgetTaggedClients } from "../../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../../runtime/server-action.ts";
-import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
+import {
+  getPluginPrepareWatchDirs,
+  matchesPluginPrepareWatch,
+  runMatchingPrepareSteps,
+} from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
 import { outsideLockTasks } from "../file-lock.ts";
 import type { PluginPrepareContext } from "../../plugin/mod.ts";
@@ -181,14 +185,18 @@ const EDITED_EXTS = new Set([
 
 /**
  * A filter over the project-wide watcher's paths (../platform-watch.ts) for the change sets the
- * folder watcher does not already deliver: a source file outside the watched paths (each as
- * given and through its real path) and not one of denext's own writes, which the app's module
- * graph reaches — a stylesheet always (route CSS is crawled apart), and any file when no crawl is
- * cached to ask.
+ * folder watcher does not already deliver: a file outside the watched paths (each as given and
+ * through its real path) and not one of denext's own writes, which a plugin prepare step's
+ * `watch` globs match (a plugin set up after the folder watch opened, whose directories it does
+ * not cover), or a source file the app's module graph reaches — a stylesheet always (route CSS is
+ * crawled apart), and any file when no crawl is cached to ask.
+ *
+ * @internal Exported for tests.
  */
-function outsideEdits(
+export function outsideEdits(
   projectDir: string,
   watched: readonly string[],
+  pluginWatches: (path: string) => boolean = (p) => matchesPluginPrepareWatch(projectDir, p),
 ): (paths: string[]) => string[] {
   const roots = new Set<string>();
   for (const p of watched) {
@@ -201,8 +209,10 @@ function outsideEdits(
     [...roots].some((r) => p === r || p.startsWith(r.endsWith(SEPARATOR) ? r : r + SEPARATOR));
   return (paths) =>
     [...new Set(paths)].filter((p) => {
+      if (covered(p) || isSelfWrite(p)) return false;
+      if (pluginWatches(p)) return true;
       const ext = extname(p);
-      if (!EDITED_EXTS.has(ext) || covered(p) || isSelfWrite(p)) return false;
+      if (!EDITED_EXTS.has(ext)) return false;
       return ext === ".css" || cachedGraphHas(p, projectDir) !== false;
     });
 }
