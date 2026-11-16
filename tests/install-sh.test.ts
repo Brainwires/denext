@@ -768,6 +768,9 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   // and by the `smoke` job on an Arm Linux runner and a Mac (both Mac binaries) before the release.
   assertStringIncludes(workflow, "sh scripts/ci/binary-smoke.sh ./denext");
   assertStringIncludes(workflow, "{ os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }");
+  // The Arm Linux leg takes our Linux arm64 pool while it has a free slot (GitHub's image else).
+  assertStringIncludes(workflow, "jobs: smoke_linux_arm=linux-arm64");
+  assertStringIncludes(workflow, ".smoke_linux_arm || 'ubuntu-24.04-arm'");
   assertStringIncludes(
     workflow,
     "{ os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }",
