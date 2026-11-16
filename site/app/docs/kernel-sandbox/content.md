@@ -39,14 +39,17 @@ for it with `--kernel-sandbox=enforce`:
     `169.254.169.254` (the cloud metadata address) included.
   - **A scoped `--allow-ffi=<paths>`** (Linux and macOS): native code may load any library it can
     read. Library loading is bounded by the read scope, not by the `--allow-ffi` list.
-- **Commands that refuse under `enforce`.** `deno test`, `deno bench`, the REPL, Jupyter, `deno
-  eval` with a deny rule, and (on Linux) a program read from stdin. They refuse to start rather
-  than run unconfined. `deno compile --kernel-sandbox=enforce` is refused too: compiled programs
+- **Commands that refuse under `enforce`.** `deno test` (before type-checking), `deno bench`, the
+  REPL, Jupyter, `deno eval` with a deny rule, a package's native executable under `deno x`, and
+  (on Linux) a program read from stdin. They refuse to start rather than run unconfined. `deno
+  lint` and the language server's lint plugins are neither covered nor refused: they run with no
+  kernel sandbox (`deno lint` warns when `deno.json` sets the key), until confining them lands
+  before 5.0. `deno compile --kernel-sandbox=enforce` is refused too: compiled programs
   have no enforcer yet.
 
 > [!WARNING]
-> **Don't put `"kernelSandbox": "enforce"` in `deno.json`.** The key applies to every command in
-> the project, so `deno test`, `deno bench`, `deno repl` and `denext dev` refuse to start there.
+> **Don't put `"kernelSandbox": "enforce"` in `deno.json`.** The key applies to every command that
+> runs your code in the project (lint plugins aside, which it doesn't cover), so `deno test`, `deno bench`, `deno repl` and `denext dev` refuse to start there.
 > Put the flag on the command that starts the app instead, for example a `start` task of
 > `deno run --kernel-sandbox=enforce --allow-read=. main.ts`. `"kernelSandbox": "warn"` is safe in
 > `deno.json`.

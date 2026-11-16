@@ -28,9 +28,12 @@ and this project adheres to
   only that), refuses chmod / utime by path inside the write scope too (`cp -p`, `tar`, git's
   executable bit), holds a read deny inside an allow by expansion (up to 20,000 entries / 64
   levels), reads remote modules from the cache only and treats an unreadable `.npmrc` as absent.
-  `deno test`, `bench`, the REPL, Jupyter, `eval` with a deny, a program from stdin (Linux) and
-  `deno compile` refuse `enforce`, so a `deno.json` `"kernelSandbox": "enforce"` breaks `deno test`
-  and `denext dev`: put the flag on the start command. `broker` still refuses to start, Windows has
+  `deno test` (before type-checking), `bench`, the REPL, Jupyter, `eval` with a deny, a package's
+  native executable under `deno x`, a program from stdin (Linux) and `deno compile` refuse
+  `enforce`, so a `deno.json` `"kernelSandbox": "enforce"` breaks `deno test` and `denext dev`:
+  put the flag on the start command. `deno eval` refuses the `--kernel-sandbox` flags and applies
+  its deny flags. Lint plugins (`deno lint`, the language server) run with no kernel sandbox and
+  aren't refused either; `deno lint` warns when `deno.json` sets the key. `broker` still refuses to start, Windows has
   no enforcer, and `deno info --json`'s `enforced` stays `false` (read `effective` and
   `enforcerBuilt`). Nothing changes for a run that doesn't ask for it. The new
   [Kernel sandbox](https://denext.dev/docs/kernel-sandbox) section describes what runs today, the

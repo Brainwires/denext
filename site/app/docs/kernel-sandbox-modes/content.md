@@ -61,11 +61,17 @@ The mode can come from five places. The `source` field of `deno info --json` say
 deno run --kernel-sandbox=warn --allow-read=. --allow-net=api.example.com:443 main.ts
 ```
 
-- Accepted by `run`, `serve`, `test`, `bench`, `repl`, `compile` and `install -g`. Not by `eval`.
-- `enforce` applies only to `run` and `serve`. Under `enforce`, `test`, `bench`, the REPL, Jupyter,
-  `eval` with a deny rule (a plain `eval` grants everything, so there is nothing to enforce) and, on
-  Linux, a program read from stdin refuse to start with "not supported for this command yet". They
-  never run unconfined.
+- Accepted by `run`, `serve`, `test`, `bench`, `repl`, `compile` and `install -g`. `eval` refuses
+  the flag (and `--kernel-sandbox-report`); it takes its mode from `deno.json` only.
+- `enforce` applies only to `run` and `serve`. Under `enforce`, `test` (before it type-checks
+  anything), `bench`, the REPL, Jupyter, `eval` with a deny rule (a plain `eval` grants everything,
+  so there is nothing to enforce; its deny flags are applied) and, on Linux, a program read from
+  stdin refuse to start with "not supported for this command yet". `deno x` refuses to run a
+  package's native executable under `enforce`. They never run unconfined.
+- **Not covered, and not refused either:** `deno lint` plugins and the language server's lint
+  plugins run their code with no kernel sandbox, whatever `deno.json`'s `kernelSandbox` says
+  (`deno lint` prints a warning when the key is set). Confining them is planned before 5.0; until
+  then, review a lint plugin as you would any build-time code.
 - The value is required: `--kernel-sandbox` alone is an error. The values are `off`, `warn`, `auto`,
   `enforce` and `broker`.
 - It overrides the `deno.json` key.
@@ -99,8 +105,10 @@ deno run --kernel-sandbox=warn --allow-read=. --allow-net=api.example.com:443 ma
 DENO_KERNEL_SANDBOX=warn deno task start
 ```
 
-- Takes `off` or `warn` only, and **only lowers** the mode: it can turn `enforce` into `warn` or
-  `off`, never `off` into `enforce`.
+- Takes `off` or `warn` only, and **only lowers** the mode: it can turn a `deno.json`
+  `"enforce"` into `warn` or `off`, never `off` into `enforce`. The `--kernel-sandbox` flag wins
+  over it, so it doesn't lower a mode given on the command line; drop the flag instead. Any other
+  value is ignored with a warning.
 - It's read from the real environment before any `--env-file` is loaded, so a `.env` file can't
   switch the sandbox down.
 - **Compiled programs ignore it**: their mode is the author's.
@@ -146,7 +154,7 @@ and `enforce` refuses to start there.
 `warn` runs your program and prints one line to stderr:
 
 ```text
-Warning kernel sandbox (warn, preview): nothing is refused; 2 rule(s) would be held by Deno's checks only. Run with --kernel-sandbox-report for the policy.
+Warning kernel sandbox (warn, preview): nothing is refused; 1 rule(s) would be held by Deno's checks only. Run with --kernel-sandbox-report for the policy.
 ```
 
 The count is the number of rules the operating system would hold more loosely than Deno on this
@@ -172,7 +180,7 @@ kernel sandbox (preview): auto (default); applies: off; would apply: warn
   why: auto applies nothing yet (the kernel sandbox is an opt-in preview)
   permission set: fixed (no prompt can widen it)
   machine: linux, Landlock ABI 4, seccomp, enforcer built: yes
-  policy 647d53aee64387a7 (mode B, with a broker)
+  policy 1775641b2a5ce963 (mode B, with a broker)
     read:       /home/me/project + implicit set (47)
     deny read:  none
     write:      /home/me/project/out + implicit set (4)
@@ -184,10 +192,12 @@ kernel sandbox (preview): auto (default); applies: off; would apply: warn
     sys:        narrows /proc/loadavg, /proc/meminfo, /proc/uptime, /proc/net
     env:        not scrubbed
     implicit:   DENO_DIR, DNS, TLS roots, devices, locale and time zones, process info, runtime, shared libraries, user database
-  gaps: 3 (1 refused by enforce, marked !)
-    sys [documented] no --allow-sys: sys is enforced by Deno; the kernel narrows: /proc/loadavg, ...
+    skipped:    /home/me/.npmrc (may hold registry tokens; never readable under enforce; grant it with --allow-read=/home/me/.npmrc if you accept the exposure)
+  gaps: 4 (1 refused by enforce, marked !)
+    sys [documented] implicit /proc/self, /sys/fs/cgroup: documented: the runtime reads its own /proc/self entries and the cgroup CPU / memory limits ...
+    sys [documented] no --allow-sys: sys is enforced by Deno; the kernel narrows: /proc/loadavg, /proc/meminfo, /proc/uptime, /proc/net
     env [documented] no --allow-env: env is enforced by Deno: native code reads the process environment directly ...
-  ! enforcer [fail-open] --kernel-sandbox (broker): the supervising broker (Mode B) is not built into this runtime yet: host-scoped network would be held by Deno's checks only
+  ! enforcer [fail-open] --kernel-sandbox (broker): the supervising broker (Mode B) is not built into this runtime yet: ... (needed for: --deny-write=/home/me/project/out/keep)
 ```
 
 Reading it from the top:
@@ -203,6 +213,8 @@ Reading it from the top:
   rules need the supervisor: the write deny inside the write allow, and the host-scoped network
   grant. Each line is one kind of access. `+ implicit set (n)` counts the entries the runtime itself
   needs; the `implicit` line lists their categories.
+- **`skipped`** names a file the implicit set leaves out on purpose: `~/.npmrc` may hold registry
+  tokens, so under `enforce` it isn't readable unless you grant it.
 - **`gaps`** lists every rule the operating system wouldn't hold exactly, by kind. The `!` line is
   the one `enforce` would refuse to start over: here, the rules that need the Mode B supervisor,
   which isn't built yet. Without the host name and the write deny inside the write allow, the

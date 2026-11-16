@@ -20,8 +20,9 @@ lead: Something that worked before fails under the kernel sandbox. How to tell w
   `hint: a child process exited with code N while the kernel sandbox was enforcing; children inherit the file and network rules, so it may have been refused something (see --kernel-sandbox-report)`.
 - **The report.** Run again with `--kernel-sandbox-report` added. It prints the policy (what may be
   read, written, executed, loaded, reached) and every gap before the program starts.
-- **The quick test.** Run again with `DENO_KERNEL_SANDBOX=warn` (or `off`). It only lowers the
-  mode, so if the failure goes away, the kernel refused it.
+- **The quick test.** Run again with `DENO_KERNEL_SANDBOX=warn` (or `off`) when `enforce` comes
+  from `deno.json`, or with `--kernel-sandbox=warn` in place of `--kernel-sandbox=enforce` (the
+  variable doesn't lower the flag). If the failure goes away, the kernel refused it.
 
 ## Turning it down safely
 
@@ -77,16 +78,19 @@ instead of `.`), or move the denied file out of the large tree.
 error: --kernel-sandbox=enforce is not supported for this command yet: it can't apply the sandbox before user code runs, so it refuses to start
 ```
 
-**Cause:** `enforce` covers `run` and `serve` only. `test`, `bench`, the REPL, Jupyter and `eval`
-with a deny rule refuse rather than run unconfined. This bites most often when `deno.json` says
-`"kernelSandbox": "enforce"`, which applies to every command in the project, `denext dev` included
-(a watched, hot-reloading run isn't fixed, so it refuses too). **Fix:** remove the key (or set it
+**Cause:** `enforce` covers `run` and `serve` only. `test` (before type-checking), `bench`, the
+REPL, Jupyter and `eval` with a deny rule refuse rather than run unconfined, and `deno x` refuses
+a package's native executable. This bites most often when `deno.json` says
+`"kernelSandbox": "enforce"`, which applies to every command that runs your code in the project,
+`denext dev` included (a watched, hot-reloading run isn't fixed, so it refuses too). `deno lint`
+and the language server are the exception: their lint plugins run with no kernel sandbox at all
+(`deno lint` warns), so the key neither covers nor refuses them. **Fix:** remove the key (or set it
 to `warn`) and put `--kernel-sandbox=enforce` on the start command.
 
 ### A program from stdin is refused on Linux
 
 ```text
-error: --kernel-sandbox=enforce can't run a program read from stdin on Linux yet (the sandbox re-executes the process); save it to a file
+error: --kernel-sandbox=enforce can't run a program read from stdin yet (the sandbox re-executes the process); save it to a file
 ```
 
 **Cause:** the sandbox re-executes the process, and stdin can't be read twice. **Fix:** save the
