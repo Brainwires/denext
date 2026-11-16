@@ -9,7 +9,9 @@ lead: What the kernel sandbox promises, cell by cell. For each permission, platf
 > in denext 5.0.** **Draft, being validated.** The matrix below comes from the
 > design and the first runs of the escape-test corpus; cells can still change while the corpus is
 > validated on every kernel. The final matrix is published with the release, generated from the
-> same policy data `--kernel-sandbox-report` prints.
+> same policy data `--kernel-sandbox-report` prints. Today the kernel holds these cells only in a
+> `deno run` or `deno serve` that asks for `--kernel-sandbox=enforce` on Linux or macOS; any other
+> run is Deno-only throughout ([What `enforce` does today](/docs/kernel-sandbox#what-enforce-does-today)).
 
 ## How to read the matrix
 
@@ -34,23 +36,25 @@ system calls, but files are Deno-only.
 
 ## The matrix (draft)
 
-| Native code tries to…                                | macOS            | Linux 5.13–5.18                  | Linux 5.19–6.6                   | Linux 6.7–6.11   | Linux 6.12+      | Windows                                  |
-| ---------------------------------------------------- | ---------------- | -------------------------------- | -------------------------------- | ---------------- | ---------------- | ---------------------------------------- |
-| read outside the read grant                          | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Deno-only                                |
-| write, create or remove outside the write grant      | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Kernel (coarser: labelled write folders) |
-| change mode, times or xattrs outside the write grant | Kernel           | Deno-only                        | Deno-only                        | Deno-only        | Deno-only        | Kernel (coarser)                         |
-| use symlink tricks and races                         | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Deno-only                                |
-| read another process (ptrace, memory)                | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Deno-only                                |
-| signal another process                               | Kernel           | Deno-only                        | Deno-only                        | Deno-only        | Kernel           | Kernel (coarser)                         |
-| run programs with no run grant                       | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Kernel                                   |
-| run unlisted programs with a run list                | By design        | By design                        | By design                        | By design        | By design        | By design                                |
-| use the network with no net grant                    | Kernel           | Kernel                           | Kernel                           | Kernel           | Kernel           | Deno-only                                |
-| connect to a port that isn't granted                 | Kernel           | Kernel (coarser: all or nothing) | Kernel (coarser: all or nothing) | Kernel           | Kernel           | Deno-only                                |
-| reach any host on a granted port                     | Kernel (coarser) | Kernel (coarser)                 | Kernel (coarser)                 | Kernel (coarser) | Kernel (coarser) | Deno-only                                |
-| use Unix sockets                                     | Kernel           | Kernel (coarser)                 | Kernel (coarser)                 | Kernel (coarser) | Kernel (coarser) | Deno-only                                |
-| read environment variables or system information     | Deno-only        | Deno-only                        | Deno-only                        | Deno-only        | Deno-only        | Deno-only                                |
+| Native code tries to…                                | macOS                        | Linux 5.13–5.18               | Linux 5.19–6.6                | Linux 6.7–6.11               | Linux 6.12+                  | Windows                                  |
+| ---------------------------------------------------- | ---------------------------- | ----------------------------- | ----------------------------- | ---------------------------- | ---------------------------- | ---------------------------------------- |
+| read outside the read grant                          | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Deno-only                                |
+| write, create or remove outside the write grant      | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Kernel (coarser: labelled write folders) |
+| change mode, times or xattrs outside the write grant | Kernel                       | Kernel (coarser: path forms)  | Kernel (coarser: path forms)  | Kernel (coarser: path forms) | Kernel (coarser: path forms) | Kernel (coarser)                         |
+| use symlink tricks and races                         | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Deno-only                                |
+| read another process (ptrace, memory)                | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Deno-only                                |
+| signal another process                               | Kernel                       | Deno-only                     | Deno-only                     | Deno-only                    | Kernel                       | Kernel (coarser)                         |
+| run programs with no run grant                       | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Kernel                                   |
+| run unlisted programs with a run list                | By design                    | By design                     | By design                     | By design                    | By design                    | By design                                |
+| use the network with no net grant                    | Kernel                       | Kernel                        | Kernel                        | Kernel                       | Kernel                       | Deno-only                                |
+| connect to a port that isn't granted                 | Kernel                       | Refused at start (port lists) | Refused at start (port lists) | Kernel                       | Kernel                       | Deno-only                                |
+| reach any host on a granted port                     | Kernel (coarser)             | Kernel (coarser)              | Kernel (coarser)              | Kernel (coarser)             | Kernel (coarser)             | Deno-only                                |
+| use Unix sockets                                     | Kernel                       | Kernel (coarser)              | Kernel (coarser)              | Kernel (coarser)             | Kernel (coarser)             | Deno-only                                |
+| read environment variables                           | Deno-only                    | Kernel (coarser: scrubbed)    | Kernel (coarser: scrubbed)    | Kernel (coarser: scrubbed)   | Kernel (coarser: scrubbed)   | Deno-only                                |
+| read system information                              | Deno-only                    | Deno-only                     | Deno-only                     | Deno-only                    | Deno-only                    | Deno-only                                |
+| load a library outside a scoped `--allow-ffi`        | Kernel (coarser: read scope) | Kernel (coarser: read scope)  | Kernel (coarser: read scope)  | Kernel (coarser: read scope) | Kernel (coarser: read scope) | Deno-only                                |
 
-**Mode B makes several coarser cells exact.** With the supervisor and broker
+**Mode B makes several coarser cells exact (design: not built yet).** With the Mode B supervisor
 ([Mode B](/docs/kernel-sandbox#mode-a-and-mode-b)), host scoping, name resolution (DNS), Unix-socket
 paths and write denies inside a write allow are exact on Linux and macOS: the supervisor checks
 each request against Deno's own rule and hands back only the file or socket it checked.
@@ -58,28 +62,48 @@ each request against Deno's own rule and hands back only the file or socket it c
 ## Notes on the cells
 
 - **Mode, times and extended attributes on Linux.** Landlock doesn't restrict changing a file's
-  mode, timestamps or extended attributes, and seccomp can't see which file a call names. So with
-  any write grant, native code can change these on files the user owns outside the grant. It can't
-  read or change their contents.
+  mode, timestamps or extended attributes, and seccomp can't see which file a call names. So under
+  `enforce` seccomp refuses the path forms of these calls everywhere, inside the write scope too
+  (`Deno.chmod`, `Deno.utime`, `cp -p`, `tar` and git's executable bit fail with `EPERM`). The
+  descriptor forms still work, so native code can change these on any file it can open, files in
+  the read scope included: Deno-only there. It can't read or change their contents outside the
+  grant.
 - **Signals before Linux 6.12.** Landlock gained signal scoping in ABI 6. On older kernels confined
   code can signal other processes of the same user.
 - **Running unlisted programs with a run list (by design).** `--allow-run=git` limits which
   programs Deno starts. Limiting what those programs start would break `git`, compilers and shells,
   so with a run list, native code can execute any program it can read. Files and network stay
   confined for the whole tree. With no `--allow-run`, no program can start at all.
-- **Ports on older Linux.** Landlock's TCP port rules arrive with Linux 6.7. Before that, the kernel
-  can allow all network or none, not a list of ports.
+- **Ports on older Linux.** Landlock's TCP port rules arrive with Linux 6.7 (ABI 4). Before that,
+  the kernel can allow all network or none, not a list of ports, so `enforce` refuses to start
+  over a port list there (a `fail-open` gap).
 - **Any host on a granted port.** No kernel filters by host name. Without Mode B, a grant of
-  `example.com:443` lets native code reach any host on port 443. On macOS, any confined code can
-  also resolve any name through the system resolver.
+  `example.com:443` lets native code reach any host on port 443. On macOS `enforce` runs such a
+  grant held by port (a `documented` gap), and any confined code can also resolve any name through
+  the system resolver; on Linux a host-scoped grant needs Mode B, so `enforce` refuses to start.
+- **Any address on a granted port.** A port list of IP addresses or `localhost` is held by port, on
+  Linux (ABI 4 and later) and macOS: native code may reach any address on those ports,
+  `169.254.169.254` (the cloud metadata address) included. A `documented` gap.
+- **Libraries under a scoped `--allow-ffi`.** Neither Linux nor macOS can hold library loading to
+  the `--allow-ffi` paths. Native code may load any library in the read scope. A `documented` gap.
 - **Unix sockets.** The kernel refuses Unix sockets unless the grant calls for them. Once allowed,
   Linux can't tell one socket path from another (Mode B can), and abstract sockets are scoped only
   from 6.12.
 - **Windows.** The job object and a lowered integrity level contain children and limit writes to
   folders labelled for the purpose. Reads, network and other processes stay Deno-only. See
   [Windows](/docs/kernel-sandbox-windows).
-- **Environment and system information.** These live in the process's memory or come from calls
-  libc needs, so no platform's kernel can hold them.
+- **Environment variables.** They live in the process's memory, so no kernel can hold them. On
+  Linux under `enforce` the process re-executes with its environment scrubbed to the `--allow-env`
+  names plus a short runtime list (`PATH`, `HOME`, `TMPDIR`, `DENO_DIR`, `LANG`, `LC_*`, `TZ`, the
+  proxy variables, `NO_COLOR`, `TERM`), and children inherit only that. An unscoped `--allow-env`
+  keeps everything. macOS keeps the environment.
+- **System information.** It comes from calls libc needs, so no platform's kernel can hold it. On
+  Linux, `/proc/self`, `/proc/thread-self`, `/proc/cpuinfo`, `/proc/stat` and the cgroup limit
+  files stay readable to native code whatever `--allow-sys` grants (the runtime sizes itself from
+  them). Under `enforce`, `--allow-sys=processes` is `fail-closed`: other processes' `/proc` entries
+  stay unreadable.
+- **`.npmrc` under `enforce`.** It's never readable to the confined process, because it can hold
+  registry tokens; it's treated as absent unless the grant names it.
 - **Also outside every cell:** worker-level permissions and `Deno.permissions.revoke()` (the kernel
   policy is per process), file metadata reads (whether a file exists and its size), and files
   written for a later, unconfined run to execute. See the

@@ -6,19 +6,40 @@ lead: How the kernel sandbox holds a grant on Linux. Landlock for files and TCP 
 
 > [!IMPORTANT]
 > **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** This page is an outline, filled in as the Linux enforcement
-> lands in denext's Deno fork. The
+> in denext 5.0.** `--kernel-sandbox=enforce` confines `deno run` and `deno serve` on Linux
+> x86_64 and aarch64 today (Mode A: Landlock and seccomp); the rest of this page is filled in as
+> the remaining parts land. The
 > [overview](/docs/kernel-sandbox#every-kernel-denext-runs-on-today-keeps-working) has the
 > per-kernel table.
 
 ## How a Linux process confines itself
 
-_Being written as this lands._ How `deno run` resolves the grant and fetches the module graph,
-then re-executes itself and applies `no_new_privs`, Landlock and seccomp while it has a single
-thread, so every thread and child it ever has is inside the sandbox. The process ID stays the
-same, so signals, supervisors and `$!` keep working. Compiled binaries and desktop apps know their
-grant before any thread starts, so they confine themselves without the extra exec. Includes the
-measured startup cost.
+Under `--kernel-sandbox=enforce`, `deno run` and `deno serve` resolve the grant and load the
+program's static module graph (remote modules cached), then re-execute themselves with the same
+arguments. The new image applies `no_new_privs`, the Landlock ruleset and one seccomp filter first
+thing, while it has a single thread, so every thread and child it ever has is inside the sandbox.
+The process ID stays the same, so signals, supervisors and `$!` keep working. The new image checks
+that the policy it was handed is the one it compiles itself, and refuses to start otherwise.
+
+What the re-exec changes:
+
+- **The environment is scrubbed.** Without an unscoped `--allow-env`, the new image keeps only the
+  `--allow-env` names plus `PATH`, `HOME`, `TMPDIR`, `DENO_DIR`, `LANG`, `LC_*`, `TZ`, the proxy
+  variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, either case), `NO_COLOR` and
+  `TERM`. Child processes inherit only that set. A variable a child needs (`SSH_AUTH_SOCK`, `CI`,
+  `NODE_ENV`, a token) must be granted: `--allow-env=CI,NODE_ENV`. The report's `env:` line lists
+  what's kept.
+- **A program read from stdin is refused**: it can't be read twice. Save it to a file.
+- **Remote modules come from the cache only.** A dynamic `import()` of a remote module that wasn't
+  cached fails with "not found in cache". Run `deno cache` on it first.
+- **Your project's files stay readable** where Deno loads them itself: the program's local modules
+  and the config files discovery read (every `deno.json` / `package.json` of the workspace, the
+  import map, the lockfile), even outside the read grant. `.npmrc` is never among them: it can hold
+  registry tokens, so it's treated as absent ([below](#npmrc-under-enforce)).
+
+Compiled binaries and desktop apps (design) know their grant before any thread starts, so they
+will confine themselves without the extra exec. Today `deno compile --kernel-sandbox=enforce` is
+refused.
 
 ## Files: Landlock
 
@@ -27,21 +48,47 @@ rules, ABI by ABI, and how symlinks are handled (Landlock checks the real file, 
 
 ### Deny rules inside an allowed folder
 
-_Being written as this lands._ Landlock rights only add up down the tree, so "this folder except
-`.env`" can't be written as one rule. How each case is handled: when it's enforced, when it's
-reported as Deno-only (`auto`) or refused (`enforce`), and how Mode B makes it exact.
+Landlock rights only add up down the tree, so "this folder except `.env`" can't be written as one
+rule.
+
+- **A read deny inside a read allow** is held by **expansion**. At startup Deno walks the allowed
+  folder and gives each entry beside the denied path its own rule, folder by folder down to the
+  deny. Three consequences:
+  - a file or folder created in an expanded folder after start is unreadable (a `fail-closed`
+    gap);
+  - a symlink in an expanded folder gets no rule (a rule would follow the link, and grant wherever
+    it leads), so it can't be read through;
+  - the walk stops at 20,000 entries or 64 levels, and `enforce` then refuses to start. Narrow the
+    allow, or move the denied file out of a large tree.
+- **A write deny inside a write allow** needs Mode B, which isn't built yet, so `enforce` refuses to
+  start over it. Scope the write grant to the folders that should be writable instead.
 
 ### What Landlock doesn't cover
 
 The kernel documentation lists operations Landlock doesn't restrict. The one that matters most
-here: changing a file's mode, timestamps or extended attributes. seccomp can't help, because it
-sees only that `chmod` was called, not which file it names. So with any write grant, native code
-can change those attributes on files the user owns outside the grant; it still can't read them or
-change their contents. The [guarantee matrix](/docs/kernel-sandbox-guarantees) marks this
-Deno-only on Linux.
+here: changing a file's mode, timestamps or extended attributes. seccomp sees only that `chmod`
+was called, not which file it names, so under `enforce` it refuses the **path forms** of chmod,
+chown, utime and extended-attribute writes everywhere, **inside the write scope too**. That breaks:
 
-_Being written as this lands:_ the rest of the list, and whether `enforce` refuses the path-based
-forms of these calls.
+- `Deno.chmod`, `Deno.utime` and `node:fs`'s `chmod` / `utimes` by path;
+- `cp -p`, `tar` extracting with modes or times, `rsync -a`;
+- `git checkout` or `git clone` setting a file's executable bit.
+
+They fail with `EPERM`. The descriptor forms (`fchmod`, `futimens`, a `Deno.FsFile`'s `chmod` and
+`utime`) still work, on any file the process can open, which includes the read scope: there,
+changing a file's mode or times stays Deno-only. Contents outside the grant stay protected. The
+[guarantee matrix](/docs/kernel-sandbox-guarantees) has the cell.
+
+### `.npmrc` under `enforce`
+
+`.npmrc` can hold registry tokens, so the confined process can never read it unless the grant
+names it. It's treated as absent: a custom registry or token from it is unavailable, Deno prints
+one warning, and `--kernel-sandbox-report` names each such file on a `skipped:` line. Two ways out:
+
+- run once without `enforce` (`deno install`, or the same `deno run`) so the packages are cached,
+  then run under `enforce`;
+- or grant the file, `--allow-read=/home/me/.npmrc`, if you accept that native code in the run can
+  read the token.
 
 ## System calls: seccomp
 
@@ -53,10 +100,16 @@ kill the process), so they surface as catchable errors in JavaScript.
 
 ## Network
 
-_Being written as this lands._ No network: sockets refused by seccomp. All network: allowed. A
-port list of IP addresses or `localhost` on ABI 4 and later: Landlock port rules. Host names: Mode
-B, where the supervisor resolves the name, checks it, connects and passes the socket back. Includes
-how private and loopback addresses are handled when a granted name resolves to one.
+- **No network:** sockets refused by seccomp.
+- **All network:** allowed.
+- **A port list of IP addresses or `localhost`** on Landlock ABI 4 (Linux 6.7) and later: Landlock
+  port rules. They hold the port, not the address, so native code and children may reach any
+  address on those ports, `169.254.169.254` included (a `documented` gap). On an older kernel a
+  port list is a `fail-open` gap and `enforce` refuses to start.
+- **Host names** (`--allow-net=api.example.com:443`) need Mode B, where the supervisor resolves the
+  name, checks it, connects and passes the socket back. Mode B isn't built yet, so `enforce`
+  refuses to start over a host-scoped grant on Linux. Grant by IP address, all network, or run
+  without `enforce`.
 
 ## Unix sockets and signals
 
@@ -78,23 +131,25 @@ container's own confinement, and with a systemd unit's `NoNewPrivileges=` and `P
 What doesn't work in a default container is anything that needs a new **user namespace**, because
 the default profile refuses to create one:
 
-- hiding denied paths by mounting over them, the exact method for a read deny inside a read allow
-  (Deno falls back, as below);
+- hiding denied paths by mounting over them (design: not built yet; today a read deny inside a
+  read allow is held by [expansion](#deny-rules-inside-an-allowed-folder) everywhere);
 - Chrome's own namespace sandbox (run headless Chrome with `--no-sandbox`, as you already do in
   Docker).
 
 The same applies on distributions that restrict unprivileged user namespaces (Ubuntu 24.04 does
-this through AppArmor by default). There the overmount method is unavailable and Deno falls back:
-the deny is enforced where the kernel can express it exactly, reported as Deno-only in `auto`, and
-refused in `enforce`.
+this through AppArmor by default). Nothing in today's `enforce` depends on user namespaces, so it
+behaves the same there.
 
 gVisor and some Firecracker setups don't offer Landlock at all, so the "no Landlock" case applies:
 seccomp only, and files Deno-only. WSL2 depends on how its kernel is built and **hasn't been
-verified yet**. `denext doctor` will say what it finds on each.
+verified yet**. `deno info --json` says whether Landlock is present (`landlockAbi`).
 
 ## Check your own system
 
-Until `deno info --json` and `denext doctor` report these directly, you can check by hand.
+`deno info --json` reports the Landlock ABI (`kernelSandbox.landlockAbi`) and the machine's
+capabilities, among them whether user namespaces are available
+([field reference](/docs/kernel-sandbox-modes#deno-info---json--kernelsandbox)). You can also check
+by hand.
 
 The kernel version:
 

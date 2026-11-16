@@ -27,12 +27,16 @@ the process as a low-privilege user, in a container, or behind a firewall.
 
 Kernel enforcement of the same grants is **in development** for denext's Deno: Landlock and
 seccomp on Linux, Seatbelt on macOS, a job object on Windows, and a supervisor for rules too fine
-for the kernel. The full system, with automatic enforcement, lands in denext 5.0; denext 4.20
-ships an opt-in preview of its settings and reports (`--kernel-sandbox=warn`,
-`--kernel-sandbox-report`), off unless you ask for it, which enforces nothing yet: `enforce` and
-`broker` refuse to start. The [Kernel sandbox](/docs/kernel-sandbox) section describes the design
-as it is built. Until enforcement ships, every permission on this site means "least-privilege
-guardrail".
+for the kernel. The full system, with automatic enforcement, lands in denext 5.0. denext 4.20
+ships an opt-in preview, off unless you ask for it: `--kernel-sandbox=warn` and
+`--kernel-sandbox-report` report, and `--kernel-sandbox=enforce` makes the operating system hold
+the grant for `deno run` and `deno serve` on Linux and macOS, so FFI, addons and subprocesses are
+held to it too. `enforce` refuses to start over a rule the kernel would hold more loosely than
+Deno, and runs with the documented gaps its report lists (a port grant held by port, library
+loading bounded by the read scope); `broker` still refuses to start. Don't set `enforce` in
+`deno.json`: `deno test` and `denext dev` refuse to start under it. See
+[What `enforce` does today](/docs/kernel-sandbox#what-enforce-does-today). Outside an `enforce`
+run, every permission on this site means "least-privilege guardrail".
 One part already runs under the OS: an approved dependency's install script runs in the
 [lifecycle-script jail](/docs/toolchain#supply-chain-lifecycle-script-jail), which uses Landlock
 and seccomp on Linux and `sandbox-exec` on macOS where they are available. That covers install
@@ -127,7 +131,69 @@ As of the runtime denext pins:
 Not covered: the check resolves the path and the operation then opens it by name, so a link
 swapped between the two (a time-of-check to time-of-use race) is followed without a new check. In a
 folder other people or programs can write to, pair the allow with `--deny-*` rules for what must
-stay out of reach.
+stay out of reach. On Unix, an [external permission broker](#the-external-permission-broker) that
+speaks protocol v2 closes that race for file opens: it opens the file and hands the descriptor
+back.
+
+## Linux `/proc` and `/sys` files
+
+On Linux, reading a file under `/proc` or `/sys` takes the read grant on the path plus the
+`--allow-sys` name for what the file holds, instead of `--allow-all`. This applies to every Linux
+run, with nothing to turn on, and it only adds ways in: a run that worked before works the same. It
+is part of Deno's checks, not of the [kernel sandbox](/docs/kernel-sandbox).
+
+| Files                                                                                                                            | `--allow-sys` name |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `/proc/cpuinfo`, `/proc/stat`, `/sys/devices/system/cpu/**`; cgroup `cpu.*` / `cpuset.*` limit files                             | `cpus`             |
+| `/proc/meminfo`; cgroup `memory.*` limit and usage files                                                                         | `systemMemoryInfo` |
+| `/proc/loadavg`                                                                                                                  | `loadavg`          |
+| `/proc/uptime`                                                                                                                   | `osUptime`         |
+| `/proc/version`                                                                                                                  | `osRelease`        |
+| This process: `status`, `stat`, `statm`, `maps`, `cgroup`, `limits` under `/proc/self`, `/proc/thread-self` or `/proc/<own pid>` | `processInfo`      |
+| Any process: the `/proc` listing itself and `/proc/<pid>/{stat,status,cmdline,comm}`; cgroup `pids.*` files                      | `processes`        |
+
+- The cgroup files are those under `/sys/fs/cgroup` ending in `.max` or `.current`.
+- `processInfo` and `processes` are new names. Like the others they work in `--allow-sys`,
+  `--deny-sys`, `deno.json` permission sets and `Deno.permissions.query({ name: "sys", kind })`.
+- **`processes` exposes other processes' command lines**, which often carry secrets passed as
+  arguments. Grant it only to code that needs the process list.
+- `/proc/<pid>/environ` needs all of `--allow-env`. The control surfaces (`mem`, `root`, `cwd`,
+  `exe`, `fd/*`, `map_files`, another process's `maps` or `limits`, `/proc/sys`, any write under
+  `/proc` or `/sys`) still need `--allow-all`.
+- A path is checked as written with `..` removed by name (`/proc/self/../1/mem` is `/proc/1/mem`),
+  and a class holds only when the path with its links resolved is in the same class: a link out of
+  `/sys/devices/system/cpu` (`cpu0/node0`) needs `--allow-all`.
+
+```sh
+deno run --allow-read=/proc --allow-sys=processInfo main.ts   # this process's /proc/self/status
+```
+
+## The external permission broker
+
+An external permission broker is a program you run yourself: set `DENO_PERMISSION_BROKER_PATH` to
+its Unix socket (a named pipe on Windows), and Deno asks it about each permission check instead of
+using the flags or prompting. It is unrelated to the kernel sandbox's `broker` mode (the Mode B
+supervisor). A run with an external permission broker can't use `--kernel-sandbox=enforce`, because
+its grant isn't fixed.
+
+**Protocol v2 (Unix)** lets the broker open the file itself and pass the descriptor back, so the
+path can't be swapped between the decision and the open:
+
+- A broker that puts `"v":2` in its first response speaks v2 for the rest of the connection.
+  Without it the connection stays v1, which is unchanged: a v1 broker never sees anything new.
+- After the permission check, each open by path (`Deno.open`, `readFile`, `writeFile`, `node:fs`
+  opens) sends an `open` request: `{"v":2,"pid":N,"id":N,"datetime":"…","permission":"open","value":"/absolute/path","open":{"read":true,"write":false,"create":false,"createNew":false,"truncate":false,"append":false,"mode":null,"customFlags":null}}`.
+- The broker answers `{"id":N,"result":"allow","fd":true}` with exactly one descriptor as
+  `SCM_RIGHTS` data (Deno uses it instead of opening the path), `{"id":N,"result":"allow"}` (Deno
+  opens the path itself) or `{"id":N,"result":"deny","reason":"…"}` (the open fails with
+  `PermissionDenied`). Open with `O_NOFOLLOW` or `openat2(RESOLVE_BENEATH)`-style flags.
+- Deno refuses a descriptor that is a socket, a symlink or (Linux) an `O_PATH` descriptor, a
+  directory for a write or create, a different access mode than requested, or a file that isn't
+  open on the requested path. A refused descriptor fails that open; the connection stays.
+- A response line is at most 64 KiB and carries a descriptor only with `"fd":true`. Anything else
+  is a malformed frame: Deno closes the connection and exits with code 87, as for any broker
+  failure.
+- Windows stays on v1: a broker's `"v":2` is ignored and no `open` request is sent.
 
 ## Network permissions and proxies
 

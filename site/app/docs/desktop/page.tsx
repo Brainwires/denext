@@ -5792,9 +5792,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           a CEF window makes are the app&apos;s
           (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
             what it turns off
-          </a>). So a Linux CEF window never downloads Hunspell dictionaries: denext&apos;s runtime
-          ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT, and an app adds other
-          languages by putting their <code>.bdic</code> files in <code>dictionaries/</code>{" "}
+          </a>), with no DNS-over-HTTPS (secure DNS) connections, even when the system resolver is a
+          DoH provider. So a Linux CEF window never downloads Hunspell dictionaries: denext&apos;s
+          runtime ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT, and an app adds
+          other languages by putting their <code>.bdic</code> files in <code>dictionaries/</code>
+          {" "}
           beside the host executable in its bundle (Windows and macOS use the OS spellchecker).
         </li>
         <li>

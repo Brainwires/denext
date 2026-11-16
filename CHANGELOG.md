@@ -14,12 +14,27 @@ and this project adheres to
   take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
   command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,
   `DENO_KERNEL_SANDBOX=off|warn` (which only lowers the mode), `deno compile --kernel-sandbox`
-  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. The preview is
-  settings and reports: nothing is enforced, `auto` (the default) changes nothing, `warn` prints
-  how many rules only Deno's checks would hold, the report prints the compiled policy and every
-  gap, and `enforce` / `broker` refuse to start because no enforcer is built in yet. Nothing
-  changes for a run that doesn't ask for it. The new [Kernel sandbox](https://denext.dev/docs/kernel-sandbox)
-  section describes the design, the guarantee matrix, the threat model and each OS; the full
+  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. `auto` (the default)
+  changes nothing in 4.x, `warn` prints how many rules only Deno's checks would hold, and the report
+  prints the compiled policy and every gap. `--kernel-sandbox=enforce` confines `deno run` and
+  `deno serve` on Linux (Landlock and seccomp, x86_64 and aarch64) and macOS (Seatbelt), so FFI,
+  Node-API addons and children are held to the grant too. It refuses to start only over a rule the
+  kernel would hold more loosely than Deno (a fail-open gap, such as a host-scoped `--allow-net` or
+  a write deny inside a write allow on Linux, which need the Mode B supervisor, or a port list before
+  Landlock ABI 4), and runs with the documented gaps the report lists: a macOS `host:port` grant
+  reaches any host on the port, an IP / `localhost` port list any address on those ports
+  (169.254.169.254 included), and a scoped `--allow-ffi` any library in the read scope. On Linux it
+  scrubs the environment to the `--allow-env` names plus a short runtime list (children inherit
+  only that), refuses chmod / utime by path inside the write scope too (`cp -p`, `tar`, git's
+  executable bit), holds a read deny inside an allow by expansion (up to 20,000 entries / 64
+  levels), reads remote modules from the cache only and treats an unreadable `.npmrc` as absent.
+  `deno test`, `bench`, the REPL, Jupyter, `eval` with a deny, a program from stdin (Linux) and
+  `deno compile` refuse `enforce`, so a `deno.json` `"kernelSandbox": "enforce"` breaks `deno test`
+  and `denext dev`: put the flag on the start command. `broker` still refuses to start, Windows has
+  no enforcer, and `deno info --json`'s `enforced` stays `false` (read `effective` and
+  `enforcerBuilt`). Nothing changes for a run that doesn't ask for it. The new
+  [Kernel sandbox](https://denext.dev/docs/kernel-sandbox) section describes what runs today, the
+  design, the guarantee matrix, the threat model, each OS and the troubleshooting; the full
   sandbox, with automatic enforcement, lands in denext 5.0.
 - **The desktop window test covers the backend hooks in a real window.** The kitchen sink's
   packaged-window test (`desktop-window.yml`, on Linux, macOS arm64, macOS Intel and Windows) has a
@@ -56,9 +71,17 @@ and this project adheres to
 
 ### Changed
 
-- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.24.** Besides the kernel
-  sandbox preview it tightens the Linux lifecycle-script jail's socket filter
-  (GHSA-9363-h8qp-jg52) and ports upstream fixes: `Deno.serve` closing after an early response to
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.25.** Besides the kernel
+  sandbox preview, Linux `/proc` and `/sys` files take the matching `--allow-sys` name instead of
+  `--allow-all` (`processInfo` for this process's files and `processes` for the process list are
+  new names, also in `Deno.permissions.query`), an external permission broker
+  (`DENO_PERMISSION_BROKER_PATH`) that speaks protocol v2 hands back opened files on Unix, `--seed=0`
+  seeds `Math.random`, `Deno.resolveDns()` and `node:dns` work with a zoned link-local name server,
+  a lockfile package name starting with a multi-byte character no longer panics, `--trace-exit`
+  exits when `Error.prepareStackTrace` throws, and the desktop CEF host makes no DNS-over-HTTPS
+  (secure DNS) connections, even when the system resolver is a DoH provider. It carries security
+  hardening, tightens the Linux lifecycle-script jail's socket filter (GHSA-9363-h8qp-jg52) and
+  ports upstream fixes: `Deno.serve` closing after an early response to
   an unread body and honoring `Connection: close`, header values with CR / LF refused, an abort
   still cancelling a collected `fetch()` body, WebSocket close code 1006 for an abnormal closure
   and a client refusing a wrong `Sec-WebSocket-Accept`, dynamic imports awaiting cached async
