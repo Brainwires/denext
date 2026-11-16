@@ -231,37 +231,47 @@ export async function redeemTokenHash(
 const CHANGE_DOMAIN = "denext.gotrue.email-change.v1";
 
 /**
- * Record that one address of a two-address email change confirmed it, and say whether the other
- * address already had: `true` once both have (the change may be applied), `false` while the
- * other is still owed (GoTrue's `email_change_confirm_status` 0 → 1 → 2). The marker is a
- * verification-token row keyed on the change's id, consumed by the second confirmation.
+ * Record that one address of a two-address email change confirmed it, and say whether this
+ * confirmation is the one that completes it: `true` once both addresses have confirmed (the
+ * caller applies the change), `false` while the other is still owed (GoTrue's
+ * `email_change_confirm_status` 0 → 1 → 2) or when the other confirmation completes it.
+ *
+ * Built only on the adapter's single-use token rows, so it holds when both addresses confirm at
+ * the same moment, on any adapter. Each confirmation, in this order: (1) writes the change's
+ * shared apply row (the same row from either side), (2) writes its own marker, (3) redeems the
+ * other address's marker; only if that is there does it (4) redeem the apply row, and only the
+ * one that redeems it reports `true`. A confirmation that finds no marker in (3) wrote its own
+ * first, so the other side's (3) finds that marker; and the apply row each side writes in (1)
+ * precedes its marker, so it is never written again after it was redeemed.
  *
  * @param ctx The context.
  * @param changeId The id both of the change's codes carry.
  * @param half Which address this confirmation came from.
- * @returns Whether both addresses have now confirmed.
+ * @returns Whether this confirmation completes the change.
  */
 export async function confirmEmailChangeHalf(
   ctx: GoTrueContext,
   changeId: string,
   half: "current" | "new",
 ): Promise<boolean> {
-  const identifier = `gotrue:email_change_confirmed:${changeId}`;
-  const marker = (which: string) => sha256Hex(`${CHANGE_DOMAIN}:${changeId}:${which}`);
-  const other = await ctx.adapter.useVerificationToken!({
-    identifier,
-    purpose: "otp",
-    tokenHash: await marker(half === "current" ? "new" : "current"),
+  const row = async (which: string) => ({
+    identifier: `gotrue:email_change_confirmed:${changeId}:${which}`,
+    purpose: "otp" as const,
+    tokenHash: await sha256Hex(`${CHANGE_DOMAIN}:${changeId}:${which}`),
   });
-  if (other && other.expires > nowSeconds()) return true;
-  await ctx.adapter.createVerificationToken!({
-    identifier,
-    purpose: "otp",
-    tokenHash: await marker(half),
-    expires: nowSeconds() + otpExpiry(ctx),
-    data: JSON.stringify({ action: "email_change_confirmed" }),
-  });
-  return false;
+  const write = async (which: string) =>
+    await ctx.adapter.createVerificationToken!({
+      ...(await row(which)),
+      expires: nowSeconds() + otpExpiry(ctx),
+      data: JSON.stringify({ action: "email_change_confirmed" }),
+    });
+  await write("apply");
+  await write(half);
+  const other = await ctx.adapter.useVerificationToken!(
+    await row(half === "current" ? "new" : "current"),
+  );
+  if (!other) return false;
+  return (await ctx.adapter.useVerificationToken!(await row("apply"))) !== undefined;
 }
 
 /** The verification link for a code. */

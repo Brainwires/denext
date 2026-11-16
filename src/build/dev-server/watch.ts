@@ -226,7 +226,7 @@ function handleChangeSet(st: DevState, configBasenames: Set<string>, changedPath
   const configChanged = changedPaths.filter((p) => configBasenames.has(basename(p)));
   const rest = changedPaths.filter((p) => !configBasenames.has(basename(p)));
   if (configChanged.length > 0) {
-    const names = configChanged.map((p) => p.split("/").pop()).join(", ");
+    const names = [...new Set(configChanged.map((p) => basename(p)))].join(", ");
     console.log(`\n  ⚠  ${names} changed — restart the dev server to apply config changes.\n`);
   }
   if (rest.length > 0) applyChanges(st, rest);
@@ -268,7 +268,9 @@ export async function watch(st: DevState): Promise<void> {
   let changed: string[] = [];
   const queue = (events: readonly string[]) => {
     const now = Date.now();
-    const paths = events.filter((p) => !startupReplay(p, startedAt, now));
+    // Not denext's own writes either: the CSS graph crawl rewrites the app's `deno.json` (a
+    // watched config file) for each `deno info` run and puts it back (see ../self-writes.ts).
+    const paths = events.filter((p) => !startupReplay(p, startedAt, now) && !isSelfWrite(p));
     if (paths.length === 0) return;
     changed.push(...paths);
     if (debounce) clearTimeout(debounce);
