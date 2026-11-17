@@ -17,6 +17,10 @@ export async function serveStatic(
   acceptEncoding?: string,
   request?: Request,
 ): Promise<Response | null> {
+  // A percent-encoded separator (or NUL) never names a file: decoded, `/private%2Fa.txt` would
+  // be `private/a.txt`, a path no middleware matcher or header rule anchored on `/private/`
+  // saw (they test the pathname as requested).
+  if (ENCODED_SEPARATOR.test(pathname)) return null;
   const decoded = safeDecode(pathname);
   if (decoded === null) return null;
   const rootAbs = resolve(publicDir);
@@ -25,7 +29,12 @@ export async function serveStatic(
   // Defense in depth: the lexical check blocks `../` traversal, but a symlink *inside*
   // publicDir can still point outside it (stat/open follow symlinks). Resolve the real
   // path and re-check it stays within publicDir.
-  if (!(await realPathWithin(rootAbs, target))) return null;
+  const real = await realPathWithin(rootAbs, target);
+  if (!real) return null;
+  // The file must be named exactly as requested. A case-insensitive file system (macOS,
+  // Windows) opens `private/a.txt` for `/PRIVATE/a.txt`, and Windows also for `/private./a.txt`
+  // or an 8.3 short name — spellings a matcher on `/private/:path*` does not cover.
+  if (!(await spelledAsRequested(rootAbs, target, real))) return null;
   const file = await openFile(target);
   if (!file) return null;
   // stat the OPEN handle so the declared length always matches the bytes streamed.
@@ -305,15 +314,62 @@ async function statFile(path: string): Promise<Deno.FileInfo | null> {
   }
 }
 
-/** Whether `target`'s REAL path (symlinks followed) stays under `rootAbs`'s real path. */
-async function realPathWithin(rootAbs: string, target: string): Promise<boolean> {
+/** The real (symlinks followed) root and target paths. */
+interface RealPaths {
+  root: string;
+  target: string;
+}
+
+/**
+ * `target`'s REAL path (symlinks followed) when it stays under `rootAbs`'s real path, else
+ * null.
+ */
+async function realPathWithin(rootAbs: string, target: string): Promise<RealPaths | null> {
   try {
     const realRoot = await Deno.realPath(rootAbs);
     const realTarget = await Deno.realPath(target);
-    return realTarget === realRoot || realTarget.startsWith(realRoot + separator());
+    const within = realTarget === realRoot || realTarget.startsWith(realRoot + separator());
+    return within ? { root: realRoot, target: realTarget } : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** `%2F` / `%5C` (an encoded path separator) or `%00`, in either hex case. */
+const ENCODED_SEPARATOR = /%(?:2f|5c|00)/i;
+
+/** Unicode-normalized, so an NFD name on disk still answers its NFC spelling in a URL. */
+const nfc = (s: string): string => s.normalize("NFC");
+
+/**
+ * Whether the file system holds `target` under the very names the request spelled (below
+ * `rootAbs`): each component an entry of its parent directory, compared exactly (but for
+ * Unicode normalization). The real path answers it without listing anything when no symlink
+ * is involved — it carries the names as stored; otherwise each parent directory is listed.
+ */
+async function spelledAsRequested(
+  rootAbs: string,
+  target: string,
+  real: RealPaths,
+): Promise<boolean> {
+  const rel = target.slice(rootAbs.length);
+  if (nfc(real.target) === nfc(real.root + rel)) return true;
+  let dir = rootAbs;
+  for (const name of rel.split(separator()).filter((part) => part.length > 0)) {
+    if (!(await hasEntry(dir, name))) return false;
+    dir = join(dir, name);
+  }
+  return true;
+}
+
+/** Whether directory `dir` has an entry named exactly `name` (but for Unicode normalization). */
+async function hasEntry(dir: string, name: string): Promise<boolean> {
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (nfc(entry.name) === nfc(name)) return true;
+    }
+  } catch { /* unreadable or gone: not served */ }
+  return false;
 }
 
 /**
@@ -332,7 +388,9 @@ async function serveGzipSibling(
 ): Promise<Response | null> {
   const gzPath = target + ".gz";
   const gzInfo = await statFile(gzPath);
-  if (!gzInfo || !(await realPathWithin(rootAbs, gzPath))) return null;
+  if (!gzInfo) return null;
+  const gzReal = await realPathWithin(rootAbs, gzPath);
+  if (!gzReal || !(await spelledAsRequested(rootAbs, gzPath, gzReal))) return null;
   let gzFile: Deno.FsFile;
   try {
     gzFile = await Deno.open(gzPath, { read: true });

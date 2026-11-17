@@ -10,22 +10,105 @@ import { currentContext } from "../../server/request-context.ts";
 import { remoteAddrOf } from "../../server/remote-addr.ts";
 import { RequestCookies } from "./cookies.ts";
 
+/** What a {@link NextURL} needs to know about the app's routing (the request context's). */
+interface NextUrlRouting {
+  basePath: string;
+  locale?: string;
+  locales?: readonly string[];
+}
+
+/** The first path segment of `pathname` (`"fr"` for `/fr/about`), or `""`. */
+function firstSegment(pathname: string): string {
+  const start = pathname.startsWith("/") ? 1 : 0;
+  const end = pathname.indexOf("/", start);
+  return end === -1 ? pathname.slice(start) : pathname.slice(start, end);
+}
+
 /**
  * A `URL` with the extras Next code reaches for: `clone()`, a `basePath`, and a
- * `locale` slot. It is a real `URL` subclass, so `pathname`, `searchParams`,
- * etc. work as usual.
+ * `locale`. It is a real `URL` subclass, so `searchParams`, `href`, etc. work as usual.
+ *
+ * With `i18n` configured, `pathname` is the path WITHOUT its locale prefix, as in Next.js
+ * (`/fr/admin` reads `/admin`, with `locale === "fr"`), so a middleware's
+ * `nextUrl.pathname.startsWith("/admin")` covers every locale's spelling of the page; `href`
+ * and `toString()` keep the prefix. Assigning `pathname` keeps the URL's locale prefix unless
+ * the new path names a locale of its own.
  */
 export class NextURL extends URL {
   /** Configured base path (empty by default). */
   basePath = "";
   /** Active locale, when locale routing is in use (empty by default). */
   locale = "";
+  /** The locale prefix this URL's path carries (`"/fr"`), `""` for none. */
+  #prefix = "";
+  /** The app's configured locales (empty without `i18n`). */
+  #locales: readonly string[] = [];
+
+  /**
+   * A `NextURL` for `url` under the app's routing: its base path, and with `i18n` its locale
+   * read from the path's prefix (else the request's resolved locale).
+   *
+   * @param url The absolute URL.
+   * @param routing The request's routing facts, if inside a request.
+   * @returns The URL.
+   */
+  static forRouting(url: string | URL, routing: NextUrlRouting | undefined): NextURL {
+    const next = new NextURL(url);
+    if (!routing) return next;
+    next.basePath = routing.basePath;
+    next.locale = routing.locale ?? "";
+    next.#locales = routing.locales ?? [];
+    next.#readPrefix();
+    return next;
+  }
+
+  /** Re-read the locale prefix from the full path. */
+  #readPrefix(): void {
+    const first = firstSegment(super.pathname);
+    if (first !== "" && this.#locales.includes(first)) {
+      this.#prefix = "/" + first;
+      this.locale = first;
+    } else {
+      this.#prefix = "";
+    }
+  }
+
+  /** The path without its locale prefix (Next's `nextUrl.pathname`). */
+  override get pathname(): string {
+    const full = super.pathname;
+    return this.#prefix ? full.slice(this.#prefix.length) || "/" : full;
+  }
+
+  /** Set the path; the URL keeps its locale prefix unless `value` names a locale itself. */
+  override set pathname(value: string) {
+    const path = String(value);
+    if (this.#prefix === "" || this.#locales.includes(firstSegment(path))) {
+      super.pathname = path;
+      this.#readPrefix();
+      return;
+    }
+    const rest = path.startsWith("/") ? path : "/" + path;
+    super.pathname = rest === "/" ? this.#prefix : this.#prefix + rest;
+  }
+
+  /** The whole URL, locale prefix included. */
+  override get href(): string {
+    return super.href;
+  }
+
+  /** Replace the whole URL (its locale prefix is read again). */
+  override set href(value: string) {
+    super.href = value;
+    this.#readPrefix();
+  }
 
   /** Return an independent copy of this URL. */
   clone(): NextURL {
-    const copy = new NextURL(this.href);
+    const copy = new NextURL(super.href);
     copy.basePath = this.basePath;
     copy.locale = this.locale;
+    copy.#locales = this.#locales;
+    copy.#prefix = this.#prefix;
     return copy;
   }
 }
@@ -63,13 +146,9 @@ export class NextRequest extends Request {
    */
   constructor(input: RequestInfo | URL, init?: RequestInit) {
     super(input, init);
-    this.nextUrl = new NextURL(this.url);
-    // Inside the pipeline the resolved basePath / locale are known: expose them like Next.
-    const routing = currentContext()?.routing;
-    if (routing) {
-      this.nextUrl.basePath = routing.basePath;
-      this.nextUrl.locale = routing.locale ?? "";
-    }
+    // Inside the pipeline the resolved basePath / locale are known: expose them like Next
+    // (`nextUrl.pathname` is the path without its locale prefix).
+    this.nextUrl = NextURL.forRouting(this.url, currentContext()?.routing);
     this.cookies = new RequestCookies(this.headers);
   }
 
