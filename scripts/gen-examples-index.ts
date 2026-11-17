@@ -107,6 +107,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   hangar: "native",
   multiwindow: "native",
   "rn-desktop": "native",
+  "rtc-viewer-native": "native",
   "expo-app": "native",
   "offline-sync": "native",
   "scroll-bench": "native",

@@ -243,6 +243,14 @@ entry = [
   "examples/clerk/desktop/e2e.ts",
   "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",
+  # examples/rtc-viewer-native: the Deno Desktop entry, its `rtcviewer` extension (loaded by path
+  # from `desktop.capabilities.extensions`), the RTCRtpScriptTransform worker (started by URL),
+  # the WHIP sender (`deno task send`) and the FFI test on the built library (`deno task test`).
+  "examples/rtc-viewer-native/desktop.ts",
+  "examples/rtc-viewer-native/desktop/rtc-viewer.ts",
+  "examples/rtc-viewer-native/lib/receive-worker.ts",
+  "examples/rtc-viewer-native/scripts/send.ts",
+  "examples/rtc-viewer-native/tests/*.ts",
   # examples/companion (Loopy): the Deno Desktop entry and the inbox CLI (`deno task say`).
   "examples/companion/desktop.ts",
   "examples/companion/scripts/loopy-say.ts",
@@ -342,6 +350,22 @@ ignorePatterns = [
   # real host) stays analyzed and is tested against a fake host by tests/hangar.test.ts.
   "examples/hangar/desktop.ts",
   "examples/hangar/desktop/**",
+  # examples/rtc-viewer-native's window and runtime side: the entry, the `rtcviewer` extension, the
+  # transform worker, the app glue (lib/app.ts: Deno.serve, RTCPeerConnection, Worker), the
+  # runtime's UI-thread call, the WHIP sender (the runtime's fake camera) and the control page.
+  # I/O against a native window, a WebRTC peer and the native library, untestable without them;
+  # the native round trips (`cargo test` in native/) and tests/ffi.test.ts are their guard. Its
+  # control API, WHIP endpoint, SDP, pump and clip parsing stay analyzed and are tested on fakes by
+  # tests/rtc-viewer-native.test.ts.
+  "examples/rtc-viewer-native/desktop.ts",
+  "examples/rtc-viewer-native/desktop/**",
+  "examples/rtc-viewer-native/lib/app.ts",
+  "examples/rtc-viewer-native/lib/main-thread.ts",
+  "examples/rtc-viewer-native/lib/receive-worker.ts",
+  "examples/rtc-viewer-native/scripts/**",
+  "examples/rtc-viewer-native/tests/**",
+  "examples/rtc-viewer-native/app/**",
+  "examples/rtc-viewer-native/native/**",
   # examples/multiwindow: the Deno Desktop entry and the `counters` desktop extension (loaded by
   # path from denext.config.ts); lib/counters.ts is tested by tests/multiwindow-example.test.ts.
   "examples/multiwindow/desktop.ts",
@@ -467,6 +491,17 @@ exports = ["transform", "version"]
 [[ignoreExports]]
 file = "src/compat/remix/client.ts"
 exports = ["Link", "LinkProps", "useParams", "useSearchParams"]
+
+# examples/rtc-viewer-native's lib/ exports read only by its window side (ignored above): the
+# library loader (desktop/rtc-viewer.ts, lib/receive-worker.ts, tests/ffi.test.ts) and the WHIP
+# path the app prints (lib/app.ts).
+[[ignoreExports]]
+file = "examples/rtc-viewer-native/lib/native.ts"
+exports = ["findLibrary", "openNative"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer-native/lib/receiver.ts"
+exports = ["WHIP_PATH"]
 
 # examples/hangar's lib/ exports read only by its window side (ignored above: the pages and the
 # real host), so the graph sees no importer: the window sizes and the start-menu prefix
