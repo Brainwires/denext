@@ -104,7 +104,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: sleep 60
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@0285478f4ade2850db7708170074bf11c0e95545 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@b9684b2d976ff61b754793f7f934f7e853205862 # pick-runners
         with:
           jobs: window_test_windows=windows-x64 summary=linux-x64
           vars: ${{ toJSON(vars) }}

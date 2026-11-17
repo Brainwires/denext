@@ -49,7 +49,7 @@ jobs:
       plan: ${{ steps.pick.outputs.plan }}
     steps:
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@0285478f4ade2850db7708170074bf11c0e95545 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@b9684b2d976ff61b754793f7f934f7e853205862 # pick-runners
         with:
           jobs: drift=linux-x64
           vars: ${{ toJSON(vars) }}
