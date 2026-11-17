@@ -1997,6 +1997,7 @@
     "DesktopMacosArtifact:interface",
     "DesktopMacosArtifactKind:typeAlias",
     "DesktopMacosDistributeDeps:interface",
+    "DesktopMacosHiddenMode:typeAlias",
     "DesktopMacosSignature:typeAlias",
     "DesktopMacosSigning:interface",
     "DesktopMacosSigningOptions:interface",

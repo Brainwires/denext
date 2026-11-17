@@ -101,6 +101,7 @@ export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
 export type {
   DesktopAppSettings,
+  DesktopMacosHiddenMode,
   DesktopTitleVisibility,
   DesktopToolbarStyle,
   DesktopWindowSettings,

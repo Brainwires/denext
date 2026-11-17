@@ -47561,6 +47561,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMacosHiddenMode",
+          "slug": "DesktopMacosHiddenMode",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosHiddenMode = \"invisible\" | \"orderOut\"",
+          "doc": "How a window is hidden on macOS's system WebView (desktop.window.macosHiddenMode, a window's macosHiddenMode): \"invisible\" (the runtime's default) keeps a hidden window ordered in but invisible, so a backgroundThrottling: false page keeps its timers' rate; \"orderOut\" really removes it, and macOS then throttles its page. Other platforms ignore it.",
+          "docFull": "How a window is hidden on macOS's system WebView (`desktop.window.macosHiddenMode`, a window's\n`macosHiddenMode`): `\"invisible\"` (the runtime's default) keeps a hidden window ordered in but\ninvisible, so a `backgroundThrottling: false` page keeps its timers' rate; `\"orderOut\"` really\nremoves it, and macOS then throttles its page. Other platforms ignore it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopMacosSignature",
           "slug": "DesktopMacosSignature",
           "kind": "typeAlias",
