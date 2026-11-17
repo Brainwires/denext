@@ -33,6 +33,7 @@ import {
 } from "../runtime/error-boundary.ts";
 import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
 import { prepareWire } from "../runtime/wire-encode.ts";
+import { assertUntainted } from "../runtime/taint.ts";
 import { getSubscriptionDef, type SubscriptionDef } from "../runtime/server-action.ts";
 import { type ChannelHub, type ChannelSub, createChannelHub } from "./live-channels.ts";
 import {
@@ -1342,6 +1343,8 @@ function decodeSubscribeArgs(msg: { args?: unknown; enc?: unknown }): unknown[] 
 
 /** A `data` frame whose value rides the wire codec (`enc` only when a tag was needed). */
 function dataFrame(subId: string, value: unknown): LiveServerMessage {
+  // The fetcher is a server function: a tainted value in its result fails the recompute.
+  assertUntainted(value);
   const p = prepareWire(value);
   return p.tagged
     ? { type: "data", subId, value: p.value, enc: WIRE_ENC }
