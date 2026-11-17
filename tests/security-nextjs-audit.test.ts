@@ -17,7 +17,7 @@ import { REGEN_HEADER, REGEN_TOKEN } from "../src/server/app-config.ts";
 import { verifyOrigin } from "../src/server/origin-check.ts";
 import { inMemoryCacheStore, setCacheStore, unstable_cache } from "../src/server/cache.ts";
 import { serveStatic } from "../src/server/static.ts";
-import { localImageGate, optimizeImage } from "../src/server/image-optimizer.ts";
+import { localImageFetcher, optimizeImage } from "../src/server/image-optimizer.ts";
 import { type NextRequest, NextResponse, NextURL } from "../src/compat/next/server.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
@@ -167,15 +167,18 @@ Deno.test("middleware bypass: a public/ file answers only the spelling it is sto
     await Deno.writeTextFile(join(root, "private", "report.txt"), SECRET);
     await Deno.writeTextFile(join(root, "private", "report.txt.gz"), "not-really-gzip");
     await Deno.writeTextFile(join(root, "café.txt"), "accent");
+    await Deno.mkdir(join(root, "longprivatedir"));
+    await Deno.writeTextFile(join(root, "longprivatedir", "confidential.txt"), SECRET);
     // A symlink inside public/ is still served under its own name (and only that name).
     await Deno.symlink(join(root, "private", "report.txt"), join(root, "Link.txt"));
     const app = appWith({
       pages: {},
-      getMiddleware: () => guard(["/private/:path*"]),
+      getMiddleware: () => guard(["/private/:path*", "/longprivatedir/:path*"]),
       publicDir: root,
     });
-    // On a case-insensitive file system (macOS, Windows) these open the same file; on a
-    // case-sensitive one they name nothing. Either way: never the guarded content.
+    // On a case-insensitive file system (macOS, Windows) the first six open the same file, and
+    // Windows opens it for the rest too (a trailing dot or space, an 8.3 short name, an
+    // alternate data stream); elsewhere they name nothing. Either way: never the guarded content.
     for (
       const spelling of [
         "/PRIVATE/report.txt",
@@ -184,6 +187,21 @@ Deno.test("middleware bypass: a public/ file answers only the spelling it is sto
         "/private/Report.txt",
         "/link.txt",
         "/LINK.TXT",
+        "/private./report.txt",
+        "/private../report.txt",
+        "/private%20/report.txt",
+        "/private/report.txt.",
+        "/private/report.txt%20",
+        "/private/report.txt::$DATA",
+        "/private/report.txt::$data",
+        "/private::$INDEX_ALLOCATION/report.txt",
+        "/private:$I30:$INDEX_ALLOCATION/report.txt",
+        "/PRIVAT~1/report.txt",
+        "/LONGPR~1/confidential.txt",
+        "/longpr~1/CONFID~1.TXT",
+        "/longprivatedir/CONFID~1.TXT",
+        "/private%5Creport.txt",
+        "/private%5creport.txt",
       ]
     ) {
       const res = await probe(app, spelling);
@@ -343,7 +361,7 @@ Deno.test("i18n: NextURL keeps its locale prefix in href and across pathname wri
 
 // ---------------------------------------------------------------------------
 // The image endpoint is answered in front of the app (and so of middleware.ts): a local source
-// is read only when the app itself would serve that file to this visitor.
+// is fetched through the app, middleware included, as the visitor's own request (Next.js).
 // ---------------------------------------------------------------------------
 
 /** A valid `w`×`h` PNG. */
@@ -361,30 +379,43 @@ Deno.test("image endpoint: a local source behind middleware is not readable thro
   const root = await Deno.makeTempDir();
   try {
     await Deno.mkdir(join(root, "private"));
+    await Deno.mkdir(join(root, "policy"));
     await Deno.writeFile(join(root, "private", "scan.png"), await png(80, 80));
+    await Deno.writeFile(join(root, "policy", "own.png"), await png(80, 80));
     await Deno.writeFile(join(root, "logo.png"), await png(80, 80));
+    const seen: string[] = [];
     const mw = createMiddlewareRunner({
-      middleware: (req: Request) =>
-        req.headers.get("cookie") === "session=valid"
+      middleware: (req: Request) => {
+        const { pathname } = new URL(req.url);
+        seen.push(`${req.method} ${pathname}`);
+        if (pathname.startsWith("/policy/")) {
+          return NextResponse.next({ headers: { "cache-control": "private, max-age=60" } });
+        }
+        if (!pathname.startsWith("/private/")) return undefined;
+        return req.headers.get("cookie") === "session=valid"
           ? undefined
-          : new Response("blocked", { status: 401 }),
-      config: { matcher: ["/private/:path*"] },
+          : new Response("blocked", { status: 401 });
+      },
     });
     const app = appWith({ pages: {}, getMiddleware: () => mw, publicDir: root });
-    const opts = { publicDir: root, authorizeLocal: localImageGate(app) };
-    const image = (src: string, headers?: HeadersInit) =>
-      optimizeImage(
+    const opts = { publicDir: root, fetchLocal: localImageFetcher(app) };
+    const image = async (src: string, headers?: HeadersInit) => {
+      const res = await optimizeImage(
         new Request(`http://localhost/_denext/image?url=${encodeURIComponent(src)}&w=64`, {
           headers,
         }),
         opts,
       );
+      await res.body?.cancel();
+      return res;
+    };
 
-    // Signed in: served, for this visitor alone.
+    // Signed in: the middleware lets the visitor in; the answer is theirs alone.
     const own = await image("/private/scan.png", { cookie: "session=valid" });
-    await own.body?.cancel();
     assertEquals(own.status, 200);
-    assertEquals(own.headers.get("cache-control"), "private, no-cache");
+    assertEquals(own.headers.get("content-type"), "image/webp");
+    assertEquals(own.headers.get("cache-control"), "private, max-age=14400");
+    assertEquals(seen, ["GET /private/scan.png"], "the middleware saw the source's own path");
 
     // Anonymous: refused — also now that the encoded image sits in the optimizer's cache.
     for (
@@ -397,31 +428,45 @@ Deno.test("image endpoint: a local source behind middleware is not readable thro
         "//localhost/private/scan.png",
       ]
     ) {
-      const res = await image(src);
-      await res.body?.cancel();
-      assertEquals(res.status, 404, src);
+      assertEquals((await image(src)).status, 404, src);
     }
-    const forged = await image("/private/scan.png", { cookie: "session=guess" });
-    await forged.body?.cancel();
-    assertEquals(forged.status, 404);
+    assertEquals((await image("/private/scan.png", { cookie: "session=guess" })).status, 404);
+    // Signed in again: a cache hit, still theirs alone.
+    const again = await image("/private/scan.png", { cookie: "session=valid" });
+    assertEquals([again.status, again.headers.get("cache-control")], [
+      200,
+      "private, max-age=14400",
+    ]);
 
-    // A public image stays publicly cacheable, with or without a cookie.
-    for (const headers of [undefined, { cookie: "session=valid" }]) {
-      const res = await image("/logo.png", headers);
-      await res.body?.cancel();
-      assertEquals(res.status, 200);
-      assert(res.headers.get("cache-control")!.startsWith("public, max-age="));
-    }
+    // A public image: publicly cacheable for an anonymous visitor, private with a credential
+    // (the middleware may have decided on it; a shared cache must not hold that answer).
+    const anonymous = await image("/logo.png");
+    assertEquals(anonymous.status, 200);
+    assertEquals(anonymous.headers.get("cache-control"), "public, max-age=14400, immutable");
+    const signedIn = await image("/logo.png", { cookie: "session=valid" });
+    assertEquals(signedIn.headers.get("cache-control"), "private, max-age=14400");
+    // The app's own policy for the file (middleware, a headers() rule) is the image's.
+    assertEquals(
+      (await image("/policy/own.png")).headers.get("cache-control"),
+      "private, max-age=60",
+    );
+    // `localPatterns` still applies, before anything is fetched.
+    seen.length = 0;
+    const narrowed = await optimizeImage(
+      new Request("http://localhost/_denext/image?url=%2Flogo.png&w=64"),
+      { ...opts, localPatterns: [{ pathname: "/assets/**" }] },
+    );
+    assertEquals([narrowed.status, seen], [404, []]);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
 
-Deno.test("image endpoint: the gate probes as an anonymous visitor first, then as the visitor", async () => {
-  const probes: Request[] = [];
-  const gate = localImageGate((req) => {
-    probes.push(req);
-    return Promise.resolve(new Response("x", { status: req.headers.has("cookie") ? 200 : 302 }));
+Deno.test("image endpoint: the fetch of a local source is the visitor's own GET on the app's origin", async () => {
+  const fetches: Request[] = [];
+  const fetchLocal = localImageFetcher((req) => {
+    fetches.push(req);
+    return Promise.resolve(new Response(null, { status: 302, headers: { location: "/login" } }));
   });
   const request = new Request("http://app.example/_denext/image?url=x&w=64", {
     headers: {
@@ -431,26 +476,27 @@ Deno.test("image endpoint: the gate probes as an anonymous visitor first, then a
       "x-forwarded-for": "203.0.113.9",
       "if-none-match": '"abc"',
       range: "bytes=0-1",
+      accept: "image/avif",
       "accept-encoding": "gzip",
     },
   });
-  assertEquals(await gate("/a/b.png?v=2", request), "private");
-  assertEquals(probes.map((p) => `${p.method} ${p.url}`), [
-    "GET http://app.example/a/b.png?v=2",
-    "GET http://app.example/a/b.png?v=2",
-  ]);
-  const [anonymous, own] = probes.map((p) => Object.fromEntries(p.headers));
-  assertEquals(anonymous, { "x-forwarded-for": "203.0.113.9" });
-  assertEquals(own, {
+  assertEquals((await fetchLocal("/a/b.png?v=2", request)).status, 302);
+  assertEquals(fetches.map((f) => `${f.method} ${f.url}`), ["GET http://app.example/a/b.png?v=2"]);
+  assertEquals(Object.fromEntries(fetches[0].headers), {
     authorization: "Bearer t",
     cookie: "s=1",
     "x-api-key": "k",
     "x-forwarded-for": "203.0.113.9",
   });
-  // The probe stays on the app's own origin whatever the source spells.
-  probes.length = 0;
-  assertEquals(await gate("//evil.example/x.png", new Request("http://app.example/i")), false);
-  for (const p of probes) assertEquals(new URL(p.url).origin, "http://app.example");
+  // A redirect (to a sign-in page) is not an image: the endpoint answers 404.
+  const res = await optimizeImage(
+    new Request("http://app.example/_denext/image?url=%2Fa%2Fb.png&w=64"),
+    { fetchLocal },
+  );
+  assertEquals(res.status, 404);
+  // The fetch stays on the app's own origin whatever the source spells.
+  await fetchLocal("//evil.example/x.png", new Request("http://app.example/i"));
+  for (const f of fetches) assertEquals(new URL(f.url).origin, "http://app.example");
 });
 
 // ---------------------------------------------------------------------------
@@ -604,4 +650,35 @@ Deno.test("CVE-2026-27978: a null or opaque Origin never passes the Server Actio
   }
   assertEquals(verifyOrigin(post({}), {}), false, "no Origin and no Referer");
   assertEquals(verifyOrigin(post({ origin: "http://app.example" }), {}), true);
+});
+
+Deno.test("pages router: a getServerSideProps redirect.destination cannot leave the origin as a path", async () => {
+  const to = (destination: string) => ({
+    getServerSideProps: () => Promise.resolve({ redirect: { destination, permanent: false } }),
+    default: () => null,
+  });
+  const handle = pagesHandler({
+    a: to("//evil.example/x"),
+    b: to("/\\evil.example/x"),
+    c: to("/\t/evil.example/x"),
+    d: to("javascript:alert(1)"),
+    e: to("/account?next=%2Fhome"),
+    f: to("https://id.example/login"),
+  });
+  const expected: Record<string, string> = {
+    a: "/evil.example/x",
+    b: "/evil.example/x",
+    c: "/evil.example/x",
+    d: "/javascript:alert(1)",
+    e: "/account?next=%2Fhome",
+    f: "https://id.example/login", // an explicit absolute URL is the app's own choice
+  };
+  for (const [page, location] of Object.entries(expected)) {
+    const doc = (await handle(new Request(`http://localhost/${page}`)))!;
+    assertEquals([doc.status, doc.headers.get("location")], [307, location], page);
+    const data = (await handle(
+      new Request(`http://localhost/${page}`, { headers: { "x-denext-pages-data": "1" } }),
+    ))!;
+    assertEquals(await data.json(), { redirect: { destination: location } }, page);
+  }
 });
