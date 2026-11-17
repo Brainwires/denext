@@ -14,7 +14,13 @@ import {
   type PageModule,
   type PageRequest,
   withBase,
+  withRequestCacheControl,
 } from "./shared.ts";
+
+/** Whether a page's data is computed per request (`getServerSideProps` / `getInitialProps`). */
+function isPerRequest(mod: PageModule, outcome: DataOutcome): boolean {
+  return mod.getServerSideProps != null || (outcome.kind === "props" && outcome.isServer);
+}
 
 /**
  * Render an error page — the custom `404`/`500`/`_error` component wrapped in
@@ -72,25 +78,35 @@ export async function renderData(
   // Data path: never a fallback shell — the client's follow-up fetch wants the real
   // getStaticProps output, so allowFallbackShell is false.
   const outcome = await resolveData(st, mod, req, appFile, resHeaders, false);
+  const perRequest = isPerRequest(mod, outcome);
   if (outcome.kind === "redirect") {
-    return Response.json({ redirect: { destination: outcome.destination } });
+    return withRequestCacheControl(
+      Response.json({ redirect: { destination: outcome.destination } }),
+      perRequest,
+    );
   }
-  if (outcome.kind !== "props") return Response.json({ notFound: true }); // "fallback" can't occur here (allowFallbackShell=false)
+  // "fallback" can't occur here (allowFallbackShell=false)
+  if (outcome.kind !== "props") {
+    return withRequestCacheControl(Response.json({ notFound: true }), perRequest);
+  }
   const { entryUrl, cssUrl } = await bundleUrls(st, entry.routePath);
-  return applyResHeaders(
-    Response.json({
-      page: entry.routePath,
-      entryUrl, // app-absolute, without basePath — the client re-adds it
-      cssUrl, // ditto; the client injects the route's stylesheet before rendering
-      pageProps: outcome.pageProps,
-      query: req.query,
-      asPath: req.pathname + req.url.search,
-      isServer: outcome.isServer,
-      locale: req.locale,
-      locales: st.opts.i18n?.locales,
-      defaultLocale: st.opts.i18n?.defaultLocale,
-    }),
-    resHeaders,
+  return withRequestCacheControl(
+    applyResHeaders(
+      Response.json({
+        page: entry.routePath,
+        entryUrl, // app-absolute, without basePath — the client re-adds it
+        cssUrl, // ditto; the client injects the route's stylesheet before rendering
+        pageProps: outcome.pageProps,
+        query: req.query,
+        asPath: req.pathname + req.url.search,
+        isServer: outcome.isServer,
+        locale: req.locale,
+        locales: st.opts.i18n?.locales,
+        defaultLocale: st.opts.i18n?.defaultLocale,
+      }),
+      resHeaders,
+    ),
+    perRequest,
   );
 }
 
@@ -116,18 +132,27 @@ export async function renderMatched(
   const resHeaders = new Headers();
   // HTML path: allow a `fallback: true` shell (allowFallbackShell = true).
   const outcome = await resolveData(st, mod, req, scan.app, resHeaders, true);
+  const perRequest = isPerRequest(mod, outcome);
   if (outcome.kind === "redirect") {
-    return applyResHeaders(
-      new Response(null, {
-        status: outcome.statusCode ?? (outcome.permanent ? 308 : 307),
-        headers: { location: outcome.destination },
-      }),
-      resHeaders,
+    return withRequestCacheControl(
+      applyResHeaders(
+        new Response(null, {
+          status: outcome.statusCode ?? (outcome.permanent ? 308 : 307),
+          headers: { location: outcome.destination },
+        }),
+        resHeaders,
+      ),
+      perRequest,
     );
   }
-  if (outcome.kind === "notFound") return await renderError(st, scan, 404, req.pathname, req.url);
+  if (outcome.kind === "notFound") {
+    return withRequestCacheControl(
+      await renderError(st, scan, 404, req.pathname, req.url),
+      perRequest,
+    );
+  }
   const body = await renderDocument(st, scan, entry, req, outcome, Page);
-  return applyResHeaders(html(body), resHeaders);
+  return withRequestCacheControl(applyResHeaders(html(body), resHeaders), perRequest);
 }
 
 /**
