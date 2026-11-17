@@ -166,8 +166,9 @@ region's content; a region the page lacks is skipped with a warning. Islands ins
 region hydrate. An answer with no partials navigates the whole page instead (a link or a GET
 form), and a full-page navigation renders each region with the new page's children.
 
-Before the regions swap, the answer's head is merged into the page's, as Fresh does: its
-`<title>`, each `<meta>` (matched by `name`, `property`, `http-equiv` or `itemprop`; a `charset`
+Before the regions swap, the answer's head is merged into the page's, as Fresh does (the tags
+the new page renders, through `<Head>` or not, which denext hoists into the document head, travel
+beside the answer for this): its `<title>`, each `<meta>` (matched by `name`, `property`, `http-equiv` or `itemprop`; a `charset`
 is left alone) updated or added, and each stylesheet `<link>` the page lacks added and waited for
 (up to three seconds) so the new regions never paint unstyled. From the answer's `<head>`, a data
 `<script>` (JSON-LD and other non-executable types) is added, or updated when the page has one of
@@ -182,7 +183,7 @@ animate it; elsewhere, and in browsers without the API, it swaps at once.
 
 Browser back and forward between the entries partial navigation made show each region as that
 entry left it, with no request: an `append` or `prepend` history is restored, not refetched or
-appended twice. Each entry keeps its scroll position, as Fresh's history state does: a link's
+appended twice. The entry's title and `<meta>` values come back with its regions. Each entry keeps its scroll position, as Fresh's history state does: a link's
 navigation starts the new entry at the top, and back / forward scrolls to where the entry was
 left. An entry made before a reload is fetched as a partial request and its regions applied in
 their own modes, as Fresh's `popstate` handler does (an answer with no partials renders the

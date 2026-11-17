@@ -68,7 +68,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "denext task dev      # http://localhost:3000\n# or, production:\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  denext task build && denext task start",
+      "run": "# from this directory\ndenext task dev      # http://localhost:3000\n# or, production:\ndenext task build\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  denext task start",
       "runFrom": "example"
     },
     {
@@ -82,7 +82,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "denext task dev          # http://localhost:3000 — files land in ./.storage",
+      "run": "# from this directory\ndenext task dev          # http://localhost:3000 — files land in ./.storage",
       "runFrom": "example"
     },
     {
@@ -95,13 +95,13 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "denext task dev      # http://localhost:3000\n# or\ndenext task build && denext task start",
+      "run": "# from this directory\ndenext task dev      # http://localhost:3000\n# or\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
       "name": "caching",
       "title": "caching — denext data cache & ISR",
-      "blurb": "Demonstrates denext's Next.js-compatible caching primitives, none of which had an example before.",
+      "blurb": "Demonstrates denext's Next.js-compatible caching primitives.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/caching",
       "tags": [
         "app-router"
@@ -149,7 +149,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop    # export + open Loopy's window (denext's pinned Deno Desktop runtime)\ndenext task dev        # the same page in a browser, with demo buttons for every move",
+      "run": "# from this directory\ndenext task desktop    # export + open Loopy's window (needs denext's Deno Desktop runtime)\ndenext task dev        # the same page in a browser, with demo buttons for every move",
       "runFrom": "example"
     },
     {
@@ -177,7 +177,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "denext task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
+      "run": "# from this directory\ndenext task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
       "runFrom": "example"
     },
     {
@@ -191,7 +191,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.8)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)\ndenext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)",
+      "run": "# from this directory\ndenext task desktop            # export + open the window (needs denext's Deno Desktop runtime)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task test:window        # package, launch and assert every check (exits 1 on a failure)\ndenext task drive start        # launch the last build in drive mode (the manual checks, scripted)\ndenext task test:lan-dev       # `desktop dev --lan`: the proxied page keeps its bridge (secureStore)",
       "runFrom": "example"
     },
     {
@@ -204,7 +204,7 @@
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "denext task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndenext task dev        # http://localhost:3000   (or: denext task build && denext task start)",
+      "run": "# from this directory\ndenext task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndenext task dev       # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
@@ -233,7 +233,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "denext task dev     # http://localhost:3000",
+      "run": "# from this directory\ndenext task dev     # http://localhost:3000",
       "runFrom": "example"
     },
     {
@@ -289,7 +289,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "denext task dev          # http://localhost:3000 — GraphiQL at /graphql",
+      "run": "# from this directory\ndenext task dev          # http://localhost:3000 — GraphiQL at /graphql",
       "runFrom": "example"
     },
     {
@@ -303,7 +303,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop            # export + open the app (denext's pinned Deno Desktop runtime)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task dev                # the UI in a browser (no backend: it says so)",
+      "run": "denext task desktop            # build + open the app (needs denext's Deno Desktop runtime)\ndenext task desktop:package    # rewrite scripts/package-*.ts from the template, then package\ndenext task dev                # the UI in a browser (no backend: it says so)",
       "runFrom": "example"
     },
     {
@@ -330,7 +330,7 @@
       ],
       "hasReadme": true,
       "category": "apis",
-      "run": "denext task dev      # http://localhost:3000\ndenext task build    # static/prod build (emits the runtime into the output)\ndenext task start    # serve the build",
+      "run": "# from this directory\ndenext task dev      # http://localhost:3000\ndenext task build    # static/prod build (emits the runtime into the output)\ndenext task start    # serve the build",
       "runFrom": "example"
     },
     {
@@ -356,13 +356,13 @@
       ],
       "hasReadme": true,
       "category": "start",
-      "run": "denext task dev        # http://localhost:3000   (or: denext task build && denext task start)",
+      "run": "# from this directory\ndenext task dev        # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
       "name": "islands",
       "title": "Islands demo — the six client:* hydration directives",
-      "blurb": "Each card on the page is the same \"use client\" component, carved out with a different directive.",
+      "blurb": "Each card on the page is the same \"use client\" component, carved out with a different directive. denext hydrates each island on its own schedule instead of all at once. The six directives are Astro's.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/islands",
       "tags": [
         "app-router"
@@ -382,7 +382,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "denext task dev     # or: denext task build && denext task start",
+      "run": "# from this directory\ndenext task dev     # or: denext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -396,7 +396,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "deno task dev     # or: deno task build && deno task start",
+      "run": "# from this directory\ndenext task dev     # or: denext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -424,7 +424,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task desktop    # export + open the windows (denext's pinned Deno Desktop runtime)\ndenext task dev        # the page in a browser (the desktop calls say \"unavailable\")",
+      "run": "denext task desktop    # build + open the windows (needs denext's Deno Desktop runtime)\ndenext task dev        # the page in a browser (the desktop calls say \"unavailable\")",
       "runFrom": "example"
     },
     {
@@ -439,7 +439,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "denext task dev      # → http://localhost:3000\ndenext task start    # serve the production build",
+      "run": "denext task dev      # → http://localhost:3000\ndenext task build    # production build\ndenext task start    # serve it",
       "runFrom": "example"
     },
     {
@@ -478,7 +478,7 @@
       "tags": [],
       "hasReadme": true,
       "category": "compat",
-      "run": "# server deps (edit PACKAGES in the file to match the app)\ndeno run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts\n\n# client deps (run from the denext repo root; pass the app's root dir)\ndeno run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app",
+      "run": "# server deps (edit PACKAGES in the file to match the app)\ndenext run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts\n\n# client deps (pass the app's root dir; it must already have node_modules)\ndenext run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app",
       "runFrom": "root"
     },
     {
@@ -518,7 +518,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "deno task backend   # the API on http://127.0.0.1:8788 (backend/)\ndenext task dev     # the app on http://localhost:3000; /api is proxied to the backend",
+      "run": "denext task backend                      # the API on http://127.0.0.1:8788 (backend/)\ndenext task build && denext task start   # the app on http://localhost:3000; /api is proxied to the backend",
       "runFrom": "example"
     },
     {
@@ -554,7 +554,7 @@
     {
       "name": "plugin-aliases",
       "title": "denext plugin example: path aliases",
-      "blurb": "A ~40-line denext plugin — the smallest real one, and the first to use the route-synthesizer seam (@denext/pages-router uses the request-handler + build-step seams). See the plugin authoring guide.",
+      "blurb": "A ~60-line denext plugin — the smallest real one, and the first to use the route-synthesizer seam (@denext/pages-router uses the request-handler + build-step seams). See the plugin authoring guide.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases",
       "tags": [
         "plugin:aliasesPlugin",
@@ -562,20 +562,20 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "cd examples/plugin-aliases\ndenext task dev            # http://localhost:3006",
+      "run": "cd examples/plugin-aliases   # from the repo root\ndenext task dev            # http://localhost:3006",
       "runFrom": "root"
     },
     {
       "name": "postgres-load",
       "title": "denext × Postgres under load",
-      "blurb": "The database guide says of networked databases: \"these drivers are not part of denext's CI — validate your driver + pooling under your load.\" This example is that validation, made runnable.",
+      "blurb": "denext's own Postgres client (postgresClient() from denext/server, on Deno.SQL) runs in denext's CI; a third-party driver and its pool are yours to validate under your load (see the database guide).",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/postgres-load",
       "tags": [
         "app-router"
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "cd examples/postgres-load\ncp .env.example .env         # DATABASE_URL + POOL_SIZE\n\ndenext task db:up              # start Postgres in Docker (or point .env anywhere)\n                             # it publishes 127.0.0.1:5432 — this machine only\ndenext task build              # build the app\ndenext task start              # serve on http://localhost:3005",
+      "run": "cd examples/postgres-load\ncp .env.example .env           # the tasks load it with --env-file=.env\n\ndenext task db:up              # start Postgres 16 in Docker (or point .env anywhere)\n                               # it publishes 127.0.0.1:5432 — this machine only\ndenext task build              # build the app\ndenext task start              # serve on http://localhost:3005",
       "runFrom": "root"
     },
     {
@@ -588,7 +588,7 @@
       ],
       "hasReadme": true,
       "category": "databases",
-      "run": "denext task setup   # one-time: bundle the shim, install, prisma generate + db push\ndenext task dev      # http://localhost:3000   (or: denext task build && denext task start)",
+      "run": "denext task setup   # one-time: bundle the shim, install, prisma generate + db push\ndenext task dev     # http://localhost:3000   (or: denext task build && denext task start)",
       "runFrom": "example"
     },
     {
@@ -602,7 +602,7 @@
       ],
       "hasReadme": true,
       "category": "routers",
-      "run": "denext task dev          # http://localhost:3000",
+      "run": "denext task dev          # http://localhost:3000\ndenext task build && denext task start",
       "runFrom": "example"
     },
     {
@@ -615,7 +615,7 @@
       ],
       "hasReadme": true,
       "category": "rendering",
-      "run": "cd examples/resumability\ndenext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndenext task build && denext task start",
+      "run": "cd examples/resumability   # from the repo root\ndenext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndenext task build && denext task start",
       "runFrom": "root"
     },
     {
@@ -630,7 +630,7 @@
       ],
       "hasReadme": true,
       "category": "native",
-      "run": "npm install            # react-native-web (the app's own dependency; denext ships none)\ndenext task dev        # in the browser\ndenext task desktop    # export + open in a native window\ndenext task desktop:dev  # live reload inside the window",
+      "run": "npm install                # react-native-web (the app's own dependency; denext ships none)\ndenext task dev            # in the browser\ndenext task desktop        # export + open in a native window (denext desktop run)\ndenext task desktop:dev    # live reload inside the window\ndenext task desktop:package  # installers for this OS in ./dist/ (scripts/package-*.ts)",
       "runFrom": "example"
     },
     {
@@ -641,7 +641,7 @@
       "tags": [],
       "hasReadme": true,
       "category": "native",
-      "run": "(cd web && denext task dev)",
+      "run": "(cd web && denext task install)\n(cd web && denext task dev)",
       "runFrom": "example"
     },
     {

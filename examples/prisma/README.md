@@ -12,9 +12,11 @@ through the same Prisma client — no client JavaScript.
 
 ## Run it
 
+From this directory (`examples/prisma`):
+
 ```sh
 denext task setup   # one-time: bundle the shim, install, prisma generate + db push
-denext task dev      # http://localhost:3000   (or: denext task build && denext task start)
+denext task dev     # http://localhost:3000   (or: denext task build && denext task start)
 ```
 
 `denext task setup` is required first (and again whenever the schema changes).
@@ -25,6 +27,9 @@ It's also network + codegen heavy — it installs `@prisma/*` and runs the
 the datasource URL lives in `prisma.config.ts`, the adapter class is
 `PrismaBetterSqlite3`, and `db push` no longer runs `prisma generate` (setup
 runs both).
+
+The database is `prisma/dev.db`. Set `DB_PATH` to use another file: both
+`lib/db.ts` (the app) and `prisma.config.ts` (what `db push` writes to) read it.
 
 ## Why the extra setup (vs. the Drizzle example)
 
@@ -45,7 +50,9 @@ pieces bridge that:
    `patch/better-sqlite3/index.mjs` before installing.
 
 The result is still zero native code — just Deno's built-in `node:sqlite` behind
-the Prisma API. See [the database guide](https://denext.dev/docs/database) for the full write-up and
+the Prisma API. Without the shim, `PrismaDenoSql` from `denext/prisma-adapter`
+runs Prisma on denext's toolchain's `Deno.SQL` instead. See
+[the database guide](https://denext.dev/docs/database) for the full write-up and
 the Drizzle / Postgres variants.
 
 ## Files
@@ -61,5 +68,6 @@ the Drizzle / Postgres variants.
 - [`scripts/setup.ts`](./scripts/setup.ts) — bundles the shim + runs
   install/generate/push.
 
-An opt-in end-to-end test lives at `tests/e2e/prisma.e2e.test.ts`
-(`denext task test:e2e`).
+An opt-in end-to-end test lives at `tests/e2e/prisma.e2e.test.ts`; it needs the
+network. From the repo root: `denext task test:e2e` (every e2e test), or
+`denext test tests/e2e/prisma.e2e.test.ts` for this one.

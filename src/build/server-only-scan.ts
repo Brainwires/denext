@@ -625,9 +625,14 @@ export function formatServerOnlyLeaks(
   leaks: Map<string, { leak: ServerOnlyLeak; entries: string[] }>,
   projectDir: string,
 ): string {
+  // A shipped module is named by its real path (the bundle's sources, the dev crawl), which a
+  // project reached through a symlink (macOS's `/var` → `/private/var`) spells differently: relate
+  // the two canonically when the spellings alone don't.
   const show = (p: string) => {
     const rel = relative(projectDir, p);
-    return rel.startsWith("..") ? p : rel;
+    if (!rel.startsWith("..")) return rel;
+    const real = relative(canonicalPath(projectDir), canonicalPath(p));
+    return real.startsWith("..") ? p : real;
   };
   const lines = [...leaks.values()].map(({ leak, entries }) =>
     `  ${show(leak.module)} — ${leak.signals.map((s) => SIGNAL_TEXT[s]).join("; ")}\n` +

@@ -458,7 +458,7 @@ import map. No `.env` file is embedded: the environment, `.env` files and relati
 read from the working directory, and state goes to `./.denext`. It bakes Docker's least-privilege
 `--allow-*` plus `compile.permissions: { write, run, ffi, sys, netConnect, netListen }` (`"all"`
 opts in to `--allow-all`; `netConnect` / `netListen` bake `--allow-net` split by direction,
-`--allow-net-connect` / `--allow-net-listen`, on denext's Deno 3.0.0-rc.2+). Generated deploy files
+`--allow-net-connect` / `--allow-net-listen`, flags only denext's Deno has). Generated deploy files
 (`generate docker`, `genericHost()`) and desktop packaging on the pinned runtime split it too: the
 server listens only on its port or loopback. The runtime is the toolchain's own `denort` (SHA-256-pinned beside the CLI), so
 `Deno.SQL` works in the binary. `--sign` (or `compile.sign`) code-signs it: macOS with `codesign`
@@ -639,19 +639,23 @@ https://denext.dev/docs/navigation-native
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
 `keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `system-stats`, `microphone`, `camera`; written to
-`desktop.capabilities`; `microphone` / `camera` work only in a packaged app on runtime 3.0.0-denext.10+
-(laufey API 53; test capture UI in a browser under `denext dev`), and Linux's webview backend has no
+`desktop.capabilities`; `microphone` / `camera` work only in a packaged app on a runtime that grants capture
+(an older one refuses `getUserMedia`; test capture UI in a browser under `denext dev`); a page that uses
+`webkitSpeechRecognition` on macOS needs `microphone: { speechRecognitionUsageDescription }`, else macOS ends the app;
+and Linux's webview backend has no
 WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
-`pty` (runtime 3.0.0-denext.12+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
-`system-stats` (runtime from 3.0.0-denext.16, `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
+`pty` (where the runtime has `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
+`system-stats` (where the runtime has `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
 only; an unsigned build has no protection against another program's writes; Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
-on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
+on `libsecret-1-0` / `libsecret` — Windows the Credential Manager where the runtime has its own Windows store (DPAPI, written
+by the app's own process, up to 64 KiB, no PowerShell; items an older denext wrote to the PasswordVault move over on their lookup during
+the first run only), else the PasswordVault through PowerShell; on Linux a missing Secret Service provider
 or a locked keyring rejects `backend_unavailable` with the reason; each caller has its own namespace:
 pages `<identifier>/page` (earlier page items move in on first read), an extension
 `<identifier>/ext/<name>` through `ctx.secureStore` / `host.secureStore` (`get` / `set` / `delete`;
@@ -665,7 +669,7 @@ spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url })
 `runDesktop` (a new scaffold and a `migrate --desktop` entry do; an entry from before 2.11 must
 add it, else every call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
 (repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
-buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`);
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped` (the backend hears every click, its own `Deno.desktop.notifications` posts included, with `runDesktop({ onNotificationClick })` / `app.onNotificationClick(fn)` / `host.onNotificationClick(fn)`, and posts its own with `app.notify({ title, body?, tag?, data?, actions?, silent? })` / `host.notify(…)`, `{ tag, close() }`, `not_enabled` without the capability);
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting;
 `deliveredNotifications()` / `removeDeliveredNotifications()` read and clear the OS notification centre
 on macOS and Windows (on Linux, what denext posted this run). `context-menu`
@@ -677,12 +681,13 @@ from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts anoth
 `raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
-"mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` on runtime
-3.0.0-denext.6), `setActivationPolicy("accessory" | "regular")` (`desktop.app.activationPolicy`: no Dock
+"mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` where
+`appCapabilities().trayRightClick` etc. say so), `setActivationPolicy("accessory" | "regular")` (`desktop.app.activationPolicy`: no Dock
 icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app stays accessory and a
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
-focusable: false, … })` and the overlay calls
+focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
+default keeps it in, invisible, at full timer rate) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
@@ -704,8 +709,8 @@ at most 64) caps the open windows; `desktop.menu.window: { newWindow: "/", reope
 New Window (Cmd/Ctrl+N, a fresh `window-N` key, or `runDesktop({ newWindow })`'s window), Reopen Closed Window
 (Cmd/Ctrl+Shift+T) and the open windows to a "Window" submenu merged into a page's `setAppMenu`; its `items: [{ id, label,
 accelerator? }]` add the app's own, whose clicks reach the backend once, never a page: `runDesktop({ onWindowMenuItem:
-(id, { keyWindow }) => … })` / `host.onWindowMenuItem(fn)`, `keyWindow` `{ id, key? }` or `null` with no window open (from
-runtime 3.0.0-denext.16; older: only while the main window is open). An extension follows the windows with `onWindowOpened` / `onWindowClosed`
+(id, { keyWindow }) => … })` / `host.onWindowMenuItem(fn)`, `keyWindow` `{ id, key? }` or `null` with no window open (on an
+older runtime: only while the main window is open). An extension follows the windows with `onWindowOpened` / `onWindowClosed`
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or
 as `host.onWindowOpened(fn)` … subscriptions in its `setup(host)`, and `host.onBeforeQuit(fn)` (also
 `onBeforeQuit` on `runDesktop`'s result) refuses a quit with `false` before any page is asked (5 s for all
@@ -713,8 +718,8 @@ guards, paused while a `host.confirm` box opened then is up, never for a session
 session-end rules are the pages'); `host.quit()` (`quit()` on `runDesktop`'s result) quits again, typed, guards and pages
 included except the caller's own (approved until the quit goes through or another quit starts, so guards never ask each
 other in a loop; `conflict` from inside its own guard); `host.confirm({ message, detail?, title?, buttons?, defaultId?, cancelId?, kind?, window? })`
-is the OS message box (owned by and modal to `window`, e.g. a handler's `ctx.windowId`), app-modal with no window open (index, `cancelId` / `null` when dismissed; runtime
-3.0.0-denext.16, else `unsupported`), and `host.openWindow(options)` is `windows.open`. Every handler's
+is the OS message box (owned by and modal to `window`, e.g. a handler's `ctx.windowId`), app-modal with no window open (index, `cancelId` / `null` when dismissed;
+`unsupported` on a runtime without it), and `host.openWindow(options)` is `windows.open`. Every handler's
 `ctx.caller` is `{ origin, frame: { kind: "main" | "sub" | "unknown", origin, verified }, window }`: refuse a
 subframe from a privileged method; `kind` is `verified` only where the runtime marks frames
 (`Deno.desktop.marksFrames`) and the engine says which frame called (CEF, macOS's WKWebView), else
@@ -746,7 +751,7 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
 `makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
 `getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
-double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit` (from runtime 3.0.0-denext.8 both are asked about the OS's quits too: Cmd+Q, a logout, Windows's session end, bounded by a deadline; macOS takes no input while a session end is pending, and a refused session end is a request: macOS ignores an accessory app's),
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit` (both are asked about the OS's quits too, on denext's runtime: Cmd+Q, a logout, Windows's session end, bounded by a deadline; macOS takes no input while a session end is pending, and a refused session end is a request: macOS ignores an accessory app's),
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and
@@ -761,7 +766,7 @@ leaves it to `confirmAppUpdate()`. Packaging bakes least-privilege guardrails: `
 `--allow-sys`, which the pinned runtime requires for them), and
 `denext desktop package --regenerate-scripts` rewrites them from the current template (a `.bak`
 and a diff for each changed file). `desktop.permissions: "strict"` (or `{ mode: "strict", env: ["MY_VAR"] }`;
-runtime 3.0.0-denext.8+ and `desktop.app.identifier`) scopes the baked `--allow-read` to the app's data /
+denext's runtime and `desktop.app.identifier`) scopes the baked `--allow-read` to the app's data /
 cache folders, the capabilities' reads and `extraPermissions.read`, and `--allow-env` to the runtime's
 variables plus `permissions.env` / `extraPermissions.env` (an undeclared read throws `NotCapable`); it
 never falls back: `desktop package` fails without the runtime or identifier (`run` / `dev` warn), and
@@ -790,9 +795,10 @@ back / forward, reloads, sub-frames, popups, `about:blank` or the runtime's own)
 only on a runtime that reports navigation events (`Deno.desktop.navigationEvents`, `runtimeHasNavigationEvents()`);
 on one that doesn't the hook is never called. While it is subscribed, CEF and WebView2 cancel each navigation and start it again
 as a new history entry (WebView2 as a GET, so a form POST loses its body; CEF keeps a same-origin POST);
-WebKitGTK decides at the response (the request already sent; `kind` `"other"`, no `initiator`, back /
-forward and reloads included). `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext toolchain status` names it) and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+WebKitGTK decides a page with no child frames at the navigation action, before the load, and a page with
+child frames, a redirect, a reload or back / forward at the response (the request already sent); there every
+`kind` is `"other"` with no `initiator`, and back / forward and reloads are included. `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext toolchain status` names it), and the runtime takes its own version: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -827,7 +833,7 @@ makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
 Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
 provisioningProfile, entitlements }` signs it in with the profile) and Windows; Linux has no OS
-passkey API, so there USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn beside
+passkey API, so there USB security keys work natively under denext's runtime (libwebauthn beside
 the host) and `denext/desktop/clerk` signs in through the browser otherwise. On Linux a `.deb` / `.rpm` install
 (xdg-desktop-portal 1.19+, systemd user manager) posts scheduled notifications while the app is closed
 and a click starts it; an AppImage or tarball delivers only while the app runs. OS limits:
@@ -948,7 +954,7 @@ Edge Functions: `backend({ functions: {} })` serves `functions/<name>/index.ts` 
 `Deno.serve(handler)` module, unchanged; `denext generate function <name>`) at
 `/functions/v1/<name>` for `supabase.functions.invoke`, each in its own Worker; callers need a
 valid identity (anon key, access token or session) unless `functions: { functions: { <name>: { verifyJwt: false } } }`;
-`functions: { memoryMb }` caps each worker's heap (runtime 3.0.0-rc.2+, `"unstable": ["worker-options"]`;
+`functions: { memoryMb }` caps each worker's heap (denext's Deno, `"unstable": ["worker-options"]`;
 over it: `546 WORKER_LIMIT`).
 With `postgres`, `vault: {}` (`vault.createSecret` / `vault.get`, AES-GCM under `DENEXT_VAULT_KEY`,
 server-only; `vault: { sql: true }` adds `vault.create_secret()` / `vault.decrypted_secrets`
@@ -985,7 +991,7 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();
 Open the connection once at module scope; do writes in Server Actions.
 Prisma (SQLite / Postgres) with no npm driver: `new PrismaClient({ adapter: new
 PrismaDenoSql(Deno.env.get("DATABASE_URL")!) })` with `PrismaDenoSql` from `denext/prisma-adapter`
-(Prisma's `prisma-client` generator, `runtime = "deno"`; needs runtime 3.0.0-rc.1+);
+(Prisma's `prisma-client` generator, `runtime = "deno"`; needs `Deno.SQL`);
 `denext migrate` wires it (`--prisma-adapter deno-sql | npm | auto`).
 Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
@@ -1099,17 +1105,17 @@ plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned re
 for example `export async function onShutdown() { await sql.end(); }`. The process exits by
 `DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
 
-**Idle memory trim:** on denext's Deno from runtime 3.0.0-rc.5 the production server (the process
+**Idle memory trim:** on denext's Deno the production server (the process
 `denext start` starts, the `build --compile` binary, the generated Docker image / systemd unit)
 runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
 at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
 or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
 `start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
-(runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
+(denext's Deno; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
 the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
 into a compiled binary (`compile: { limits }` gives it its own, same shape; `compile: { limits: false }`
 bakes none), which takes no flag to change them: `./app` and `./app start` serve under
-them, and from denext's Deno 3.0.0-denext.8 its `job` / `db` lift them (the generated main module's
+them, and where the runtime can disarm them its `job` / `db` lift them (the generated main module's
 `Deno.disarmResourceLimits(import.meta)`, which nothing else can call), while on an older runtime
 those verbs run under them and print a notice; never `dev` or tests; not applied on stock Deno, with
 a warning): https://denext.dev/docs/deployment-targets#resource-limits
@@ -1288,7 +1294,16 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   hooks is code execution; `--allow-net` to localhost reaches local services and cloud metadata;
   `--allow-env` exposes secrets; `--allow-read` of the home directory exposes credentials; an allow
   scope follows symlinks that lead out of it. A grant to a proxy host is a grant to all it reaches.
-  Kernel enforcement is planned: https://denext.dev/docs/permissions
+  Kernel enforcement is an opt-in preview in denext 4.20 (the default `auto` applies nothing in
+  4.x; the full sandbox lands in 5.0): `--kernel-sandbox=enforce` on `deno run` / `deno serve`
+  makes Linux (Landlock + seccomp) and macOS (Seatbelt) hold the grant for FFI, addons and
+  children too. It refuses to start only over a rule the kernel would hold more loosely; documented
+  gaps run (a macOS `host:port` or an IP / `localhost` port list reaches any address on the port,
+  169.254.169.254 included; a scoped `--allow-ffi` loads any library in the read scope). On Linux
+  it scrubs the env to the `--allow-env` names, refuses chmod / utime by path, refuses host-scoped
+  `--allow-net`, and hides `.npmrc`. `test` / `bench` / REPL refuse it, so never set
+  `"kernelSandbox": "enforce"` in deno.json (it breaks `deno test` and `denext dev`): put the flag on
+  the start task. `broker` still refuses: https://denext.dev/docs/kernel-sandbox
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
@@ -1301,12 +1316,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
   `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
   `mobile dev|build`,
-  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
+  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-denext.N` release built from Deno
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need (`migration`, `db` and `gen` run project code too, as they
   import `denext.config.*`, but under `deno run` stay on the Deno that started them and hand the
-  toolchain to their children); the `deno` on PATH is never replaced (every API, flag
-  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
+  toolchain to their children); the `deno` on PATH is never replaced (every API, flag,
+  env var and behavior fix it adds over Deno 2.9.8: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
   `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
   prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
@@ -1336,11 +1351,11 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);
   everywhere it runs a CommonJS `.js` file as CommonJS and serves `better-sqlite3` over the built-in
   SQLite: https://denext.dev/docs/toolchain. A dependency's approved lifecycle script runs jailed
-  (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
+  (no network, writes only under `node_modules`; on by default on denext's Deno):
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
-  deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  deno.json, the only one Deno reads; download hosts instead of `net: true` where the
+  runtime scopes the jail's network) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -1439,7 +1454,8 @@ install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release
 ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
 too (`gh workflow run desktop-ci.yml --ref development`). It refuses as well unless the newest
 e2e.yml run on HEAD ran every job green (`E2E_JOBS`: `e2e`, `migration-beds`, `timer-stress`,
-`no-deno`; a one-job `-f job=…` dispatch doesn't count) and the newest desktop-window.yml run on HEAD
+`no-deno` and the `denext job install` round trip's three legs, `job-install (linux)` / `(macos)` /
+`(windows)`; a one-job `-f job=…` dispatch doesn't count) and the newest desktop-window.yml run on HEAD
 (a real packaged window on Linux, macOS arm64 / x64 and Windows; `DESKTOP_WINDOW_JOBS`) is green:
 e2e runs only on a dispatch and desktop-window only when its `paths` filter matches, so dispatch
 both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-window.yml --ref

@@ -288,7 +288,7 @@ Deno.test("jail: on a runtime that jails only on request nothing is written", as
   try {
     const r = await applyJailExceptions(dir, { version: RC3, env: NO_ENV });
     assertEquals([r.action, r.effective], ["pending", false]);
-    assertStringIncludes(r.lines[0], `runtime ${RC5}`);
+    assertStringIncludes(r.lines[0], "on by default on denext's Deno toolchain");
     assertEquals(await Deno.readTextFile(join(dir, "deno.json")), DENO_JSON);
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -712,7 +712,7 @@ Deno.test("doctor: the jail check flags a missing exception, then passes once it
     assertEquals([missing?.ok, missing?.critical], [false, false]);
     assertStringIncludes(missing!.detail, "re2 needs an exception");
     assertStringIncludes(missing!.detail, '{"supplyChain":{"jailScripts":{"packages":{"re2"');
-    assertStringIncludes(missing!.detail, `on by default from runtime ${RC5}`);
+    assertStringIncludes(missing!.detail, "on by default on denext's Deno toolchain");
     // before rc.5 it is a heads-up, not a failure
     const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV, os: "linux" });
     assertEquals(pending?.ok, true);

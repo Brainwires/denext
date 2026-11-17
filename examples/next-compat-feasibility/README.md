@@ -8,13 +8,13 @@ convert the app.
 > _convert and run_ a real third-party app end-to-end (clone → `package.json`→
 > `deno.json` → build → render), recording exactly where drop-in holds. See
 > [The drop-in verifier](#the-drop-in-verifier-convertts--verify-dropinsh)
-> below. Its successor is the **migration beds**
-> (`tests/migration-bed/`, `denext task test:migration-bed`): SHA-pinned real apps
+> below. Its successor is the **migration beds** (`tests/migration-bed/`; from
+> the repo root: `denext task test:migration-bed`): SHA-pinned real apps
 > cloned, run through `denext migrate`, built, served and render-asserted on
 > every e2e.yml run — the same walk, with the real `migrate` command and a
 > failing test instead of a report table.
 
-> **Status update (superseded on `v-1.0`):** the punch-list findings below —
+> **Status update (superseded):** the punch-list findings below —
 > including the "dual-React at SSR" blocker (#6) — have since been **resolved**.
 > `denext migrate` shipped as a real CLI command (`denext migrate <app>`), and
 > the next-compat build rewrites `react`→denext for **server-loaded** modules
@@ -33,12 +33,14 @@ convert the app.
   bundle means the library and its transitive deps resolve onto denext's React
   with no duplicate-React or missing-export breakage.
 
+Run both from the denext repo root:
+
 ```sh
 # server deps (edit PACKAGES in the file to match the app)
-deno run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts
+denext run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts
 
-# client deps (run from the denext repo root; pass the app's root dir)
-deno run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app
+# client deps (pass the app's root dir; it must already have node_modules)
+denext run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app
 ```
 
 ## Results — a large production app (Next 15.5 / React 19)
@@ -110,28 +112,36 @@ denext?** — reproducibly.
   dev-tooling + denext no-ops (`sharp`, `eslint-config-next`), flags
   hard-unsupported natives, and emits a next-compat page manifest from the App
   Router tree.
+  From the repo root (`--denext .` points at this checkout):
   ```sh
-  deno run -A examples/next-compat-feasibility/convert.ts \
+  denext run -A examples/next-compat-feasibility/convert.ts \
     --app /path/to/next-app --denext . --write
   ```
-- **`verify-dropin.sh`** — clone (pinned) → `npm install` → `convert.ts` →
-  `deno check` → `denext build` → start + curl the homepage. Every stage is
-  logged; the verdict lands in `REPORT.md` next to the script.
+- **`verify-dropin.sh`** — clone (`APP_REF`, default `main`; pin a SHA to
+  reproduce) → `npm install` → `convert.ts` → `deno check` → `denext build` →
+  start + curl the homepage on port 8912. Every stage is logged under
+  `$TMPDIR/denext-dropin/<app>/logs`; the verdict lands in `REPORT.md` next to
+  the script. It needs `git`, `curl` and a `deno` on `PATH` (or `DENO_BIN`;
+  `denext toolchain link` provides one); `npm` is optional. `SKIP_SETUP=1` reuses
+  an earlier clone, `OUT` moves the work dir, `DENEXT` points at another
+  checkout.
   ```sh
   bash examples/next-compat-feasibility/verify-dropin.sh
   # swap the app:
-  APP_NAME=commerce APP_REPO=https://github.com/vercel/commerce.git \
+  APP_NAME=commerce APP_REPO=https://github.com/vercel/commerce.git APP_REF=<sha> \
     bash examples/next-compat-feasibility/verify-dropin.sh
   ```
 
-`deno-wrap.sh` is a temporary bridge that injects `--unstable-sloppy-imports`
-into denext's child `deno` calls; it exists only until that flag is propagated
-natively (punch-list item #1 below) and should then be deleted.
+A `deno-wrap.sh` shim once injected `--unstable-sloppy-imports` into denext's
+child `deno` calls; punch-list item #1 below made it unnecessary, and it has been
+removed.
 
-### Latest result
+### Recorded result (historical)
 
 Target: `shadcn-ui/next-template` @ `d117bd0`. Conversion is **fully
-automatic**. Progress driven by fixing each reproduced failure and re-running:
+automatic**. Progress driven by fixing each reproduced failure and re-running
+(the table is the record at the time; item 6 has since been resolved, see the
+status update above):
 
 | Punch-list item                                                                                 | Status                                                                                        |
 | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -142,7 +152,7 @@ automatic**. Progress driven by fixing each reproduced failure and re-running:
 | 5. React DOM prop types for the compat path                                                     | ⏳ `check` stage (types-only)                                                                 |
 | **6. Dual-React at SSR (the fundamental boundary)**                                             | ❌ **open** — see below                                                                       |
 
-**The remaining hard blocker (dual-React at SSR).** With the above fixed, an
+**The blocker at the time (dual-React at SSR, since resolved).** With the above fixed, an
 unmodified app builds and renders the framework/CSS/fonts, then crashes with
 `Cannot read properties of null (reading 'useContext')` originating in
 `node_modules/react/*/cjs/react.development.js`. Cause: an app npm React library
@@ -155,7 +165,8 @@ these imports for the **client bundle**; the equivalent is needed for
 → denext). This is the core "compatibility" work and is the gate to true
 unmodified drop-in for any app using npm React UI libraries.
 
-**Verdict:** the pipeline (convert → build → serve framework SSR + CSS + fonts)
-now works end-to-end; unmodified drop-in of an app that uses **npm React UI
-libraries** is blocked only by the dual-React SSR boundary (#6). Re-run
-`verify-dropin.sh` after each fix to watch the stage table advance.
+**Verdict at the time:** the pipeline (convert → build → serve framework SSR +
+CSS + fonts) worked end-to-end; unmodified drop-in of an app that uses **npm
+React UI libraries** was blocked only by the dual-React SSR boundary (#6), which
+the next-compat build now handles. Re-run `verify-dropin.sh` to refresh
+`REPORT.md`.

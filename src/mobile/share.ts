@@ -68,7 +68,7 @@ async function settle(run: () => Promise<unknown>): Promise<ShareResult> {
  *
  * - Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),
  *   the OS share sheet.
- * - In a Deno Desktop window under denext's pinned runtime (2.9.7-denext.20 or later), the OS
+ * - In a Deno Desktop window on a runtime with share sheets (`windowCapabilities().share`), the OS
  *   share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows
  *   `DataTransferManager` (it reports no more than that the sheet was shown: `"shared"`). Linux has
  *   none, so the paths below run. To share files, use `shareFromWindow` from

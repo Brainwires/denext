@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.19.0\"",
+          "signature": "VERSION: \"4.20.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14990,7 +14990,7 @@
               "kind": "property",
               "name": "limits",
               "signature": "limits?: StartLimits | false",
-              "doc": "The resource limits baked into the executable, in place of {@link StartConfig.limits}\n(`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno from runtime 3.0.0-rc.2).\nOmitted, the binary takes `start.limits`; `false` bakes none, so a binary built from an app\nwith `start.limits` (for `denext start` and the Docker image) runs unlimited. The binary\nenforces them on `./app` and `./app start`, and lifts them for `job` and `db` as it does\n`start.limits` (runtime 3.0.0-denext.8). Same shape and checks as `start.limits`."
+              "doc": "The resource limits baked into the executable, in place of {@link StartConfig.limits}\n(`--max-memory`, `--max-cpu-time`, `--max-time`; denext's Deno).\nOmitted, the binary takes `start.limits`; `false` bakes none, so a binary built from an app\nwith `start.limits` (for `denext start` and the Docker image) runs unlimited. The binary\nenforces them on `./app` and `./app start`, and lifts them for `job` and `db` as it does\n`start.limits` (on a runtime with `Deno.disarmResourceLimits`; an older one keeps them and\nprints a notice). Same shape and checks as `start.limits`."
             }
           ]
         },
@@ -15060,7 +15060,7 @@
               "kind": "property",
               "name": "netConnect",
               "signature": "netConnect?: string[]",
-              "doc": "`--allow-net-connect` hosts (outbound: `fetch`, WebSocket, database clients), with\n`--allow-net`'s host syntax (`api.example.com`, `db:5432`, `*.example.com`); `[\"*\"]` is\nunscoped. Setting this or {@linkcode CompilePermissions.netListen} bakes the network grant\nsplit by direction instead of the baseline's unscoped `--allow-net`, under denext's Deno\n3.0.0-rc.2 or later (the toolchain compiling onto its own `denort`); an unset direction is\nunscoped, and an empty list is refused (it would be unscoped too). Elsewhere the binary keeps\n`--allow-net`, with a warning."
+              "doc": "`--allow-net-connect` hosts (outbound: `fetch`, WebSocket, database clients), with\n`--allow-net`'s host syntax (`api.example.com`, `db:5432`, `*.example.com`); `[\"*\"]` is\nunscoped. Setting this or {@linkcode CompilePermissions.netListen} bakes the network grant\nsplit by direction instead of the baseline's unscoped `--allow-net`, under denext's Deno\n(the toolchain compiling onto its own `denort`, which has the direction-split flags); an unset direction is\nunscoped, and an empty list is refused (it would be unscoped too). Elsewhere the binary keeps\n`--allow-net`, with a warning."
             },
             {
               "kind": "property",
@@ -16897,7 +16897,7 @@
               "kind": "property",
               "name": "systemStats",
               "signature": "systemStats?: boolean",
-              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through denext's Deno Desktop runtime from\n3.0.0-denext.16 (`unsupported` before it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
+              "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through `Deno.desktop.systemStats` in denext's Deno\nDesktop runtime (`unsupported` on a runtime without it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
             },
             {
               "kind": "property",
@@ -16915,7 +16915,7 @@
               "kind": "property",
               "name": "pty",
               "signature": "pty?: boolean | DesktopPtyConfig",
-              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.12 or later,\n3.0.0-denext.21 or later on Windows; `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
+              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime; `unsupported` on a runtime\nwithout it, or whose `Deno.openPty` has no terminals on this OS, as an older one on Windows). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
             },
             {
               "kind": "property",
@@ -16933,13 +16933,13 @@
               "kind": "property",
               "name": "passkeys",
               "signature": "passkeys?: false | DesktopPasskeysConfig",
-              "doc": "Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through\ndenext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot\nuse (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app\nmay request and is required; anything else answers `invalid_rp` without reaching the OS.\nThe list is also written to the packaged app's `laufey-launch.json` (`\"passkeyRpIds\"`), so the\nwebview backend enforces it natively; from runtime 3.0.0-denext.1 (`\"strictPolicy\"`) a launch\nfile without it refuses every ceremony. `false` (or leaving it out) disables it."
+              "doc": "Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through\ndenext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot\nuse (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app\nmay request and is required; anything else answers `invalid_rp` without reaching the OS.\nThe list is also written to the packaged app's `laufey-launch.json` (`\"passkeyRpIds\"`), so the\nwebview backend enforces it natively; under a runtime that reads `\"strictPolicy\"` a launch\nfile without it refuses every ceremony. `false` (or leaving it out) disables it."
             },
             {
               "kind": "property",
               "name": "microphone",
-              "signature": "microphone?: boolean | DesktopMediaCaptureConfig",
-              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin, except on Linux,\nwhere WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with\n`allow=\"microphone\"` gets it). The packaged app's `laufey-launch.json` carries the grant\n(`\"mediaCapture\"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS\nbuild the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime\n3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older\none. macOS still asks the user once. The options take `usageDescription` only."
+              "signature": "microphone?: boolean | DesktopMicrophoneConfig",
+              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin, except on Linux,\nwhere WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with\n`allow=\"microphone\"` gets it). The packaged app's `laufey-launch.json` carries the grant\n(`\"mediaCapture\"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS\nbuild the `com.apple.security.device.audio-input` entitlement. It needs a Deno Desktop runtime\nthat reads `\"mediaCapture\"` and so enforces the grant: `denext desktop package` refuses an\nolder one. macOS still asks the user once. The options take `usageDescription` and\n`speechRecognitionUsageDescription` (macOS's `NSSpeechRecognitionUsageDescription`, written\nonly when given: the text macOS shows before a page's speech recognition may run)."
             },
             {
               "kind": "property",
@@ -17067,7 +17067,7 @@
               "kind": "property",
               "name": "permissions",
               "signature": "permissions?: \"default\" | \"strict\" | DesktopPermissionsConfig",
-              "doc": "How narrow the packaged binary's baked read and environment grants are. `\"default\"` (or unset):\n`--allow-read` and `--allow-env` unscoped, as before. `\"strict\"` (needs Deno Desktop runtime\n3.0.0-denext.8 and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache\nfolders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)\nplus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`\nscoped to the variables denext's desktop runtime reads (never a signing or credential variable\nof the packaging tools) plus {@link DesktopPermissionsConfig.env} and\n{@link DesktopExtraPermissions.env}. Strict mode never falls back to the unscoped grants:\npackaging fails, naming the reason and the fix, when the runtime is older (or\n`DENEXT_DESKTOP_RUNTIME=stock` / `DENEXT_DESKTOP_RUNTIME_DIR` is set) or the identifier is\nmissing, and when a read has no folder token or absolute path (a capability that reads a path\npicked at run time, `dialogs`; `$DOCUMENTS`; a relative path; `\"*\"`) or an env entry is `\"*\"`.\n`denext desktop run` / `dev` warn and bake the default instead for the first two. Refused with\na program sidecar (`run.exec`) or `loginShellEnv`, which hand the child the whole environment."
+              "doc": "How narrow the packaged binary's baked read and environment grants are. `\"default\"` (or unset):\n`--allow-read` and `--allow-env` unscoped, as before. `\"strict\"` (needs a Deno Desktop runtime\nthat expands the app-folder tokens, and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache\nfolders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)\nplus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`\nscoped to the variables denext's desktop runtime reads (never a signing or credential variable\nof the packaging tools) plus {@link DesktopPermissionsConfig.env} and\n{@link DesktopExtraPermissions.env}. Strict mode never falls back to the unscoped grants:\npackaging fails, naming the reason and the fix, when the runtime is older (or\n`DENEXT_DESKTOP_RUNTIME=stock` / `DENEXT_DESKTOP_RUNTIME_DIR` is set) or the identifier is\nmissing, and when a read has no folder token or absolute path (a capability that reads a path\npicked at run time, `dialogs`; `$DOCUMENTS`; a relative path; `\"*\"`) or an env entry is `\"*\"`.\n`denext desktop run` / `dev` warn and bake the default instead for the first two. Refused with\na program sidecar (`run.exec`) or `loginShellEnv`, which hand the child the whole environment."
             },
             {
               "kind": "property",
@@ -17259,13 +17259,13 @@
               "kind": "property",
               "name": "write",
               "signature": "write?: string[]",
-              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be\nscoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with\n`desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as\nwritten (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`)."
+              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be\nscoped) — except under a Deno Desktop runtime that expands the app-folder tokens, in an app with\n`desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as\nwritten (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`)."
             },
             {
               "kind": "property",
               "name": "net",
               "signature": "net?: string[]",
-              "doc": "`--allow-net` hosts, e.g. the updater's feed host. Under denext's pinned runtime (3.0.0-rc.2 or\nlater), which bakes the network grant split by direction, each host is granted both ways;\n{@linkcode DesktopExtraPermissions.netConnect} / {@linkcode DesktopExtraPermissions.netListen}\ngrant one direction."
+              "doc": "`--allow-net` hosts, e.g. the updater's feed host. Under denext's Deno Desktop runtime, which\nbakes the network grant split by direction, each host is granted both ways;\n{@linkcode DesktopExtraPermissions.netConnect} / {@linkcode DesktopExtraPermissions.netListen}\ngrant one direction."
             },
             {
               "kind": "property",
@@ -17552,6 +17552,32 @@
               "name": "window",
               "signature": "window?: { newWindow?: string | false; reopenClosed?: boolean | \"list\"; list?: boolean; items?: readonly DesktopWindowMenuItemConfig[] }",
               "doc": "The \"Window\" submenu's items."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMicrophoneConfig",
+          "slug": "DesktopMicrophoneConfig",
+          "kind": "interface",
+          "signature": "interface DesktopMicrophoneConfig",
+          "doc": "desktop.capabilities.microphone options.",
+          "docFull": "`desktop.capabilities.microphone` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "usageDescription",
+              "signature": "usageDescription?: string",
+              "doc": "What macOS shows when it asks the user for the microphone (`NSMicrophoneUsageDescription`).\nDefault: \"<app name> uses your microphone.\"."
+            },
+            {
+              "kind": "property",
+              "name": "speechRecognitionUsageDescription",
+              "signature": "speechRecognitionUsageDescription?: string",
+              "doc": "What macOS shows when a page's speech recognition (WebKit's `webkitSpeechRecognition`) asks\nthe user (`NSSpeechRecognitionUsageDescription` in `Info.plist`). Written only when set: macOS\nends an app that starts speech recognition without it. It needs no entitlement of its own."
             }
           ]
         },
@@ -18545,7 +18571,13 @@
               "kind": "property",
               "name": "overlay",
               "signature": "overlay?: boolean",
-              "doc": "Make the window a desktop overlay surface on Linux Wayland: where the compositor has\nwlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)\nthe window is a layer surface above every other window, on every workspace, with no taskbar\nentry, placeable, and with `focusable: false` never focused; that is the only way to get those\non Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every\nother OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).\nCreation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs denext's Deno\nDesktop runtime 3.0.0-denext.7 or later (ignored with a warning before). Default `false`."
+              "doc": "Make the window a desktop overlay surface on Linux Wayland: where the compositor has\nwlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)\nthe window is a layer surface above every other window, on every workspace, with no taskbar\nentry, placeable, and with `focusable: false` never focused; that is the only way to get those\non Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every\nother OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).\nCreation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs a Deno Desktop\nruntime with overlay windows (ignored with a warning elsewhere). Default `false`."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How the window is hidden on macOS's system WebView (default `\"invisible\"`). `\"invisible\"` keeps\na hidden window (`show: false`, `hideWindow()`) ordered in but invisible: transparent, clicks\npassing through, out of window cycling and Mission Control, so a page that does background\nwork keeps its timers' rate. `\"orderOut\"` really removes the window, and macOS then throttles\nits page. Other platforms and the CEF backend ignore it. Creation-time (written to\n`.deno-desktop/app.json` `initialWindow.macosHiddenMode`, so the window the app starts with is\nhidden the same way); needs a Deno Desktop runtime with the macOS hidden mode (no effect, with\na warning, elsewhere). Windows opened with `windows.open` / `openWindow` take their own\n`macosHiddenMode`."
             }
           ]
         },
@@ -18609,7 +18641,7 @@
               "kind": "property",
               "name": "proxy",
               "signature": "proxy?: \"system\" | \"direct\"",
-              "doc": "How the CEF window reaches the network (runtime 2.9.7-denext.20): `\"system\"` (the default) uses\nthe OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as\nthe window is created; `\"direct\"` uses no proxy at all, so a slow WPAD / PAC lookup never holds\nthe page's requests (its Live WebSocket to the loopback relay included) at startup. Choose\n`\"direct\"` only for an app whose users never need a proxy. The package scripts write it to the\nWindows bundle's `laufey-launch.json` (`\"proxy\"`); `denext desktop run` / `dev` pass it as\n`LAUFEY_PROXY`. A proxy switch on the app's own command line wins. The WebView2 backend and\nmacOS / Linux ignore it."
+              "doc": "How the CEF window reaches the network (denext's Deno Desktop runtime): `\"system\"` (the default) uses\nthe OS proxy configuration, WPAD and PAC files included, and the runtime starts resolving it as\nthe window is created; `\"direct\"` uses no proxy at all, so a slow WPAD / PAC lookup never holds\nthe page's requests (its Live WebSocket to the loopback relay included) at startup. Choose\n`\"direct\"` only for an app whose users never need a proxy. The package scripts write it to the\nWindows bundle's `laufey-launch.json` (`\"proxy\"`); `denext desktop run` / `dev` pass it as\n`LAUFEY_PROXY`. A proxy switch on the app's own command line wins. The WebView2 backend and\nmacOS / Linux ignore it."
             }
           ]
         },
@@ -20479,6 +20511,12 @@
               "name": "phoneAutoconfirm",
               "signature": "phoneAutoconfirm?: boolean",
               "doc": "The same for phone sign-ups (default `false`)."
+            },
+            {
+              "kind": "property",
+              "name": "secureEmailChange",
+              "signature": "secureEmailChange?: boolean",
+              "doc": "Confirm an email change from both addresses (default `true`, GoTrue's\n`GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED`): `PUT /user { email }` sends a code to the\naccount's current, verified address as well as the new one, and the change applies once\nboth are redeemed (the first answers `{ msg }` and starts no session). `false` confirms it\nfrom the new address alone. An account with no verified address confirms from the new one."
             },
             {
               "kind": "property",
@@ -32263,7 +32301,7 @@
           "kind": "function",
           "signature": "safeRedirectLocation(location: string): string",
           "doc": "Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.",
-          "docFull": "Make a redirect `Location` safe against open redirects. An explicit\n`http(s)://` absolute URL is preserved (a deliberately-configured external\nredirect); anything else is forced to a single-slash, same-origin path so a\nprotocol-relative (`//host`) or backslash (`/\\host`) prefix — which browsers\nresolve cross-origin — cannot escape the current origin.\n\nSEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully\nqualified `http(s)://…` value is returned as-is (no host allowlist), so it is an\nopen redirect if built from untrusted input. Only pass an absolute URL that is\nstatically configured or otherwise trusted; for anything derived from the request\n(query/path/header), pass a PATH so it is pinned to the current origin, or\nvalidate the host against your own allowlist before calling this.",
+          "docFull": "Make a redirect `Location` safe against open redirects. An explicit\n`http(s)://` absolute URL is preserved (a deliberately-configured external\nredirect); anything else is forced to a single-slash, same-origin path so a\nprotocol-relative (`//host`) or backslash (`/\\host`) prefix — which browsers\nresolve cross-origin — cannot escape the current origin.\n\nA value is treated as absolute only when it starts with `http(s)://` as given; one\nthat becomes absolute only after its control characters are stripped is a path.\n\nSEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully\nqualified `http(s)://…` value is returned as-is (no host allowlist), so it is an\nopen redirect if built from untrusted input. Only pass an absolute URL that is\nstatically configured or otherwise trusted; for anything derived from the request\n(query/path/header), pass a PATH so it is pinned to the current origin, or\nvalidate the host against your own allowlist before calling this.",
           "params": [
             {
               "name": "location",
@@ -35310,19 +35348,19 @@
               "kind": "property",
               "name": "idleTrim",
               "signature": "idleTrim?: boolean",
-              "doc": "Hand the memory a load burst leaves behind back to the OS once the server goes idle: after\nthe event loop has gone a second without work, a full V8 GC and then `malloc_trim(0)` (at most\nonce per idle period, 10 s apart, and after the first only when the resident memory grew by\n16 MB). On by default for `denext start`, the `build --compile` executable, and the Docker\nimage and systemd unit the generators write, when they run on denext's Deno from runtime\n3.0.0-rc.5 — never for `dev`, tests or jobs. It does anything on glibc Linux only. `false`\nturns it off, as does `DENEXT_IDLE_TRIM=0` in the environment. See\n{@link https://denext.dev/docs/deployment-targets#idle-memory-trim}."
+              "doc": "Hand the memory a load burst leaves behind back to the OS once the server goes idle: after\nthe event loop has gone a second without work, a full V8 GC and then `malloc_trim(0)` (at most\nonce per idle period, 10 s apart, and after the first only when the resident memory grew by\n16 MB). On by default for `denext start`, the `build --compile` executable, and the Docker\nimage and systemd unit the generators write, when they run on a denext Deno with the idle\ntrim (never stock Deno) — never for `dev`, tests or jobs. It does anything on glibc Linux only. `false`\nturns it off, as does `DENEXT_IDLE_TRIM=0` in the environment. See\n{@link https://denext.dev/docs/deployment-targets#idle-memory-trim}."
             },
             {
               "kind": "property",
               "name": "limits",
               "signature": "limits?: StartLimits",
-              "doc": "Process resource limits for the production server, enforced by denext's Deno from runtime\n3.0.0-rc.2 (`--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production\nserver starts: `denext start` (on the process it starts), baked into the `build --compile`\nexecutable, and written into the Docker image's command and the systemd unit's `ExecStart` —\nnever for `dev`, tests or `denext job` (a compiled executable enforces them on whatever it\nruns, `./app job` included). Each limit ends the whole process with its own exit code, for\na supervisor (Docker's restart policy, systemd's `Restart=`) to start it again. Best-effort\nguardrails, not a security boundary: subprocesses are not counted. On stock Deno they are not\napplied (a warning says so). See\n{@link https://denext.dev/docs/deployment-targets#resource-limits}."
+              "doc": "Process resource limits for the production server, enforced by denext's Deno (its\n`--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production\nserver starts: `denext start` (on the process it starts), baked into the `build --compile`\nexecutable, and written into the Docker image's command and the systemd unit's `ExecStart` —\nnever for `dev`, tests or `denext job` (a compiled executable enforces them on whatever it\nruns, `./app job` included). Each limit ends the whole process with its own exit code, for\na supervisor (Docker's restart policy, systemd's `Restart=`) to start it again. Best-effort\nguardrails, not a security boundary: subprocesses are not counted. On stock Deno they are not\napplied (a warning says so). See\n{@link https://denext.dev/docs/deployment-targets#resource-limits}."
             },
             {
               "kind": "property",
               "name": "tls",
               "signature": "tls?: StartTls",
-              "doc": "Serve HTTPS directly, without a proxy in front: the certificates and the host names each\nserves. The certificate and key files' paths come from the environment variables each entry\nnames (`certFileEnv`, `keyFileEnv`), never from the config, and are read when the server\nstarts. One certificate serves every name, on any Deno. Several pick one per connection by\nthe name the client asks for (SNI), which needs denext's Deno from runtime 3.0.0-denext.3 and\n`\"unstable\": [\"net\"]` in `deno.json`; elsewhere the server refuses to start and says why.\nApplies to `denext start` and a `build --compile` server, never to `dev`. See\n{@link https://denext.dev/docs/deployment-targets#https-without-a-proxy}."
+              "doc": "Serve HTTPS directly, without a proxy in front: the certificates and the host names each\nserves. The certificate and key files' paths come from the environment variables each entry\nnames (`certFileEnv`, `keyFileEnv`), never from the config, and are read when the server\nstarts. One certificate serves every name, on any Deno. Several pick one per connection by\nthe name the client asks for (SNI), which needs denext's Deno with per-name certificates and\n`\"unstable\": [\"net\"]` in `deno.json`; elsewhere the server refuses to start and says why.\nApplies to `denext start` and a `build --compile` server, never to `dev`. See\n{@link https://denext.dev/docs/deployment-targets#https-without-a-proxy}."
             }
           ]
         },
@@ -45812,8 +45850,8 @@
             {
               "kind": "property",
               "name": "forwardKeys",
-              "signature": "forwardKeys?: string[]",
-              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+              "signature": "forwardKeys?: WebViewForwardKey[]",
+              "doc": "Keys the view hands to the app's page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`, and its release as a `keyup`\n(where `webViewCapabilities().keyUp`). The app menu's accelerators win over an entry unless\nit is `{ accelerator, beforeMenu: true }` ({@linkcode WebViewForwardKey})."
             },
             {
               "kind": "property",
@@ -46285,6 +46323,12 @@
           "members": [
             {
               "kind": "property",
+              "name": "notify",
+              "signature": "readonly notify: DesktopNotify",
+              "doc": "Post an OS notification from the backend through the `notifications` capability (what\n`DesktopRuntime.notify` and an extension's `host.notify` are): `not_enabled` while it is off."
+            },
+            {
+              "kind": "property",
               "name": "events",
               "signature": "readonly events: DesktopEventLog",
               "doc": "The event log (tests)."
@@ -46331,13 +46375,13 @@
               "kind": "property",
               "name": "netSplit",
               "signature": "readonly netSplit?: boolean",
-              "doc": "The runtime has the direction-split network flags (denext's pinned Deno Desktop runtime and\ntoolchain, 3.0.0-rc.2 or later; see `desktopNetSplit`): bake `--allow-net-connect` +\n`--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags)."
+              "doc": "The runtime has the direction-split network flags (denext's Deno Desktop runtime and\ntoolchain; `desktopNetSplit` detects it): bake `--allow-net-connect` +\n`--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags)."
             },
             {
               "kind": "property",
               "name": "cacheScope",
               "signature": "readonly cacheScope?: boolean",
-              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every\n`--allow-run` path, so the app could not write the copy it then runs."
+              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's Deno Desktop\nruntime; `desktopCacheTokenRuntime` detects it): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every\n`--allow-run` path, so the app could not write the copy it then runs."
             },
             {
               "kind": "property",
@@ -46361,13 +46405,13 @@
               "kind": "property",
               "name": "sidecarIntegrity",
               "signature": "readonly sidecarIntegrity?: boolean",
-              "doc": "The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.10 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`\nrecords the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,\nand `cacheScope` not `false`. Default:\n`desktopSidecarIntegrityRuntime()`."
+              "doc": "The runtime checks a program sidecar's recorded hash at spawn (denext's Deno Desktop\nruntime; `desktopSidecarIntegrityRuntime` detects it), so its `--allow-run`\nrecords the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,\nand `cacheScope` not `false`. Default:\n`desktopSidecarIntegrityRuntime()`."
             },
             {
               "kind": "property",
               "name": "dataScope",
               "signature": "readonly dataScope?: boolean",
-              "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."
+              "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's Deno Desktop runtime; `desktopDataTokenRuntime` detects it):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."
             },
             {
               "kind": "property",
@@ -46386,6 +46430,12 @@
               "name": "macSecureStore",
               "signature": "readonly macSecureStore?: boolean",
               "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the\npermission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,\nwhatever this says. Default: the pinned runtime's."
+            },
+            {
+              "kind": "property",
+              "name": "windowsSecureStore",
+              "signature": "readonly windowsSecureStore?: boolean",
+              "doc": "The runtime has its own Windows secure store (see `windowsSecureStoreRuntime`): Windows then\nbakes what Linux does for the secure store, and no `--allow-run` of Windows PowerShell.\nDefault: the pinned runtime's."
             }
           ]
         },
@@ -46394,8 +46444,8 @@
           "slug": "desktopBuildFlags",
           "kind": "function",
           "signature": "desktopBuildFlags(config: unknown, os: DesktopOs, options?: DesktopBuildFlagOptions): string[]",
-          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it) — or, on a runtime that expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (3.0.0-denext.8, dataScope) in an app with desktop.app.identifier, --allow-write scoped to those folders (and any absolute extraPermissions.write path) unless a write has no token (a picked path, $DOCUMENTS); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (the pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. - with desktop.permissions: \"strict\" on such a runtime (and desktop.app.identifier), --allow-read scoped to the app's folders and the declared reads, and --allow-env to DESKTOP_STRICT_RUNTIME_ENV and the declared variables. Strict mode never falls back to the unscoped grants: when it cannot be honoured (strictPermissionsProblem) this throws (unless options.strictFallback), and a read or variable entry it cannot scope always throws. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
-          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it) — or, on a runtime that expands `$DENO_DESKTOP_DATA` /\n  `$DENO_DESKTOP_CACHE` (3.0.0-denext.8, `dataScope`) in an app with `desktop.app.identifier`,\n  `--allow-write` scoped to those folders (and any absolute `extraPermissions.write` path) unless\n  a write has no token (a picked path, `$DOCUMENTS`); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and\n  `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (the\n  pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead:\n  `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,\n  `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server\n  picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\n- with `desktop.permissions: \"strict\"` on such a runtime (and `desktop.app.identifier`),\n  `--allow-read` scoped to the app's folders and the declared reads, and `--allow-env` to\n  {@linkcode DESKTOP_STRICT_RUNTIME_ENV} and the declared variables. Strict mode never falls back\n  to the unscoped grants: when it cannot be honoured ({@linkcode strictPermissionsProblem}) this\n  throws (unless `options.strictFallback`), and a read or variable entry it cannot scope always\n  throws.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
+          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it) — or, on a runtime that expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (dataScope) in an app with desktop.app.identifier, --allow-write scoped to those folders (and any absolute extraPermissions.write path) unless a write has no token (a picked path, $DOCUMENTS); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (a runtime with the direction-split net flags) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. - with desktop.permissions: \"strict\" on such a runtime (and desktop.app.identifier), --allow-read scoped to the app's folders and the declared reads, and --allow-env to DESKTOP_STRICT_RUNTIME_ENV and the declared variables. Strict mode never falls back to the unscoped grants: when it cannot be honoured (strictPermissionsProblem) this throws (unless options.strictFallback), and a read or variable entry it cannot scope always throws. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
+          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it) — or, on a runtime that expands `$DENO_DESKTOP_DATA` /\n  `$DENO_DESKTOP_CACHE` (`dataScope`) in an app with `desktop.app.identifier`,\n  `--allow-write` scoped to those folders (and any absolute `extraPermissions.write` path) unless\n  a write has no token (a picked path, `$DOCUMENTS`); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and\n  `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (a\n  runtime with the direction-split net flags) the network grant is baked by direction instead:\n  `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,\n  `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server\n  picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\n- with `desktop.permissions: \"strict\"` on such a runtime (and `desktop.app.identifier`),\n  `--allow-read` scoped to the app's folders and the declared reads, and `--allow-env` to\n  {@linkcode DESKTOP_STRICT_RUNTIME_ENV} and the declared variables. Strict mode never falls back\n  to the unscoped grants: when it cannot be honoured ({@linkcode strictPermissionsProblem}) this\n  throws (unless `options.strictFallback`), and a read or variable entry it cannot scope always\n  throws.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
           "params": [
             {
               "name": "config",
@@ -46704,7 +46754,7 @@
               "kind": "method",
               "name": "runOnMainThread",
               "signature": "runOnMainThread(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>",
-              "doc": "Call a native function on the app's UI thread (the thread AppKit, Win32 windows and GTK objects\nbelong to) and resolve with its pointer-sized return value as an unsigned `bigint`\n(meaningless for a `void` function). `fn` is a C function `void* fn(void* context)`: a\n`Deno.UnsafeFnPointer`, a `Deno.UnsafeCallback`, or a pointer (from `Deno.dlopen(...)` through\n`Deno.UnsafePointer.of`); it is called with `context` (default `null`). The call is queued\nbehind the UI work already posted and never runs on the calling thread.\n\n**Full trust**: this is FFI. The app needs `--allow-ffi` (grant it in\n`desktop.extraPermissions`), and a wrong pointer or signature crashes the app. A\n`Deno.UnsafeCallback` runs on the JavaScript thread while the UI thread waits for it, so it must\nnot wait for the UI thread itself.\n\nOver `Deno.desktop.runOnMainThread`, so it needs denext's pinned Deno Desktop runtime\n(2.9.7-denext.6 or later): elsewhere it rejects with a {@linkcode DesktopCapError} whose code is\n`unsupported`. It also rejects, without calling `fn`, once the app is quitting.",
+              "doc": "Call a native function on the app's UI thread (the thread AppKit, Win32 windows and GTK objects\nbelong to) and resolve with its pointer-sized return value as an unsigned `bigint`\n(meaningless for a `void` function). `fn` is a C function `void* fn(void* context)`: a\n`Deno.UnsafeFnPointer`, a `Deno.UnsafeCallback`, or a pointer (from `Deno.dlopen(...)` through\n`Deno.UnsafePointer.of`); it is called with `context` (default `null`). The call is queued\nbehind the UI work already posted and never runs on the calling thread.\n\n**Full trust**: this is FFI. The app needs `--allow-ffi` (grant it in\n`desktop.extraPermissions`), and a wrong pointer or signature crashes the app. A\n`Deno.UnsafeCallback` runs on the JavaScript thread while the UI thread waits for it, so it must\nnot wait for the UI thread itself.\n\nOver `Deno.desktop.runOnMainThread`, so it needs a denext Deno Desktop runtime that has it:\nelsewhere it rejects with a {@linkcode DesktopCapError} whose code is\n`unsupported`. It also rejects, without calling `fn`, once the app is quitting.",
               "params": [
                 {
                   "name": "fn",
@@ -47200,7 +47250,7 @@
               "kind": "method",
               "name": "onWindowMenuItem",
               "signature": "onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void",
-              "doc": "Call `fn` on every click on one of the app's own Window-menu items\n(`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or\n`null` with no window open). Each click is delivered once to each subscriber (and to\n`runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive\nfrom runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw\nor a rejection is logged. Returns the unsubscribe."
+              "doc": "Call `fn` on every click on one of the app's own Window-menu items\n(`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or\n`null` with no window open). Each click is delivered once to each subscriber (and to\n`runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive\non a runtime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the\nmain window is open. A throw\nor a rejection is logged. Returns the unsubscribe."
             },
             {
               "kind": "method",
@@ -47213,6 +47263,12 @@
               "name": "onNotificationClick",
               "signature": "onNotificationClick(fn: DesktopNotificationClickListener): () => void",
               "doc": "Call `fn` for every click the runtime reports on one of the app's notifications, with its\n`tag`, the `action` button (`null` for the notification itself), its `data` and `launch`:\nany tag, including notifications the extension posted itself through\n`Deno.desktop.notifications` (the pages still get the clicks on theirs). The click that\nlaunched the app reaches `fn` too (`launch: true`, on a microtask after it subscribed). A throw\nor a rejection is logged. Never called without denext's pinned runtime. Returns the\nunsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "notify",
+              "signature": "notify(options: DesktopNotifyOptions): Promise<DesktopPostedNotification>",
+              "doc": "Post an OS notification now, as a page's `Notification` does and through the same path (the\n`notifications` capability): `title`, and optionally `body`, `tag` (another with the same tag\nreplaces it; default a fresh `app-<uuid>`, never `denext-…`), JSON `data` (at most 4 KiB),\n`actions` (`{ id, title }` buttons) and `silent`. Its clicks reach\n{@linkcode DesktopExtensionHost.onNotificationClick} (and `runDesktop({ onNotificationClick })`)\nwith that tag and data, never a page. Resolves `{ tag, close() }`. Rejects with a\n{@linkcode DesktopCapError}: `not_enabled` while the `notifications` capability is off,\n`unsupported` where the Deno Desktop runtime has no native notifications, `validation` for\nbad options."
             },
             {
               "kind": "method",
@@ -47230,7 +47286,7 @@
               "kind": "method",
               "name": "confirm",
               "signature": "confirm(options: DesktopConfirmOptions): Promise<number | null>",
-              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Asking on behalf of a window (a handler's\n`ctx.windowId`), pass it as {@linkcode DesktopConfirmOptions.window}: the box is then owned by\nand modal to that window, so on Windows it cannot open behind it. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
+              "doc": "Ask the user with the OS's own message box (NSAlert, TaskDialogIndirect, GtkMessageDialog):\napp-modal, so it works with no window open — an {@linkcode DesktopExtensionHost.onBeforeQuit}\nguard after the last window closed, a tray app. Asking on behalf of a window (a handler's\n`ctx.windowId`), pass it as {@linkcode DesktopConfirmOptions.window}: the box is then owned by\nand modal to that window, so on Windows it cannot open behind it. Resolves the pressed button's index; a box\ndismissed without a button (Escape or the close button with no `cancelId`, the app quitting)\nresolves `cancelId`, or `null` without one. Rejects with a `validation`\n{@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without\nnative message boxes (no `Deno.desktop.dialog.showMessageBox`). While\nthe box is up during the quit guards' turn their deadline does not count (see\n{@linkcode DesktopExtensionHost.onBeforeQuit})."
             },
             {
               "kind": "method",
@@ -47501,6 +47557,18 @@
             }
           ],
           "returns": "The line (indented, in parentheses).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosHiddenMode",
+          "slug": "DesktopMacosHiddenMode",
+          "kind": "typeAlias",
+          "signature": "type DesktopMacosHiddenMode = \"invisible\" | \"orderOut\"",
+          "doc": "How a window is hidden on macOS's system WebView (desktop.window.macosHiddenMode, a window's macosHiddenMode): \"invisible\" (the runtime's default) keeps a hidden window ordered in but invisible, so a backgroundThrottling: false page keeps its timers' rate; \"orderOut\" really removes it, and macOS then throttles its page. Other platforms ignore it.",
+          "docFull": "How a window is hidden on macOS's system WebView (`desktop.window.macosHiddenMode`, a window's\n`macosHiddenMode`): `\"invisible\"` (the runtime's default) keeps a hidden window ordered in but\ninvisible, so a `backgroundThrottling: false` page keeps its timers' rate; `\"orderOut\"` really\nremoves it, and macOS then throttles its page. Other platforms ignore it.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -48048,6 +48116,94 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopNotify",
+          "slug": "DesktopNotify",
+          "kind": "typeAlias",
+          "signature": "type DesktopNotify = (options: DesktopNotifyOptions) => Promise<DesktopPostedNotification>",
+          "doc": "Post an OS notification from the backend. Rejects with a DesktopCapError: not_enabled while the notifications capability is off, unsupported where the Deno Desktop runtime has no native notifications, validation for bad options.",
+          "docFull": "Post an OS notification from the backend. Rejects with a {@linkcode DesktopCapError}:\n`not_enabled` while the `notifications` capability is off, `unsupported` where the Deno Desktop\nruntime has no native notifications, `validation` for bad options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopNotifyAction",
+          "slug": "DesktopNotifyAction",
+          "kind": "interface",
+          "signature": "interface DesktopNotifyAction",
+          "doc": "An action button on a backend notification.",
+          "docFull": "An action button on a backend notification.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "What a click on it reports as the click's `action` (at most 1024 UTF-8 bytes)."
+            },
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title: string",
+              "doc": "The button's label."
+            }
+          ]
+        },
+        {
+          "name": "DesktopNotifyOptions",
+          "slug": "DesktopNotifyOptions",
+          "kind": "interface",
+          "signature": "interface DesktopNotifyOptions",
+          "doc": "What DesktopNotify posts.",
+          "docFull": "What {@linkcode DesktopNotify} posts.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title: string",
+              "doc": "The title (up to 4096 characters)."
+            },
+            {
+              "kind": "property",
+              "name": "body",
+              "signature": "readonly body?: string",
+              "doc": "The body text (default none)."
+            },
+            {
+              "kind": "property",
+              "name": "tag",
+              "signature": "readonly tag?: string",
+              "doc": "The notification's tag: posting another with the same tag replaces it, and its clicks carry\nit (`onNotificationClick`'s `click.tag`). 1–256 UTF-8 bytes, never starting with `denext-`\n(denext's own tags). Default: a fresh `app-<uuid>`."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data?: unknown",
+              "doc": "JSON data the click brings back (`click.data`), at most 4 KiB as JSON; an object may not have\na top-level `denext` key (denext's own notifications keep theirs there)."
+            },
+            {
+              "kind": "property",
+              "name": "actions",
+              "signature": "readonly actions?: readonly DesktopNotifyAction[]",
+              "doc": "Action buttons; a click on one reports its `id` as the click's `action`."
+            },
+            {
+              "kind": "property",
+              "name": "silent",
+              "signature": "readonly silent?: boolean",
+              "doc": "Post it without a sound."
+            }
+          ]
+        },
+        {
           "name": "desktopNpmArgs",
           "slug": "desktopNpmArgs",
           "kind": "function",
@@ -48176,13 +48332,13 @@
               "kind": "property",
               "name": "transparent",
               "signature": "readonly transparent?: boolean",
-              "doc": "A transparent background (macOS, Linux with the system WebView, Windows from runtime 3.0.0-denext.6)."
+              "doc": "A transparent background (macOS, Linux with the system WebView, Windows on a runtime that can)."
             },
             {
               "kind": "property",
               "name": "overlay",
               "signature": "readonly overlay?: boolean",
-              "doc": "A desktop overlay surface (runtime `3.0.0-denext.6`+): on a Wayland compositor with\nwlr-layer-shell (wlroots, KDE Plasma, COSMIC) a layer above every window, on every workspace and\nout of the task list (`layerShell` in the window capabilities); an ordinary window elsewhere."
+              "doc": "A desktop overlay surface (on a runtime with overlay windows): on a Wayland compositor with\nwlr-layer-shell (wlroots, KDE Plasma, COSMIC) a layer above every window, on every workspace and\nout of the task list (`layerShell` in the window capabilities); an ordinary window elsewhere."
             },
             {
               "kind": "property",
@@ -48218,7 +48374,13 @@
               "kind": "property",
               "name": "backgroundThrottling",
               "signature": "readonly backgroundThrottling?: boolean",
-              "doc": "`false`: its page keeps its timers' rate while the window is not on screen (Electron's\n`backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime\n3.0.0-denext.8 (an older one ignores it)."
+              "doc": "`false`: its page keeps its timers' rate while the window is not on screen (Electron's\n`backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; denext's\nDeno Desktop runtime honours it (an older one ignores it)."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How it is hidden on macOS's system WebView: `\"invisible\"` (the default) keeps a hidden window\nordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;\n`\"orderOut\"` really removes it, and macOS then throttles its page. Other platforms ignore it.\nCreation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one\nignores it)."
             },
             {
               "kind": "property",
@@ -48375,8 +48537,8 @@
           "slug": "desktopPackageFlags",
           "kind": "function",
           "signature": "desktopPackageFlags(entryUrl: string, os: DesktopOs, netSplit?: boolean): Promise<string[]>",
-          "doc": "The deno desktop --allow-* flags for a scaffolded packaging script: read the project's config (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts, or its .mts / .js / .mjs twin) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or later, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.",
-          "docFull": "The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's\nconfig (next to `entryUrl` — a packaging script lives in `scripts/`, so the config is\n`../denext.config.ts`, or its `.mts` / `.js` / `.mjs` twin) and derive the least-privilege flags for `os` via {@linkcode\ndesktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The\nconfig is imported dynamically at run time from a caller-supplied URL, so it is never part of\nthis module's own dependency graph (nor a build-time import of user code). The network grant is\nsplit by direction when the build runs on denext's pinned runtime and toolchain, 3.0.0-rc.2 or\nlater, read from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});\n`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.",
+          "doc": "The deno desktop --allow-* flags for a scaffolded packaging script: read the project's config (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts, or its .mts / .js / .mjs twin) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code). The network grant is split by direction when the build runs on denext's runtime and toolchain with the split flags, read from the deno on PATH the script builds with (desktopNetSplitFor); DENEXT_DESKTOP_RUNTIME=stock, a local runtime build or a stock deno keep --allow-net.",
+          "docFull": "The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's\nconfig (next to `entryUrl` — a packaging script lives in `scripts/`, so the config is\n`../denext.config.ts`, or its `.mts` / `.js` / `.mjs` twin) and derive the least-privilege flags for `os` via {@linkcode\ndesktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The\nconfig is imported dynamically at run time from a caller-supplied URL, so it is never part of\nthis module's own dependency graph (nor a build-time import of user code). The network grant is\nsplit by direction when the build runs on denext's runtime and toolchain with the split flags,\nread from the `deno` on `PATH` the script builds with ({@linkcode desktopNetSplitFor});\n`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build or a stock `deno` keep `--allow-net`.",
           "params": [
             {
               "name": "entryUrl",
@@ -48655,6 +48817,32 @@
           ]
         },
         {
+          "name": "DesktopPostedNotification",
+          "slug": "DesktopPostedNotification",
+          "kind": "interface",
+          "signature": "interface DesktopPostedNotification",
+          "doc": "A posted backend notification.",
+          "docFull": "A posted backend notification.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "tag",
+              "signature": "readonly tag: string",
+              "doc": "Its tag (the one given, or the one denext picked)."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): void",
+              "doc": "Remove it: from the OS's notification centre once shown, or before it shows."
+            }
+          ]
+        },
+        {
           "name": "DesktopProxyFn",
           "slug": "DesktopProxyFn",
           "kind": "typeAlias",
@@ -48768,6 +48956,12 @@
             },
             {
               "kind": "property",
+              "name": "notify",
+              "signature": "readonly notify: DesktopNotify",
+              "doc": "Post an OS notification now, as a page's `Notification` does and through the same path (the\n`notifications` capability, which must be enabled): `notify({ title, body?, tag?, data?,\nactions?, silent? })` resolves `{ tag, close() }`, and its clicks reach\n{@linkcode RunDesktopOptions.onNotificationClick} / {@linkcode DesktopRuntime.onNotificationClick}\nwith that tag and data, never a page. Rejects with a `DesktopCapError`: `not_enabled` while the\ncapability is off, `unsupported` where the Deno Desktop runtime has no native notifications\n(and in a sidecar's child), `validation` for bad options."
+            },
+            {
+              "kind": "property",
               "name": "trust",
               "signature": "readonly trust: DesktopTrust",
               "doc": "The desktop world the gates enforce."
@@ -48788,7 +48982,7 @@
               "kind": "method",
               "name": "setActivationPolicy",
               "signature": "setActivationPolicy(policy: \"regular\" | \"accessory\" | \"prohibited\"): boolean",
-              "doc": "Set the macOS activation policy: `\"regular\"` (a Dock icon and a menu bar), `\"accessory\"`\n(neither: a tray app) or `\"prohibited\"` (runtime `3.0.0-denext.6`+; on an older runtime\n`\"regular\"` / `\"accessory\"` show / hide the Dock icon). Switching to regular also brings the\napp to the front. A tray app stays accessory and shows its window with the window's\n`focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps\nonce its running tile goes away. On Windows and Linux `\"regular\"` shows the main window's taskbar entry and\nthe others hide it (as `\"accessory\"` does at launch), where the runtime can. Returns whether it\napplied."
+              "doc": "Set the macOS activation policy: `\"regular\"` (a Dock icon and a menu bar), `\"accessory\"`\n(neither: a tray app) or `\"prohibited\"` (a runtime with `Deno.dock.setActivationPolicy`; on an\nolder runtime `\"regular\"` / `\"accessory\"` show / hide the Dock icon). Switching to regular also brings the\napp to the front. A tray app stays accessory and shows its window with the window's\n`focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps\nonce its running tile goes away. On Windows and Linux `\"regular\"` shows the main window's taskbar entry and\nthe others hide it (as `\"accessory\"` does at launch), where the runtime can. Returns whether it\napplied."
             },
             {
               "kind": "method",
@@ -48883,8 +49077,8 @@
           "slug": "desktopRuntimeDenoFlags",
           "kind": "function",
           "signature": "desktopRuntimeDenoFlags(runtimeEnv: Readonly<Record<string, string>>, denoFlags?: readonly string[], pin?: { readonly version: string }): string[]",
-          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime before 3.0.0-rc.5 gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata (from 2.9.7-denext.21), so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. From 3.0.0-rc.5 that is the runtime's default, so it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
-          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime before\n`3.0.0-rc.5` gets `--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata\n(from 2.9.7-denext.21), so the app's server aborts `request.signal` only when a response is not\ndelivered and prints no `Deno.serve` legacy-behavior notice on its first request, as under\n`denext start` and a `build --compile` binary. From `3.0.0-rc.5` that is the runtime's default,\nso it gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A\nflag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
+          "doc": "The deno desktop flags a build on denext's pinned Deno Desktop runtime (or a local runtime build) gets, given the env resolveDesktopRuntimeEnv resolved for it. A runtime whose default is still Deno.serve's legacy abort (decided from the pin's version) gets --unstable-no-legacy-abort, which it keeps from the compiled app's metadata, so the app's server aborts request.signal only when a response is not delivered and prints no Deno.serve legacy-behavior notice on its first request, as under denext start and a build --compile binary. A runtime where that is the default gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A flag already in denoFlags (desktop.denoFlags) is not repeated.",
+          "docFull": "The `deno desktop` flags a build on denext's pinned Deno Desktop runtime (or a local runtime\nbuild) gets, given the env {@linkcode resolveDesktopRuntimeEnv} resolved for it. A runtime whose\ndefault is still `Deno.serve`'s legacy abort (decided from the pin's version) gets\n`--unstable-no-legacy-abort`, which it keeps from the compiled app's metadata, so the app's\nserver aborts `request.signal` only when a response is not delivered and prints no `Deno.serve`\nlegacy-behavior notice on its first request, as under `denext start` and a `build --compile`\nbinary. A runtime where that is the default gets none. The stock runtime (an empty env) gets none either: it ignores the setting. A\nflag already in `denoFlags` (`desktop.denoFlags`) is not repeated.",
           "params": [
             {
               "name": "runtimeEnv",
@@ -49285,13 +49479,13 @@
               "kind": "method",
               "name": "on",
               "signature": "on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void",
-              "doc": "Call `handler` on each `type` event (`contextmenu`, `auxclick`, `mouseenter`, `mouseleave`,\n… — runtime `3.0.0-denext.6`+), with its detail. Returns the unsubscribe."
+              "doc": "Call `handler` on each `type` event (`contextmenu`, `auxclick`, `mouseenter`, `mouseleave`,\n… — a runtime with tray mouse events: `trayRightClick`, `trayMiddleClick`, `trayHover`), with\nits detail. Returns the unsubscribe."
             },
             {
               "kind": "method",
               "name": "popUpMenu",
               "signature": "popUpMenu(): boolean",
-              "doc": "Open the tray's menu at the icon now (runtime `3.0.0-denext.6`+), for another gesture than the\nright click (which opens it by itself): a Control-click, say. `false` without a menu, on an\nolder runtime, or where the OS can't (Linux: the tray host opens it)."
+              "doc": "Open the tray's menu at the icon now (`trayPopUpMenu`), for another gesture than the\nright click (which opens it by itself): a Control-click, say. `false` without a menu, on an\nolder runtime, or where the OS can't (Linux: the tray host opens it)."
             },
             {
               "kind": "method",
@@ -49365,7 +49559,7 @@
               "kind": "property",
               "name": "onClick",
               "signature": "readonly onClick?: (detail: TrayMouseDetail | null) => void",
-              "doc": "Called on a click on the icon with the primary button (before the pages hear of it), with the\nruntime's detail (runtime `3.0.0-denext.6`+; else `null`). On macOS a tray with a menu and no\npanel opens its menu on a plain left click, as Electron's does; a handler here (or one added\nwith the handle's `onClick`) takes the left click instead."
+              "doc": "Called on a click on the icon with the primary button (before the pages hear of it), with the\nruntime's detail, or `null` on a runtime without it. On macOS a tray with a menu and no\npanel opens its menu on a plain left click, as Electron's does; a handler here (or one added\nwith the handle's `onClick`) takes the left click instead."
             },
             {
               "kind": "property",
@@ -49377,7 +49571,7 @@
               "kind": "property",
               "name": "onContextMenu",
               "signature": "readonly onContextMenu?: (detail: TrayMouseDetail | null) => void",
-              "doc": "Called on a right click (runtime `3.0.0-denext.6`+, where `trayRightClick` is reported). The OS\nopens the tray's menu on a right click by itself; this is for doing something else as well."
+              "doc": "Called on a right click (where the runtime reports `trayRightClick`; never elsewhere). The OS\nopens the tray's menu on a right click by itself; this is for doing something else as well."
             },
             {
               "kind": "property",
@@ -50505,6 +50699,12 @@
               "name": "toolbarStyle",
               "signature": "readonly toolbarStyle?: DesktopToolbarStyle",
               "doc": "The macOS toolbar style that lays the title bar out (`desktop.window.toolbarStyle`)."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: DesktopMacosHiddenMode",
+              "doc": "How the window is hidden on macOS (`desktop.window.macosHiddenMode`, creation-time)."
             }
           ]
         },
@@ -50674,19 +50874,19 @@
               "kind": "property",
               "name": "strict",
               "signature": "readonly strict?: boolean",
-              "doc": "Whether the runtime reads `\"strictPolicy\"` (default `strictLaunchRuntime()`: denext's pinned\nruntime from `3.0.0-denext.1`, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build)."
+              "doc": "Whether the runtime reads `\"strictPolicy\"` (default `strictLaunchRuntime()`: denext's Deno\nDesktop runtime, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build)."
             },
             {
               "kind": "property",
               "name": "activationPolicy",
               "signature": "readonly activationPolicy?: boolean",
-              "doc": "Whether the runtime reads `\"activationPolicy\"` (default `activationPolicyRuntime()`: denext's\npinned runtime from `3.0.0-denext.6`)."
+              "doc": "Whether the runtime reads `\"activationPolicy\"` (default `activationPolicyRuntime()`, which\ndetects a runtime with activation policies)."
             },
             {
               "kind": "property",
               "name": "mediaCapture",
               "signature": "readonly mediaCapture?: boolean",
-              "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`: denext's pinned\nruntime from `3.0.0-denext.10`). Without it a config with the microphone or camera on is\nrefused."
+              "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`, which detects a\nruntime with media capture). Without it a config with the microphone or camera on is\nrefused."
             }
           ]
         },
@@ -51837,7 +52037,7 @@
               "kind": "property",
               "name": "onWindowMenuItem",
               "signature": "onWindowMenuItem?: DesktopWindowMenuItemHandler",
-              "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from\nruntime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only\nwhile the main window is open. A throw or a rejection is logged."
+              "doc": "Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),\nwith the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app\nkey when it was opened with one), or `null` with no window open. The clicks never reach the\npages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive on a\nruntime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the main\nwindow is open. A throw or a rejection is logged."
             },
             {
               "kind": "property",
@@ -52262,13 +52462,13 @@
               "kind": "property",
               "name": "netConnect",
               "signature": "readonly netConnect?: readonly string[]",
-              "doc": "Outbound hosts only (`--allow-net-connect` under the pinned runtime, 3.0.0-rc.2+)."
+              "doc": "Outbound hosts only (`--allow-net-connect` on a runtime with the direction-split net flags)."
             },
             {
               "kind": "property",
               "name": "netListen",
               "signature": "readonly netListen?: readonly string[]",
-              "doc": "Listen addresses only (`--allow-net-listen` under the pinned runtime, 3.0.0-rc.2+)."
+              "doc": "Listen addresses only (`--allow-net-listen` on a runtime with the direction-split net flags)."
             },
             {
               "kind": "property",
@@ -52678,8 +52878,8 @@
           "slug": "system",
           "kind": "variable",
           "signature": "system: SystemStatsApi",
-          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and denext's Deno Desktop runtime from 3.0.0-denext.16.",
-          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and denext's Deno Desktop runtime from 3.0.0-denext.16.",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process (denext/desktop). Needs desktop.capabilities.systemStats (denext desktop add system-stats) and a Deno Desktop runtime with Deno.desktop.systemStats (unsupported without it).",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the desktop app's own process\n(`denext/desktop`). Needs `desktop.capabilities.systemStats` (`denext desktop add\nsystem-stats`) and a Deno Desktop runtime with `Deno.desktop.systemStats` (`unsupported` without\nit).",
           "params": [],
           "returns": "",
           "examples": [
@@ -52954,8 +53154,8 @@
             {
               "kind": "property",
               "name": "focus-change",
-              "signature": "\"focus-change\": { focused: boolean }",
-              "doc": "The native view gained or lost keyboard focus."
+              "signature": "\"focus-change\": { focused: boolean; reason?: \"hidden\" | \"blur\" }",
+              "doc": "The native view gained or lost keyboard focus. `reason` says when denext moved it:\n`\"hidden\"` (`setVisible(false)` on a focused view gave the keyboard back to the app's page)\nor `\"blur\"` ({@linkcode WebViewHandle.blur}); any other change (a click elsewhere, the window\ndeactivated) has none."
             },
             {
               "kind": "property",
@@ -52978,8 +53178,14 @@
             {
               "kind": "property",
               "name": "keydown",
-              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
-              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+              "signature": "keydown: WebViewKeyEvent & { type: \"keydown\" }",
+              "doc": "A keydown while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it; a held key repeats with `repeat: true`), `false` for a keydown its page\nleft unhandled (where the engine can tell: `unhandledKeys`). DOM `KeyboardEvent` names and\nvalues."
+            },
+            {
+              "kind": "property",
+              "name": "keyup",
+              "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
+              "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
             },
             {
               "kind": "property",
@@ -52988,6 +53194,18 @@
               "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
             }
           ]
+        },
+        {
+          "name": "WebViewForwardKey",
+          "slug": "WebViewForwardKey",
+          "kind": "typeAlias",
+          "signature": "type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }",
+          "doc": "One forwardKeys entry: an accelerator (\"CmdOrCtrl+W\"), or { accelerator, beforeMenu }.",
+          "docFull": "One `forwardKeys` entry: an accelerator (`\"CmdOrCtrl+W\"`), or `{ accelerator, beforeMenu }`.\n\n`beforeMenu: true` (where `webViewCapabilities().forwardKeysBeforeMenu`; else the create or\n`setForwardKeys` rejects `unsupported`) forwards the key even when the app menu has the same\naccelerator: while this view has the keyboard, the key reaches the app's page as a forwarded\n`keydown` and the menu item does not fire. With the view unfocused, the menu item works as\nalways. Without it (the default) the menu item fires and the key is not forwarded. A string with\na leading `!` (`\"!CmdOrCtrl+W\"`) is the same as `beforeMenu: true`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "WebViewHandle",
@@ -53017,7 +53235,7 @@
               "kind": "method",
               "name": "setVisible",
               "signature": "setVisible(visible: boolean): Promise<void>",
-              "doc": "Show or hide it."
+              "doc": "Show or hide it. Hiding a view that has the keyboard hands the keyboard back to the app's\npage (never activating the app): `focus-change` fires with `{ focused: false, reason:\n\"hidden\" }`."
             },
             {
               "kind": "method",
@@ -53053,7 +53271,13 @@
               "kind": "method",
               "name": "focus",
               "signature": "focus(): Promise<void>",
-              "doc": "Move keyboard focus into the view."
+              "doc": "Move keyboard focus into the view (this brings its window forward and activates the app)."
+            },
+            {
+              "kind": "method",
+              "name": "blur",
+              "signature": "blur(): Promise<void>",
+              "doc": "Hand the keyboard back to the app's page if the view has it, without activating the app or\nraising or reordering a window (`focusWindow()` does both). `focus-change` fires with\n`{ focused: false, reason: \"blur\" }`; a view without the keyboard is left as it is. Rejects\n`unsupported` where `webViewCapabilities().blur` is `false`."
             },
             {
               "kind": "method",
@@ -53071,7 +53295,7 @@
               "kind": "method",
               "name": "evaluate",
               "signature": "evaluate<T>(script: string): Promise<T>",
-              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+              "doc": "Run `script` (a classic script; its completion value is the result) in the view's main frame,\nin an isolated world (`laufey-webview`): it shares the DOM but none of the page's globals (a\npage variable, function or patched prototype is not seen), and no Content-Security-Policy of\nthe page refuses it. A promise completion value is awaited, except on WKWebView and WebKitGTK\nunder a page CSP that refuses `eval`, where the engine's own evaluate returns the completion\nvalue as it is (a promise there rejects `not_serializable`: end the script with a plain\nvalue). The result is JSON (`undefined` → `null`); a throw rejects `error`, a value JSON can't\nhold rejects `not_serializable`."
             },
             {
               "kind": "method",
@@ -53130,7 +53354,7 @@
             {
               "kind": "method",
               "name": "setForwardKeys",
-              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "signature": "setForwardKeys(keys: WebViewForwardKey[]): Promise<void>",
               "doc": "Replace its `forwardKeys` (an empty list forwards none)."
             },
             {
@@ -53143,7 +53367,75 @@
               "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
-              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
+            }
+          ]
+        },
+        {
+          "name": "WebViewKeyEvent",
+          "slug": "WebViewKeyEvent",
+          "kind": "interface",
+          "signature": "interface WebViewKeyEvent",
+          "doc": "A key event of a web view (WebViewEventMap's keydown / keyup).",
+          "docFull": "A key event of a web view ({@linkcode WebViewEventMap}'s `keydown` / `keyup`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "type: \"keydown\" | \"keyup\"",
+              "doc": "`\"keydown\"` or `\"keyup\"`."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "key: string",
+              "doc": "DOM `KeyboardEvent.key`."
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "code: string",
+              "doc": "DOM `KeyboardEvent.code` (the physical key)."
+            },
+            {
+              "kind": "property",
+              "name": "altKey",
+              "signature": "altKey: boolean",
+              "doc": "Alt / Option held."
+            },
+            {
+              "kind": "property",
+              "name": "ctrlKey",
+              "signature": "ctrlKey: boolean",
+              "doc": "Control held."
+            },
+            {
+              "kind": "property",
+              "name": "metaKey",
+              "signature": "metaKey: boolean",
+              "doc": "Command on macOS, the Windows / Super key elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "shiftKey",
+              "signature": "shiftKey: boolean",
+              "doc": "Shift held."
+            },
+            {
+              "kind": "property",
+              "name": "repeat",
+              "signature": "repeat: boolean",
+              "doc": "An auto-repeat of a held key (`keydown` only)."
+            },
+            {
+              "kind": "property",
+              "name": "forwarded",
+              "signature": "forwarded: boolean",
+              "doc": "One of the view's `forwardKeys` (its page never saw it); always `true` for a `keyup`."
             }
           ]
         },
@@ -55287,8 +55579,8 @@
           "slug": "system",
           "kind": "variable",
           "signature": "system: SystemStatsClient",
-          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, denext's Deno Desktop runtime from 3.0.0-denext.16).",
-          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, denext's Deno Desktop runtime from 3.0.0-denext.16).",
+          "doc": "The machine's aggregate CPU, GPU and memory load, for the page (denext desktop add system-stats, a Deno Desktop runtime with Deno.desktop.systemStats; unsupported without it).",
+          "docFull": "The machine's aggregate CPU, GPU and memory load, for the page (`denext desktop add\nsystem-stats`, a Deno Desktop runtime with `Deno.desktop.systemStats`; `unsupported` without it).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -55482,9 +55774,9 @@
           "name": "attachWebView",
           "slug": "attachWebView",
           "kind": "function",
-          "signature": "attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): () => void",
+          "signature": "attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): WebViewAttachment",
           "doc": "Keep handle glued to element's border box: the view follows the element through resizes, scrolling (any scroller), window resizes and display scale changes, at most one setBounds per animation frame and only when the rectangle changed. It is hidden (setVisible(false)) while the element is out of the document, display: none, zero-sized or out of view, and shown again when it is back — so the attachment owns the view's visibility while attached. The view only ever covers the element's visible part: its box cut to the viewport and to the scroll containers around it (clip: false keeps the whole box).",
-          "docFull": "Keep `handle` glued to `element`'s border box: the view follows the element through resizes,\nscrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per\nanimation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the\nelement is out of the document, `display: none`, zero-sized or out of view, and shown again when\nit is back — so the attachment owns the view's visibility while attached. The view only ever\ncovers the element's visible part: its box cut to the viewport and to the scroll containers\naround it (`clip: false` keeps the whole box).",
+          "docFull": "Keep `handle` glued to `element`'s border box: the view follows the element through resizes,\nscrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per\nanimation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the\nelement is out of the document, `display: none`, zero-sized or out of view, and shown again when\nit is back — so the attachment owns the view's visibility while attached. The view only ever\ncovers the element's visible part: its box cut to the viewport and to the scroll containers\naround it (`clip: false` keeps the whole box).\n\nA move made only by a CSS `transform` (on the element or an ancestor) changes none of those:\n`follow: \"frame\"` measures on every frame while a CSS transition or animation runs there, and\n`relayout()` measures once, for any other move.",
           "params": [
             {
               "name": "handle",
@@ -55496,11 +55788,13 @@
             },
             {
               "name": "options",
-              "doc": "hideWhenOutOfView, clip."
+              "doc": "hideWhenOutOfView, clip, follow."
             }
           ],
-          "returns": "A function that stops following (the view stays as it is, open). It also stops when the view closes.",
-          "examples": [],
+          "returns": "The attachment: call it (or detach()) to stop following (the view stays as it is, open); relayout() measures again. It also stops when the view closes.",
+          "examples": [
+            "```ts\nconst attachment = attachWebView(view, tile, { follow: \"frame\" });\npanel.style.transform = \"translateX(0)\"; // a CSS transition: followed frame by frame\ntile.animate([{ translate: \"0 40px\" }], 200).finished.then(() => attachment.relayout());\nattachment(); // stop\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -55526,6 +55820,12 @@
               "name": "clip",
               "signature": "readonly clip?: boolean",
               "doc": "Fit the view to the part of the element that is visible: inside the viewport and inside every\nancestor that clips its overflow (a scroll container) (default `true`). A native view can't\nbe cropped, so a partly scrolled-away element gets a smaller view whose page lays out at that\nsize (it is resized, not cut). `false` keeps the whole element box, and the view then draws\nover whatever is outside the scroll container (a toolbar, the window's other content)."
+            },
+            {
+              "kind": "property",
+              "name": "follow",
+              "signature": "readonly follow?: \"events\" | \"frame\"",
+              "doc": "How the view follows moves the element's own box doesn't report. `\"events\"` (default):\nresizes, scrolls, the window's resize and display scale changes. `\"frame\"` adds a measure on\nevery animation frame while a CSS transition or animation runs on the element or one of its\nancestors (a `transform` slide, a sheet moving in), from its `transitionrun` /\n`animationstart` until none runs there, and nothing between them: no polling while idle. A\nmove no event reports (a transform set from script, a Web Animations `element.animate()`)\nneeds {@linkcode WebViewAttachment.relayout}."
             }
           ]
         },
@@ -55679,8 +55979,8 @@
             {
               "kind": "property",
               "name": "forwardKeys",
-              "signature": "forwardKeys?: string[]",
-              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+              "signature": "forwardKeys?: WebViewForwardKey[]",
+              "doc": "Keys the view hands to the app's page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`, and its release as a `keyup`\n(where `webViewCapabilities().keyUp`). The app menu's accelerators win over an entry unless\nit is `{ accelerator, beforeMenu: true }` ({@linkcode WebViewForwardKey})."
             },
             {
               "kind": "property",
@@ -56182,8 +56482,8 @@
           "slug": "onBeforeQuit",
           "kind": "function",
           "signature": "onBeforeQuit(handler: BeforeQuitHandler): () => void",
-          "doc": "Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: \"quit\"); a refusal here asks no close handler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows), within the deadlines onCloseRequested lists; on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.",
-          "docFull": "Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows\ntray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or\nresolves) `false`. Plain closes of this window are not held. The before-quit handlers run before\nthe {@linkcode onCloseRequested} ones (which get `reason: \"quit\"`); a refusal here asks no close\nhandler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout\non macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;\non an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is\npending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the\nhandler is never called.",
+          "doc": "Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: \"quit\"); a refusal here asks no close handler. On denext's Deno Desktop runtime the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows), within the deadlines onCloseRequested lists; on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.",
+          "docFull": "Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows\ntray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or\nresolves) `false`. Plain closes of this window are not held. The before-quit handlers run before\nthe {@linkcode onCloseRequested} ones (which get `reason: \"quit\"`); a refusal here asks no close\nhandler. On denext's Deno Desktop runtime the OS's own quits ask too (Cmd+Q, the Dock's Quit and a\nlogout on macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;\non an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is\npending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the\nhandler is never called.",
           "params": [
             {
               "name": "handler",
@@ -56201,8 +56501,8 @@
           "slug": "onCloseRequested",
           "kind": "function",
           "signature": "onCloseRequested(handler: CloseRequestHandler): () => void",
-          "doc": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which (\"close\" or \"quit\"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (reason: \"quit\"): Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
-          "docFull": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting\n({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler\ngets a {@linkcode CloseRequestEvent} whose `reason` says which (`\"close\"` or `\"quit\"`), like\nElectron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit\nthrough. While a handler is registered the runtime holds every close and calls the handlers; the\nwindow closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops\nanswering cannot keep the window open: a close requested again after 5 seconds without an answer\ngoes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (`reason: \"quit\"`): Cmd+Q, the\nDock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends\nthe app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a\nsession end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end\nis pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
+          "doc": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which (\"close\" or \"quit\"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. On denext's Deno Desktop runtime the OS's own quits ask too (reason: \"quit\"): Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
+          "docFull": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting\n({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler\ngets a {@linkcode CloseRequestEvent} whose `reason` says which (`\"close\"` or `\"quit\"`), like\nElectron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit\nthrough. While a handler is registered the runtime holds every close and calls the handlers; the\nwindow closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops\nanswering cannot keep the window open: a close requested again after 5 seconds without an answer\ngoes through. On denext's Deno Desktop runtime the OS's own quits ask too (`reason: \"quit\"`):\nCmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime\nCmd+Q ends the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a\nsession end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end\nis pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
           "params": [
             {
               "name": "handler",
@@ -56256,8 +56556,8 @@
           "slug": "onTitleBarPreferencesChange",
           "kind": "function",
           "signature": "onTitleBarPreferencesChange(handler: (preferences: TitleBarPreferences) => void): () => void",
-          "doc": "Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs runtime 2.9.7-denext.12; earlier the handler is never called.",
-          "docFull": "Call `handler` with the new preferences whenever the user changes them (moves the window buttons,\npicks another double-click action, colour scheme or accent colour). Needs runtime\n2.9.7-denext.12; earlier the handler is never called.",
+          "doc": "Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs a runtime that reads them (source is not \"unknown\"); elsewhere the handler is never called.",
+          "docFull": "Call `handler` with the new preferences whenever the user changes them (moves the window buttons,\npicks another double-click action, colour scheme or accent colour). Needs a runtime that reads\nthem (`source` is not `\"unknown\"`); elsewhere the handler is never called.",
           "params": [
             {
               "name": "handler",
@@ -56486,19 +56786,25 @@
               "kind": "property",
               "name": "overlay",
               "signature": "readonly overlay?: boolean",
-              "doc": "A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with\nwlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every\nworkspace and out of the task list, placed with `setBounds` (`layerShell` in\n{@linkcode windowCapabilities}); an ordinary window elsewhere."
+              "doc": "A desktop overlay surface (on a runtime with overlay windows): on a Wayland compositor with\nwlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every\nworkspace and out of the task list, placed with `setBounds` (`layerShell` in\n{@linkcode windowCapabilities}); an ordinary window elsewhere."
             },
             {
               "kind": "property",
               "name": "backgroundThrottling",
               "signature": "readonly backgroundThrottling?: boolean",
-              "doc": "What its page does while the window is not on screen (hidden, minimized or covered), like\nElectron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with\nits timers slowed (about once a second on macOS); its events, messages and sockets are still\nhandled. `false`: its timers keep their rate, for a hidden window that does the app's\nbackground work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on\nmacOS froze a page created hidden about a second after it loaded). The system WebView on\nWindows and Linux and the CEF backend throttle a hidden page without freezing it either way."
+              "doc": "What its page does while the window is not on screen (hidden, minimized or covered), like\nElectron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with\nits timers slowed (about once a second on macOS); its events, messages and sockets are still\nhandled. `false`: its timers keep their rate, for a hidden window that does the app's\nbackground work. Creation time only; denext's Deno Desktop runtime honours it (an older one\nignores it, and on macOS froze a page created hidden about a second after it loaded). The system WebView on\nWindows and Linux and the CEF backend throttle a hidden page without freezing it either way."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How it is hidden on macOS's system WebView: `\"invisible\"` (the default) keeps a hidden window\nordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;\n`\"orderOut\"` really removes it, and macOS then throttles its page. Other platforms ignore it.\nCreation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one\nignores it)."
             },
             {
               "kind": "property",
               "name": "show",
               "signature": "readonly show?: boolean",
-              "doc": "Show it once created (default `true`). With `false` it opens hidden (its page loads), to be\nshown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first."
+              "doc": "Show it once created (default `true`). With `false` it opens hidden (its page loads), to be\nshown with the handle's `show()`; an older runtime may flash it first."
             },
             {
               "kind": "property",
@@ -56906,8 +57212,8 @@
           "slug": "shareFromWindow",
           "kind": "function",
           "signature": "shareFromWindow(data: WindowShareData): Promise<WindowShareResult>",
-          "doc": "Show the OS share sheet over the window: macOS NSSharingServicePicker (anchored at x / y), Windows DataTransferManager (files go as their paths in the text). Linux has none (outcome \"not_supported\"). Needs denext's pinned runtime, 2.9.7-denext.20 or later (share in windowCapabilities); elsewhere it rejects unsupported. A file the app may not read rejects forbidden. share() in denext/mobile uses it for text and URLs, and falls back to the web where it can't.",
-          "docFull": "Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),\nWindows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`\n`\"not_supported\"`). Needs denext's pinned runtime, 2.9.7-denext.20 or later (`share` in\n{@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read\nrejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to\nthe web where it can't.",
+          "doc": "Show the OS share sheet over the window: macOS NSSharingServicePicker (anchored at x / y), Windows DataTransferManager (files go as their paths in the text). Linux has none (outcome \"not_supported\"). Needs a denext Deno Desktop runtime with share sheets (share in windowCapabilities); elsewhere it rejects unsupported. A file the app may not read rejects forbidden. share() in denext/mobile uses it for text and URLs, and falls back to the web where it can't.",
+          "docFull": "Show the OS share sheet over the window: macOS `NSSharingServicePicker` (anchored at `x` / `y`),\nWindows `DataTransferManager` (files go as their paths in the text). Linux has none (`outcome`\n`\"not_supported\"`). Needs a denext Deno Desktop runtime with share sheets (`share` in\n{@linkcode windowCapabilities}); elsewhere it rejects `unsupported`. A file the app may not read\nrejects `forbidden`. `share()` in `denext/mobile` uses it for text and URLs, and falls back to\nthe web where it can't.",
           "params": [
             {
               "name": "data",
@@ -57031,7 +57337,7 @@
               "kind": "property",
               "name": "source",
               "signature": "readonly source: \"portal\" | \"gsettings\" | \"default\" | \"os\" | \"unknown\"",
-              "doc": "Where the answer came from: Linux reads xdg-desktop-portal's Settings first (`\"portal\"`), then\nGSettings (`\"gsettings\"`), else GTK's defaults (`\"default\"`); `\"os\"` on macOS and Windows;\n`\"unknown\"` before runtime 2.9.7-denext.12 (the OS's usual layout then)."
+              "doc": "Where the answer came from: Linux reads xdg-desktop-portal's Settings first (`\"portal\"`), then\nGSettings (`\"gsettings\"`), else GTK's defaults (`\"default\"`); `\"os\"` on macOS and Windows;\n`\"unknown\"` on a runtime that can't read them (the OS's usual layout then)."
             }
           ]
         },
@@ -57124,6 +57430,44 @@
               "name": "getBoundingClientRect",
               "signature": "getBoundingClientRect(): { readonly left: number; readonly top: number; readonly width: number; readonly height: number }",
               "doc": "Its border box, in CSS pixels relative to the viewport."
+            },
+            {
+              "kind": "method",
+              "name": "getAnimations",
+              "signature": "getAnimations?(): ReadonlyArray<{ readonly playState?: string }>",
+              "doc": "Its running animations and transitions (`follow: \"frame\"` keeps measuring while any runs)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewAttachment",
+          "slug": "WebViewAttachment",
+          "kind": "interface",
+          "signature": "interface WebViewAttachment",
+          "doc": "What attachWebView returns: call it (or its detach) to stop following; relayout() measures the element again at the next animation frame, for a move no event reports.",
+          "docFull": "What {@linkcode attachWebView} returns: call it (or its `detach`) to stop following;\n`relayout()` measures the element again at the next animation frame, for a move no event\nreports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "call",
+              "name": "",
+              "signature": "(): void",
+              "doc": "Stop following (the view stays as it is, open)."
+            },
+            {
+              "kind": "method",
+              "name": "detach",
+              "signature": "detach(): void",
+              "doc": "The same as calling the attachment."
+            },
+            {
+              "kind": "method",
+              "name": "relayout",
+              "signature": "relayout(): void",
+              "doc": "Measure the element again at the next animation frame and move or show / hide the view to\nmatch (at most one `setBounds` per frame, only on a change). A no-op once detached."
             }
           ]
         },
@@ -57170,8 +57514,8 @@
           "slug": "webViewCapabilities-fn",
           "kind": "function",
           "signature": "webViewCapabilities(): Promise<WebViewCapabilities>",
-          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
-          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
+          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
+          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,\n`forwardKeysBeforeMenu`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
           "params": [],
           "returns": "The capabilities. Off desktop it rejects unavailable.",
           "examples": [],
@@ -57272,6 +57616,24 @@
               "name": "forwardKeys",
               "signature": "forwardKeys: boolean",
               "doc": "Whether `forwardKeys` / `setForwardKeys` work."
+            },
+            {
+              "kind": "property",
+              "name": "blur",
+              "signature": "blur: boolean",
+              "doc": "Whether {@linkcode WebViewHandle.blur} works."
+            },
+            {
+              "kind": "property",
+              "name": "keyUp",
+              "signature": "keyUp: boolean",
+              "doc": "Whether a forwarded key's release arrives as `keyup`."
+            },
+            {
+              "kind": "property",
+              "name": "forwardKeysBeforeMenu",
+              "signature": "forwardKeysBeforeMenu: boolean",
+              "doc": "Whether `forwardKeys` entries take `beforeMenu: true`."
             }
           ]
         },
@@ -57326,8 +57688,8 @@
             {
               "kind": "property",
               "name": "focus-change",
-              "signature": "\"focus-change\": { focused: boolean }",
-              "doc": "The native view gained or lost keyboard focus."
+              "signature": "\"focus-change\": { focused: boolean; reason?: \"hidden\" | \"blur\" }",
+              "doc": "The native view gained or lost keyboard focus. `reason` says when denext moved it:\n`\"hidden\"` (`setVisible(false)` on a focused view gave the keyboard back to the app's page)\nor `\"blur\"` ({@linkcode WebViewHandle.blur}); any other change (a click elsewhere, the window\ndeactivated) has none."
             },
             {
               "kind": "property",
@@ -57350,8 +57712,14 @@
             {
               "kind": "property",
               "name": "keydown",
-              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
-              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+              "signature": "keydown: WebViewKeyEvent & { type: \"keydown\" }",
+              "doc": "A keydown while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it; a held key repeats with `repeat: true`), `false` for a keydown its page\nleft unhandled (where the engine can tell: `unhandledKeys`). DOM `KeyboardEvent` names and\nvalues."
+            },
+            {
+              "kind": "property",
+              "name": "keyup",
+              "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
+              "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
             },
             {
               "kind": "property",
@@ -57360,6 +57728,18 @@
               "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
             }
           ]
+        },
+        {
+          "name": "WebViewForwardKey",
+          "slug": "WebViewForwardKey",
+          "kind": "typeAlias",
+          "signature": "type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }",
+          "doc": "One forwardKeys entry: an accelerator (\"CmdOrCtrl+W\"), or { accelerator, beforeMenu }.",
+          "docFull": "One `forwardKeys` entry: an accelerator (`\"CmdOrCtrl+W\"`), or `{ accelerator, beforeMenu }`.\n\n`beforeMenu: true` (where `webViewCapabilities().forwardKeysBeforeMenu`; else the create or\n`setForwardKeys` rejects `unsupported`) forwards the key even when the app menu has the same\naccelerator: while this view has the keyboard, the key reaches the app's page as a forwarded\n`keydown` and the menu item does not fire. With the view unfocused, the menu item works as\nalways. Without it (the default) the menu item fires and the key is not forwarded. A string with\na leading `!` (`\"!CmdOrCtrl+W\"`) is the same as `beforeMenu: true`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "WebViewHandle",
@@ -57389,7 +57769,7 @@
               "kind": "method",
               "name": "setVisible",
               "signature": "setVisible(visible: boolean): Promise<void>",
-              "doc": "Show or hide it."
+              "doc": "Show or hide it. Hiding a view that has the keyboard hands the keyboard back to the app's\npage (never activating the app): `focus-change` fires with `{ focused: false, reason:\n\"hidden\" }`."
             },
             {
               "kind": "method",
@@ -57425,7 +57805,13 @@
               "kind": "method",
               "name": "focus",
               "signature": "focus(): Promise<void>",
-              "doc": "Move keyboard focus into the view."
+              "doc": "Move keyboard focus into the view (this brings its window forward and activates the app)."
+            },
+            {
+              "kind": "method",
+              "name": "blur",
+              "signature": "blur(): Promise<void>",
+              "doc": "Hand the keyboard back to the app's page if the view has it, without activating the app or\nraising or reordering a window (`focusWindow()` does both). `focus-change` fires with\n`{ focused: false, reason: \"blur\" }`; a view without the keyboard is left as it is. Rejects\n`unsupported` where `webViewCapabilities().blur` is `false`."
             },
             {
               "kind": "method",
@@ -57443,7 +57829,7 @@
               "kind": "method",
               "name": "evaluate",
               "signature": "evaluate<T>(script: string): Promise<T>",
-              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+              "doc": "Run `script` (a classic script; its completion value is the result) in the view's main frame,\nin an isolated world (`laufey-webview`): it shares the DOM but none of the page's globals (a\npage variable, function or patched prototype is not seen), and no Content-Security-Policy of\nthe page refuses it. A promise completion value is awaited, except on WKWebView and WebKitGTK\nunder a page CSP that refuses `eval`, where the engine's own evaluate returns the completion\nvalue as it is (a promise there rejects `not_serializable`: end the script with a plain\nvalue). The result is JSON (`undefined` → `null`); a throw rejects `error`, a value JSON can't\nhold rejects `not_serializable`."
             },
             {
               "kind": "method",
@@ -57502,7 +57888,7 @@
             {
               "kind": "method",
               "name": "setForwardKeys",
-              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "signature": "setForwardKeys(keys: WebViewForwardKey[]): Promise<void>",
               "doc": "Replace its `forwardKeys` (an empty list forwards none)."
             },
             {
@@ -57515,7 +57901,75 @@
               "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
-              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
+            }
+          ]
+        },
+        {
+          "name": "WebViewKeyEvent",
+          "slug": "WebViewKeyEvent",
+          "kind": "interface",
+          "signature": "interface WebViewKeyEvent",
+          "doc": "A key event of a web view (WebViewEventMap's keydown / keyup).",
+          "docFull": "A key event of a web view ({@linkcode WebViewEventMap}'s `keydown` / `keyup`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "type: \"keydown\" | \"keyup\"",
+              "doc": "`\"keydown\"` or `\"keyup\"`."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "key: string",
+              "doc": "DOM `KeyboardEvent.key`."
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "code: string",
+              "doc": "DOM `KeyboardEvent.code` (the physical key)."
+            },
+            {
+              "kind": "property",
+              "name": "altKey",
+              "signature": "altKey: boolean",
+              "doc": "Alt / Option held."
+            },
+            {
+              "kind": "property",
+              "name": "ctrlKey",
+              "signature": "ctrlKey: boolean",
+              "doc": "Control held."
+            },
+            {
+              "kind": "property",
+              "name": "metaKey",
+              "signature": "metaKey: boolean",
+              "doc": "Command on macOS, the Windows / Super key elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "shiftKey",
+              "signature": "shiftKey: boolean",
+              "doc": "Shift held."
+            },
+            {
+              "kind": "property",
+              "name": "repeat",
+              "signature": "repeat: boolean",
+              "doc": "An auto-repeat of a held key (`keydown` only)."
+            },
+            {
+              "kind": "property",
+              "name": "forwarded",
+              "signature": "forwarded: boolean",
+              "doc": "One of the view's `forwardKeys` (its page never saw it); always `true` for a `keyup`."
             }
           ]
         },
@@ -57793,7 +58247,7 @@
               "kind": "property",
               "name": "share",
               "signature": "readonly share: boolean",
-              "doc": "{@linkcode shareFromWindow} shows a share sheet (macOS, Windows; runtime 2.9.7-denext.20)."
+              "doc": "{@linkcode shareFromWindow} shows a share sheet (macOS, Windows, on a runtime that has one)."
             },
             {
               "kind": "property",
@@ -57817,13 +58271,13 @@
               "kind": "property",
               "name": "sessionType",
               "signature": "readonly sessionType: \"wayland\" | \"x11\" | \"tty\" | \"unknown\" | null",
-              "doc": "Linux: `\"wayland\"` (windows cannot be placed), `\"x11\"`, `\"tty\"` or `\"unknown\"`; `null` on macOS\nand Windows. `\"unknown\"` before runtime 2.9.7-denext.10 (no `platformFeatures()` probe)."
+              "doc": "Linux: `\"wayland\"` (windows cannot be placed), `\"x11\"`, `\"tty\"` or `\"unknown\"`; `null` on macOS\nand Windows. `\"unknown\"` on a runtime without the `platformFeatures()` probe."
             },
             {
               "kind": "property",
               "name": "cookieEncryption",
               "signature": "readonly cookieEncryption: \"os\" | \"basic\" | \"unknown\" | null",
-              "doc": "CEF's cookie store: `\"os\"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux\nkeyring, a team-signed macOS app's own keychain item from runtime 2.9.7-denext.20) or\n`\"basic\"` (obfuscated with a fixed key, not protected by the OS: an ad-hoc signed or unsigned\nmacOS build, where CEF runs with Chromium's mock keychain, and Linux when the login keyring was\nlocked with no one to unlock it); `null` on the WebView backends, `\"unknown\"` before runtime\n2.9.7-denext.10."
+              "doc": "CEF's cookie store: `\"os\"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux\nkeyring, a team-signed macOS app's own keychain item on denext's Deno Desktop runtime) or\n`\"basic\"` (obfuscated with a fixed key, not protected by the OS: an ad-hoc signed or unsigned\nmacOS build, where CEF runs with Chromium's mock keychain, and Linux when the login keyring was\nlocked with no one to unlock it); `null` on the WebView backends, `\"unknown\"` on a runtime\nwithout the `platformFeatures()` probe."
             },
             {
               "kind": "property",
@@ -57883,19 +58337,19 @@
               "kind": "property",
               "name": "visibleOnFullScreen",
               "signature": "readonly visibleOnFullScreen: boolean",
-              "doc": "`setVisibleOnAllWorkspaces` also shows the window over other apps' full-screen windows (macOS,\nat a `\"status\"` level or above; runtime 3.0.0-denext.6)."
+              "doc": "`setVisibleOnAllWorkspaces` also shows the window over other apps' full-screen windows (macOS,\nat a `\"status\"` level or above, on a runtime that can)."
             },
             {
               "kind": "property",
               "name": "layerShell",
               "signature": "readonly layerShell: boolean",
-              "doc": "An `overlay: true` window ({@linkcode openWindow}) is a wlr-layer-shell surface (wlroots\ncompositors, KDE Plasma and COSMIC on Wayland; runtime 3.0.0-denext.6)."
+              "doc": "An `overlay: true` window ({@linkcode openWindow}) is a wlr-layer-shell surface (wlroots\ncompositors, KDE Plasma and COSMIC on Wayland, on a runtime with overlay windows)."
             },
             {
               "kind": "property",
               "name": "activationPolicy",
               "signature": "readonly activationPolicy: boolean",
-              "doc": "`setActivationPolicy` in `denext/desktop/app` works (macOS; runtime 3.0.0-denext.6)."
+              "doc": "`setActivationPolicy` in `denext/desktop/app` works (macOS, on a runtime with activation\npolicies)."
             },
             {
               "kind": "property",
@@ -58168,8 +58622,8 @@
           "slug": "appCapabilities-fn",
           "kind": "function",
           "signature": "appCapabilities(): Promise<AppCapabilities>",
-          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches (the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads \"unknown\".",
-          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the\ntray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11);\nthe Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and\nnative Linux passkeys (3.0.0-rc.1); Windows' microphone and camera privacy switches\n(the runtime from 3.0.0-denext.16). A fact an older runtime cannot report reads `\"unknown\"`.",
+          "doc": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), where the runtime has it): the tray host, the Secret Service, the session type and the cookie store, the badge, the Linux CEF sandbox and file chooser, the Linux window blur and native Linux passkeys, and Windows' microphone and camera privacy switches. A fact the runtime cannot report (an older one probes fewer) reads \"unknown\".",
+          "docFull": "What the application menu, tray and Dock can do on this OS and runtime, plus the session facts\nthe runtime probed (`Deno.desktop.platformFeatures()`, where the runtime has it): the tray host,\nthe Secret Service, the session type and the cookie store, the badge, the Linux CEF sandbox and\nfile chooser, the Linux window blur and native Linux passkeys, and Windows' microphone and camera\nprivacy switches. A fact the runtime cannot report (an older one probes fewer) reads `\"unknown\"`.",
           "params": [],
           "returns": "The capabilities.",
           "examples": [],
@@ -58215,7 +58669,7 @@
               "kind": "property",
               "name": "destructive",
               "signature": "readonly destructive: boolean",
-              "doc": "Destructive menu items are drawn as such (red; runtime 2.9.7-denext.20)."
+              "doc": "Destructive menu items are drawn as such (red; `false` on a runtime that can't)."
             },
             {
               "kind": "property",
@@ -58263,7 +58717,7 @@
               "kind": "property",
               "name": "cookieEncryption",
               "signature": "readonly cookieEncryption: \"os\" | \"basic\" | PlatformUnknown | null",
-              "doc": "CEF's cookie store: `\"os\"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux\nkeyring, and from runtime 2.9.7-denext.20 a team-signed macOS app's own\n`\"<app id> Safe Storage\"` keychain item) or `\"basic\"` (obfuscated with a fixed key, not\nprotected by the OS): an ad-hoc signed or unsigned macOS build, where CEF runs with Chromium's\nmock keychain and its constant key, and Linux when the login keyring was locked with no one to\nunlock it. `null` on the WebView backends."
+              "doc": "CEF's cookie store: `\"os\"` (encrypted with a key the OS keeps: Windows' DPAPI, the Linux\nkeyring, and on denext's Deno Desktop runtime a team-signed macOS app's own\n`\"<app id> Safe Storage\"` keychain item) or `\"basic\"` (obfuscated with a fixed key, not\nprotected by the OS): an ad-hoc signed or unsigned macOS build, where CEF runs with Chromium's\nmock keychain and its constant key, and Linux when the login keyring was locked with no one to\nunlock it. `null` on the WebView backends."
             },
             {
               "kind": "property",
@@ -58275,7 +58729,7 @@
               "kind": "property",
               "name": "badgeShows",
               "signature": "readonly badgeShows: \"dock\" | \"launcher-entry\" | \"title\" | PlatformUnknown",
-              "doc": "Where the badge shows: `\"dock\"` (the macOS Dock tile), `\"launcher-entry\"` (Linux: a count on\nthe app's launcher, where a dock reads it: Ubuntu's dock, Dash to Dock, Plasma's task manager)\nor `\"title\"` (a `\"(N) \"` prefix on the window titles: Windows, Linux without such a dock, and a\nbadge that isn't a number), as the runtime probed it (runtime 2.9.7-denext.11 and later)."
+              "doc": "Where the badge shows: `\"dock\"` (the macOS Dock tile), `\"launcher-entry\"` (Linux: a count on\nthe app's launcher, where a dock reads it: Ubuntu's dock, Dash to Dock, Plasma's task manager)\nor `\"title\"` (a `\"(N) \"` prefix on the window titles: Windows, Linux without such a dock, and a\nbadge that isn't a number), as the runtime probed it; `\"unknown\"` where it can't say."
             },
             {
               "kind": "property",
@@ -58287,7 +58741,7 @@
               "kind": "property",
               "name": "sandbox",
               "signature": "readonly sandbox: \"namespace\" | \"setuid\" | \"chromium\" | \"off\" | PlatformUnknown | null",
-              "doc": "CEF on Linux: the Chromium sandbox the window's web content runs in: `\"namespace\"`\n(unprivileged user namespaces), `\"setuid\"` (the `chrome-sandbox` helper the `.deb` / `.rpm`\ninstalls), `\"chromium\"` (on; the runtime's probe could not run, so Chromium picked the layer) or\n`\"off\"` (neither: a tarball or AppImage on Ubuntu 23.10 and later, or root; see\n`desktop.linux.requireSandbox`). `null` on other platforms and backends; `\"unknown\"` before\nruntime 2.9.7-denext.12."
+              "doc": "CEF on Linux: the Chromium sandbox the window's web content runs in: `\"namespace\"`\n(unprivileged user namespaces), `\"setuid\"` (the `chrome-sandbox` helper the `.deb` / `.rpm`\ninstalls), `\"chromium\"` (on; the runtime's probe could not run, so Chromium picked the layer) or\n`\"off\"` (neither: a tarball or AppImage on Ubuntu 23.10 and later, or root; see\n`desktop.linux.requireSandbox`). `null` on other platforms and backends; `\"unknown\"` on a\nruntime without the sandbox probe."
             },
             {
               "kind": "property",
@@ -58299,7 +58753,7 @@
               "kind": "property",
               "name": "fileChooser",
               "signature": "readonly fileChooser: \"portal\" | \"gtk\" | PlatformUnknown | null",
-              "doc": "Linux: the chooser a file dialog uses: `\"portal\"` (xdg-desktop-portal's FileChooser, the\ndesktop's own dialog) or `\"gtk\"` (GTK's chooser: the portal offers none). `null` elsewhere;\n`\"unknown\"` before runtime 2.9.7-denext.12."
+              "doc": "Linux: the chooser a file dialog uses: `\"portal\"` (xdg-desktop-portal's FileChooser, the\ndesktop's own dialog) or `\"gtk\"` (GTK's chooser: the portal offers none). `null` elsewhere;\n`\"unknown\"` on a runtime without the file-chooser probe."
             },
             {
               "kind": "property",
@@ -58311,7 +58765,7 @@
               "kind": "property",
               "name": "windowBlur",
               "signature": "readonly windowBlur: \"kwin-wayland\" | \"kwin-x11\" | PlatformUnknown | null",
-              "doc": "Linux: the compositor blurs behind translucent windows, KWin's Blur effect on KDE Plasma:\n`\"kwin-wayland\"` or `\"kwin-x11\"`; `null` when it doesn't (and on macOS / Windows). Probed on\nevery call (the effect can be turned on and off). The WebView backend can put it behind a\nwindow; CEF can't. `\"unknown\"` before runtime 3.0.0-rc.1."
+              "doc": "Linux: the compositor blurs behind translucent windows, KWin's Blur effect on KDE Plasma:\n`\"kwin-wayland\"` or `\"kwin-x11\"`; `null` when it doesn't (and on macOS / Windows). Probed on\nevery call (the effect can be turned on and off). The WebView backend can put it behind a\nwindow; CEF can't. `\"unknown\"` on a runtime without the blur probe."
             },
             {
               "kind": "property",
@@ -58323,7 +58777,7 @@
               "kind": "property",
               "name": "passkeys",
               "signature": "readonly passkeys: \"security-keys\" | PlatformUnknown | null",
-              "doc": "Linux: `\"security-keys\"` when passkeys with USB security keys work natively (the runtime's\nlibwebauthn library is beside its host and can list HID devices); `null` when they don't, and\non macOS / Windows (their OS passkey API; see `passkeysSupported()`). `\"unknown\"` before\nruntime 3.0.0-rc.1, where a Linux window signs in with a passkey through the browser."
+              "doc": "Linux: `\"security-keys\"` when passkeys with USB security keys work natively (the runtime's\nlibwebauthn library is beside its host and can list HID devices); `null` when they don't, and\non macOS / Windows (their OS passkey API; see `passkeysSupported()`). `\"unknown\"` on a runtime\nwithout native Linux passkeys, where a Linux window signs in with a passkey through the browser."
             },
             {
               "kind": "property",
@@ -58335,7 +58789,7 @@
               "kind": "property",
               "name": "microphoneAccess",
               "signature": "readonly microphoneAccess: \"allowed\" | \"denied\" | PlatformUnknown | null",
-              "doc": "Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›\nPrivacy & security › Microphone: the device-wide switch, \"Microphone access\" and \"Let desktop\napps access your microphone\"): `\"allowed\"`, or `\"denied\"`, in which case the window refuses\nthe page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`\ncapability on, and `checkPermission(\"microphone\")` reads `\"blocked\"`. `null` when no switch is\nset, and on macOS / Linux. Probed on every call (the user can flip a switch while the app\nruns). `\"unknown\"` before runtime 3.0.0-denext.16."
+              "doc": "Windows: whether the OS lets this app use the microphone, from its privacy switches (Settings ›\nPrivacy & security › Microphone: the device-wide switch, \"Microphone access\" and \"Let desktop\napps access your microphone\"): `\"allowed\"`, or `\"denied\"`, in which case the window refuses\nthe page's `getUserMedia({ audio })` with `NotAllowedError` even with the `microphone`\ncapability on, and `checkPermission(\"microphone\")` reads `\"blocked\"`. `null` when no switch is\nset, and on macOS / Linux. Probed on every call (the user can flip a switch while the app\nruns). `\"unknown\"` on a runtime that can't read the switches."
             },
             {
               "kind": "property",
@@ -58389,7 +58843,7 @@
               "kind": "property",
               "name": "activationPolicy",
               "signature": "readonly activationPolicy: boolean",
-              "doc": "{@linkcode setActivationPolicy} works (macOS; runtime 3.0.0-denext.6)."
+              "doc": "{@linkcode setActivationPolicy} works (macOS, on a runtime with activation policies)."
             },
             {
               "kind": "property",
@@ -58407,37 +58861,37 @@
               "kind": "property",
               "name": "trayRightClick",
               "signature": "readonly trayRightClick: boolean",
-              "doc": "A tray's `contextmenu` fires on a right click (runtime 3.0.0-denext.6)."
+              "doc": "A tray's `contextmenu` fires on a right click (`false` on a runtime without tray mouse events)."
             },
             {
               "kind": "property",
               "name": "trayMiddleClick",
               "signature": "readonly trayMiddleClick: boolean",
-              "doc": "A tray's `auxclick` fires on a middle click (runtime 3.0.0-denext.6)."
+              "doc": "A tray's `auxclick` fires on a middle click (`false` on a runtime without tray mouse events)."
             },
             {
               "kind": "property",
               "name": "trayHover",
               "signature": "readonly trayHover: boolean",
-              "doc": "A tray's `mouseenter` / `mouseleave` fire (macOS, Windows; runtime 3.0.0-denext.6)."
+              "doc": "A tray's `mouseenter` / `mouseleave` fire (macOS, Windows, on a runtime with tray mouse events)."
             },
             {
               "kind": "property",
               "name": "trayModifiers",
               "signature": "readonly trayModifiers: boolean",
-              "doc": "A tray event's detail carries the modifier keys (runtime 3.0.0-denext.6)."
+              "doc": "A tray event's detail carries the modifier keys (`false` on a runtime without the detail)."
             },
             {
               "kind": "property",
               "name": "trayPosition",
               "signature": "readonly trayPosition: boolean",
-              "doc": "A tray event's detail carries the cursor position (runtime 3.0.0-denext.6)."
+              "doc": "A tray event's detail carries the cursor position (`false` on a runtime without the detail)."
             },
             {
               "kind": "property",
               "name": "trayPopUpMenu",
               "signature": "readonly trayPopUpMenu: boolean",
-              "doc": "A tray's `popUpMenu()` opens its menu (macOS, Windows; runtime 3.0.0-denext.6)."
+              "doc": "A tray's `popUpMenu()` opens its menu (macOS, Windows, on a runtime that can)."
             },
             {
               "kind": "property",
@@ -58505,7 +58959,7 @@
               "kind": "property",
               "name": "destructive",
               "signature": "readonly destructive?: boolean",
-              "doc": "An action that deletes or discards: drawn in red on macOS, Linux (WebKitGTK) and the CEF\nbackend's menus, as a normal item in Windows' menus (`appCapabilities().destructive`; runtime\n2.9.7-denext.20)."
+              "doc": "An action that deletes or discards: drawn in red on macOS, Linux (WebKitGTK) and the CEF\nbackend's menus, as a normal item in Windows' menus (`appCapabilities().destructive` says\nwhether the runtime draws it; an older runtime draws a normal item)."
             }
           ]
         },
@@ -58669,19 +59123,19 @@
               "kind": "method",
               "name": "onClick",
               "signature": "onClick(handler: (event: \"click\" | \"doubleClick\", detail: TrayMouseDetail | null) => void): () => void",
-              "doc": "Call `handler` on each click of the primary button (`\"click\"`) and each double click\n(`\"doubleClick\"`), with the runtime's detail (button, modifiers, position, `double`; runtime\n3.0.0-denext.6, else `null`). A right click is a `contextmenu` event ({@linkcode AppTray.on}).\nReturns the unsubscribe."
+              "doc": "Call `handler` on each click of the primary button (`\"click\"`) and each double click\n(`\"doubleClick\"`), with the runtime's detail (button, modifiers, position, `double`), or `null`\non a runtime without it (`trayModifiers` / `trayPosition` in {@linkcode appCapabilities}). A right click is a `contextmenu` event ({@linkcode AppTray.on}).\nReturns the unsubscribe."
             },
             {
               "kind": "method",
               "name": "on",
               "signature": "on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void",
-              "doc": "Call `handler` on each `type` event, by its DOM name: `click` (the primary button), `dblclick`,\n`contextmenu` (a right click), `auxclick` (a middle click), `mouseenter` / `mouseleave` (hover;\nmacOS, Windows). All but `click` / `dblclick` need runtime 3.0.0-denext.6 (`trayRightClick`,\n`trayMiddleClick`, `trayHover` in {@linkcode appCapabilities}). Returns the unsubscribe."
+              "doc": "Call `handler` on each `type` event, by its DOM name: `click` (the primary button), `dblclick`,\n`contextmenu` (a right click), `auxclick` (a middle click), `mouseenter` / `mouseleave` (hover;\nmacOS, Windows). All but `click` / `dblclick` need a runtime with tray mouse events\n(`trayRightClick`, `trayMiddleClick`, `trayHover` in {@linkcode appCapabilities}). Returns the unsubscribe."
             },
             {
               "kind": "method",
               "name": "popUpMenu",
               "signature": "popUpMenu(): Promise<boolean>",
-              "doc": "Open the tray's menu at the icon now (Electron's `popUpContextMenu`): from another gesture than\nthe right click, which opens it by itself (a Control-click on macOS, a left click in an app that\nwants its menu there, a shortcut). Resolves `false` without a menu, on a runtime before\n3.0.0-denext.6, or where the OS can't (Linux, where the tray host opens the menu itself;\n`trayPopUpMenu`)."
+              "doc": "Open the tray's menu at the icon now (Electron's `popUpContextMenu`): from another gesture than\nthe right click, which opens it by itself (a Control-click on macOS, a left click in an app that\nwants its menu there, a shortcut). Resolves `false` without a menu, on a runtime without\nit, or where the OS can't (Linux, where the tray host opens the menu itself;\n`trayPopUpMenu`)."
             },
             {
               "kind": "method",
@@ -59064,7 +59518,7 @@
           "doc": "The app's macOS activation policy.",
           "docFull": "The app's macOS activation policy.",
           "params": [],
-          "returns": "The policy, or null where there is none (Windows, Linux, a runtime before 3.0.0-denext.6).",
+          "returns": "The policy, or null where there is none (Windows, Linux, a runtime without activation policies: appCapabilities().activationPolicy is false).",
           "examples": [],
           "denextOnly": true
         },
@@ -59152,8 +59606,8 @@
           "slug": "onAppCapabilitiesChanged",
           "kind": "function",
           "signature": "onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void",
-          "doc": "Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.",
-          "docFull": "Call `handler` with fresh {@linkcode appCapabilities} whenever the runtime says what the session\nprovides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went\naway, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray\nicon again when `tray` turns `true`. Older runtimes never call it.",
+          "doc": "Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. A runtime without Deno.desktop.platformFeatures() never calls it.",
+          "docFull": "Call `handler` with fresh {@linkcode appCapabilities} whenever the runtime says what the session\nprovides may have changed (Linux: a tray host started or went away, as when the GNOME\nAppIndicator extension is enabled while the app runs). Create the tray icon again when `tray`\nturns `true`. A runtime without `Deno.desktop.platformFeatures()` never calls it.",
           "params": [
             {
               "name": "handler",
@@ -59203,8 +59657,8 @@
           "slug": "onUserActivityContinued",
           "kind": "function",
           "signature": "onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void",
-          "doc": "Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.",
-          "docFull": "Call `handler` with each user activity the user continues: Handoff from another device, or a\nSpotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to\nthe first handler. Treat its fields as untrusted input, as a deep link's.",
+          "doc": "Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, on a runtime with user activities; never called elsewhere). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.",
+          "docFull": "Call `handler` with each user activity the user continues: Handoff from another device, or a\nSpotlight result (macOS, on a runtime with user activities; never called elsewhere). The one that launched the app is delivered to\nthe first handler. Treat its fields as untrusted input, as a deep link's.",
           "params": [
             {
               "name": "handler",
@@ -59220,8 +59674,8 @@
           "slug": "PlatformUnknown",
           "kind": "typeAlias",
           "signature": "type PlatformUnknown = \"unknown\"",
-          "doc": "A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).",
-          "docFull": "A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).",
+          "doc": "A session fact the runtime could not report (a runtime without that probe, or no answer).",
+          "docFull": "A session fact the runtime could not report (a runtime without that probe, or no answer).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -59293,8 +59747,8 @@
           "slug": "setActivationPolicy",
           "kind": "function",
           "signature": "setActivationPolicy(policy: ActivationPolicy): Promise<boolean>",
-          "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front. A tray app should stay accessory for good and bring its windows up with focusWindow() / a window ref's focus(), which activate it without changing the policy: on macOS an app installed under /Applications that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it gets none. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
-          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front. A tray app should stay\naccessory for good and bring its windows up with `focusWindow()` / a window ref's `focus()`,\nwhich activate it without changing the policy: on macOS an app installed under /Applications\nthat was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on\nquit, or on switching back to accessory), and there is no opt-out; installed anywhere else it\ngets none. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
+          "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front. A tray app should stay accessory for good and bring its windows up with focusWindow() / a window ref's focus(), which activate it without changing the policy: on macOS an app installed under /Applications that was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on quit, or on switching back to accessory), and there is no opt-out; installed anywhere else it gets none. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs a runtime with activation policies (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
+          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front. A tray app should stay\naccessory for good and bring its windows up with `focusWindow()` / a window ref's `focus()`,\nwhich activate it without changing the policy: on macOS an app installed under /Applications\nthat was ever regular gets a tile in the Dock's recent apps once its running tile goes away (on\nquit, or on switching back to accessory), and there is no opt-out; installed anywhere else it\ngets none. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs a runtime with activation\npolicies (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
           "params": [
             {
               "name": "policy",
@@ -59329,8 +59783,8 @@
           "slug": "setBadge",
           "kind": "function",
           "signature": "setBadge(badge: string | number | null): Promise<void>",
-          "doc": "Show a badge: on the Dock icon on macOS, and as a \"(N) \" prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, \"\" or 0 removes it.",
-          "docFull": "Show a badge: on the Dock icon on macOS, and as a `\"(N) \"` prefix of the window titles on\nWindows. On Linux a count shows on the app's launcher where a dock reads launcher badges\n(runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same\ntitle prefix; `appCapabilities().badgeShows` says which. `null`, `\"\"` or `0` removes it.",
+          "doc": "Show a badge: on the Dock icon on macOS, and as a \"(N) \" prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (Ubuntu's dock, Dash to Dock, Plasma's task manager; a runtime that probes them), else as the same title prefix; appCapabilities().badgeShows says which. null, \"\" or 0 removes it.",
+          "docFull": "Show a badge: on the Dock icon on macOS, and as a `\"(N) \"` prefix of the window titles on\nWindows. On Linux a count shows on the app's launcher where a dock reads launcher badges\n(Ubuntu's dock, Dash to Dock, Plasma's task manager; a runtime that probes them), else as the\nsame title prefix; `appCapabilities().badgeShows` says which. `null`, `\"\"` or `0` removes it.",
           "params": [
             {
               "name": "badge",
@@ -59428,8 +59882,8 @@
           "slug": "setUserActivity",
           "kind": "function",
           "signature": "setUserActivity(activity: UserActivity): Promise<boolean>",
-          "doc": "Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under denext's pinned runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.",
-          "docFull": "Make `activity` the app's current user activity, for Handoff (the user's other devices offer to\ncontinue it) and Spotlight (`searchable: true` indexes it). macOS only, under denext's pinned\nruntime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves\n`false` and nothing happens.",
+          "doc": "Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under a denext Deno Desktop runtime with user activities; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.",
+          "docFull": "Make `activity` the app's current user activity, for Handoff (the user's other devices offer to\ncontinue it) and Spotlight (`searchable: true` indexes it). macOS only, under a denext Deno Desktop\nruntime with user activities; elsewhere (Windows, Linux, an older runtime) it resolves `false`\nand nothing happens.",
           "params": [
             {
               "name": "activity",
@@ -59676,8 +60130,8 @@
           "slug": "TrayMouseDetail",
           "kind": "interface",
           "signature": "interface TrayMouseDetail",
-          "doc": "What a tray mouse event carries (the runtime's TrayMouseEvent, runtime 3.0.0-denext.6+).",
-          "docFull": "What a tray mouse event carries (the runtime's `TrayMouseEvent`, runtime `3.0.0-denext.6`+).",
+          "doc": "What a tray mouse event carries (the runtime's TrayMouseEvent, where it has one).",
+          "docFull": "What a tray mouse event carries (the runtime's `TrayMouseEvent`, where it has one).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -61290,7 +61744,7 @@
           "kind": "function",
           "signature": "checkPermission(name: PermissionName): Promise<PermissionState>",
           "doc": "The current status of a permission, without prompting (see PermissionState for what each status means).",
-          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`\nwhile the OS's privacy switch for the device is off (the runtime from 3.0.0-denext.16;\n`appCapabilities()` from `denext/desktop/app` says which switch). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
+          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting, and on Windows `microphone` / `camera` read `blocked`\nwhile the OS's privacy switch for the device is off (on a runtime that reads the switches;\n`appCapabilities()` from `denext/desktop/app` says which switch, `\"unknown\"` elsewhere). It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
           "params": [
             {
               "name": "name",
@@ -61533,7 +61987,7 @@
               "kind": "property",
               "name": "iconPng",
               "signature": "readonly iconPng?: string",
-              "doc": "A PNG (base64) drawn next to the label by a Deno Desktop window's OS menu, where the backend\ndraws menu icons (runtime 2.9.7-denext.20: macOS, Windows, Linux WebKitGTK; on macOS a\nblack-and-transparent image is a template image). Other paths show `icon` / `systemIcon`."
+              "doc": "A PNG (base64) drawn next to the label by a Deno Desktop window's OS menu, where the backend\ndraws menu icons (`appCapabilities().icons`: macOS, Windows, Linux WebKitGTK; on macOS a\nblack-and-transparent image is a template image). Other paths show `icon` / `systemIcon`."
             },
             {
               "kind": "property",
@@ -61993,7 +62447,7 @@
           "kind": "function",
           "signature": "deliveredNotifications(): Promise<DeliveredNotification[]>",
           "doc": "The notifications the app has in the notification centre: local ones and remote pushes alike, most platforms newest first as the OS reports them. Group summaries (Android) are not listed.",
-          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the\n  OS's notification centre still shows (runtime 2.9.7-denext.20), local ones the app scheduled\n  through denext. On Linux, whose notification servers keep no list, the ones denext posted\n  during this run whose time has come and that were not removed through denext: one the user\n  dismissed is still listed, and one from an earlier run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
+          "docFull": "The notifications the app has in the notification centre: local ones and remote pushes alike,\nmost platforms newest first as the OS reports them. Group summaries (Android) are not listed.\n\n- iOS / Android: everything the OS shows for the app (needs `denext mobile add\n  local-notifications` or `push`, generation 3 of denext's `DenextSettings` plugin; it rejects in\n  a binary built before, until the command is re-run and a new binary shipped).\n- Deno Desktop (`notifications` capability): on macOS and Windows the app's notifications the\n  OS's notification centre still shows (where the runtime reads it), local ones the app scheduled\n  through denext. On Linux, whose notification servers keep no list, the ones denext posted\n  during this run whose time has come and that were not removed through denext: one the user\n  dismissed is still listed, and one from an earlier run is not.\n- Web: the open notifications `scheduleNotification` showed from this page, plus the service\n  worker registration's (a web push's thread is its `data.threadId`).",
           "params": [],
           "returns": "The delivered notifications.",
           "examples": [
@@ -68963,7 +69417,7 @@
           "kind": "function",
           "signature": "share(opts: ShareOptions): Promise<ShareResult>",
           "doc": "Open the share sheet.",
-          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- In a Deno Desktop window under denext's pinned runtime (2.9.7-denext.20 or later), the OS\n  share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows\n  `DataTransferManager` (it reports no more than that the sheet was shown: `\"shared\"`). Linux has\n  none, so the paths below run. To share files, use `shareFromWindow` from\n  `denext/desktop/window`.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
+          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- In a Deno Desktop window on a runtime with share sheets (`windowCapabilities().share`), the OS\n  share sheet over the window for a `text` or `url`: macOS `NSSharingServicePicker`, Windows\n  `DataTransferManager` (it reports no more than that the sheet was shown: `\"shared\"`). Linux has\n  none, so the paths below run. To share files, use `shareFromWindow` from\n  `denext/desktop/window`.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
           "params": [
             {
               "name": "opts",
@@ -69096,7 +69550,7 @@
           "kind": "function",
           "signature": "showContextMenu(items: readonly ContextMenuItem[], options?: ContextMenuOptions): Promise<string | null>",
           "doc": "Open a context menu and resolve the chosen item's id, or null if it was dismissed.",
-          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, `destructive` items in red (macOS, Linux and\n  the CEF backend; runtime 2.9.7-denext.20), an `iconPng` next to the label where the backend\n  draws icons, and `null` when the user dismisses it (`icon` and `systemIcon` are not drawn there;\n  a `title` is a disabled first item). Without the capability, or under the stock runtime, the\n  in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
+          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, `destructive` items in red (macOS, Linux and\n  the CEF backend, where `appCapabilities().destructive`), an `iconPng` next to the label where the backend\n  draws icons, and `null` when the user dismisses it (`icon` and `systemIcon` are not drawn there;\n  a `title` is a disabled first item). Without the capability, or under the stock runtime, the\n  in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped. Aborting\n`options.signal` closes the in-page popover and the shell's native menu (the plugin's\ngeneration-2 `dismiss`), which then resolve `null`.",
           "params": [
             {
               "name": "items",
@@ -76864,7 +77318,7 @@
               "kind": "property",
               "name": "net",
               "signature": "net: DeployNetPermissions | null",
-              "doc": "The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno from\n3.0.0-rc.2: `--allow-net-connect` / `--allow-net-listen`). `[\"*\"]` is a direction left\nunscoped. `listen` is `[\"*\"]` unless `compile.permissions.netListen` names addresses: an\nadapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),\nso nothing else in the process can open a listener. `null` under `allowAll`."
+              "doc": "The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno:\n`--allow-net-connect` / `--allow-net-listen`). `[\"*\"]` is a direction left\nunscoped. `listen` is `[\"*\"]` unless `compile.permissions.netListen` names addresses: an\nadapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),\nso nothing else in the process can open a listener. `null` under `allowAll`."
             }
           ]
         },
@@ -77046,19 +77500,19 @@
               "kind": "property",
               "name": "idleTrim",
               "signature": "idleTrim?: boolean",
-              "doc": "Whether a server started on denext's pinned Deno toolchain should run with its idle trim\n(`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):\nthe pinned toolchain has it (3.0.0-rc.5 or later) and the project does not opt out\n(`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A\n`--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1."
+              "doc": "Whether a server started on denext's Deno toolchain should run with its idle trim\n(`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):\nthe toolchain has the idle trim (stock Deno has none) and the project does not opt out\n(`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A\n`--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1."
             },
             {
               "kind": "property",
               "name": "limits",
               "signature": "limits?: string[]",
-              "doc": "The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,\n`--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on\ndenext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`\n(a `--compile` executable has them baked in already). Absent in a manifest from before denext\n4.10."
+              "doc": "The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,\n`--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on\ndenext's Deno (stock Deno has no such flags): a generator puts them on the server's `deno run`\n(a `--compile` executable has them baked in already). Absent in a manifest from before denext\n4.10."
             },
             {
               "kind": "property",
               "name": "tls",
               "signature": "tls?: DeployServerTls | null",
-              "doc": "`start.tls` — the server serves HTTPS itself — with each certificate's host names and the\nenvironment variables naming its PEM files (never the paths or the files), for a generator to\npass those variables through, make the files readable and probe health over `https:`; `null`\nwhen the server serves plain HTTP. Several certificates need denext's Deno from runtime\n3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3."
+              "doc": "`start.tls` — the server serves HTTPS itself — with each certificate's host names and the\nenvironment variables naming its PEM files (never the paths or the files), for a generator to\npass those variables through, make the files readable and probe health over `https:`; `null`\nwhen the server serves plain HTTP. Several certificates need denext's Deno with per-name\ncertificates and the unstable net APIs on. Absent in a manifest from before denext 4.10.3."
             }
           ]
         },
@@ -78270,8 +78724,8 @@
           "slug": "denoSqlHasColumns",
           "kind": "function",
           "signature": "denoSqlHasColumns(): Promise<boolean>",
-          "doc": "Whether this runtime's Deno.SQL reports result-set column metadata (result.columns), which the Prisma adapter needs: denext's Deno runtime 3.0.0-rc.1 and later. Probes an in-memory SQLite database, so it needs no permission and touches no file.",
-          "docFull": "Whether this runtime's `Deno.SQL` reports result-set column metadata (`result.columns`),\nwhich the Prisma adapter needs: denext's Deno runtime 3.0.0-rc.1 and later. Probes an\nin-memory SQLite database, so it needs no permission and touches no file.",
+          "doc": "Whether this runtime's Deno.SQL reports result-set column metadata (result.columns), which the Prisma adapter needs (denext's Deno does; an older runtime does not). Probes an in-memory SQLite database, so it needs no permission and touches no file.",
+          "docFull": "Whether this runtime's `Deno.SQL` reports result-set column metadata (`result.columns`),\nwhich the Prisma adapter needs (denext's Deno does; an older runtime does not). Probes an\nin-memory SQLite database, so it needs no permission and touches no file.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -78860,7 +79314,7 @@
               "kind": "property",
               "name": "columns",
               "signature": "columns?: SqlColumn[]",
-              "doc": "The result's columns, in order (runtime 3.0.0-rc.1 and later)."
+              "doc": "The result's columns, in order (where `denoSqlHasColumns()`; absent on an older runtime)."
             },
             {
               "kind": "property",
@@ -81313,7 +81767,7 @@
               "kind": "property",
               "name": "net",
               "signature": "net: DeployNetPermissions | null",
-              "doc": "The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno from\n3.0.0-rc.2: `--allow-net-connect` / `--allow-net-listen`). `[\"*\"]` is a direction left\nunscoped. `listen` is `[\"*\"]` unless `compile.permissions.netListen` names addresses: an\nadapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),\nso nothing else in the process can open a listener. `null` under `allowAll`."
+              "doc": "The network grant by direction, for a runtime that splits `--allow-net` (denext's Deno:\n`--allow-net-connect` / `--allow-net-listen`). `[\"*\"]` is a direction left\nunscoped. `listen` is `[\"*\"]` unless `compile.permissions.netListen` names addresses: an\nadapter that knows the port it serves on scopes it there (`:<port>`, or `<host>:<port>`),\nso nothing else in the process can open a listener. `null` under `allowAll`."
             }
           ]
         },
@@ -81495,19 +81949,19 @@
               "kind": "property",
               "name": "idleTrim",
               "signature": "idleTrim?: boolean",
-              "doc": "Whether a server started on denext's pinned Deno toolchain should run with its idle trim\n(`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):\nthe pinned toolchain has it (3.0.0-rc.5 or later) and the project does not opt out\n(`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A\n`--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1."
+              "doc": "Whether a server started on denext's Deno toolchain should run with its idle trim\n(`DENO_UNSTABLE_IDLE_TRIM=1`: a full GC and `malloc_trim(0)` once the event loop goes idle):\nthe toolchain has the idle trim (stock Deno has none) and the project does not opt out\n(`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0` when the manifest was written). A\n`--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1."
             },
             {
               "kind": "property",
               "name": "limits",
               "signature": "limits?: string[]",
-              "doc": "The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,\n`--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on\ndenext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`\n(a `--compile` executable has them baked in already). Absent in a manifest from before denext\n4.10."
+              "doc": "The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,\n`--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on\ndenext's Deno (stock Deno has no such flags): a generator puts them on the server's `deno run`\n(a `--compile` executable has them baked in already). Absent in a manifest from before denext\n4.10."
             },
             {
               "kind": "property",
               "name": "tls",
               "signature": "tls?: DeployServerTls | null",
-              "doc": "`start.tls` — the server serves HTTPS itself — with each certificate's host names and the\nenvironment variables naming its PEM files (never the paths or the files), for a generator to\npass those variables through, make the files readable and probe health over `https:`; `null`\nwhen the server serves plain HTTP. Several certificates need denext's Deno from runtime\n3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3."
+              "doc": "`start.tls` — the server serves HTTPS itself — with each certificate's host names and the\nenvironment variables naming its PEM files (never the paths or the files), for a generator to\npass those variables through, make the files readable and probe health over `https:`; `null`\nwhen the server serves plain HTTP. Several certificates need denext's Deno with per-name\ncertificates and the unstable net APIs on. Absent in a manifest from before denext 4.10.3."
             }
           ]
         },

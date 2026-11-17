@@ -708,14 +708,15 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Native desktop capabilities** — the `denext/mobile` calls reach the OS
   through a token-gated bridge once `denext desktop add <capability>` lists them
   in `desktop.capabilities` (which also derives the packaged app's permissions):
-  `secureStore` (Keychain, PasswordVault, libsecret), `fs` / `sqlite` in the
+  `secureStore` (Keychain, Credential Manager, libsecret), `fs` / `sqlite` in the
   app's folders, the OS's own open/save panels, the OS clipboard (text, HTML,
   PNG), native notifications (scheduled, repeating, action buttons, launch
-  clicks) and the web `Notification` API on top of them, native context menus,
+  clicks) and the web `Notification` API on top of them (the backend posts its own with
+  `app.notify()` / `host.notify()`), native context menus,
   `shell`, `keep-awake`, `device`, global shortcuts, launch at login and native
   passkeys (`{ rpIds }` required). Picked files and folders travel as scoped
   handles, never paths. — `src/desktop/caps/mod.ts`,
-  `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
+  `src/desktop/notification-shim.ts`, `src/desktop/notify.ts`, `src/cli/commands/desktop-add.ts`.
 - **`denext desktop doctor [--linux] [--json]`** — what the runtime will find
   on this machine, with a fix for each gap: the pinned runtime and its cache,
   the `deno` version, and on Linux the session's tray host (a StatusNotifierWatcher,
@@ -749,7 +750,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
   resolves to `{ window, trust, emit }` for pushing OS events to the page. —
   `src/desktop/extension.ts`, `src/build/desktop.ts`.
-- **Terminals in a desktop app** — the `pty` capability (runtime 3.0.0-denext.12+,
+- **Terminals in a desktop app** — the `pty` capability (where the runtime has
   `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `attachPty` /
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
   to its window (`onWindowClose: "kill" | "detach"`, `replayBytes` replayed on attach), and
@@ -757,12 +758,14 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `--allow-run`). On Windows a terminal is a ConPTY, under a runtime whose `Deno.openPty`
   runs there (else `unsupported`). — `src/desktop/caps/pty.ts`.
 - **Microphone and camera** — the `microphone` / `camera` capabilities let the app's own
-  origin call `getUserMedia` in a packaged app (runtime 3.0.0-denext.10+); every other
+  origin call `getUserMedia` in a packaged app (on a runtime that grants capture); every other
   origin and screen capture are refused, the OS's consent still applies (macOS asks with
-  `usageDescription`), and with Windows' privacy switch off the window refuses the device
+  `usageDescription`; `speechRecognitionUsageDescription` adds macOS's
+  `NSSpeechRecognitionUsageDescription` for the window's own speech recognition), and with
+  Windows' privacy switch off the window refuses the device
   (`checkPermission` reads `blocked`). — `src/build/desktop-media-capture.ts`,
   `src/build/desktop-capabilities.ts`.
-- **System stats** — the `systemStats` capability (runtime 3.0.0-denext.16):
+- **System stats** — the `systemStats` capability (where the runtime has `Deno.desktop.systemStats`):
   `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` give the machine's
   aggregate CPU, GPU and memory load in percent, sampled natively with no Deno permission
   and no per-process data. — `src/desktop/caps/system-stats.ts`,
@@ -776,7 +779,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Native message boxes for extensions** — `host.confirm({ message, detail, buttons,
   defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
   TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window
-  open (runtime 3.0.0-denext.16). — `src/desktop/extension.ts`.
+  open (`unsupported` on a runtime without it). — `src/desktop/extension.ts`.
 - **App-level desktop hooks** — `desktop.menu.window.items` add the app's own Window-menu items
   (`runDesktop({ onWindowMenuItem })` / `host.onWindowMenuItem(fn)`); `runDesktop({
   onSecondInstance })`, `app.onSecondInstance(fn)` and `host.onSecondInstance(fn)` hear a
@@ -820,7 +823,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
 - **Desktop kitchen sink, window-tested** — `examples/desktop-kitchen-sink`
   turns on every capability, packages the app on the pinned runtime and asserts
   each from the page (deep links, a second instance, a real update installed and
-  rolled back) on Linux, macOS and Windows in CI. —
+  rolled back, and the backend hooks: Window-menu items, `onSecondInstance`,
+  `onWillNavigate`, `ctx.caller`, `notify()`, a quit guard's `host.confirm` box)
+  on Linux, macOS and Windows in CI. —
   `.github/workflows/desktop-window.yml`.
 - **Deno Desktop self-updater** — `denext/desktop/updater`
   (`checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate`,

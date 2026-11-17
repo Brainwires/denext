@@ -16,10 +16,12 @@ import {
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
   supportsInitialOverlay,
+  supportsMacosHiddenMode,
   supportsMacSecureStore,
   supportsMediaCapture,
   supportsOverlayTray,
   supportsSidecarIntegrity,
+  supportsWindowsSecureStore,
 } from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
@@ -123,6 +125,24 @@ export function initialOverlayRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsInitialOverlay);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process launches a runtime with
+ * the macOS hidden mode (`initialWindow.macosHiddenMode` in `.deno-desktop/app.json`): denext's
+ * pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR`
+ * build of unknown version) from `FIRST_MACOS_HIDDEN_MODE_RUNTIME`. An older runtime refuses an
+ * app.json with the key, so the app would not start.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the key.
+ */
+export function macosHiddenModeRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsMacosHiddenMode);
 }
 
 /**
@@ -239,7 +259,8 @@ export function desktopDataTokenRuntimeProblem(
   }
   if (!supportsDesktopDataToken(version)) {
     return `the pinned Deno Desktop runtime is ${version}, and expanding $DENO_DESKTOP_DATA / ` +
-      "$DENO_DESKTOP_CACHE needs 3.0.0-denext.8 or later. Upgrade denext (`denext upgrade`)";
+      "$DENO_DESKTOP_CACHE needs a runtime that expands them, which it is not. Upgrade denext " +
+      "(`denext upgrade`): its pinned runtime does";
   }
   if (!compilerBakesAppIdentifier(compiler)) {
     return `the app is compiled by stock Deno ${compiler.deno}, which does not write ` +
@@ -301,6 +322,24 @@ export function macSecureStoreRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsMacSecureStore);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime with
+ * its own Windows secure store (`Deno.desktop.secureStore` on Windows: the Credential Manager):
+ * denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local
+ * `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) from `FIRST_WINDOWS_SECURE_STORE_RUNTIME`
+ * (`3.0.0-denext.25`). Otherwise Windows stores through Windows PowerShell and the PasswordVault.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether the runtime has the store.
+ */
+export function windowsSecureStoreRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsWindowsSecureStore);
 }
 
 /**

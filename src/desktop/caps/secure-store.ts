@@ -31,8 +31,18 @@
  * no item is moved, and a runtime without its own macOS store fails every call
  * `backend_unavailable`.
  *
- * Otherwise (macOS under an older or the stock runtime, and Windows) the backends are the OS
- * credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
+ * Windows: the runtime's own store when it has one (`Deno.desktop.secureStore` on Windows, see
+ * `supportsWindowsSecureStore`): the Credential Manager, written by the app's own process
+ * (DPAPI-encrypted generic credentials named per app id, values up to 64 KiB), with no PowerShell
+ * and no `--allow-run`. The values stay base64 as below, so the items an older denext wrote to the
+ * WinRT PasswordVault (resource = service, user name = key) need no conversion: the runtime moves
+ * each one over on its lookup during the first run of the updated app (the app data directory
+ * existed at start and holds no marker yet). A key first read after that run stays in the
+ * PasswordVault, which nothing here reads any more.
+ *
+ * Otherwise (macOS under an older or the stock runtime, and Windows under one without its own
+ * store) the backends are the OS credential CLIs (subprocess, argv — no shell), chosen for safety
+ * over raw FFI:
  * - macOS (only while `desktop.secureStore.legacy` is on): `security
  *   add/find/delete-generic-password` (the login Keychain). A write runs
  *   `security -i` and sends the command line on STDIN, so the secret is never argv.
@@ -70,6 +80,7 @@ import { secureStorePermissionSet } from "../secure-store-config.ts";
 import {
   supportsDesktopBakedCapabilities,
   supportsMacSecureStore,
+  supportsWindowsSecureStore,
 } from "../../build/deno-version.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 import { platformFacts } from "./platform.ts";
@@ -271,7 +282,8 @@ export interface SecureStoreDeps {
   readonly probeTimeoutMs?: number;
   /**
    * The runtime's app API (default `Deno.desktop`): its `secureStore`, when `supported`, is the
-   * Linux and macOS backend; tests pass a fake, or `null` for a runtime without one.
+   * Linux and macOS backend, and the Windows one under a runtime with its own Windows store; tests
+   * pass a fake, or `null` for a runtime without one.
    */
   readonly api?: DesktopAppApi | null;
   /**
@@ -1046,6 +1058,20 @@ function noMacStoreError(): DesktopCapError {
   );
 }
 
+/**
+ * `backend_unavailable` on Windows under a runtime that has its own Windows store (so the app holds
+ * no PowerShell grant) when that store does not answer `supported`: never a PowerShell or plaintext
+ * fallback.
+ */
+function noWindowsStoreError(): DesktopCapError {
+  return new DesktopCapError(
+    "backend_unavailable",
+    "the secure store on Windows is the Deno Desktop runtime's own (the Credential Manager), " +
+      "which is not available in this process",
+    { status: 503 },
+  );
+}
+
 /** What {@linkcode secureBackends} returns: each caller's backend, resolved per call. */
 interface SecureBackends {
   /** The pages' backend (`<service>/page`, with the earlier items moved in). */
@@ -1057,7 +1083,8 @@ interface SecureBackends {
 /**
  * The backends for each call: Linux, the runtime's store (`backend_unavailable` when the runtime
  * has none); macOS, the runtime's store (with the `security` items moved over while the legacy move
- * is on), else `security` while the legacy move is on, else `backend_unavailable`; Windows,
+ * is on), else `security` while the legacy move is on, else `backend_unavailable`; Windows, the
+ * runtime's store where the runtime has one (`backend_unavailable` when it does not answer), else
  * PowerShell + PasswordVault. Each caller's items live under its own namespace
  * ({@linkcode secureStoreNamespace}). Keeps the Linux probe and the movers between calls.
  */
@@ -1066,6 +1093,8 @@ function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): Secur
   const legacy = deps.legacy ?? true;
   const answerMs = deps.answerTimeoutMs ?? LINUX_ANSWER_TIMEOUT_MS;
   const probeMs = deps.probeTimeoutMs ?? LINUX_PROBE_TIMEOUT_MS;
+  /** Windows: the runtime's own store (the Credential Manager) replaces PowerShell. */
+  const windowsRuntime = supportsWindowsSecureStore(deps.runtimeVersion ?? Deno.version.deno);
   const warn = deps.warn ??
     ((m: string) => console.warn(`denext desktop secureStore (${service}): ${m}`));
   /** The runtime's app API, or `undefined` (none, or reading it threw). */
@@ -1078,7 +1107,7 @@ function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): Secur
   };
   /** The runtime's own secure store when it has one (`supported`), else `undefined`. */
   const runtimeStore = (): RuntimeSecureStore | undefined => {
-    if (os === "windows") return undefined;
+    if (os === "windows" && !windowsRuntime) return undefined;
     try {
       const candidate = appApi()?.secureStore;
       return candidate?.supported === true ? candidate : undefined;
@@ -1105,8 +1134,11 @@ function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): Secur
   };
   /** One namespace as the plain store: no move of any kind. */
   const plain = (ns: string, store: RuntimeSecureStore | undefined): SecureBackend => {
-    if (os === "windows") return cliBackend("windows", ns, run);
     if (store) return runtimeBackend(store, ns, answerMs);
+    if (os === "windows") {
+      if (!windowsRuntime) return cliBackend("windows", ns, run);
+      throw noWindowsStoreError();
+    }
     if (os === "darwin" && legacy) return cliBackend("darwin", ns, run);
     throw os === "linux" ? noLinuxStoreError() : noMacStoreError();
   };
@@ -1152,7 +1184,7 @@ function secureBackends(deps: SecureStoreDeps, os: Os, run: SecureRunner): Secur
  * The permission descriptor shared by all methods ({@linkcode secureStorePermissionSet}, the same
  * function the package scripts bake from): an unscoped `--allow-sys` for the runtime's store while
  * the runtime does not gate it on the baked capability list; on macOS `security` only while the
- * legacy move is on; Windows PowerShell.
+ * legacy move is on; Windows PowerShell only under a runtime without its own Windows store.
  */
 function secureStorePermissions(os: Os, deps: SecureStoreDeps): DesktopPermissions {
   const version = deps.runtimeVersion ?? Deno.version.deno;
@@ -1160,6 +1192,7 @@ function secureStorePermissions(os: Os, deps: SecureStoreDeps): DesktopPermissio
     legacy: deps.legacy ?? true,
     bakedCapabilities: supportsDesktopBakedCapabilities(version),
     macRuntimeStore: supportsMacSecureStore(version),
+    windowsRuntimeStore: supportsWindowsSecureStore(version),
   });
 }
 

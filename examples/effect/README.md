@@ -29,14 +29,14 @@ byte-for-byte identical.
 ## Regenerating
 
 The golden files use published-JSR specifiers so they are machine-independent.
-To refresh them (e.g. after the denext version bumps), from the repo root:
+To refresh them (for example after a denext release), from the repo root:
 
 ```sh
 deno run -A cli.ts migrate examples/effect
 ```
 
 For a **locally runnable** copy (against this checkout, not published JSR),
-migrate a copy with `--denext-local-path`:
+migrate a copy with `--denext-local-path` (also from the repo root):
 
 ```sh
 deno run -A cli.ts migrate <copy> --denext-local-path .

@@ -123,6 +123,7 @@ ours is open yet.
 | [Page downloads](#page-downloads)                                                            | laufey, Deno runtime | planned                                                                      |
 | [The secure store on Linux](#the-secure-store-on-linux)                                      | laufey, Deno, denext | planned                                                                      |
 | [The secure store on macOS](#the-secure-store-on-macos)                                      | laufey, Deno, denext | planned                                                                      |
+| [The secure store on Windows](#the-secure-store-on-windows)                                  | laufey, denext       | planned                                                                      |
 | [Baked capabilities](#baked-capabilities)                                                    | Deno runtime, denext | planned                                                                      |
 | [System stats](#system-stats)                                                                | Deno runtime, denext | planned                                                                      |
 | [The rich clipboard](#the-rich-clipboard)                                                    | laufey, Deno, denext | planned                                                                      |
@@ -185,7 +186,10 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   WKWebView `decidePolicyForNavigationAction` (main frame), WebView2 `NavigationStarting` (main
   frame only), each asked again per redirect. WebKitGTK's navigation policy names no frame, so its
   backend refuses the main frame's response instead (after any redirect): the request has been
-  sent, but nothing from the response is shown or run. The Deno runtime passes the allowed origins
+  sent, but nothing from the response is shown or run. While an `onWillNavigate` handler is
+  subscribed and leaves a navigation to the guard, WebKitGTK decides a page with no child frames
+  at the navigation action instead, before anything loads; with no handler the guard still
+  refuses at the response. The Deno runtime passes the allowed origins
   at startup; denext writes `allowedNavigationOrigins` into `app.json`.
 - **Upstream:** planned.
 
@@ -347,6 +351,40 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   Sasivarnan R), [littledivy/laufey#80](https://github.com/littledivy/laufey/pull/80) (Kenta
   Moriuchi) and [littledivy/laufey#81](https://github.com/littledivy/laufey/pull/81) (Sasivarnan R),
   all open and cherry-picked with their authorship. Ours is planned.
+
+### The macOS hidden mode
+
+- **What:** `macosHiddenMode` on a `BrowserWindow` (and `desktop.initialWindow.macosHiddenMode`
+  in deno.json or `.deno-desktop/app.json`): `"invisible"` (the default) hides a window by keeping
+  it ordered in but invisible (transparent, clicks passing through, never key or main, out of
+  window cycling, Mission Control, the Window menu and screen sharing); `"orderOut"` really removes
+  it. A full-screen window is always ordered out. While an invisible-hidden window is open the app
+  holds an App Nap activity, and occlusion is ignored for its view. Creation time only; other
+  platforms ignore it.
+- **Why:** macOS throttles the page of a window that is ordered out, whatever the page asks, so a
+  hidden window doing the app's background work with `backgroundThrottling: false` lost its timer
+  rate. Kept ordered in and invisible, it keeps full rate; `"orderOut"` is there for a window
+  that should leave the screen completely and may be throttled.
+- **Layer:** laufey (`MacosHiddenMode`), Deno runtime.
+
+### Embedded web views: keyboard and focus
+
+- **What:** for a `Deno.WebView` (`createWebView`): `blur()` returns the keyboard to the window's
+  page without activating the app or reordering windows; a `forwardKeys` entry starting with `!`
+  (`"!CmdOrCtrl+W"`, the `!` counted in the 64 characters) is matched before the app menu's
+  accelerators, where plain entries come after them; `"key"` events carry `type: "keydown"` or
+  `"keyup"` (a forwarded keydown's keyup, and a keyup for every key still down when the view loses
+  the focus); `"focus-change"` carries `reason: "hidden"` or `"blur"` when the app took the focus
+  away, and hiding a focused view gives the keyboard back to the page. `webViewCapabilities()`
+  reports `blur`, `keyUp` and `forwardKeysBeforeMenu`. `evaluate()` runs in the isolated world
+  even under a page CSP that refuses `eval` (on WKWebView and WebKitGTK through the engine's own
+  evaluate, where a promise result isn't awaited).
+- **Why:** an app that embeds another site needs to take the keyboard back (an address bar, a
+  shortcut that closes the view), to see a forwarded key's release so a held shortcut doesn't
+  stick, and to keep a shortcut such as Cmd+W for itself even when the menu binds it.
+- **Layer:** laufey, Deno runtime. `denext/desktop/window` passes `forwardKeys` entries through,
+  so a `!` entry works there; `blur()`, keyups, the `reason` and the three capability keys are
+  the runtime's own API ([Desktop apps](/docs/desktop#desktop-web-views-keys)).
 
 ### Title bar preferences
 
@@ -557,6 +595,29 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
+### The secure store on Windows
+
+- **What:** `Deno.desktop.secureStore` on Windows (from `3.0.0-denext.25`, laufey 0.8.1): a
+  generic credential per (service, account) in the Credential Manager, written by the app's own
+  process (`CredWriteW` / `CredReadW` / `CredDeleteW`, kept for this user on this machine, not
+  roamed), which Windows encrypts with the user's DPAPI key. Each credential's name carries the app
+  id (the packaged app's `desktop.app.identifier`), so one app never reads or overwrites another's
+  item. A value up to 64 KiB is split over several credentials (a reader sees the whole old value
+  or the whole new one); a larger one is refused. Nothing prompts or waits; a logon session with
+  no credential store (a service, an SSH key logon) rejects `SecureStoreUnavailable` with the
+  reason, never a plaintext fallback.
+- **Why:** the runtime had no Windows store, so denext's `secure-store` ran the WinRT
+  `PasswordVault` through Windows PowerShell, which meant baking `--allow-run` of PowerShell, a
+  script interpreter: full trust for any code in the app. With the runtime's store denext bakes no
+  program on Windows. The values keep denext's base64 form, and an item an older denext wrote to
+  the `PasswordVault` (resource = service, user name = key) moves into the Credential Manager on
+  the app's lookup of it during its first run of the updated build (the Linux rule: a
+  `.laufey-secret-store-v2` marker in the app data directory ends that run's window, and only an
+  app that had run here before, with an identifier, moves anything). A key the app first reads
+  after that run stays in the `PasswordVault`, which the app no longer reads.
+- **Layer:** laufey, denext.
+- **Upstream:** planned.
+
 ### Baked capabilities
 
 - **What:** the embedded `.deno-desktop/app.json` takes `"capabilities": string[]` (from
@@ -751,7 +812,8 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 ### No network requests from the CEF backend
 
 - **What:** the CEF host makes no network requests of its own (runtime 2.9.7-denext.11): no
-  network time, component updater, account or search-engine traffic, and on Linux no Hunspell
+  network time, component updater, account or search-engine traffic, no DNS-over-HTTPS (secure
+  DNS) connections, even when the system resolver is a DoH provider, and on Linux no Hunspell
   dictionary downloads. A feature or switch the app's own command line sets still wins. From
   2.9.7-denext.21 the Linux CEF archives ship Chromium's dictionaries for en-US, en-GB, de-DE,
   fr-FR, es-ES, pt-BR and it-IT (pinned by SHA-256, licenses in `licenses/hunspell/`), copied into
@@ -961,7 +1023,7 @@ line, and denext's runtime is the forward line. The Deno release a runtime is bu
 the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and that is still the stock
 `deno desktop` it packages with. denext compares runtime versions by semver with one exception: on
 the `3.0.0` core a `denext.N` release ranks above every `rc.N` one, where plain semver would put it
-below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7` < `3.0.0-denext.8` < `3.0.0-denext.10` < `3.0.0-denext.12` < `3.0.0-denext.13` < `3.0.0-denext.16` < `3.0.0-denext.17` < `3.0.0-denext.18` < `3.0.0-denext.21` < `3.0.0-denext.22` < `3.0.0-denext.23`.
+below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7` < `3.0.0-denext.8` < `3.0.0-denext.10` < `3.0.0-denext.12` < `3.0.0-denext.13` < `3.0.0-denext.16` < `3.0.0-denext.17` < `3.0.0-denext.18` < `3.0.0-denext.21` < `3.0.0-denext.22` < `3.0.0-denext.23` < `3.0.0-denext.24` < `3.0.0-denext.25`.
 From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marker rather than the version: `Deno.build.denext` and a
 `denext <version> (Brainwires)` line in `deno --version` (see the
 [toolchain notes](/docs/toolchain#identity)).
@@ -1012,6 +1074,8 @@ From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marke
 | `3.0.0-denext.21` | There are no `3.0.0-denext.19` or `3.0.0-denext.20` releases (the `3.0.0-denext.19` tag build failed on Windows and the `3.0.0-denext.20` one was cancelled, and a tag is never reused), so this release carries that work. Terminals on Windows: `Deno.openPty`, `Deno.Command`'s `pty` option and node-pty run on ConPTY (Windows 10 1809 and later). Deno Desktop (laufey API 56): a cancelable `"willnavigate"` event on each `BrowserWindow` before the navigation guard decides (`Deno.desktop.navigationEvents`; on CEF and WebView2 a non-GET navigation is never held and goes to the guard), bridge requests marked with the requesting frame by the engine under CEF and WKWebView (`Deno.desktop.marksFrames`), `Deno.desktop.setApplicationMenu()` for a menu owned by no window, and Windows' microphone and camera privacy switches reported instead of a failing capture. Node.js: `"node": "20"` (22, 24, 26) in deno.json picks the Node.js major `process.version` reports, `--trace-exit`, `require(esm)` throwing the module's own error, and Windows fixes (unsigned child exit codes, files named like a DOS device, an IPC message sent just before exit, shell execs while Deno is `node` on PATH); an inherited descriptor needs the permission its kind implies (net for a TCP socket's address, read and write for a pipe or terminal). `--deterministic` pins `Math.random`, the time zone and the locale (`--seed=1`), not the cryptographic random sources; `Deno.createHttpClient({ userAgent })` replaces or drops the default `User-Agent`; `new Worker()` no longer blocks while the worker starts. Supply chain: `deno add` also checks the dependencies it brings in and suggests the popular name a near-miss may imitate, the malicious-version check reads every page of OSV's answer, and the lifecycle-script jail's built-in download hosts are open on port 443 only. Security: V8 15.6.75.57 (19 V8 fixes from Chrome 156's branch); CEF 156.0.28 (Chromium 156.0.8078.88), which does not yet carry the fix for the exploited CVE-2026-125350, so keep `desktop.app.allowedNavigationOrigins` minimal; Little CMS 2.19 for `createImageBitmap()`. |
 | `3.0.0-denext.22` | Deno Desktop (laufey API 57 and 58): `BrowserWindow.setTitleVisibility()` and `setToolbarStyle()`, an accessory app's focused window brought to the front on macOS, and embedded web views (`BrowserWindow.prototype.createWebView()`, a `Deno.WebView` per child view, with stacking, zoom, find, print, DevTools, a context-menu event, clipboard policy and key forwarding, as `Deno.desktop.webViewCapabilities()` reports per engine). `LAUFEY_HEADLESS=1` keeps every window hidden (CEF's first one included) and leaves the app in the background at launch; an accessory app is no longer activated at launch. Web MIDI (`navigator.requestMIDIAccess()`, `--allow-midi[=devices,sysex]`) and WebRTC data channels (`RTCPeerConnection`, `RTCDataChannel`). Node.js: `node:fs` reaches an inherited descriptor and one a native addon opened, a worker without IPC has no IPC members, a self-signal on Windows writes its profiles first. An inherited property name is an unknown style in the window setters, and a packaged program busy for a moment is spawned instead of failing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `3.0.0-denext.23` | WebRTC media (transceivers, senders and receivers with every browser codec, `MediaStream`), certificates (`generateCertificate()`), DTLS and ICE transports, DTMF and candidate pairs, plus `Deno.webrtc` for servers: encoded media tracks, RTP reading, certificate export, shared-port networks with 1:1 NAT, ICE-lite, ICE over TCP and mDNS host names, and the engine's log level. `info.completed` rejects a cut-short HTTP/1.1 stream, `WebSocket.close()` gives up after 5 s, refused HTTP/2 streams are retried, `node:http2` no longer re-enters nghttp2, `existsSync()` answers `false` for an unreachable special path, `deno compile` handles deeply nested npm files, every packaged Windows app gets an app id for its WebView2 data, and the language server resolves configured npm dependencies lazily.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `3.0.0-denext.24` | The [kernel sandbox](/docs/kernel-sandbox) preview: `--kernel-sandbox`, `--kernel-sandbox-report`, deno.json `permissions.kernelSandbox`, `DENO_KERNEL_SANDBOX`, `deno compile --kernel-sandbox` and `kernelSandbox` in `deno info --json` (settings and reports; nothing is enforced, and `enforce` / `broker` refuse to start). A tighter Linux script-jail socket filter (GHSA-9363-h8qp-jg52), and upstream fixes: HTTP/1 early responses and `Connection: close`, CR / LF in header values, an abort cancelling a collected `fetch` body, WebSocket close code 1006 and a checked `Sec-WebSocket-Accept`, cached async modules awaited by dynamic imports, a BOM stripped from `.env` and `.npmrc`, symlinked entrypoints, `deno compile --exclude` on canonical paths, `*.localhost` resolving to localhost, Windows timestamps on read-only files, and on the desktop the backend's process tree ended with a Windows dev run and the WebGPU surface created on the UI thread.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `3.0.0-denext.25` | The [kernel sandbox](/docs/kernel-sandbox)'s `--kernel-sandbox=enforce` confines `deno run` and `deno serve` on Linux (Landlock and seccomp) and macOS (Seatbelt): it refuses to start over a rule the kernel would hold more loosely than Deno and runs with the documented gaps its report lists; on Linux it scrubs the environment to the `--allow-env` names, refuses chmod / utime by path and treats an unreadable `.npmrc` as absent; `test`, `bench`, the REPL and `compile` refuse it; `broker` and `auto` are unchanged. Linux `/proc` and `/sys` files take the matching `--allow-sys` name instead of `--allow-all` (`processInfo` and `processes` are new names), and an external permission broker can hand back opened files (protocol v2, Unix). `--seed=0` seeds `Math.random`, DNS works with a zoned link-local name server, a lockfile package name starting with a multi-byte character no longer panics, and `--trace-exit` exits when `Error.prepareStackTrace` throws. Deno Desktop: the CEF host makes no DNS-over-HTTPS (secure DNS) connections, even when the system resolver is a DoH provider. Security hardening.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
@@ -1058,7 +1122,9 @@ Each layer has its own gate, and a release runs all of them:
 - **denext, from the page.** The
   [desktop kitchen sink](https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink)
   turns on every capability, calls each one from the page and asserts the results, including a
-  real update installed, left unconfirmed and rolled back. Its window test
+  real update installed, left unconfirmed and rolled back, and the backend hooks (Window-menu
+  items, a second launch, will-navigate, `ctx.caller`, `notify()` and a quit guard's message box
+  outlasting the guards' deadline) on a launch of their own. Its window test
   (`.github/workflows/desktop-window.yml`) runs on Linux, macOS arm64, macOS Intel and Windows,
   when dispatched before a release and on every push that touches the desktop code; a check that can't run on a hosted
   runner must say why.

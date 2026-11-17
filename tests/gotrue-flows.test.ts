@@ -5,7 +5,9 @@
 // a native id_token sign-in.
 
 import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
+import type { AuthAdapter } from "../src/server/auth/adapter.ts";
 import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import { base64UrlEncode } from "../src/server/auth/oauth.ts";
 import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
 import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
@@ -45,9 +47,10 @@ async function withApp(
   fn: (app: SupabaseAuthApp) => Promise<void>,
   auth: GoTrueOptions = {},
   authConfig: Partial<AuthConfig> = {},
+  adapter: AuthAdapter = inMemoryAuthAdapter(),
 ): Promise<void> {
   const app = await supabaseAuthApp({
-    adapter: inMemoryAuthAdapter(),
+    adapter,
     auth,
     authConfig,
     withClient: false,
@@ -201,6 +204,189 @@ Deno.test("a phone change is confirmed by an SMS code", async () => {
     assertEquals(done.json.user.phone, "+15555550160");
     assertExists(done.json.user.phone_confirmed_at);
   });
+});
+
+/** A confirmed password user and its access token. */
+async function confirmedUser(app: SupabaseAuthApp, email: string): Promise<string> {
+  await app.fetch(`${ORIGIN}/auth/v1/admin/users`, {
+    method: "POST",
+    headers: { apikey: app.secretKey, "content-type": "application/json" },
+    body: JSON.stringify({ email, password: "a password!", email_confirm: true }),
+  });
+  return (await password(app, email, "a password!")).json.access_token;
+}
+
+/** The stored email of the user `token` belongs to (read with the secret key). */
+async function emailOf(app: SupabaseAuthApp, token: string): Promise<string> {
+  return (await api(app, "/user", { token })).json.email;
+}
+
+const SINGLE_CONFIRMATION =
+  "Confirmation link accepted. Please proceed to confirm link sent to the other email";
+
+Deno.test("an email change is confirmed from both the current and the new address", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur@example.com");
+    const put = await api(app, "/user", {
+      token,
+      method: "PUT",
+      body: { email: "nxt@example.com" },
+    });
+    assertEquals(put.status, 200);
+    const mails = app.emails.slice(-2);
+    assertEquals(mails.map((m) => m.identifier), ["cur@example.com", "nxt@example.com"]);
+    const [current, next] = mails.map((m) => m.token);
+
+    // The new address alone does not move the account.
+    const first = await api(app, "/verify", {
+      body: { type: "email_change", email: "nxt@example.com", token: next },
+    });
+    assertEquals(first.status, 200);
+    assertEquals(first.json.msg, SINGLE_CONFIRMATION);
+    assertEquals(first.json.access_token, undefined, "no session yet");
+    assertEquals(await emailOf(app, token), "cur@example.com");
+
+    // The current address confirms it too: now the change applies.
+    const second = await api(app, "/verify", {
+      body: { type: "email_change", email: "cur@example.com", token: current },
+    });
+    assertEquals(second.status, 200);
+    assertEquals(second.json.user.email, "nxt@example.com");
+    assertExists(second.json.access_token);
+  });
+});
+
+Deno.test("an email change confirmed only from the current address stays pending", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur2@example.com");
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt2@example.com" } });
+    const current = app.emails.at(-2)!.token;
+    const only = await api(app, "/verify", {
+      body: { type: "email_change", email: "cur2@example.com", token: current },
+    });
+    assertEquals(only.json.msg, SINGLE_CONFIRMATION);
+    assertEquals(await emailOf(app, token), "cur2@example.com");
+  });
+});
+
+Deno.test("an email change link from one address answers with the pending message", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur3@example.com");
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt3@example.com" } });
+    const link = await api(app, app.emails.at(-1)!.url);
+    assertEquals(link.status, 303);
+    const location = link.headers.get("location")!;
+    assertEquals(
+      new URLSearchParams(location.split("#")[1]).get("message"),
+      SINGLE_CONFIRMATION,
+    );
+    assertEquals(await emailOf(app, token), "cur3@example.com");
+  });
+});
+
+/**
+ * An in-memory adapter that holds each lookup of a two-address change's confirmation marker until
+ * `parties` of them are waiting (or a short grace passes), so two redemptions are forced to
+ * interleave, and counts the account updates that move the email.
+ */
+function interleavingAdapter(parties: number, inner: AuthAdapter = inMemoryAuthAdapter()) {
+  let waiting: (() => void)[] = [];
+  let emailUpdates = 0;
+  const adapter: AuthAdapter = {
+    ...inner,
+    async useVerificationToken(ref) {
+      if (ref.identifier.startsWith("gotrue:email_change_confirmed:")) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await new Promise<void>((release) => {
+          waiting.push(release);
+          if (waiting.length >= parties) {
+            for (const go of waiting) go();
+            waiting = [];
+          } else timer = setTimeout(release, 500);
+        });
+        clearTimeout(timer);
+      }
+      return inner.useVerificationToken!(ref);
+    },
+    updateUser(patch) {
+      if (patch.email !== undefined) emailUpdates++;
+      return inner.updateUser(patch);
+    },
+  };
+  return { adapter, emailUpdates: () => emailUpdates };
+}
+
+for (
+  const [name, make] of [
+    ["in-memory", () => inMemoryAuthAdapter()],
+    ["node:sqlite", () => sqliteAuthAdapter({ path: ":memory:" })],
+  ] as const
+) {
+  Deno.test(`an email change confirmed from both addresses at once applies exactly once (${name})`, async () => {
+    const seam = interleavingAdapter(2, make());
+    await withApp(
+      async (app) => {
+        const token = await confirmedUser(app, "cur5@example.com");
+        await api(app, "/user", { token, method: "PUT", body: { email: "nxt5@example.com" } });
+        const [current, next] = app.emails.slice(-2).map((m) => m.token);
+        const before = seam.emailUpdates();
+        const both = await Promise.all([
+          api(app, "/verify", {
+            body: { type: "email_change", email: "cur5@example.com", token: current },
+          }),
+          api(app, "/verify", {
+            body: { type: "email_change", email: "nxt5@example.com", token: next },
+          }),
+        ]);
+        assertEquals(both.map((r) => r.status), [200, 200]);
+        assertEquals(seam.emailUpdates() - before, 1, "the change is applied exactly once");
+        assertEquals(both.filter((r) => r.json.access_token !== undefined).length, 1);
+        assertEquals(await emailOf(app, token), "nxt5@example.com");
+      },
+      {},
+      {},
+      seam.adapter,
+    );
+  });
+}
+
+Deno.test("an email change confirmed from both addresses concurrently applies exactly once", async () => {
+  const seam = interleavingAdapter(1); // no held lookups: a plain concurrent pair
+  await withApp(
+    async (app) => {
+      const token = await confirmedUser(app, "cur6@example.com");
+      await api(app, "/user", { token, method: "PUT", body: { email: "nxt6@example.com" } });
+      const [current, next] = app.emails.slice(-2).map((m) => m.token);
+      const before = seam.emailUpdates();
+      await Promise.all([
+        api(app, "/verify", {
+          body: { type: "email_change", email: "nxt6@example.com", token: next },
+        }),
+        api(app, "/verify", {
+          body: { type: "email_change", email: "cur6@example.com", token: current },
+        }),
+      ]);
+      assertEquals(seam.emailUpdates() - before, 1);
+      assertEquals(await emailOf(app, token), "nxt6@example.com");
+    },
+    {},
+    {},
+    seam.adapter,
+  );
+});
+
+Deno.test("secureEmailChange: false confirms an email change from the new address alone", async () => {
+  await withApp(async (app) => {
+    const token = await confirmedUser(app, "cur4@example.com");
+    const sent = app.emails.length;
+    await api(app, "/user", { token, method: "PUT", body: { email: "nxt4@example.com" } });
+    assertEquals(app.emails.length, sent + 1, "one mail, to the new address");
+    assertEquals(app.emails.at(-1)!.identifier, "nxt4@example.com");
+    const done = await api(app, "/verify", {
+      body: { type: "email_change", email: "nxt4@example.com", token: code(app) },
+    });
+    assertEquals(done.json.user.email, "nxt4@example.com");
+  }, { secureEmailChange: false });
 });
 
 // ---- OAuth through a fake provider ----------------------------------------------------------

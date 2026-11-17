@@ -133,7 +133,7 @@ Deno.test("runDesktop (pinned runtime): a runtime older than denext.7 is refused
       deno: { desktop: { authSession: { start() {}, capabilities: () => ({}) } } },
     });
     assertEquals(runtime.trust.kind, "refuse");
-    assert(errors.some((e) => e.includes("older than 2.9.7-denext.7")));
+    assert(errors.some((e) => e.includes("does not mark requests from its WebSocket relay")));
     assert(errors.some((e) => e.includes("every desktop endpoint is refused")));
     // No token, even for the page's own document over the memory transport.
     const res = await served.handler(get("http+memory://app/"), {
@@ -751,6 +751,67 @@ Deno.test("runDesktop (pinned runtime): a second launch reaches onSecondInstance
     launch([]);
     await until(() => fromHook.length === 2);
     assertEquals([fromRunDesktop.length, fromHost.length, fromRuntime.length], [2, 1, 1]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): runtime.notify posts through the notifications capability; its click reaches onNotificationClick", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    const scheduled: Record<string, unknown>[] = [];
+    Object.assign(desktop, {
+      notifications: {
+        capabilities: () => ({}),
+        schedule: (o: Record<string, unknown>) => {
+          scheduled.push(o);
+          return Promise.resolve(String(o.tag));
+        },
+        getScheduled: () => Promise.resolve([]),
+        cancel: () => {},
+      },
+    });
+    const clicks: unknown[] = [];
+    let host: DesktopExtensionHost | undefined;
+    const ext: DesktopCapability = { name: "ext", methods: {}, setup: (h) => void (host = h) };
+    const { runtime } = await boot({
+      outDir,
+      port: 1,
+      capabilities: [ext, notificationsCapability({ api: desktop, autoTopUp: false })],
+      onNotificationClick: (click) => void clicks.push(click),
+    }, { deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} } });
+    const posted = await runtime.notify({ title: "Synced", tag: "sync-1", data: { n: 1 } });
+    assertEquals(posted.tag, "sync-1");
+    assertEquals(scheduled.map((o) => [o.title, o.tag, o.data]), [["Synced", "sync-1", { n: 1 }]]);
+    // The extension's host posts through the same capability.
+    await host!.notify({ title: "From ext", tag: "ext-1" });
+    assertEquals(scheduled.map((o) => o.tag), ["sync-1", "ext-1"]);
+    desktop.dispatchEvent(
+      new CustomEvent("notificationresponse", { detail: { tag: "sync-1", data: { n: 1 } } }),
+    );
+    await until(() => clicks.length === 1);
+    assertEquals(clicks, [{ tag: "sync-1", action: null, data: { n: 1 }, launch: false }]);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop: runtime.notify is not_enabled without the notifications capability", async () => {
+  const outDir = await exportDir();
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    const { runtime } = await boot({ outDir, port: 1 }, {
+      deno: { BrowserWindow: FakeMenuWindow, desktop, exit: () => {} },
+    });
+    const err = await assertRejects(() => runtime.notify({ title: "x" }), DesktopCapError);
+    assertEquals(err.code, "not_enabled");
   } finally {
     FakeBrowserWindow.last = undefined;
     FakeMenuWindow.all = [];

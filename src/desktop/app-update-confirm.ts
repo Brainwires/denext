@@ -14,7 +14,12 @@ import { appUpdateStatus, confirmAppUpdate } from "./app-updater.ts";
 /** The runtime hooks auto-confirmation needs (injectable for tests). */
 export interface AppUpdateConfirmDeps {
   /** The runtime's update status, or `null` outside denext's pinned runtime. */
-  readonly status: () => { readonly trial: boolean } | null;
+  readonly status: () => {
+    readonly trial: boolean;
+    readonly version?: string | null;
+    readonly updatedFrom?: string | null;
+    readonly rolledBackFrom?: string | null;
+  } | null;
   /** Confirm the pending update; `true` when one was confirmed. */
   readonly confirm: () => boolean;
   /** Where a failure or a confirmation is reported. */
@@ -29,6 +34,25 @@ const RUNTIME_DEPS: AppUpdateConfirmDeps = {
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * What this launch follows, for the app's log (a launch after an update or a rollback), or
+ * `undefined` for an ordinary launch: the one line that says where an update stopped.
+ */
+function launchNote(
+  status: ReturnType<AppUpdateConfirmDeps["status"]>,
+): string | undefined {
+  if (!status) return undefined;
+  const running = status.version ?? "this version";
+  if (status.rolledBackFrom) {
+    return `app update: ${running} is running again; ${status.rolledBackFrom} was rolled back`;
+  }
+  if (status.updatedFrom) {
+    return `app update: ${running} is running, updated from ${status.updatedFrom}` +
+      (status.trial ? " (on trial until confirmed)" : "");
+  }
+  return undefined;
 }
 
 /**
@@ -49,7 +73,10 @@ export function appUpdateAutoConfirm(
   if (enabled === false) return undefined;
   let trial: boolean;
   try {
-    trial = deps.status()?.trial === true;
+    const status = deps.status();
+    trial = status?.trial === true;
+    const note = launchNote(status);
+    if (note) deps.log(note);
   } catch (err) {
     deps.log(`cannot read the app update status: ${describe(err)}`);
     return undefined;

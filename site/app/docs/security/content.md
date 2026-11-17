@@ -81,7 +81,11 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    under explicit `--allow-*` grants, so an RCE or path traversal that did land
    is limited to what those grants allow through Deno's own APIs. They are
    checks inside Deno, not a sandbox: a subprocess, FFI or a native addon goes
-   around them, and kernel enforcement is planned, not shipped. See
+   around them. Kernel enforcement is in development: denext 4.20 ships an opt-in preview, off
+   unless you ask for it, in which `--kernel-sandbox=enforce` makes the operating system hold the
+   grant for `deno run` / `deno serve` on Linux and macOS, with the documented gaps its report
+   lists. The full system, with automatic enforcement, lands in denext 5.0
+   ([Kernel sandbox](/docs/kernel-sandbox)). See
    [Permissions](/docs/permissions) for the grants that amount to full trust, and
    [Permission flags are guardrails](#permission-flags-are-guardrails).
 
@@ -281,10 +285,15 @@ define it**: denext reads the config's text first, and imports it unless it can 
 `defineConfig` hides the keys, so those import too, since a project's real verb must not silently
 stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
 config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
-reviewed, type only the verbs listed above as running none of it. A compiled binary also offers an unknown
-verb to the denext the project pins before this read, so a verb only that newer denext has keeps
-working, and a repository can pin an older denext, which imports the config for any unknown verb. A
+reviewed, type only the verbs listed above as running none of it. A compiled binary makes this read
+itself and hands the invocation to the denext the project pins (under the project's `deno.json`)
+only when the read says to import the config; a typo and `<verb> --help` stay in the binary, so a
+verb only a newer pinned denext has runs through that denext's own CLI. A
 verb named by the listing the last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+The `denext ui` process that `denext mcp`'s `denext_ui_*` tools start runs with `--no-config`, on
+this denext's own CLI rather than the project's pin, from a directory outside the project, so the
+project's `deno.json` can't replace a module of it; the panels listed above as running project code
+start their own children with the project's config.
 `deno run jsr:@denext/denext/cli …` is different: Deno applies the working
 directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
 so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,
@@ -324,10 +333,16 @@ process that holds them, and several grants hand over more than their name sugge
 
 Treat code you haven't reviewed as having every permission the process could reach this way, and
 run it only where that is acceptable: [Untrusted repositories](#untrusted-repositories) lists which
-verbs run a project's code. Kernel enforcement of the grants (Landlock on Linux, Seatbelt on macOS,
-so a subprocess, FFI or a native addon is held to them too) is in design for the runtime fork; it is
-on the 5.x part of the [roadmap](https://github.com/Brainwires/denext/blob/main/ROADMAP.md), not
-shipped.
+verbs run a project's code. Kernel enforcement of the grants (Landlock and seccomp on Linux,
+Seatbelt on macOS, a job object on Windows, so a subprocess, FFI or a native addon is held to them
+too) is in development. The full system, with automatic enforcement, lands in denext 5.0. denext
+4.20 ships an opt-in preview, off unless you ask for it: `--kernel-sandbox=enforce` confines a
+`deno run` or `deno serve` on Linux and macOS, refuses to start over a rule the kernel would hold
+more loosely than Deno, and runs with documented gaps (a macOS `host:port` grant reaches any host on
+the port; a port list of IP addresses or `localhost` reaches any address on those ports, the cloud
+metadata address included; a scoped `--allow-ffi` loads any library in the read scope). Every other
+run, the default included, is guardrails only. The [Kernel sandbox](/docs/kernel-sandbox) section
+describes what runs today and the design as it is built.
 
 ### `denext dashboard` — a password-gated database GUI
 
@@ -353,7 +368,7 @@ services behind a bearer token. [Project UI › The stack dashboard](/docs/ui#th
 ### Desktop windows — the navigation guard
 
 A Deno Desktop window holds the app's capabilities and storage, so under denext's
-pinned runtime (from `2.9.7-denext.18`) a top-level navigation to any other
+Deno Desktop runtime a top-level navigation to any other
 origin — a link, `location = …`, a form, a server redirect, `window.open()` —
 never loads in the window: an `http(s)` destination opens in the system browser
 and anything else is dropped. Only the app origin, the dev server in a
@@ -627,8 +642,8 @@ Partytown on any page of the origin. denext closes both:
   `DENEXT_HTML_REWRITER=1` and denext's Deno with `HTMLRewriter` turned on
   (`--unstable-html-rewriter`, or `"unstable": ["html-rewriter"]` in `deno.json`) it streams
   through the rewriter instead, with the same bytes. That is opt-in because it is slower on
-  today's runtimes: on 3.0.0-denext.17 a 600-byte shell takes 8 µs as a string and 1.7 ms through
-  the rewriter, a 17 KB one 48 µs against 6.5 ms. It is kept for runtimes where it pays off.
+  today's runtimes: a 600-byte shell took 8 µs as a string and 1.7 ms through the rewriter, a
+  17 KB one 48 µs against 6.5 ms. It is kept for runtimes where it pays off.
   A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no

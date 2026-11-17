@@ -150,37 +150,58 @@ export function isSameOrigin(request: Request, config: AuthConfig): boolean {
   return !!host && u.host === host;
 }
 
+/** C0 controls, space and DEL: the URL parser drops or trims them, so they are removed first. */
+// deno-lint-ignore no-control-regex
+const REDIRECT_CONTROL_CHARS = /[\u0000-\u0020\u007f]/g;
+
+/** A leading URL scheme (`https:`, `javascript:`, …). */
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
 /**
  * Coerce a **request-derived** redirect target to a same-origin path. `callbackUrl`
- * (query or POST body) is attacker-supplied, and {@link safeRedirectLocation} passes
+ * (query or POST body) comes from the request, and {@link safeRedirectLocation} passes
  * a fully-qualified `http(s)://…` value through unchanged by design (its SEC-L3
- * note) — an open redirect. So an absolute URL is admitted only when its origin
- * matches the app's canonical origin, and then only its path is kept; any other
- * absolute URL falls back to the default. Relative values still go through
- * `safeRedirectLocation` (which pins them to the current origin).
+ * note). So control characters and whitespace are stripped first (the URL parser
+ * ignores them, so they must not decide what the scheme test sees), then a value with
+ * a scheme is admitted only when its origin is the app's canonical origin or the
+ * request's own, and then only its path is kept; any other value with a scheme falls
+ * back to the default. Relative values still go through `safeRedirectLocation` (which
+ * pins them to the current origin).
  *
  * @param config The auth config (its `canonicalOrigin` decides what "same origin" means).
- * @param requested The attacker-supplied target, if any.
- * @param fallback Where to go when `requested` is absent or foreign.
+ * @param requested The request-supplied target, if any.
+ * @param fallback Where to go when `requested` is absent or foreign (trusted: config).
+ * @param requestUrl The current request's URL, whose origin also counts as "same origin".
  * @returns A safe `Location` value.
  */
 export function sameOriginRedirect(
   config: AuthConfig,
   requested: string | null | undefined,
   fallback: string,
+  requestUrl?: string | URL,
 ): string {
-  if (requested && /^https?:\/\//i.test(requested)) {
-    if (config.canonicalOrigin) {
-      try {
-        const u = new URL(requested);
-        if (u.origin === new URL(config.canonicalOrigin).origin) {
-          return safeRedirectLocation(u.pathname + u.search + u.hash);
-        }
-      } catch { /* fall through to the fallback */ }
+  const clean = (requested ?? "").replace(REDIRECT_CONTROL_CHARS, "");
+  if (!clean) return safeRedirectLocation(fallback);
+  if (!SCHEME.test(clean)) return safeRedirectLocation(clean);
+  try {
+    const target = new URL(clean);
+    if (sameOriginAs(target.origin, config.canonicalOrigin, requestUrl)) {
+      return safeRedirectLocation(target.pathname + target.search + target.hash);
     }
-    return safeRedirectLocation(fallback);
+  } catch { /* not a URL at all: fall through to the fallback */ }
+  return safeRedirectLocation(fallback);
+}
+
+/** Whether `origin` (an http(s) origin, never `"null"`) is one of the given ones. */
+function sameOriginAs(origin: string, ...candidates: (string | URL | undefined)[]): boolean {
+  if (origin === "null") return false;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      if (new URL(candidate).origin === origin) return true;
+    } catch { /* an unparsable candidate matches nothing */ }
   }
-  return safeRedirectLocation(requested || fallback);
+  return false;
 }
 
 /**
@@ -188,10 +209,15 @@ export function sameOriginRedirect(
  *
  * @param config The auth config.
  * @param requested The requested `callbackUrl`, if any.
+ * @param requestUrl The current request's URL (its origin counts as same-origin).
  * @returns A safe `Location` value.
  */
-export function afterSignIn(config: AuthConfig, requested?: string | null): string {
-  return sameOriginRedirect(config, requested, config.pages?.afterSignIn || "/");
+export function afterSignIn(
+  config: AuthConfig,
+  requested?: string | null,
+  requestUrl?: string | URL,
+): string {
+  return sameOriginRedirect(config, requested, config.pages?.afterSignIn || "/", requestUrl);
 }
 
 /**
@@ -199,10 +225,15 @@ export function afterSignIn(config: AuthConfig, requested?: string | null): stri
  *
  * @param config The auth config.
  * @param requested The requested `callbackUrl`, if any.
+ * @param requestUrl The current request's URL (its origin counts as same-origin).
  * @returns A safe `Location` value.
  */
-export function afterSignOut(config: AuthConfig, requested?: string | null): string {
-  return sameOriginRedirect(config, requested, config.pages?.afterSignOut || "/");
+export function afterSignOut(
+  config: AuthConfig,
+  requested?: string | null,
+  requestUrl?: string | URL,
+): string {
+  return sameOriginRedirect(config, requested, config.pages?.afterSignOut || "/", requestUrl);
 }
 
 /**

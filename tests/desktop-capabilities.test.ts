@@ -342,10 +342,10 @@ Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay t
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-sys=osRelease",
   ]);
-  // secure-store on Windows uses WinRT PasswordVault via powershell.exe (not on other OSes).
+  // secure-store on Windows under the pinned runtime: the runtime's own Credential Manager store,
+  // so no program is baked (PowerShell only for an older runtime: desktop-secure-store-scoping.test.ts).
   assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
-    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   ]);
   // keep-awake's Windows backend is FFI, not a program.
   assertEquals(desktopBuildFlags(caps({ keepAwake: true }), "windows"), [
@@ -721,9 +721,8 @@ Deno.test("desktop add secure-store: a first enablement writes desktop.secureSto
     report.permissions.darwin.includes("--allow-run=security"),
     JSON.stringify(report.permissions),
   );
-  assertEquals(report.permissions.windows, [
-    "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-  ]);
+  // Windows under the pinned runtime uses its own store: nothing to bake.
+  assertEquals(report.permissions.windows, []);
   // A second run leaves both as they are.
   const again = await addDesktopCapabilities({ capabilities: ["secure-store"], dir });
   assertEquals(again.kept, ["secure-store"]);
@@ -797,12 +796,27 @@ Deno.test("desktopBuildFlags: secure-store bakes --allow-sys and `security` only
     ),
     [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease"],
   );
-  // Windows: PowerShell + PasswordVault whatever the runtime.
+  // Windows under a runtime without its own Windows store: PowerShell + PasswordVault.
   for (const options of [pinned, baked]) {
-    assertEquals(desktopBuildFlags(legacy(false), "windows", options), [
-      ...DESKTOP_BASELINE_FLAGS,
-      "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-    ]);
+    assertEquals(
+      desktopBuildFlags(legacy(false), "windows", { ...options, windowsSecureStore: false }),
+      [
+        ...DESKTOP_BASELINE_FLAGS,
+        "--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      ],
+    );
+  }
+  // Windows under a runtime with its own store (the Credential Manager): Linux's flags, no
+  // PowerShell, whatever the legacy flag.
+  for (const on of [undefined, true, false]) {
+    assertEquals(
+      desktopBuildFlags(legacy(on), "windows", { ...baked, windowsSecureStore: true }),
+      [...DESKTOP_BASELINE_FLAGS],
+    );
+    assertEquals(
+      desktopBuildFlags(legacy(on), "windows", { ...pinned, windowsSecureStore: true }),
+      [...DESKTOP_BASELINE_FLAGS, "--allow-sys"],
+    );
   }
   // The catalog's static lists are an older runtime's and the default config's.
   assertEquals(desktopPermissionFlags(["secure-store"], "darwin"), [

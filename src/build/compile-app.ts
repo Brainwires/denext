@@ -44,7 +44,7 @@ import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { supplyChainConfig } from "./workspace-imports.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
-import { NET_SPLIT_RELEASE, netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
+import { netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
 import { currentDenoIdentity } from "./deno-version.ts";
 import {
   type CompileSignDeps,
@@ -338,8 +338,9 @@ export function compilePermissionFlags(
   const netSplit = ownDenort && supportsNetSplit(version);
   if (!netSplit && wantsNetSplit(compile)) {
     warn(
-      `  ⚠ compile.permissions.netConnect / netListen need denext's Deno ${NET_SPLIT_RELEASE} or ` +
-        "later (its own denort for this target); baking the unscoped --allow-net instead.",
+      "  ⚠ compile.permissions.netConnect / netListen need a denext Deno with split network " +
+        "grants (--allow-net-connect / --allow-net-listen) and its own denort for this target " +
+        "(`denext upgrade`); baking the unscoped --allow-net instead.",
     );
   }
   return compileBuildFlags(compile, { netSplit });

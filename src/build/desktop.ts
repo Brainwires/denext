@@ -50,10 +50,11 @@ import type { DesktopEventAppendOptions } from "../desktop/bridge-events.ts";
 import { desktopHeadless, headlessWindow } from "../desktop/headless.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
-import type {
-  DesktopCapability,
-  DesktopEmitOptions,
-  DesktopSecureStore,
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  type DesktopEmitOptions,
+  type DesktopSecureStore,
 } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
@@ -100,6 +101,7 @@ export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
 export type {
   DesktopAppSettings,
+  DesktopMacosHiddenMode,
   DesktopTitleVisibility,
   DesktopToolbarStyle,
   DesktopWindowSettings,
@@ -149,7 +151,9 @@ export type {
   CreateWebViewOptions,
   WebViewBounds,
   WebViewEventMap,
+  WebViewForwardKey,
   WebViewHandle,
+  WebViewKeyEvent,
   WebViewLoadState,
   WebViewPermissions,
   WebViewState,
@@ -183,6 +187,13 @@ import {
   type DesktopNotificationClickListener,
   type NotificationClickHooks,
 } from "../desktop/notification-clicks.ts";
+export type {
+  DesktopNotify,
+  DesktopNotifyAction,
+  DesktopNotifyOptions,
+  DesktopPostedNotification,
+} from "../desktop/notify.ts";
+import type { DesktopNotify } from "../desktop/notify.ts";
 export {
   defineDesktopExtension,
   type DesktopCaller,
@@ -818,9 +829,9 @@ export interface RunDesktopOptions {
    * Called once per click on one of the app's own Window-menu items (`desktop.menu.window.items`),
    * with the item's `id` and the key window: `{ id, key? }` (the app window focused last, its app
    * key when it was opened with one), or `null` with no window open. The clicks never reach the
-   * pages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive from
-   * runtime 3.0.0-denext.16 (`Deno.desktop`'s app-level menu clicks); on an older runtime only
-   * while the main window is open. A throw or a rejection is logged.
+   * pages; extensions get them too (`host.onWindowMenuItem`). With no window open they arrive on a
+   * runtime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the main
+   * window is open. A throw or a rejection is logged.
    */
   onWindowMenuItem?: DesktopWindowMenuItemHandler;
   /**
@@ -897,8 +908,8 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
   setDockVisible(visible: boolean): boolean;
   /**
    * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
-   * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
-   * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
+   * (neither: a tray app) or `"prohibited"` (a runtime with `Deno.dock.setActivationPolicy`; on an
+   * older runtime `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
    * app to the front. A tray app stays accessory and shows its window with the window's
    * `focus()`: one under /Applications that was ever regular gets a tile in the Dock's recent apps
    * once its running tile goes away. On Windows and Linux `"regular"` shows the main window's taskbar entry and
@@ -936,6 +947,16 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
    * in a sidecar's child).
    */
   onNotificationClick(fn: DesktopNotificationClickListener): () => void;
+  /**
+   * Post an OS notification now, as a page's `Notification` does and through the same path (the
+   * `notifications` capability, which must be enabled): `notify({ title, body?, tag?, data?,
+   * actions?, silent? })` resolves `{ tag, close() }`, and its clicks reach
+   * {@linkcode RunDesktopOptions.onNotificationClick} / {@linkcode DesktopRuntime.onNotificationClick}
+   * with that tag and data, never a page. Rejects with a `DesktopCapError`: `not_enabled` while the
+   * capability is off, `unsupported` where the Deno Desktop runtime has no native notifications
+   * (and in a sidecar's child), `validation` for bad options.
+   */
+  readonly notify: DesktopNotify;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -2085,6 +2106,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     onSecondInstance: (fn) => windows.onSecondInstance(fn),
     onWillNavigate: (fn) => navigation.add(fn),
     onNotificationClick: (fn) => notificationClicks.add(fn),
+    notify: bridge.notify,
     trust,
     emit: (cap, event, data, emitOptions) =>
       bridge.emit(
@@ -2163,6 +2185,12 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
     window: undefined,
     ...noDesktopWindows(),
     onNotificationClick: () => () => {},
+    notify: () =>
+      Promise.reject(
+        new DesktopCapError("unsupported", "a sidecar's child posts no notifications", {
+          status: 501,
+        }),
+      ),
     trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
     emit: () => {},
     sidecar: (name) => {

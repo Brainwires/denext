@@ -74,6 +74,7 @@ import type {
 import { desktopConfirm } from "./message-box.ts";
 import type { DesktopWillNavigateHandler } from "./will-navigate.ts";
 import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
+import { desktopBackendNotifier, type DesktopNotify } from "./notify.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -256,6 +257,11 @@ export interface DesktopBridge {
    * then says which window reloaded.
    */
   navigationStarted(): Promise<void>;
+  /**
+   * Post an OS notification from the backend through the `notifications` capability (what
+   * `DesktopRuntime.notify` and an extension's `host.notify` are): `not_enabled` while it is off.
+   */
+  readonly notify: DesktopNotify;
   /** The event log (tests). */
   readonly events: DesktopEventLog;
 }
@@ -456,6 +462,7 @@ async function runHandlerWithDeadline(
   makeCtx: (signal: AbortSignal) => DesktopCapCtx,
   input: unknown,
   dev: boolean,
+  label: string,
 ): Promise<{ result: unknown } | Response> {
   const timeoutMs = method.timeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS;
   const abort = new AbortController();
@@ -470,6 +477,9 @@ async function runHandlerWithDeadline(
       return fail(408, "timeout", "the capability timed out");
     }
     if (err instanceof DesktopCapError) return fail(err.status, err.code, err.message, err.data);
+    // The page gets no detail outside dev (it could carry a path); the app's own log does, so a
+    // packaged app's unexpected failure can still be diagnosed.
+    console.error(`denext: desktop ${label} failed:`, err);
     return fail(
       500,
       "internal",
@@ -503,7 +513,7 @@ export function runOnDesktopMainThread(
     return Promise.reject(
       new DesktopCapError(
         "unsupported",
-        "ctx.runOnMainThread needs denext's pinned Deno Desktop runtime (2.9.7-denext.6 or later)",
+        "ctx.runOnMainThread needs a Deno Desktop runtime with Deno.desktop.runOnMainThread (denext's pinned runtime has it)",
         { status: 501 },
       ),
     );
@@ -604,6 +614,8 @@ export function createDesktopBridge(
     secureStore: secureStoreOf(cap),
   });
 
+  // The backend's notifications go through the enabled `notifications` capability, if any.
+  const notify = desktopBackendNotifier(registry.values());
   // Each capability's process-level host, handed once to its `setup` before any page can call.
   const lifecycle = options.lifecycle ?? NO_LIFECYCLE;
   setUpCapabilities(registry.values(), (cap) => ({
@@ -621,6 +633,7 @@ export function createDesktopBridge(
     ...hostAppMenus(options.appMenus),
     onSecondInstance: (fn) => options.onSecondInstance?.(fn) ?? (() => {}),
     onNotificationClick: (fn) => options.onNotificationClick?.(fn) ?? (() => {}),
+    notify,
     onWillNavigate: (fn) => options.onWillNavigate?.(fn) ?? (() => {}),
     windows: () => lifecycle.windows(),
     secureStore: secureStoreOf(cap),
@@ -661,6 +674,7 @@ export function createDesktopBridge(
   const invokeMethod = async (
     cap: DesktopCapability,
     method: CapMethod,
+    methodName: string,
     args: unknown,
     request: Request,
     windowId: string,
@@ -677,6 +691,7 @@ export function createDesktopBridge(
         makeCtx(cap, lifeline(signal), windowId, callerOf(request, trust, windowId, marksFrames)),
       inp.input,
       dev,
+      `${cap.name}.${methodName}`,
     );
     if (ran instanceof Response) return ran;
     const out = await checkOutput(method, ran.result);
@@ -699,7 +714,7 @@ export function createDesktopBridge(
     if (!found) {
       return fail(404, "unavailable", `capability ${call.cap}.${call.method} is not enabled`);
     }
-    return await invokeMethod(found.cap, found.method, call.args, request, windowId);
+    return await invokeMethod(found.cap, found.method, call.method, call.args, request, windowId);
   };
 
   /**
@@ -749,6 +764,7 @@ export function createDesktopBridge(
     navigationStarted: async () => {
       if ((options.windowCount?.() ?? 1) <= 1) await pageLoaded("main");
     },
+    notify,
     events,
   };
 }

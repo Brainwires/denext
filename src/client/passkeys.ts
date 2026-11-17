@@ -9,6 +9,8 @@
  * @module
  */
 
+import { sameOriginPath } from "./same-origin-path.ts";
+
 /** The endpoint prefix denext auth mounts on unless the app configured `basePath`. */
 const DEFAULT_BASE_PATH = "/auth";
 
@@ -276,7 +278,9 @@ export async function signInWithPasskey(
   const res = await post(`${at.base}/passkey/authenticate`, {
     credential: credentialJSON(asserted),
     ceremonyId: fetched.ceremonyId,
-    callbackUrl: options.callbackUrl,
+    // Coerced here too, as `signIn` does: a foreign value is dropped and the server's
+    // `afterSignIn` page applies.
+    callbackUrl: sameOriginPath(options.callbackUrl, undefined),
   }, at.credentials);
   if (!res?.ok) return { ok: false, error: await errorOf(res) };
   const body = await res.json() as { mfa?: "required"; url?: string };

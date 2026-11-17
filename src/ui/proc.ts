@@ -141,6 +141,24 @@ export function cliInvocation(options: CliInvocationOptions = {}): string[] {
 }
 
 /**
+ * The argv prefix that runs a `denext ui` process as a child (what `denext mcp`'s UI tools start).
+ * The UI process runs none of the project's code, and that has to hold before its first module
+ * loads: a `deno.json` handed to it (or discovered from its working directory) applies its
+ * `imports` to the CLI's OWN modules too. So, unlike {@linkcode cliInvocation}, a remote or
+ * copied CLI module runs with `--no-config`, and a compiled binary runs its own version rather
+ * than the project's pin. A checkout's `cli.ts` still finds its own `deno.json` beside it. Start
+ * the child in a directory outside the project too, so nothing Deno looks for in the working
+ * directory is the project's. The panels that do run project code (Commands, Doctor, Tasks, Dev,
+ * Database, Cron) start their own children with {@linkcode cliInvocation}.
+ *
+ * @param module The CLI module (default: this denext's own, see {@linkcode cliModule}).
+ * @returns `["run", "-A", "--no-config"?, <module>]`, to be spread before `ui` and its flags.
+ */
+export function uiChildInvocation(module: string = cliModule()): string[] {
+  return ["run", "-A", ...(runsFromCheckout(module) ? [] : ["--no-config"]), module];
+}
+
+/**
  * The `--config` a CLI child needs to read the project's config: a remote CLI module discovers
  * none (an https URL) or the WORKING directory's (`jsr:`), which need not be the project. A local
  * checkout's `cli.ts` keeps discovering its own, as the process that spawned it did. A copy of the

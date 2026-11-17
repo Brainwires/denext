@@ -15,6 +15,7 @@ import {
   setWindowBounds,
   type WindowBackdrop,
   type WindowBounds,
+  type WindowCapabilities,
   windowCapabilities,
   type WindowScreen,
   type WindowState,
@@ -191,13 +192,13 @@ const BACKDROPS: readonly WindowBackdrop[] = ["none", "mica", "acrylic", "tabbed
 
 /** Backdrop: Mica / Acrylic / tabbed (Windows 11), vibrancy (macOS). */
 function BackdropCheck() {
-  const [caps, setCaps] = useState<Record<string, boolean> | null>(null);
+  const [caps, setCaps] = useState<WindowCapabilities | null>(null);
   const [current, setCurrent] = useState<string>("none");
   const [outcome, setOutcome] = useState<Outcome>(null);
 
   useEffect(() => {
     windowCapabilities().then(
-      (c) => setCaps({ ...c }),
+      (c) => setCaps(c),
       (err: unknown) => setOutcome({ ok: false, text: `windowCapabilities(): ${message(err)}` }),
     );
     return () => {

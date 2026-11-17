@@ -551,7 +551,7 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>migrate</code> and <code>upgrade</code> apply: <code>minimumDependencyAge</code> in
         {" "}
         <code>deno.json</code>, <code>min-release-age</code> in <code>.npmrc</code>,{" "}
-        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s two days; an <code>npm:</code>{" "}
+        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s 24 hours; an <code>npm:</code>{" "}
         entry in its <code>exclude</code>{" "}
         lifts it for that package). When the registry cannot be reached it installs the pins and
         says their age was not checked.
@@ -2928,9 +2928,8 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         Speech API. <code>denext/mobile</code>&apos;s own <code>speak(text, options)</code>{" "}
         (resolving once said) and <code>stopSpeaking()</code>{" "}
         take the same plugin, else the Web Speech API (Deno Desktop windows included), else, in a
-        Deno Desktop window without it (WebKitGTK), the runtime&apos;s OS speech (runtime
-        3.0.0-denext.6: AVSpeechSynthesizer, SAPI, speech-dispatcher, which the Linux packages
-        recommend).
+        Deno Desktop window without it (WebKitGTK), the runtime&apos;s OS speech (denext&apos;s
+        runtime: AVSpeechSynthesizer, SAPI, speech-dispatcher, which the Linux packages recommend).
       </p>
       <p>
         The same goes for <code>contacts</code> (<code>@capgo/capacitor-contacts</code>, behind{" "}

@@ -7,7 +7,7 @@ island hydrates.
 ## Run it
 
 ```sh
-cd examples/resumability
+cd examples/resumability   # from the repo root
 denext task dev          # the CLI prints the local URL (e.g. http://localhost:3000)
 # or a production build:
 denext task build && denext task start
@@ -25,6 +25,8 @@ Open the browser **DevTools console**, then:
 3. **The clock** resumes on its own, on idle — it is interactive via
    `useEffect`, so the framework wakes it without a click (no directive needed).
    Its time is a `useSignal`, adopted from the server render.
+4. **Follow the link to `/second`** (`app/second/page.tsx`). It is a soft
+   navigation to another resumable route, whose counter resumes the same way.
 
 The components render **identically** on the server and client, so resumption is
 invisible and there is no hydration mismatch — the console and the working
@@ -36,8 +38,9 @@ buttons are the proof.
   `onClick`, `useEffect`. No `qrl`, no `client:*` directive.
 - `export const resumable = true` in `app/page.tsx` is the only change from a
   normal app.
-- The server carves each island into a `<div data-dnx-island … style="display:contents">`
-  wrapper the page root never executes, and stamps handler hosts with `data-dnx-h`.
+- The server carves each island into a
+  `<div data-dnx-island … style="display:contents">` wrapper the page root never
+  executes, and stamps handler hosts with `data-dnx-h`.
 - A single delegated listener resumes the touched island synchronously and
   **replays** the event, so the real (closure-capturing) handler fires.
   Effect-only islands are auto-scheduled on idle instead.

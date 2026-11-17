@@ -89,7 +89,7 @@ Preact's internal vnode.
 | `options._commit(vnode, queue)` (mangled `__c`)                                | Called once per commit, after its layout effects, with the root element and an empty queue.                                                        |
 | `options.unmount(vnode)`                                                       | Called for each component, element and text node removed, parent first; the effect cleanups follow, children first (React's order).                |
 | `options.debounceRendering(cb)`                                                | Schedules the render a state update needs (by default a microtask, as in Preact).                                                                  |
-| `options.requestAnimationFrame(cb)`                                            | Schedules the `useEffect` flush after a commit (`preact/test-utils`-style synchronous flushing works).                                             |
+| `options.requestAnimationFrame(cb)`                                            | Schedules the `useEffect` flush after every commit, a click's too (`preact/test-utils`-style synchronous flushing works).                          |
 | `options._diff(vnode)` (mangled `__b`)                                         | Called as each element is created through those entry points, after `options.vnode` (denext has no per-vnode diff to run it before).               |
 | `_catchError` / `__e`, `_hook` / `__h`, `_root` / `__`, `__suspenseDidResolve` | Not called (a no-op); `preact/debug` and `preact/devtools` map to an empty module, since the devtools bridge reads Preact's internal vnode fields. |
 

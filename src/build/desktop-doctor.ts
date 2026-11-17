@@ -1003,7 +1003,7 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
       `the pinned runtime ${s.version} (laufey API ${runtime.laufeyApiVersion}) predates ` +
         "Deno.desktop.platformFeatures(): appCapabilities() / windowCapabilities() report the " +
         'session facts as "unknown", and a tray with no tray host is not detected',
-      "upgrade denext to a release that pins runtime 2.9.7-denext.10 or later",
+      "upgrade denext (`denext upgrade`): its pinned runtime has Deno.desktop.platformFeatures()",
     );
   }
   if (linuxChecks && !runtime.linuxNotifications) {
@@ -1013,7 +1013,7 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
         "notifications posted while the app is closed, and launcher badges: a click on a " +
         "notification can't start the app, a schedule waits for the app to run, and setBadge() " +
         'is a "(N) " title prefix',
-      "upgrade denext to a release that pins runtime 2.9.7-denext.11 or later",
+      "upgrade denext (`denext upgrade`): its pinned runtime has Linux notification cold starts",
     );
   }
   return out;

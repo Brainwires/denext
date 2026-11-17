@@ -11,6 +11,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import { createSpaDevState, getUnbundledCss } from "../src/build/spa/dev-state.ts";
 import { watch } from "../src/build/spa/dev-watch.ts";
 import { isSelfWrite, recordSelfWrite, writeManagedFile } from "../src/build/self-writes.ts";
+import { ContentBaseline } from "../src/build/spa/content-baseline.ts";
 
 /** The watcher's batches, and a wait for one holding a path (the watcher's ack, not a guess). */
 class Batches {
@@ -119,6 +120,64 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    "SPA dev: an event for a file whose content is unchanged since the watcher started is dropped",
+  fn: async () => {
+    // macOS FSEvents can deliver the project's own just-written files (a scaffold's, a
+    // fixture's) after the watcher starts; their content is what it was at the start, so they
+    // must not bump the generation. A real edit still does, at once.
+    const { dir } = await rootEntrySpa();
+    const controller = new AbortController();
+    try {
+      const paths = await resolveProject(dir);
+      const st = createSpaDevState({ paths, signal: controller.signal, unbundled: false });
+      const watched = new Batches();
+      watch(st, watched.push);
+      const attach = join(dir, "attach.txt");
+      await attached(watched, attach);
+      watched.seen.length = 0;
+
+      const main = join(dir, "main.tsx");
+      const before = await Deno.readTextFile(main);
+      // The same bytes again: an event arrives, but nothing changed since the start.
+      await Deno.writeTextFile(main, before);
+      const marker = join(dir, "marker.txt");
+      const markerSeen = watched.next(marker);
+      await Deno.writeTextFile(marker, "after the rewrite\n");
+      await markerSeen;
+      assertEquals(
+        watched.seen.flat().filter((p) => p !== marker && p !== attach),
+        [],
+        "an unchanged file was taken for an edit",
+      );
+
+      // A new file seen once, then written with the same bytes: dropped the second time.
+      const from = watched.seen.length;
+      await Deno.writeTextFile(marker, "after the rewrite\n");
+      const second = join(dir, "second.txt");
+      const secondSeen = watched.next(second);
+      await Deno.writeTextFile(second, "x\n");
+      await secondSeen;
+      assertEquals(
+        watched.seen.slice(from).flat().filter((p) => p === marker),
+        [],
+        "a same-content rewrite of a seen file was an edit",
+      );
+
+      // A real edit is still an edit.
+      const edited = st.generation;
+      const mainSeen = watched.next(main);
+      await Deno.writeTextFile(main, before + "console.log(2);\n");
+      await mainSeen;
+      assertEquals(st.generation > edited, true, "a real edit must still rebuild");
+    } finally {
+      controller.abort();
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 Deno.test("writeManagedFile skips an unchanged file and records its writes", async () => {
   const dir = await Deno.makeTempDir();
   try {
@@ -157,6 +216,63 @@ Deno.test("isSelfWrite covers denext's own write while it is still in progress",
     assertEquals(isSelfWrite(file), true, "the finished write still holds recorded content");
     await Deno.writeTextFile(file, "user edit");
     assertEquals(isSelfWrite(file), false, "an edit after the write finished is an edit");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ContentBaseline: only a readable file holding its recorded bytes is unchanged", () => {
+  const files = new Map<string, string | null>([["/p/a.ts", "h1"], ["/p/dir", null]]);
+  const baseline = new ContentBaseline((p) => files.get(p) ?? null);
+  baseline.capture("/p/a.ts");
+  baseline.capture("/p/dir");
+  assertEquals(baseline.size, 1, "a directory (or a file too big to hash) records nothing");
+  assertEquals(baseline.changed("/p/a.ts"), false, "the bytes recorded at the start");
+  files.set("/p/a.ts", "h2");
+  assertEquals(baseline.changed("/p/a.ts"), true, "an edit");
+  assertEquals(baseline.changed("/p/a.ts"), false, "the same bytes again");
+  files.set("/p/a.ts", "h1");
+  assertEquals(baseline.changed("/p/a.ts"), true, "reverting to the start's bytes is an edit");
+  assertEquals(baseline.changed("/p/dir"), true, "a directory event always counts");
+  assertEquals(baseline.changed("/p/dir"), true);
+  files.set("/p/new.ts", "n");
+  assertEquals(baseline.changed("/p/new.ts"), true, "a file first seen counts");
+  assertEquals(baseline.changed("/p/new.ts"), false);
+  files.delete("/p/new.ts");
+  assertEquals(baseline.changed("/p/new.ts"), true, "a removal counts");
+});
+
+Deno.test("ContentBaseline.snapshot: the watched files, never ignored or skipped folders", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    await Deno.mkdir(join(dir, "src"), { recursive: true });
+    await Deno.mkdir(join(dir, "node_modules/x"), { recursive: true });
+    await Deno.mkdir(join(dir, "ignored"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "src/a.tsx"), "a");
+    await Deno.writeTextFile(join(dir, "node_modules/x/i.js"), "x");
+    await Deno.writeTextFile(join(dir, "ignored/b.ts"), "b");
+    const baseline = new ContentBaseline();
+    baseline.snapshot([dir, join(dir, "missing")], (p) => p.startsWith(join(dir, "ignored")));
+    assertEquals(baseline.size, 1);
+    assertEquals(baseline.changed(join(dir, "src/a.tsx")), false);
+    assertEquals(baseline.changed(join(dir, "node_modules/x/i.js")), true, "never snapshotted");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ContentBaseline.snapshot: stops at its byte budget (the rest is learned lazily)", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    for (const name of ["a.png", "b.png", "c.png"]) {
+      await Deno.writeFile(join(dir, name), new Uint8Array(1000));
+    }
+    const baseline = new ContentBaseline();
+    baseline.snapshot([dir], () => false, { bytes: 2500 });
+    assertEquals(baseline.size, 2, "a third 1000-byte file would pass the 2500-byte budget");
+    const capped = new ContentBaseline();
+    capped.snapshot([dir], () => false, { files: 1 });
+    assertEquals(capped.size, 1);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -8,6 +8,7 @@ JS** — htmx (served from this origin by the plugin) does all the interactivity
 ## Run
 
 ```sh
+# from this directory
 denext task dev      # http://localhost:3000
 denext task build    # static/prod build (emits the runtime into the output)
 denext task start    # serve the build

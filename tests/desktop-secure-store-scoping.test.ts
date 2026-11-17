@@ -29,7 +29,11 @@ import {
   FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME,
   FIRST_MAC_SECURE_STORE_RUNTIME,
   FIRST_PTY_RUNTIME,
+  FIRST_WINDOWS_SECURE_STORE_RUNTIME,
+  supportsWindowsSecureStore,
 } from "../src/build/deno-version.ts";
+import { secureStorePermissionSet } from "../src/desktop/secure-store-config.ts";
+import { windowsSecureStoreRuntime } from "../src/build/desktop-launch-policy.ts";
 
 const SVC = "com.example.app";
 
@@ -281,7 +285,15 @@ function windowsVault() {
 Deno.test("secureStore (Windows): the vault resource is <service>/page or <service>/ext/<name>; earlier items move", async () => {
   const vault = windowsVault();
   vault.items.set(item(SVC, "token"), b64("signed in"));
-  const host = secureStoreHost({ service: SVC, os: "windows", run: vault.run, warn: () => {} });
+  // A runtime without its own Windows store (the runtime's store, were one passed, is not used).
+  const host = secureStoreHost({
+    service: SVC,
+    os: "windows",
+    run: vault.run,
+    warn: () => {},
+    runtimeVersion: FIRST_MAC_SECURE_STORE_RUNTIME,
+    api: fakeStore().api,
+  });
   assertEquals(await call(host.capability, "get", { key: "token" }), "signed in");
   await host.extension("notes").set("token", "notes");
   const services = new Set(vault.payloads.map((p) => p.service));
@@ -298,6 +310,89 @@ Deno.test("secureStore (Windows): the vault resource is <service>/page or <servi
   assertEquals(host.capability.methods.get.permissions, {
     run: ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
   });
+});
+
+Deno.test("secureStore (Windows, the runtime's own store): no PowerShell; the namespaces and the move are the runtime store's", async () => {
+  const store = fakeStore();
+  store.items.set(item(SVC, "token"), b64("signed in"));
+  const host = secureStoreHost({
+    service: SVC,
+    os: "windows",
+    api: store.api,
+    run: noCli,
+    warn: () => {},
+    runtimeVersion: FIRST_WINDOWS_SECURE_STORE_RUNTIME,
+  });
+  // The earlier un-namespaced item moves into <service>/page, through the runtime's store.
+  assertEquals(await call(host.capability, "get", { key: "token" }), "signed in");
+  await host.extension("notes").set("token", "notes");
+  assertEquals(store.items.get(item(`${SVC}/page`, "token")), b64("signed in"));
+  assertEquals(store.items.get(item(`${SVC}/ext/notes`, "token")), b64("notes"));
+  assertEquals(store.items.has(item(SVC, "token")), false);
+  // Values stay base64, as the PasswordVault path stored them.
+  await call(host.capability, "set", { key: "multi", value: 'line one\nline "two" é' });
+  assertEquals(store.items.get(item(`${SVC}/page`, "multi")), b64('line one\nline "two" é'));
+  assertEquals(await call(host.capability, "get", { key: "multi" }), 'line one\nline "two" é');
+  // No program: the baked capability list serves the store.
+  assertEquals(host.capability.methods.get.permissions, {});
+});
+
+Deno.test("secureStore (Windows, the runtime's own store): a store that does not answer is backend_unavailable, never PowerShell", async () => {
+  for (const api of [null, { secureStore: { supported: false } }]) {
+    const host = secureStoreHost({
+      service: SVC,
+      os: "windows",
+      api: api as Parameters<typeof secureStoreHost>[0]["api"],
+      run: noCli,
+      warn: () => {},
+      runtimeVersion: FIRST_WINDOWS_SECURE_STORE_RUNTIME,
+    });
+    const err = await assertRejects(
+      () => call(host.capability, "get", { key: "token" }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "backend_unavailable");
+    assertStringIncludes(err.message, "Credential Manager");
+    await assertRejects(() => host.extension("notes").set("k", "v"), DesktopCapError);
+  }
+});
+
+Deno.test("supportsWindowsSecureStore: from the runtime with its own Windows store", () => {
+  assertEquals(supportsWindowsSecureStore(FIRST_WINDOWS_SECURE_STORE_RUNTIME), true);
+  assertEquals(supportsWindowsSecureStore("3.0.0-denext.24"), false);
+  assertEquals(supportsWindowsSecureStore("3.0.0-denext.26"), true);
+  assertEquals(supportsWindowsSecureStore("2.9.8"), false);
+  assertEquals(supportsWindowsSecureStore("not a version"), false);
+  // The stock runtime and a local build of unknown version have none, whatever the pin.
+  const stock = (name: string) => name === "DENEXT_DESKTOP_RUNTIME" ? "stock" : undefined;
+  assertEquals(windowsSecureStoreRuntime(stock, FIRST_WINDOWS_SECURE_STORE_RUNTIME), false);
+  assertEquals(
+    windowsSecureStoreRuntime(() => undefined, FIRST_WINDOWS_SECURE_STORE_RUNTIME),
+    true,
+  );
+  assertEquals(windowsSecureStoreRuntime(() => undefined, "3.0.0-denext.24"), false);
+});
+
+Deno.test("secureStorePermissionSet: Windows gets Linux's set under a runtime with its own Windows store", () => {
+  for (const bakedCapabilities of [false, true]) {
+    for (const legacy of [false, true]) {
+      const facts = { legacy, bakedCapabilities, macRuntimeStore: true };
+      assertEquals(
+        secureStorePermissionSet("windows", { ...facts, windowsRuntimeStore: true }),
+        secureStorePermissionSet("linux", facts),
+      );
+      assertEquals(
+        secureStorePermissionSet("windows", { ...facts, windowsRuntimeStore: true }),
+        bakedCapabilities ? {} : { sys: ["*"] },
+      );
+      // An older runtime (unset reads as one) keeps Windows PowerShell.
+      for (const ctx of [{ ...facts, windowsRuntimeStore: false }, facts]) {
+        assertEquals(secureStorePermissionSet("windows", ctx), {
+          run: ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
+        });
+      }
+    }
+  }
 });
 
 // ---- the bridge: ctx.secureStore and host.secureStore -----------------------------------------
@@ -399,12 +494,29 @@ Deno.test("secureStoreLegacy: on unless desktop.secureStore.legacy is false", ()
 Deno.test("secureStore: the declared method permissions are what packaging bakes, per runtime and config", () => {
   // A runtime version for each set of runtime facts.
   const runtimes = [
-    { version: FIRST_PTY_RUNTIME, bakedCapabilities: false, macRuntimeStore: false },
-    { version: FIRST_MAC_SECURE_STORE_RUNTIME, bakedCapabilities: false, macRuntimeStore: true },
+    {
+      version: FIRST_PTY_RUNTIME,
+      bakedCapabilities: false,
+      macRuntimeStore: false,
+      windowsRuntimeStore: false,
+    },
+    {
+      version: FIRST_MAC_SECURE_STORE_RUNTIME,
+      bakedCapabilities: false,
+      macRuntimeStore: true,
+      windowsRuntimeStore: false,
+    },
     {
       version: FIRST_DESKTOP_BAKED_CAPABILITIES_RUNTIME,
       bakedCapabilities: true,
       macRuntimeStore: true,
+      windowsRuntimeStore: false,
+    },
+    {
+      version: FIRST_WINDOWS_SECURE_STORE_RUNTIME,
+      bakedCapabilities: true,
+      macRuntimeStore: true,
+      windowsRuntimeStore: true,
     },
   ];
   const flags = (perms: { run?: readonly string[]; sys?: readonly string[] } | undefined) => [
@@ -427,17 +539,30 @@ Deno.test("secureStore: the declared method permissions are what packaging bakes
   }
 });
 
-Deno.test("secure-store (Windows): the Windows PowerShell grant is baked on every runtime and named as full trust", () => {
-  // The runtime's own store has no Windows backend, so Windows always runs PowerShell.
+Deno.test("secure-store (Windows): Windows PowerShell is baked only under a runtime without its own Windows store, and named as full trust", () => {
+  // A runtime without its own Windows store: Windows runs PowerShell.
   for (const bakedCapabilities of [false, true]) {
     assertEquals(
       desktopPermissionFlags(["secure-store"], "windows", {
         legacy: false,
         bakedCapabilities,
         macRuntimeStore: true,
+        windowsRuntimeStore: false,
       }),
       ["--allow-run=C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"],
     );
+  }
+  // A runtime with its own Windows store: no --allow-run at all, as on Linux.
+  for (const legacy of [false, true]) {
+    const flags = (bakedCapabilities: boolean) =>
+      desktopPermissionFlags(["secure-store"], "windows", {
+        legacy,
+        bakedCapabilities,
+        macRuntimeStore: true,
+        windowsRuntimeStore: true,
+      });
+    assertEquals(flags(true), []);
+    assertEquals(flags(false), ["--allow-sys"]);
   }
   // `denext desktop add secure-store` says what that grant gives away: a script interpreter.
   const entry = DESKTOP_CAPABILITIES["secure-store"];
@@ -453,8 +578,9 @@ Deno.test("desktopPermissionContext: the config's legacy flag and the runtime's 
     desktopPermissionContext({ desktop: { secureStore: { legacy: false } } }, {
       bakedCapabilities: true,
       macSecureStore: false,
+      windowsSecureStore: true,
     }),
-    { legacy: false, bakedCapabilities: true, macRuntimeStore: false },
+    { legacy: false, bakedCapabilities: true, macRuntimeStore: false, windowsRuntimeStore: true },
   );
   // The pinned runtime reads the baked list.
   assertEquals(desktopPermissionContext(undefined).bakedCapabilities, true);

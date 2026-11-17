@@ -261,8 +261,8 @@ export interface PasswordlessRedeem extends ProvenSignIn {
   keys: AttemptKeys;
   /** Redeem the presented secret. */
   consume(): Promise<VerificationTokenRecord | null>;
-  /** Find, convert or create the user the redeemed identifier signs in as. */
-  resolve(identifier: string): Promise<ResolvedSignIn | null>;
+  /** Find, convert or create the user the redeemed identifier (of `record`) signs in as. */
+  resolve(identifier: string, record: VerificationTokenRecord): Promise<ResolvedSignIn | null>;
 }
 
 /**
@@ -281,6 +281,10 @@ export async function redeemAndSignIn(
 ): Promise<Response> {
   const record = await redeemUnderBudget(ctx, provider, redeem.keys, redeem.consume, redeem.asJson);
   if (record instanceof Response) return record;
-  const resolved = await resolveContained(ctx, provider, () => redeem.resolve(record.identifier));
+  const resolved = await resolveContained(
+    ctx,
+    provider,
+    () => redeem.resolve(record.identifier, record),
+  );
   return await finishProvenSignIn(ctx, provider, resolved, redeem);
 }

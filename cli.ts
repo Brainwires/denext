@@ -259,16 +259,16 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
   const route = await routeUnknownVerb(Deno.args, outcome.unknownVerb);
   if (route.kind === "deno") return await runRouted(route);
-  const { afterPinHandOff, unknownVerbAction } = await lazy<
+  const { handOffToDiscover, unknownVerbAction } = await lazy<
     typeof import("./src/cli/unknown-verb.ts")
   >(
     "./unknown-verb.ts",
   );
   const dir = cwdFromArgs(Deno.args);
   const verb = outcome.unknownVerb;
-  const action = await afterPinHandOff(
-    () => deferDiscoveryToPinned(dir),
+  const action = await handOffToDiscover(
     () => unknownVerbAction(Deno.args, verb, dir),
+    () => deferDiscoveryToPinned(dir),
   );
   if (action === "unknown") return outcome;
   if (action === "help") return { ...outcome, hint: UNLISTED_VERB_HELP };

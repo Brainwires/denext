@@ -27,12 +27,14 @@ const cov = (
   functions: [number, number] = [1, 1],
 ): FileCoverage => ({ lines, branches, functions });
 
-Deno.test("ratchet scope: the CLI, the server, the compat layer, the DevTools panes and the packages' sources", () => {
+Deno.test("ratchet scope: the CLI, the server, the compat layer, the DevTools panes, the desktop runtime, the project UI and the packages' sources", () => {
   assertEquals(RATCHETED, [
     "src/cli",
     "src/server",
     "src/compat",
     "src/client/devtools-panel",
+    "src/desktop",
+    "src/ui",
     "packages",
   ]);
   for (
@@ -43,6 +45,8 @@ Deno.test("ratchet scope: the CLI, the server, the compat layer, the DevTools pa
       "packages/openapi/mod.ts",
       "packages/backend/src/rest/query.ts",
       "src/client/devtools-panel/live.ts",
+      "src/desktop/caps/keep-awake.ts",
+      "src/ui/features/services.ts",
     ]
   ) assert(ratcheted(f), f);
   for (
@@ -54,6 +58,7 @@ Deno.test("ratchet scope: the CLI, the server, the compat layer, the DevTools pa
       "packages/x/node_modules/y/index.ts",
       "src/server/types.d.ts",
       "src/clix/a.ts", // a prefix, not the directory
+      "src/uix/a.ts",
       "src/client/devtools-panel.ts", // the panel's entry, beside the panes' directory
       "src/client/reconciler.ts",
     ]

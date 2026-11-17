@@ -40,8 +40,7 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 ## A freshly published `@denext/*` version is refused ("minimum dependency age")
 
 **Cause.** Deno's minimum-dependency-age hold refuses a JSR version until it is
-old enough (Deno 2.9 holds two days by default, although its error hint says 24
-hours). A supply-chain delay, not an error: it is the window in which a
+old enough (24 hours by default). A supply-chain delay, not an error: it is the window in which a
 compromised release would be caught.
 
 **Fix.** Run `denext upgrade`: it pins the newest `@denext/*` versions your rule
@@ -112,14 +111,14 @@ See [Migrating from Next.js](/docs/migrating) § 8.
 
 ## `deno test` runs `_test.ts` files from `.deno/npm-compat`
 
-**Cause.** Runtimes 3.0.0-rc.5 through 3.0.0-denext.7 write the type check's
+**Cause.** Some older denext runtimes write the type check's
 `.deno/npm-compat` into the project root: an npm-shaped copy of the `@jsr/*` packages, their `_test.ts`
 files included, which a `deno test` with default discovery then finds.
 
 **Fix.** Add a top-level `exclude` to the project's `deno.json` (a workspace's
 root and its members): `{ "exclude": [".deno/"] }`. A project `denext create`
-scaffolds already has it. From runtime 3.0.0-denext.8 the copy lives under
-`DENO_DIR` and a check removes the old folder, so moving to it is a fix too.
+scaffolds already has it. The current toolchain keeps the copy under
+`DENO_DIR` and a check removes the old folder, so upgrading denext is a fix too.
 
 ## `WorkspaceDiscoverError(ConfigNotWorkspaceMember)` when building
 

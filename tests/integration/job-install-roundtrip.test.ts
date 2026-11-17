@@ -1,6 +1,7 @@
 // `denext job install` for real: a throwaway app's job installed into this machine's own scheduler
 // (launchd on macOS, a systemd user timer or the crontab on Linux, Task Scheduler on Windows),
-// started through the scheduler, its marker file checked, then uninstalled and checked gone.
+// reported by `denext job install --status`, started through the scheduler, its marker file
+// checked, then uninstalled and checked gone (and gone from `--status`).
 // tests/job-install.test.ts covers what each backend writes against a fake host; this is the one
 // test that installs, fires and removes a real entry.
 //
@@ -86,6 +87,19 @@ async function jobInstall(dir: string, noBin: string, extra: string[] = []): Pro
     ["run", "-A", fromFileUrl(CLI), "job", "install", ...extra, "--json"],
     { cwd: dir, env: { DENEXT_INSTALL: noBin, NO_COLOR: "1" } },
   );
+}
+
+/** What `denext job install --status --json` reports: the backend and this project's entries. */
+interface Status {
+  readonly backend: string | null;
+  readonly installed: readonly { backend: string; slug: string; job?: string }[];
+}
+
+/** `denext job install --status --json` in `dir`. */
+async function jobStatus(dir: string, noBin: string): Promise<Status> {
+  const out = await jobInstall(dir, noBin, ["--status"]);
+  assertEquals(out.code, 0, `job install --status failed:\n${out.stderr}`);
+  return JSON.parse(out.stdout) as Status;
 }
 
 /** Where a backend keeps the entry, how to run it now, and how to see it. */
@@ -219,6 +233,10 @@ async function install(rt: RoundTrip): Promise<boolean> {
   if (REQUIRED_BACKEND) assertEquals(report.backend, REQUIRED_BACKEND);
   assertEquals(report.installed.map((e) => e.slug), [rt.slug]);
   assert(await rt.entry.present(), `the ${report.backend} entry is not there after install`);
+  // `--status` reads the scheduler back: the entry, named by its job, in the backend installed to.
+  const status = await jobStatus(rt.dir, rt.noBin);
+  assertEquals(status.backend, report.backend);
+  assertEquals(status.installed, [{ backend: report.backend, slug: rt.slug, job: JOB }]);
   return true;
 }
 
@@ -254,6 +272,7 @@ async function uninstall(rt: RoundTrip, entry: Entry): Promise<void> {
   assertEquals(removal.removed.map((r) => r.slug), [rt.slug]);
   assert(!(await entry.present()), "the entry is still there after uninstall");
   rt.installed = false;
+  assertEquals((await jobStatus(rt.dir, rt.noBin)).installed, [], "--status after uninstall");
 }
 
 /** After a failure: denext's own uninstall, then the scheduler's tools; then the app. */

@@ -1,7 +1,6 @@
 # caching — denext data cache & ISR
 
-Demonstrates denext's Next.js-compatible caching primitives, none of which had
-an example before.
+Demonstrates denext's Next.js-compatible caching primitives.
 
 ## What it shows
 
@@ -26,7 +25,8 @@ in-memory fallback. Override it with `setCacheStore(...)`:
 - `sqliteCacheStore({ path })` — the durable single-node `node:sqlite` file (the
   default); bounded (FIFO eviction) and stale-while-revalidate, no unstable
   flag.
-- a custom `CacheStore` (e.g. a Redis adapter) — to share one cache across
+- `redisCacheStore`, `postgresCacheStore` or `denoKvCacheStore` (all from
+  `denext/server`), or your own `CacheStore` — to share one cache across
   instances.
 
 ## Run

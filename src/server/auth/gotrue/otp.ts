@@ -60,6 +60,15 @@ export interface OtpData {
   data?: Record<string, unknown>;
   /** An email / phone change: the new value. */
   newValue?: string;
+  /**
+   * A two-address email change (confirmed from both addresses): the id both codes share, which
+   * address this one was sent to, and the address the change moves away from.
+   */
+  changeId?: string;
+  /** A two-address email change: `current` (the account's address) or `new`. */
+  half?: "current" | "new";
+  /** A two-address email change: the account's address when the change was requested. */
+  oldValue?: string;
   /** A sign-up confirmation: the fingerprint of the password that sign-up chose. */
   pw?: string;
 }
@@ -218,6 +227,53 @@ export async function redeemTokenHash(
   return data ? { address: identifier.slice(prefix.length), data } : null;
 }
 
+/** The MAC domain of a two-address email change's per-address confirmation marker. */
+const CHANGE_DOMAIN = "denext.gotrue.email-change.v1";
+
+/**
+ * Record that one address of a two-address email change confirmed it, and say whether this
+ * confirmation is the one that completes it: `true` once both addresses have confirmed (the
+ * caller applies the change), `false` while the other is still owed (GoTrue's
+ * `email_change_confirm_status` 0 → 1 → 2) or when the other confirmation completes it.
+ *
+ * Built only on the adapter's single-use token rows, so it holds when both addresses confirm at
+ * the same moment, on any adapter. Each confirmation, in this order: (1) writes the change's
+ * shared apply row (the same row from either side), (2) writes its own marker, (3) redeems the
+ * other address's marker; only if that is there does it (4) redeem the apply row, and only the
+ * one that redeems it reports `true`. A confirmation that finds no marker in (3) wrote its own
+ * first, so the other side's (3) finds that marker; and the apply row each side writes in (1)
+ * precedes its marker, so it is never written again after it was redeemed.
+ *
+ * @param ctx The context.
+ * @param changeId The id both of the change's codes carry.
+ * @param half Which address this confirmation came from.
+ * @returns Whether this confirmation completes the change.
+ */
+export async function confirmEmailChangeHalf(
+  ctx: GoTrueContext,
+  changeId: string,
+  half: "current" | "new",
+): Promise<boolean> {
+  const row = async (which: string) => ({
+    identifier: `gotrue:email_change_confirmed:${changeId}:${which}`,
+    purpose: "otp" as const,
+    tokenHash: await sha256Hex(`${CHANGE_DOMAIN}:${changeId}:${which}`),
+  });
+  const write = async (which: string) =>
+    await ctx.adapter.createVerificationToken!({
+      ...(await row(which)),
+      expires: nowSeconds() + otpExpiry(ctx),
+      data: JSON.stringify({ action: "email_change_confirmed" }),
+    });
+  await write("apply");
+  await write(half);
+  const other = await ctx.adapter.useVerificationToken!(
+    await row(half === "current" ? "new" : "current"),
+  );
+  if (!other) return false;
+  return (await ctx.adapter.useVerificationToken!(await row("apply"))) !== undefined;
+}
+
 /** The verification link for a code. */
 export function verifyLink(
   ctx: GoTrueContext,
@@ -260,6 +316,8 @@ interface AuthEmailInput {
   issued: IssuedOtp;
   redirectTo: string;
   user?: AdapterUser;
+  /** An email change's new address, when the mail goes to the current one. */
+  newEmail?: string;
 }
 
 /**
@@ -283,7 +341,7 @@ async function sendOverSmtp(ctx: GoTrueContext, input: AuthEmailInput, link: str
     siteUrl: ctx.siteUrl,
     redirectTo: input.redirectTo,
     email: input.user?.email ?? input.email,
-    ...(input.action === "email_change" ? { newEmail: input.email } : {}),
+    ...(input.action === "email_change" ? { newEmail: input.newEmail ?? input.email } : {}),
     data: input.user ? userMetadataOf(input.user) : {},
   });
 }

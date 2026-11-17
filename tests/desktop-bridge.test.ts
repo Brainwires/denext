@@ -215,6 +215,22 @@ Deno.test("dispatch: an unexpected error never leaks internals in production", a
   assert(!String(env.error?.message).includes("/Users/secret"), "leaked a path");
 });
 
+Deno.test("dispatch: an unexpected error is logged in the app's own log, named by its method", async () => {
+  const bridge = createDesktopBridge([probe], { dev: false });
+  const logged: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => void logged.push(args);
+  try {
+    const { env } = await call(bridge, rpc({ cap: "probe", method: "secretBoom" }));
+    assertEquals(env.error?.code, "internal");
+  } finally {
+    console.error = original;
+  }
+  assertEquals(logged.length, 1);
+  assertEquals(logged[0][0], "denext: desktop probe.secretBoom failed:");
+  assert(String(logged[0][1]).includes("/Users/secret"), "the error itself is in the log");
+});
+
 Deno.test("dispatch: a non-cooperative handler is timed out", async () => {
   const bridge = createDesktopBridge([probe]);
   const { status, env } = await call(bridge, rpc({ cap: "probe", method: "hang" }));

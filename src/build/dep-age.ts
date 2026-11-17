@@ -1,7 +1,7 @@
 // Deno's minimum dependency age, as denext reads it to pick versions Deno will resolve.
 //
 // Deno (2.9+) holds a version published less than `minimumDependencyAge` ago out of resolution
-// (two days by default on Deno 2.9.7): a compromised release is refused while it is fresh. denext never
+// (1440 minutes, 24 hours, by default): a compromised release is refused while it is fresh. denext never
 // weakens that hold on the user's behalf. Instead `create`, `migrate` and `upgrade` pin the
 // newest `@denext/*` version that is ALREADY old enough under the project's effective rule, and
 // say when a newer one becomes eligible.
@@ -16,12 +16,12 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 
 /**
- * Deno's default hold, in minutes, as Deno 2.9.7 enforces it: its source names 1440 and its
- * error hint says "24 hours", but with no rule configured it reports (and applies) a cutoff two
- * days back — measured against JSR on both the stock 2.9.7 and denext's toolchain. Pinning by
- * the longer window never picks a version Deno then refuses.
+ * Deno's default hold, in minutes: `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` in Deno's
+ * `libs/resolver/factory.rs` (the cutoff is `now - 1440 min` with no rule configured), the same
+ * on denext's toolchain. denext once assumed two days here, which pinned the previous release for
+ * a day after Deno itself already resolved the new one.
  */
-const DEFAULT_MIN_DEP_AGE_MINUTES = 2880;
+const DEFAULT_MIN_DEP_AGE_MINUTES = 1440;
 
 /** The exclude entry `denext create` / `migrate` wrote before 4.5.2. */
 export const DENEXT_EXCLUDE = "jsr:@denext/*";
@@ -190,7 +190,9 @@ export function heldUntil(
 ): Date | null {
   if (rule.cutoff === null || publishedAt === undefined || isExcluded(rule, name)) return null;
   const published = new Date(publishedAt);
-  if (Number.isNaN(published.getTime()) || published <= rule.cutoff) return null;
+  // Deno lets a version in only when it was published strictly before the cutoff
+  // (deno_graph's `NewestDependencyDate::matches`: `created_at < cutoff`).
+  if (Number.isNaN(published.getTime()) || published < rule.cutoff) return null;
   // A relative rule ends `age` after publishing; a fixed cutoff date never lets it in.
   if (rule.absolute) return new Date(NEVER);
   return new Date(published.getTime() + (now.getTime() - rule.cutoff.getTime()));

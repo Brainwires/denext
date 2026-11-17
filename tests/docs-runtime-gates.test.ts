@@ -154,3 +154,116 @@ Deno.test("docs: reference rows and names match the code", async () => {
   const live = await read("site/app/docs/live/page.tsx");
   assert(live.includes("<code>ctx.resubscribe</code>"));
 });
+
+/** A runtime release number: denext's Deno / Deno Desktop runtime (`3.0.0-rc.N`, `3.0.0-denext.N`, `2.9.7-denext.N`). */
+const RUNTIME_RELEASE = /\b(?:3\.0\.0-(?:rc|denext)\.\d+|2\.9\.[78]-denext\.\d+)\b/;
+
+/**
+ * Docs directories whose subject IS runtime versions (the release record, the runtime release
+ * table, the toolchain's version history), and the generated API reference (checked below,
+ * symbol by symbol, from the JSDoc it is built from).
+ */
+const VERSION_PAGES = new Set([
+  "changelog",
+  "runtime-reference",
+  "toolchain",
+  "desktop-runtime",
+  "api",
+]);
+
+/**
+ * Lines that may name a runtime release, each with why: a dated record, not a gate. Matched by a
+ * substring of the line. Add an entry only for text whose subject is a version, never for a gate.
+ */
+const VERSION_ALLOWLIST: { path: string; line: string; why: string }[] = [
+  // A dated hardware-verification record (the toolchain a VM run used, and what it printed),
+  // not a gate: it says when Windows on Arm last ran outside CI.
+  {
+    path: "KNOWN-LIMITATIONS.md",
+    line: "2.9.7-denext.21, 2026-10-19; later runtimes are covered by CI's",
+    why: "dated verification record",
+  },
+  {
+    path: "KNOWN-LIMITATIONS.md",
+    line: "(`deno --version` reports `2.9.7-denext.21`",
+    why: "the output that dated run printed",
+  },
+];
+
+/** Every Markdown / page source a reader learns runtime gates from, outside the version pages. */
+async function gateTexts(): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const path of ["AGENTS.md", "README.md", "KNOWN-LIMITATIONS.md", "FEATURES.md"]) {
+    out.set(path, await read(path));
+  }
+  const docs = join(ROOT, "site/app/docs");
+  async function visit(dir: string, rel: string): Promise<void> {
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isDirectory) {
+        if (rel === "" && VERSION_PAGES.has(e.name)) continue;
+        await visit(join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
+      } else if (/\.(?:md|tsx)$/.test(e.name)) {
+        const path = `site/app/docs/${rel ? `${rel}/` : ""}${e.name}`;
+        out.set(path, await Deno.readTextFile(join(dir, e.name)));
+      }
+    }
+  }
+  await visit(docs, "");
+  return out;
+}
+
+/** `<path>: <line>` for every line naming a runtime release that the allowlist doesn't cover. */
+export function versionPinOffenders(texts: Map<string, string>): string[] {
+  const offenders: string[] = [];
+  for (const [path, text] of texts) {
+    for (const line of text.split("\n")) {
+      if (!RUNTIME_RELEASE.test(line)) continue;
+      if (VERSION_ALLOWLIST.some((a) => a.path === path && line.includes(a.line))) continue;
+      offenders.push(`${path}: ${line.trim()}`);
+    }
+  }
+  return offenders;
+}
+
+Deno.test("docs: no runtime release numbers outside the CHANGELOG and the version pages", async () => {
+  const texts = await gateTexts();
+  assert(texts.has("site/app/docs/desktop/page.tsx"));
+  assert(!texts.has("site/app/docs/runtime-reference/content.md"));
+  assertEquals(versionPinOffenders(texts), []);
+});
+
+Deno.test("docs: the API reference (public JSDoc) names no runtime release", async () => {
+  const reference = JSON.parse(await read("site/app/docs/api/reference.json")) as {
+    groups: { module: string; symbols: unknown[] }[];
+  };
+  const offenders = new Set<string>();
+  const releaseIn = (key: string, value: unknown): boolean =>
+    typeof value === "string" && key !== "signature" && RUNTIME_RELEASE.test(value);
+  const visit = (node: unknown, where: string): void => {
+    if (Array.isArray(node)) return node.forEach((n) => visit(n, where));
+    if (!node || typeof node !== "object") return;
+    const o = node as Record<string, unknown>;
+    const here = o.name ? `${where}.${o.name}` : where;
+    for (const [key, value] of Object.entries(o)) {
+      if (releaseIn(key, value)) offenders.add(here);
+      else visit(value, here);
+    }
+  };
+  for (const group of reference.groups) visit(group.symbols, group.module);
+  assertEquals([...offenders], []);
+});
+
+Deno.test("versionPinOffenders: flags a gate, keeps an allowlisted line", () => {
+  const texts = new Map([
+    ["AGENTS.md", "works on runtime 3.0.0-denext.12+"],
+    [
+      "KNOWN-LIMITATIONS.md",
+      "under runtime 2.9.7-denext.20 only\nwhere the runtime has pty\n" +
+      "  2.9.7-denext.21, 2026-10-19; later runtimes are covered by CI's job",
+    ],
+  ]);
+  assertEquals(versionPinOffenders(texts), [
+    "AGENTS.md: works on runtime 3.0.0-denext.12+",
+    "KNOWN-LIMITATIONS.md: under runtime 2.9.7-denext.20 only",
+  ]);
+});

@@ -1,10 +1,12 @@
 # denext × Postgres under load
 
-The [database guide](https://denext.dev/docs/database) says of networked databases: _"these drivers are not part of
-denext's CI — validate your driver + pooling under your load."_ This example
-**is** that validation, made runnable. It's a denext app backed by a real
-**Postgres** connection pool (`jsr:@db/postgres`, zero npm), plus a load harness
-that hammers it and reports throughput and latency percentiles.
+denext's own Postgres client (`postgresClient()` from `denext/server`, on
+`Deno.SQL`) runs in denext's CI; a third-party driver and its pool are yours to
+validate under your load (see the
+[database guide](https://denext.dev/docs/database)). This example does that for
+one driver. It's a denext app backed by a real **Postgres** connection pool
+(`jsr:@db/postgres`, zero npm), plus a load harness that sends it concurrent
+requests and reports throughput and latency percentiles.
 
 The lesson it demonstrates: with a bounded pool (`POOL_SIZE=10`) and concurrency
 far above it (say 100), requests **queue for a free connection** instead of
@@ -13,15 +15,28 @@ stays bounded and no request errors out.
 
 ## Run it
 
+Needs Docker with Compose (for `db:up`), or any Postgres you point
+`DATABASE_URL` at. From the repo root:
+
 ```sh
 cd examples/postgres-load
-cp .env.example .env         # DATABASE_URL + POOL_SIZE
+cp .env.example .env           # the tasks load it with --env-file=.env
 
-denext task db:up              # start Postgres in Docker (or point .env anywhere)
-                             # it publishes 127.0.0.1:5432 — this machine only
+denext task db:up              # start Postgres 16 in Docker (or point .env anywhere)
+                               # it publishes 127.0.0.1:5432 — this machine only
 denext task build              # build the app
 denext task start              # serve on http://localhost:3005
 ```
+
+`denext task dev` serves the same app in dev mode on the same port.
+
+| Variable       | Read by     | What it is                                                                            |
+| -------------- | ----------- | ------------------------------------------------------------------------------------- |
+| `DATABASE_URL` | the app     | Required. Postgres URL; `.env.example` matches `docker-compose.yml`.                  |
+| `POOL_SIZE`    | the app     | Connections in the pool (default `10`).                                               |
+| `CONCURRENCY`  | `load` task | Requests in flight at once (default `50`).                                            |
+| `REQUESTS`     | `load` task | Total requests (default `2000`).                                                      |
+| `TARGET_URL`   | `load` task | Endpoint to POST to (default `http://localhost:3005/api/hit`; a first argument wins). |
 
 Open <http://localhost:3005> — the homepage reads the live count from Postgres
 on every request and lets you record a visit with a plain `<form>` (works with
@@ -53,7 +68,8 @@ CONCURRENCY=100 REQUESTS=5000 denext task load
   connections at `POOL_SIZE`; the extra 490 virtual users wait in
   `pool.connect()`.
 - **Add a denext concurrency ceiling.** Pair this with `maxConcurrency` on the
-  prod server (see `examples/concurrency` and the [deployment guide](https://denext.dev/docs/deploy)) to add HTTP-level
+  prod server (see `examples/concurrency` and the
+  [deployment guide](https://denext.dev/docs/deploy)) to add HTTP-level
   backpressure in front of the pool.
 
 ## How it's built
@@ -74,9 +90,10 @@ required**. The Postgres integration is what you run here, with a real database.
 ## Notes
 
 - The driver (`jsr:@db/postgres`) is standard Deno usage; swap in
-  `npm:postgres`, `npm:mysql2`, or any other by editing `lib/db.ts`. Keep the
-  pool a module singleton.
+  `postgresClient()` from `denext/server`, `npm:postgres`, `npm:mysql2`, or any
+  other by editing `lib/db.ts`. Keep the pool a module singleton.
 - `denext task db:down` stops Postgres and deletes its volume.
 - This is the multi-instance counterpart to [`examples/notes`](../notes) (which
   uses zero-npm `node:sqlite` for the single-process case). See
-  [the database guide](https://denext.dev/docs/database) for the full decision guide.
+  [the database guide](https://denext.dev/docs/database) for the full decision
+  guide.

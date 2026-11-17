@@ -577,7 +577,8 @@ Deno.test("jail: bcrypt and bufferutil say approving works only where the OS con
       JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === name)?.caveat ?? "";
     assertStringIncludes(why, "unapproved", name);
     assertStringIncludes(why, "where the OS confines lifecycle scripts", name);
-    assertStringIncludes(why, "3.0.0-denext.1", name);
+    assertStringIncludes(why, "the runtime does so", name);
+    assert(!why.includes("3.0.0-denext.1"), `${name}: names the capability, not a release`);
   }
 });
 

@@ -84,6 +84,8 @@ export interface DesktopWindowSettings {
   readonly titleVisibility?: DesktopTitleVisibility;
   /** The macOS toolbar style that lays the title bar out (`desktop.window.toolbarStyle`). */
   readonly toolbarStyle?: DesktopToolbarStyle;
+  /** How the window is hidden on macOS (`desktop.window.macosHiddenMode`, creation-time). */
+  readonly macosHiddenMode?: DesktopMacosHiddenMode;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
@@ -122,6 +124,8 @@ export interface DesktopInitialWindow {
   readonly showOnFirstLoad?: boolean;
   /** A Wayland layer-shell overlay surface (runtime `3.0.0-denext.7`+). */
   readonly overlay?: boolean;
+  /** How the window is hidden on macOS (a runtime with the macOS hidden mode). */
+  readonly macosHiddenMode?: DesktopMacosHiddenMode;
 }
 
 /** The macOS vibrancy material `desktop.backdrop: "vibrancy"` puts behind the page. */
@@ -150,6 +154,28 @@ export const TOOLBAR_STYLES: readonly DesktopToolbarStyle[] = [
   "unifiedCompact",
   "expanded",
 ];
+/**
+ * How a window is hidden on macOS's system WebView (`desktop.window.macosHiddenMode`, a window's
+ * `macosHiddenMode`): `"invisible"` (the runtime's default) keeps a hidden window ordered in but
+ * invisible, so a `backgroundThrottling: false` page keeps its timers' rate; `"orderOut"` really
+ * removes it, and macOS then throttles its page. Other platforms ignore it.
+ */
+export type DesktopMacosHiddenMode = "invisible" | "orderOut";
+/** The macOS hidden modes. */
+const MACOS_HIDDEN_MODES: readonly DesktopMacosHiddenMode[] = ["invisible", "orderOut"];
+
+/**
+ * Why `value` is not a macOS hidden mode, or `null`. Shared by `desktop.window.macosHiddenMode`
+ * and a window's own option.
+ *
+ * @param value The configured value.
+ * @returns The problem, or `null`.
+ */
+export function macosHiddenModeProblem(value: unknown): string | null {
+  return MACOS_HIDDEN_MODES.includes(value as DesktopMacosHiddenMode)
+    ? null
+    : `must be one of ${MACOS_HIDDEN_MODES.join(", ")}`;
+}
 const POLICIES = ["regular", "accessory"] as const;
 /** The most `desktop.app.maxWindows` may be. */
 export const MAX_WINDOWS_LIMIT = 64;
@@ -262,6 +288,19 @@ export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, st
   if (o !== undefined && (typeof o !== "number" || !Number.isFinite(o) || o < 0 || o > 1)) {
     return ["window.opacity", "must be a number from 0 to 1"];
   }
+  const value = windowValueProblem(w);
+  if (value !== null) return value;
+  const combo = titleOptionsProblem({
+    frameless: w.frameless === true,
+    titleVisibility: w.titleVisibility as DesktopTitleVisibility | undefined,
+    toolbarStyle: w.toolbarStyle as DesktopToolbarStyle | undefined,
+  });
+  if (combo !== null) return [`window.${combo[0]}`, combo[1]];
+  return null;
+}
+
+/** The first problem with `desktop.window`'s key, button position, title or hidden-mode values. */
+function windowValueProblem(w: Record<string, unknown>): [string, string] | null {
   const key = w.key === undefined ? null : windowKeyProblem(w.key);
   if (key !== null) return ["window.key", key.replace(/^key /, "")];
   const buttons = w.windowButtonPosition === undefined
@@ -270,12 +309,8 @@ export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, st
   if (buttons !== null) return ["window.windowButtonPosition", buttons];
   const title = titleOptionValuesProblem(w);
   if (title !== null) return [`window.${title[0]}`, title[1]];
-  const combo = titleOptionsProblem({
-    frameless: w.frameless === true,
-    titleVisibility: w.titleVisibility as DesktopTitleVisibility | undefined,
-    toolbarStyle: w.toolbarStyle as DesktopToolbarStyle | undefined,
-  });
-  if (combo !== null) return [`window.${combo[0]}`, combo[1]];
+  const hidden = w.macosHiddenMode === undefined ? null : macosHiddenModeProblem(w.macosHiddenMode);
+  if (hidden !== null) return ["window.macosHiddenMode", hidden];
   return null;
 }
 
@@ -373,6 +408,9 @@ function windowKeys(raw: unknown): Omit<
       : {}),
     ...(w.toolbarStyle !== undefined
       ? { toolbarStyle: w.toolbarStyle as DesktopToolbarStyle }
+      : {}),
+    ...(w.macosHiddenMode !== undefined
+      ? { macosHiddenMode: w.macosHiddenMode as DesktopMacosHiddenMode }
       : {}),
   };
 }
@@ -484,17 +522,23 @@ export function maxWindowsProblem(value: unknown): string | null {
 /**
  * The `initialWindow` block of `.deno-desktop/app.json` for these settings, or `undefined` when
  * the window needs none: written only when the window is hidden at launch, frameless, transparent,
- * non-activating or a layer-shell overlay (the creation-time settings), then with its configured
- * size so it opens at that size. A size above the runtime's 65535 limit is left to `runDesktop` to
- * apply. `overlay` only for a runtime that reads it (an older one refuses the key).
+ * non-activating, a layer-shell overlay or hidden on macOS by ordering it out (the creation-time
+ * settings), then with its configured size so it opens at that size. A size above the runtime's
+ * 65535 limit is left to `runDesktop` to apply. `overlay` and `macosHiddenMode` only for a runtime
+ * that reads them (an older one refuses the key); `macosHiddenMode` only for `"orderOut"`, since
+ * `"invisible"` is the runtime's default. The main window's `new Deno.BrowserWindow()` passes no
+ * hidden mode, so it takes over the start window whatever this says.
  *
  * @param settings The resolved window settings.
  * @param overlayKnown Whether the runtime reads `initialWindow.overlay` (`initialOverlayRuntime`).
+ * @param hiddenModeKnown Whether the runtime reads `initialWindow.macosHiddenMode`
+ *   (`macosHiddenModeRuntime`).
  * @returns The block, or `undefined`.
  */
 export function desktopInitialWindow(
   settings: DesktopWindowSettings,
   overlayKnown = false,
+  hiddenModeKnown = false,
 ): DesktopInitialWindow | undefined {
   const flags = {
     ...(settings.frameless === true ? { frameless: true } : {}),
@@ -502,6 +546,9 @@ export function desktopInitialWindow(
     ...(settings.transparent === true ? { transparent: true } : {}),
     ...(settings.show === false ? { showOnFirstLoad: false } : {}),
     ...(settings.overlay === true && overlayKnown ? { overlay: true } : {}),
+    ...(settings.macosHiddenMode === "orderOut" && hiddenModeKnown
+      ? { macosHiddenMode: "orderOut" as const }
+      : {}),
   };
   if (Object.keys(flags).length === 0) return undefined;
   const fits = (n: number | undefined) => n !== undefined && n <= 65535;

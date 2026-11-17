@@ -19,7 +19,7 @@
  * @module
  */
 
-import type { AdapterUser, AuthAdapter } from "./adapter.ts";
+import type { AdapterUser, AuthAdapter, VerificationTokenRecord } from "./adapter.ts";
 import { type ResolvedSignIn, toAuthUser } from "./adapter-link.ts";
 import { captchaRefusal } from "./captcha.ts";
 import { emitAuthEvent } from "./events.ts";
@@ -53,15 +53,29 @@ const ANONYMOUS_PROVIDER = "anonymous";
 type ConvertingAdapter = Pick<AuthAdapter, "updateUser"> & Partial<Pick<AuthAdapter, "getUser">>;
 
 /**
- * Whether the request carries a complete (not second-factor-owed) session of an anonymous
- * user — one a proof could convert. A send to an identifier with no account goes out for such a
- * request even under `allowSignUp: false`, since the conversion creates no user.
+ * The verification-token `data` that binds a proof sent now to the request's anonymous user: set
+ * when the request carries a complete (not second-factor-owed) session of an anonymous user — one
+ * the proof could convert — else `undefined`. A send to an identifier with no account goes out
+ * for such a request even under `allowSignUp: false`, since the conversion creates no user. On
+ * redeem, only that same anonymous user is converted ({@linkcode convertOrCreateUser}).
  *
  * @param ctx The route context.
- * @returns `true` for a complete anonymous session.
+ * @returns The `data` to store with the token or code, or `undefined`.
  */
-export async function hasConvertibleSession(ctx: AuthRouteContext): Promise<boolean> {
-  return (await convertibleSession(ctx)) !== null;
+export async function conversionBinding(ctx: AuthRouteContext): Promise<string | undefined> {
+  const session = await convertibleSession(ctx);
+  return session ? JSON.stringify({ convert: session.user.id }) : undefined;
+}
+
+/** The anonymous user id a redeemed token's `data` was bound to, or `undefined`. */
+function boundUserId(data: string | undefined): string | undefined {
+  if (!data) return undefined;
+  try {
+    const parsed = JSON.parse(data) as { convert?: unknown } | null;
+    return typeof parsed?.convert === "string" ? parsed.convert : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The request's complete anonymous session, or `null`. */
@@ -72,8 +86,9 @@ async function convertibleSession(ctx: AuthRouteContext): Promise<AuthSession | 
 
 /**
  * Attach a just-proven identifier to the signed-in anonymous user, if there is one: the
- * request's session must be complete (not owing a second factor) and its user still anonymous
- * in the adapter. The user keeps its id; `proof` (`{ email, emailVerified }` or
+ * request's session must be complete (not owing a second factor), its user must be the one the
+ * proof was sent for (`boundTo`, from {@linkcode conversionBinding}) and still anonymous in the
+ * adapter. The user keeps its id; `proof` (`{ email, emailVerified }` or
  * `{ phone, phoneVerified }`) is written with `isAnonymous: false`, and `userConverted` fires.
  * Call it only for an identifier that has NO account.
  *
@@ -81,16 +96,20 @@ async function convertibleSession(ctx: AuthRouteContext): Promise<AuthSession | 
  * @param adapter The configured adapter.
  * @param proof The proven identifier and its verification time.
  * @param provider The provider whose proof converts the user.
- * @returns The converted user, or `null` when the request has no complete anonymous session.
+ * @param boundTo The anonymous user id the proof was sent for, if any.
+ * @returns The converted user, or `null` when the request has no complete anonymous session
+ * of the user the proof was sent for.
  */
 async function convertAnonymousUser(
   ctx: AuthRouteContext,
   adapter: ConvertingAdapter,
   proof: Partial<Pick<AdapterUser, "email" | "emailVerified" | "phone" | "phoneVerified">>,
   provider: string,
+  boundTo: string | undefined,
 ): Promise<AdapterUser | null> {
+  if (boundTo === undefined) return null;
   const session = await convertibleSession(ctx);
-  if (!session) return null;
+  if (!session || session.user.id !== boundTo) return null;
   const stored = await adapter.getUser?.(session.user.id);
   if (stored?.isAnonymous !== true) return null;
   const user = await adapter.updateUser({ id: stored.id, ...proof, isAnonymous: false });
@@ -100,14 +119,16 @@ async function convertAnonymousUser(
 
 /**
  * The user a proven identifier with NO account signs in as: the request's anonymous user,
- * converted ({@linkcode convertAnonymousUser}) — even when the provider allows no sign-up, since
- * the user exists already; else a new user carrying the proof when the provider allows sign-up
- * (firing `createUser`); else `null`.
+ * converted ({@linkcode convertAnonymousUser}) when the proof was sent from that same anonymous
+ * session (its token's `data`, from {@linkcode conversionBinding}) — even when the provider
+ * allows no sign-up, since the user exists already; else a new user carrying the proof when the
+ * provider allows sign-up (firing `createUser`); else `null`.
  *
  * @param ctx The route context.
  * @param adapter The configured adapter.
  * @param proof The proven identifier and its verification time.
  * @param provider The provider's id and sign-up policy.
+ * @param record The redeemed token or code (its `data` names the user it may convert).
  * @returns The resolved sign-in, or `null`.
  */
 export async function convertOrCreateUser(
@@ -115,8 +136,10 @@ export async function convertOrCreateUser(
   adapter: ConvertingAdapter & Pick<AuthAdapter, "createUser">,
   proof: Partial<Pick<AdapterUser, "email" | "emailVerified" | "phone" | "phoneVerified">>,
   provider: { id: string; allowSignUp: boolean },
+  record: Pick<VerificationTokenRecord, "data">,
 ): Promise<ResolvedSignIn | null> {
-  const converted = await convertAnonymousUser(ctx, adapter, proof, provider.id);
+  const boundTo = boundUserId(record.data);
+  const converted = await convertAnonymousUser(ctx, adapter, proof, provider.id, boundTo);
   if (converted) return { user: toAuthUser(converted), isNewUser: false };
   if (!provider.allowSignUp) return null;
   const created = await adapter.createUser(proof);

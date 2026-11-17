@@ -7,13 +7,46 @@ import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import { ATTACHMENT_PATH, attachmentResponse } from "./app/downloads.ts";
 import { standInBrowser } from "./desktop/browser-stand-in.ts";
+import {
+  hookLog,
+  HOOKS_ENV,
+  navigation,
+  runtimeNotifier,
+  secondInstanceRecorder,
+  windowMenuRecorder,
+  withHooksMenu,
+} from "./desktop/hooks.ts";
 
 /** The WebSocket the "websocket relay" check dials: answers with the `Origin` it was opened with. */
 const ECHO_SOCKET_PATH = "/_kitchen/ws";
 
-await runDesktop({
+/**
+ * The window test's hooks launch (KITCHEN_SINK_HOOKS=1, see desktop/hooks.ts): a Window-menu item
+ * of the app's own (`desktop.menu.window.items`, through the config as an app would set it) and
+ * the backend hooks, each recording what it saw for the page to check. Other launches have none.
+ */
+function hooksLaunch(): boolean {
+  try {
+    return Deno.env.get(HOOKS_ENV) === "1";
+  } catch {
+    return false; // no env permission
+  }
+}
+
+const hooks = hooksLaunch();
+
+const runtime = await runDesktop({
   importMetaUrl: import.meta.url,
-  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  ...(await resolveDesktopCapabilities(hooks ? withHooksMenu(config) : config, {
+    base: import.meta.url,
+  })),
+  ...(hooks
+    ? {
+      onWindowMenuItem: windowMenuRecorder(hookLog, "runDesktop"),
+      onSecondInstance: secondInstanceRecorder(hookLog, "runDesktop"),
+      onWillNavigate: navigation.handler,
+    }
+    : {}),
   // On Windows the window test's stand-in browser is in-process (see browser-stand-in.ts).
   openBrowser: standInBrowser(),
   // Reached only through the runtime's loopback relay (the page's custom origin carries no
@@ -29,3 +62,6 @@ await runDesktop({
     return response;
   },
 });
+
+// The hooks launch's `notify` check posts through this result's `notify` too (desktop/hooks.ts).
+if (hooks) runtimeNotifier.notify = runtime.notify;

@@ -60,7 +60,8 @@ escape hatch, so both engines run in one app. `reactNative: { lists: "library" }
 
 ## Running a cell
 
-Web: `(cd web && denext task dev)` then `/?list=legend&kind=chat&n=100000`. Without a query the
+Web: `(cd web && denext task install)` once (npm packages; needs Node.js), then
+`(cd web && denext task dev)` and open `/?list=legend&kind=chat&n=100000`. Without a query the
 page lists every cell. Android: `adb shell am start -a android.intent.action.VIEW -d
 'denextscrollbench://run?list=legend&kind=chat&n=100000' com.brainwires.denext.scrollbench`
 (RN: `rnscrollbench://…`, `com.brainwires.rnscrollbench`). While a cell runs,
@@ -71,20 +72,27 @@ page lists every cell. Android: `adb shell am start -a android.intent.action.VIE
 
 ## Building the APKs
 
-`./build-apks.sh [host] [out-dir]` exports the web app here and builds both release APKs on a
+`./build-apks.sh <host> [out-dir]` exports the web app here and builds both release APKs on a
 Linux host over SSH (JDK 21, `~/Android/Sdk`), x86_64 only, signed with a throwaway key made on
-the host. The placeholder images come from `denext task images` (committed).
+the host. The host is required (or `SCROLL_BENCH_HOST`); there is no default. Locally it needs `ssh`, `rsync`, a
+`deno` on `PATH` and `web/node_modules` (`(cd web && denext task install)`). The placeholder
+images come from `denext task images` (committed).
 
 ## Measuring
 
+From this directory (`denext task harness` runs `harness/measure.ts`):
+
 ```sh
-deno run -A harness/measure.ts doctor
-deno run -A harness/measure.ts install --apks <dir with scroll-bench-*-release.apk>
-deno run -A harness/measure.ts matrix --dry-run                  # the plan, no adb
-deno run -A harness/measure.ts matrix --only rn-flash-chat,denext-legend-chat
-deno run -A harness/measure.ts matrix --config my-matrix.json --resume results/<stamp>
-deno run -A harness/measure.ts coldstart --runs 5
+denext task harness doctor
+denext task harness install --apks <dir with scroll-bench-*-release.apk>
+denext task harness matrix --dry-run                  # the plan, no adb
+denext task harness matrix --only rn-flash-chat,denext-legend-chat
+denext task harness matrix --config my-matrix.json --resume results/<stamp>
+denext task harness coldstart --runs 5
 ```
+
+It finds `adb` under `ANDROID_HOME` / `ANDROID_SDK_ROOT` (default `~/Library/Android/sdk`), else
+on `PATH`; set `ANDROID_SERIAL` when more than one device is attached.
 
 The method, and what each number does and does not mean, is in the header of
 `harness/measure.ts`. Checks without a device: `denext task test` (parsers, matrix, data) and

@@ -448,3 +448,62 @@ Deno.test({
     }
   },
 });
+
+Deno.test("runDeno jsonDocument: a document after an earlier JSON line still settles (the closing-brace span)", async () => {
+  // The whole of stdout is not one JSON value (a logged object came first), but it ends with a
+  // pretty-printed document: that span is the answer.
+  const notices: string[] = [];
+  const result = await runDeno(
+    ["eval", docProgram(`'{"progress":1}\\n' + ${PRETTY}`, SPIN)],
+    {
+      cwd: Deno.cwd(),
+      signal: AbortSignal.timeout(60_000),
+      jsonDocument: { graceMs: 400, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assertEquals(result.code, 0, "settled, not killed at the deadline");
+  assertEquals(parseJsonDocument(result.stdout), DOC);
+  assertEquals(notices.length, 1, notices.join("\n"));
+});
+
+Deno.test("runDeno jsonDocument: an infinite grace never settles early, and the child's own exit stands", async () => {
+  const notices: string[] = [];
+  const result = await runDeno(
+    ["eval", docProgram(PRETTY, "await new Promise((r) => setTimeout(r, 300)); Deno.exit(4);")],
+    {
+      cwd: Deno.cwd(),
+      jsonDocument: { graceMs: Infinity, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assertEquals(result.code, 4);
+  assertEquals(result.json(), DOC);
+  assertEquals(notices, []);
+});
+
+Deno.test("runDeno: a streamed run keeps only a bounded tail, and every line still reaches onLine", async () => {
+  // 40 lines of 1 KiB each, flushed one write at a time: far past the 8 KiB tail.
+  const program = `for (let i = 0; i < 40; i++) {
+  Deno.stdout.writeSync(new TextEncoder().encode(String(i).padStart(4, "0") + "x".repeat(1020) + "\\n"));
+  await new Promise((r) => setTimeout(r, 2));
+}`;
+  const lines: string[] = [];
+  const result = await runDeno(["eval", program], {
+    cwd: Deno.cwd(),
+    onLine: (line) => void lines.push(line),
+  });
+  assertEquals(result.code, 0);
+  assertEquals(lines.filter((l) => l !== "").length, 40, "nothing is lost to the tail");
+  assert(result.stdout.length < 40 * 1025, `tail kept (${result.stdout.length} chars)`);
+  assert(result.stdout.length >= 8192 - 1025, "at least the tail's worth");
+  assert(result.stdout.endsWith("\n") && result.stdout.includes("0039"), "the newest output kept");
+  assert(!result.stdout.startsWith("0000"), "the oldest output dropped");
+});
+
+Deno.test("runDeno: stdin is fed to the child and closed, and json() of non-JSON output is null", async () => {
+  const program = `const text = await new Response(Deno.stdin.readable).text();
+console.log("got " + text.toUpperCase());`;
+  const result = await runDeno(["eval", program], { cwd: Deno.cwd(), stdin: "hello" });
+  assertEquals(result.code, 0);
+  assertEquals(result.stdout.trim(), "got HELLO", "the pipe closed, so the read finished");
+  assertEquals(result.json(), null, "json() never throws");
+});

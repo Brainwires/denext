@@ -1,13 +1,16 @@
 # examples/graphql
 
-`@denext/graphql` in one app: a Pothos (code-first, no decorators) schema served by GraphQL
-Yoga at `/graphql`, with a **subscription that rides a denext channel** — a `post` mutation
-publishes to `createChannel`, and both the GraphQL `subscription { messages }` (over SSE, or
-over WebSocket with any `graphql-ws` client) and the page's `useChannel` (Live socket) receive it.
-The channel's `authorize` gates the GraphQL subscription exactly as it gates `useChannel`, and an
-edit under `app/graphql/` reloads the schema in `denext dev` without a restart.
+`@denext/graphql` in one app: a Pothos (code-first, no decorators) schema served
+by GraphQL Yoga at `/graphql`, with a **subscription that rides a denext
+channel** — a `post` mutation publishes to `createChannel`, and both the GraphQL
+`subscription { messages }` (over SSE, or over WebSocket with any `graphql-ws`
+client) and the page's `useChannel` (Live socket) receive it. The channel's
+`authorize` gates the GraphQL subscription exactly as it gates `useChannel`, and
+an edit under `app/graphql/` reloads the schema in `denext dev` without a
+restart.
 
 ```sh
+# from this directory
 denext task dev          # http://localhost:3000 — GraphiQL at /graphql
 ```
 
@@ -20,6 +23,7 @@ curl -s localhost:3000/graphql -H 'content-type: application/json' \
   -d '{"query":"mutation { post(room: \"lobby\", text: \"hello\") { text } }"}'
 ```
 
-`deno run -A ../../cli.ts graphql sdl` prints the schema (`denext graphql sdl` in an app); `denext task build` writes `.denext/schema.graphql`.
-Yoga, `graphql` and Pothos are npm packages the example opts into (`deno.json` imports) —
+`deno run -A ../../cli.ts graphql sdl` prints the schema (`denext graphql sdl`
+in an app); `denext task build` writes `.denext/schema.graphql`. Yoga, `graphql`
+and Pothos are npm packages the example opts into (`deno.json` imports) —
 denext's own runtime stays zero-npm.

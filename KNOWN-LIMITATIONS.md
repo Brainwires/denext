@@ -129,16 +129,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
-  `denext start` begins its graceful shutdown on those events too, but Windows ends a console
-  process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
-  the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
-  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully. Planned for 5.x (ROADMAP, "5.x / Runtime fork").
+- **On Windows, a closed console window, logoff or system shutdown bounds the drain.**
+  `denext start` drains on those events too, and denext's runtime holds Windows' console handler
+  while the drain runs (the shutdown listener's promise settles when the process ends), but Windows
+  itself ends the process after its own limit: about 5 seconds for a closed console window and
+  about 20 seconds for logoff or shutdown. A drain longer than that is cut off there; on stock
+  Deno, whose handler returns at once, it is cut off immediately. Stop a server with Ctrl-C or
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
 - **The production server's idle memory trim is glibc Linux only, and a trim can delay one
   request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
   between event loop polls, so a request that arrives while one runs waits for it once (up to about
-  240 ms on a large app after a load burst; 8-20 ms on a small handler). It needs denext's Deno
-  from runtime 3.0.0-rc.5, so stock Deno never gets it, and `denext task start` (straight on the
+  240 ms on a large app after a load burst; 8-20 ms on a small handler). It needs denext's Deno,
+  so stock Deno never gets it, and `denext task start` (straight on the
   toolchain) gets it only with `DENO_UNSTABLE_IDLE_TRIM=1` in its environment.
   `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0` turns it off. See
   [Deployment targets › Idle memory trim](https://denext.dev/docs/deployment-targets#idle-memory-trim).
@@ -396,8 +398,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
   adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
   not yet run against a live SQL Server. SQLite and Postgres
-  run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
-  3.0.0-rc.1 or later; for an app that runs on an earlier runtime (or under
+  run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on a runtime with
+  `Deno.SQL` (denext's Deno); for an app that runs without it (or under
   `DENEXT_DENO=stock`) migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs. Planned for 5.x (ROADMAP, "5.x / Backend").
@@ -697,13 +699,13 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   sends the app a forged callback is refused: each sign-in's redirect carries a per-session
   `denext_nonce` the callback must bring back, so the forgery protection does not depend on Clerk
   binding its `rotating_token_nonce` to the client.
-- **Native passkeys:** on Linux (no OS API) only USB security keys, under runtime 3.0.0-rc.1+
+- **Native passkeys:** on Linux (no OS API) only USB security keys, under denext's runtime
   (libwebauthn; no platform authenticator, the browser otherwise); macOS needs the
   associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back). They
   work only for the RP IDs listed in `desktop.capabilities.passkeys.rpIds`, which the packaged
-  launch file pins natively (`passkeyRpIds`); from runtime `3.0.0-denext.1` (`strictPolicy`) a
+  launch file pins natively (`passkeyRpIds`); where the runtime enforces it (`strictPolicy`) a
   missing or empty list refuses every ceremony with `invalid_rp`.
 - **The first macOS passkey request after login is slower:** about 0.5 s on Apple silicon and up to
   2.5 s on Intel (measured on fresh CI machines), whatever the window backend. macOS starts its
@@ -760,16 +762,16 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   / `camera` turn on. No other origin can be granted; `denext desktop package` warns and `denext
   doctor` reports a deno.json grant that differs
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
-- **Microphone and camera capture works only in a packaged app, on Deno Desktop runtime
-  3.0.0-denext.10 or later.** `denext desktop package` writes the grant, macOS's usage strings and
-  its device entitlements; `denext desktop run` / `dev` windows have none, so from that runtime
-  they refuse `getUserMedia` (`NotAllowedError`). Test capture in the browser (`denext dev`) or a
+- **Microphone and camera capture works only in a packaged app, on a Deno Desktop
+  runtime that grants capture.** `denext desktop package` writes the grant, macOS's usage strings and
+  its device entitlements; `denext desktop run` / `dev` windows have none, so such a runtime
+  makes them refuse `getUserMedia` (`NotAllowedError`). Test capture in the browser (`denext dev`) or a
   packaged build. The OS then has its own say. macOS asks once per app (TCC), and an unsigned or
   ad-hoc signed build may be refused without asking. On Windows the privacy switches (Settings ›
   Privacy & security › Microphone / Camera, including "Let desktop apps access…") refuse the
-  device. From runtime 3.0.0-denext.16 the window refuses up front (`NotAllowedError`),
+  device. Where the runtime reads those switches the window refuses up front (`NotAllowedError`),
   `checkPermission` reads `"blocked"` and `appCapabilities()` reports
-  `microphoneAccess` / `cameraAccess: "denied"` with the switch. Before it, the engine fails to
+  `microphoneAccess` / `cameraAccess: "denied"` with the switch (`"unknown"` on a runtime that can't read them). There, the engine fails to
   open the device with its own error and nothing reports why. Linux has no OS consent for the
   devices: the grant is the only gate
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
@@ -789,22 +791,22 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
-- **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
+- **CEF on Linux spellchecks seven languages out of the box**: the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
   the `.bdic` files in `dictionaries/` beside the host executable. Windows and macOS use the OS
   spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
-- **Overlay and tray-first windows depend on the OS for part of what they ask for.** With the
-  pinned runtime (3.0.0-denext.7 and later): always-on-top levels above `"floating"` and
+- **Overlay and tray-first windows depend on the OS for part of what they ask for.** With
+  denext's runtime: always-on-top levels above `"floating"` and
   `visibleOnFullScreen` are macOS-only (Windows and Linux have one floating level); a transparent
   window is opaque on CEF; `overlay: true` is a layer surface only on a Wayland compositor with
   wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) and with gtk-layer-shell installed, an
   ordinary window elsewhere (GNOME has no layer shell); tray hover events are macOS and Windows
   only, `popUpMenu()` does nothing on Linux (the tray host opens the menu), and a Linux session
   without a StatusNotifierWatcher (AppIndicator only) delivers no tray clicks; text to speech on
-  Linux needs speech-dispatcher (the packages recommend it). Under the stock runtime, or a pinned runtime before 3.0.0-denext.6,
+  Linux needs speech-dispatcher (the packages recommend it). Under the stock runtime, or an older denext runtime,
   click-through, hit regions, every-workspace visibility, the taskbar setter, the levels, tray
   event detail and the activation policy report `false` / reject `unsupported`,
   `desktop.app.dock: false` hides the Dock icon only once the app starts (it shows for a moment at
@@ -815,7 +817,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   and drops; keep-awake holds and global shortcuts are released only by the main window's reload.
   A runtime without window bindings treats every page as the main window's.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
-  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held before runtime 3.0.0-denext.8 (from it, a quit is held only up to a deadline, macOS takes no input while a session end is pending, and macOS ignores an accessory app's refusal of a logout); a badge is a
+  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held on an older runtime (on denext's, a quit is held only up to a deadline, macOS takes no input while a session end is pending, and macOS ignores an accessory app's refusal of a logout); a badge is a
   window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
   `windowCapabilities()` and `appCapabilities()`.
 - **macOS can hand your deep-link scheme to another app;** denext requires PKCE S256 and an exact
@@ -826,16 +828,16 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   Store build (each sandbox breaks per-app storage and deep-link registration).
 - **Permissions:** by default a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a
   picked path needs unscoped read/write (permissions bake at build time). `desktop.permissions:
-  "strict"` (runtime 3.0.0-denext.8, `desktop.app.identifier`) scopes both, but refuses to package
+  "strict"` (denext's runtime, `desktop.app.identifier`) scopes both, but refuses to package
   an app that reads a picked path (`dialogs`), `$DOCUMENTS` or `"*"`, and its `--allow-env=<names>`
   also lets app code set those names (`PATH`, `DENO_DIR`, … included), as the default does; FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
   (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
-  (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
+  (its copy in the app's cache folder has a per-user path); with denext's runtime and
   `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
   unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
-  the app from writing it. Runtime 3.0.0-denext.10 and later (with `desktop.app.identifier`) lifts
+  the app from writing it. Where the runtime checks a sidecar's integrity (with `desktop.app.identifier`) it lifts
   that: the run grant records the program's SHA-256, no write grant is
   baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
   remains on macOS and Linux: another program of the same user that changes the file between the
@@ -847,7 +849,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   own code cannot. An unscoped write grant could change a binary that is not signed, and with
   unscoped read and write the app could symlink a folder above the program's before the runtime
   first writes it and race a spawn the same way. Under
-  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets the
+  `deno run desktop.ts` on an older or stock Deno, a sidecar's `spawnSelf()` child gets the
   permissions the app holds unscoped, `desktop.denoFlags` and the unstable features with an API of
   their own (`kv`, `cron`, `net`, `broadcast-channel`, `webgpu`), but no scoped grants, `--config`
   or other `--unstable-*` flags given on the command line.
@@ -869,11 +871,19 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
   unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
   Linux secure store, and there is no `secret-tool` path) — else every call rejects
-  `backend_unavailable` with the reason (never a plaintext fallback). From runtime
-  `3.0.0-denext.1` Linux items are namespaced per app id; an item an older build stored under the
+  `backend_unavailable` with the reason (never a plaintext fallback). Under denext's runtime
+  Linux items are namespaced per app id; an item an older build stored under the
   shared attributes moves over only when the app looks it up during its first run of the updated
   build (as on macOS, a key first read later stays behind, no longer visible to the app), and an
-  app without `desktop.app.identifier` sees none of them.
+  app without `desktop.app.identifier` sees none of them. On Windows, where the runtime has its
+  own Windows store (the Credential Manager, DPAPI-encrypted, no PowerShell), values are limited to
+  64 KiB and a logon session with no credential store (a service, an SSH key logon) rejects
+  `backend_unavailable`; an item an older denext wrote to the WinRT PasswordVault moves over only
+  when the app looks it up during its first run of the updated build, with
+  `desktop.app.identifier` set and the app having run here before (a key first read later stays in
+  the PasswordVault, which the app no longer reads: nothing there is reachable without PowerShell).
+  Under an older or the stock runtime Windows keeps the PasswordVault through Windows PowerShell,
+  whose `--allow-run` is full trust.
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF

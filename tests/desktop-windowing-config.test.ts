@@ -26,10 +26,15 @@ import {
 } from "../src/build/desktop-app-config.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { initialOverlayRuntime } from "../src/build/desktop-launch-policy.ts";
+import {
+  initialOverlayRuntime,
+  macosHiddenModeRuntime,
+} from "../src/build/desktop-launch-policy.ts";
 import {
   FIRST_INITIAL_OVERLAY_RUNTIME,
+  FIRST_MACOS_HIDDEN_MODE_RUNTIME,
   supportsInitialOverlay,
+  supportsMacosHiddenMode,
 } from "../src/build/deno-version.ts";
 
 /** Validate a config with just a `desktop` block. */
@@ -421,6 +426,114 @@ Deno.test("sync: initialWindow goes to app.json for a windowless or overlay wind
       true,
     );
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("macosHiddenMode: desktop.window takes invisible or orderOut, nothing else", () => {
+  assertEquals(resolveDesktopWindowSettings({ window: { macosHiddenMode: "orderOut" } }), {
+    macosHiddenMode: "orderOut",
+  });
+  assertEquals(resolveDesktopWindowSettings({ window: { macosHiddenMode: "invisible" } }), {
+    macosHiddenMode: "invisible",
+  });
+  for (const bad of ["hidden", "OrderOut", false]) {
+    assertEquals(desktopWindowKeyProblem({ macosHiddenMode: bad }), [
+      "window.macosHiddenMode",
+      "must be one of invisible, orderOut",
+    ]);
+    assertThrows(
+      () => resolveDesktopWindowSettings({ window: { macosHiddenMode: bad } }),
+      Error,
+      "window.macosHiddenMode",
+    );
+    assertThrows(
+      () => validateDesktop({ window: { macosHiddenMode: bad } }),
+      Error,
+      "desktop.window.macosHiddenMode",
+    );
+  }
+  validateDesktop({ window: { show: false, macosHiddenMode: "orderOut" } });
+});
+
+Deno.test("initialWindow: macosHiddenMode orderOut only for a runtime that reads it", () => {
+  // "invisible" is the runtime's default: no block for it alone.
+  assertEquals(desktopInitialWindow({ macosHiddenMode: "invisible" }, true, true), undefined);
+  assertEquals(
+    desktopInitialWindow({ width: 300, height: 200, macosHiddenMode: "orderOut" }, true, true),
+    { width: 300, height: 200, macosHiddenMode: "orderOut" },
+  );
+  // An older runtime refuses the key: left out (the start window keeps the runtime's own mode).
+  assertEquals(
+    desktopInitialWindow({ width: 300, height: 200, macosHiddenMode: "orderOut" }, true, false),
+    undefined,
+  );
+  assertEquals(
+    desktopInitialWindow({ show: false, macosHiddenMode: "orderOut" }, true, false),
+    { showOnFirstLoad: false },
+  );
+});
+
+Deno.test("macosHiddenModeRuntime: the pinned runtime from the gate, never stock or a local build", () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  assertEquals(FIRST_MACOS_HIDDEN_MODE_RUNTIME, "3.0.0-denext.25");
+  assertEquals(supportsMacosHiddenMode("3.0.0-denext.25"), true);
+  assertEquals(supportsMacosHiddenMode("3.0.0-denext.24"), false);
+  assertEquals(supportsMacosHiddenMode("nope"), false);
+  assertEquals(macosHiddenModeRuntime(env({}), "3.0.0-denext.25"), true);
+  assertEquals(macosHiddenModeRuntime(env({}), "3.0.0-denext.24"), false);
+  assertEquals(
+    macosHiddenModeRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.25"),
+    false,
+  );
+  assertEquals(
+    macosHiddenModeRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.25"),
+    false,
+  );
+});
+
+Deno.test("sync: macosHiddenMode goes to app.json initialWindow; an older runtime warns", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-hidden-mode-" });
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    const config = {
+      desktop: { window: { width: 260, height: 300, show: false, macosHiddenMode: "orderOut" } },
+    };
+    await syncDesktopAppConfigAt(dir, config, true, true, true);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      initialWindow: {
+        width: 260,
+        height: 300,
+        showOnFirstLoad: false,
+        macosHiddenMode: "orderOut",
+      },
+    });
+    assertEquals(warnings, []);
+    // An older runtime: the key is left out (it would refuse app.json), with a warning naming the
+    // capability.
+    await syncDesktopAppConfigAt(dir, config, true, true, false);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      initialWindow: { width: 260, height: 300, showOnFirstLoad: false },
+    });
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0], "desktop.window.macosHiddenMode");
+    assertStringIncludes(warnings[0], "how a hidden window is hidden on macOS");
+    assertEquals(/\d+\.\d+\.\d+/.test(warnings[0]), false, "no runtime version in the warning");
+    // "invisible" is the default everywhere: no warning, no key.
+    warnings.length = 0;
+    await syncDesktopAppConfigAt(
+      dir,
+      { desktop: { window: { show: false, macosHiddenMode: "invisible" } } },
+      true,
+      true,
+      false,
+    );
+    assertEquals(warnings, []);
+  } finally {
+    console.warn = warn;
     await Deno.remove(dir, { recursive: true });
   }
 });

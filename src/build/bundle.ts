@@ -41,7 +41,12 @@ import {
 } from "./server-module-guard.ts";
 import { carryLinks } from "./config-links.ts";
 import { readTsPathAliases } from "./tsconfig-paths.ts";
-import { appDenextRootFor, foldAppDenext, JSR_DENEXT_ROOT } from "./app-framework-root.ts";
+import {
+  appDenextRootFor,
+  foldAppDenext,
+  JSR_DENEXT_ROOT,
+  pinLinkedEntryModules,
+} from "./app-framework-root.ts";
 import { VERSION } from "../version.ts";
 
 /**
@@ -1665,6 +1670,7 @@ export async function prepareConfig(
     "denext/client-runtime": frameworkFileUrl("src/client/client-runtime.ts"),
     "denext/devtools": frameworkFileUrl("src/devtools.ts"),
     ...foldAppDenext(frameworkRootUrl(), appRoot),
+    ...pinLinkedEntryModules(frameworkRootUrl(), appRoot, appImports),
     ...appImports,
     ...opts.importMap,
   };
@@ -1732,7 +1738,7 @@ async function appFrameworkRoot(
  * module imported by more than one is hoisted into a shared chunk.
  */
 /**
- * Deno's minimum-dependency-age policy (default two days) applies to the `deno bundle` child too,
+ * Deno's minimum-dependency-age policy (default 24 hours) applies to the `deno bundle` child too,
  * and Deno gives the parent no way to read the value it was started with. `DENEXT_MIN_DEP_AGE`
  * (e.g. `0`, `1h`) is forwarded as the child's `--min-dep-age`; the app's own `deno.json`
  * `minimumDependencyAge` is honored by the child through `--config` as usual.
@@ -1800,7 +1806,7 @@ function safeEnv(name: string): string | undefined {
 export function bundleFailureMessage(code: number, stderr: string): string {
   const hint = /Do not know how to load path: deno:jsr:@denext\//.test(stderr)
     ? `\nHint: no published version of denext satisfied the import map's range. If the version ` +
-      `it names was published within your minimum dependency age (Deno's default is two days), Deno ` +
+      `it names was published within your minimum dependency age (Deno's default is 24 hours), Deno ` +
       `holds it until then — run \`denext upgrade\` to pin the newest version old enough, or ` +
       `wait for the hold to pass.`
     : "";

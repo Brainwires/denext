@@ -213,7 +213,8 @@ subscribe: (_root, { user }, ctx) => fromChannel(inbox, \`user:\${user}\`, { sig
         config itself, or imported through an import-map alias) reloads by re-importing the config:
         an edit under the directory of any project module the config's import graph reaches reads
         the schema from its <code>graphql()</code>{" "}
-        plugin again. An edit to the config itself still restarts the dev server.
+        plugin again, with every edited module fresh (one the schema loads with{" "}
+        <code>import()</code> included). An edit to the config itself still restarts the dev server.
       </p>
       <p>
         Each reload logs one line naming the edited files (

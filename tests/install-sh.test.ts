@@ -749,18 +749,28 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   assertEquals(workflow.match(/softprops\/action-gh-release/g)?.length, 1);
   assertStringIncludes(workflow, "prerelease: ${{ contains(github.ref_name, '-') }}");
   assertStringIncludes(workflow, "make_latest: ${{ !contains(github.ref_name, '-') }}");
-  assertStringIncludes(workflow, "needs: [binaries, smoke]");
+  assertStringIncludes(workflow, "needs: [runners, binaries, smoke]");
   assertStringIncludes(workflow, "fail_on_unmatched_files: true");
-  // Every third-party action is a full commit SHA with the version it is beside it.
+  // Every third-party action is a full commit SHA with the version it is beside it; the org's own
+  // runner picker (Brainwires/.github, untagged) is a full commit SHA too.
   const uses = workflow.split("\n").filter((l) => /^\s*-?\s*uses:/.test(l));
   assert(uses.length >= 8, `found ${uses.length} uses:`);
   for (const line of uses) {
-    assert(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(line.trim()), line);
+    assert(
+      /uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(line.trim()) ||
+        /uses: Brainwires\/\.github\/actions\/pick-runners@[0-9a-f]{40} # pick-runners$/.test(
+          line.trim(),
+        ),
+      line,
+    );
   }
   // The binary is executed, not merely linked, before it ships: where it is built (x86_64 Linux),
   // and by the `smoke` job on an Arm Linux runner and a Mac (both Mac binaries) before the release.
   assertStringIncludes(workflow, "sh scripts/ci/binary-smoke.sh ./denext");
   assertStringIncludes(workflow, "{ os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }");
+  // The Arm Linux leg takes our Linux arm64 pool while it has a free slot (GitHub's image else).
+  assertStringIncludes(workflow, "jobs: smoke_linux_arm=linux-arm64");
+  assertStringIncludes(workflow, ".smoke_linux_arm || 'ubuntu-24.04-arm'");
   assertStringIncludes(
     workflow,
     "{ os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }",

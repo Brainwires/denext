@@ -8,7 +8,7 @@ A runnable demo of the four **gated** Live hooks over a single WebSocket:
 - **`usePresence`** — who's on the page (the `lobby` room).
 - **`useChannel`** — server-pushed events from a `createChannel`
   (`announcements`): `publish(key, payload)` fans out to every authorized
-  subscriber, at-most-once, latest-wins, no history.
+  subscriber, at-most-once, latest-wins (this channel sets no `history`).
 - **`useSubscription`** — a typed, validated live query built with
   `defineSubscription` (`announcementCount`): it re-runs its server resolver on
   every invalidation of a server-derived tag. See
@@ -48,6 +48,7 @@ an unmarked or mutating action over the socket.
 ## Run it
 
 ```sh
+# from this directory
 denext task dev     # or: denext task build && denext task start
 ```
 

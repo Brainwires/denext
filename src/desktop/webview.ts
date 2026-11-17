@@ -78,14 +78,54 @@ export interface CreateWebViewOptions {
    */
   contextMenu?: "native" | "app";
   /**
-   * Keys the view hands to the page instead of its own page while it has the keyboard:
+   * Keys the view hands to the app's page instead of its own page while it has the keyboard:
    * accelerators as `registerShortcut` takes them (`"CmdOrCtrl+1"`, `"Meta+Shift+L"`), at most
-   * 64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators
-   * still win over them.
+   * 64. Each arrives as a `keydown` event with `forwarded: true`, and its release as a `keyup`
+   * (where `webViewCapabilities().keyUp`). The app menu's accelerators win over an entry unless
+   * it is `{ accelerator, beforeMenu: true }` ({@linkcode WebViewForwardKey}).
    */
-  forwardKeys?: string[];
+  forwardKeys?: WebViewForwardKey[];
   /** Replaces the engine's user agent string for this view. */
   userAgent?: string;
+}
+
+/**
+ * One `forwardKeys` entry: an accelerator (`"CmdOrCtrl+W"`), or `{ accelerator, beforeMenu }`.
+ *
+ * `beforeMenu: true` (where `webViewCapabilities().forwardKeysBeforeMenu`; else the create or
+ * `setForwardKeys` rejects `unsupported`) forwards the key even when the app menu has the same
+ * accelerator: while this view has the keyboard, the key reaches the app's page as a forwarded
+ * `keydown` and the menu item does not fire. With the view unfocused, the menu item works as
+ * always. Without it (the default) the menu item fires and the key is not forwarded. A string with
+ * a leading `!` (`"!CmdOrCtrl+W"`) is the same as `beforeMenu: true`.
+ */
+export type WebViewForwardKey = string | {
+  /** The accelerator, as `registerShortcut` takes it. */
+  readonly accelerator: string;
+  /** Match it before the app menu's accelerators (default `false`). */
+  readonly beforeMenu?: boolean;
+};
+
+/** A key event of a web view ({@linkcode WebViewEventMap}'s `keydown` / `keyup`). */
+export interface WebViewKeyEvent {
+  /** `"keydown"` or `"keyup"`. */
+  type: "keydown" | "keyup";
+  /** DOM `KeyboardEvent.key`. */
+  key: string;
+  /** DOM `KeyboardEvent.code` (the physical key). */
+  code: string;
+  /** Alt / Option held. */
+  altKey: boolean;
+  /** Control held. */
+  ctrlKey: boolean;
+  /** Command on macOS, the Windows / Super key elsewhere. */
+  metaKey: boolean;
+  /** Shift held. */
+  shiftKey: boolean;
+  /** An auto-repeat of a held key (`keydown` only). */
+  repeat: boolean;
+  /** One of the view's `forwardKeys` (its page never saw it); always `true` for a `keyup`. */
+  forwarded: boolean;
 }
 
 /** The object form of {@linkcode CreateWebViewOptions.permissions}. */
@@ -116,8 +156,13 @@ export interface WebViewEventMap {
     source?: string;
     line?: number;
   };
-  /** The native view gained or lost keyboard focus. */
-  "focus-change": { focused: boolean };
+  /**
+   * The native view gained or lost keyboard focus. `reason` says when denext moved it:
+   * `"hidden"` (`setVisible(false)` on a focused view gave the keyboard back to the app's page)
+   * or `"blur"` ({@linkcode WebViewHandle.blur}); any other change (a click elsewhere, the window
+   * deactivated) has none.
+   */
+  "focus-change": { focused: boolean; reason?: "hidden" | "blur" };
   /** A popup was refused (only with `allowPopups: "deny"`). */
   "new-window": { url: string; disposition: "popup" | "tab" };
   /** A {@linkcode WebViewHandle.find} search's matches (`activeMatch` 1-based, `0` = none). */
@@ -136,20 +181,20 @@ export interface WebViewEventMap {
     mediaType?: "image" | "video" | "audio" | "canvas" | "plugin";
   };
   /**
-   * A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its
-   * page never saw it), `false` for a keydown its page left unhandled (where the engine can tell:
-   * `unhandledKeys`). DOM `KeyboardEvent` names and values.
+   * A keydown while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its
+   * page never saw it; a held key repeats with `repeat: true`), `false` for a keydown its page
+   * left unhandled (where the engine can tell: `unhandledKeys`). DOM `KeyboardEvent` names and
+   * values.
    */
-  keydown: {
-    key: string;
-    code: string;
-    altKey: boolean;
-    ctrlKey: boolean;
-    metaKey: boolean;
-    shiftKey: boolean;
-    repeat: boolean;
-    forwarded: boolean;
-  };
+  keydown: WebViewKeyEvent & { type: "keydown" };
+  /**
+   * The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever
+   * modifiers are down by then; its page never sees it. A forwarded key still held when the view
+   * loses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app
+   * deactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not
+   * forwarded stay the page's.
+   */
+  keyup: WebViewKeyEvent & { type: "keyup"; forwarded: true };
   /** The view closed (its `close()`, or its window closed). Nothing follows it. */
   closed: Record<string, never>;
 }
@@ -203,6 +248,12 @@ export interface WebViewCapabilities {
   unhandledKeys: boolean;
   /** Whether `forwardKeys` / `setForwardKeys` work. */
   forwardKeys: boolean;
+  /** Whether {@linkcode WebViewHandle.blur} works. */
+  blur: boolean;
+  /** Whether a forwarded key's release arrives as `keyup`. */
+  keyUp: boolean;
+  /** Whether `forwardKeys` entries take `beforeMenu: true`. */
+  forwardKeysBeforeMenu: boolean;
 }
 
 /** A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`). */
@@ -211,7 +262,11 @@ export interface WebViewHandle {
   readonly id: string;
   /** Move / resize it (CSS pixels, relative to the window's page viewport). */
   setBounds(bounds: WebViewBounds): Promise<void>;
-  /** Show or hide it. */
+  /**
+   * Show or hide it. Hiding a view that has the keyboard hands the keyboard back to the app's
+   * page (never activating the app): `focus-change` fires with `{ focused: false, reason:
+   * "hidden" }`.
+   */
   setVisible(visible: boolean): Promise<void>;
   /** Load another `http:` / `https:` page (rejects `not_allowed_url` otherwise). */
   navigate(url: string): Promise<void>;
@@ -223,8 +278,15 @@ export interface WebViewHandle {
   reload(opts?: { ignoreCache?: boolean }): Promise<void>;
   /** Stop loading. */
   stop(): Promise<void>;
-  /** Move keyboard focus into the view. */
+  /** Move keyboard focus into the view (this brings its window forward and activates the app). */
   focus(): Promise<void>;
+  /**
+   * Hand the keyboard back to the app's page if the view has it, without activating the app or
+   * raising or reordering a window (`focusWindow()` does both). `focus-change` fires with
+   * `{ focused: false, reason: "blur" }`; a view without the keyboard is left as it is. Rejects
+   * `unsupported` where `webViewCapabilities().blur` is `false`.
+   */
+  blur(): Promise<void>;
   /** Its URL, title, load state and history. */
   state(): Promise<WebViewState>;
   /**
@@ -233,9 +295,14 @@ export interface WebViewHandle {
    */
   capture(opts?: { format?: "png" | "jpeg"; quality?: number; scale?: number }): Promise<Blob>;
   /**
-   * Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise
-   * completion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects
-   * `error`, a value JSON can't hold rejects `not_serializable`.
+   * Run `script` (a classic script; its completion value is the result) in the view's main frame,
+   * in an isolated world (`laufey-webview`): it shares the DOM but none of the page's globals (a
+   * page variable, function or patched prototype is not seen), and no Content-Security-Policy of
+   * the page refuses it. A promise completion value is awaited, except on WKWebView and WebKitGTK
+   * under a page CSP that refuses `eval`, where the engine's own evaluate returns the completion
+   * value as it is (a promise there rejects `not_serializable`: end the script with a plain
+   * value). The result is JSON (`undefined` → `null`); a throw rejects `error`, a value JSON can't
+   * hold rejects `not_serializable`.
    */
   evaluate<T = unknown>(script: string): Promise<T>;
   /** Put it above the window's other views. */
@@ -263,10 +330,13 @@ export interface WebViewHandle {
   /** Show the OS print dialog for its page. */
   print(): Promise<void>;
   /** Replace its `forwardKeys` (an empty list forwards none). */
-  setForwardKeys(keys: string[]): Promise<void>;
+  setForwardKeys(keys: WebViewForwardKey[]): Promise<void>;
   /** Listen to one of its events; returns the unsubscribe. */
   on<K extends keyof WebViewEventMap>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void;
-  /** Close it (`closed` fires; the handle's calls reject `closed` after). */
+  /**
+   * Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the
+   * keyboard hands it back to the app's page.
+   */
   close(): Promise<void>;
 }
 
@@ -281,6 +351,7 @@ const EVENT_NAMES: ReadonlySet<string> = new Set([
   "find-result",
   "context-menu",
   "keydown",
+  "keyup",
   "closed",
 ]);
 
@@ -418,8 +489,8 @@ function adopt(id: string): WebViewHandle {
   let backlog: WireEvent[] | null = queued.length > 0 ? queued : null;
   r.views.set(id, (e) => backlog ? void backlog.push(e) : process(e));
   if (backlog) {
+    const events = backlog; // later events push onto this same list until it is taken
     setTimeout(() => {
-      const events = backlog ?? [];
       backlog = null;
       events.forEach(process);
     }, 0);
@@ -466,7 +537,8 @@ export async function createWebView(opts: CreateWebViewOptions): Promise<WebView
 /**
  * Whether this window can host web views, on which engine, and which of their features work
  * (`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,
- * `clipboard`). On a runtime without web views it resolves `supported: false` and every feature
+ * `clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,
+ * `forwardKeysBeforeMenu`). On a runtime without web views it resolves `supported: false` and every feature
  * `false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.
  *
  * @returns The capabilities. Off desktop it rejects `unavailable`.
@@ -495,6 +567,9 @@ export async function webViewCapabilities(): Promise<WebViewCapabilities> {
     menuAccelerators: flag("menuAccelerators"),
     unhandledKeys: flag("unhandledKeys"),
     forwardKeys: flag("forwardKeys"),
+    blur: flag("blur"),
+    keyUp: flag("keyUp"),
+    forwardKeysBeforeMenu: flag("forwardKeysBeforeMenu"),
   };
 }
 
@@ -513,6 +588,8 @@ export interface WebViewAnchor {
   readonly isConnected?: boolean;
   /** Its parent element (walked for the scroll containers that clip it). */
   readonly parentElement?: WebViewAnchor | null;
+  /** Its running animations and transitions (`follow: "frame"` keeps measuring while any runs). */
+  getAnimations?(): ReadonlyArray<{ readonly playState?: string }>;
 }
 
 /** Options for {@linkcode attachWebView}. */
@@ -531,6 +608,38 @@ export interface AttachWebViewOptions {
    * over whatever is outside the scroll container (a toolbar, the window's other content).
    */
   readonly clip?: boolean;
+  /**
+   * How the view follows moves the element's own box doesn't report. `"events"` (default):
+   * resizes, scrolls, the window's resize and display scale changes. `"frame"` adds a measure on
+   * every animation frame while a CSS transition or animation runs on the element or one of its
+   * ancestors (a `transform` slide, a sheet moving in), from its `transitionrun` /
+   * `animationstart` until none runs there, and nothing between them: no polling while idle. A
+   * move no event reports (a transform set from script, a Web Animations `element.animate()`)
+   * needs {@linkcode WebViewAttachment.relayout}.
+   */
+  readonly follow?: "events" | "frame";
+}
+
+/**
+ * What {@linkcode attachWebView} returns: call it (or its `detach`) to stop following;
+ * `relayout()` measures the element again at the next animation frame, for a move no event
+ * reports.
+ */
+export interface WebViewAttachment {
+  /** Stop following (the view stays as it is, open). */
+  (): void;
+  /** The same as calling the attachment. */
+  detach(): void;
+  /**
+   * Measure the element again at the next animation frame and move or show / hide the view to
+   * match (at most one `setBounds` per frame, only on a change). A no-op once detached.
+   */
+  relayout(): void;
+}
+
+/** A transition / animation event as {@linkcode attachWebView}'s frame follower reads it. */
+interface MotionEvent {
+  readonly target?: unknown;
 }
 
 /** The browser globals {@linkcode attachWebView} uses, each feature-detected. */
@@ -545,8 +654,8 @@ interface LayoutGlobals {
     addEventListener?(type: string, fn: () => void, opts?: unknown): void;
     removeEventListener?(type: string, fn: () => void): void;
   };
-  addEventListener?: (type: string, fn: () => void, opts?: unknown) => void;
-  removeEventListener?: (type: string, fn: () => void, opts?: unknown) => void;
+  addEventListener?: (type: string, fn: (e?: MotionEvent) => void, opts?: unknown) => void;
+  removeEventListener?: (type: string, fn: (e?: MotionEvent) => void, opts?: unknown) => void;
   devicePixelRatio?: number;
   innerWidth?: number;
   innerHeight?: number;
@@ -600,6 +709,48 @@ interface Attachment {
   lastVisible?: boolean;
   /** Stop following (observers and listeners off). */
   detach: () => void;
+}
+
+/** The transition / animation events that start (and end) a frame follower's measuring. */
+const MOTION_START = ["transitionrun", "animationstart"] as const;
+const MOTION_END = [
+  "transitionend",
+  "transitioncancel",
+  "animationend",
+  "animationcancel",
+] as const;
+/** Frames measured after the last motion with no running-animation API to ask. */
+const MOTION_TAIL_FRAMES = 2;
+
+/** `follow: "frame"`: an animation-frame loop while motion runs on the element's chain. */
+interface FrameFollower {
+  /** Motions started minus ended (the fallback where `getAnimations` is missing). */
+  running: number;
+  /** The loop's pending frame. */
+  frame?: number;
+  /** Frames still to measure once nothing runs. */
+  tail: number;
+}
+
+/** Whether `target` is the element or one of its ancestors. */
+function onChain(element: WebViewAnchor, target: unknown): boolean {
+  for (let el: WebViewAnchor | null | undefined = element; el; el = el.parentElement) {
+    if (el === target) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether an animation or transition runs on the element's chain: asked of each element's
+ * `getAnimations()` where it exists, else the started-minus-ended count.
+ */
+function motionRuns(element: WebViewAnchor, f: FrameFollower): boolean {
+  if (typeof element.getAnimations !== "function") return f.running > 0;
+  for (let el: WebViewAnchor | null | undefined = element; el; el = el.parentElement) {
+    const list = typeof el.getAnimations === "function" ? el.getAnimations() : [];
+    if (list.some((x) => x.playState === "running" || x.playState === "pending")) return true;
+  }
+  return false;
 }
 
 /** Ask for one flush at the next animation frame (at most one pending). */
@@ -667,19 +818,31 @@ async function flush(a: Attachment): Promise<void> {
  * covers the element's visible part: its box cut to the viewport and to the scroll containers
  * around it (`clip: false` keeps the whole box).
  *
+ * A move made only by a CSS `transform` (on the element or an ancestor) changes none of those:
+ * `follow: "frame"` measures on every frame while a CSS transition or animation runs there, and
+ * `relayout()` measures once, for any other move.
+ *
+ * @example
+ * ```ts
+ * const attachment = attachWebView(view, tile, { follow: "frame" });
+ * panel.style.transform = "translateX(0)"; // a CSS transition: followed frame by frame
+ * tile.animate([{ translate: "0 40px" }], 200).finished.then(() => attachment.relayout());
+ * attachment(); // stop
+ * ```
+ *
  * @param handle The view ({@linkcode createWebView}).
  * @param element The placeholder element the view should cover.
- * @param options `hideWhenOutOfView`, `clip`.
- * @returns A function that stops following (the view stays as it is, open). It also stops when the
- *   view closes.
+ * @param options `hideWhenOutOfView`, `clip`, `follow`.
+ * @returns The attachment: call it (or `detach()`) to stop following (the view stays as it is,
+ *   open); `relayout()` measures again. It also stops when the view closes.
  */
 export function attachWebView(
   handle: WebViewHandle,
   element: WebViewAnchor,
   options: AttachWebViewOptions = {},
-): () => void {
+): WebViewAttachment {
   const g = globalThis as unknown as LayoutGlobals;
-  const a: Attachment = {
+  const a = {
     g,
     handle,
     element,
@@ -689,8 +852,7 @@ export function attachWebView(
     inFlight: false,
     dirty: false,
     intersecting: true,
-    detach: () => {},
-  };
+  } as Attachment; // `detach` is set below, before anything can call it
   const onChange = () => schedule(a);
   const resize = g.ResizeObserver ? new g.ResizeObserver(onChange) : undefined;
   resize?.observe(element);
@@ -714,6 +876,7 @@ export function attachWebView(
     schedule(a);
   };
   onRatio();
+  const motion = options.follow === "frame" ? followFrames(a) : undefined;
   let detached = false;
   const detach = () => {
     if (detached) return;
@@ -729,9 +892,72 @@ export function attachWebView(
     g.removeEventListener?.("scroll", onChange, { capture: true });
     g.removeEventListener?.("resize", onChange);
     media?.removeEventListener?.("change", onRatio);
+    motion?.();
     stopOnClose();
   };
   a.detach = detach;
   const stopOnClose = handle.on("closed", detach);
-  return detach;
+  return Object.assign(() => detach(), {
+    detach,
+    relayout: () => schedule(a),
+  });
+}
+
+/** Measure in this frame (a frame already asked for, or a call in flight, takes it over). */
+function measureNow(a: Attachment): void {
+  a.dirty = true;
+  if (a.frame === undefined && !a.inFlight) void flush(a);
+}
+
+/** One animation frame (or a 16 ms timer without `requestAnimationFrame`). */
+function nextFrame(g: LayoutGlobals, fn: () => void): number {
+  return g.requestAnimationFrame
+    ? g.requestAnimationFrame(fn)
+    : setTimeout(fn, 16) as unknown as number;
+}
+
+/**
+ * `follow: "frame"`: a transition / animation starting on the element's chain runs a measure on
+ * every frame until none runs there (and {@linkcode MOTION_TAIL_FRAMES} more, for the last
+ * position); nothing runs between motions. Returns the stop.
+ */
+function followFrames(a: Attachment): () => void {
+  const g = a.g;
+  const f: FrameFollower = { running: 0, tail: 0 };
+  const tick = () => {
+    f.frame = undefined;
+    if (a.stopped) return;
+    measureNow(a);
+    // Out of the document: no end event may come for its motions.
+    if (a.element.isConnected === false) {
+      f.running = 0;
+      return;
+    }
+    if (motionRuns(a.element, f)) f.tail = MOTION_TAIL_FRAMES;
+    else if (f.tail-- <= 0) return;
+    f.frame = nextFrame(g, tick);
+  };
+  const start = (e?: MotionEvent) => {
+    if (!onChain(a.element, e?.target)) return;
+    f.running++;
+    f.tail = MOTION_TAIL_FRAMES;
+    if (f.frame === undefined) f.frame = nextFrame(g, tick);
+  };
+  const end = (e?: MotionEvent) => {
+    if (!onChain(a.element, e?.target)) return;
+    f.running = Math.max(0, f.running - 1);
+    schedule(a);
+  };
+  // They bubble: a capture listener on the window hears the whole document's.
+  for (const type of MOTION_START) g.addEventListener?.(type, start, { capture: true });
+  for (const type of MOTION_END) g.addEventListener?.(type, end, { capture: true });
+  return () => {
+    for (const type of MOTION_START) g.removeEventListener?.(type, start, { capture: true });
+    for (const type of MOTION_END) g.removeEventListener?.(type, end, { capture: true });
+    if (f.frame !== undefined) {
+      if (g.cancelAnimationFrame) g.cancelAnimationFrame(f.frame);
+      else clearTimeout(f.frame);
+      f.frame = undefined;
+    }
+  };
 }

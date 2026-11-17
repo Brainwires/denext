@@ -417,7 +417,11 @@ function windowSubmenuFor(
 function barFor(s: AppState, windowId?: string): DesktopMenuItem[] | undefined {
   const active = s.model.active();
   if (!active && !s.backendMenu) return s.pageMenu;
-  const bar = mergeWindowSubmenu(s.pageMenu ?? managedBar(s.os), windowSubmenuFor(s, windowId));
+  const bar = mergeWindowSubmenu(
+    s.pageMenu ?? managedBar(s.os),
+    windowSubmenuFor(s, windowId),
+    s.os,
+  );
   return active ? insertCustomMenus(bar, s.model.menusFor(windowId), s.os) : bar;
 }
 

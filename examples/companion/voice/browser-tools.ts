@@ -3,7 +3,9 @@
 // numbered list of links, buttons and inputs), clicks, types, scrolls and goes back. The rules
 // (voice/browser-safety.ts) are enforced here, before the browser is touched:
 //
-// - only http(s) addresses open;
+// - only http(s) addresses open, and a host the user has not allowed this session asks first
+//   when the URL carries more than a little data after the host (no carrying the conversation
+//   out);
 // - a page's content comes back wrapped as untrusted data, never as instructions;
 // - no typing into password, payment-card or one-time-code fields, no file uploads (the file
 //   chooser is never answered) and no downloads (Chrome denies them);
@@ -16,6 +18,7 @@ import {
   checkUrl,
   clickRefusal,
   hostOf,
+  openNeedsConsent,
   type PageElement,
   pageForModel,
   type PageSnapshot,
@@ -238,8 +241,12 @@ function definition(
 
 const REF = { type: "integer", description: "The element's number from browser_read's list." };
 
-/** browser_open */
-function openTool(o: BrowserToolsOptions): VoiceTool {
+/**
+ * browser_open; `allowed` holds the hosts the user said Yes to this session (asked about once).
+ * A plain open never adds its host: that would let a page open `https://bad.example/` first and
+ * then carry the data there unasked.
+ */
+function openTool(o: BrowserToolsOptions, allowed: Set<string>): VoiceTool {
   return {
     feature: "browser",
     definition: definition(
@@ -250,10 +257,24 @@ function openTool(o: BrowserToolsOptions): VoiceTool {
     run(args) {
       const checked = checkUrl((args as { url?: unknown } | null)?.url);
       if ("error" in checked) return refused(checked.error);
-      return guarded(o, async (d) => {
+      const open = async (d: BrowserDriver) => {
         await d.open(checked.url);
         return await afterAction(d, o.confirmations);
-      });
+      };
+      if (!openNeedsConsent(checked.url, allowed)) return guarded(o, open);
+      return guarded(o, () =>
+        Promise.resolve(
+          o.confirmations.ask(
+            `Open ${hostOf(checked.url)}? you haven't allowed it yet, and the address carries ` +
+              `data: ${clip(checked.url, 120)}`,
+            {
+              run: () => {
+                allowed.add(new URL(checked.url).host);
+                return guarded(o, open);
+              },
+            },
+          ),
+        ));
     },
   };
 }
@@ -379,7 +400,7 @@ function backTool(o: BrowserToolsOptions): VoiceTool {
 /** The browser tools: open, read, click, type, scroll and back. */
 export function browserTools(options: BrowserToolsOptions): VoiceTool[] {
   return [
-    openTool(options),
+    openTool(options, new Set()),
     readTool(options),
     clickTool(options),
     typeTool(options),

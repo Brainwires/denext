@@ -3,7 +3,10 @@
 # Android SDK at ~/Android/Sdk there), then copies them back. The web export is built HERE
 # (denext, the repo's cli.ts); Gradle and Metro run on the host.
 #
-#   examples/scroll-bench/build-apks.sh [host] [local-out-dir]
+#   examples/scroll-bench/build-apks.sh <host> [local-out-dir]
+#
+# <host> is any `ssh` destination (user@host, or a Host alias from ~/.ssh/config); it is
+# required (or set SCROLL_BENCH_HOST), with no default.
 #
 # Host scratch layout: ~/scroll-bench-build/{src/{shared,native,web},throwaway.jks,logs/}.
 # Both APKs are signed with a THROWAWAY key generated on the host (CN=Throwaway Bench,
@@ -11,7 +14,12 @@
 # x86_64 only (the Android emulator on an Intel Mac); drop -PreactNativeArchitectures for all ABIs.
 set -euo pipefail
 
-HOST="${1:-biscuits}"
+HOST="${1:-${SCROLL_BENCH_HOST:-}}"
+if [ -z "$HOST" ]; then
+  echo "usage: $0 <host> [local-out-dir]   (or set SCROLL_BENCH_HOST)" >&2
+  echo "  <host>: an ssh destination with JDK 21 and the Android SDK at ~/Android/Sdk" >&2
+  exit 2
+fi
 OUT="${2:-$(pwd)/apks}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$OUT"

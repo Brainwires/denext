@@ -1,6 +1,6 @@
 # denext plugin example: path aliases
 
-A ~40-line denext **plugin** — the smallest real one, and the first to use the
+A ~60-line denext **plugin** — the smallest real one, and the first to use the
 **route-synthesizer** seam (`@denext/pages-router` uses the request-handler +
 build-step seams). See the
 [plugin authoring guide](https://denext.dev/docs/plugins).
@@ -13,7 +13,7 @@ target route under the alias path (`plugin.ts`).
 ## Run it
 
 ```sh
-cd examples/plugin-aliases
+cd examples/plugin-aliases   # from the repo root
 denext task dev            # http://localhost:3006
 ```
 
@@ -21,8 +21,8 @@ denext task dev            # http://localhost:3006
   page.
 - <http://localhost:3006/about> and <http://localhost:3006/about-us> too.
 
-`denext task build` / `denext task start` and `denext task export` (static) all honor
-the aliases — the synthesizer runs in every pipeline, and each alias is an
+`denext task build` / `denext task start` and `denext task export` (static) all
+honor the aliases — the synthesizer runs in every pipeline, and each alias is an
 ordinary page route the core renders.
 
 ## What it demonstrates

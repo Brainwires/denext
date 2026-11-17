@@ -683,7 +683,7 @@ Deno holds a package version published less than its _minimum dependency age_ ag
 resolution: a compromised release is refused while it is fresh. The window is the root
 `deno.json`'s `minimumDependencyAge` (minutes, an ISO-8601 duration such as `"P3D"`, a fixed date,
 or `{ "age": …, "exclude": [...] }`), else `.npmrc`'s `min-release-age`, else Deno's default
-(Deno 2.9 holds two days, although its error hint says 24 hours). denext's own packages wait
+(24 hours). denext's own packages wait
 like every other dependency: denext never switches the hold off on your behalf, and only forwards
 a `--min-dep-age` you set yourself (`DENEXT_MIN_DEP_AGE`) to the Deno processes it starts.
 
@@ -1118,8 +1118,10 @@ OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-wi
 `3.0.0-denext.18` adds Node's diagnostic report (`process.report`), `NODE_V8_COVERAGE`, trace event files, `node --permission` on Deno's permissions and ML-DSA / ML-KEM keys in `node:crypto`, and builds native addons from source inside the lifecycle-script jail.
 `3.0.0-denext.21` (the first release published after `3.0.0-denext.18`, so it carries the work of the numbers between) runs `Deno.openPty` and node-pty on Windows, adds the desktop `"willnavigate"` event, frame-marked bridge requests and an app-wide application menu, `"node"` in deno.json to pick the Node.js major the runtime reports, `--trace-exit` and `--deterministic`, checks the dependencies `deno add` brings in, opens the jail's built-in download hosts on port 443 only, and moves to V8 15.6.75.57 and CEF 156.0.28 (Chromium 156.0.8078.88).
 `3.0.0-denext.22` adds Web MIDI (`navigator.requestMIDIAccess()`, `--allow-midi`), WebRTC data channels (`RTCPeerConnection`), embedded web views in desktop apps, title visibility and the macOS toolbar style, `LAUFEY_HEADLESS` for headless desktop runs, `node:fs` on inherited and native-addon descriptors, and Node's IPC members in workers.
-`3.0.0-denext.23` adds WebRTC media, certificates and transports, `Deno.webrtc` (encoded media tracks, shared-port networks, ICE over TCP and mDNS), a rejected `info.completed` for a cut-short HTTP/1.1 stream, a bounded WebSocket closing handshake, HTTP/2 refused-stream retries, and faster language-server startup in workspaces with npm dependencies. The
-[runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
+`3.0.0-denext.23` adds WebRTC media, certificates and transports, `Deno.webrtc` (encoded media tracks, shared-port networks, ICE over TCP and mDNS), a rejected `info.completed` for a cut-short HTTP/1.1 stream, a bounded WebSocket closing handshake, HTTP/2 refused-stream retries, and faster language-server startup in workspaces with npm dependencies.
+`3.0.0-denext.24` adds the opt-in [kernel sandbox](/docs/kernel-sandbox) preview (`--kernel-sandbox`, `--kernel-sandbox-report`, `permissions.kernelSandbox`; settings and reports, nothing enforced), tightens the Linux script jail's socket filter, and ports upstream HTTP, `fetch`, WebSocket, web API, file system, cache and coverage fixes.
+`3.0.0-denext.25` makes the kernel sandbox's opt-in `--kernel-sandbox=enforce` confine `deno run` and `deno serve` on Linux and macOS, reads Linux `/proc` and `/sys` files with the matching `--allow-sys` name (`processInfo` and `processes` are new), lets an external permission broker hand back opened files, and fixes `--seed=0`, DNS with a zoned link-local name server, lockfile names starting with a multi-byte character and `--trace-exit` with a throwing `Error.prepareStackTrace`.
+The [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases
 

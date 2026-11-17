@@ -3,7 +3,7 @@
 // marker when imported. `denext commands` is the control: it imports the config on purpose.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { collectRoutes } from "../src/build/route-list.ts";
 import { generateArtifact } from "../src/build/generate.ts";
 import { resolveProject, resolveProjectLayout } from "../src/build/paths.ts";
@@ -12,6 +12,10 @@ import { denoCacheDir } from "../src/build/deno-cache-dir.ts";
 import { routeMap } from "../src/mcp/inspect.ts";
 import { projectLaunchPolicy } from "../src/cli/commands/desktop-doctor.ts";
 import { ensureCodeIndex } from "../src/mcp/rag/codebase.ts";
+import { uiChildInvocation } from "../src/ui/proc.ts";
+import { UiBridge } from "../src/mcp/ui.ts";
+import { handOffToDiscover, unknownVerbAction } from "../src/cli/unknown-verb.ts";
+import { maybeReexecPinned } from "../src/cli/self-exec.ts";
 
 const CLI = new URL("../cli.ts", import.meta.url).href;
 
@@ -289,5 +293,109 @@ Deno.test("a config that declares commands still runs on an unknown verb: this i
     assert(await ran(), "the documented limit changed: update /docs/security");
   } finally {
     await cleanup(dir, marker);
+  }
+});
+
+/**
+ * A project whose `deno.json` maps a module the denext CLI itself imports (`jsr:@std/path`) to
+ * one of its own files, which leaves `marker` when it runs; it also pins a denext.
+ */
+async function remapping(configBody?: string): Promise<{
+  dir: string;
+  marker: string;
+  ran: () => Promise<boolean>;
+}> {
+  const fixture = await hostile(configBody);
+  const mapped = `${fixture.marker}.mapped`;
+  await Deno.writeTextFile(
+    join(fixture.dir, "deno.json"),
+    JSON.stringify({
+      imports: { denext: "jsr:@denext/denext@4.0.0", "jsr:@std/path@^1.0.0": "./mapped.ts" },
+    }),
+  );
+  await Deno.writeTextFile(
+    join(fixture.dir, "mapped.ts"),
+    `Deno.writeTextFileSync(${JSON.stringify(mapped)}, "ran");\nexport {};\n`,
+  );
+  return {
+    dir: fixture.dir,
+    marker: fixture.marker,
+    ran: () => Deno.stat(mapped).then(() => true, () => false),
+  };
+}
+
+Deno.test("the UI child of a remote denext reads no project config", () => {
+  for (
+    const module of [
+      "jsr:@denext/denext@4.13.1/cli",
+      "https://jsr.io/@denext/denext/4.13.1/cli.ts",
+    ]
+  ) {
+    const argv = uiChildInvocation(module);
+    assert(argv.includes("--no-config"), `${module}: ${argv.join(" ")}`);
+    assertEquals(argv.includes("--config"), false, `${module}: ${argv.join(" ")}`);
+    assertEquals(argv.at(-1), module);
+  }
+  // A checkout's cli.ts finds its own deno.json, as the process that spawned it did.
+  const checkout = uiChildInvocation(CLI);
+  assertEquals(checkout.includes("--no-config") || checkout.includes("--config"), false);
+});
+
+Deno.test("the MCP UI bridge's child runs none of a project that remaps the CLI's imports", async () => {
+  const { dir, marker, ran } = await remapping();
+  const cwdFile = `${marker}.cwd`;
+  // Stands in for a copy of the published CLI inside the project (`vendor/jsr.io/`): it imports
+  // what the project remaps, and says where it ran. Deno finds the project's deno.json from it.
+  const copy = join(dir, "vendor", "jsr.io", "@denext", "denext", "4.13.1");
+  await Deno.mkdir(copy, { recursive: true });
+  await Deno.writeTextFile(
+    join(copy, "cli.ts"),
+    `try { await import("jsr:@std/path@^1.0.0"); } catch { /* offline */ }\n` +
+      `Deno.writeTextFileSync(${JSON.stringify(cwdFile)}, Deno.cwd());\n`,
+  );
+  const probe = toFileUrl(join(copy, "cli.ts")).href;
+  const bridge = new UiBridge(dir, {}, () => [Deno.execPath(), ...uiChildInvocation(probe)]);
+  try {
+    await bridge.start().catch(() => {}); // the probe prints no launch record
+    assertEquals(await ran(), false, "the project's remapped module ran in the UI child");
+    const cwd = await Deno.readTextFile(cwdFile);
+    assertEquals(cwd === dir || cwd.startsWith(dir + "/") || cwd.startsWith(dir + "\\"), false);
+  } finally {
+    await bridge.stop();
+    await Deno.remove(cwdFile).catch(() => {});
+    await Deno.remove(`${marker}.mapped`).catch(() => {});
+    await cleanup(dir, marker);
+  }
+});
+
+Deno.test("a compiled binary hands an unknown verb to the pinned denext only to discover it", async () => {
+  const cases: [string[], string | undefined, boolean][] = [
+    [["biuld"], undefined, false], // a config with no verbs: the name is unknown
+    [
+      ["seed", "--help"],
+      'export default { commands: [{ name: "seed", summary: "s", run() {} }] };\n',
+      false,
+    ],
+    [["seed"], 'export default { commands: [{ name: "seed", summary: "s", run() {} }] };\n', true],
+  ];
+  for (const [argv, body, handsOff] of cases) {
+    const { dir, marker } = await remapping(body);
+    const spawned: string[] = [];
+    try {
+      await handOffToDiscover(
+        () => unknownVerbAction(argv, { name: argv[0], index: 0 }, dir),
+        () =>
+          maybeReexecPinned(dir, "4.13.1", argv, {
+            standalone: () => true,
+            env: () => undefined,
+            spawn: (cli) => Promise.resolve(spawned.push(cli) && 0),
+            exit: () => {},
+            warn: () => {},
+          }).then(() => {}),
+      );
+      assertEquals(spawned.length > 0, handsOff, `${argv.join(" ")}: ${spawned.join(" ")}`);
+    } finally {
+      await cleanup(dir, marker);
+    }
   }
 });

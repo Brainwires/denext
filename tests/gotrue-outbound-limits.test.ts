@@ -215,7 +215,8 @@ Deno.test("signed-in sends: reauthenticate, email change and phone change are pe
       5,
       () => api(app, "/user", { method: "PUT", token, body: { email: "new@example.com" } }),
     );
-    assertEquals([app.emails.length, change.at(-1)], [6, "over_email_send_rate_limit"]);
+    // Three changes get through, each mailing both addresses (secureEmailChange, on by default).
+    assertEquals([app.emails.length, change.at(-1)], [9, "over_email_send_rate_limit"]);
     const phone = await codes(
       5,
       () => api(app, "/user", { method: "PUT", token, body: { phone: "+15555550113" } }),

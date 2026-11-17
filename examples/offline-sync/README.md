@@ -12,15 +12,25 @@ itself on denext, and what `openSqlite` can and cannot do there.
 
 ## Run it
 
+From this directory (`examples/offline-sync`), in two terminals:
+
 ```sh
-deno task backend   # the API on http://127.0.0.1:8788 (backend/)
-denext task dev     # the app on http://localhost:3000; /api is proxied to the backend
+denext task backend                      # the API on http://127.0.0.1:8788 (backend/)
+denext task build && denext task start   # the app on http://localhost:3000; /api is proxied to the backend
 ```
 
+`spa.proxy` applies to `denext start` (and the desktop runtime), not to
+`denext dev`: under `denext task dev` the app renders but its `/api` calls do
+not reach the backend.
+
+The backend keeps its data in memory; set `OFFLINE_SYNC_DB` to a file path to
+keep it across restarts.
+
 In a browser, `openSqlite` runs the app's own `@sqlite.org/sqlite-wasm`
-(persisted to OPFS); install it first with `npm install` (this folder's
-`package.json` lists only that package). Without it the app says what to
-install.
+(persisted to OPFS); install it first with `npm install` (needs Node.js; this
+folder's `package.json` lists only that package, and `deno.json` sets
+`nodeModulesDir: "none"`, so `denext install` does not fill `node_modules`).
+Without it the app says what to install.
 
 In the Capacitor shell (`denext migrate --enable-capacitor`, then
 `denext mobile add sqlite`), the database is a file in the app's storage through

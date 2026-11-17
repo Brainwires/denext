@@ -294,7 +294,8 @@ Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", 
   const old = resolveDesktopTrust("t3code://app", "t3code://app", false);
   assertEquals(old.trust.kind, "refuse");
   const reason = (old.trust as { reason: string }).reason;
-  assertStringIncludes(reason, DESKTOP_RELAY_MARKING_RUNTIME);
+  assertStringIncludes(reason, "does not mark requests from its WebSocket relay");
+  assert(!reason.includes(DESKTOP_RELAY_MARKING_RUNTIME), "names the capability, not a release");
   assertStringIncludes(reason, "DENEXT_DESKTOP_RUNTIME=stock");
   assertStringIncludes(reason, "stock Deno CLI (DENEXT_DENO=stock)");
   assertStringIncludes(reason, "DENORT_DESKTOP_BIN");
@@ -313,8 +314,8 @@ Deno.test("runtime skew: the memory world without DENO_DESKTOP_WS_URL names the 
     assert(w !== undefined, String(published));
     assertEquals(DESKTOP_RELAY_TOKEN_RUNTIME, "2.9.7-denext.9");
     assertEquals(DESKTOP_MINIMUM_RUNTIME, "2.9.7-denext.14");
-    assertStringIncludes(w, `older than ${DESKTOP_MINIMUM_RUNTIME}, the oldest denext supports`);
-    assertStringIncludes(w, `which came in ${DESKTOP_RELAY_TOKEN_RUNTIME}`);
+    assertStringIncludes(w, "older than the oldest denext supports");
+    assert(!w.includes(DESKTOP_MINIMUM_RUNTIME), "names the capability, not a release");
     assertStringIncludes(w, "spawnSelf");
     assertStringIncludes(w, DESKTOP_WS_URL_ENV);
     assertStringIncludes(w, "WebSockets");

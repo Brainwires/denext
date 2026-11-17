@@ -1,7 +1,7 @@
 // The stock Deno the workflows install with denoland/setup-deno is a bootstrap, by design: it
 // starts the job and runs only what must be stock — `deno fmt --check` / `deno lint` /
 // `doc-lint` (reproducible formatting, and JSR scores what stock `deno publish` uploads),
-// `deno publish` itself, and scripts that run no project code (the pick steps, cargo-audit). Every
+// `deno publish` itself, and scripts that run no project code (cargo-audit). Every
 // step that runs project code puts denext's toolchain on PATH first
 // (scripts/ci/toolchain-on-path.ts, or scripts/test-run.ts, which runs every pass on it). So the
 // workflows pin exactly two stock versions, each for one reason, and nothing else creeps in:

@@ -19,7 +19,7 @@ export const YARN_NO_SCRIPTS_ENV: Readonly<Record<string, string>> = {
  * The Capacitor release the shell targets (Capacitor 8, as every `mobile add` plugin), pinned
  * exactly: a range would let the package manager take a release published minutes ago, past the
  * project's minimum dependency age. Bump it only to a version that has cleared Deno's default
- * hold (two days).
+ * hold (24 hours).
  */
 export const CAPACITOR_VERSION = "8.6.0";
 

@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
-import { canonicalPath } from "../src/build/canonical-path.ts";
+import { canonicalPath, rootSpelling } from "../src/build/canonical-path.ts";
 import { isFrameworkSource, localModulesOutside } from "../src/build/module-graph.ts";
 import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 
@@ -124,4 +124,26 @@ Deno.test("localModulesOutside warns and scans the project alone when the graph 
   assertEquals(warnings.length, 1, warnings.join("\n"));
   assertStringIncludes(warnings[0], "build-time feature scans");
   assert(warnings[0].includes("/nowhere"));
+});
+
+Deno.test({
+  name: dirLinkTestName(
+    "rootSpelling names a path under the root's real path in the root's spelling",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
+  const made = await symlinkTo(REPO);
+  try {
+    const respell = rootSpelling(made.link);
+    const real = Deno.realPathSync(REPO);
+    assertEquals(respell(join(real, "src", "x.ts")), join(made.link, "src", "x.ts"));
+    assertEquals(respell(real), made.link);
+    // Outside the real root, or already in the root's spelling: unchanged.
+    assertEquals(respell(join(made.link, "a")), join(made.link, "a"));
+    assertEquals(respell(real + "-sibling"), real + "-sibling");
+    // A root that is its own real path respells nothing.
+    assertEquals(rootSpelling(real)(join(real, "a")), join(real, "a"));
+  } finally {
+    await Deno.remove(made.dir, { recursive: true });
+  }
 });

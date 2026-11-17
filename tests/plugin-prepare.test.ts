@@ -4,6 +4,7 @@ import { assert, assertEquals } from "@std/assert";
 import {
   applyPlugins,
   getPluginPrepareWatchDirs,
+  matchesPluginPrepareWatch,
   type PluginPrepareContext,
   resetPlugins,
   runMatchingPrepareSteps,
@@ -12,6 +13,8 @@ import {
 import type { DenextConfig } from "../src/server/config.ts";
 import type { DenextPlugin, PluginContext } from "../src/plugin/mod.ts";
 import { join } from "@std/path";
+import { outsideEdits } from "../src/build/dev-server/watch.ts";
+import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "./helpers/symlink.ts";
 
 const ROOT = "/proj";
 const ctx: PluginPrepareContext = {
@@ -72,6 +75,19 @@ Deno.test("addPrepareStep: runMatchingPrepareSteps runs only when a changed path
   // A matching change re-runs the step.
   assertEquals(await runMatchingPrepareSteps(ctx, ["/proj/content/blog/hello.md"]), true);
   assertEquals(runs, 1);
+  resetPlugins();
+});
+
+Deno.test("dev watcher: a file a prepare step's globs match is delivered, registered after the watch opened", async () => {
+  resetPlugins();
+  // The folder watch opened over app/ only (the filter is built before any plugin set up).
+  const outside = outsideEdits(ROOT, [join(ROOT, "app")]);
+  const sdl = join(ROOT, "gql", "schema.graphql");
+  const notes = join(ROOT, "notes", "todo.graphql");
+  assertEquals(outside([sdl, notes]), [], "no plugin watches them yet");
+  await setup(["gql/**/*.{ts,graphql}"], () => {});
+  // A plugin whose (async) setup finished later: its files reach the change set.
+  assertEquals(outside([sdl, notes, join(ROOT, "app", "page.graphql")]), [sdl]);
   resetPlugins();
 });
 
@@ -161,4 +177,46 @@ Deno.test("addPrepareStep: a throwing step is caught, not fatal", async () => {
   await runPluginPrepareSteps(ctx);
   assert(true);
   resetPlugins();
+});
+
+Deno.test({
+  name: dirLinkTestName(
+    "addPrepareStep: a change the watcher names through the root's real path re-runs the step",
+  ),
+  ignore: IGNORE_WITHOUT_DIR_LINKS,
+}, async () => {
+  // macOS's FSEvents reports `/private/var/…` for a watch on `/var/…`; any symlinked checkout does
+  // the same. The project is reached through a symlink here so the case runs on every OS.
+  resetPlugins();
+  const tmp = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_prepare_real_" }));
+  try {
+    const real = join(tmp, "real");
+    await Deno.mkdir(join(real, "content"), { recursive: true });
+    const link = join(tmp, "link");
+    await symlinkDir(real, link);
+    const seen: (readonly string[] | undefined)[] = [];
+    await applyPlugins({
+      projectRoot: link,
+      appDir: join(link, "app"),
+      config: {
+        plugins: [{
+          name: "test-real-spelling",
+          setup(c) {
+            c.addPrepareStep((p) => void seen.push(p.changed), { watch: ["content/**/*.md"] });
+          },
+        }],
+      } as DenextConfig,
+      mode: "dev",
+      load: () => Promise.resolve({}),
+    });
+    const linkCtx = { ...ctx, projectRoot: link, appDir: join(link, "app") };
+    const event = join(real, "content", "a.md");
+    assert(matchesPluginPrepareWatch(link, event), "the real spelling matches the globs");
+    assertEquals(await runMatchingPrepareSteps(linkCtx, [event]), true);
+    // The step is told the path in the root's own spelling, as its globs name it.
+    assertEquals(seen, [[join(link, "content", "a.md")]]);
+  } finally {
+    resetPlugins();
+    await Deno.remove(tmp, { recursive: true });
+  }
 });

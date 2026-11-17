@@ -362,17 +362,40 @@ jobs:
   # unpacked, then binary-smoke.sh runs and (on the native architecture) the verbs that read
   # framework files at run time (tests/integration/cli-binary-smoke.test.ts). A failure skips the
   # release, as a failed build leg does.
-  smoke:
+  # Picks the aarch64 Linux smoke leg's runner (Brainwires/.github's pick-runners action): our
+  # Linux arm64 pool while it has a free slot, else GitHub's ubuntu-24.04-arm at once. On GitHub's
+  # image (it must not wait in the queue it shortens); it never fails (the leg's `|| <image>`).
+  smoke_runners:
+    name: pick smoke runners
     needs: binaries
     if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+    outputs:
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@b9684b2d976ff61b754793f7f934f7e853205862 # pick-runners
+        with:
+          jobs: smoke_linux_arm=linux-arm64
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+  smoke:
+    needs: [binaries, smoke_runners]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && needs.binaries.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-gnu }
           - { os: macos-latest, targets: aarch64-apple-darwin x86_64-apple-darwin }
-    # Stays on GitHub-hosted: no Linux arm64 pool for ubuntu-24.04-arm, and the macOS leg runs x86_64 under Rosetta, not verified on the self-hosted macOS image.
-    runs-on: ${{ matrix.os }}
+    # The aarch64 Linux leg runs where smoke_runners put it (our Linux arm64 pool, else
+    # ubuntu-24.04-arm). The macOS leg stays on GitHub-hosted: it runs x86_64 under Rosetta, not
+    # verified on the self-hosted macOS image.
+    runs-on: ${{ matrix.os == 'ubuntu-24.04-arm' && (fromJSON(needs.smoke_runners.outputs.plan || '{}').smoke_linux_arm || 'ubuntu-24.04-arm') || matrix.os }}
     permissions:
       contents: read
     steps:
@@ -419,11 +442,38 @@ jobs:
   # ONE release, created once every leg has its archive and the `smoke` legs ran them. `needs` on
   # the matrix jobs means a single failed leg (fail-fast is off, so the others still finish and
   # upload) skips this job entirely — a release is all six platforms or nothing.
-  release:
+  # Picks the runners of the jobs after the build (Brainwires/.github's pick-runners action): our
+  # self-hosted pools while they have a free slot, else the GitHub image at once (always on a fork's
+  # pull request). It runs once `binaries` and `smoke` pass — when those jobs can start — so the
+  # free slots it counts are current; on GitHub's image (it must not wait in the queue it shortens),
+  # and it never fails: each job's `|| <image>` takes its GitHub image if the plan is empty.
+  runners:
+    name: pick runners
     needs: [binaries, smoke]
     if: startsWith(github.ref_name, 'v')
-    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a fork's pull_request / pull_request_target).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # the repository's queued / running jobs
+    outputs:
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@b9684b2d976ff61b754793f7f934f7e853205862 # pick-runners
+        with:
+          # package-managers runs after `release` (on a final version only): it takes its runner.
+          jobs: >-
+            ${{ !contains(github.ref_name, '-')
+            && 'release=linux-x64 package_managers=~release macos_check=macos-arm64 windows_arm_check=windows-arm64'
+            || 'release=linux-x64 macos_check=macos-arm64 windows_arm_check=windows-arm64' }}
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+  release:
+    needs: [runners, binaries, smoke]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && needs.binaries.result == 'success' && needs.smoke.result == 'success' }}
+    # The runners job's pick (`linux-x64`): our Linux pool while it has a free slot, else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').release || 'ubuntu-latest' }}
     permissions:
       contents: write # create the release and attach the assets
       id-token: write # sign the build-provenance attestation (Sigstore, keyless)
@@ -492,10 +542,10 @@ jobs:
   # creates the repos and tokens. A separate job, after the release: a failure here (a revoked
   # token, a GitHub outage) never touches the release itself, and re-running it is idempotent.
   package-managers:
-    needs: release
-    if: startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')
-    # The self-hosted Linux runner RUNNER_LINUX_X64 names, else ubuntu-latest (always on a fork's pull_request / pull_request_target).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: [runners, release]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-') && needs.release.result == 'success' }}
+    # The runners job's pick (`~release`): the runner `release` had, else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').package_managers || 'ubuntu-latest' }}
     permissions:
       contents: read
     steps:
@@ -530,13 +580,11 @@ jobs:
   # Windows runner (it starts, knows its version, loads a verb). Off the critical path, like
   # macos-check: a failure means the shipped Arm64 archive needs a follow-up release.
   windows-arm-check:
-    needs: release
-    if: startsWith(github.ref_name, 'v')
-    # The self-hosted Windows arm64 runner the repository variable
-    # RUNNER_WINDOWS_ARM names (a label, or a JSON array), else windows-11-arm; always
-    # windows-11-arm on a fork's pull_request / pull_request_target (a self-hosted runner never takes a fork's code; a same-repo
-    # pull_request runs on it).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"windows-11-arm"' || (startsWith(vars.RUNNER_WINDOWS_ARM, '[') && vars.RUNNER_WINDOWS_ARM || format('"{0}"', vars.RUNNER_WINDOWS_ARM || 'windows-11-arm'))) }}
+    needs: [runners, release]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && needs.release.result == 'success' }}
+    # The runners job's pick (`windows-arm64`, not pinned: GitHub's windows-11-arm runs the released
+    # binary as well): our Windows arm64 runner while it has a free slot, else windows-11-arm.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').windows_arm_check || 'windows-11-arm' }}
     permissions:
       contents: read
     steps:
@@ -571,10 +619,10 @@ jobs:
   # under `codesign --verify --strict`, the arm64 one starts and knows its version), so a failure
   # here means the shipped Mac archives need a follow-up release.
   macos-check:
-    needs: release
-    if: startsWith(github.ref_name, 'v')
-    # The self-hosted arm64 runner RUNNER_MACOS_ARM names, else macos-latest (always on a fork's pull_request / pull_request_target).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"macos-latest"' || (startsWith(vars.RUNNER_MACOS_ARM, '[') && vars.RUNNER_MACOS_ARM || format('"{0}"', vars.RUNNER_MACOS_ARM || 'macos-latest'))) }}
+    needs: [runners, release]
+    if: ${{ !cancelled() && startsWith(github.ref_name, 'v') && needs.release.result == 'success' }}
+    # The runners job's pick (`macos-arm64`): our arm64 runner while it has a free slot, else macos-latest.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').macos_check || 'macos-latest' }}
     permissions:
       contents: read
     steps:

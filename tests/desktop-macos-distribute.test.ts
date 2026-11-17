@@ -66,14 +66,44 @@ Deno.test("desktopNotarizeMacos: a .dmg and a .pkg are submitted directly, stapl
     ["dist/App.dmg", true, true],
     ["dist/App.pkg", true, true],
   ]);
-  for (const file of ["dist/App.dmg", "dist/App.pkg"]) {
+  // Then Gatekeeper itself is asked, as a downloader's Mac would: `-t open` for the image (the
+  // check that answered "no usable signature" for an unsigned one), `-t install` for the package.
+  const assess = {
+    "dist/App.dmg": [
+      "spctl",
+      "--assess",
+      "--type",
+      "open",
+      "--context",
+      "context:primary-signature",
+      "-v",
+      "dist/App.dmg",
+    ],
+    "dist/App.pkg": ["spctl", "--assess", "--type", "install", "-v", "dist/App.pkg"],
+  };
+  for (const file of ["dist/App.dmg", "dist/App.pkg"] as const) {
     const mine = calls.filter((c) => c.includes(file));
     assertEquals(mine, [
       ["xcrun", "notarytool", "submit", file, "--keychain-profile", "notary", "--wait"],
       ["xcrun", "stapler", "staple", file],
       ["xcrun", "stapler", "validate", file],
+      assess[file],
     ]);
   }
+});
+
+Deno.test("desktopNotarizeMacos: an installer Gatekeeper refuses fails the run", async () => {
+  const { run } = recorder((cmd) => cmd[0] === "spctl");
+  await assertRejects(
+    () =>
+      desktopNotarizeMacos(
+        [desktopMacosArtifact("dist/App.dmg", "dmg", "developer-id")],
+        PROFILE,
+        { run },
+      ),
+    Error,
+    "spctl",
+  );
 });
 
 Deno.test("desktopNotarizeMacos: an .app goes up as a zip with the API key, which is removed", async () => {

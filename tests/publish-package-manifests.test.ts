@@ -258,10 +258,10 @@ Deno.test("publish.yml runs the publisher after the release, stable tags only, t
   );
   const job = workflow.slice(workflow.indexOf("\n  package-managers:"));
   const body = job.slice(0, job.indexOf("\n  windows-arm-check:"));
-  assertStringIncludes(body, "needs: release");
+  assertStringIncludes(body, "needs: [runners, release]");
   assertStringIncludes(
     body,
-    "if: startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-')",
+    "startsWith(github.ref_name, 'v') && !contains(github.ref_name, '-') && needs.release.result == 'success'",
   );
   assertStringIncludes(
     body,

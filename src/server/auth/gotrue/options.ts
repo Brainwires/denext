@@ -140,6 +140,14 @@ export interface GoTrueOptions {
   autoconfirm?: boolean;
   /** The same for phone sign-ups (default `false`). */
   phoneAutoconfirm?: boolean;
+  /**
+   * Confirm an email change from both addresses (default `true`, GoTrue's
+   * `GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED`): `PUT /user { email }` sends a code to the
+   * account's current, verified address as well as the new one, and the change applies once
+   * both are redeemed (the first answers `{ msg }` and starts no session). `false` confirms it
+   * from the new address alone. An account with no verified address confirms from the new one.
+   */
+  secureEmailChange?: boolean;
   /** Allow `signInAnonymously()` (default `false`). */
   anonymousUsers?: boolean;
   /** Minimum password length (default 8). */

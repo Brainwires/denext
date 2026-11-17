@@ -11,7 +11,8 @@ import type { RootHandle } from "./state.ts";
 import { devHydrationActive } from "./fiber-utils.ts";
 import { Variable } from "../../runtime/async-context.ts";
 import { transitionScope } from "../../runtime/async-context-mode.ts";
-import { inEventDispatch } from "../event-priority.ts";
+import { inDiscreteEvent, inEventDispatch } from "../event-priority.ts";
+import { postTask } from "./post-task.ts";
 import {
   type Fiber,
   ForceRenderBit,
@@ -172,7 +173,13 @@ export function scheduleUpdateLane(fiber: Fiber, lane: number): void {
   }
   const handle = rootHandleOf(fiber);
   if (!handle) return;
-  if (lane & SyncLane) handle.reveal = false; // urgent work joins it: no longer a pure reveal
+  if (lane & SyncLane) {
+    handle.reveal = false; // urgent work joins it: no longer a pure reveal
+    // A click's / key press's update commits its passive effects before returning, as React's
+    // SyncLane does, so they beat the next input event. A Preact app keeps Preact's after-paint
+    // `useEffect` timing.
+    if (!preactOptions && inDiscreteEvent()) handle.syncPassive = true;
+  }
   handle.pendingLanes |= lane;
   if (duringRender) return; // picked up by the render-again loop
   if (lane & TransitionLane) scheduleTransitionFlush();
@@ -347,26 +354,16 @@ const transitionDoneCallbacks: Array<() => void> = [];
 // pump through __pumpForTests() and must never construct it. It is closed again once a
 // slice schedules no further one (the sliced render finished or stopped), so a non-browser
 // process that ran a transition (a component test) is not held open by it either.
-let yieldChannel: MessageChannel | undefined;
-
 let continuationScheduled = false;
 
 export function scheduleContinuation(): void {
   if (continuationScheduled) return;
   continuationScheduled = true;
   if (manualSlicing) return; // pumped via __pumpForTests()
-  if (!yieldChannel) {
-    const channel = yieldChannel = new MessageChannel();
-    channel.port1.onmessage = () => {
-      continuationScheduled = false;
-      resumeConcurrentImpl();
-      // Slicing went idle: let the channel go.
-      if (!continuationScheduled) {
-        channel.port1.close(), channel.port2.close(), yieldChannel = undefined;
-      }
-    };
-  }
-  yieldChannel.port2.postMessage(null);
+  postTask(() => {
+    continuationScheduled = false;
+    resumeConcurrentImpl();
+  });
 }
 
 export function scheduleTransitionFlush(): void {

@@ -13,8 +13,9 @@
 // with `apply: true`. `denext mcp --ui-read-only` starts the UI with `--read-only`, which refuses
 // every mutation.
 
+import { resolve } from "@std/path";
 import { denoExecutable } from "../build/deno-executable.ts";
-import { cliInvocation } from "../ui/proc.ts";
+import { uiChildInvocation } from "../ui/proc.ts";
 import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../ui/security.ts";
 import { panelOf, UI_PANELS, type UiPanel } from "../ui/panels.ts";
 import type { Tool } from "./tools.ts";
@@ -69,11 +70,13 @@ export class UiBridge {
   #cookie = "";
   #csrf = "";
   #starting: Promise<void> | null = null;
+  /** The child's working directory: an empty one of its own, removed once it has exited. */
+  #cwd: string | null = null;
 
   constructor(
     private readonly dir: string,
     private readonly options: UiBridgeOptions = {},
-    private readonly argv: () => string[] = () => [denoExecutable(), ...cliInvocation({ dir })],
+    private readonly argv: () => string[] = () => [denoExecutable(), ...uiChildInvocation()],
   ) {}
 
   /** The UI's origin once started (`http://127.0.0.1:<port>`). */
@@ -95,9 +98,11 @@ export class UiBridge {
     const flags = ["--no-open", "--port", "0", "--json"];
     if (this.options.readOnly) flags.push("--read-only");
     if (this.options.offline) flags.push("--offline");
+    // Outside the project, so nothing Deno looks for in the working directory is the project's.
+    this.#cwd = await Deno.makeTempDir({ prefix: "denext-mcp-ui-" });
     this.#child = new Deno.Command(command, {
-      args: [...prefix, "ui", this.dir, ...flags],
-      cwd: this.dir,
+      args: [...prefix, "ui", resolve(this.dir), ...flags],
+      cwd: this.#cwd,
       stdin: "null",
       stdout: "piped",
       stderr: "null",
@@ -156,7 +161,7 @@ export class UiBridge {
   async stop(): Promise<void> {
     const child = this.#child;
     this.#child = null;
-    if (!child) return;
+    if (!child) return await this.#removeCwd();
     try {
       child.kill("SIGTERM");
     } catch { /* already gone */ }
@@ -164,6 +169,14 @@ export class UiBridge {
     // Unread (it exited before its launch record, or the handshake failed): close it.
     if (!child.stdout.locked) await child.stdout.cancel().catch(() => {});
     await this.#drained;
+    await this.#removeCwd();
+  }
+
+  /** Remove the child's working directory, once it has exited. */
+  async #removeCwd(): Promise<void> {
+    const cwd = this.#cwd;
+    this.#cwd = null;
+    if (cwd !== null) await Deno.remove(cwd, { recursive: true }).catch(() => {});
   }
 }
 

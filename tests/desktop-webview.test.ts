@@ -7,6 +7,8 @@
 // per-window limit shared with desktop.ts's views, a page driving only its own views, runtime
 // error codes mapped, events to the owning window's page, cleanup on `closed` and on the window
 // closing, an older runtime reporting `supported: false`); and `desktop.webViews` validation.
+// Also: keyup events, blur(), focus-change reasons, before-menu forwardKeys entries, and
+// attachWebView's relayout() and follow: "frame".
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
@@ -153,6 +155,10 @@ class FakeWebView extends EventTarget {
     this.#rec("setForwardKeys", keys);
     return this.answer;
   }
+  blur() {
+    this.#rec("blur");
+    return this.answer;
+  }
   close() {
     this.#rec("close");
     if (this.closed) return;
@@ -229,6 +235,9 @@ const CAPS = {
   menuAccelerators: true,
   unhandledKeys: true,
   forwardKeys: true,
+  blur: true,
+  keyUp: true,
+  forwardKeysBeforeMenu: true,
 };
 /** Every feature on. */
 const ALL_ON = {
@@ -246,6 +255,9 @@ const ALL_ON = {
   menuAccelerators: true,
   unhandledKeys: true,
   forwardKeys: true,
+  blur: true,
+  keyUp: true,
+  forwardKeysBeforeMenu: true,
 };
 /** What an older runtime (or no engine) answers. */
 const NONE = {
@@ -263,6 +275,9 @@ const NONE = {
   menuAccelerators: false,
   unhandledKeys: false,
   forwardKeys: false,
+  blur: false,
+  keyUp: false,
+  forwardKeysBeforeMenu: false,
 };
 const BOUNDS = { x: 10, y: 20, width: 300, height: 200 };
 
@@ -296,6 +311,7 @@ Deno.test("web views backend: capabilities from the runtime, supported: false on
       devTools: false,
       print: false,
       forwardKeys: false,
+      blur: false,
     },
   );
   // The engine without a feature: false.
@@ -1481,7 +1497,7 @@ Deno.test("web views backend: forwardKeys on create and setForwardKeys, checked"
   );
 });
 
-Deno.test("web views backend: the runtime's key event becomes keydown, to the page and desktop.ts", async () => {
+Deno.test("web views backend: the runtime's key event becomes keydown / keyup, to the page and desktop.ts", async () => {
   const { c, call, made, emits } = controller({ caps: CAPS });
   const { id } = await call("webViewCreate", {
     options: { url: "https://a.example", bounds: BOUNDS },
@@ -1494,9 +1510,11 @@ Deno.test("web views backend: the runtime's key event becomes keydown, to the pa
     forwarded: true,
     extra: "dropped",
   });
-  made[0].fire("key", { type: "keyup", key: "1" });
+  made[0].fire("key", { type: "keyup", key: "1", code: "Digit1", repeat: true });
+  made[0].fire("key", { type: "keypress", key: "1" });
   made[0].fire("key", JSON.stringify({ type: "keydown", key: "Escape", code: "Escape" }));
   const keydown = (over: Record<string, unknown>) => ({
+    type: "keydown",
     key: "",
     code: "",
     altKey: false,
@@ -1513,6 +1531,12 @@ Deno.test("web views backend: the runtime's key event becomes keydown, to the pa
       event: "keydown",
       detail: keydown({ key: "1", code: "Digit1", metaKey: true, forwarded: true }),
     },
+    // A keyup is a forwarded key's, never a repeat.
+    {
+      id,
+      event: "keyup",
+      detail: keydown({ type: "keyup", key: "1", code: "Digit1", forwarded: true }),
+    },
     { id, event: "keydown", detail: keydown({ key: "Escape", code: "Escape" }) },
   ]);
   const h = await c.createWebView({
@@ -1521,9 +1545,11 @@ Deno.test("web views backend: the runtime's key event becomes keydown, to the pa
     forwardKeys: ["F1"],
   });
   const keys: string[] = [];
-  h.on("keydown", (e) => keys.push(`${e.key}:${e.forwarded}`));
+  h.on("keydown", (e) => keys.push(`${e.type}:${e.key}:${e.forwarded}`));
+  h.on("keyup", (e) => keys.push(`${e.type}:${e.key}:${e.forwarded}`));
   made[1].fire("key", { type: "keydown", key: "F1", code: "F1", forwarded: true });
-  assertEquals(keys, ["F1:true"]);
+  made[1].fire("key", { type: "keyup", key: "F1", code: "F1", forwarded: true });
+  assertEquals(keys, ["keydown:F1:true", "keyup:F1:true"]);
   await h.setForwardKeys(["F2"]);
   assertEquals(made[1].calls.at(-1), ["setForwardKeys", ["F2"]]);
 });
@@ -1548,5 +1574,302 @@ Deno.test("web views page: forwardKeys, setForwardKeys and keydown on the wire",
     ctl.made[0].fire("key", { type: "keydown", key: "2", code: "Digit2", forwarded: true });
     await until(() => keys.length === 1);
     assertEquals(keys, [["2", true]]);
+  });
+});
+
+Deno.test("web views backend: blur() reaches the runtime; an older one or an engine without it is unsupported", async () => {
+  const { c, call, made, emits } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS },
+  }) as { id: string };
+  assertEquals(await call("webViewCall", { id, method: "blur" }), null);
+  assertEquals(made[0].calls.at(-1), ["blur", undefined]);
+  // focus-change carries the runtime's reason to the page and desktop.ts.
+  made[0].fire("focus-change", { focused: false, reason: "blur" });
+  assertEquals(emits.at(-1)?.data, {
+    id,
+    event: "focus-change",
+    detail: { focused: false, reason: "blur" },
+  });
+  const h = await c.createWebView({ url: "https://b.example", bounds: BOUNDS });
+  const seen: unknown[] = [];
+  h.on("focus-change", (e) => seen.push(e));
+  await h.blur();
+  assertEquals(made[1].calls.at(-1), ["blur", undefined]);
+  made[1].fire("focus-change", { focused: false, reason: "hidden" });
+  assertEquals(seen, [{ focused: false, reason: "hidden" }]);
+  // The engine answering false, or a runtime without the member.
+  made[0].answer = false;
+  assertEquals(
+    (await rejection(() => call("webViewCall", { id, method: "blur" }))).code,
+    "unsupported",
+  );
+  Object.defineProperty(made[0], "blur", { value: undefined });
+  assertEquals(
+    (await rejection(() => call("webViewCall", { id, method: "blur" }))).code,
+    "unsupported",
+  );
+});
+
+Deno.test("web views backend: beforeMenu forwardKeys entries go to the runtime marked '!', where supported", async () => {
+  const { call, made } = controller({ caps: CAPS });
+  const { id } = await call("webViewCreate", {
+    options: {
+      url: "https://a.example",
+      bounds: BOUNDS,
+      forwardKeys: [
+        "F5",
+        { accelerator: "CmdOrCtrl+W", beforeMenu: true },
+        { accelerator: "Alt+1" },
+        { accelerator: "Alt+2", beforeMenu: false },
+        "!CmdOrCtrl+T",
+      ],
+    },
+  }) as { id: string };
+  assertEquals(made[0].options.forwardKeys, [
+    "F5",
+    "!CmdOrCtrl+W",
+    "Alt+1",
+    "Alt+2",
+    "!CmdOrCtrl+T",
+  ]);
+  const run = (keys: unknown) =>
+    call("webViewCall", { id, method: "setForwardKeys", args: { keys } });
+  assertEquals(await run([{ accelerator: "Meta+Shift+L", beforeMenu: true }]), null);
+  assertEquals(made[0].calls.at(-1), ["setForwardKeys", ["!Meta+Shift+L"]]);
+  for (
+    const bad of [
+      [{}],
+      [{ accelerator: "" }],
+      [{ accelerator: "F5", beforeMenu: "yes" }],
+      [{ accelerator: "!F5", beforeMenu: true }],
+      [{ accelerator: "x".repeat(64), beforeMenu: true }],
+      [null],
+      [["F5"]],
+    ]
+  ) {
+    assertEquals((await rejection(() => run(bad))).code, "validation", JSON.stringify(bad));
+  }
+  // A runtime without the feature: a before-menu entry is unsupported (a plain one still works).
+  const older = controller({ caps: { ...CAPS, forwardKeysBeforeMenu: false } });
+  const err = await rejection(() =>
+    older.call("webViewCreate", {
+      options: {
+        url: "https://a.example",
+        bounds: BOUNDS,
+        forwardKeys: [{ accelerator: "CmdOrCtrl+W", beforeMenu: true }],
+      },
+    })
+  );
+  assertEquals([err.code, err.status], ["unsupported", 501]);
+  assertEquals(older.made.length, 0);
+  const plain = await older.call("webViewCreate", {
+    options: { url: "https://a.example", bounds: BOUNDS, forwardKeys: ["!F5".slice(1)] },
+  }) as { id: string };
+  assertEquals(
+    (await rejection(() =>
+      older.call("webViewCall", {
+        id: plain.id,
+        method: "setForwardKeys",
+        args: { keys: ["!F5"] },
+      })
+    )).code,
+    "unsupported",
+  );
+});
+
+Deno.test("web views page: blur, object forwardKeys and keyup on the wire", async () => {
+  await inDesktop(async (rt, ctl) => {
+    const view = await createWebView({
+      url: "https://a.example",
+      bounds: BOUNDS,
+      forwardKeys: [{ accelerator: "CmdOrCtrl+W", beforeMenu: true }, "F13"],
+    });
+    assertEquals(ctl.made[0].options.forwardKeys, ["!CmdOrCtrl+W", "F13"]);
+    assertEquals((await webViewCapabilities()).blur, true);
+    await view.blur();
+    await view.setForwardKeys([{ accelerator: "Space", beforeMenu: false }]);
+    const wire = rt.calls.filter((c) => c.method === "webViewCall").map((c) => c.args);
+    assertEquals(wire, [
+      { id: view.id, method: "blur", args: {} },
+      {
+        id: view.id,
+        method: "setForwardKeys",
+        args: { keys: [{ accelerator: "Space", beforeMenu: false }] },
+      },
+    ]);
+    assertEquals(ctl.made[0].calls.slice(-2), [["blur", undefined], ["setForwardKeys", ["Space"]]]);
+    const keys: string[] = [];
+    view.on("keydown", (e) => keys.push(`${e.type}:${e.code}:${e.repeat}`));
+    view.on("keyup", (e) => keys.push(`${e.type}:${e.code}:${e.forwarded}`));
+    const focus: unknown[] = [];
+    view.on("focus-change", (e) => focus.push(e));
+    ctl.made[0].fire("key", { type: "keydown", code: "F13", forwarded: true });
+    ctl.made[0].fire("key", { type: "keydown", code: "F13", forwarded: true, repeat: true });
+    ctl.made[0].fire("key", { type: "keyup", code: "F13", forwarded: true });
+    ctl.made[0].fire("focus-change", { focused: false, reason: "hidden" });
+    await until(() => keys.length === 3 && focus.length === 1);
+    assertEquals(keys, ["keydown:F13:false", "keydown:F13:true", "keyup:F13:true"]);
+    assertEquals(focus, [{ focused: false, reason: "hidden" }]);
+  });
+});
+
+Deno.test("attachWebView: relayout() measures at the next frame; it is the detach too", async () => {
+  const layout = fakeLayout();
+  await withGlobals(layout.globals, async () => {
+    const { handle, calls } = fakeHandle();
+    const el = anchor();
+    const attachment = attachWebView(handle, el);
+    await layout.frame();
+    assertEquals(calls, ["bounds:10,20,300,200", "visible:true"]);
+    // A transform moved it: nothing reports that, relayout() does.
+    el.rect = { left: 60, top: 20, width: 300, height: 200 };
+    await layout.frame();
+    assertEquals(calls.length, 2);
+    attachment.relayout();
+    attachment.relayout();
+    assertEquals(layout.frames.length, 1);
+    await layout.frame();
+    assertEquals(calls.slice(2), ["bounds:60,20,300,200"]);
+    attachment.detach();
+    attachment();
+    attachment.relayout();
+    assertEquals(layout.frames.length, 0);
+    assertEquals(layout.resizeCbs.size, 0);
+  });
+});
+
+/** An element under `parent`, with a settable animation list. */
+function animatedAnchor(parent: object | null, withAnimations: boolean) {
+  const el = anchor();
+  const anims: Array<{ playState: string }> = [];
+  Object.assign(el, { parentElement: parent });
+  if (withAnimations) Object.assign(el, { getAnimations: () => anims });
+  return { el, anims };
+}
+
+Deno.test('attachWebView: follow "frame" measures every frame while a transition runs on the chain, then idles', async () => {
+  const layout = fakeLayout();
+  await withGlobals(layout.globals, async () => {
+    const { handle, calls } = fakeHandle();
+    const ancestor = { parentElement: null, getAnimations: () => ancestorAnims };
+    const ancestorAnims: Array<{ playState: string }> = [];
+    const { el } = animatedAnchor(ancestor, true);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await layout.frame();
+    assertEquals(calls.length, 2);
+    const fire = (type: string, target: unknown) =>
+      layout.listeners.get(type)!.forEach((f) => (f as (e: unknown) => void)({ target }));
+    // A transition elsewhere in the document: nothing starts.
+    fire("transitionrun", { parentElement: null });
+    assertEquals(layout.frames.length, 0);
+    // On an ancestor: a measure every frame while it runs.
+    ancestorAnims.push({ playState: "running" });
+    fire("transitionrun", ancestor);
+    for (const left of [20, 30, 40]) {
+      el.rect = { left, top: 20, width: 300, height: 200 };
+      await layout.frame();
+    }
+    assertEquals(calls.slice(2), [
+      "bounds:20,20,300,200",
+      "bounds:30,20,300,200",
+      "bounds:40,20,300,200",
+    ]);
+    // It ends: a few frames for the final position, then no frame is asked for.
+    ancestorAnims.length = 0;
+    el.rect = { left: 50, top: 20, width: 300, height: 200 };
+    fire("transitionend", ancestor);
+    for (let i = 0; i < 6; i++) await layout.frame();
+    assertEquals(calls.at(-1), "bounds:50,20,300,200");
+    assertEquals(layout.frames.length, 0);
+    // Detaching drops the motion listeners.
+    detach();
+    for (const type of ["transitionrun", "animationstart", "transitionend", "animationcancel"]) {
+      assertEquals(layout.listeners.get(type)?.size ?? 0, 0, type);
+    }
+  });
+});
+
+Deno.test('attachWebView: follow "frame" without getAnimations counts start / end events; detached mid-motion it stops', async () => {
+  const layout = fakeLayout();
+  await withGlobals(layout.globals, async () => {
+    const { handle, calls } = fakeHandle();
+    const { el } = animatedAnchor(null, false);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await layout.frame();
+    const fire = (type: string) =>
+      layout.listeners.get(type)!.forEach((f) => (f as (e: unknown) => void)({ target: el }));
+    fire("animationstart");
+    fire("transitionrun");
+    fire("animationend");
+    // One still runs: frames keep coming.
+    for (let i = 0; i < 5; i++) await layout.frame();
+    assert(layout.frames.length > 0);
+    fire("transitioncancel");
+    for (let i = 0; i < 6; i++) await layout.frame();
+    assertEquals(layout.frames.length, 0);
+    // An element taken out of the document mid-motion ends the loop (no end event may come).
+    fire("animationstart");
+    el.isConnected = false;
+    for (let i = 0; i < 3; i++) await layout.frame();
+    assertEquals(layout.frames.length, 0);
+    assertEquals(calls.at(-1), "visible:false");
+    // Detached with a loop frame pending: it is cancelled.
+    el.isConnected = true;
+    fire("animationstart");
+    assert(layout.frames.length > 0);
+    detach();
+    const before = calls.length;
+    await layout.frame();
+    assertEquals(calls.length, before);
+  });
+});
+
+Deno.test('attachWebView: follow "frame" reads "pending" animations, skips an ancestor without getAnimations, and ignores an end elsewhere', async () => {
+  const layout = fakeLayout();
+  await withGlobals(layout.globals, async () => {
+    const { handle } = fakeHandle();
+    const ancestor = { parentElement: null }; // no getAnimations of its own
+    const { el, anims } = animatedAnchor(ancestor, true);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await layout.frame();
+    const fire = (type: string, target: unknown) =>
+      layout.listeners.get(type)!.forEach((f) => (f as (e: unknown) => void)({ target }));
+    anims.push({ playState: "pending" });
+    fire("animationstart", el);
+    for (let i = 0; i < 4; i++) await layout.frame();
+    assert(layout.frames.length > 0, "a pending animation keeps the frames coming");
+    // An end event for an element off the chain changes nothing.
+    fire("animationend", { parentElement: null });
+    await layout.frame();
+    assert(layout.frames.length > 0, "an end elsewhere does not stop the motion");
+    anims.length = 0;
+    for (let i = 0; i < 8; i++) await layout.frame();
+    assertEquals(layout.frames.length, 0);
+    detach();
+  });
+});
+
+Deno.test("attachWebView: without requestAnimationFrame, matchMedia or devicePixelRatio it measures on a timer", async () => {
+  const layout = fakeLayout();
+  const globals: Record<string, unknown> = { ...layout.globals };
+  delete globals.requestAnimationFrame;
+  delete globals.cancelAnimationFrame;
+  delete globals.matchMedia;
+  delete globals.devicePixelRatio;
+  await withGlobals(globals, async () => {
+    const { handle, calls } = fakeHandle();
+    const { el } = animatedAnchor(null, false);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await new Promise((r) => setTimeout(r, 40));
+    assert(calls.includes("bounds:10,20,300,200"), calls.join());
+    // A motion asks for timer frames; detaching mid-motion clears the pending one.
+    layout.listeners.get("animationstart")!.forEach((f) =>
+      (f as (e: unknown) => void)({ target: el })
+    );
+    detach();
+    const before = calls.length;
+    await new Promise((r) => setTimeout(r, 40));
+    assertEquals(calls.length, before, "no measure after the detach");
   });
 });

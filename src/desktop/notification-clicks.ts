@@ -73,14 +73,35 @@ function dispatcherOf(api: DesktopAppApi): Dispatcher {
     subscribed: new Set(),
   };
   dispatchers.set(api, d);
-  api.addEventListener?.("notificationresponse", (e) => {
-    const r: DesktopNotificationResponse = (e as CustomEvent).detail ?? {};
-    for (const kind of ["page", "backend"] as const) {
-      if (!d.subscribed.has(kind) && d.early[kind].length < MAX_EARLY) d.early[kind].push(r);
-    }
-    for (const { sink } of [...d.sinks]) sink(r, false);
-  });
+  api.addEventListener?.(
+    "notificationresponse",
+    (e) => fanOut(d, (e as CustomEvent).detail ?? {}),
+  );
   return d;
+}
+
+/** Hand one click to every consumer (kept for a kind that has not subscribed yet). */
+function fanOut(d: Dispatcher, r: DesktopNotificationResponse): void {
+  for (const kind of ["page", "backend"] as const) {
+    if (!d.subscribed.has(kind) && d.early[kind].length < MAX_EARLY) d.early[kind].push(r);
+  }
+  for (const { sink } of [...d.sinks]) sink(r, false);
+}
+
+/**
+ * Deliver a click the runtime did not report itself, as if it had: one on a notification shown
+ * with the Deno `Notification` where the runtime cannot schedule (a backend `notify`), whose click
+ * arrives on that object instead of `Deno.desktop`. Nothing happens without `api`.
+ *
+ * @param api `Deno.desktop`, or `undefined`.
+ * @param r The click.
+ */
+export function dispatchNotificationResponse(
+  api: DesktopAppApi | undefined,
+  r: DesktopNotificationResponse,
+): void {
+  if (typeof api !== "object" || api === null) return;
+  fanOut(dispatcherOf(api), r);
 }
 
 /**

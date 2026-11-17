@@ -9,14 +9,15 @@ the RAM they use. The VM logic is plain Deno code over a fake-able host, tested 
 ## Run it
 
 ```sh
-denext task desktop            # export + open the app (denext's pinned Deno Desktop runtime)
-denext task desktop:package    # write scripts/package-*.ts from the scaffold, then package
+denext task desktop            # build + open the app (needs denext's Deno Desktop runtime)
+denext task desktop:package    # rewrite scripts/package-*.ts from the template, then package
 denext task dev                # the UI in a browser (no backend: it says so)
 ```
 
-It needs QEMU (`brew install qemu` on macOS; `qemu-system-*` and `qemu-img` under the QEMU prefix,
-`/opt/homebrew` by default; set `qemuPrefix` in `hangar-settings.json` in the app's data folder).
-The tests run from the repository root:
+Run these from this directory (`examples/hangar`). It needs QEMU (`brew install qemu` on macOS, the
+distribution's QEMU packages on Linux): `qemu-system-*` and `qemu-img` under the QEMU prefix,
+`/opt/homebrew` on macOS and `/usr` elsewhere by default; set `qemuPrefix` in `hangar-settings.json`
+in the app's data folder for another. The tests run from the repository root:
 
 ```sh
 deno test -A tests/hangar.test.ts
@@ -115,9 +116,10 @@ AppIndicator has no left click and no icon position (the panel opens where the c
 the menu has "Show panel"), and stock GNOME needs the AppIndicator extension (without a tray host
 the main window is shown instead). On Wayland the panel stays on top, out of the task manager and
 where it is put only as a layer-shell surface: KDE Plasma and wlroots compositors with
-`libgtk-layer-shell0` installed, runtime 3.0.0-denext.7 or later; on GNOME it is an ordinary window.
-GDK reports the whole display as the work area on Wayland, so the panel opened at a click keeps 64
-px clear of the display's edges (room for a taskbar denext can't see; a reported work area is used
-as it is). Before 3.0.0-denext.7 the panel opens at 800 × 600 on Linux (with a title bar on KDE). On
-a runtime before 3.0.0-denext.6 the Dock icon shows for a moment at launch and the tray's clicks
-carry no detail.
+`libgtk-layer-shell0` installed, on a runtime with layer-shell panels; on GNOME it is an ordinary
+window. GDK reports the whole display as the work area on Wayland, so the panel opened at a click
+keeps 64 px clear of the display's edges (room for a taskbar denext can't see; a reported work area
+is used as it is). On a runtime without layer-shell panels the panel opens at 800 × 600 on Linux
+(with a title bar on KDE). On a runtime that cannot set the activation policy from the first frame
+or report tray click details, the Dock icon shows for a moment at launch and the tray's clicks carry
+no detail.

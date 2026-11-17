@@ -35,7 +35,14 @@ import {
 } from "./context.ts";
 import { fail, GoTrueError } from "./errors.ts";
 import { factorsJson } from "./factors.ts";
-import { canSendSms, issueOtp, redeemOtp, sendAuthEmail, sendAuthSms } from "./otp.ts";
+import {
+  canSendSms,
+  issueOtp,
+  type OtpData,
+  redeemOtp,
+  sendAuthEmail,
+  sendAuthSms,
+} from "./otp.ts";
 import { readChallenge } from "./pkce.ts";
 import { identitiesOf, userJson } from "./user.ts";
 
@@ -165,7 +172,11 @@ async function changePassword(
   return await updateAccount(ctx, { id: user.id });
 }
 
-/** A new email: set at once under autoconfirm, else confirmed by a code sent to it. */
+/**
+ * A new email: set at once under autoconfirm, else confirmed by a code sent to it — and, under
+ * `secureEmailChange` (the default) for an account with a verified address, by a second code
+ * sent to that current address.
+ */
 async function changeEmail(
   ctx: GoTrueContext,
   user: AdapterUser,
@@ -192,16 +203,43 @@ async function changeEmail(
     ctx.url.searchParams.get("redirect_to") ?? str(body, "email_redirect_to"),
   );
   await spend(ctx, verificationLimiter(ctx.config), "verify", email, "over_email_send_rate_limit");
-  const issued = await issueOtp(ctx, "email_change", email, {
+  const change: OtpData = {
     action: "email_change",
     userId: user.id,
     newValue: email,
     redirectTo,
     ...(challenge ? { codeChallenge: challenge } : {}),
     pw: await firstAddressBinding(ctx, user),
-  });
+  };
+  const current = currentAddressToConfirm(ctx, user);
+  if (current) {
+    const shared = { ...change, changeId: crypto.randomUUID(), oldValue: current };
+    const toCurrent = await issueOtp(ctx, "email_change", current, { ...shared, half: "current" });
+    await sendAuthEmail(ctx, {
+      email: current,
+      action: "email_change",
+      issued: toCurrent,
+      redirectTo,
+      user,
+      newEmail: email,
+    });
+    change.changeId = shared.changeId;
+    change.oldValue = current;
+    change.half = "new";
+  }
+  const issued = await issueOtp(ctx, "email_change", email, change);
   await sendAuthEmail(ctx, { email, action: "email_change", issued, redirectTo, user });
   return email;
+}
+
+/**
+ * The address a two-address email change must also be confirmed from: the account's current email
+ * when `secureEmailChange` is on (the default) and that address is verified, else `undefined`.
+ */
+function currentAddressToConfirm(ctx: GoTrueContext, user: AdapterUser): string | undefined {
+  if (ctx.options.secureEmailChange === false) return undefined;
+  if (!user.email || user.emailVerified === undefined) return undefined;
+  return user.email.toLowerCase();
 }
 
 /**

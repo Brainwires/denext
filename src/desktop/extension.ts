@@ -23,6 +23,7 @@ import type {
 import type { DesktopWindowMenuItemHandler } from "./window-menu.ts";
 import type { DesktopAppMenusApi } from "./app-menus.ts";
 import type { DesktopNotificationClickListener } from "./notification-clicks.ts";
+import type { DesktopNotifyOptions, DesktopPostedNotification } from "./notify.ts";
 
 export type { StandardSchemaV1 };
 
@@ -118,8 +119,8 @@ export interface DesktopCapCtx {
    * `Deno.UnsafeCallback` runs on the JavaScript thread while the UI thread waits for it, so it must
    * not wait for the UI thread itself.
    *
-   * Over `Deno.desktop.runOnMainThread`, so it needs denext's pinned Deno Desktop runtime
-   * (2.9.7-denext.6 or later): elsewhere it rejects with a {@linkcode DesktopCapError} whose code is
+   * Over `Deno.desktop.runOnMainThread`, so it needs a denext Deno Desktop runtime that has it:
+   * elsewhere it rejects with a {@linkcode DesktopCapError} whose code is
    * `unsupported`. It also rejects, without calling `fn`, once the app is quitting.
    *
    * @param fn The native function to call on the UI thread.
@@ -339,7 +340,8 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * (`desktop.menu.window.items`), with the item's `id` and the key window (`{ id, key? }`, or
    * `null` with no window open). Each click is delivered once to each subscriber (and to
    * `runDesktop({ onWindowMenuItem })`), never to the pages. With no window open the clicks arrive
-   * from runtime 3.0.0-denext.16; on an older runtime only while the main window is open. A throw
+   * on a runtime with `Deno.desktop`'s app-level menu clicks; on an older runtime only while the
+   * main window is open. A throw
    * or a rejection is logged. Returns the unsubscribe.
    */
   onWindowMenuItem(fn: DesktopWindowMenuItemHandler): () => void;
@@ -361,6 +363,18 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * unsubscribe.
    */
   onNotificationClick(fn: DesktopNotificationClickListener): () => void;
+  /**
+   * Post an OS notification now, as a page's `Notification` does and through the same path (the
+   * `notifications` capability): `title`, and optionally `body`, `tag` (another with the same tag
+   * replaces it; default a fresh `app-<uuid>`, never `denext-…`), JSON `data` (at most 4 KiB),
+   * `actions` (`{ id, title }` buttons) and `silent`. Its clicks reach
+   * {@linkcode DesktopExtensionHost.onNotificationClick} (and `runDesktop({ onNotificationClick })`)
+   * with that tag and data, never a page. Resolves `{ tag, close() }`. Rejects with a
+   * {@linkcode DesktopCapError}: `not_enabled` while the `notifications` capability is off,
+   * `unsupported` where the Deno Desktop runtime has no native notifications, `validation` for
+   * bad options.
+   */
+  notify(options: DesktopNotifyOptions): Promise<DesktopPostedNotification>;
   /**
    * Call `fn` before every top-level navigation of every window, ahead of the navigation guard
    * (`desktop.app.origin`, `allowedNavigationOrigins`), with the `url`, the `window`, its `kind`
@@ -384,7 +398,7 @@ export interface DesktopExtensionHost extends DesktopAppMenusApi {
    * dismissed without a button (Escape or the close button with no `cancelId`, the app quitting)
    * resolves `cancelId`, or `null` without one. Rejects with a `validation`
    * {@linkcode DesktopCapError} for bad options, and with an `unsupported` one on a runtime without
-   * native message boxes (`Deno.desktop.dialog.showMessageBox`, runtime 3.0.0-denext.16). While
+   * native message boxes (no `Deno.desktop.dialog.showMessageBox`). While
    * the box is up during the quit guards' turn their deadline does not count (see
    * {@linkcode DesktopExtensionHost.onBeforeQuit}).
    */

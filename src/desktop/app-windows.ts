@@ -173,10 +173,10 @@ export interface DesktopOpenWindowOptions {
   readonly resizable?: boolean;
   /** No title bar or chrome. */
   readonly frameless?: boolean;
-  /** A transparent background (macOS, Linux with the system WebView, Windows from runtime 3.0.0-denext.6). */
+  /** A transparent background (macOS, Linux with the system WebView, Windows on a runtime that can). */
   readonly transparent?: boolean;
   /**
-   * A desktop overlay surface (runtime `3.0.0-denext.6`+): on a Wayland compositor with
+   * A desktop overlay surface (on a runtime with overlay windows): on a Wayland compositor with
    * wlr-layer-shell (wlroots, KDE Plasma, COSMIC) a layer above every window, on every workspace and
    * out of the task list (`layerShell` in the window capabilities); an ordinary window elsewhere.
    */
@@ -193,10 +193,18 @@ export interface DesktopOpenWindowOptions {
   readonly visibleOnAllWorkspaces?: boolean;
   /**
    * `false`: its page keeps its timers' rate while the window is not on screen (Electron's
-   * `backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime
-   * 3.0.0-denext.8 (an older one ignores it).
+   * `backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; denext's
+   * Deno Desktop runtime honours it (an older one ignores it).
    */
   readonly backgroundThrottling?: boolean;
+  /**
+   * How it is hidden on macOS's system WebView: `"invisible"` (the default) keeps a hidden window
+   * ordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;
+   * `"orderOut"` really removes it, and macOS then throttles its page. Other platforms ignore it.
+   * Creation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one
+   * ignores it).
+   */
+  readonly macosHiddenMode?: "invisible" | "orderOut";
   /** Show it once created (default `true`). */
   readonly show?: boolean;
   /** The capabilities its pages may call (default: all; `window` always). */

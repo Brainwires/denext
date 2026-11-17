@@ -510,7 +510,7 @@ function reportExclude(dir: string, stripped: readonly string[], written: boolea
       written ? "Removed" : "Would remove"
     } "${DENEXT_EXCLUDE}" from minimumDependencyAge.exclude ` +
       `in ${where}. It let a just-published @denext/* release in before Deno's dependency-age ` +
-      `hold (two days by default) had passed — the window that catches a compromised release. ` +
+      `hold (24 hours by default) had passed — the window that catches a compromised release. ` +
       `denext now pins only versions old enough for the hold. If you publish denext yourself, ` +
       `add it back: https://denext.dev/docs/toolchain#supply-chain-hold`,
   );

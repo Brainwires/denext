@@ -9,10 +9,14 @@ Activity and over-the-air UI updates. Each section has a button that runs the
 capability and prints the result on screen.
 
 It is a template for your own app and a device test bed. Everything also runs in
-a desktop browser through `denext/mobile`'s web fallbacks (`denext task dev`), and
-the native-only capabilities say `unsupported` there.
+a desktop browser through `denext/mobile`'s web fallbacks (`denext task dev`),
+and the native-only capabilities say `unsupported` there.
 
 ## Run it
+
+You need Node.js with npm (the Capacitor CLI and plugins), Xcode for the iOS
+build and the Android SDK (Android Studio) for the Android one. Run everything
+from this directory (`examples/mobile`).
 
 ```sh
 npm install            # the Capacitor packages and plugins (package.json)
@@ -83,10 +87,11 @@ half is not in the repository, so to test OTA, generate your own pair and re-run
 ### Regenerating the native files
 
 Every file denext writes into `ios/` and `android/` starts with a
-`denext-<family>-template: <n>` marker, and `tests/examples-native-templates.test.ts`
-fails when a committed one is behind the template denext writes today (or was edited
-by hand). After a template change, re-run the installers: they upgrade an unedited
-file in place and leave the rest of the project alone.
+`denext-<family>-template: <n>` marker, and
+`tests/examples-native-templates.test.ts` fails when a committed one is behind
+the template denext writes today (or was edited by hand). After a template
+change, re-run the installers: they upgrade an unedited file in place and leave
+the rest of the project alone.
 
 ```sh
 DENEXT="deno run -A --node-modules-dir=none ../../cli.ts"
@@ -100,14 +105,15 @@ $DENEXT mobile add live-activity --name Build --app-group group.com.brainwires.d
 
 ## The code
 
-- `denext.config.ts`: SPA mode, `SAFE_AREA_CSS` as an inline `<style>` in the head, and
-  `spa.csp`: denext's strict Content-Security-Policy as a `<meta>` (inline styles are allowed by
-  hash, so nothing may inject a `<style>` at runtime; `connect-src` adds http(s) for the OTA
-  server on your LAN).
-- `ios/App/App/PrivacyInfo.xcprivacy`: the example requests App Tracking Transparency (the
-  `tracking` capability), so it sets `NSPrivacyTracking` to true. It contacts no tracker, so
-  `NSPrivacyTrackingDomains` lists the placeholder `tracking.example.com`. A real app lists the
-  domains it tracks through, which iOS blocks until the user allows tracking.
+- `denext.config.ts`: SPA mode, `SAFE_AREA_CSS` as an inline `<style>` in the
+  head, and `spa.csp`: denext's strict Content-Security-Policy as a `<meta>`
+  (inline styles are allowed by hash, so nothing may inject a `<style>` at
+  runtime; `connect-src` adds http(s) for the OTA server on your LAN).
+- `ios/App/App/PrivacyInfo.xcprivacy`: the example requests App Tracking
+  Transparency (the `tracking` capability), so it sets `NSPrivacyTracking` to
+  true. It contacts no tracker, so `NSPrivacyTrackingDomains` lists the
+  placeholder `tracking.example.com`. A real app lists the domains it tracks
+  through, which iOS blocks until the user allows tracking.
 - `src/main.tsx`: mounts the app, hides the splash, calls `otaBooted()`.
 - `src/app.tsx`: the two routes (`/` and `/detail/:id`), `runtimePlatform()` at
   the top, and the listeners that must subscribe at startup: `useDeepLink`,
@@ -116,16 +122,18 @@ $DENEXT mobile add live-activity --name Build --app-group group.com.brainwires.d
   `files`, `inbound`, `ios-extras`, `ota`).
 - `src/ui.tsx`: the section card, the result box and a 20-line history router
   that follows `popstate` (which is how deep links and push taps navigate).
-- `src/v211/`: one screen per denext 2.11 mobile feature (keyboard, safe area and system
-  bars, dialogs, pull-to-refresh, permissions, local notifications, biometrics, geolocation,
-  orientation, privacy screen, tracking, app review, media library, lists, navigation), listed
-  on the home screen. Each says what to do and what to see. The dialog screen reaches the
-  internal `showDialog` through the `denext-internal/dialog` alias in `deno.json`, because
+- `src/v211/`: one screen per further mobile feature (keyboard, safe area and
+  system bars, dialogs, pull-to-refresh, permissions, local notifications,
+  biometrics, geolocation, orientation, privacy screen, tracking, app review,
+  media library, lists, navigation), listed on the home screen. Each says what
+  to do and what to see. The dialog screen imports the internal `showDialog` by
+  relative path (`src/mobile/dialog.ts` in this repository), because
   `denext/mobile` does not export a dialog API.
-- `src/v211/selftest.tsx`: an automatic self-test of every check that needs no human and shows
-  no OS prompt. Open `denextmobile://selftest` (or tap "Run the automatic self-test"). Each check
-  logs `SELFTEST|<name>|PASS|FAIL|SKIP|<detail>` to the console, then
-  `SELFTEST|DONE|<passed>/<total>`:
+- `src/v211/selftest.tsx`: an automatic self-test of every check that needs no
+  human and shows no OS prompt. Open `denextmobile://selftest` (or tap "Run the
+  automatic self-test"). Each check logs
+  `SELFTEST|<name>|<PASS, FAIL or SKIP>|<detail>` to the console, then
+  `SELFTEST|DONE|<passed>/<total>` (SKIPs are not counted):
 
   ```sh
   xcrun devicectl device process launch --console --terminate-existing --device <udid> \

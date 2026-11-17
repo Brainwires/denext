@@ -62,7 +62,15 @@ import {
 } from "../../mobile/notification-trigger.ts";
 import { platformFacts } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
-import { subscribeNotificationResponses } from "../notification-clicks.ts";
+import {
+  dispatchNotificationResponse,
+  subscribeNotificationResponses,
+} from "../notification-clicks.ts";
+import {
+  type DesktopNotifyOptions,
+  type DesktopPostedNotification,
+  registerBackendNotifier,
+} from "../notify.ts";
 
 /** How many occurrences of a repeating notification are scheduled ahead. */
 export const REPEAT_HORIZON = 16;
@@ -825,6 +833,164 @@ async function webShow(s: NotificationsState, req: WebShowRequest): Promise<void
   });
 }
 
+/** The longest backend tag, in UTF-8 bytes (the runtime drops a click with a longer one). */
+const MAX_TAG_BYTES = 256;
+
+/** One validated backend `notify` call. */
+interface BackendNotifyRequest {
+  readonly title: string;
+  readonly body: string;
+  readonly tag: string;
+  readonly actions: DesktopNotificationAction[];
+  readonly data?: unknown;
+  readonly silent?: true;
+}
+
+/** Whether `value` is plain JSON, nested at most 32 deep (a function or a class instance is not). */
+function isJson(value: unknown, depth: number): boolean {
+  if (depth > 32) return false;
+  switch (typeof value) {
+    case "string":
+    case "boolean":
+      return true;
+    case "number":
+      return Number.isFinite(value);
+    case "object":
+      return value === null || jsonContainer(value, depth);
+    default:
+      return false;
+  }
+}
+
+/** Whether an array or a plain object holds only plain JSON. */
+function jsonContainer(value: object, depth: number): boolean {
+  const proto = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) return false;
+  return Object.values(value).every((v) => isJson(v, depth + 1));
+}
+
+/** The JSON a backend notification's click brings back, checked against the runtime's limit. */
+function backendData(data: unknown): unknown {
+  if (typeof data === "object" && data !== null && !Array.isArray(data) && "denext" in data) {
+    throw invalid("data must not have a top-level `denext` key (denext's own notifications' key)");
+  }
+  if (!isJson(data, 0)) {
+    throw invalid("data must be JSON (null, booleans, numbers, strings, arrays, objects)");
+  }
+  const json = JSON.stringify(data);
+  if (utf8Bytes(json) > MAX_DATA_BYTES) {
+    throw invalid("data is too large: a desktop notification stores at most 4 KiB of JSON (UTF-8)");
+  }
+  return data;
+}
+
+/** A backend notification's tag, checked; a fresh `app-<uuid>` when none is given. */
+function backendTag(tag: unknown): string {
+  if (tag === undefined) return `app-${crypto.randomUUID()}`;
+  if (typeof tag !== "string" || tag === "" || utf8Bytes(tag) > MAX_TAG_BYTES) {
+    throw invalid(`tag must be a string of 1-${MAX_TAG_BYTES} bytes (UTF-8)`);
+  }
+  if (tag.startsWith(TAG_PREFIX)) {
+    throw invalid(`tag must not start with "${TAG_PREFIX}" (denext's own notifications' tags)`);
+  }
+  return tag;
+}
+
+/** A backend notification's action buttons, checked. */
+function backendActions(actions: unknown): DesktopNotificationAction[] {
+  if (actions === undefined) return [];
+  if (!Array.isArray(actions)) throw invalid("actions must be an array");
+  return categoryActions(actions);
+}
+
+/** The options of a backend `notify`, checked. */
+function backendNotifyRequest(options: unknown): BackendNotifyRequest {
+  const a = record(options, "options");
+  return {
+    title: text(a.title, "title"),
+    body: text(a.body ?? "", "body"),
+    tag: backendTag(a.tag),
+    actions: backendActions(a.actions),
+    ...(a.data !== undefined ? { data: backendData(a.data) } : {}),
+    ...(a.silent === true ? { silent: true as const } : {}),
+  };
+}
+
+/** The runtime's notifications for a backend `notify`: `unsupported` where it has none. */
+function backendNativeApi(s: NotificationsState): DesktopNotificationsApi {
+  try {
+    return nativeApi(s.api());
+  } catch (err) {
+    if (err instanceof DesktopCapError && err.code === "unavailable") {
+      throw new DesktopCapError(
+        "unsupported",
+        "this Deno Desktop runtime has no native notifications",
+        { status: 501 },
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Post a backend notification now, through the path the page's web notifications take: the
+ * runtime's `schedule`, else the Deno `Notification` (its clicks handed to the shared dispatcher,
+ * so the backend's hooks hear them). A notification with the same tag is replaced.
+ */
+async function backendNotify(
+  s: NotificationsState,
+  options: DesktopNotifyOptions,
+): Promise<DesktopPostedNotification> {
+  const req = backendNotifyRequest(options);
+  const n = backendNativeApi(s);
+  const quiet = req.silent ? { silent: true } : {};
+  const data = "data" in req ? { data: req.data } : {};
+  let shown: EventTarget | undefined;
+  await serial(s, async () => {
+    n.cancel(req.tag);
+    if ((n.capabilities?.() ?? {}).schedule !== false) {
+      await n.schedule({
+        title: req.title,
+        body: req.body,
+        at: s.now(),
+        tag: req.tag,
+        actions: req.actions,
+        ...data,
+        ...quiet,
+      });
+      return;
+    }
+    const Ctor = s.options.showNow ??
+      (globalThis as { Notification?: NotificationCtor }).Notification;
+    if (typeof Ctor !== "function") {
+      throw new DesktopCapError("unsupported", "notifications cannot be shown here", {
+        status: 501,
+      });
+    }
+    shown = new Ctor(req.title, {
+      body: req.body,
+      tag: req.tag,
+      actions: req.actions,
+      ...data,
+      ...quiet,
+    });
+    const respond = (action: string | null) =>
+      dispatchNotificationResponse(s.api(), { tag: req.tag, action, data: req.data ?? null });
+    shown.addEventListener("click", () => respond(null));
+    shown.addEventListener(
+      "action",
+      (e) => respond((e as Event & { action?: string }).action ?? null),
+    );
+  });
+  return {
+    tag: req.tag,
+    close: () => {
+      (shown as { close?: () => void } | undefined)?.close?.();
+      n.cancel(req.tag);
+    },
+  };
+}
+
 /** The scheduling methods: `capabilities`, `schedule`, `cancel`, `pending`. */
 function schedulingMethods(s: NotificationsState): DesktopCapability["methods"] {
   return {
@@ -1008,7 +1174,7 @@ export function notificationsCapability(
   if (options.autoTopUp !== false && s.api()?.notifications) {
     queueMicrotask(() => void serial(s, () => topUp(s)).catch(() => {}));
   }
-  return {
+  const cap: DesktopCapability = {
     name: "notifications",
     methods: { ...schedulingMethods(s), ...deliveryMethods(s), ...webMethods(s) },
     events: ["tap", "webtap"],
@@ -1020,4 +1186,7 @@ export function notificationsCapability(
       s.webQueue?.clear();
     },
   };
+  // The backend's `notify` (desktop.ts, an extension's host) posts through this capability.
+  registerBackendNotifier(cap, (options) => backendNotify(s, options));
+  return cap;
 }

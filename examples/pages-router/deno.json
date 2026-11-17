@@ -19,6 +19,7 @@
     "@denext/pages-router": "../../packages/pages-router/mod.ts",
     "@denext/pages-router/router": "../../packages/pages-router/router.ts",
     "@denext/pages-router/link": "../../packages/pages-router/link.ts",
+    "@denext/pages-router/head": "../../packages/pages-router/head.ts",
     "@denext/pages-router/document": "../../packages/pages-router/src/document.ts",
     "@denext/pages-router/client-runtime": "../../packages/pages-router/src/client-runtime.ts",
     "@std/path": "jsr:@std/path@^1.0.0"

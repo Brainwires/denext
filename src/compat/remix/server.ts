@@ -24,7 +24,8 @@ import {
   RedirectError,
   RedirectType,
 } from "../../runtime/error-boundary.ts";
-import { serverAction } from "../../runtime/action-stub.ts";
+import { inlineServerReference } from "../../server/action-bound.ts";
+import type { ServerActionRef } from "../../runtime/server-action.ts";
 import { registerServerMatch } from "./matches-server.ts";
 import { serverRenderMatches } from "./matches-bridge.ts";
 import { setDocumentAttrsSink } from "./document.ts";
@@ -481,10 +482,95 @@ export async function runLoader(
   }
 }
 
+/** A route action's registered server reference, with what it was registered for. */
+interface RegisteredRouteAction {
+  action: ActionFunction;
+  middleware: readonly RouteMiddleware[] | undefined;
+  ref: ServerActionRef<unknown[], unknown>;
+}
+
+/** One registration per route (re-made when a dev re-import hands in a new action). */
+const routeActions = new Map<string, RegisteredRouteAction>();
+
+/**
+ * The route's action, registered once under `remix:<routeId>#action` as a bound-only server
+ * reference: its leading parameters (the render's params and page path) are reachable only
+ * through the reference id a render sealed them into, never the plain id.
+ */
+function routeActionReference(
+  action: ActionFunction,
+  routeId: string,
+  middleware: readonly RouteMiddleware[] | undefined,
+): ServerActionRef<unknown[], unknown> {
+  const known = routeActions.get(routeId);
+  if (known && known.action === action && known.middleware === middleware) return known.ref;
+  const handler = (params: unknown, pagePath: unknown, formData: unknown) =>
+    runRouteAction(
+      action,
+      middleware,
+      params as Record<string, string>,
+      typeof pagePath === "string" ? pagePath : undefined,
+      formData as FormData,
+    );
+  const ref = inlineServerReference(
+    `remix:${routeId}#action`,
+    handler as (...args: unknown[]) => unknown,
+    2,
+  );
+  routeActions.set(routeId, { action, middleware, ref });
+  return ref;
+}
+
+/** The path + query of the page being rendered, or `undefined` outside a page request. */
+function renderedPagePath(): string | undefined {
+  const url = currentContext()?.request?.url;
+  if (!url) return undefined;
+  const { pathname, search } = new URL(url);
+  return pathname.startsWith("/_denext/") ? undefined : pathname + search;
+}
+
+/**
+ * The request a route action reads: the submitted FormData, posted to the URL of the page the
+ * form was rendered on (as a Remix form posts to its route), with the viewer's request headers
+ * (Cookie, Authorization, Accept-Language — an action reads the session from `request.headers`
+ * exactly like a Remix POST) minus the body framing, which the FormData body sets itself.
+ */
+function actionRequest(pagePath: string | undefined, formData: FormData): Request {
+  const base = currentContext()?.request;
+  const baseUrl = base?.url ?? "http://localhost/";
+  const url = pagePath ? new URL(pagePath, baseUrl).href : baseUrl;
+  const headers = new Headers(base?.headers);
+  headers.delete("content-type");
+  headers.delete("content-length");
+  return new Request(url, { method: "POST", body: formData, headers });
+}
+
+/** Run a route action for one submission, with the params and page its render sealed. */
+async function runRouteAction(
+  action: ActionFunction,
+  middleware: readonly RouteMiddleware[] | undefined,
+  params: Record<string, string>,
+  pagePath: string | undefined,
+  formData: FormData,
+): Promise<unknown> {
+  const request = actionRequest(pagePath, formData);
+  try {
+    const context = await loadContext(request, params);
+    if (!middleware?.length) return await unwrap(await action({ request, params, context }));
+    return await runActionInMiddleware(action, middleware, { request, params, context });
+  } catch (thrown) {
+    // `throw redirect()` / `throw json()` from an action — honored like a return.
+    if (isResponse(thrown)) return await unwrapThrown(thrown);
+    throw thrown;
+  }
+}
+
 /**
  * Wrap a Remix `action` as a denext Server Action bound to `routeId`. The returned ref is
  * callable from `<Form>`/`useSubmit` and, on the server, runs the action with a synthesized
- * `{ request, params, context }` (the params captured at render). Returns `undefined` when
+ * `{ request, params, context }`. The action is registered once per route; the params captured
+ * at render (and the page's path) are sealed into the returned reference's id, so a submission
+ * always runs with the params of the render that produced its form. Returns `undefined` when
  * the route has no action.
  */
 export function bindAction(
@@ -494,27 +580,8 @@ export function bindAction(
   middleware?: readonly RouteMiddleware[],
 ): ((formData: FormData) => Promise<unknown>) | undefined {
   if (!action) return undefined;
-  return serverAction(`remix:${routeId}#action`, async (formData: FormData) => {
-    // Rebuild a request carrying the submitted FormData for the action to read.
-    const base = currentContext()?.request;
-    const url = base?.url ?? "http://localhost/";
-    // Carry the viewer's request headers (Cookie, Authorization, Accept-Language) — an
-    // action reads the session from `request.headers` exactly like a Remix POST — minus
-    // the body framing, which the FormData body sets itself.
-    const headers = new Headers(base?.headers);
-    headers.delete("content-type");
-    headers.delete("content-length");
-    const request = new Request(url, { method: "POST", body: formData, headers });
-    try {
-      const context = await loadContext(request, params);
-      if (!middleware?.length) return await unwrap(await action({ request, params, context }));
-      return await runActionInMiddleware(action, middleware, { request, params, context });
-    } catch (thrown) {
-      // `throw redirect()` / `throw json()` from an action — honored like a return.
-      if (isResponse(thrown)) return await unwrapThrown(thrown);
-      throw thrown;
-    }
-  });
+  const ref = routeActionReference(action, routeId, middleware);
+  return ref.bind(null, params, renderedPagePath()) as (formData: FormData) => Promise<unknown>;
 }
 
 /**
@@ -696,9 +763,9 @@ async function resolveRouteRender(
 }
 
 /** Parse a JSON request header into an object map, or `{}` when absent/malformed. */
-function jsonHeader(req: Request, name: string): Record<string, unknown> {
+function jsonHeader(source: Headers, name: string): Record<string, unknown> {
   try {
-    const raw = req.headers.get(name);
+    const raw = source.get(name);
     return raw ? JSON.parse(raw) as Record<string, unknown> : {};
   } catch {
     return {};
@@ -714,21 +781,40 @@ interface RevalidationInput {
   formAction?: string;
 }
 
+/** The header every client soft navigation carries (src/client/navigation.ts). */
+const SOFT_NAV_HEADER = "x-denext-nav";
+
 /**
  * Read the client's revalidation echo for THIS request from whichever transport carried it: a
  * soft-nav POST body ({@link RequestContext.softNavBody}, used when the echo is too large for
- * headers) or, on a GET, the request headers. Returns null when this isn't a revalidation.
+ * headers) or, on a GET, the request headers. Returns null when this isn't a revalidation — and
+ * for any request that is not a client soft navigation: a document request renders from its
+ * loaders only, whatever headers it carries. The headers are read through the tracked
+ * `headers()` path, so a render that reads them is per-request (never stored for others).
  */
 function revalidationInput(req: Request): RevalidationInput | null {
+  if (req.headers.get(SOFT_NAV_HEADER) !== "1") return null;
   const body = currentContext()?.softNavBody;
   if (body && typeof body === "object") return fromBody(body as Record<string, unknown>);
   if (req.headers.get(REVALIDATE_HEADER) === null) return null;
+  return fromHeaders();
+}
+
+/** The echo from the request headers, read through the tracked `headers()` path, or null. */
+function fromHeaders(): RevalidationInput | null {
+  let tracked: Headers;
+  try {
+    tracked = requestHeaders();
+  } catch {
+    return null; // a segment that may not read request headers revalidates instead
+  }
+  if (tracked.get(REVALIDATE_HEADER) === null) return null; // force-static: no headers
   return {
-    from: req.headers.get(FROM_HEADER),
-    params: jsonHeader(req, PARAMS_HEADER) as RevalidationInput["params"],
-    data: jsonHeader(req, LOADER_DATA_HEADER),
-    formMethod: req.headers.get(FORM_METHOD_HEADER) ?? undefined,
-    formAction: req.headers.get(FORM_ACTION_HEADER) ?? undefined,
+    from: tracked.get(FROM_HEADER),
+    params: jsonHeader(tracked, PARAMS_HEADER) as RevalidationInput["params"],
+    data: jsonHeader(tracked, LOADER_DATA_HEADER),
+    formMethod: tracked.get(FORM_METHOD_HEADER) ?? undefined,
+    formAction: tracked.get(FORM_ACTION_HEADER) ?? undefined,
   };
 }
 
@@ -761,7 +847,11 @@ function keptLoaderData(
   if (!input || !(options.id in input.data)) return { kept: false }; // no echo → must revalidate
   // `shouldRevalidate` returns TRUE to re-run; keep prior data ONLY when it returns false.
   const revalidate = options.shouldRevalidate(revalidateArgs(req, options, input));
-  return revalidate === false ? { kept: true, data: input.data[options.id] } : { kept: false };
+  if (revalidate !== false) return { kept: false };
+  // The render now carries what this request sent: it is per-request, never cached for others.
+  const ctx = currentContext();
+  if (ctx) ctx.usedDynamicApi = true;
+  return { kept: true, data: input.data[options.id] };
 }
 
 /** Build the `shouldRevalidate` argument from the client's echoed input + this route's options. */

@@ -15,6 +15,7 @@
 
 import { readConfigModel } from "../../build/config-edit.ts";
 import {
+  EMIT_RESULT,
   evalNextConfigProgram,
   LOAD_NEXT_CONFIG,
   machineEnvIn,
@@ -86,7 +87,7 @@ if (cfg && typeof cfg === "object") {
     } else out.other.push(key);
   }
 }
-console.log(${JSON.stringify(RESULT_MARKER)} + JSON.stringify(out));
+${EMIT_RESULT}(${JSON.stringify(RESULT_MARKER)}, out);
 Deno.exit(0);
 `;
 
@@ -128,11 +129,36 @@ const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
       marker: RESULT_MARKER,
     });
     if (!result.ok) return unreadable(file);
-    return { file, failed: false, ...(result.value as Omit<NextConfigRead, "file" | "failed">) };
+    return { file, failed: false, ...evaluatedRead(result.value) };
   } catch {
     return unreadable(file);
   }
 };
+
+/** Whether `value` is a plain object (not null, not an array). */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * What the evaluator's result line may contribute, checked key by key: the config ran in the
+ * child that printed it, so the line is the config's to shape. Only the honored keys and rule
+ * thunks {@linkcode EVAL_PROGRAM} reads are kept, and `other` holds strings only.
+ *
+ * @param value The parsed result line.
+ * @returns The fields, rules and other keys to show.
+ */
+function evaluatedRead(value: unknown): Omit<NextConfigRead, "file" | "failed"> {
+  const out = isPlainRecord(value) ? value : {};
+  const only = (group: unknown, keys: readonly string[]) =>
+    Object.fromEntries(
+      Object.entries(isPlainRecord(group) ? group : {}).filter(([key]) => keys.includes(key)),
+    );
+  const other = Array.isArray(out.other)
+    ? out.other.filter((key): key is string => typeof key === "string")
+    : [];
+  return { fields: only(out.fields, HONORED_KEYS), rules: only(out.rules, RULE_KEYS), other };
+}
 
 /**
  * `read` without the honored values and rules that read a machine-path variable — the evaluator

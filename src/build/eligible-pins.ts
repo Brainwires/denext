@@ -42,7 +42,7 @@ export interface EligibleOptions {
 export function offlineNote(reason: string): string {
   return `${reason}, so the publish times of the pinned @denext/* versions are unknown; kept ` +
     `them as written. Deno holds a version published within your dependency-age window ` +
-    `(Deno's default is two days) until it passes — run "denext upgrade" if resolution is held.`;
+    `(Deno's default is 24 hours) until it passes — run "denext upgrade" if resolution is held.`;
 }
 
 /**

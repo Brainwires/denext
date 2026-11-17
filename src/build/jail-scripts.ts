@@ -79,9 +79,10 @@ export function jailHostListsSupported(
 export const JAIL_HARDENED_RELEASE = "3.0.0-denext.1";
 
 /**
- * The first release of denext's Deno that allows a declared download host's redirect targets with
- * it (a declared `github.com` reaches the hosts GitHub hands a release download to; the
- * runtime's `DECLARED_HOST_REDIRECTS`). Before it denext lists those hosts under the entry's `net`.
+ * Where denext's Deno allows a declared download host's redirect targets with it (a declared
+ * `github.com` reaches the hosts GitHub hands a release download to; the runtime's
+ * `DECLARED_HOST_REDIRECTS`): the version gate behind `jailRuntime(version).declaredRedirects`.
+ * On a runtime without it denext lists those hosts under the entry's `net`.
  */
 export const JAIL_DECLARED_REDIRECTS_RELEASE = "3.0.0-denext.19";
 
@@ -820,7 +821,7 @@ export function entryException(
 /**
  * The hosts the entry's declared download hosts redirect to, as a `net` list on a runtime that
  * needs `knownPackages` for a declared host but doesn't allow its redirect targets with it
- * (3.0.0-denext.1 up to {@linkcode JAIL_DECLARED_REDIRECTS_RELEASE}); empty elsewhere.
+ * (`runtime.knownPackages` without `runtime.declaredRedirects`); empty elsewhere.
  */
 function redirectHosts(entry: JailExceptionEntry, runtime: JailRuntime): string[] {
   if (!runtime.knownPackages || runtime.declaredRedirects) return [];
@@ -1084,8 +1085,8 @@ function completedLines(patches: readonly JailPatch[]): string[] {
         ...p.executables ? ['"executables": true'] : [],
       ]
         .join(" and ")
-    } to your entry (the runtime confines a script's writes to its own package and sweeps ` +
-    "executables out of `~` paths from 3.0.0-rc.6)"
+    } to your entry (denext's toolchain confines a script's writes to its own package and ` +
+    "sweeps executables out of `~` paths)"
   );
 }
 
@@ -1190,7 +1191,7 @@ function unwrittenReport(
       action: "pending",
       lines: [
         `${names(required)} will need a lifecycle-script jail exception once dependencies' ` +
-        `install scripts run jailed (on by default from denext's runtime ${JAIL_DEFAULT_RELEASE}, ` +
+        "install scripts run jailed (on by default on denext's Deno toolchain, " +
         "or with jail-scripts=true); `denext doctor` flags it then",
       ],
     };
@@ -1457,8 +1458,9 @@ function ffiAdvice(name: string, version: string | null | undefined, home: JailH
   const old = typeof version === "string" && isDenextReleaseVersion(version) &&
     compareDenoVersions(version, JAIL_HARDENED_RELEASE) < 0;
   const where = old
-    ? `on runtime ${version} (before ${JAIL_HARDENED_RELEASE})`
-    : "before runtime " + JAIL_HARDENED_RELEASE + ", or where the OS can't confine the script";
+    ? `on runtime ${version}, which predates OS-confined lifecycle scripts (\`denext upgrade\`)`
+    : "on a runtime without OS-confined lifecycle scripts, or where the OS can't confine the " +
+      "script";
   return `  the script loads ${name}'s own native addon, which a jailed script can't do ${where}, ` +
     `and no exception grants it: leave ${name} unapproved (out of "allowScripts" in ` +
     `${homeName(home)}) so the install skips the script; the addon itself still loads when ` +
@@ -1480,11 +1482,11 @@ function unreviewedAdvice(
       `network${seen}. An unreviewed install script that phones home is a common sign of malware.`,
       "  review the package and what its script fetches before granting anything; then grant " +
       `only the hosts it needs ("supplyChain.jailScripts.packages" → ${name} → "net": ` +
-      `${hosts}, runtime ${JAIL_HOSTS_RELEASE} and later), never the whole network` +
+      `${hosts}, where the runtime takes jail host lists), never the whole network` +
       (version !== undefined && !jailHostListsSupported(version)
         ? `; ${
           version === null ? "this Deno" : `runtime ${version}`
-        } takes no host list, so install it on ${JAIL_HOSTS_RELEASE} or later rather than ` +
+        } takes no host list, so install it on denext's current toolchain (\`denext upgrade\`) rather than ` +
           'grant "net": true'
         : ""),
     ];

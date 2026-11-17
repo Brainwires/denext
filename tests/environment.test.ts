@@ -4,6 +4,12 @@
 
 import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { clientOnly, isServer, serverOnly } from "../src/runtime/environment.ts";
+// The compat modules imported plainly too, not only under the cache-busting queries the tests
+// below use: a coverage report maps a module through the emit of its plain URL, and the sharded
+// CI merge re-emits only modules some profile names that way. Imported only by query, both were
+// reported as never loaded by a test (the coverage ratchet's miss). Inert here: no `document`.
+import "../src/compat/client-only.ts";
+import "../src/compat/server-only.ts";
 
 // The test runner has no `document`, so this environment is "the server".
 

@@ -9,11 +9,14 @@
  * - `webViewCreate` `{ options }` (the page's `CreateWebViewOptions`) → `{ id }` (a string).
  * - `webViewCall` `{ id, method, args }` → the method's result: `setBounds` `{ x, y, width, height }`,
  *   `setVisible` `{ visible }`, `navigate` `{ url }`, `back` / `forward` / `stop` / `focus` /
- *   `close` `{}`, `reload` `{ ignoreCache? }` → `null`; `state` `{}` → `{ url, title, load,
- *   canGoBack, canGoForward }`; `capture` `{ format?, quality? }` → `{ base64, type }`; `evaluate`
+ *   `blur` / `close` `{}`, `reload` `{ ignoreCache? }`, `setForwardKeys` `{ keys }` (each entry a
+ *   string or `{ accelerator, beforeMenu? }`, sent to the runtime as strings, a before-menu one
+ *   marked with a leading `!`) → `null`; `state` `{}` → `{ url, title, load, canGoBack,
+ *   canGoForward }`; `capture` `{ format?, quality? }` → `{ base64, type }`; `evaluate`
  *   `{ script }` → `{ value }`.
  * - Event `webview` `{ id, event, detail }` to the window's page, for each view the page made
- *   (`detail` the draft's `WebViewEventMap` shape); `closed` is the last one for an id.
+ *   (`detail` the draft's `WebViewEventMap` shape); `closed` is the last one for an id. The
+ *   runtime's `key` event is `keydown` or `keyup` by its `type`.
  *
  * Checks, before the runtime is touched: every argument's type, finite numbers and enums; the URL
  * of a create or a navigate is `http:` / `https:`, never one of the app's own origins (its
@@ -39,6 +42,7 @@ import type {
   WebViewEngine,
   WebViewEventMap,
   WebViewHandle,
+  WebViewKeyEvent,
 } from "../webview.ts";
 import { DEFAULT_WEBVIEW_SETTINGS, type DesktopWebViewSettings } from "../webview-config.ts";
 import {
@@ -61,7 +65,7 @@ const WEBVIEW_EVENTS: readonly (keyof WebViewEventMap)[] = [
   "closed",
 ];
 
-/** The runtime's key event (a `CustomEvent` `"key"`), the page's `keydown` when `type` is one. */
+/** The runtime's key event (a `CustomEvent` `"key"`), the page's `keydown` / `keyup` by `type`. */
 const RUNTIME_KEY_EVENT = "key";
 
 /** The most `forwardKeys` entries, and the longest one. */
@@ -113,6 +117,7 @@ interface RuntimeWebView extends EventTarget {
   reload(options?: { ignoreCache?: boolean }): void;
   stop(): void;
   focus(): void;
+  blur?(): boolean | void;
   state(): unknown;
   capture(
     options?: { format?: "png" | "jpeg"; quality?: number; scale?: number },
@@ -133,8 +138,10 @@ interface RuntimeWebView extends EventTarget {
 }
 
 /** The runtime's web view options (`BrowserWindow.prototype.createWebView`'s argument). */
-interface RuntimeWebViewOptions extends Omit<CreateWebViewOptions, "permissions"> {
+interface RuntimeWebViewOptions extends Omit<CreateWebViewOptions, "permissions" | "forwardKeys"> {
   permissions?: "deny" | "ask";
+  /** Accelerator strings, a before-menu one marked with a leading `!`. */
+  forwardKeys?: string[];
   clipboardRead?: boolean;
   clipboardWrite?: boolean;
 }
@@ -154,6 +161,9 @@ const FEATURES: ReadonlyArray<readonly [keyof WebViewCapabilities, readonly stri
   ["menuAccelerators", []],
   ["unhandledKeys", []],
   ["forwardKeys", ["setForwardKeys"]],
+  ["blur", ["blur"]],
+  ["keyUp", []],
+  ["forwardKeysBeforeMenu", []],
 ];
 
 /** The window and app API members the web views need (each feature-detected). */
@@ -307,27 +317,65 @@ function policiesOf(o: Record<string, unknown>): Partial<RuntimeWebViewOptions> 
   };
 }
 
+/** The runtime's mark of a `forwardKeys` entry matched before the app menu. */
+const BEFORE_MENU = "!";
+
 /**
- * A `forwardKeys` list: at most 64 accelerator strings (`"CmdOrCtrl+1"`, the syntax
- * `registerShortcut` takes), each one line of 1 to 64 characters; the runtime checks the syntax.
+ * A `forwardKeys` list: at most 64 entries, each an accelerator string (`"CmdOrCtrl+1"`, the
+ * syntax `registerShortcut` takes) or `{ accelerator, beforeMenu? }`, the accelerator one line of
+ * 1 to 64 characters; the runtime checks the syntax. As the runtime takes them: strings, a
+ * before-menu entry marked with a leading `!` (a string may carry the mark itself).
  */
 function forwardKeysOf(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > MAX_FORWARD_KEYS) {
     throw invalid(`forwardKeys must be an array of at most ${MAX_FORWARD_KEYS} accelerators`);
   }
-  return value.map((k, i) => {
-    if (
-      typeof k !== "string" || k === "" || k.length > MAX_FORWARD_KEY_CHARS ||
-      // deno-lint-ignore no-control-regex
-      /[\u0000-\u001f\u007f]/.test(k)
-    ) {
-      throw invalid(
-        `forwardKeys[${i}] must be an accelerator of 1 to ${MAX_FORWARD_KEY_CHARS} characters ` +
-          '("CmdOrCtrl+1")',
-      );
-    }
-    return k;
-  });
+  return value.map(forwardKeyOf);
+}
+
+/** Whether `k` is an accelerator string: one line of 1 to 64 characters. */
+function isAcceleratorText(k: unknown): k is string {
+  return typeof k === "string" && k !== "" && k.length <= MAX_FORWARD_KEY_CHARS &&
+    // deno-lint-ignore no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(k);
+}
+
+/** `value` when it is a plain object (not an array), else `undefined`. */
+function objectOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+/** One `forwardKeys` entry (index `i`) as the runtime's string. */
+function forwardKeyOf(entry: unknown, i: number): string {
+  const o = objectOf(entry);
+  const k = o ? o.accelerator : entry;
+  // The object form says beforeMenu itself: its accelerator never carries the mark.
+  if (!isAcceleratorText(k) || (o && k.startsWith(BEFORE_MENU))) {
+    throw invalid(
+      `forwardKeys[${i}] must be an accelerator of 1 to ${MAX_FORWARD_KEY_CHARS} characters ` +
+        '("CmdOrCtrl+1") or { accelerator, beforeMenu }',
+    );
+  }
+  const beforeMenu = o && optBool(o, "beforeMenu", `forwardKeys[${i}].beforeMenu`);
+  const out = beforeMenu ? `${BEFORE_MENU}${k}` : k;
+  // The runtime counts the mark in its 64 characters.
+  if (out.length > MAX_FORWARD_KEY_CHARS) {
+    throw invalid(`forwardKeys[${i}] is too long with beforeMenu (at most 63 characters)`);
+  }
+  return out;
+}
+
+/** `keys` (checked) may go to this window's runtime: a before-menu entry needs the feature. */
+function checkBeforeMenu(h: HostState, keys: readonly string[] | undefined): void {
+  if (!keys?.some((k) => k.startsWith(BEFORE_MENU))) return;
+  if (capabilitiesOf(h).forwardKeysBeforeMenu) return;
+  throw fail(
+    "unsupported",
+    "this Deno Desktop runtime's web views can't forward a key before the app menu " +
+      "(webViewCapabilities().forwardKeysBeforeMenu)",
+  );
 }
 
 /** An optional boolean field of `o`. */
@@ -469,6 +517,9 @@ function capabilitiesOf(h: HostState): WebViewCapabilities {
     menuAccelerators: false,
     unhandledKeys: false,
     forwardKeys: false,
+    blur: false,
+    keyUp: false,
+    forwardKeysBeforeMenu: false,
   };
   if (!supported) return out;
   const engine = caps.engine;
@@ -543,25 +594,28 @@ function follow(h: HostState, entry: Entry): void {
   }
   entry.view.addEventListener(RUNTIME_KEY_EVENT, (e) => {
     if (entry.closed) return;
-    const key = keydownOf(detailOf((e as CustomEvent).detail));
-    if (key) deliver("keydown", key);
+    const key = keyEventOf(detailOf((e as CustomEvent).detail));
+    if (key) deliver(key.type, key);
   });
 }
 
-/** A runtime key event's detail as the page's `keydown` (other types: `null`). */
-function keydownOf(raw: unknown): WebViewEventMap["keydown"] | null {
+/** A runtime key event's detail as the page's `keydown` / `keyup` (other types: `null`). */
+function keyEventOf(raw: unknown): WebViewKeyEvent | null {
   const d = raw as Record<string, unknown>;
-  if (d.type !== "keydown") return null;
+  if (d.type !== "keydown" && d.type !== "keyup") return null;
   const str = (v: unknown) => typeof v === "string" ? v : "";
+  const up = d.type === "keyup";
   return {
+    type: d.type,
     key: str(d.key),
     code: str(d.code),
     altKey: d.altKey === true,
     ctrlKey: d.ctrlKey === true,
     metaKey: d.metaKey === true,
     shiftKey: d.shiftKey === true,
-    repeat: d.repeat === true,
-    forwarded: d.forwarded === true,
+    repeat: !up && d.repeat === true,
+    // A keyup is only ever a forwarded key's.
+    forwarded: up || d.forwarded === true,
   };
 }
 
@@ -569,6 +623,7 @@ function keydownOf(raw: unknown): WebViewEventMap["keydown"] | null {
 function open(h: HostState, raw: unknown, owner: Owner): Entry {
   const options = createOptionsOf(raw);
   checkUrl(h, options.url);
+  checkBeforeMenu(h, options.forwardKeys);
   const win = h.options.window;
   if (typeof win?.createWebView !== "function") {
     throw fail(
@@ -786,6 +841,7 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
   },
   stop: simple("stop", (v) => v.stop()),
   focus: simple("take the focus", (v) => v.focus()),
+  blur: feature("blur", "give the keyboard back to the page", () => []),
   state: (_h, entry) => {
     const raw = run(entry, "report its state", (v) => v.state());
     return webViewStateOf(typeof raw === "string" ? detailOf(raw) : raw);
@@ -820,11 +876,11 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
     return null;
   },
   print: feature("print", "print", () => []),
-  setForwardKeys: feature(
-    "setForwardKeys",
-    "forward keys",
-    (a) => [forwardKeysOf(a.keys)],
-  ),
+  setForwardKeys: (h, entry, a) => {
+    const keys = forwardKeysOf(a.keys);
+    checkBeforeMenu(h, keys);
+    return feature("setForwardKeys", "forward keys", () => [keys])(h, entry, a);
+  },
 };
 
 /** One `webViewCall` method on `entry`. */

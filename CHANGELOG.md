@@ -8,6 +8,353 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-11-17
+
+### Added
+
+- **Embedded web views: key releases, `blur()`, keys before the menu, and transform-following.**
+  A forwarded key's release arrives as a `keyup` event (`type: "keyup"`, capability `keyUp`),
+  matched by its `code` whatever modifiers are down by then, so a hold-to-talk key works while a
+  view has the keyboard; a key still held when the view loses the keyboard gets its `keyup` then.
+  Every key event carries `type`. `view.blur()` (capability `blur`) hands the keyboard back to the
+  app's page without activating the app or moving a window, with `focus-change`
+  `{ focused: false, reason: "blur" }`. A `forwardKeys` entry may be
+  `{ accelerator, beforeMenu: true }` (or `"!CmdOrCtrl+W"`; capability `forwardKeysBeforeMenu`):
+  while the view has the keyboard that key is forwarded instead of firing the app menu's item.
+  `attachWebView` now returns an attachment that is still the detach function and also has
+  `relayout()` (measure again at the next frame) and `detach()`; its new `follow: "frame"` option
+  measures every frame while a CSS transition or animation runs on the element or an ancestor,
+  for moves made only by a `transform`, and nothing while none runs. Each needs a Deno Desktop
+  runtime that reports the capability.
+- **`macosHiddenMode`: how a hidden window is hidden on macOS.** `openWindow({ macosHiddenMode })`,
+  `windows.open({ macosHiddenMode })` in `desktop.ts` and `desktop.window.macosHiddenMode` take
+  `"invisible"` (the default: a hidden window stays ordered in but invisible, transparent and
+  click-through, so a `backgroundThrottling: false` page keeps its timers' rate) or `"orderOut"`
+  (the window is really removed, and macOS throttles its page) on the system WebView; other
+  platforms ignore it. `desktop.window.macosHiddenMode: "orderOut"` is also written to
+  `.deno-desktop/app.json`'s `initialWindow`, so the window the app starts with is hidden the same
+  way. Any other value is a config error, or a `validation` error from `openWindow`. Needs Deno
+  Desktop runtime `3.0.0-denext.25` (`FIRST_MACOS_HIDDEN_MODE_RUNTIME`): on an older one the
+  window option has no effect, and packaging leaves the app.json key out with a warning.
+- **The kernel sandbox, as an opt-in preview.** The Deno toolchain and Desktop runtime denext pins
+  take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
+  command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,
+  `DENO_KERNEL_SANDBOX=off|warn` (which only lowers the mode), `deno compile --kernel-sandbox`
+  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. `auto` (the default)
+  changes nothing in 4.x, `warn` prints how many rules only Deno's checks would hold, and the report
+  prints the compiled policy and every gap. `--kernel-sandbox=enforce` confines `deno run` and
+  `deno serve` on Linux (Landlock and seccomp, x86_64 and aarch64) and macOS (Seatbelt), so FFI,
+  Node-API addons and children are held to the grant too. It refuses to start only over a rule the
+  kernel would hold more loosely than Deno (a fail-open gap, such as a host-scoped `--allow-net` or
+  a write deny inside a write allow on Linux, which need the Mode B supervisor, or a port list before
+  Landlock ABI 4), and runs with the documented gaps the report lists: a macOS `host:port` grant
+  reaches any host on the port, an IP / `localhost` port list any address on those ports
+  (169.254.169.254 included), and a scoped `--allow-ffi` any library in the read scope. On Linux it
+  scrubs the environment to the `--allow-env` names plus a short runtime list (children inherit
+  only that), refuses chmod / utime by path inside the write scope too (`cp -p`, `tar`, git's
+  executable bit), holds a read deny inside an allow by expansion (up to 20,000 entries / 64
+  levels), reads remote modules from the cache only and treats an unreadable `.npmrc` as absent.
+  `deno test` (before type-checking), `bench`, the REPL, Jupyter, `eval` with a deny, a package's
+  native executable under `deno x`, a program from stdin (Linux) and `deno compile` refuse
+  `enforce`, so a `deno.json` `"kernelSandbox": "enforce"` breaks `deno test` and `denext dev`:
+  put the flag on the start command. `deno eval` refuses the `--kernel-sandbox` flags and applies
+  its deny flags. Lint plugins (`deno lint`, the language server) run with no kernel sandbox and
+  aren't refused either; `deno lint` warns when `deno.json` sets the key. `broker` still refuses to start, Windows has
+  no enforcer, and `deno info --json`'s `enforced` stays `false` (read `effective` and
+  `enforcerBuilt`). Nothing changes for a run that doesn't ask for it. The new
+  [Kernel sandbox](https://denext.dev/docs/kernel-sandbox) section describes what runs today, the
+  design, the guarantee matrix, the threat model, each OS and the troubleshooting; the full
+  sandbox, with automatic enforcement, lands in denext 5.0.
+- **The desktop window test covers the backend hooks in a real window.** The kitchen sink's
+  packaged-window test (`desktop-window.yml`, on Linux, macOS arm64, macOS Intel and Windows) has a
+  new "hooks" launch: a `desktop.menu.window.items` click reaches `runDesktop({ onWindowMenuItem })`
+  and `host.onWindowMenuItem` once each with the key window; a second launch reaches
+  `onSecondInstance` and `host.onSecondInstance` with its `args` and `cwd` and exits;
+  `runDesktop({ onWillNavigate })` sees a page-started top-level navigation and `preventDefault()`
+  refuses it (skipped, with the reason, where the runtime reports no navigation events);
+  `ctx.caller` names the main frame for the page's call and a same-origin sub-frame's call is
+  refused; `notify()` from `runDesktop`'s result and `host.notify()` post, and a `denext-` tag is
+  refused as `validation`; and a `host.onBeforeQuit` guard's `host.confirm` box, answered by the
+  runner 8 s after it opens, holds the quit past the guards' 5 s deadline. The menu click is the
+  runtime's `menuclick` event (no unattended pointer opens a native menu), so the menu item's
+  native rendering stays a manual check.
+- **The backend posts notifications: `app.notify()` and an extension's `host.notify()`.** What
+  `runDesktop()` resolves with and an extension's `host` take `notify({ title, body?, tag?, data?,
+  actions?, silent? })`, which posts an OS notification through the same path a page's
+  `Notification` takes (the `notifications` capability: the runtime's notifications, or the Deno
+  `Notification` where the runtime cannot schedule), so `desktop.ts` and an extension no longer
+  call `Deno.desktop.notifications` themselves. It resolves `{ tag, close() }`; a notification with
+  the same tag is replaced (default a fresh `app-<uuid>`; `denext-…` tags are denext's own and
+  refused), and its clicks reach `onNotificationClick` with that tag and `data`, never a page.
+  It rejects with a `DesktopCapError`: `not_enabled` while the `notifications` capability is off,
+  `unsupported` where the runtime has no native notifications (and in a sidecar's child),
+  `validation` for bad options (JSON `data` up to 4 KiB, no top-level `denext` key).
+- **A speech recognition usage string for a Deno Desktop app's microphone.**
+  `desktop.capabilities.microphone: { speechRecognitionUsageDescription }` writes macOS's
+  `NSSpeechRecognitionUsageDescription` into the packaged app's `Info.plist`, the text macOS shows
+  before the window's own speech recognition (WebKit's `webkitSpeechRecognition`) may run; macOS
+  ends an app that starts it without one. It is written only when set, needs no entitlement, and
+  is validated like `usageDescription` (a non-empty string with no control characters; the camera
+  does not take it). The microphone's `NSMicrophoneUsageDescription` and the signed build's
+  `com.apple.security.device.audio-input` entitlement were already written.
+
+### Changed
+
+- **Hiding a focused web view gives the keyboard to the app's page, and says so.** On every
+  engine, `setVisible(false)` (or `attachWebView` hiding the view) on a view that has the keyboard
+  moves it to the app's page and fires `focus-change` with `{ focused: false, reason: "hidden" }`;
+  a focus change denext didn't make has no `reason`.
+- **A web view's `evaluate` runs under a page CSP that refuses `eval`.** It runs in the isolated
+  `laufey-webview` world as before (the DOM, none of the page's globals); on WKWebView and WebKitGTK
+  a page whose Content-Security-Policy refused `eval` made it fail, and now the runtime runs the
+  script through the engine's own evaluate there, which returns the completion value without
+  awaiting a promise (`not_serializable`). CEF and WebView2 were never refused.
+- **A Deno Desktop launch after a full-app update or a rollback says so in the app's log.**
+  `desktop: app update: 99.0.0 is running, updated from 1.0.0 (on trial until confirmed)` or
+  `… 1.0.0 is running again; 99.0.0 was rolled back`, from the runtime's update status at startup,
+  so a field report shows where an update stopped.
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.25.** Besides the kernel
+  sandbox preview, Linux `/proc` and `/sys` files take the matching `--allow-sys` name instead of
+  `--allow-all` (`processInfo` for this process's files and `processes` for the process list are
+  new names, also in `Deno.permissions.query`), an external permission broker
+  (`DENO_PERMISSION_BROKER_PATH`) that speaks protocol v2 hands back opened files on Unix, `--seed=0`
+  seeds `Math.random`, `Deno.resolveDns()` and `node:dns` work with a zoned link-local name server,
+  a lockfile package name starting with a multi-byte character no longer panics, `--trace-exit`
+  exits when `Error.prepareStackTrace` throws, the desktop CEF host makes no DNS-over-HTTPS
+  (secure DNS) connections, even when the system resolver is a DoH provider, and on Linux's
+  webview backend `onWillNavigate` decides a page with no child frames before anything loads, so
+  a navigation it refuses leaves the page running. It carries security
+  hardening, tightens the Linux lifecycle-script jail's socket filter (GHSA-9363-h8qp-jg52) and
+  ports upstream fixes: `Deno.serve` closing after an early response to
+  an unread body and honoring `Connection: close`, header values with CR / LF refused, an abort
+  still cancelling a collected `fetch()` body, WebSocket close code 1006 for an abnormal closure
+  and a client refusing a wrong `Sec-WebSocket-Accept`, dynamic imports awaiting cached async
+  modules, a BOM stripped from `.env` and `.npmrc`, symlinked entrypoints for `run` / `serve`,
+  `deno compile --exclude` matched against canonical paths, `*.localhost` resolving to localhost,
+  timestamps on read-only files on Windows, and on the desktop the backend's process tree ended
+  with a Windows dev run and the WebGPU surface created on the UI thread. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists the changes.
+- **The `denext job install` round trip gates a release** (maintainers). Its three e2e.yml legs,
+  `job-install (linux)`, `(macos)` and `(windows)`, are in `E2E_JOBS`, so `deno task release`
+  refuses a commit where one of them is red or did not run. The round trip now also checks that
+  `denext job install --status` reports the installed entry (by job name, in the backend it was
+  installed to) and nothing after the uninstall.
+- **`deno task revocations sign` splits `--force` into two flags** (maintainers).
+  `--skip-published-check` signs when the published list can't be read or verified, and
+  `--allow-unrevoke` signs an entries file that leaves out a published revocation. Each allows
+  only its own case, so skipping the published-list check never also allows un-revoking a
+  release; a bare `--force` on `sign` is refused with a message naming both.
+- **Docs: runtime gates are described by capability, not by runtime release.** AGENTS.md,
+  README.md, KNOWN-LIMITATIONS.md, FEATURES.md, the docs pages (desktop, config, database,
+  deployment targets, security, permissions, backend, environment, troubleshooting and others) and
+  the public JSDoc behind the [API reference](https://denext.dev/docs/api) no longer say "runtime
+  3.0.0-denext.N and later": each gate names what has the feature and how to detect it
+  (`appCapabilities()`, `windowCapabilities()`, `Deno.desktop.*`, `denoSqlHasColumns()`) or what
+  happens on a runtime without it. Release numbers stay in this changelog and on the pages whose
+  subject is versions (runtime reference, toolchain, desktop runtime); a docs test fails on a new
+  one anywhere else, with a commented allowlist for dated records.
+- **The coverage ratchet covers `src/desktop` and `src/ui`, and its floors match what CI
+  measures** (maintainers). `scripts/coverage-baseline.json` records each Deno Desktop runtime and
+  project UI module, the files whose numbers CI's report beats are raised to them, and new tests
+  lift the weakest `denext ui` and desktop modules (the services and dev-server panels, the logs
+  readers, the third-party options reader, the browser opener, the database child runner, the
+  keep-awake driver, the partial-download files). The compat `server-only` / `client-only` modules
+  are imported plainly by their test, so the sharded CI merge no longer reports them as never
+  loaded.
+- **The Deno Desktop secure store on Windows uses the runtime's own store, without PowerShell.**
+  Under runtime 3.0.0-denext.25 (laufey 0.8.1) `secureStore` on Windows is the Credential Manager,
+  written by the app's own process (DPAPI-encrypted, named per app id, values up to 64 KiB), so a
+  packaged app no longer bakes `--allow-run` of Windows PowerShell, a script interpreter that gave
+  any code in the app full trust: Windows bakes what Linux does. Values keep the same base64 form;
+  an item an older denext wrote to the WinRT PasswordVault moves over when the app looks it up
+  during its first run of the updated build (with `desktop.app.identifier` set), and a key first
+  read later stays in the PasswordVault. Under an older or the stock runtime Windows keeps the
+  PasswordVault through PowerShell. `desktopBuildFlags` takes `windowsSecureStore` (default: the
+  pinned runtime's), and `supportsWindowsSecureStore` gates it.
+- **The Window menu denext merges into is titled "Window" on macOS.** Runtime 3.0.0-denext.25 adds
+  Close Window (Cmd+W) to every macOS menu bar that has no close item, at the top of the submenu
+  titled exactly "Window" (else in one of its own), so a page's `setAppMenu` with a `"window"` or
+  `"&Window"` submenu, which `desktop.menu.window` merges into, would have shown two Window menus.
+  denext adds no Close Window or Cmd+W of its own.
+
+### Fixed
+
+- **On Windows, a closed console window, logoff or system shutdown lets `denext start` drain.**
+  The shutdown listener now returns a promise that settles as the process ends, so a runtime that
+  waits on it (denext's) holds Windows' console handler while in-flight requests, the `services/`
+  stop and `onShutdown()` run, up to Windows' own limit (about 5 seconds for a closed console, 20
+  for logoff or shutdown). `denext serve`, `ui`, `dashboard` and compiled apps share it.
+- **An in-memory build drops the unused SQLite bridge on Windows with a short-named temp folder.**
+  A build with `write: false` (dev, tests) compared esbuild's outputs against its metafile under
+  two spellings of the working folder (a Windows 8.3 short name such as `NIGHTN~1` beside its
+  realpath), so nothing matched and the unreachable `openSqlite` bridge and its wasm stayed in the
+  output for any user whose name is longer than 8 characters.
+- **A plugin's prepare step re-runs in dev for a project reached through a symlink.** macOS's
+  file watcher names a changed file through its real path (`/private/var/…` for a project under
+  `/var/…`, the real folder of a symlinked checkout), while the step's `watch` globs were resolved
+  against the project folder as given, so an edit to a watched file (content-collections' entries,
+  a GraphQL schema) never regenerated its output. The changed path is now matched, and handed to
+  the step, in the project's own spelling, and the SPA dev server keeps recognizing a write into
+  the build output under either spelling.
+- **The dev server's server-only leak error names a module relative to a symlinked project.** It
+  printed the module's absolute real path (`/private/var/…/lib/db.ts`) instead of `lib/db.ts`
+  when the project folder was spelled through a symlink.
+- **A Deno Desktop capability's unexpected failure is logged in the app's own log.** Outside
+  `denext desktop dev` the page still gets only "the capability failed" (the error could carry a
+  path), and the error itself, named by its capability and method, now goes to the app's stderr,
+  so a packaged app's failure can be diagnosed.
+- **An app whose import map reaches denext through a symlink bundles each framework module once.**
+  The modules the app's `deno.json` names directly (`mod.ts`, `src/jsx/jsx-runtime.ts`, …) loaded
+  under the linked spelling, as the app's config resolves them, while the framework's own imports
+  reached the same files under the real path, so a native client bundle carried them twice: a
+  second JSX runtime (+469 B in the shared chunks, a second element builder beside the first).
+  The merged bundle config now pins each of those files to one spelling, so the app's shared
+  chunks match the real-path build byte for byte.
+- **Effects from a click or key press run before the next input event, as in React 18.** A
+  commit caused by a discrete event (click, key down / up, pointer down / up, input, focus change,
+  submit, …; React's discrete set) now runs its `useEffect` cleanups and setups at the end of that
+  commit, after its layout effects, and pending `useEffect`s are flushed before a discrete event's
+  handlers run. Other commits schedule the flush on a `MessageChannel` task, as React's Scheduler
+  does, instead of a 0 ms timer. The flush used to wait for a timer, which a browser runs after
+  input tasks and a busy loop can starve, so an outside click or Escape could beat the effect that
+  adds the `window` listener closing a menu, a key press could miss the input an effect focuses,
+  and a dependency change's cleanup (an iframe's removal) landed a commit late. Transitions, timer
+  and fetch updates, and continuous events (`mousemove`, `scroll`, `wheel`, …) still run their
+  effects after the commit's task; a Preact app keeps Preact's after-paint timing.
+- **`/auth/v1` email changes are confirmed from both addresses (`secureEmailChange`).** As in
+  GoTrue (on by default), `PUT /user { email }` for an account with a confirmed address sends a
+  code to that address as well as the new one, and the change applies once both are redeemed (the
+  first answers GoTrue's "Confirmation link accepted" message); `secureEmailChange: false`
+  confirms from the new address alone, and an account with no confirmed address still does. The
+  two codes redeemed at the same moment apply the change exactly once, on every adapter: the
+  second redemption is decided by single-use token rows, never by a read followed by a write.
+- **`denext dev` no longer prints "deno.json changed — restart the dev server" for its own
+  writes.** In an App Router app with stylesheets whose `deno.json` carries the css→shim
+  redirects (an app with npm dependencies), each CSS graph crawl strips them for its `deno info`
+  run and puts the file back; the watcher of `deno.json` now drops denext's own writes, as the
+  SPA watcher already did, so the notice appears only for a real edit. A notice names each
+  changed file once.
+- **`denext migrate` checks the next.config evaluator's result before writing it.** The evaluator
+  prints its result through a writer it holds from before the config is imported, a result with
+  more than one line fails the evaluation, and `migrate` (like `denext ui`'s next.config panel)
+  keeps only the fields, rules and dropped keys it reads itself, quoting each key it writes.
+- **Remix compat: a route action runs with the params of the render that produced its form.**
+  The action is registered once per route and each render seals its params and page path (now
+  the action's `request.url`) into the form's action id; the plain `remix:<route>#action` id is no
+  longer callable by itself.
+- **Remix compat: the `shouldRevalidate` prior-data echo is read on client soft navigations
+  only.** A document request renders from its loaders whatever headers it carries, and a render
+  that reuses echoed data is marked per-request, so it is never stored as a shared page.
+- **An anonymous account converts only from the session that asked for the code.** An email
+  code, magic link or SMS code requested from an anonymous session records that session's user,
+  and redeeming it converts that user only; a code requested without that session is a plain
+  sign-in to the address or number (a new account where the provider allows sign-up).
+- **A sign-in `callbackUrl` is trimmed and checked as one origin.** A `callbackUrl` (credentials,
+  email code, magic link, MFA and passkey sign-ins, and the magic-link confirm page) has its
+  control characters and whitespace removed before its scheme is read; a value with a scheme is
+  kept, as its path, only on `canonicalOrigin` or the request's own origin, else
+  `pages.afterSignIn` applies. `safeRedirectLocation()` keeps a value relative unless it was an
+  absolute `http(s)://` URL as given, and `signInWithPasskey({ callbackUrl })` normalizes the value
+  in the browser as `signIn` does.
+- **The `denext ui` process that `denext mcp` starts runs without the project's config.** The UI
+  child behind the `denext_ui_*` tools runs with `--no-config`, on this denext's own CLI, from a
+  working directory outside the project; the panels that run project code still start their own
+  children with the project's config. A compiled binary decides an unknown verb (or
+  `<verb> --help`) before it hands the invocation to the denext the project pins, and hands it over
+  only to discover the project's verbs.
+- **Loopy's browser asks before carrying data to a new host.** `browser_open` asks the user first
+  when the host is one the user hasn't allowed this session and the URL's path, query and fragment
+  together carry more than 64 characters (`URL_DATA_LIMIT` in
+  `examples/companion/voice/browser-safety.ts`), so a page can't have the model open
+  `https://bad.example/?q=<the conversation>` or `https://bad.example/<the conversation>`. Only a
+  Yes allows a host: opening it without data first does not, so a page can't open the host plainly
+  and then send the data there. Ordinary browsing (no data, a short search or path, a host the
+  user allowed) does not ask.
+- **A SPA's `denext dev` no longer rebuilds for a file whose content did not change.** The
+  watcher records each project file's content (SHA-256) before it opens, and learns a file it had
+  not seen on its first event; an event for a file holding the bytes it had then is dropped. On
+  a loaded Mac, FSEvents could deliver the project's own just-written files (a scaffold's, a
+  checkout's) after the dev server started, each starting a new build generation right away. A
+  rewrite with the same bytes is dropped the same way; a real edit still counts on its first
+  event. The start-time record stops at 5,000 files or 64 MiB read, so a large `public/` doesn't
+  hold the dev server's start; a file it left out counts on its first event, as before.
+- **`denext create`, `migrate` and `upgrade` pin what Deno's dependency-age hold actually lets
+  in.** denext assumed Deno's default hold was two days, so for a day after Deno itself already
+  resolved a new `@denext/*` release (24 hours, `DEFAULT_MINIMUM_DEPENDENCY_AGE_MINUTES` = 1440)
+  they still pinned the previous one, and said to wait. They now read the same 24-hour default,
+  and a version published exactly at the cutoff is held, as Deno holds it (it lets in only a
+  version published strictly before). A configured `minimumDependencyAge`, `.npmrc`
+  `min-release-age` or `DENEXT_MIN_DEP_AGE` applies as before.
+- **`denext desktop package` asks Gatekeeper to accept each notarized macOS installer.** After a
+  `.dmg` or a signed `.pkg` is notarized, stapled and its ticket validated, the package step runs
+  `spctl --assess --type open --context context:primary-signature` on the image and
+  `spctl --assess --type install` on the package, the checks a downloader's Mac makes, and fails
+  the run when Gatekeeper refuses one, so "ready to distribute" is never printed for an installer
+  it would block. Only a Developer-ID-signed, notarized run takes the step; unsigned and ad-hoc
+  builds are unchanged, and no script needs regenerating (the step lives in denext).
+- **The kitchen-sink window test refocuses its main window after the secondary-window check.**
+  That check closed the window it opened and left the keyboard focus wherever the window manager
+  put it, so the next check's maximize request timed out once on Linux (xfwm4 under Xvfb). It now
+  asks for the main window's focus (`focusWindow()`) and waits for `document.hasFocus()` before
+  the next check runs, asking again each second for up to 5 s.
+- **Docs: the example READMEs match their examples.** Every `examples/*/README.md` was checked
+  against the example's files: wrong or missing tasks and `denext` verbs, commands that did not say
+  which directory they run in, stale API names and config keys, release numbers, and missing
+  prerequisites and environment variables are fixed, and marketing phrasing is gone. A test checks
+  that every `deno task` / `denext task` a README names exists in the deno.json it runs against
+  (a root task only where the README says it runs from the repo root).
+- **CLI messages describe a runtime gate by what is missing, not by a release number.** The
+  warnings, errors and doctor findings that said a feature needs "runtime 3.0.0-denext.10+" or
+  "a release that pins runtime 2.9.7-denext.11 or later" now name the capability (media-capture
+  grants, `Deno.openPty`, ConPTY terminals on Windows, `$DENO_DESKTOP_DATA` expansion, split
+  network grants, resource-limit flags, SNI certificate resolution, `Deno.SQL` result columns,
+  crash reports, the lifecycle-script jail) and how to get it (`denext upgrade`: the pinned
+  runtime has it). That covers `denext desktop add`'s capability catalog (notes and by-hand
+  steps for `fs`, `sqlite`, `system-stats`, `pty`, `microphone`, `camera`, `passkeys`),
+  `denext doctor` / `desktop doctor`, `desktop run` / `package`, `build --compile`, `start`, the
+  Prisma adapter, the desktop transport's refusals and the generated Dockerfile's idle-trim
+  comment. Version constants and the comparisons behind them are unchanged, as is a pty error's
+  `data.requires`. A test scans every shipped source line for a release number or an
+  interpolated version constant in user-facing text.
+- **Example fixes.** The pages-router example maps `@denext/pages-router/head`, which its pages
+  import (a test now checks that every example maps each `@denext/*` module it imports). The
+  prisma example's `prisma.config.ts` reads `DB_PATH` as `lib/db.ts` does, so `db push` and the
+  app open the same file. The tailwind example's home page is a Server Component rendering a
+  `"use client"` counter (`app/counter.tsx`) instead of calling `useState` itself. The
+  offline-sync example's `src/config.ts` says that only `denext start` proxies `/api` (not
+  `denext dev`), and the openapi example's config comments match the plugin (vendored renderers,
+  the docs page's own CSP, security decided by the route's builder). The scroll-bench
+  `build-apks.sh` takes its SSH host as a required argument (or `SCROLL_BENCH_HOST`) with no
+  default. The unused `deno-wrap.sh` of next-compat-feasibility is removed. The desktop kitchen
+  sink's `app/manual-checks.tsx` type-checks again (its backdrop check keeps a
+  `WindowCapabilities`).
+- **Fresh partial navigation merges the new page's own head tags, and back / forward restores
+  them.** A `<meta>` or stylesheet `<link>` a page renders (Fresh's `<Head>` included) is hoisted
+  out of the Flight tree into the document head, so a partial answer reached the browser without
+  them and only its `<title>` changed. A partial request's answer now carries those tags beside
+  the tree (`head`, only when the request has `fresh-partial`; other soft navigations are
+  unchanged) and the client merges them as Fresh does. Back and forward between partial
+  navigations now restore each entry's title and `<meta>` values with its regions, where the
+  title and description used to stay the last page's. A real-browser run in e2e.yml covers the
+  head merge, the view transition, an island keeping its state and back / forward.
+- **A source checkout's CLI loads a `denext.config.ts` that imports through an app-only alias**
+  (contributors). A config that imported a module through a key only the app's `deno.json` maps
+  (`import { schema } from "@/gql/schema.ts"` for `graphql({ schema })`, with `"@/": "./"`) failed
+  with `Import "@/…" not a dependency and not in import map` under a checkout's `cli.ts`: the
+  stylesheet gate imported the config before the re-run that applies the app's import map. That
+  re-run now comes first when the config needs the map, and its child builds the stylesheets as
+  before. The published CLI and the compiled binary were not affected: both run with the
+  project's `deno.json`.
+- **A plugin's dev `watch` globs outside `app/` reload on an edit.** The dev server opened its
+  folder watch before an async plugin `setup` finished, so a prepare step's globs over another
+  directory (`@denext/graphql`'s schema module outside `app/`, or the directories of the modules
+  a config-built schema reaches) were never watched, and the project-wide watcher dropped the
+  files the app's module graph doesn't reach: the schema answered as it was until a restart. The
+  project-wide watcher now delivers every file a registered prepare step's globs match, whenever
+  the plugin registered it. A real-browser run in e2e.yml edits a schema built in
+  `denext.config.ts` and the module it loads with `import()`, and queries the new field from the
+  page without a restart.
+
 ## [4.19.0] - 2026-11-15
 
 ### Added
@@ -22449,7 +22796,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.19.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.0...development
+[4.20.0]: https://jsr.io/@denext/denext@4.20.0
 [4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0

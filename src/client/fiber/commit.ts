@@ -2,6 +2,7 @@
 // deletion, Offscreen visibility, profilers and the passive-effect queue.
 
 import { preactCommitHook, preactOptions } from "./preact-options-seam.ts";
+import { postTask } from "./post-task.ts";
 import type { RootHandle } from "./state.ts";
 import {
   collectEffects,
@@ -528,32 +529,26 @@ function runEffectPass(queue: Array<Fiber | CommitEffect>, i: number, teardown: 
 
 // ---- Passive effects (useEffect): scheduled after commit -------------------
 // React runs passive effects on a task after paint, separate from the synchronous
-// layout phase. denext schedules them on a macrotask and flushes them
-// synchronously at the points React does: before starting the next render, and
-// inside flushSync/act. Class lifecycle and useLayoutEffect stay in the layout
-// phase (synchronous), so their observable timing is unchanged.
+// layout phase. denext schedules them on a MessageChannel task, as React's Scheduler
+// does (a setTimeout only where MessageChannel is missing: a timer can starve behind
+// input tasks and a busy loop), and flushes them synchronously at the points React
+// does: at the end of a commit a discrete event (a click, a key press) caused, before
+// such an event is dispatched, before starting the next render, and inside
+// flushSync/act. Cleanups ride the same flush as setups (all cleanups, then all
+// setups). Class lifecycle and useLayoutEffect stay in the layout phase (synchronous).
 
 const pendingPassive: Fiber[] = [];
-/** The macrotask that will flush the queued passive effects, if one is scheduled. */
-let passiveTimer: ReturnType<typeof setTimeout> | undefined;
+/** Whether a task (or Preact's frame) will flush the queued passive effects. */
+let passiveScheduled = false;
 let flushingPassive = false;
 
 function schedulePassiveFlush(): void {
-  if (passiveTimer !== undefined) return;
-  // Preact's `options.requestAnimationFrame` schedules the `useEffect` flush when an app set it.
-  const raf = preactOptions?.requestAnimationFrame;
-  if (raf) {
-    passiveTimer = -1 as unknown as ReturnType<typeof setTimeout>;
-    raf(() => {
-      passiveTimer = undefined;
-      flushPassiveEffects();
-    });
-    return;
-  }
-  passiveTimer = setTimeout(() => {
-    passiveTimer = undefined;
-    flushPassiveEffects();
-  }, 0);
+  if (passiveScheduled) return;
+  passiveScheduled = true;
+  // The scheduled callback is `flushPassiveEffects` itself; one an earlier flush made moot
+  // finds the queue empty. Preact's `options.requestAnimationFrame` schedules the `useEffect`
+  // flush when an app set it.
+  (preactOptions?.requestAnimationFrame ?? postTask)(flushPassiveEffects);
 }
 
 /** Whether a commit queued passive effects (useEffect) that have not run yet. */
@@ -564,10 +559,8 @@ export function hasPendingPassiveEffects(): boolean {
 /** Run all queued passive effects (useEffect). Safe to call repeatedly. */
 export function flushPassiveEffects(): void {
   if (flushingPassive) return;
-  // Flushed now (flushSync, act, the next render): the scheduled task has nothing left to do.
-  // (A `requestAnimationFrame`-scheduled flush, marked -1, finds the queue empty.)
-  if ((passiveTimer as unknown) !== -1) clearTimeout(passiveTimer);
-  passiveTimer = undefined;
+  // Flushed now (flushSync, act, the next render): a task still scheduled finds the queue empty.
+  passiveScheduled = false;
   if (pendingPassive.length === 0) return;
   flushingPassive = true;
   try {

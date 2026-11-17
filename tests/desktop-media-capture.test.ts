@@ -198,7 +198,8 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.10", () => {
 
   const problem = mediaCaptureRuntimeProblem(BOTH, false, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "desktop.capabilities.microphone / camera");
-  assertStringIncludes(problem!, "3.0.0-denext.10");
+  assertStringIncludes(problem!, "media-capture grants");
+  assert(!problem!.includes(FIRST_MEDIA_CAPTURE_RUNTIME), "names the capability, not a release");
   assertStringIncludes(problem!, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "cannot restrict capture to the app's origin");
   assert(!problem!.includes("\n"));
@@ -212,7 +213,8 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.10", () => {
   } catch (e) {
     refused = e as Error;
   }
-  assertStringIncludes(refused!.message, "needs Deno Desktop runtime 3.0.0-denext.10 or later");
+  assertStringIncludes(refused!.message, "needs a Deno Desktop runtime with media-capture grants");
+  assertStringIncludes(refused!.message, "Build on denext's pinned runtime, which has them");
   assertStringIncludes(refused!.message, "the stock runtime");
   assert(!refused!.message.includes("\n"));
   assertMediaCaptureRuntime(BOTH, true, "runtime 3.0.0-denext.10");
@@ -254,7 +256,7 @@ Deno.test("media capture: the packaged launch file grants the app origin; Info.p
     const err = await assertRejects(
       () => writeLaufeyLaunchConfig(entry, "darwin", old, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
+      "needs a Deno Desktop runtime with media-capture grants to package",
     );
     assert(!err.message.includes("\n"));
     const oldPlist = await Deno.readTextFile(join(old, "Contents", "Info.plist"));
@@ -392,7 +394,7 @@ Deno.test("media capture: a signed build gets the device entitlements; the confi
     const refused = await assertRejects(
       () => desktopMacosSigning(entry, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
+      "needs a Deno Desktop runtime with media-capture grants to package",
     );
     assert(!refused.message.includes("\n"));
     // Without either capability the runtime does not matter.
@@ -501,14 +503,81 @@ Deno.test("media capture: the schema closes the options object", async () => {
   for (const kind of ["microphone", "camera"]) {
     const options = caps[kind].anyOf.find((b: { type?: string }) => b.type === "object");
     assertEquals(options.additionalProperties, false, kind);
-    assertEquals(Object.keys(options.properties), ["usageDescription"]);
+    assertEquals(
+      Object.keys(options.properties).sort(),
+      kind === "microphone"
+        ? ["speechRecognitionUsageDescription", "usageDescription"]
+        : ["usageDescription"],
+    );
   }
+});
+
+Deno.test("media capture: the microphone's speech recognition usage text reaches Info.plist", () => {
+  const config = {
+    desktop: {
+      capabilities: {
+        microphone: {
+          usageDescription: "Talk to the assistant.",
+          speechRecognitionUsageDescription: "  Dictate notes.  ",
+        },
+      },
+    },
+  };
+  assertEquals(desktopMediaCapture(config), {
+    microphone: {
+      usageDescription: "Talk to the assistant.",
+      speechRecognitionUsageDescription: "Dictate notes.",
+    },
+  });
+  const out = withMediaUsageDescriptions(INFO_PLIST, config);
+  assertEquals(plistValue(out, "NSMicrophoneUsageDescription"), "Talk to the assistant.");
+  assertEquals(plistValue(out, "NSSpeechRecognitionUsageDescription"), "Dictate notes.");
+  // The entitlement stays the microphone's: speech recognition needs no Hardened Runtime key.
+  assertEquals(mediaCaptureEntitlements(config), {
+    "com.apple.security.device.audio-input": true,
+  });
+  // Opt-in: without the text, no speech key is written (and a stale one is left alone).
+  const plain = withMediaUsageDescriptions(INFO_PLIST, {
+    desktop: { capabilities: { microphone: true } },
+  });
+  assertEquals(plistValue(plain, "NSSpeechRecognitionUsageDescription"), undefined);
+  // On the camera the key is not an option: the camera is off, as for any unknown key.
+  assertEquals(
+    desktopMediaCapture({
+      desktop: { capabilities: { camera: { speechRecognitionUsageDescription: "x" } } },
+    }),
+    {},
+  );
+});
+
+Deno.test("media capture: speechRecognitionUsageDescription validation", () => {
+  const errors = (capabilities: unknown) => {
+    try {
+      validateDenextConfig({ desktop: { capabilities } } as DenextConfig);
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
+  assertEquals(errors({ microphone: { speechRecognitionUsageDescription: "Dictation." } }), "");
+  assertStringIncludes(
+    errors({ microphone: { speechRecognitionUsageDescription: "" } }),
+    "desktop.capabilities.microphone.speechRecognitionUsageDescription",
+  );
+  assertStringIncludes(
+    errors({ microphone: { speechRecognitionUsageDescription: "a\u0001" } }),
+    "must not contain control characters",
+  );
+  assertStringIncludes(
+    errors({ camera: { speechRecognitionUsageDescription: "Dictation." } }),
+    "desktop.capabilities.camera.speechRecognitionUsageDescription",
+  );
 });
 
 Deno.test("media capture: `desktop add microphone camera` writes both keys", async () => {
   assertEquals(DESKTOP_CAPABILITIES.microphone.key, "microphone");
   assertEquals(DESKTOP_CAPABILITIES.camera.trust, "none");
-  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "3.0.0-denext.10");
+  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "media-capture grants");
   const { dir } = await project({ desktop: { capabilities: {} } });
   try {
     const report = await addDesktopCapabilities({

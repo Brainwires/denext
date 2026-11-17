@@ -54,7 +54,7 @@ Deno.test("npm pins: every exact pin passes Deno's default dependency-age hold",
     const { name, version } = splitSpec(spec);
     assert(RECORDED[name]?.[version], `${spec}: record its npm publish time in the fixture`);
   }
-  // Deno's default rule (two days), as a project without its own rule has it.
+  // Deno's default rule (24 hours), as a project without its own rule has it.
   const report = await checkPinAges(pins, recorded, effectiveRule({}));
   assertEquals(report, { held: [], unknown: [] });
   assertEquals(assertPinsEligible(report), []);
@@ -67,7 +67,7 @@ Deno.test("checkPinAges: a version inside the hold is held; an npm: exclude lift
   const rule = effectiveRule({ now });
   const held = await checkPinAges(["@capacitor/core@8.6.0"], fresh, rule, now);
   assertEquals(held.held.map((h) => `${h.name}@${h.version}`), ["@capacitor/core@8.6.0"]);
-  assertEquals(held.held[0].until.toISOString(), "2026-10-31T06:00:00.000Z");
+  assertEquals(held.held[0].until.toISOString(), "2026-10-30T06:00:00.000Z");
   assertThrows(() => assertPinsEligible(held, now), Error, "@capacitor/core 8.6.0 was published");
   assertEquals((await checkPinAges(["@capacitor/core@8.5.2"], fresh, rule, now)).held, []);
   const excluded = effectiveRule({ config: { age: "P2D", exclude: ["npm:@capacitor/*"] }, now });

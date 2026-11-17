@@ -1,8 +1,10 @@
 # The desktop kitchen sink's window test (examples/desktop-kitchen-sink) on every desktop OS: package
 # the app with denext's pinned Deno Desktop runtime, open it in a real window and assert every check
 # the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
-# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, and
-# a full-app update installed, left unconfirmed and rolled back).
+# the Clerk bridge, page downloads through the save dialog and `downloadToFile` with an abort, a
+# full-app update installed, left unconfirmed and rolled back, and on a launch of their own the
+# backend hooks: Window-menu items, a second launch, will-navigate, ctx.caller, notify() and an
+# onBeforeQuit guard's host.confirm box, which the runner answers past the guards' 5 s deadline).
 #
 # Windows also runs the Authenticode phases: "sign" packages builds signed with two throwaway
 # self-signed certificates and checks the signer of every PE file, and, because the hosted runner
@@ -67,8 +69,6 @@ on:
       - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"
       - "scripts/ci/desktop-window-summary.ts"
-      - "scripts/ci/pick-windows-runner.ts" # the windows-runner job: our Windows runner or the overflow
-      - "scripts/ci/pick-linux-runners.ts" # the linux-runner job: our Linux pools or the overflow
       - ".github/workflows/desktop-window.yml"
 
 permissions:
@@ -82,95 +82,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Picks each Linux job's runner (scripts/ci/pick-linux-runners.ts): biscuits' Linux pools
-  # (RUNNER_LINUX_X64, RUNNER_LINUX_X64_DOCKER) share one set of job containers, so the jobs that
-  # most need them (first in PICK_JOBS) take that capacity's free slots and the rest run on
-  # ubuntu-latest at once instead of queueing behind each other; ubuntu-latest on a fork's pull
-  # request, or when DENEXT_POOL_HEALTH is stale or marks a pool down. It runs on GitHub's image (it
-  # must not wait in the queue it shortens), and its pick step never fails: on any error a Linux job whose
-  # pick is empty takes its repository variable (each runs `if: !cancelled()`).
-  linux-runner:
+  # Picks every job's runner (Brainwires/.github's pick-runners action): our self-hosted pools are the
+  # first choice, never a bottleneck. A job takes our pool while it has a free slot (DENEXT_POOL_HEALTH
+  # and the queued jobs; biscuits' three Linux labels share one capacity), else its GitHub image at
+  # once; a fork's pull request runs every job on GitHub's images. It runs on GitHub's image (it must
+  # not wait in the queue it shortens) and never fails: each job's `|| <image>` takes its GitHub image
+  # if the plan is empty (each runs `if: !cancelled()` or `always()`).
+  runners:
+    name: pick runners
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read # the repository's queued / running jobs
-      contents: read
     outputs:
-      summary: ${{ steps.pick.outputs.summary }}
+      plan: ${{ steps.pick.outputs.plan }}
       hosted: ${{ steps.pick.outputs.hosted }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
+      # this one waits longest so it counts the jobs the others queued on the pools.
+      - name: Let the other dispatched runs pick first
+        if: github.event_name == 'workflow_dispatch'
+        run: sleep 60
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@b9684b2d976ff61b754793f7f934f7e853205862 # pick-runners
         with:
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/ci/pick-linux-runners.ts
-            scripts/ci/pick-windows-runner.ts
-          sparse-checkout-cone-mode: false
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
-      # The script bounds its API calls (60 s) and prints its own fallback on an API error; a crash
-      # before it prints leaves the outputs empty, which the jobs read as "the variable".
-      - name: Pick
-        id: pick
-        env:
-          PICK_JOBS: summary
-          PICK_RUNNER_X64: ${{ vars.RUNNER_LINUX_X64 }}
-          PICK_RUNNER_DOCKER: ${{ vars.RUNNER_LINUX_X64_DOCKER }}
-          PICK_RUNNER_2204: ${{ vars.RUNNER_LINUX_X64_2204 }}
-          PICK_SHARED_SLOTS: ${{ vars.RUNNER_LINUX_X64_SHARED_SLOTS }}
-          PICK_HEALTH: ${{ vars.DENEXT_POOL_HEALTH }}
-          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-          # A release gate dispatches ci.yml, desktop-ci.yml, e2e.yml and desktop-window.yml together:
-          # each later one waits a little so it counts the jobs an earlier one queued on the pools.
-          PICK_DELAY: ${{ github.event_name == 'workflow_dispatch' && '60' || '0' }}
-          GITHUB_TOKEN: ${{ github.token }}
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
-        run: |
-          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-linux-runners.ts >> "$GITHUB_OUTPUT" ||
-            echo "::warning::the Linux runner pick failed: every Linux job takes its repository variable"
-
-  # Picks each Windows x64 job's runner (scripts/ci/pick-windows-runner.ts): our self-hosted
-  # Windows x64 runner (RUNNER_WINDOWS_X64) while it has a free slot (none of this repository's
-  # other runs holds it, queued or running), windows-latest for the overflow; windows-latest on a
-  # fork's pull request. It never fails the run: on any error every job keeps our runner, and a
-  # Windows job whose pick is empty falls back to the variable (each runs `if: !cancelled()`).
-  windows-runner:
-    # GitHub's image: a one-minute pick must not wait in the Linux pools' queue.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read # the repository's queued / running jobs
-      contents: read
-    outputs:
-      window_test: ${{ steps.pick.outputs.window_test }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-          sparse-checkout: scripts/ci/pick-windows-runner.ts
-          sparse-checkout-cone-mode: false
-      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: "2.9.8" # only runs the pick: no project code, so no toolchain
-      # The script bounds its API calls (60 s) and prints the fallback itself on an API error; a
-      # crash before it prints leaves the outputs empty, which the jobs read as "the variable".
-      - name: Pick
-        id: pick
-        env:
-          PICK_JOBS: window_test
-          PICK_RUNNER: ${{ vars.RUNNER_WINDOWS_X64 }}
-          PICK_SLOTS: ${{ vars.RUNNER_WINDOWS_X64_SLOTS || '1' }}
-          PICK_FORK_PR: ${{ (startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) }}
-          GITHUB_TOKEN: ${{ github.token }}
-          RUNNER_STATUS_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
-        run: |
-          deno run --allow-net=api.github.com --allow-env scripts/ci/pick-windows-runner.ts >> "$GITHUB_OUTPUT" ||
-            echo "::warning::the Windows runner pick failed: every Windows job takes RUNNER_WINDOWS_X64"
+          jobs: window_test_windows=windows-x64 summary=linux-x64
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
 
   window-test:
     name: window test (${{ matrix.label }})
-    needs: windows-runner
+    needs: runners
     strategy:
       fail-fast: false
       matrix:
@@ -178,15 +120,13 @@ jobs:
           - { os: ubuntu-22.04, label: linux-x64 }
           - { os: macos-latest, label: macos-arm64 }
           - { os: macos-15-intel, label: macos-x64 }
-          - { os: windows-latest, label: windows-x64 }
-    # Each matrix entry below runs on a self-hosted runner when its repository variable
-    # names one (a label, or a JSON array):
-    #   windows-latest → RUNNER_WINDOWS_X64 while it has a free slot, else windows-latest (the overflow; the windows-runner job picks)
-    # Unset, the entry keeps its image; always the image on a fork's pull_request / pull_request_target (a self-hosted
-    # runner never takes a fork's code; a same-repo pull_request runs on it). Other entries keep their image.
+          - { os: windows-latest, pick: window_test_windows, label: windows-x64 }
+    # The windows-latest entry runs where the runners job's pick puts it (`windows-x64`): our Windows
+    # x64 runner while it has a free slot, else windows-latest at once (always on a fork's pull
+    # request). The other entries keep their image.
     # The macOS entries stay on GitHub's images: the download checks drive the save dialog
     # with osascript, which needs the Automation (TCC) grant the self-hosted pool's image lacks.
-    runs-on: ${{ fromJSON(((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) || matrix.os != 'windows-latest') && format('"{0}"', matrix.os) || (needs.windows-runner.outputs.window_test || (startsWith(vars.RUNNER_WINDOWS_X64, '[') && vars.RUNNER_WINDOWS_X64 || format('"{0}"', vars.RUNNER_WINDOWS_X64 || 'windows-latest')))) }}
+    runs-on: ${{ matrix.pick && fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || matrix.os }}
     if: ${{ !cancelled() }}
     timeout-minutes: 45
     env:
@@ -254,14 +194,11 @@ jobs:
 
   summary:
     name: results by OS
-    needs: [window-test, linux-runner]
+    needs: [runners, window-test]
     if: always()
-    # Linux: what the linux-runner job picks (scripts/ci/pick-linux-runners.ts): the self-hosted x64
-    # runner the repository variable RUNNER_LINUX_X64 names while biscuits' shared Linux capacity
-    # has a free slot, else ubuntu-latest; the variable (a label, or a JSON array; unset:
-    # ubuntu-latest) when the pick is empty; always ubuntu-latest on a fork's pull_request /
-    # pull_request_target (a self-hosted runner never takes a fork's code).
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || needs.linux-runner.outputs.summary || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    # Linux: the runners job's pick (`linux-x64`): our pool while biscuits' shared Linux capacity has
+    # a free slot, else ubuntu-latest at once; always ubuntu-latest on a fork's pull request.
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').summary || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
