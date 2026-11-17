@@ -28,8 +28,6 @@ const inRequest = <T>(fn: () => Promise<T>): Promise<T> => runWithContext(reques
 
 /** A `"use cache"` entry's store key (see `sharedCacheEntry`). */
 const cachedKey = (id: string, args: unknown[] = []) => JSON.stringify([id, args]);
-/** An `unstable_cache` entry's store key (see `unstable_cache`). */
-const unstableKey = (keyParts: string[], args: unknown[] = []) => JSON.stringify([keyParts, args]);
 
 const stores: Record<string, () => CacheStore> = {
   memory: () => inMemoryCacheStore(),
@@ -165,6 +163,13 @@ Deno.test("a stale loader hit refreshes in the foreground inside a cached functi
 Deno.test('the reverse: a `"use cache"` inside a loader keeps its tags and lifetime to itself, and refreshes in the foreground when stale', async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);
+  // The loader's key also names the loader itself (a digest of its source): record it as stored.
+  const stored: string[] = [];
+  const setData = store.setData.bind(store);
+  store.setData = (key, entry) => {
+    stored.push(key);
+    return setData(key, entry);
+  };
   let inner = 0;
   let outer = 0;
   const cached = __useCache("nest#rev-inner", () => {
@@ -177,7 +182,7 @@ Deno.test('the reverse: a `"use cache"` inside a loader keeps its tags and lifet
     return `o${await cached()}`;
   }, ["nest#rev-outer"]);
   assertEquals(await inRequest(() => load()), "o1");
-  const e = await store.getData(unstableKey(["nest#rev-outer"]));
+  const e = await store.getData(stored.find((key) => key.includes('["nest#rev-outer"]'))!);
   assert(e, "the loader's entry is stored");
   assertEquals(e.tags, [], "the inner entry's tag does not reach the loader's entry (Next.js)");
   assertEquals(e.expiresAt, Infinity, "nor does its lifetime");
