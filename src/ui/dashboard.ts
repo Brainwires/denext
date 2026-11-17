@@ -166,6 +166,20 @@ export class LoginLimiter {
   reset(peer: string): void {
     this.#peers.delete(peer);
   }
+
+  /**
+   * An attempt counted with `fail` before its password was checked turned out right: forget the
+   * peer's failures and give the overall budget its unit back.
+   *
+   * @param peer The peer's address.
+   * @param now The clock.
+   */
+  succeed(peer: string, now = Date.now()): void {
+    this.#peers.delete(peer);
+    if (this.#global.resetAt > now && this.#global.count > 0) {
+      this.#global = { count: this.#global.count - 1, resetAt: this.#global.resetAt };
+    }
+  }
 }
 
 /** One dashboard's credentials, sessions and limiter. */
@@ -507,11 +521,13 @@ export async function dashboardLogin(
     return res;
   }
   const password = form.get("password");
+  // Counted before the check, which awaits: attempts sent together each see the ones before
+  // them, so they cannot all pass the limit above while none has been counted yet.
+  gate.limiter.fail(peer);
   if (typeof password !== "string" || !await gate.check(password)) {
-    gate.limiter.fail(peer);
     return await loginPage(gate, "wrong", 401, secure);
   }
-  gate.limiter.reset(peer);
+  gate.limiter.succeed(peer);
   const id = await gate.open();
   const headers = new Headers({ location: "/database" });
   headers.append("set-cookie", cookie(DASH_COOKIE, id, { secure, path: "/" }));
