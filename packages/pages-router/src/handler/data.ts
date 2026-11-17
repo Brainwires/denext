@@ -1,6 +1,7 @@
 // Resolving a page's props: getServerSideProps / getStaticProps (with getStaticPaths
 // gating + Preview Mode), or the legacy getInitialProps fallback.
 
+import { safeRedirectLocation } from "@denext/denext/server";
 import type { PageComponent } from "../render.ts";
 import { previewCookieFrom, previewSecrets, readPreview } from "../preview.ts";
 import {
@@ -71,7 +72,14 @@ export async function resolveData(
       statusCode?: number;
     };
     // Next accepts either `permanent` (308/307) or an explicit `statusCode` (301/302/303/307/308).
-    return { kind: "redirect", destination, permanent: !!permanent, statusCode };
+    // As core's `redirect()`: a path stays on the app's origin (`//host`, `/\host` and control
+    // characters cannot turn it into another one); only an explicit `http(s)://` URL leaves it.
+    return {
+      kind: "redirect",
+      destination: safeRedirectLocation(String(destination)),
+      permanent: !!permanent,
+      statusCode,
+    };
   }
   if (result.notFound) return { kind: "notFound" };
   return { kind: "props", pageProps: result.props ?? {}, isServer: mod.getServerSideProps != null };

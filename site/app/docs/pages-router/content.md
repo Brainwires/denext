@@ -61,7 +61,10 @@ run.
 `getServerSideProps` runs per request. `getStaticProps` prerenders to HTML +
 JSON at `denext build`, with `revalidate: N` driving stale-while-revalidate
 ISR; `getStaticPaths` enumerates the paths (`fallback: false` returns 404 for
-unlisted params). Both support `redirect` and `notFound`. A page's static
+unlisted params). Both support `redirect` and `notFound`. A `redirect.destination`
+is treated as core's `redirect()` target is: a path stays on the app's origin
+(`//host` and `/\host` collapse to a path), and only a value that starts with
+`http://` or `https://` leaves it. A page's static
 `getInitialProps` — or `_app`'s, which then owns the flow — also supplies
 `pageProps`, resolved **server-side** in denext for both the initial render and
 soft-nav data requests.
