@@ -125,6 +125,93 @@ export interface ImageOptimizeOptions {
   maximumRedirects?: number;
   /** **Dangerous.** Allow remote sources resolving to loopback/private IPs (SSRF guard off). */
   dangerouslyAllowLocalIP?: boolean;
+  /**
+   * Fetches the local source `src` (a `/…` path, query included) for this request, in place of
+   * a direct read of `publicDir`: the image is taken from the response when it is a 200, and
+   * anything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint
+   * is served in front of the app, so a direct read is one no `middleware.ts` sees. See
+   * {@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache.
+   */
+  fetchLocal?: (src: string, request: Request) => Promise<Response>;
+}
+
+/** Request headers the fetch of a local source never carries: it asks for the whole file. */
+const LOCAL_FETCH_DROPPED_HEADERS = [
+  "accept",
+  "accept-encoding",
+  "if-match",
+  "if-modified-since",
+  "if-none-match",
+  "if-range",
+  "if-unmodified-since",
+  "range",
+];
+
+/**
+ * An {@linkcode ImageOptimizeOptions.fetchLocal} that asks the app itself, as Next.js fetches
+ * a local image source: a `GET` of the source path through the app's own pipeline — its
+ * `middleware.ts` included — carrying the visitor's own headers (cookie, `Authorization`,
+ * forwarded address) and socket peer. The middleware decides exactly as for a direct request
+ * of the file; what the visitor could not GET, the optimizer cannot read for them.
+ *
+ * @param handler The app's request handler (`createApp`'s).
+ * @param copyPeer Carries the socket peer onto the fetch (`copyRemoteAddr`), for an address guard.
+ * @returns The fetcher.
+ */
+export function localImageFetcher(
+  handler: (request: Request) => Promise<Response>,
+  copyPeer?: (from: Request, to: Request) => void,
+): NonNullable<ImageOptimizeOptions["fetchLocal"]> {
+  return (src, request) => {
+    // On the request's own origin, whatever the source spells (`//other.host/x.png`).
+    const target = new URL(request.url);
+    const q = src.indexOf("?");
+    target.hash = "";
+    target.search = q === -1 ? "" : src.slice(q);
+    target.pathname = q === -1 ? src : src.slice(0, q);
+    const headers = new Headers(request.headers);
+    for (const name of LOCAL_FETCH_DROPPED_HEADERS) headers.delete(name);
+    const fetched = new Request(target, { method: "GET", headers, signal: request.signal });
+    copyPeer?.(request, fetched);
+    return handler(fetched);
+  };
+}
+
+/** A local source fetched through the app: its response, and the cache policy for the image. */
+interface FetchedLocal {
+  response: Response;
+  cacheControl: string;
+}
+
+/**
+ * Fetch a local source through {@linkcode ImageOptimizeOptions.fetchLocal}: `null` when the
+ * option is unset or the source is remote (the direct read applies), a 404 when the app does
+ * not answer 200 (or `localPatterns` leaves the source out), else the response. The image's
+ * `Cache-Control` is the file's own when the app made it `private` or `no-store` (middleware, a
+ * `headers()` rule); else `private` when the request carried a credential — the middleware may
+ * have let this visitor alone in, so no shared cache may hold the answer — and public otherwise.
+ */
+async function fetchLocalSource(
+  src: string,
+  request: Request,
+  opts: ImageOptimizeOptions,
+  ttl: number,
+): Promise<FetchedLocal | Response | null> {
+  if (!opts.fetchLocal || !src.startsWith("/")) return null;
+  const refused = () => new Response("image not found", { status: 404 });
+  if (!isAllowedLocal(src, opts.localPatterns)) return refused();
+  const response = await opts.fetchLocal(src, request);
+  if (response.status !== 200) {
+    await response.body?.cancel();
+    return refused();
+  }
+  const own = response.headers.get("cache-control");
+  if (own && /\b(?:private|no-store)\b/i.test(own)) return { response, cacheControl: own };
+  const credentialed = request.headers.has("cookie") || request.headers.has("authorization");
+  const cacheControl = credentialed
+    ? `private, max-age=${ttl}`
+    : `public, max-age=${ttl}, immutable`;
+  return { response, cacheControl };
 }
 
 // The bounded FIFO semaphore lives in `gate.ts` (shared with password hashing); re-exported
@@ -329,7 +416,13 @@ export function isAllowedLocal(src: string, patterns?: LocalPattern[]): boolean 
 }
 
 /** Read the source image bytes for `src`, or `null` when not found/forbidden. */
-async function loadSource(src: string, opts: ImageOptimizeOptions): Promise<Uint8Array | null> {
+async function loadSource(
+  src: string,
+  opts: ImageOptimizeOptions,
+  fetched?: Response,
+): Promise<Uint8Array | null> {
+  // Already fetched through the app (`fetchLocal`): its body is the source, byte-capped.
+  if (fetched) return await readCapped(fetched, MAX_SOURCE_BYTES);
   if (src.startsWith("/")) {
     if (!opts.publicDir) return null;
     // Enforce the local-source allowlist (enumeration guard) before touching disk.
@@ -595,9 +688,13 @@ export async function optimizeImage(
   if (parsed instanceof Response) return parsed;
   const { src, width, quality, format } = parsed;
   const ttl = opts.minimumCacheTTL ?? DEFAULT_MIN_CACHE_TTL;
+  // A local source is fetched through the app (middleware included) for THIS visitor, before
+  // the cache — which holds the encoded image whoever asked first.
+  const local = await fetchLocalSource(src, request, opts, ttl);
+  if (local instanceof Response) return local;
   const headers = {
     "content-type": format,
-    "cache-control": `public, max-age=${ttl}, immutable`,
+    "cache-control": local?.cacheControl ?? `public, max-age=${ttl}, immutable`,
     // Output depends on the Accept header (format negotiation) — key any shared
     // cache on it so an AVIF response is never served to a WebP-only client.
     "vary": "Accept",
@@ -607,16 +704,22 @@ export async function optimizeImage(
   // work below is serialized.
   const cacheKey = `${src}|${width}|${quality}|${format}`;
   const cached = cacheGet(cacheKey);
-  if (cached) return new Response(cached as BodyInit, { headers });
+  if (cached) {
+    await local?.response.body?.cancel();
+    return new Response(cached as BodyInit, { headers });
+  }
   // Acquire the concurrency gate BEFORE loading the source. The source can be a
   // remote fetch of tens of MB, so gating only the decode let a burst of concurrent
   // requests hold that many large source buffers resident at once and issue that many
   // unbounded parallel network fetches (M2/M3). Gating first caps both to
   // MAX_CONCURRENT_OPTIMIZATIONS; over the (bounded) queue cap, shed load with 503.
   const release = await acquireGate(gate);
-  if (release instanceof Response) return release;
+  if (release instanceof Response) {
+    await local?.response.body?.cancel();
+    return release;
+  }
   try {
-    const out = await loadAndEncode(src, opts, width, format, quality);
+    const out = await loadAndEncode(src, opts, width, format, quality, local?.response);
     if (out instanceof Response) return out;
     cacheSet(cacheKey, out);
     return new Response(out as BodyInit, { headers });
@@ -698,8 +801,9 @@ async function loadAndEncode(
   width: number,
   format: string,
   quality: number,
+  fetched?: Response,
 ): Promise<Uint8Array | Response> {
-  const bytes = await loadSource(src, opts);
+  const bytes = await loadSource(src, opts, fetched);
   if (!bytes) return new Response("image not found", { status: 404 });
   if (!looksLikeSvg(bytes) && !hasImageSignature(bytes)) {
     // A stylesheet, a script, a text file: no decoder takes it. One line, no stack — the
