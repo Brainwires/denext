@@ -2151,16 +2151,17 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               <code>secure-store</code>
             </td>
             <td>
-              <code>secureStore</code> (Keychain · PasswordVault · libsecret)
+              <code>secureStore</code> (Keychain · Credential Manager · libsecret)
             </td>
             <td>
               <code>--allow-run</code>: security only while <code>desktop.secureStore.legacy</code>
               {" "}
               is on ·{" "}
-              <code>--allow-run</code>: Windows PowerShell by absolute path (on every runtime: the
-              runtime&apos;s own store has no Windows backend; a script interpreter, so any code in
-              the app can run scripts through it) · none. On an older runtime macOS and Linux also
-              bake an unscoped <code>--allow-sys</code> (the runtime&apos;s store)
+              none where the runtime has its own Windows store (the Credential Manager); else{" "}
+              <code>--allow-run</code>: Windows PowerShell by absolute path (a script interpreter,
+              so any code in the app can run scripts through it) · none. On an older runtime macOS,
+              Linux and Windows (with the runtime&apos;s store) also bake an unscoped{" "}
+              <code>--allow-sys</code> (the runtime&apos;s store)
             </td>
             <td>full</td>
           </tr>
@@ -2471,9 +2472,18 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
         uses the pinned runtime&apos;s own Keychain store on macOS (the <code>security</code>{" "}
         tool under an older or the stock runtime), the runtime&apos;s libsecret on Linux and, on
-        Windows, WinRT <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
-        — the Windows backend is verified by the Windows CI round-trip); <code>shell</code>,{" "}
-        <code>dialogs</code> and <code>keep-awake</code>{" "}
+        Windows, the runtime&apos;s own Credential Manager store where the runtime has one
+        (DPAPI-encrypted, written by the app&apos;s own process, values up to 64 KiB, no PowerShell
+        and no <code>--allow-run</code>), else WinRT <code>PasswordVault</code> via{" "}
+        <code>powershell.exe</code>{" "}
+        — that backend is verified by the Windows CI round-trip). An item an older denext wrote to
+        the <code>PasswordVault</code>{" "}
+        moves to the Credential Manager when the app looks it up during its first run of the updated
+        build (with <code>desktop.app.identifier</code>{" "}
+        set, and an app data folder from an earlier run); a key the app first reads only after that
+        run stays in the{" "}
+        <code>PasswordVault</code>, which the app no longer reads (nothing there without
+        PowerShell); <code>shell</code>, <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Under denext&apos;s pinned runtime, <code>dialogs</code>{" "}
         shows the OS&apos;s own panels (<code>NSOpenPanel</code> as a sheet on the window,{" "}
         <code>IFileOpenDialog</code>; on Linux the desktop&apos;s own dialog through
@@ -3507,9 +3517,22 @@ export default defineDesktopExtension({
         the main window is open or hidden, and not once it has closed for good. On macOS the submenu
         starts with Minimize and Zoom and ends with Bring All to Front, as the OS&apos;s Window menu
         does. A page&apos;s <code>setAppMenu</code>{" "}
-        keeps its menu: the items join its own "Window" submenu when it has one, after a separator,
-        else the submenu is appended; the backend answers these items itself, so{" "}
-        <code>onAppMenuItem</code> never sees them.
+        keeps its menu: the items join its own "Window" submenu when it has one (matched ignoring
+        case and a <code>&amp;</code>{" "}
+        mnemonic; on macOS it is then titled "Window"), after a separator, else the submenu is
+        appended; the backend answers these items itself, so <code>onAppMenuItem</code>{" "}
+        never sees them.
+      </p>
+      <p id="desktop-close-window-item">
+        denext adds no Close Window item or Cmd+W of its own. Under denext&apos;s pinned runtime
+        every macOS menu bar (the managed one, a page&apos;s <code>setAppMenu</code>{" "}
+        and each window&apos;s bar) gets Close Window (Cmd+W, which asks the window&apos;s close
+        handlers as its close button does, so <code>onCloseRequested</code> sees it with{" "}
+        <code>reason: "close"</code>) unless an item already closes the window (a{" "}
+        <code>{'{ role: "close" }'}</code>) or takes plain Cmd+W: at the end of a "File" submenu,
+        else at the top of the "Window" submenu (above Minimize and Zoom, and denext&apos;s items),
+        else in a "Window" submenu of its own. To give Cmd+W another meaning, bind it to an item of
+        your own (<code>accelerator: "CommandOrControl+W"</code>).
       </p>
       <p id="desktop-window-menu-items">
         <code>items: [{"{ id, label, accelerator? }"}]</code>{" "}
@@ -4542,7 +4565,9 @@ export default {
           the user&apos;s own, 0700), and takes only the connection that presents that token. The
           helper leaves when the connection closes, so it never outlives the app. The helper&apos;s
           windows list in the Dock menu and App Exposé is empty, and the menu bar stays the
-          accessory app&apos;s (none): handle Cmd+W in the page (a <code>keydown</code> with{" "}
+          accessory app&apos;s (none). Cmd+W closes the key window through the runtime&apos;s
+          built-in Close Window item where the runtime adds one (denext&apos;s pinned runtime); on
+          an older runtime handle Cmd+W in the page (a <code>keydown</code> with{" "}
           <code>metaKey</code> calling <code>closeWindow()</code>).
         </li>
         <li>
@@ -4571,9 +4596,11 @@ export default {
         the runtime&apos;s focus only activates the app, the window still comes up and takes the
         keyboard when macOS grants the activation. An accessory app has no menu bar: the editing
         shortcuts (Cmd+C, Cmd+V, Cmd+X, Cmd+A, Cmd+Z) and Cmd+Q still work through the host&apos;s
-        built-in menu while the app sets none of its own, but nothing closes the window on Cmd+W, so
-        handle it in the page (a <code>keydown</code> with <code>metaKey</code> calling{" "}
-        <code>closeWindow()</code>).
+        built-in menu while the app sets none of its own, and so does Cmd+W where the runtime adds
+        Close Window to it (denext&apos;s pinned runtime; see{" "}
+        <a href="#desktop-close-window-item">Close Window</a>). On an older runtime nothing closes
+        the window on Cmd+W, so handle it in the page (a <code>keydown</code> with{" "}
+        <code>metaKey</code> calling <code>closeWindow()</code>).
       </p>
       <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
       <p>

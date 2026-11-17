@@ -31,6 +31,7 @@ import {
   desktopDataTokenRuntimeProblem,
   desktopSidecarIntegrityRuntime,
   macSecureStoreRuntime,
+  windowsSecureStoreRuntime,
 } from "./desktop-launch-policy.ts";
 import {
   secureStoreLegacy,
@@ -152,13 +153,14 @@ const LEGACY_PERMISSION_CONTEXT: DesktopPermissionContext = {
   legacy: true,
   bakedCapabilities: false,
   macRuntimeStore: false,
+  windowsRuntimeStore: false,
 };
 
 /**
  * The permission context for `config` under the runtime this process packages for: its
  * `desktop.secureStore.legacy`, and whether the pinned runtime reads the baked capability list and
- * has its own macOS store (`desktopBakedCapabilitiesRuntime`, `macSecureStoreRuntime`; overridden
- * by `options`).
+ * has its own macOS and Windows stores (`desktopBakedCapabilitiesRuntime`, `macSecureStoreRuntime`,
+ * `windowsSecureStoreRuntime`; overridden by `options`).
  *
  * @param config The project config.
  * @param options Overrides for the runtime facts (default: the pinned runtime's).
@@ -166,13 +168,15 @@ const LEGACY_PERMISSION_CONTEXT: DesktopPermissionContext = {
  */
 export function desktopPermissionContext(
   config: unknown,
-  options: { bakedCapabilities?: boolean; macSecureStore?: boolean } = {},
+  options: { bakedCapabilities?: boolean; macSecureStore?: boolean; windowsSecureStore?: boolean } =
+    {},
 ): DesktopPermissionContext {
   const desktop = (config as { desktop?: unknown } | null | undefined)?.desktop;
   return {
     legacy: secureStoreLegacy(desktop),
     bakedCapabilities: options.bakedCapabilities ?? desktopBakedCapabilitiesRuntime(),
     macRuntimeStore: options.macSecureStore ?? macSecureStoreRuntime(),
+    windowsRuntimeStore: options.windowsSecureStore ?? windowsSecureStoreRuntime(),
   };
 }
 
@@ -233,10 +237,11 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // Keychain, items only the app may read), which needs an unscoped --allow-sys until the runtime
     // gates it on the capability list baked into app.json. macOS keeps `security` while
     // `desktop.secureStore.legacy` is on (moving older items over, or as the store under a runtime
-    // without its own), never otherwise. Windows: WinRT PasswordVault via `powershell.exe`, baked
-    // as --allow-run of its absolute path (WINDOWS_POWERSHELL): the runtime has no Windows store of its own (its
-    // Deno.desktop.secureStore answers there only on macOS and Linux), and PowerShell is a script
-    // interpreter, so that grant is full trust (the manual line says so).
+    // without its own), never otherwise. Windows: the runtime's own store where it has one (the
+    // Credential Manager, in the app's own process), baked as Linux's; under an older or the stock
+    // runtime WinRT PasswordVault via `powershell.exe`, baked as --allow-run of its absolute path
+    // (WINDOWS_POWERSHELL): PowerShell is a script interpreter, so that grant is full trust (the
+    // manual line says so). The static `os` lists are an older runtime's.
     os: {
       darwin: secureStorePermissionSet("darwin", LEGACY_PERMISSION_CONTEXT),
       linux: secureStorePermissionSet("linux", LEGACY_PERMISSION_CONTEXT),
@@ -245,10 +250,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     permissionsFor: (os, ctx) => secureStorePermissionSet(os, ctx),
     trust: "full",
     notes:
-      "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / Windows PasswordVault)",
+      "OS keychain (the runtime's Keychain store on macOS / libsecret on Linux / the Credential Manager on Windows, or PasswordVault through PowerShell under an older runtime)",
     manual: [
       "secure-store: Linux needs a Secret Service provider (GNOME Keyring, or KWallet with its Secret Service enabled) that can be unlocked; the pinned runtime reaches it through libsecret (`libsecret-1.so.0`, loaded at run time: the .deb depends on libsecret-1-0, the .rpm on libsecret). Without one, or under the stock runtime, every call fails `backend_unavailable` with the reason, never a plain file.",
-      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run of Windows PowerShell (by absolute path, C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe): PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
+      "secure-store: Windows uses the runtime's own store where the Deno Desktop runtime has one (the Credential Manager, DPAPI-encrypted, written by the app's own process, values up to 64 KiB; no PowerShell and no --allow-run). Under an older or the stock runtime it uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip), so the Windows package bakes --allow-run of Windows PowerShell (by absolute path, C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe): PowerShell is a script interpreter, so any code in the app's Deno process (a dependency, an extension) can run any script through it, as the user. The capability itself passes only its fixed script, with the value on stdin.",
     ],
   },
   fs: {
@@ -750,6 +755,12 @@ export interface DesktopBuildFlagOptions {
    * whatever this says. Default: the pinned runtime's.
    */
   readonly macSecureStore?: boolean;
+  /**
+   * The runtime has its own Windows secure store (see `windowsSecureStoreRuntime`): Windows then
+   * bakes what Linux does for the secure store, and no `--allow-run` of Windows PowerShell.
+   * Default: the pinned runtime's.
+   */
+  readonly windowsSecureStore?: boolean;
 }
 
 /** The relevant slice of `denext.config.ts` for flag derivation. */

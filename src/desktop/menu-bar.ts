@@ -75,15 +75,23 @@ export function managedBar(os: string): DesktopMenuItem[] {
 
 /**
  * `bar` with the "Window" submenu merged in: into its own "Window" submenu (after a separator)
- * when it has one, else appended.
+ * when it has one (matched ignoring case and a `&` mnemonic), else appended.
+ *
+ * On macOS the merged submenu is titled exactly "Window" (macOS has no mnemonics): the Deno Desktop
+ * runtime adds Close Window (Cmd+W) to every macOS menu bar that has no item closing the window,
+ * at the end of a "File" submenu, else at the top of the submenu titled "Window", else in a
+ * "Window" submenu of its own, so a page's `"window"` or `"&Window"` would get a second Window
+ * menu. denext adds no Close Window or Cmd+W of its own.
  *
  * @param bar The menu bar.
  * @param items The submenu's entries (`undefined`: none to merge).
+ * @param os The running OS (default: not macOS, the page's label kept).
  * @returns The bar with the submenu.
  */
 export function mergeWindowSubmenu(
   bar: readonly DesktopMenuItem[],
   items: DesktopMenuItem[] | undefined,
+  os?: string,
 ): DesktopMenuItem[] {
   if (!items) return [...bar];
   let merged = false;
@@ -96,7 +104,8 @@ export function mergeWindowSubmenu(
     const joined = own.length > 0 && items.length > 0
       ? [...own, "separator" as const, ...items]
       : [...own, ...items];
-    return { submenu: { label: entry.submenu.label, items: joined } };
+    const label = os === "darwin" ? "Window" : entry.submenu.label;
+    return { submenu: { label, items: joined } };
   });
   if (!merged) out.push({ submenu: { label: "Window", items } });
   return out;

@@ -20508,6 +20508,12 @@
             },
             {
               "kind": "property",
+              "name": "secureEmailChange",
+              "signature": "secureEmailChange?: boolean",
+              "doc": "Confirm an email change from both addresses (default `true`, GoTrue's\n`GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED`): `PUT /user { email }` sends a code to the\naccount's current, verified address as well as the new one, and the change applies once\nboth are redeemed (the first answers `{ msg }` and starts no session). `false` confirms it\nfrom the new address alone. An account with no verified address confirms from the new one."
+            },
+            {
+              "kind": "property",
               "name": "anonymousUsers",
               "signature": "anonymousUsers?: boolean",
               "doc": "Allow `signInAnonymously()` (default `false`)."
@@ -32289,7 +32295,7 @@
           "kind": "function",
           "signature": "safeRedirectLocation(location: string): string",
           "doc": "Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.",
-          "docFull": "Make a redirect `Location` safe against open redirects. An explicit\n`http(s)://` absolute URL is preserved (a deliberately-configured external\nredirect); anything else is forced to a single-slash, same-origin path so a\nprotocol-relative (`//host`) or backslash (`/\\host`) prefix — which browsers\nresolve cross-origin — cannot escape the current origin.\n\nSEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully\nqualified `http(s)://…` value is returned as-is (no host allowlist), so it is an\nopen redirect if built from untrusted input. Only pass an absolute URL that is\nstatically configured or otherwise trusted; for anything derived from the request\n(query/path/header), pass a PATH so it is pinned to the current origin, or\nvalidate the host against your own allowlist before calling this.",
+          "docFull": "Make a redirect `Location` safe against open redirects. An explicit\n`http(s)://` absolute URL is preserved (a deliberately-configured external\nredirect); anything else is forced to a single-slash, same-origin path so a\nprotocol-relative (`//host`) or backslash (`/\\host`) prefix — which browsers\nresolve cross-origin — cannot escape the current origin.\n\nA value is treated as absolute only when it starts with `http(s)://` as given; one\nthat becomes absolute only after its control characters are stripped is a path.\n\nSEC-L3 — the absolute-URL passthrough is deliberate but unconstrained: a fully\nqualified `http(s)://…` value is returned as-is (no host allowlist), so it is an\nopen redirect if built from untrusted input. Only pass an absolute URL that is\nstatically configured or otherwise trusted; for anything derived from the request\n(query/path/header), pass a PATH so it is pinned to the current origin, or\nvalidate the host against your own allowlist before calling this.",
           "params": [
             {
               "name": "location",
@@ -46418,6 +46424,12 @@
               "name": "macSecureStore",
               "signature": "readonly macSecureStore?: boolean",
               "doc": "The runtime has its own macOS secure store (see `macSecureStoreRuntime`). Reported in the\npermission context; `security` is baked exactly while `desktop.secureStore.legacy` is on,\nwhatever this says. Default: the pinned runtime's."
+            },
+            {
+              "kind": "property",
+              "name": "windowsSecureStore",
+              "signature": "readonly windowsSecureStore?: boolean",
+              "doc": "The runtime has its own Windows secure store (see `windowsSecureStoreRuntime`): Windows then\nbakes what Linux does for the secure store, and no `--allow-run` of Windows PowerShell.\nDefault: the pinned runtime's."
             }
           ]
         },

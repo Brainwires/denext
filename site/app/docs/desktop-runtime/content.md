@@ -123,6 +123,7 @@ ours is open yet.
 | [Page downloads](#page-downloads)                                                            | laufey, Deno runtime | planned                                                                      |
 | [The secure store on Linux](#the-secure-store-on-linux)                                      | laufey, Deno, denext | planned                                                                      |
 | [The secure store on macOS](#the-secure-store-on-macos)                                      | laufey, Deno, denext | planned                                                                      |
+| [The secure store on Windows](#the-secure-store-on-windows)                                  | laufey, denext       | planned                                                                      |
 | [Baked capabilities](#baked-capabilities)                                                    | Deno runtime, denext | planned                                                                      |
 | [System stats](#system-stats)                                                                | Deno runtime, denext | planned                                                                      |
 | [The rich clipboard](#the-rich-clipboard)                                                    | laufey, Deno, denext | planned                                                                      |
@@ -555,6 +556,29 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   first read (read with `security`, stored in the runtime's store, then deleted), so a signed-in
   user stays signed in; a runtime without the store keeps the `security` path.
 - **Layer:** laufey, Deno runtime, denext.
+- **Upstream:** planned.
+
+### The secure store on Windows
+
+- **What:** `Deno.desktop.secureStore` on Windows (from `3.0.0-denext.25`, laufey 0.8.1): a
+  generic credential per (service, account) in the Credential Manager, written by the app's own
+  process (`CredWriteW` / `CredReadW` / `CredDeleteW`, kept for this user on this machine, not
+  roamed), which Windows encrypts with the user's DPAPI key. Each credential's name carries the app
+  id (the packaged app's `desktop.app.identifier`), so one app never reads or overwrites another's
+  item. A value up to 64 KiB is split over several credentials (a reader sees the whole old value
+  or the whole new one); a larger one is refused. Nothing prompts or waits; a logon session with
+  no credential store (a service, an SSH key logon) rejects `SecureStoreUnavailable` with the
+  reason, never a plaintext fallback.
+- **Why:** the runtime had no Windows store, so denext's `secure-store` ran the WinRT
+  `PasswordVault` through Windows PowerShell, which meant baking `--allow-run` of PowerShell, a
+  script interpreter: full trust for any code in the app. With the runtime's store denext bakes no
+  program on Windows. The values keep denext's base64 form, and an item an older denext wrote to
+  the `PasswordVault` (resource = service, user name = key) moves into the Credential Manager on
+  the app's lookup of it during its first run of the updated build (the Linux rule: a
+  `.laufey-secret-store-v2` marker in the app data directory ends that run's window, and only an
+  app that had run here before, with an identifier, moves anything). A key the app first reads
+  after that run stays in the `PasswordVault`, which the app no longer reads.
+- **Layer:** laufey, denext.
 - **Upstream:** planned.
 
 ### Baked capabilities

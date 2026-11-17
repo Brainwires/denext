@@ -20,6 +20,7 @@ import {
   supportsMediaCapture,
   supportsOverlayTray,
   supportsSidecarIntegrity,
+  supportsWindowsSecureStore,
 } from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
@@ -302,6 +303,24 @@ export function macSecureStoreRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsMacSecureStore);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime with
+ * its own Windows secure store (`Deno.desktop.secureStore` on Windows: the Credential Manager):
+ * denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local
+ * `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) from `FIRST_WINDOWS_SECURE_STORE_RUNTIME`
+ * (`3.0.0-denext.25`). Otherwise Windows stores through Windows PowerShell and the PasswordVault.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether the runtime has the store.
+ */
+export function windowsSecureStoreRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsWindowsSecureStore);
 }
 
 /**

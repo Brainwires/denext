@@ -653,7 +653,9 @@ The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, 
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
 only; an unsigned build has no protection against another program's writes; Linux libsecret inside the runtime — no `secret-tool`; the `.deb` / `.rpm` depend
-on `libsecret-1-0` / `libsecret` — Windows PasswordVault; on Linux a missing Secret Service provider
+on `libsecret-1-0` / `libsecret` — Windows the Credential Manager where the runtime has its own Windows store (DPAPI, written
+by the app's own process, up to 64 KiB, no PowerShell; items an older denext wrote to the PasswordVault move over on their lookup during
+the first run only), else the PasswordVault through PowerShell; on Linux a missing Secret Service provider
 or a locked keyring rejects `backend_unavailable` with the reason; each caller has its own namespace:
 pages `<identifier>/page` (earlier page items move in on first read), an extension
 `<identifier>/ext/<name>` through `ctx.secureStore` / `host.secureStore` (`get` / `set` / `delete`;

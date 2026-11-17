@@ -22,6 +22,7 @@ import {
 import type { DesktopAppMenuItemContext } from "../src/desktop/app-menus.ts";
 import { createDesktopBridge } from "../src/desktop/bridge.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
+import { managedBar, mergeWindowSubmenu } from "../src/desktop/menu-bar.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
 /** A runtime window that records its application menus. */
@@ -665,4 +666,59 @@ Deno.test("app menus: unsupported without an app window to set menus on", async 
     appLevelMenu: boolean;
   };
   assertEquals([caps.customMenus, caps.appLevelMenu], [false, false]);
+});
+
+// ---- the runtime's Close Window (macOS) ---------------------------------------------------------
+
+/** Every entry of `bar`, depth first, as `role:<name>` / `id:<id>` / `<label> {`. */
+function outline(bar: readonly DesktopMenuItem[]): string[] {
+  const out: string[] = [];
+  for (const e of bar) {
+    if (e === "separator") continue;
+    if ("role" in e) out.push(`role:${e.role.role}`);
+    else if ("item" in e) out.push(`id:${e.item.id}`, e.item.accelerator ?? "");
+    else out.push(`${e.submenu.label} {`, ...outline(e.submenu.items));
+  }
+  return out;
+}
+
+Deno.test("menu bar (macOS): denext adds no Close Window or Cmd+W of its own; the runtime adds the one item", () => {
+  const items: DesktopMenuItem[] = [{
+    item: { id: "denext:window:new", label: "New Window", enabled: true },
+  }];
+  const bars = [managedBar("darwin"), mergeWindowSubmenu(managedBar("darwin"), items, "darwin")];
+  for (const bar of bars) {
+    const entries = outline(bar);
+    assert(!entries.includes("role:close"), entries.join(" "));
+    assert(!entries.some((e) => /^(CommandOrControl|CmdOrCtrl|Cmd|Command)\+W$/i.test(e)));
+  }
+});
+
+Deno.test("menu bar (macOS): the Window menu denext merges into is titled Window, so the runtime's Close Window joins it", () => {
+  const items: DesktopMenuItem[] = [{
+    item: { id: "denext:window:new", label: "New Window", enabled: true },
+  }];
+  for (const label of ["window", "&Window", " WINDOW "]) {
+    const page: DesktopMenuItem[] = [
+      { submenu: { label: "App", items: [{ role: { role: "quit" } }] } },
+      { submenu: { label, items: [{ item: { id: "own", label: "Own", enabled: true } }] } },
+    ];
+    // The runtime looks for a submenu titled exactly "Window" (else it adds one): one Window menu.
+    const mac = mergeWindowSubmenu(page, items, "darwin");
+    assertEquals(
+      mac.filter((e) => typeof e === "object" && "submenu" in e).map((e) =>
+        (e as { submenu: { label: string } }).submenu.label
+      ),
+      ["App", "Window"],
+    );
+    assertEquals(outline(mac).slice(-5), ["Window {", "id:own", "", "id:denext:window:new", ""]);
+    // Elsewhere (a window's own bar, where a mnemonic means something) the page's label stays.
+    for (const os of ["windows", "linux"]) {
+      const bar = mergeWindowSubmenu(page, items, os);
+      assertEquals((bar[1] as { submenu: { label: string } }).submenu.label, label);
+    }
+  }
+  // Nothing merged: the page's menu as it is.
+  const page: DesktopMenuItem[] = [{ submenu: { label: "window", items: [] } }];
+  assertEquals(mergeWindowSubmenu(page, undefined, "darwin"), page);
 });
