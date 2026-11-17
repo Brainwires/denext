@@ -95,6 +95,24 @@ Deno.test("useActionState permalink renders as the SSR form action (no-JS fallba
   assert(html.includes(`action="/submit-fallback"`), html);
 });
 
+Deno.test("useActionState permalink passes the URL scheme check a string action passes", async () => {
+  const form = (permalink: string) =>
+    renderToString(
+      h(function Form(): VNode {
+        const [, submit] = useActionState<number, unknown>((s) => s, 0, permalink);
+        return h("form", { action: submit }, h("button", { formAction: submit }, "Go"));
+      }, null),
+    );
+  // A permalink is often built from the request (`?next=`): a script scheme renders no attribute.
+  for (const hostile of ["javascript:void 0", " Java\tScript:void 0", "data:text/html,x"]) {
+    const html = await form(hostile);
+    assertEquals(html, "<form><button>Go</button></form>");
+  }
+  const ok = await form("https://example.com/next?a=1&b=2");
+  assert(ok.includes(`<form action="https://example.com/next?a=1&amp;b=2">`), ok);
+  assert(ok.includes(`<button formaction="https://example.com/next?a=1&amp;b=2">`), ok);
+});
+
 Deno.test("useActionState without a permalink renders no form action attribute", async () => {
   const html = await renderToString(
     h(function Form(): VNode {

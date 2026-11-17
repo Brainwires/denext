@@ -1259,7 +1259,7 @@ function attributeFor(
   custom: boolean,
   props: Record<string, unknown>,
 ): string {
-  const action = formActionAttribute(rawName, value);
+  const action = formActionAttribute(rawName, value, tag);
   if (action !== null) return action;
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
   if (typeof value === "function" || typeof value === "symbol" || value == null) return "";
@@ -1274,11 +1274,22 @@ function attributeFor(
   return namedAttribute(prop, aliasedAttrName(prop) ?? prop, value, tag);
 }
 
-/** A server action's endpoint / a permalink for `action`/`formAction`, else null. */
-function formActionAttribute(rawName: string, value: unknown): string | null {
+/**
+ * A server action's endpoint / a permalink for `action`/`formAction`, else null. The permalink
+ * is the app's string (often built from the request, `?next=`): it passes the same scheme check
+ * as a string `action`, and one that is refused renders no attribute.
+ */
+function formActionAttribute(
+  rawName: string,
+  value: unknown,
+  tag: string | undefined,
+): string | null {
   if (rawName !== "action" && rawName !== "formAction") return null;
   const url = formActionUrl(value);
-  return url === null ? null : ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
+  if (url === null) return null;
+  const name = rawName.toLowerCase();
+  const safe = sanitizeUrlAttr(tag, name, url);
+  return safe === null ? "" : ` ${name}="${escapeHtml(safe)}"`;
 }
 
 /** A non-boolean React prop's attribute, under its (aliased) attribute `name`. */
