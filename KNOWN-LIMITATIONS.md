@@ -129,11 +129,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
-  `denext start` begins its graceful shutdown on those events too, but Windows ends a console
-  process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
-  the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
-  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully. Planned for 5.x (ROADMAP, "5.x / Runtime fork").
+- **On Windows, a closed console window, logoff or system shutdown bounds the drain.**
+  `denext start` drains on those events too, and denext's runtime holds Windows' console handler
+  while the drain runs (the shutdown listener's promise settles when the process ends), but Windows
+  itself ends the process after its own limit: about 5 seconds for a closed console window and
+  about 20 seconds for logoff or shutdown. A drain longer than that is cut off there; on stock
+  Deno, whose handler returns at once, it is cut off immediately. Stop a server with Ctrl-C or
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
 - **The production server's idle memory trim is glibc Linux only, and a trim can delay one
   request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
   between event loop polls, so a request that arrives while one runs waits for it once (up to about
