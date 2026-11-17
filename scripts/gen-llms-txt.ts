@@ -92,6 +92,9 @@ export function llmsIndex(): string {
   \`runJob()\` / \`denext job <name>\`, run history.
 - [denext's Deno toolchain](${SITE}/docs/toolchain): the pinned Deno build project verbs run on
   (\`Deno.SQL\`, Vitest/Jest compatibility), and \`denext task\` vs \`deno task\`.
+- [Runtime reference](${SITE}/docs/runtime-reference): everything denext's Deno does differently
+  from stock Deno 2.9.8 (APIs, flags, environment variables, Node.js and npm behavior, the
+  supply-chain gates, permissions, the Deno Desktop APIs, and the fixes it carries), by area.
 - [Coming from Supabase](${SITE}/docs/coming-from-supabase): a concept map and migration
   checklist (schema, policies, users and files).
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.
