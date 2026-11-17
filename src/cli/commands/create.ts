@@ -11,7 +11,7 @@ import {
   scaffoldProject,
   type ScaffoldTemplate,
 } from "../../build/scaffold.ts";
-import { pinEligible } from "../../build/eligible-pins.ts";
+import { type EligibleOptions, pinEligible } from "../../build/eligible-pins.ts";
 import {
   MONOREPO_APP_DIR,
   MONOREPO_CONFIGS,
@@ -115,9 +115,7 @@ async function runCreate(
     allowExisting: mode === "init",
   };
   const monorepo = monorepoMode(on("monorepo"), mode);
-  const { written, notes: held } = await scaffoldEligible(options, mode, monorepo);
-  for (const p of written) console.log(`   + ${p}`);
-  for (const note of held) console.log(`\n  ${note}`);
+  await scaffoldAndReport(options, mode, monorepo);
   // `init` scaffolds next to an existing package.json: its dependencies may need exceptions.
   const [jail, ...jailMore] = (await applyJailExceptions(dir)).lines;
   if (jail) console.log(`\n  ${[jail, ...jailMore.map((l) => `    ${l}`)].join("\n")}`);
@@ -143,6 +141,27 @@ function monorepoMode(selected: boolean, mode: "create" | "init"): boolean {
 }
 
 /**
+ * {@link scaffoldEligible}, then print each file written and each pin the hold kept back.
+ *
+ * @param options What to scaffold.
+ * @param mode `create` or `init`.
+ * @param monorepo A workspace instead of one app.
+ * @param eligibleOptions The registry lookups, rule and clock (tests pass fakes).
+ * @returns The files written.
+ */
+export async function scaffoldAndReport(
+  options: ScaffoldOptions,
+  mode: "create" | "init",
+  monorepo: boolean,
+  eligibleOptions: EligibleOptions = {},
+): Promise<string[]> {
+  const { written, notes: held } = await scaffoldEligible(options, mode, monorepo, eligibleOptions);
+  for (const p of written) console.log(`   + ${p}`);
+  for (const note of held) console.log(`\n  ${note}`);
+  return written;
+}
+
+/**
  * Scaffold with the newest denext Deno's dependency-age hold lets in — this CLI's own release
  * can be too new for it. Checked before anything is written, so a project that can't resolve
  * yet is never made (that exits 1 with when it can).
@@ -151,10 +170,11 @@ async function scaffoldEligible(
   options: ScaffoldOptions,
   mode: "create" | "init",
   monorepo: boolean,
+  eligibleOptions: EligibleOptions = {},
 ): Promise<{ written: string[]; notes: readonly string[] }> {
   // A monorepo's configs (root, app, packages) are planned together: their pins move as one.
   const text = monorepo ? monorepoConfigText(options) : denoJson(options);
-  const eligible = await pinEligible(text, options.dir);
+  const eligible = await pinEligible(text, options.dir, eligibleOptions);
   if (!eligible.ok) {
     console.error(`denext ${mode}: ${eligible.error}`);
     Deno.exit(1);

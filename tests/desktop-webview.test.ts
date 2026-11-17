@@ -1824,3 +1824,52 @@ Deno.test('attachWebView: follow "frame" without getAnimations counts start / en
     assertEquals(calls.length, before);
   });
 });
+
+Deno.test('attachWebView: follow "frame" reads "pending" animations, skips an ancestor without getAnimations, and ignores an end elsewhere', async () => {
+  const layout = fakeLayout();
+  await withGlobals(layout.globals, async () => {
+    const { handle } = fakeHandle();
+    const ancestor = { parentElement: null }; // no getAnimations of its own
+    const { el, anims } = animatedAnchor(ancestor, true);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await layout.frame();
+    const fire = (type: string, target: unknown) =>
+      layout.listeners.get(type)!.forEach((f) => (f as (e: unknown) => void)({ target }));
+    anims.push({ playState: "pending" });
+    fire("animationstart", el);
+    for (let i = 0; i < 4; i++) await layout.frame();
+    assert(layout.frames.length > 0, "a pending animation keeps the frames coming");
+    // An end event for an element off the chain changes nothing.
+    fire("animationend", { parentElement: null });
+    await layout.frame();
+    assert(layout.frames.length > 0, "an end elsewhere does not stop the motion");
+    anims.length = 0;
+    for (let i = 0; i < 8; i++) await layout.frame();
+    assertEquals(layout.frames.length, 0);
+    detach();
+  });
+});
+
+Deno.test("attachWebView: without requestAnimationFrame, matchMedia or devicePixelRatio it measures on a timer", async () => {
+  const layout = fakeLayout();
+  const globals: Record<string, unknown> = { ...layout.globals };
+  delete globals.requestAnimationFrame;
+  delete globals.cancelAnimationFrame;
+  delete globals.matchMedia;
+  delete globals.devicePixelRatio;
+  await withGlobals(globals, async () => {
+    const { handle, calls } = fakeHandle();
+    const { el } = animatedAnchor(null, false);
+    const detach = attachWebView(handle, el, { follow: "frame" });
+    await new Promise((r) => setTimeout(r, 40));
+    assert(calls.includes("bounds:10,20,300,200"), calls.join());
+    // A motion asks for timer frames; detaching mid-motion clears the pending one.
+    layout.listeners.get("animationstart")!.forEach((f) =>
+      (f as (e: unknown) => void)({ target: el })
+    );
+    detach();
+    const before = calls.length;
+    await new Promise((r) => setTimeout(r, 40));
+    assertEquals(calls.length, before, "no measure after the detach");
+  });
+});

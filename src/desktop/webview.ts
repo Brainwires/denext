@@ -489,8 +489,8 @@ function adopt(id: string): WebViewHandle {
   let backlog: WireEvent[] | null = queued.length > 0 ? queued : null;
   r.views.set(id, (e) => backlog ? void backlog.push(e) : process(e));
   if (backlog) {
+    const events = backlog; // later events push onto this same list until it is taken
     setTimeout(() => {
-      const events = backlog ?? [];
       backlog = null;
       events.forEach(process);
     }, 0);
@@ -842,7 +842,7 @@ export function attachWebView(
   options: AttachWebViewOptions = {},
 ): WebViewAttachment {
   const g = globalThis as unknown as LayoutGlobals;
-  const a: Attachment = {
+  const a = {
     g,
     handle,
     element,
@@ -852,8 +852,7 @@ export function attachWebView(
     inFlight: false,
     dirty: false,
     intersecting: true,
-    detach: () => {},
-  };
+  } as Attachment; // `detach` is set below, before anything can call it
   const onChange = () => schedule(a);
   const resize = g.ResizeObserver ? new g.ResizeObserver(onChange) : undefined;
   resize?.observe(element);
