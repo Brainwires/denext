@@ -38,12 +38,30 @@ and this project adheres to
   take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
   command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,
   `DENO_KERNEL_SANDBOX=off|warn` (which only lowers the mode), `deno compile --kernel-sandbox`
-  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. The preview is
-  settings and reports: nothing is enforced, `auto` (the default) changes nothing, `warn` prints
-  how many rules only Deno's checks would hold, the report prints the compiled policy and every
-  gap, and `enforce` / `broker` refuse to start because no enforcer is built in yet. Nothing
-  changes for a run that doesn't ask for it. The new [Kernel sandbox](https://denext.dev/docs/kernel-sandbox)
-  section describes the design, the guarantee matrix, the threat model and each OS; the full
+  (baked into the binary) and a `kernelSandbox` object in `deno info --json`. `auto` (the default)
+  changes nothing in 4.x, `warn` prints how many rules only Deno's checks would hold, and the report
+  prints the compiled policy and every gap. `--kernel-sandbox=enforce` confines `deno run` and
+  `deno serve` on Linux (Landlock and seccomp, x86_64 and aarch64) and macOS (Seatbelt), so FFI,
+  Node-API addons and children are held to the grant too. It refuses to start only over a rule the
+  kernel would hold more loosely than Deno (a fail-open gap, such as a host-scoped `--allow-net` or
+  a write deny inside a write allow on Linux, which need the Mode B supervisor, or a port list before
+  Landlock ABI 4), and runs with the documented gaps the report lists: a macOS `host:port` grant
+  reaches any host on the port, an IP / `localhost` port list any address on those ports
+  (169.254.169.254 included), and a scoped `--allow-ffi` any library in the read scope. On Linux it
+  scrubs the environment to the `--allow-env` names plus a short runtime list (children inherit
+  only that), refuses chmod / utime by path inside the write scope too (`cp -p`, `tar`, git's
+  executable bit), holds a read deny inside an allow by expansion (up to 20,000 entries / 64
+  levels), reads remote modules from the cache only and treats an unreadable `.npmrc` as absent.
+  `deno test` (before type-checking), `bench`, the REPL, Jupyter, `eval` with a deny, a package's
+  native executable under `deno x`, a program from stdin (Linux) and `deno compile` refuse
+  `enforce`, so a `deno.json` `"kernelSandbox": "enforce"` breaks `deno test` and `denext dev`:
+  put the flag on the start command. `deno eval` refuses the `--kernel-sandbox` flags and applies
+  its deny flags. Lint plugins (`deno lint`, the language server) run with no kernel sandbox and
+  aren't refused either; `deno lint` warns when `deno.json` sets the key. `broker` still refuses to start, Windows has
+  no enforcer, and `deno info --json`'s `enforced` stays `false` (read `effective` and
+  `enforcerBuilt`). Nothing changes for a run that doesn't ask for it. The new
+  [Kernel sandbox](https://denext.dev/docs/kernel-sandbox) section describes what runs today, the
+  design, the guarantee matrix, the threat model, each OS and the troubleshooting; the full
   sandbox, with automatic enforcement, lands in denext 5.0.
 - **The desktop window test covers the backend hooks in a real window.** The kitchen sink's
   packaged-window test (`desktop-window.yml`, on Linux, macOS arm64, macOS Intel and Windows) has a
@@ -93,10 +111,22 @@ and this project adheres to
   `desktop: app update: 99.0.0 is running, updated from 1.0.0 (on trial until confirmed)` or
   `… 1.0.0 is running again; 99.0.0 was rolled back`, from the runtime's update status at startup,
   so a field report shows where an update stopped.
-
 - **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.24.** Besides the kernel
   sandbox preview it tightens the Linux lifecycle-script jail's socket filter
   (GHSA-9363-h8qp-jg52) and ports upstream fixes: `Deno.serve` closing after an early response to
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.25.** Besides the kernel
+  sandbox preview, Linux `/proc` and `/sys` files take the matching `--allow-sys` name instead of
+  `--allow-all` (`processInfo` for this process's files and `processes` for the process list are
+  new names, also in `Deno.permissions.query`), an external permission broker
+  (`DENO_PERMISSION_BROKER_PATH`) that speaks protocol v2 hands back opened files on Unix, `--seed=0`
+  seeds `Math.random`, `Deno.resolveDns()` and `node:dns` work with a zoned link-local name server,
+  a lockfile package name starting with a multi-byte character no longer panics, `--trace-exit`
+  exits when `Error.prepareStackTrace` throws, the desktop CEF host makes no DNS-over-HTTPS
+  (secure DNS) connections, even when the system resolver is a DoH provider, and on Linux's
+  webview backend `onWillNavigate` decides a page with no child frames before anything loads, so
+  a navigation it refuses leaves the page running. It carries security
+  hardening, tightens the Linux lifecycle-script jail's socket filter (GHSA-9363-h8qp-jg52) and
+  ports upstream fixes: `Deno.serve` closing after an early response to
   an unread body and honoring `Connection: close`, header values with CR / LF refused, an abort
   still cancelling a collected `fetch()` body, WebSocket close code 1006 for an abnormal closure
   and a client refusing a wrong `Sec-WebSocket-Accept`, dynamic imports awaiting cached async
@@ -155,13 +185,11 @@ and this project adheres to
   waits on it (denext's) holds Windows' console handler while in-flight requests, the `services/`
   stop and `onShutdown()` run, up to Windows' own limit (about 5 seconds for a closed console, 20
   for logoff or shutdown). `denext serve`, `ui`, `dashboard` and compiled apps share it.
-
 - **An in-memory build drops the unused SQLite bridge on Windows with a short-named temp folder.**
   A build with `write: false` (dev, tests) compared esbuild's outputs against its metafile under
   two spellings of the working folder (a Windows 8.3 short name such as `NIGHTN~1` beside its
   realpath), so nothing matched and the unreachable `openSqlite` bridge and its wasm stayed in the
   output for any user whose name is longer than 8 characters.
-
 - **A plugin's prepare step re-runs in dev for a project reached through a symlink.** macOS's
   file watcher names a changed file through its real path (`/private/var/…` for a project under
   `/var/…`, the real folder of a symlinked checkout), while the step's `watch` globs were resolved
@@ -169,16 +197,13 @@ and this project adheres to
   a GraphQL schema) never regenerated its output. The changed path is now matched, and handed to
   the step, in the project's own spelling, and the SPA dev server keeps recognizing a write into
   the build output under either spelling.
-
 - **The dev server's server-only leak error names a module relative to a symlinked project.** It
   printed the module's absolute real path (`/private/var/…/lib/db.ts`) instead of `lib/db.ts`
   when the project folder was spelled through a symlink.
-
 - **A Deno Desktop capability's unexpected failure is logged in the app's own log.** Outside
   `denext desktop dev` the page still gets only "the capability failed" (the error could carry a
   path), and the error itself, named by its capability and method, now goes to the app's stderr,
   so a packaged app's failure can be diagnosed.
-
 - **An app whose import map reaches denext through a symlink bundles each framework module once.**
   The modules the app's `deno.json` names directly (`mod.ts`, `src/jsx/jsx-runtime.ts`, …) loaded
   under the linked spelling, as the app's config resolves them, while the framework's own imports

@@ -6,14 +6,16 @@ lead: Compiled binaries and packaged desktop apps are where the kernel sandbox s
 
 > [!IMPORTANT]
 > **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** This page is an outline, filled in as these parts land. The
+> in denext 5.0.** This page is an outline, filled in as these parts land: today `enforce` covers
+> `deno run` and `deno serve` only, and `deno compile --kernel-sandbox=enforce` is refused because
+> compiled programs have no enforcer yet. The
 > desktop results below are a draft from the first experiments, being validated (see
 > [Browser engines](#browser-engines-inside-the-sandbox)). The [overview](/docs/kernel-sandbox)
 > has the design.
 
 ## Compiled binaries
 
-**Compiled command-line apps get the full headless
+**In the full sandbox (design), compiled command-line apps get the full headless
 [guarantee matrix](/docs/kernel-sandbox-guarantees) on every platform**: the same cells as any
 fixed-permission run on that platform and kernel. A compiled app has no window and no browser
 engine, so nothing limits what the sandbox can apply.

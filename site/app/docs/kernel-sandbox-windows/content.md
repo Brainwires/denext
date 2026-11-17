@@ -8,7 +8,8 @@ lead: What the kernel sandbox holds on Windows, and what it doesn't. A job objec
 > **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
 > in denext 5.0.** This page is an outline, filled in as the Windows part lands
 > in denext's Deno fork. **Status:** the 4.20 preview's settings and report run on Windows too,
-> but the kernel enforcement they preview is Linux's and macOS's; Windows comes with the full
+> but `enforce` confines a run only on Linux and macOS; on Windows the runtime has no enforcer
+> (`enforcerBuilt: false`), so `enforce` and `broker` refuse to start. Windows comes with the full
 > sandbox in denext 5.0. The [overview](/docs/kernel-sandbox) has the design.
 
 ## What Windows gets

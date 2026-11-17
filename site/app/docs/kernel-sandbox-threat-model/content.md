@@ -8,7 +8,10 @@ lead: What the kernel sandbox defends against, what it doesn't, and where the bo
 > **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
 > in denext 5.0.** **Draft, being validated.** This threat model is checked
 > against the escape-test corpus alongside the [guarantee matrix](/docs/kernel-sandbox-guarantees),
-> and is finished before the release. The [overview](/docs/kernel-sandbox) has the design.
+> and is finished before the release. Today the kernel holds the matrix only in a `deno run` or
+> `deno serve` started with `--kernel-sandbox=enforce` on Linux or macOS, and the `documented` gaps
+> that run lists (port grants held by port, library loading bounded by the read scope) are part of
+> the boundary described here. The [overview](/docs/kernel-sandbox) has the design.
 
 ## The attacker
 
@@ -41,7 +44,13 @@ Within the cells the [guarantee matrix](/docs/kernel-sandbox-guarantees) marks *
 - **Runs that can prompt, and `-A` runs.** A prompt can widen the grant, so there's no fixed policy
   to enforce. Plain `-A` has nothing to narrow.
 - **`env` and `sys`.** Environment variables live in the process's memory, and system information
-  comes from calls libc needs.
+  comes from calls libc needs. (On Linux under `enforce` the environment is scrubbed to the
+  `--allow-env` names and a short runtime list before the program starts, and `/proc/self`,
+  `/proc/cpuinfo`, `/proc/stat` and the cgroup limit files stay readable.)
+- **The `documented` gaps of an `enforce` run.** A macOS `host:port` grant reaches any host on the
+  port; a port list of IP addresses or `localhost` reaches any address on those ports; a scoped
+  `--allow-ffi` loads any library in the read scope; macOS's `sandbox-exec` fallback can start the
+  runtime's own binary again, under the same profile.
 - **Workers and `Deno.permissions.revoke()`.** The kernel policy is per process and equals the
   top-level grant. For a kernel boundary between components, run the component as a subprocess
   with narrower flags.
@@ -59,7 +68,8 @@ Platform gaps are listed cell by cell in the [guarantee matrix](/docs/kernel-san
 
 ## The supervisor's trust boundary
 
-_Being written as this lands._ How Mode B's supervisor is kept small and strict: no JavaScript
+_Design, being written as this lands (Mode B isn't built yet)._ How Mode B's supervisor is kept
+small and strict: no JavaScript
 engine, no user code, no configuration read after the split, the same compiled policy, one handle
 per answer, a strict message format with size and rate limits, and the connection closed on any
 malformed message. Why a policy passed from a parent can only narrow a child.
@@ -69,7 +79,9 @@ malformed message. Why a policy passed from a parent can only narrow a child.
 _Being written as this lands._ Where checking a path and then opening it by name could be raced
 (today's documented limit on [Permissions](/docs/permissions#symlinks-and-allow-scopes)), how
 handing back the opened file instead of a yes/no closes it, and why it doesn't matter for rules the
-kernel enforces itself.
+kernel enforces itself. Outside the kernel sandbox, an external permission broker that speaks
+[protocol v2](/docs/permissions#the-external-permission-broker) already hands back the opened file
+on Unix.
 
 ## What counts as an escape
 

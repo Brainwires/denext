@@ -5923,9 +5923,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           a CEF window makes are the app&apos;s
           (<a href="/docs/desktop-runtime#no-network-requests-from-the-cef-backend">
             what it turns off
-          </a>). So a Linux CEF window never downloads Hunspell dictionaries: denext&apos;s runtime
-          ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT, and an app adds other
-          languages by putting their <code>.bdic</code> files in <code>dictionaries/</code>{" "}
+          </a>), with no DNS-over-HTTPS (secure DNS) connections, even when the system resolver is a
+          DoH provider. So a Linux CEF window never downloads Hunspell dictionaries: denext&apos;s
+          runtime ships them for en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT, and an app adds
+          other languages by putting their <code>.bdic</code> files in <code>dictionaries/</code>
+          {" "}
           beside the host executable in its bundle (Windows and macOS use the OS spellchecker).
         </li>
         <li>
@@ -6080,8 +6082,10 @@ export default {
               same-origin POST&apos;s method and body and loads a cross-origin one by URL.
             </li>
             <li>
-              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides at the
-              response: the request has already been sent, every <code>kind</code> is{" "}
+              WebKitGTK (Linux, 2.40 and later; an older one never calls the hook) decides a page
+              with no child frames at the navigation action, before anything loads. For a page with
+              child frames, a redirect, a reload or back / forward it decides at the response: the
+              request has already been sent. Either way every <code>kind</code> is{" "}
               <code>"other"</code> with no{" "}
               <code>initiator</code>, and back / forward and reloads are reported too.
             </li>
