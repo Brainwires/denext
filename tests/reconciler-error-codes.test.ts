@@ -10,6 +10,7 @@ import {
   ERR_HOOK_BOUNDARIES_OFF,
   ERR_HREF_PARAMS_OFF,
   ERR_IMAGE_BLUR_OFF,
+  ERR_INVALID_CHILD,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
   reconcilerError,
@@ -62,5 +63,9 @@ Deno.test("reconciler errors: the installed texts are the full messages", () => 
     "a route-pattern href (/blog/[slug]) was rendered",
   );
   assertStringIncludes(reconcilerError(ERR_IMAGE_BLUR_OFF).message, "blur placeholder");
+  assertStringIncludes(
+    reconcilerError(ERR_INVALID_CHILD).message,
+    "objects are not valid as a child",
+  );
   assert(!depth.includes("a dev build"), "the full text replaces the short form");
 });

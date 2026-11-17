@@ -34,6 +34,12 @@ export const ERR_HREF_PARAMS_OFF = 8;
  * its clearing was left out (the `__DENEXT_IMAGE_BLUR__` gate).
  */
 export const ERR_IMAGE_BLUR_OFF = 9;
+/**
+ * A child that is an object but not an element: data rendered as a child, or an object shaped
+ * like a host element without the brand `createElement` / `jsx` stamp (React's "Objects are not
+ * valid as a React child").
+ */
+export const ERR_INVALID_CHILD = 10;
 
 /** A full error text: the named component (may be empty) and the fiber it was raised at. */
 export type ErrorText = (name: string, fiber?: Fiber | null) => string;

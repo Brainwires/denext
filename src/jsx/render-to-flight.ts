@@ -31,6 +31,7 @@ import {
   serializeFlightValue,
 } from "./render-shared.ts";
 import type { IdHolder } from "./render-to-string.ts";
+import { hostTagOf } from "./host-tag.ts";
 
 /** A JSON primitive leaf in a Flight tree. */
 export type FlightPrimitive = string | number | boolean | null;
@@ -255,8 +256,9 @@ async function flightVNode(node: VNode, ctx: FlightCtx): Promise<FlightNode> {
   if ((type as unknown) === ERROR_BOUNDARY) return flightErrorBoundary(props, ctx);
   if (isComponentType(type)) return flightComponent(type, props, ctx);
   // Intrinsic host element.
+  const tag = hostTagOf(node);
   const p = await serializeProps(props, ctx);
-  return flightHost(type as string, p, await flightChildren(props.children, ctx), node.key);
+  return flightHost(tag, p, await flightChildren(props.children, ctx), node.key);
 }
 
 /** A fragment, or a context provider whose scope wraps its children. */

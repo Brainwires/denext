@@ -3,6 +3,8 @@
 // arbitrarily-nested-array flattening), and same-type identity.
 
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
+import { isElementBrand } from "../runtime/react-brands.ts";
+import { ERR_INVALID_CHILD, reconcilerError } from "./fiber/errors.ts";
 
 /** The synthetic `type` used for text nodes in the client tree. */
 export const TEXT_TYPE = "#text";
@@ -10,6 +12,25 @@ export const TEXT_TYPE = "#text";
 /** Wrap a raw string value as a text VNode. */
 function textVNode(value: string): VNode {
   return { type: TEXT_TYPE, props: { nodeValue: value }, key: null };
+}
+
+/**
+ * An object child as the element it must be. A host element (a string `type`) carries the
+ * `$$typeof` symbol `createElement` / `jsx` stamp, which JSON cannot express: an object without
+ * it is data (a fetched document, a stored record), never an element the app created, and
+ * rendering it would let that data choose the tag and its props (`dangerouslySetInnerHTML`).
+ * Component, fragment and boundary elements have a function or symbol `type`, which JSON cannot
+ * express either; any other `type` is refused where the fiber is created (fiber-utils.ts).
+ */
+function element(c: object): VNode {
+  const v = c as VNode;
+  if (isElementBrand(v.$$typeof) || typeof v.type !== "string" || v.type === TEXT_TYPE) return v;
+  throw invalidChild();
+}
+
+/** The error for a child that is an object but not an element (React's "Objects are not valid"). */
+export function invalidChild(): Error {
+  return reconcilerError(ERR_INVALID_CHILD);
 }
 
 /** Normalize JSX children into a flat list of renderable VNodes. */
@@ -25,7 +46,7 @@ export function normalizeChildren(children: VNodeChildren): VNode[] {
     }
     if (typeof c === "string") out.push(textVNode(c));
     else if (typeof c === "number") out.push(textVNode(String(c)));
-    else out.push(c as VNode);
+    else out.push(element(c as object));
   };
   push(children as VNodeChild);
   return out;
@@ -80,6 +101,7 @@ function isFlatElementList(list: readonly unknown[]): boolean {
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
     if (c === null || typeof c !== "object" || Array.isArray(c)) return false;
+    element(c);
   }
   return true;
 }
@@ -88,7 +110,7 @@ function isFlatElementList(list: readonly unknown[]): boolean {
 function asVNode(c: VNodeChild): VNode {
   if (typeof c === "string") return textVNode(c);
   if (typeof c === "number") return textVNode(String(c));
-  return c as VNode;
+  return element(c as object);
 }
 
 /** Record that the child at `position` in the result sits at `slot` in its own array. */

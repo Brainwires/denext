@@ -151,6 +151,16 @@ describe("live view island", () => {
       const { render } = await import("../src/testing/render.ts");
       const { h } = await import("../src/jsx/jsx-runtime.ts");
       const { LiveViewIsland } = await import("../src/client/live-view-island.ts");
+      // The socket carries JSON, which has no element brand: the stand-in parser rebuilds each
+      // element with `h`, as the Flight parser the entry installs does.
+      // deno-lint-ignore no-explicit-any
+      const revive = (n: any): any =>
+        Array.isArray(n)
+          ? n.map(revive)
+          : n !== null && typeof n === "object" && typeof n.type === "string"
+          ? h(n.type, { ...n.props, children: revive(n.props?.children) })
+          : n;
+      live.configureLive({ parse: (flight) => revive(flight), refresh: () => refreshes++ });
       const screen = await render(
         h(LiveViewIsland, { ...spec }, h("button", { onClick: { __dnxlv: 2 } }, "+")),
       );
