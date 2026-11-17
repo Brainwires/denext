@@ -213,14 +213,16 @@ Deno.test("secureStore (Linux): a runtime without its own store is backend_unava
   // Validation still comes first (a bad key never reaches a backend).
   const bad = await assertRejects(() => call(cap, "get", { key: "-x" }), DesktopCapError);
   assertEquals(bad.code, "validation");
-  // Windows: PasswordVault through PowerShell, even with a runtime store present (macOS uses the
-  // runtime's store: desktop-secure-store-macos.test.ts).
+  // Windows under a runtime before its own Windows store: PasswordVault through PowerShell, even
+  // with a runtime store present (macOS uses the runtime's store:
+  // desktop-secure-store-macos.test.ts; the Windows store: desktop-secure-store-scoping.test.ts).
   const runtime = fakeRuntimeStore(() => "ok");
   const ran: string[] = [];
   const win = secureStoreCapability({
     service: "com.example.app",
     os: "windows",
     api: runtime.api,
+    runtimeVersion: "3.0.0-denext.24",
     run: (cmd) => {
       ran.push(cmd);
       return Promise.resolve({ code: 1, stdout: "" });

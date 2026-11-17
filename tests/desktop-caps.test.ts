@@ -69,6 +69,12 @@ import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { withDenoProps } from "./helpers/deno-stub.ts";
 
 const OS = Deno.build.os as "darwin" | "windows" | "linux";
+/**
+ * A runtime before the one with its own Windows store: its secure store on Windows is PowerShell +
+ * the PasswordVault, which the Windows tests below drive through a fake runner (otherwise they would
+ * follow the Deno running the tests).
+ */
+const POWERSHELL_STORE_RUNTIME = "3.0.0-denext.24";
 
 function ctx(overrides: Partial<DesktopCapCtx> = {}): DesktopCapCtx {
   return {
@@ -1252,7 +1258,12 @@ function windowsVault(): { run: SecureRunner; store: Map<string, string> } {
 
 Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON payload", async () => {
   const { run } = windowsVault();
-  const cap = secureStoreCapability({ service: "com.example.app", os: "windows", run });
+  const cap = secureStoreCapability({
+    service: "com.example.app",
+    os: "windows",
+    run,
+    runtimeVersion: POWERSHELL_STORE_RUNTIME,
+  });
   const secret = 'k=v\nline2 🔒 "q"';
   await call(cap, "set", { key: "token", value: secret });
   assertEquals(await call(cap, "get", { key: "token" }), secret);
@@ -1286,6 +1297,7 @@ Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is re
   const cap = secureStoreCapability({
     service: "svc",
     os: "windows",
+    runtimeVersion: POWERSHELL_STORE_RUNTIME,
     run: () => {
       throw new Error("the runner must not be reached for an invalid key");
     },
@@ -1302,6 +1314,7 @@ Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is re
   const ok = secureStoreCapability({
     service: "svc",
     os: "windows",
+    runtimeVersion: POWERSHELL_STORE_RUNTIME,
     run: () => {
       reached = true;
       return Promise.resolve({ code: 1, stdout: "" });
@@ -2147,6 +2160,7 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   const cap = secureStoreCapability({
     service: "svc",
     os: "windows",
+    runtimeVersion: POWERSHELL_STORE_RUNTIME,
     run: () => Promise.resolve({ code, stdout }),
   });
   assertEquals(await call(cap, "get", { key: "k" }), null, "empty stdout");
@@ -2171,6 +2185,7 @@ Deno.test("secureStore (Windows): a refused write is tried once more; a second r
   const cap = secureStoreCapability({
     service: "svc",
     os: "windows",
+    runtimeVersion: POWERSHELL_STORE_RUNTIME,
     run: (_cmd, _args, stdin) => {
       // The pages' first calls also look for their namespace's marker (absent: code 1).
       if (JSON.parse(stdin ?? "{}").op !== "set") return Promise.resolve({ code: 1, stdout: "" });
