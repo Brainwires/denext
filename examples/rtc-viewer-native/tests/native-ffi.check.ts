@@ -1,5 +1,6 @@
 // The control API (lib/viewer.ts) on the BUILT native library through Deno FFI, headless:
-// `denext task test` (builds native/ first). The fake camera's H.264 clip goes through
+// `denext task test` in this example (builds native/ first). Named `.check.ts` so the repo's
+// generic test pass, which never builds this example's Rust, does not pick it up. The fake camera's H.264 clip goes through
 // `NativeViewer.push` → `rtcv_push` → VideoToolbox, then the Metal presenter into an offscreen
 // target; `open` is driven through `rtcv_main` called from this (non-UI) thread, which the library
 // must refuse without touching AppKit. No window is opened.

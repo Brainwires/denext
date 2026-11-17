@@ -2,7 +2,7 @@
 // connection: the control API over a fake binding (lib/viewer.ts), the ABI tables against the Rust
 // source (lib/native.ts ↔ native/src), the SDP helpers, the transform worker's pump and the WHIP
 // endpoint over a fake peer. The decode round trips are the library's own tests (`cargo test` in
-// native/) and examples/rtc-viewer-native/tests/ffi.test.ts runs this API on the built library.
+// native/) and examples/rtc-viewer-native/tests/native-ffi.check.ts runs this API on the built library.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { fromFileUrl } from "@std/path";

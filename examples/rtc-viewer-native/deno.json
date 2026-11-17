@@ -14,7 +14,7 @@
     "export": "deno run -A ../../cli.ts export .",
     "desktop": "deno run -A ../../cli.ts desktop run .",
     "send": "DENO_FAKE_MEDIA_DEVICES=1 deno run --allow-net=127.0.0.1 --allow-env=DENO_FAKE_MEDIA_DEVICES scripts/send.ts",
-    "test": "cd native && cargo build --release && cd .. && deno test --allow-ffi --allow-read=. --allow-env tests/"
+    "test": "cd native && cargo build --release && cd .. && deno test --allow-ffi --allow-read=. --allow-env tests/ tests/native-ffi.check.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

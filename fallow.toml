@@ -354,7 +354,7 @@ ignorePatterns = [
   # transform worker, the app glue (lib/app.ts: Deno.serve, RTCPeerConnection, Worker), the
   # runtime's UI-thread call, the WHIP sender (the runtime's fake camera) and the control page.
   # I/O against a native window, a WebRTC peer and the native library, untestable without them;
-  # the native round trips (`cargo test` in native/) and tests/ffi.test.ts are their guard. Its
+  # the native round trips (`cargo test` in native/) and tests/native-ffi.check.ts are their guard. Its
   # control API, WHIP endpoint, SDP, pump and clip parsing stay analyzed and are tested on fakes by
   # tests/rtc-viewer-native.test.ts.
   "examples/rtc-viewer-native/desktop.ts",
@@ -493,7 +493,7 @@ file = "src/compat/remix/client.ts"
 exports = ["Link", "LinkProps", "useParams", "useSearchParams"]
 
 # examples/rtc-viewer-native's lib/ exports read only by its window side (ignored above): the
-# library loader (desktop/rtc-viewer.ts, lib/receive-worker.ts, tests/ffi.test.ts) and the WHIP
+# library loader (desktop/rtc-viewer.ts, lib/receive-worker.ts, tests/native-ffi.check.ts) and the WHIP
 # path the app prints (lib/app.ts).
 [[ignoreExports]]
 file = "examples/rtc-viewer-native/lib/native.ts"
