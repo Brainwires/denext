@@ -243,6 +243,11 @@ entry = [
   "examples/clerk/desktop/e2e.ts",
   "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",
+  # examples/rtc-viewer: the Deno Desktop entry, the conformance probe (`deno task probe`) and
+  # the CLI sender (`deno task send`).
+  "examples/rtc-viewer/desktop.ts",
+  "examples/rtc-viewer/probe.ts",
+  "examples/rtc-viewer/cli/send.ts",
   # examples/companion (Loopy): the Deno Desktop entry and the inbox CLI (`deno task say`).
   "examples/companion/desktop.ts",
   "examples/companion/scripts/loopy-say.ts",
@@ -357,6 +362,24 @@ ignorePatterns = [
   # per-example duplication + the template's own CRAP aren't reported against them; the
   # byte-identity test is their guard. (examples/native/scripts is an entry point above.)
   "examples/rn-desktop/scripts/**",
+  # examples/rtc-viewer's in-engine half: the viewer and sender components, the encoded-frame tap
+  # and its worker, the WebCodecs decoder, the WebGPU / WebGL2 renderers, the session wiring them,
+  # the canvas test pattern and full screen. They run only in a page with WebRTC, WebCodecs and
+  # WebGPU / WebGL2 (none of which a Deno test has), so CRAP-on-zero-coverage is noise there;
+  # e2e/browser-check.ts (headless Chromium, also ignored) is their guard. The pure parts (the hub,
+  # the protocol, the pipeline's selection, codec strings, stats, shaders, the H.264 encoder) stay
+  # analyzed and are tested by tests/rtc-viewer-*.test.ts.
+  "examples/rtc-viewer/app/**/*.tsx",
+  "examples/rtc-viewer/e2e/**",
+  "examples/rtc-viewer/public/rtc-transform-worker.js",
+  "examples/rtc-viewer/public/styles.css",
+  "examples/rtc-viewer/lib/fullscreen.ts",
+  "examples/rtc-viewer/lib/test-pattern.ts",
+  "examples/rtc-viewer/lib/pipeline/decoder.ts",
+  "examples/rtc-viewer/lib/pipeline/render-*.ts",
+  "examples/rtc-viewer/lib/pipeline/renderer.ts",
+  "examples/rtc-viewer/lib/pipeline/session.ts",
+  "examples/rtc-viewer/lib/pipeline/tap.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
@@ -478,3 +501,17 @@ exports = ["PANEL_SIZE", "FULL_SIZE", "START_PREFIX"]
 [[ignoreExports]]
 file = "examples/hangar/lib/processes.ts"
 exports = ["PS_ARGS"]
+
+# examples/rtc-viewer's pure pipeline exports read only by its in-engine half (ignored above: the
+# session and the WebGL2 renderer), so the graph sees no importer.
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/plan.ts"
+exports = ["detectCapabilities"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/shaders.ts"
+exports = ["VIDEO_VERTEX_GLSL", "VIDEO_FRAGMENT_GLSL"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/stats.ts"
+exports = ["readInbound"]

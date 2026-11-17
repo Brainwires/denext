@@ -634,6 +634,21 @@
       "runFrom": "example"
     },
     {
+      "name": "rtc-viewer",
+      "title": "RTC viewer (web pipeline)",
+      "blurb": "A full-screen WebRTC video viewer written once for the web, the desktop (a Deno Desktop window) and mobile (a Capacitor shell on iOS and Android).",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/rtc-viewer",
+      "tags": [
+        "desktop",
+        "mobile",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "# from this directory\ndenext task dev                 # http://127.0.0.1:3000",
+      "runFrom": "example"
+    },
+    {
       "name": "scroll-bench",
       "title": "scroll-bench",
       "blurb": "A scroll benchmark with two apps that draw the same data with the same row designs: a denext app in a Capacitor WebView (web/) and a bare React Native app (native/).",

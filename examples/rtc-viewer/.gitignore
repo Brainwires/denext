@@ -1,0 +1,11 @@
+.denext/
+# The desktop sync writes these; config.json (the entry's config) is committed so desktop.ts
+# type-checks.
+.deno-desktop/*
+!.deno-desktop/config.json
+out/
+dist/
+node_modules/
+ios/
+android/
+scripts/
