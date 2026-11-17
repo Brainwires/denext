@@ -147,7 +147,9 @@ export default async function Note({ params }: { params: Promise<{ id: string }>
       <p>
         Neither replaces authorization: an exposed action is a public endpoint anyone who can load
         the page may call with any arguments. Check the session and validate the input inside every
-        action.
+        action. An action's endpoint is{" "}
+        <code>/_denext/action/&lt;id&gt;</code>, whichever page calls it: a{" "}
+        <code>middleware.ts</code> matcher on that page's path does not cover it.
       </p>
 
       <h2>Return values &amp; redirects</h2>
