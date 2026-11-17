@@ -169,8 +169,9 @@
       "url": "/a%2Fb",
       "pages": ["/a%2Fb/index.html", "/a%2Fb.html"],
       "navigation": true,
-      "serves": "a/b/index.html",
-      "note": "an encoded slash is decoded before the file is read"
+      "serves": "shell",
+      "note": "an encoded slash is refused when the file is read (it would name a file a middleware matcher never sees), so the navigation gets the shell",
+      "nativeSkip": "the native routers see the decoded path (/a/b) and serve a/b/index.html; an export in the shell has no middleware"
     },
     {
       "url": "//about",
