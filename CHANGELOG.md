@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-11-17
+
 ### Added
 
 - **Embedded web views: key releases, `blur()`, keys before the menu, and transform-following.**
@@ -22794,7 +22796,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.19.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.0...development
+[4.20.0]: https://jsr.io/@denext/denext@4.20.0
 [4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0
 [4.17.0]: https://jsr.io/@denext/denext@4.17.0
