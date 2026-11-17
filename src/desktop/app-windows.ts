@@ -197,6 +197,14 @@ export interface DesktopOpenWindowOptions {
    * Deno Desktop runtime honours it (an older one ignores it).
    */
   readonly backgroundThrottling?: boolean;
+  /**
+   * How it is hidden on macOS's system WebView: `"invisible"` (the default) keeps a hidden window
+   * ordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;
+   * `"orderOut"` really removes it, and macOS then throttles its page. Other platforms ignore it.
+   * Creation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one
+   * ignores it).
+   */
+  readonly macosHiddenMode?: "invisible" | "orderOut";
   /** Show it once created (default `true`). */
   readonly show?: boolean;
   /** The capabilities its pages may call (default: all; `window` always). */

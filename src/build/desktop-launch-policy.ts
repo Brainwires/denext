@@ -16,6 +16,7 @@ import {
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
   supportsInitialOverlay,
+  supportsMacosHiddenMode,
   supportsMacSecureStore,
   supportsMediaCapture,
   supportsOverlayTray,
@@ -124,6 +125,24 @@ export function initialOverlayRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsInitialOverlay);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process launches a runtime with
+ * the macOS hidden mode (`initialWindow.macosHiddenMode` in `.deno-desktop/app.json`): denext's
+ * pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR`
+ * build of unknown version) from `FIRST_MACOS_HIDDEN_MODE_RUNTIME`. An older runtime refuses an
+ * app.json with the key, so the app would not start.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the key.
+ */
+export function macosHiddenModeRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsMacosHiddenMode);
 }
 
 /**

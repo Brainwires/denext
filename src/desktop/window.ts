@@ -54,12 +54,15 @@ export {
   createWebView,
   type CreateWebViewOptions,
   type WebViewAnchor,
+  type WebViewAttachment,
   type WebViewBounds,
   type WebViewCapabilities,
   webViewCapabilities,
   type WebViewEngine,
   type WebViewEventMap,
+  type WebViewForwardKey,
   type WebViewHandle,
+  type WebViewKeyEvent,
   type WebViewLoadState,
   type WebViewPermissions,
   type WebViewState,
@@ -1389,6 +1392,14 @@ export interface OpenWindowOptions {
    * Windows and Linux and the CEF backend throttle a hidden page without freezing it either way.
    */
   readonly backgroundThrottling?: boolean;
+  /**
+   * How it is hidden on macOS's system WebView: `"invisible"` (the default) keeps a hidden window
+   * ordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;
+   * `"orderOut"` really removes it, and macOS then throttles its page. Other platforms ignore it.
+   * Creation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one
+   * ignores it).
+   */
+  readonly macosHiddenMode?: "invisible" | "orderOut";
   /**
    * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
    * shown with the handle's `show()`; an older runtime may flash it first.

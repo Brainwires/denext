@@ -2183,6 +2183,19 @@ export interface DesktopWindowConfig {
    * runtime with overlay windows (ignored with a warning elsewhere). Default `false`.
    */
   overlay?: boolean;
+  /**
+   * How the window is hidden on macOS's system WebView (default `"invisible"`). `"invisible"` keeps
+   * a hidden window (`show: false`, `hideWindow()`) ordered in but invisible: transparent, clicks
+   * passing through, out of window cycling and Mission Control, so a page that does background
+   * work keeps its timers' rate. `"orderOut"` really removes the window, and macOS then throttles
+   * its page. Other platforms and the CEF backend ignore it. Creation-time (written to
+   * `.deno-desktop/app.json` `initialWindow.macosHiddenMode`, so the window the app starts with is
+   * hidden the same way); needs a Deno Desktop runtime with the macOS hidden mode (no effect, with
+   * a warning, elsewhere). Windows opened with `windows.open` / `openWindow` take their own
+   * `macosHiddenMode`.
+   */
+
+  macosHiddenMode?: "invisible" | "orderOut";
 }
 
 /** The production server's settings (see {@link DenextConfig.start}). */

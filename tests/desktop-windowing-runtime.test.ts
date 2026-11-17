@@ -321,6 +321,36 @@ Deno.test("registry: open maps focusable false to noActivate, levels, hidden sta
   ]);
 });
 
+Deno.test("registry: open passes macosHiddenMode to the runtime at creation", () => {
+  const { reg } = registry();
+  reg.open({ url: "/worker", macosHiddenMode: "orderOut", show: false });
+  assertEquals(FakeWin.made.at(-1)!.options, { macosHiddenMode: "orderOut", show: false });
+  reg.open({ url: "/w", macosHiddenMode: "invisible", backgroundThrottling: false });
+  assertEquals(FakeWin.made.at(-1)!.options, {
+    backgroundThrottling: false,
+    macosHiddenMode: "invisible",
+  });
+  // Unset: the runtime's default ("invisible"), so no key.
+  reg.open({ url: "/w" });
+  assertEquals(FakeWin.made.at(-1)!.options, {});
+  assertEquals(
+    openWindowSettings({ url: "/", macosHiddenMode: "orderOut" }).macosHiddenMode,
+    "orderOut",
+  );
+  for (const bad of ["hidden", "OrderOut", true]) {
+    let code = "";
+    let message = "";
+    try {
+      reg.open({ url: "/x", macosHiddenMode: bad });
+    } catch (err) {
+      code = String((err as { code?: unknown }).code);
+      message = String((err as Error).message);
+    }
+    assertEquals(code, "validation");
+    assertStringIncludes(message, "macosHiddenMode");
+  }
+});
+
 Deno.test("registry: open passes backgroundThrottling to the runtime at creation", () => {
   const { reg } = registry();
   reg.open({ url: "/worker", backgroundThrottling: false, show: false });

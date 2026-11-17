@@ -3489,6 +3489,21 @@ export default defineDesktopExtension({
         backend throttle a hidden page without freezing it either way. The main window is the one
         the runtime starts with, which is always throttled.
       </p>
+      <p id="desktop-macos-hidden-mode">
+        On macOS&apos;s system WebView, how a window is hidden decides whether that holds:{" "}
+        <code>macosHiddenMode</code> (in <code>openWindow</code>, <code>windows.open</code> or{" "}
+        <code>desktop.window</code>, at creation only) is <code>"invisible"</code>{" "}
+        by default, which keeps a hidden window ordered in but invisible (transparent, clicks
+        passing through, out of window cycling and Mission Control), so a{" "}
+        <code>backgroundThrottling: false</code> page keeps its timers&apos; rate;{" "}
+        <code>"orderOut"</code>{" "}
+        really removes the window, and macOS then throttles its page. Other platforms ignore it.
+        {" "}
+        <code>desktop.window.macosHiddenMode</code>{" "}
+        is also written to the packaged app&apos;s start window, so the main window takes it over
+        hidden the same way. It needs a Deno Desktop runtime with the macOS hidden mode: under one
+        without it the option has no effect, and packaging warns about the config key.
+      </p>
       <h4 id="desktop-window-menu">The standard window items</h4>
       <p>
         <code>desktop.menu.window</code>{" "}
@@ -3806,6 +3821,22 @@ if (caps.supported) {
           are the page&apos;s; nothing in the view can reach them.
         </li>
         <li>
+          <strong>
+            <code>evaluate(script)</code>
+          </strong>{" "}
+          runs a classic script in the view&apos;s main frame and resolves its completion value as
+          JSON (<code>undefined</code> is <code>null</code>; a throw rejects{" "}
+          <code>error</code>, a value JSON can&apos;t hold{" "}
+          <code>not_serializable</code>). It runs in an isolated world named{" "}
+          <code>laufey-webview</code>: it shares the DOM, but none of the page&apos;s globals (a
+          page variable, a page function or a prototype the page patched is not seen), and no
+          Content-Security-Policy of the page refuses it. A promise completion value is awaited,
+          except on WKWebView (macOS) and WebKitGTK (Linux) under a page CSP that refuses{" "}
+          <code>eval</code>: there the engine&apos;s own evaluate runs the script and returns the
+          completion value as it is, so a promise rejects <code>not_serializable</code>{" "}
+          — end the script with a plain value on such pages.
+        </li>
+        <li>
           <strong>Partitions.</strong> <code>partition</code> names the view&apos;s storage (default
           {" "}
           <code>"webview:default"</code>; 1 to 64 letters, digits, <code>.</code>, <code>_</code>,
@@ -3846,8 +3877,8 @@ if (caps.supported) {
           {" "}
           <code>"blocked"</code>, <code>"aborted"</code> or <code>"failed"</code>),{" "}
           <code>console</code>, <code>focus-change</code>, <code>new-window</code>,{" "}
-          <code>find-result</code>, <code>context-menu</code>, <code>keydown</code> (see{" "}
-          <a href="#desktop-web-views-keys">Keys and focus</a>) and{" "}
+          <code>find-result</code>, <code>context-menu</code>, <code>keydown</code>,{" "}
+          <code>keyup</code> (see <a href="#desktop-web-views-keys">Keys and focus</a>) and{" "}
           <code>closed</code>, which comes once, last.
         </li>
         <li>
@@ -3856,12 +3887,16 @@ if (caps.supported) {
           see <a href="#desktop-web-views-stacking">How web views stack and overlap</a>.
         </li>
         <li>
-          <strong>Focus.</strong> <code>view.focus()</code> moves the keyboard into the view. When
+          <strong>Focus.</strong> <code>view.focus()</code>{" "}
+          moves the keyboard into the view (bringing its window forward). <code>view.blur()</code>
+          {" "}
+          hands it back to the app&apos;s page without activating the app or moving a window. When
           {" "}
           <code>focus-change</code> reports <code>focused: false</code>{" "}
           the keyboard has left it (a click outside, or Tab past its end): focus the next element of
           the page yourself. Global shortcuts and app-menu accelerators still fire while the view
-          has the focus; the page&apos;s own <code>keydown</code> listeners do not.
+          has the focus; the page&apos;s own <code>keydown</code> listeners do not. See{" "}
+          <a href="#desktop-web-views-keys">Keys and focus</a>.
         </li>
         <li>
           <strong>Lifecycle.</strong> <code>close()</code>{" "}
@@ -3885,8 +3920,23 @@ if (caps.supported) {
           viewport and to every scroll container around it, so the view never covers what is outside
           them (<code>clip: false</code> keeps the whole box; <code>hideWhenOutOfView: false</code>
           {" "}
-          with it keeps a view shown while scrolled away). The function it returns stops following
-          and leaves the view open; it also stops when the view closes.
+          with it keeps a view shown while scrolled away). It returns the attachment: call it (or
+          {" "}
+          <code>attachment.detach()</code>) to stop following and leave the view open; it also stops
+          when the view closes.
+        </li>
+        <li>
+          <strong>Moves by transform.</strong> A CSS <code>transform</code>{" "}
+          on the element or an ancestor (a panel sliding in, a sheet, a carousel) moves it without
+          any resize or scroll, so the default attachment doesn&apos;t see it.{" "}
+          <code>attachWebView(view, el, {`{ follow: "frame" }`})</code>{" "}
+          measures on every animation frame while a CSS transition or animation runs on the element
+          or one of its ancestors (from its <code>transitionrun</code> / <code>animationstart</code>
+          {" "}
+          until none runs there) and does nothing between them: no polling while idle. A move no
+          event reports — a transform set from script, a Web Animations{" "}
+          <code>element.animate()</code> — needs{" "}
+          <code>attachment.relayout()</code>, which measures once at the next frame.
         </li>
         <li>
           <strong>Limits and gating.</strong> A window hosts at most{" "}
@@ -3900,8 +3950,10 @@ if (caps.supported) {
           <code>capture</code>, <code>evaluate</code>, <code>zOrder</code>, <code>zoom</code>,{" "}
           <code>find</code>, <code>devTools</code>, <code>contextMenu</code>, <code>print</code>,
           {" "}
-          <code>clipboard</code>, <code>menuAccelerators</code>, <code>unhandledKeys</code> and{" "}
-          <code>forwardKeys</code> work (a feature reported <code>false</code> rejects{" "}
+          <code>clipboard</code>, <code>menuAccelerators</code>, <code>unhandledKeys</code>,{" "}
+          <code>forwardKeys</code>, <code>blur</code>, <code>keyUp</code> and{" "}
+          <code>forwardKeysBeforeMenu</code> work (a feature reported <code>false</code> rejects
+          {" "}
           <code>unsupported</code>). On a runtime without web views it answers{" "}
           <code>supported: false</code> and <code>createWebView</code> rejects{" "}
           <code>unsupported</code>: keep an iframe path behind that check.
@@ -4039,7 +4091,8 @@ async function withOverlay(view: WebViewHandle, tile: HTMLElement, open: () => P
           Cmd/Ctrl+W or Cmd/Ctrl+N) goes to the menu before the view&apos;s page, as in a browser:
           the item fires and the page never sees the key. <code>webViewCapabilities()</code>{" "}
           reports it as <code>menuAccelerators</code>; where it is <code>false</code>{" "}
-          the view&apos;s page gets those keys.
+          the view&apos;s page gets those keys. A <code>forwardKeys</code> entry with{" "}
+          <code>beforeMenu: true</code> is the exception (below).
         </li>
         <li>
           <strong>
@@ -4052,10 +4105,44 @@ async function withOverlay(view: WebViewHandle, tile: HTMLElement, open: () => P
           <code>keydown</code> with <code>forwarded: true</code>. <code>setForwardKeys(keys)</code>
           {" "}
           replaces the list (<code>[]</code>{" "}
-          forwards none). Menu accelerators still win over them. Capability{" "}
-          <code>forwardKeys</code>; without it the option is ignored and <code>setForwardKeys</code>
+          forwards none). Menu accelerators win over them, unless the entry is{" "}
+          <code>{`{ accelerator: "CmdOrCtrl+W", beforeMenu: true }`}</code> (or the string{" "}
+          <code>"!CmdOrCtrl+W"</code>): while this view has the keyboard, that key is forwarded and
+          the menu item does not fire; with the view unfocused the item works as always. Use it for
+          a key the app means differently while the view has the keyboard (closing the view&apos;s
+          tab rather than the window). Capability <code>forwardKeys</code>{" "}
+          (without it the option is ignored and <code>setForwardKeys</code> rejects{" "}
+          <code>unsupported</code>); a <code>beforeMenu</code> entry needs{" "}
+          <code>forwardKeysBeforeMenu</code>, else the create or <code>setForwardKeys</code> rejects
           {" "}
-          rejects <code>unsupported</code>.
+          <code>unsupported</code>.
+        </li>
+        <li>
+          <strong>Key releases.</strong> Where <code>keyUp</code>{" "}
+          is reported, releasing a forwarded key fires <code>keyup</code>{" "}
+          (<code>type: "keyup"</code>, <code>forwarded: true</code>), matched by its{" "}
+          <code>code</code>{" "}
+          whatever modifiers are down by then, and the view&apos;s page never sees it; a key held
+          down repeats as <code>keydown</code> with{" "}
+          <code>repeat: true</code>. A forwarded key still held when the view loses the keyboard (a
+          click elsewhere, <code>blur()</code>, hiding it, the app deactivated) gets its{" "}
+          <code>keyup</code>{" "}
+          then, so a hold-to-talk key always ends. Releases of keys that were not forwarded stay the
+          page&apos;s. Every key event carries <code>type</code> (<code>"keydown"</code> /{" "}
+          <code>"keyup"</code>).
+        </li>
+        <li>
+          <strong>Giving the keyboard back.</strong> <code>view.blur()</code> (capability{" "}
+          <code>blur</code>) moves the keyboard from the view to the app&apos;s page if the view has
+          it, without activating the app or raising or reordering a window (
+          <code>focusWindow()</code>, by contrast, activates the app). <code>focus-change</code>
+          {" "}
+          fires with{" "}
+          <code>{`{ focused: false, reason: "blur" }`}</code>. Hiding a view that has the keyboard
+          (<code>setVisible(false)</code>, or <code>attachWebView</code>{" "}
+          hiding it) does the same with <code>reason: "hidden"</code>{" "}
+          — the keyboard goes to the app&apos;s page, never nowhere. A change denext didn&apos;t
+          make (a click, Tab, the window deactivated) has no <code>reason</code>.
         </li>
         <li>
           <strong>Unhandled keys.</strong> Where the engine can tell (<code>unhandledKeys</code>
@@ -4078,6 +4165,23 @@ async function withOverlay(view: WebViewHandle, tile: HTMLElement, open: () => P
           page, Tab past its end) fires <code>{`{ focused: false }`}</code>.
         </li>
       </ul>
+      <Code lang="ts">
+        {`// Hold-to-talk while the view has the keyboard, and the app's own Cmd/Ctrl+W.
+const view = await createWebView({
+  url: "https://chat.example",
+  bounds: { x: 0, y: 0, width: 0, height: 0 },
+  forwardKeys: ["F13", { accelerator: "CmdOrCtrl+W", beforeMenu: true }],
+});
+view.on("keydown", (e) => {
+  if (e.code === "F13" && !e.repeat) startTalking();
+  if (e.code === "KeyW" && e.forwarded) closeChatTab();
+});
+view.on("keyup", (e) => e.code === "F13" && stopTalking());
+view.on("focus-change", ({ focused, reason }) => {
+  if (!focused && reason) composer.focus(); // "blur" / "hidden": the page has the keyboard
+});
+escapeButton.onclick = () => view.blur(); // back to the app, nothing activated`}
+      </Code>
       <Code lang="ts">
         {`const view = await createWebView({
   url: "https://docs.example",

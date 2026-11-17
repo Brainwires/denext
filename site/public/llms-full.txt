@@ -690,7 +690,8 @@ from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts anoth
 icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app stays accessory and a
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
-focusable: false, … })` and the overlay calls
+focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
+default keeps it in, invisible, at full timer rate) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
@@ -3266,7 +3267,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
 - `interface WebViewEventMap` — The events a web view fires (WebViewHandle.on) and their payloads.
+- `type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }` — One forwardKeys entry: an accelerator ("CmdOrCtrl+W"), or { accelerator, beforeMenu }.
 - `interface WebViewHandle` — A web view (from createWebView, or win.createWebView in desktop.ts).
+- `interface WebViewKeyEvent` — A key event of a web view (WebViewEventMap's keydown / keyup).
 - `type WebViewLoadState = "loading" | "interactive" | "complete" | "failed"` — A web view's last load state.
 - `interface WebViewPermissions` — The object form of CreateWebViewOptions.permissions.
 - `interface WebViewState` — What WebViewHandle.state answers.
@@ -3364,7 +3367,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/window`
 
-- `attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): () => void` — Keep handle glued to element's border box: the view follows the element through resizes, scrolling (any scroller), window resizes and display scale changes, at most one setBounds per animation frame and only when the rectangle changed. It is hidden (setVisible(false)) while the element is out of the document, display: none, zero-sized or out of view, and shown again when it is back — so the attachment owns the view's visibility while attached. The view only ever covers the element's visible part: its box cut to the viewport and to the scroll containers around it (clip: false keeps the whole box).
+- `attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): WebViewAttachment` — Keep handle glued to element's border box: the view follows the element through resizes, scrolling (any scroller), window resizes and display scale changes, at most one setBounds per animation frame and only when the rectangle changed. It is hidden (setVisible(false)) while the element is out of the document, display: none, zero-sized or out of view, and shown again when it is back — so the attachment owns the view's visibility while attached. The view only ever covers the element's visible part: its box cut to the viewport and to the scroll containers around it (clip: false keeps the whole box).
 - `interface AttachWebViewOptions` — Options for attachWebView.
 - `type BeforeQuitHandler = () => boolean | void | Promise<boolean | void>` — A before-quit handler: return (or resolve) false to keep the app running.
 - `type CloseReason = "close" | "quit"` — Why the window is asked to close: the user closed it, or the app is quitting.
@@ -3436,12 +3439,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `unmaximizeWindow(): Promise<void>` — Leave the maximized state. @returns Once requested.
 - `type VibrancyMaterial = "titlebar" | "selection" | "menu" | "popover" | "sidebar" | "header" | "sheet" | "window" | "hud" | "fullscreen-ui" | "tooltip" | "content" | "under-window" | "under-page"` — A macOS vibrancy material (NSVisualEffectMaterial, Electron's names).
 - `interface WebViewAnchor` — The slice of a DOM element attachWebView measures.
+- `interface WebViewAttachment` — What attachWebView returns: call it (or its detach) to stop following; relayout() measures the element again at the next animation frame, for a move no event reports.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
-- `webViewCapabilities(): Promise<WebViewCapabilities>` — Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.
+- `webViewCapabilities(): Promise<WebViewCapabilities>` — Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.
 - `interface WebViewCapabilities` — What webViewCapabilities answers.
 - `type WebViewEngine = "cef" | "wkwebview" | "webview2" | "webkitgtk"` — An engine that hosts web views.
 - `interface WebViewEventMap` — The events a web view fires (WebViewHandle.on) and their payloads.
+- `type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }` — One forwardKeys entry: an accelerator ("CmdOrCtrl+W"), or { accelerator, beforeMenu }.
 - `interface WebViewHandle` — A web view (from createWebView, or win.createWebView in desktop.ts).
+- `interface WebViewKeyEvent` — A key event of a web view (WebViewEventMap's keydown / keyup).
 - `type WebViewLoadState = "loading" | "interactive" | "complete" | "failed"` — A web view's last load state.
 - `interface WebViewPermissions` — The object form of CreateWebViewOptions.permissions.
 - `interface WebViewState` — What WebViewHandle.state answers.

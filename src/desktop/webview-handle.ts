@@ -99,6 +99,7 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
       act("reload", opts?.ignoreCache !== undefined ? { ignoreCache: opts.ignoreCache } : {}),
     stop: () => act("stop"),
     focus: () => act("focus"),
+    blur: () => act("blur"),
     state: async () => webViewStateOf(await ops.call("state", {})),
     capture: (opts) => ops.capture({ ...opts }),
     evaluate: async <T>(script: string) => await ops.evaluate(script) as T,
@@ -114,7 +115,10 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
     stopFind: () => act("stopFind"),
     openDevTools: () => act("openDevTools"),
     print: () => act("print"),
-    setForwardKeys: (keys) => act("setForwardKeys", { keys: [...keys] }),
+    setForwardKeys: (keys) =>
+      act("setForwardKeys", {
+        keys: keys.map((k) => typeof k === "string" ? k : { ...k }),
+      }),
     on: (event, fn) => addWebViewListener(v, event, fn as (e: unknown) => void),
     close: () => ops.close(),
   };

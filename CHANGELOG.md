@@ -10,6 +10,30 @@ and this project adheres to
 
 ### Added
 
+- **Embedded web views: key releases, `blur()`, keys before the menu, and transform-following.**
+  A forwarded key's release arrives as a `keyup` event (`type: "keyup"`, capability `keyUp`),
+  matched by its `code` whatever modifiers are down by then, so a hold-to-talk key works while a
+  view has the keyboard; a key still held when the view loses the keyboard gets its `keyup` then.
+  Every key event carries `type`. `view.blur()` (capability `blur`) hands the keyboard back to the
+  app's page without activating the app or moving a window, with `focus-change`
+  `{ focused: false, reason: "blur" }`. A `forwardKeys` entry may be
+  `{ accelerator, beforeMenu: true }` (or `"!CmdOrCtrl+W"`; capability `forwardKeysBeforeMenu`):
+  while the view has the keyboard that key is forwarded instead of firing the app menu's item.
+  `attachWebView` now returns an attachment that is still the detach function and also has
+  `relayout()` (measure again at the next frame) and `detach()`; its new `follow: "frame"` option
+  measures every frame while a CSS transition or animation runs on the element or an ancestor,
+  for moves made only by a `transform`, and nothing while none runs. Each needs a Deno Desktop
+  runtime that reports the capability.
+- **`macosHiddenMode`: how a hidden window is hidden on macOS.** `openWindow({ macosHiddenMode })`,
+  `windows.open({ macosHiddenMode })` in `desktop.ts` and `desktop.window.macosHiddenMode` take
+  `"invisible"` (the default: a hidden window stays ordered in but invisible, transparent and
+  click-through, so a `backgroundThrottling: false` page keeps its timers' rate) or `"orderOut"`
+  (the window is really removed, and macOS throttles its page) on the system WebView; other
+  platforms ignore it. `desktop.window.macosHiddenMode: "orderOut"` is also written to
+  `.deno-desktop/app.json`'s `initialWindow`, so the window the app starts with is hidden the same
+  way. Any other value is a config error, or a `validation` error from `openWindow`. Needs Deno
+  Desktop runtime `3.0.0-denext.25` (`FIRST_MACOS_HIDDEN_MODE_RUNTIME`): on an older one the
+  window option has no effect, and packaging leaves the app.json key out with a warning.
 - **The kernel sandbox, as an opt-in preview.** The Deno toolchain and Desktop runtime denext pins
   take `--kernel-sandbox=off|warn|auto|enforce|broker` and `--kernel-sandbox-report` on every
   command with permission flags, a `permissions.kernelSandbox` key in `deno.json`,
@@ -56,6 +80,15 @@ and this project adheres to
 
 ### Changed
 
+- **Hiding a focused web view gives the keyboard to the app's page, and says so.** On every
+  engine, `setVisible(false)` (or `attachWebView` hiding the view) on a view that has the keyboard
+  moves it to the app's page and fires `focus-change` with `{ focused: false, reason: "hidden" }`;
+  a focus change denext didn't make has no `reason`.
+- **A web view's `evaluate` runs under a page CSP that refuses `eval`.** It runs in the isolated
+  `laufey-webview` world as before (the DOM, none of the page's globals); on WKWebView and WebKitGTK
+  a page whose Content-Security-Policy refused `eval` made it fail, and now the runtime runs the
+  script through the engine's own evaluate there, which returns the completion value without
+  awaiting a promise (`not_serializable`). CEF and WebView2 were never refused.
 - **A Deno Desktop launch after a full-app update or a rollback says so in the app's log.**
   `desktop: app update: 99.0.0 is running, updated from 1.0.0 (on trial until confirmed)` or
   `… 1.0.0 is running again; 99.0.0 was rolled back`, from the runtime's update status at startup,

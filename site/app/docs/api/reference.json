@@ -18572,6 +18572,12 @@
               "name": "overlay",
               "signature": "overlay?: boolean",
               "doc": "Make the window a desktop overlay surface on Linux Wayland: where the compositor has\nwlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)\nthe window is a layer surface above every other window, on every workspace, with no taskbar\nentry, placeable, and with `focusable: false` never focused; that is the only way to get those\non Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every\nother OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).\nCreation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs a Deno Desktop\nruntime with overlay windows (ignored with a warning elsewhere). Default `false`."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How the window is hidden on macOS's system WebView (default `\"invisible\"`). `\"invisible\"` keeps\na hidden window (`show: false`, `hideWindow()`) ordered in but invisible: transparent, clicks\npassing through, out of window cycling and Mission Control, so a page that does background\nwork keeps its timers' rate. `\"orderOut\"` really removes the window, and macOS then throttles\nits page. Other platforms and the CEF backend ignore it. Creation-time (written to\n`.deno-desktop/app.json` `initialWindow.macosHiddenMode`, so the window the app starts with is\nhidden the same way); needs a Deno Desktop runtime with the macOS hidden mode (no effect, with\na warning, elsewhere). Windows opened with `windows.open` / `openWindow` take their own\n`macosHiddenMode`."
             }
           ]
         },
@@ -45844,8 +45850,8 @@
             {
               "kind": "property",
               "name": "forwardKeys",
-              "signature": "forwardKeys?: string[]",
-              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+              "signature": "forwardKeys?: WebViewForwardKey[]",
+              "doc": "Keys the view hands to the app's page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`, and its release as a `keyup`\n(where `webViewCapabilities().keyUp`). The app menu's accelerators win over an entry unless\nit is `{ accelerator, beforeMenu: true }` ({@linkcode WebViewForwardKey})."
             },
             {
               "kind": "property",
@@ -48360,6 +48366,12 @@
             },
             {
               "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How it is hidden on macOS's system WebView: `\"invisible\"` (the default) keeps a hidden window\nordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;\n`\"orderOut\"` really removes it, and macOS then throttles its page. Other platforms ignore it.\nCreation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one\nignores it)."
+            },
+            {
+              "kind": "property",
               "name": "show",
               "signature": "readonly show?: boolean",
               "doc": "Show it once created (default `true`)."
@@ -50675,6 +50687,12 @@
               "name": "toolbarStyle",
               "signature": "readonly toolbarStyle?: DesktopToolbarStyle",
               "doc": "The macOS toolbar style that lays the title bar out (`desktop.window.toolbarStyle`)."
+            },
+            {
+              "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: DesktopMacosHiddenMode",
+              "doc": "How the window is hidden on macOS (`desktop.window.macosHiddenMode`, creation-time)."
             }
           ]
         },
@@ -53124,8 +53142,8 @@
             {
               "kind": "property",
               "name": "focus-change",
-              "signature": "\"focus-change\": { focused: boolean }",
-              "doc": "The native view gained or lost keyboard focus."
+              "signature": "\"focus-change\": { focused: boolean; reason?: \"hidden\" | \"blur\" }",
+              "doc": "The native view gained or lost keyboard focus. `reason` says when denext moved it:\n`\"hidden\"` (`setVisible(false)` on a focused view gave the keyboard back to the app's page)\nor `\"blur\"` ({@linkcode WebViewHandle.blur}); any other change (a click elsewhere, the window\ndeactivated) has none."
             },
             {
               "kind": "property",
@@ -53148,8 +53166,14 @@
             {
               "kind": "property",
               "name": "keydown",
-              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
-              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+              "signature": "keydown: WebViewKeyEvent & { type: \"keydown\" }",
+              "doc": "A keydown while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it; a held key repeats with `repeat: true`), `false` for a keydown its page\nleft unhandled (where the engine can tell: `unhandledKeys`). DOM `KeyboardEvent` names and\nvalues."
+            },
+            {
+              "kind": "property",
+              "name": "keyup",
+              "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
+              "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
             },
             {
               "kind": "property",
@@ -53158,6 +53182,18 @@
               "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
             }
           ]
+        },
+        {
+          "name": "WebViewForwardKey",
+          "slug": "WebViewForwardKey",
+          "kind": "typeAlias",
+          "signature": "type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }",
+          "doc": "One forwardKeys entry: an accelerator (\"CmdOrCtrl+W\"), or { accelerator, beforeMenu }.",
+          "docFull": "One `forwardKeys` entry: an accelerator (`\"CmdOrCtrl+W\"`), or `{ accelerator, beforeMenu }`.\n\n`beforeMenu: true` (where `webViewCapabilities().forwardKeysBeforeMenu`; else the create or\n`setForwardKeys` rejects `unsupported`) forwards the key even when the app menu has the same\naccelerator: while this view has the keyboard, the key reaches the app's page as a forwarded\n`keydown` and the menu item does not fire. With the view unfocused, the menu item works as\nalways. Without it (the default) the menu item fires and the key is not forwarded. A string with\na leading `!` (`\"!CmdOrCtrl+W\"`) is the same as `beforeMenu: true`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "WebViewHandle",
@@ -53187,7 +53223,7 @@
               "kind": "method",
               "name": "setVisible",
               "signature": "setVisible(visible: boolean): Promise<void>",
-              "doc": "Show or hide it."
+              "doc": "Show or hide it. Hiding a view that has the keyboard hands the keyboard back to the app's\npage (never activating the app): `focus-change` fires with `{ focused: false, reason:\n\"hidden\" }`."
             },
             {
               "kind": "method",
@@ -53223,7 +53259,13 @@
               "kind": "method",
               "name": "focus",
               "signature": "focus(): Promise<void>",
-              "doc": "Move keyboard focus into the view."
+              "doc": "Move keyboard focus into the view (this brings its window forward and activates the app)."
+            },
+            {
+              "kind": "method",
+              "name": "blur",
+              "signature": "blur(): Promise<void>",
+              "doc": "Hand the keyboard back to the app's page if the view has it, without activating the app or\nraising or reordering a window (`focusWindow()` does both). `focus-change` fires with\n`{ focused: false, reason: \"blur\" }`; a view without the keyboard is left as it is. Rejects\n`unsupported` where `webViewCapabilities().blur` is `false`."
             },
             {
               "kind": "method",
@@ -53241,7 +53283,7 @@
               "kind": "method",
               "name": "evaluate",
               "signature": "evaluate<T>(script: string): Promise<T>",
-              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+              "doc": "Run `script` (a classic script; its completion value is the result) in the view's main frame,\nin an isolated world (`laufey-webview`): it shares the DOM but none of the page's globals (a\npage variable, function or patched prototype is not seen), and no Content-Security-Policy of\nthe page refuses it. A promise completion value is awaited, except on WKWebView and WebKitGTK\nunder a page CSP that refuses `eval`, where the engine's own evaluate returns the completion\nvalue as it is (a promise there rejects `not_serializable`: end the script with a plain\nvalue). The result is JSON (`undefined` → `null`); a throw rejects `error`, a value JSON can't\nhold rejects `not_serializable`."
             },
             {
               "kind": "method",
@@ -53300,7 +53342,7 @@
             {
               "kind": "method",
               "name": "setForwardKeys",
-              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "signature": "setForwardKeys(keys: WebViewForwardKey[]): Promise<void>",
               "doc": "Replace its `forwardKeys` (an empty list forwards none)."
             },
             {
@@ -53313,7 +53355,75 @@
               "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
-              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
+            }
+          ]
+        },
+        {
+          "name": "WebViewKeyEvent",
+          "slug": "WebViewKeyEvent",
+          "kind": "interface",
+          "signature": "interface WebViewKeyEvent",
+          "doc": "A key event of a web view (WebViewEventMap's keydown / keyup).",
+          "docFull": "A key event of a web view ({@linkcode WebViewEventMap}'s `keydown` / `keyup`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "type: \"keydown\" | \"keyup\"",
+              "doc": "`\"keydown\"` or `\"keyup\"`."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "key: string",
+              "doc": "DOM `KeyboardEvent.key`."
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "code: string",
+              "doc": "DOM `KeyboardEvent.code` (the physical key)."
+            },
+            {
+              "kind": "property",
+              "name": "altKey",
+              "signature": "altKey: boolean",
+              "doc": "Alt / Option held."
+            },
+            {
+              "kind": "property",
+              "name": "ctrlKey",
+              "signature": "ctrlKey: boolean",
+              "doc": "Control held."
+            },
+            {
+              "kind": "property",
+              "name": "metaKey",
+              "signature": "metaKey: boolean",
+              "doc": "Command on macOS, the Windows / Super key elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "shiftKey",
+              "signature": "shiftKey: boolean",
+              "doc": "Shift held."
+            },
+            {
+              "kind": "property",
+              "name": "repeat",
+              "signature": "repeat: boolean",
+              "doc": "An auto-repeat of a held key (`keydown` only)."
+            },
+            {
+              "kind": "property",
+              "name": "forwarded",
+              "signature": "forwarded: boolean",
+              "doc": "One of the view's `forwardKeys` (its page never saw it); always `true` for a `keyup`."
             }
           ]
         },
@@ -55652,9 +55762,9 @@
           "name": "attachWebView",
           "slug": "attachWebView",
           "kind": "function",
-          "signature": "attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): () => void",
+          "signature": "attachWebView(handle: WebViewHandle, element: WebViewAnchor, options?: AttachWebViewOptions): WebViewAttachment",
           "doc": "Keep handle glued to element's border box: the view follows the element through resizes, scrolling (any scroller), window resizes and display scale changes, at most one setBounds per animation frame and only when the rectangle changed. It is hidden (setVisible(false)) while the element is out of the document, display: none, zero-sized or out of view, and shown again when it is back — so the attachment owns the view's visibility while attached. The view only ever covers the element's visible part: its box cut to the viewport and to the scroll containers around it (clip: false keeps the whole box).",
-          "docFull": "Keep `handle` glued to `element`'s border box: the view follows the element through resizes,\nscrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per\nanimation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the\nelement is out of the document, `display: none`, zero-sized or out of view, and shown again when\nit is back — so the attachment owns the view's visibility while attached. The view only ever\ncovers the element's visible part: its box cut to the viewport and to the scroll containers\naround it (`clip: false` keeps the whole box).",
+          "docFull": "Keep `handle` glued to `element`'s border box: the view follows the element through resizes,\nscrolling (any scroller), window resizes and display scale changes, at most one `setBounds` per\nanimation frame and only when the rectangle changed. It is hidden (`setVisible(false)`) while the\nelement is out of the document, `display: none`, zero-sized or out of view, and shown again when\nit is back — so the attachment owns the view's visibility while attached. The view only ever\ncovers the element's visible part: its box cut to the viewport and to the scroll containers\naround it (`clip: false` keeps the whole box).\n\nA move made only by a CSS `transform` (on the element or an ancestor) changes none of those:\n`follow: \"frame\"` measures on every frame while a CSS transition or animation runs there, and\n`relayout()` measures once, for any other move.",
           "params": [
             {
               "name": "handle",
@@ -55666,11 +55776,13 @@
             },
             {
               "name": "options",
-              "doc": "hideWhenOutOfView, clip."
+              "doc": "hideWhenOutOfView, clip, follow."
             }
           ],
-          "returns": "A function that stops following (the view stays as it is, open). It also stops when the view closes.",
-          "examples": [],
+          "returns": "The attachment: call it (or detach()) to stop following (the view stays as it is, open); relayout() measures again. It also stops when the view closes.",
+          "examples": [
+            "```ts\nconst attachment = attachWebView(view, tile, { follow: \"frame\" });\npanel.style.transform = \"translateX(0)\"; // a CSS transition: followed frame by frame\ntile.animate([{ translate: \"0 40px\" }], 200).finished.then(() => attachment.relayout());\nattachment(); // stop\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -55696,6 +55808,12 @@
               "name": "clip",
               "signature": "readonly clip?: boolean",
               "doc": "Fit the view to the part of the element that is visible: inside the viewport and inside every\nancestor that clips its overflow (a scroll container) (default `true`). A native view can't\nbe cropped, so a partly scrolled-away element gets a smaller view whose page lays out at that\nsize (it is resized, not cut). `false` keeps the whole element box, and the view then draws\nover whatever is outside the scroll container (a toolbar, the window's other content)."
+            },
+            {
+              "kind": "property",
+              "name": "follow",
+              "signature": "readonly follow?: \"events\" | \"frame\"",
+              "doc": "How the view follows moves the element's own box doesn't report. `\"events\"` (default):\nresizes, scrolls, the window's resize and display scale changes. `\"frame\"` adds a measure on\nevery animation frame while a CSS transition or animation runs on the element or one of its\nancestors (a `transform` slide, a sheet moving in), from its `transitionrun` /\n`animationstart` until none runs there, and nothing between them: no polling while idle. A\nmove no event reports (a transform set from script, a Web Animations `element.animate()`)\nneeds {@linkcode WebViewAttachment.relayout}."
             }
           ]
         },
@@ -55849,8 +55967,8 @@
             {
               "kind": "property",
               "name": "forwardKeys",
-              "signature": "forwardKeys?: string[]",
-              "doc": "Keys the view hands to the page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`. The app menu's accelerators\nstill win over them."
+              "signature": "forwardKeys?: WebViewForwardKey[]",
+              "doc": "Keys the view hands to the app's page instead of its own page while it has the keyboard:\naccelerators as `registerShortcut` takes them (`\"CmdOrCtrl+1\"`, `\"Meta+Shift+L\"`), at most\n64. Each arrives as a `keydown` event with `forwarded: true`, and its release as a `keyup`\n(where `webViewCapabilities().keyUp`). The app menu's accelerators win over an entry unless\nit is `{ accelerator, beforeMenu: true }` ({@linkcode WebViewForwardKey})."
             },
             {
               "kind": "property",
@@ -56666,6 +56784,12 @@
             },
             {
               "kind": "property",
+              "name": "macosHiddenMode",
+              "signature": "readonly macosHiddenMode?: \"invisible\" | \"orderOut\"",
+              "doc": "How it is hidden on macOS's system WebView: `\"invisible\"` (the default) keeps a hidden window\nordered in but invisible, so a `backgroundThrottling: false` page keeps its timers' rate;\n`\"orderOut\"` really removes it, and macOS then throttles its page. Other platforms ignore it.\nCreation time only; a Deno Desktop runtime with the macOS hidden mode honours it (an older one\nignores it)."
+            },
+            {
+              "kind": "property",
               "name": "show",
               "signature": "readonly show?: boolean",
               "doc": "Show it once created (default `true`). With `false` it opens hidden (its page loads), to be\nshown with the handle's `show()`; an older runtime may flash it first."
@@ -57294,6 +57418,44 @@
               "name": "getBoundingClientRect",
               "signature": "getBoundingClientRect(): { readonly left: number; readonly top: number; readonly width: number; readonly height: number }",
               "doc": "Its border box, in CSS pixels relative to the viewport."
+            },
+            {
+              "kind": "method",
+              "name": "getAnimations",
+              "signature": "getAnimations?(): ReadonlyArray<{ readonly playState?: string }>",
+              "doc": "Its running animations and transitions (`follow: \"frame\"` keeps measuring while any runs)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewAttachment",
+          "slug": "WebViewAttachment",
+          "kind": "interface",
+          "signature": "interface WebViewAttachment",
+          "doc": "What attachWebView returns: call it (or its detach) to stop following; relayout() measures the element again at the next animation frame, for a move no event reports.",
+          "docFull": "What {@linkcode attachWebView} returns: call it (or its `detach`) to stop following;\n`relayout()` measures the element again at the next animation frame, for a move no event\nreports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "call",
+              "name": "",
+              "signature": "(): void",
+              "doc": "Stop following (the view stays as it is, open)."
+            },
+            {
+              "kind": "method",
+              "name": "detach",
+              "signature": "detach(): void",
+              "doc": "The same as calling the attachment."
+            },
+            {
+              "kind": "method",
+              "name": "relayout",
+              "signature": "relayout(): void",
+              "doc": "Measure the element again at the next animation frame and move or show / hide the view to\nmatch (at most one `setBounds` per frame, only on a change). A no-op once detached."
             }
           ]
         },
@@ -57340,8 +57502,8 @@
           "slug": "webViewCapabilities-fn",
           "kind": "function",
           "signature": "webViewCapabilities(): Promise<WebViewCapabilities>",
-          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
-          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
+          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
+          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,\n`forwardKeysBeforeMenu`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
           "params": [],
           "returns": "The capabilities. Off desktop it rejects unavailable.",
           "examples": [],
@@ -57442,6 +57604,24 @@
               "name": "forwardKeys",
               "signature": "forwardKeys: boolean",
               "doc": "Whether `forwardKeys` / `setForwardKeys` work."
+            },
+            {
+              "kind": "property",
+              "name": "blur",
+              "signature": "blur: boolean",
+              "doc": "Whether {@linkcode WebViewHandle.blur} works."
+            },
+            {
+              "kind": "property",
+              "name": "keyUp",
+              "signature": "keyUp: boolean",
+              "doc": "Whether a forwarded key's release arrives as `keyup`."
+            },
+            {
+              "kind": "property",
+              "name": "forwardKeysBeforeMenu",
+              "signature": "forwardKeysBeforeMenu: boolean",
+              "doc": "Whether `forwardKeys` entries take `beforeMenu: true`."
             }
           ]
         },
@@ -57496,8 +57676,8 @@
             {
               "kind": "property",
               "name": "focus-change",
-              "signature": "\"focus-change\": { focused: boolean }",
-              "doc": "The native view gained or lost keyboard focus."
+              "signature": "\"focus-change\": { focused: boolean; reason?: \"hidden\" | \"blur\" }",
+              "doc": "The native view gained or lost keyboard focus. `reason` says when denext moved it:\n`\"hidden\"` (`setVisible(false)` on a focused view gave the keyboard back to the app's page)\nor `\"blur\"` ({@linkcode WebViewHandle.blur}); any other change (a click elsewhere, the window\ndeactivated) has none."
             },
             {
               "kind": "property",
@@ -57520,8 +57700,14 @@
             {
               "kind": "property",
               "name": "keydown",
-              "signature": "keydown: { key: string; code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; forwarded: boolean }",
-              "doc": "A key while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it), `false` for a keydown its page left unhandled (where the engine can tell:\n`unhandledKeys`). DOM `KeyboardEvent` names and values."
+              "signature": "keydown: WebViewKeyEvent & { type: \"keydown\" }",
+              "doc": "A keydown while the view had the keyboard: `forwarded: true` for one of its `forwardKeys` (its\npage never saw it; a held key repeats with `repeat: true`), `false` for a keydown its page\nleft unhandled (where the engine can tell: `unhandledKeys`). DOM `KeyboardEvent` names and\nvalues."
+            },
+            {
+              "kind": "property",
+              "name": "keyup",
+              "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
+              "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
             },
             {
               "kind": "property",
@@ -57530,6 +57716,18 @@
               "doc": "The view closed (its `close()`, or its window closed). Nothing follows it."
             }
           ]
+        },
+        {
+          "name": "WebViewForwardKey",
+          "slug": "WebViewForwardKey",
+          "kind": "typeAlias",
+          "signature": "type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }",
+          "doc": "One forwardKeys entry: an accelerator (\"CmdOrCtrl+W\"), or { accelerator, beforeMenu }.",
+          "docFull": "One `forwardKeys` entry: an accelerator (`\"CmdOrCtrl+W\"`), or `{ accelerator, beforeMenu }`.\n\n`beforeMenu: true` (where `webViewCapabilities().forwardKeysBeforeMenu`; else the create or\n`setForwardKeys` rejects `unsupported`) forwards the key even when the app menu has the same\naccelerator: while this view has the keyboard, the key reaches the app's page as a forwarded\n`keydown` and the menu item does not fire. With the view unfocused, the menu item works as\nalways. Without it (the default) the menu item fires and the key is not forwarded. A string with\na leading `!` (`\"!CmdOrCtrl+W\"`) is the same as `beforeMenu: true`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "WebViewHandle",
@@ -57559,7 +57757,7 @@
               "kind": "method",
               "name": "setVisible",
               "signature": "setVisible(visible: boolean): Promise<void>",
-              "doc": "Show or hide it."
+              "doc": "Show or hide it. Hiding a view that has the keyboard hands the keyboard back to the app's\npage (never activating the app): `focus-change` fires with `{ focused: false, reason:\n\"hidden\" }`."
             },
             {
               "kind": "method",
@@ -57595,7 +57793,13 @@
               "kind": "method",
               "name": "focus",
               "signature": "focus(): Promise<void>",
-              "doc": "Move keyboard focus into the view."
+              "doc": "Move keyboard focus into the view (this brings its window forward and activates the app)."
+            },
+            {
+              "kind": "method",
+              "name": "blur",
+              "signature": "blur(): Promise<void>",
+              "doc": "Hand the keyboard back to the app's page if the view has it, without activating the app or\nraising or reordering a window (`focusWindow()` does both). `focus-change` fires with\n`{ focused: false, reason: \"blur\" }`; a view without the keyboard is left as it is. Rejects\n`unsupported` where `webViewCapabilities().blur` is `false`."
             },
             {
               "kind": "method",
@@ -57613,7 +57817,7 @@
               "kind": "method",
               "name": "evaluate",
               "signature": "evaluate<T>(script: string): Promise<T>",
-              "doc": "Run `script` in the view, isolated from the view's own scripts (it shares the DOM); a promise\ncompletion value is awaited. The result is JSON (`undefined` → `null`); a throw rejects\n`error`, a value JSON can't hold rejects `not_serializable`."
+              "doc": "Run `script` (a classic script; its completion value is the result) in the view's main frame,\nin an isolated world (`laufey-webview`): it shares the DOM but none of the page's globals (a\npage variable, function or patched prototype is not seen), and no Content-Security-Policy of\nthe page refuses it. A promise completion value is awaited, except on WKWebView and WebKitGTK\nunder a page CSP that refuses `eval`, where the engine's own evaluate returns the completion\nvalue as it is (a promise there rejects `not_serializable`: end the script with a plain\nvalue). The result is JSON (`undefined` → `null`); a throw rejects `error`, a value JSON can't\nhold rejects `not_serializable`."
             },
             {
               "kind": "method",
@@ -57672,7 +57876,7 @@
             {
               "kind": "method",
               "name": "setForwardKeys",
-              "signature": "setForwardKeys(keys: string[]): Promise<void>",
+              "signature": "setForwardKeys(keys: WebViewForwardKey[]): Promise<void>",
               "doc": "Replace its `forwardKeys` (an empty list forwards none)."
             },
             {
@@ -57685,7 +57889,75 @@
               "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
-              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after)."
+              "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
+            }
+          ]
+        },
+        {
+          "name": "WebViewKeyEvent",
+          "slug": "WebViewKeyEvent",
+          "kind": "interface",
+          "signature": "interface WebViewKeyEvent",
+          "doc": "A key event of a web view (WebViewEventMap's keydown / keyup).",
+          "docFull": "A key event of a web view ({@linkcode WebViewEventMap}'s `keydown` / `keyup`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "type: \"keydown\" | \"keyup\"",
+              "doc": "`\"keydown\"` or `\"keyup\"`."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "key: string",
+              "doc": "DOM `KeyboardEvent.key`."
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "code: string",
+              "doc": "DOM `KeyboardEvent.code` (the physical key)."
+            },
+            {
+              "kind": "property",
+              "name": "altKey",
+              "signature": "altKey: boolean",
+              "doc": "Alt / Option held."
+            },
+            {
+              "kind": "property",
+              "name": "ctrlKey",
+              "signature": "ctrlKey: boolean",
+              "doc": "Control held."
+            },
+            {
+              "kind": "property",
+              "name": "metaKey",
+              "signature": "metaKey: boolean",
+              "doc": "Command on macOS, the Windows / Super key elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "shiftKey",
+              "signature": "shiftKey: boolean",
+              "doc": "Shift held."
+            },
+            {
+              "kind": "property",
+              "name": "repeat",
+              "signature": "repeat: boolean",
+              "doc": "An auto-repeat of a held key (`keydown` only)."
+            },
+            {
+              "kind": "property",
+              "name": "forwarded",
+              "signature": "forwarded: boolean",
+              "doc": "One of the view's `forwardKeys` (its page never saw it); always `true` for a `keyup`."
             }
           ]
         },

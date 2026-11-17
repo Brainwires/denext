@@ -62,11 +62,13 @@ import {
   applyTitleOptions,
   applyWindowButtonPosition,
   applyWindowOverlaySettings,
+  type DesktopMacosHiddenMode,
   type DesktopTitleBarStyle,
   type DesktopTitleVisibility,
   type DesktopToolbarStyle,
   type DesktopWindowSettings,
   type DesktopWindowSize,
+  macosHiddenModeProblem,
   TITLE_BARS,
   titleOptionsProblem,
   titleOptionValuesProblem,
@@ -382,6 +384,8 @@ export interface OpenWindowSettings {
   readonly skipTaskbar?: boolean;
   readonly visibleOnAllWorkspaces?: boolean;
   readonly backgroundThrottling?: boolean;
+  /** How it is hidden on macOS (absent: the runtime's default, `"invisible"`). */
+  readonly macosHiddenMode?: DesktopMacosHiddenMode;
   readonly show: boolean;
   readonly capabilities: ReadonlySet<string> | null;
   /** The app-chosen key (unique among the open windows). */
@@ -447,6 +451,8 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
   if (keyProblem !== null) throw invalid(keyProblem);
   const restoreBounds = optBool(a, "restoreBounds");
   const limits = sizeLimitSettings(a);
+  const hidden = a.macosHiddenMode === undefined ? null : macosHiddenModeProblem(a.macosHiddenMode);
+  if (hidden !== null) throw invalid(`macosHiddenMode ${hidden}`);
   return {
     url: a.url,
     ...(a.title !== undefined ? { title: a.title as string } : {}),
@@ -458,6 +464,9 @@ export function openWindowSettings(args: unknown): OpenWindowSettings {
     capabilities: subsetOf(a.capabilities),
     ...(a.key !== undefined ? { key: a.key as string } : {}),
     ...(restoreBounds !== undefined ? { restoreBounds } : {}),
+    ...(a.macosHiddenMode !== undefined
+      ? { macosHiddenMode: a.macosHiddenMode as DesktopMacosHiddenMode }
+      : {}),
     ...chrome,
     ...limits,
   };
@@ -640,6 +649,8 @@ function creationOptions(o: OpenWindowSettings): Record<string, unknown> {
     // Creation-time from runtime 3.0.0-denext.8: `false` keeps the page's timers at their rate
     // while the window is not on screen (an older runtime ignores it).
     ...pick("backgroundThrottling"),
+    // Creation-time from the runtime with the macOS hidden mode (an older one ignores it).
+    ...pick("macosHiddenMode"),
     ...(o.focusable === false ? { noActivate: true } : {}),
     ...(o.alwaysOnTop !== undefined ? { alwaysOnTop: o.alwaysOnTop !== false } : {}),
     // Honoured once the runtime can create a window hidden; it is hidden right after otherwise.
