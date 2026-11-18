@@ -102,7 +102,7 @@
           "jsr:@std/path@1"
         ]
       },
-      "jsr:@denext/pages-router@0.13.0": {
+      "jsr:@denext/pages-router@0.13.1": {
         "dependencies": [
           "jsr:@denext/denext@^4.20.0",
           "jsr:@std/path@1"
