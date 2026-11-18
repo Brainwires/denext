@@ -3,6 +3,12 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.13.1 - Unreleased
+
+- **Security:** a `getServerSideProps` answer is `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` unless the page sets its own, and every page answer varies on the data and prefetch request headers ([GHSA-vqwf-h6vg-4x73](https://github.com/Brainwires/denext/security/advisories/GHSA-vqwf-h6vg-4x73)).
+- **Security:** client navigation refuses `javascript:`, `vbscript:` and executable `data:` URLs ([GHSA-4cw5-8vq6-2xr8](https://github.com/Brainwires/denext/security/advisories/GHSA-4cw5-8vq6-2xr8)).
+- A `redirect.destination` from `getServerSideProps` / `getStaticProps` is pinned to the origin like `redirect()` (an explicit `http(s)://` destination is still followed).
+
 ## 0.13.0 - 2026-10-19
 
 - Requires `@denext/denext` ^4.4.0. The plugin reports that it serves the app's routes
