@@ -1,0 +1,148 @@
+:root {
+  color-scheme: dark;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #eee;
+}
+
+.app {
+  min-height: 100%;
+}
+
+/* The viewer fills the window edge to edge; the picture and the controls stay in the safe area. */
+.stage {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.stage-surface > canvas,
+.stage-video {
+  position: absolute;
+  top: var(--safe-top);
+  right: var(--safe-right);
+  bottom: var(--safe-bottom);
+  left: var(--safe-left);
+  width: calc(100% - var(--safe-left) - var(--safe-right));
+  height: calc(100% - var(--safe-top) - var(--safe-bottom));
+  display: block;
+}
+
+.stage-video {
+  object-fit: contain;
+  background: #000;
+}
+
+/* The canvas (the WebCodecs paths) sits over the idle <video>; the overlay and controls over both. */
+.stage-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.stage-surface:empty {
+  display: none;
+}
+
+.stats,
+.controls {
+  z-index: 2;
+}
+
+.stats {
+  position: absolute;
+  top: calc(var(--safe-top) + 12px);
+  left: calc(var(--safe-left) + 12px);
+  margin: 0;
+  padding: 10px 12px;
+  max-width: calc(100% - var(--safe-left) - var(--safe-right) - 48px);
+  overflow: hidden;
+  font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.controls {
+  position: absolute;
+  right: calc(var(--safe-right) + 12px);
+  bottom: calc(var(--safe-bottom) + 12px);
+  display: flex;
+  gap: 8px;
+  opacity: 0.35;
+  transition: opacity 0.2s;
+}
+
+.controls:hover,
+.controls:focus-within {
+  opacity: 1;
+}
+
+button,
+.button,
+select {
+  font: inherit;
+  font-size: 14px;
+  color: #fff;
+  background: rgba(40, 40, 40, 0.85);
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 6px 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sender {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: calc(var(--safe-top) + 16px) calc(var(--safe-right) + 16px)
+    calc(var(--safe-bottom) + 16px) calc(var(--safe-left) + 16px);
+}
+
+.sender a {
+  color: #8ab4ff;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.preview {
+  width: 100%;
+  margin-top: 16px;
+  aspect-ratio: 16 / 9;
+  background: #111;
+  border-radius: 8px;
+}
+
+.log {
+  font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  background: #111;
+  padding: 10px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+}

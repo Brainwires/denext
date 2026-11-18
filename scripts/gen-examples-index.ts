@@ -110,6 +110,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   "expo-app": "native",
   "offline-sync": "native",
   "scroll-bench": "native",
+  "rtc-viewer": "native",
 };
 
 /** A README heading whose section says how to run the example. */

@@ -1,0 +1,21 @@
+{
+  "desktop": {
+    "backend": {
+      "linux": "cef"
+    },
+    "titleBar": "hidden",
+    "window": {
+      "width": 1280,
+      "height": 720,
+      "title": "RTC viewer"
+    },
+    "minSize": {
+      "width": 320,
+      "height": 180
+    },
+    "app": {
+      "name": "RTC viewer",
+      "identifier": "dev.denext.rtc-viewer"
+    }
+  }
+}
