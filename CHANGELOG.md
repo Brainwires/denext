@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext export` writes `404.html`.** The root `app/not-found.tsx` (or the default 404 page)
+  inside the root layout, with their stylesheets, is pre-rendered to `out/404.html` (and
+  `out/404/index.html` with `trailingSlash: true`), as Next's `output: "export"` writes it: the
+  page static hosts serve for a URL with no file.
+- **`denext export` writes route handlers and metadata files.** Each route handler's GET
+  response is written at its URL (`feed.xml`, `api/hello`, each `generateStaticParams` set), and
+  `sitemap.xml`, `robots.txt`, `favicon.ico`, `manifest.webmanifest` and the icon / Open Graph /
+  Twitter images are written too; a static image keeps its extension (`icon.png`) and the pages
+  link it there. A handler with another method than GET, `force-dynamic`, or a failing GET is
+  skipped and listed. The deploy manifest marks what the export writes (`staticExport`), and
+  `staticHost()` no longer refuses an app for a GET route handler or a metadata route.
+- **Metadata image and manifest links carry the `basePath`.** The `icon`, `apple-icon`,
+  `og:image`, `twitter:image` and web-manifest links the file conventions add were written
+  without it, under `denext start` and in an export.
+- **A soft navigation no longer re-downloads the route's client entry.** Each navigation
+  re-imported the incoming route's entry under a fresh `?nav=` query so it would run again,
+  which no HTTP cache could serve (about 17 KB a click on a static export). A route entry now
+  registers its `main` by its URL when it runs, and a navigation to a route the page already
+  loaded calls it again; a route seen for the first time loads its entry by its plain URL. Dev
+  keeps re-importing (the entry is rebuilt in place).
+- **Open Graph and Twitter metadata inherit as in Next.js.** An `openGraph` or `twitter` object
+  without a title or description takes the page's `title` / `description`; with `openGraph` set,
+  `twitter` takes its title, description and images; and an unset `twitter.card` is
+  `summary_large_image` with an image, else `summary`. A `title` alone still adds no
+  `og:title`, as in Next.
+
 ## [4.20.0] - 2026-11-17
 
 ### Added

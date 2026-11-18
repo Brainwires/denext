@@ -76,7 +76,7 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
     minify: prodMinify(),
     // Route entry sources are the import roots; crawling them finds stylesheets in
     // sibling workspace packages (outside `projectDir`) the walk can't reach.
-    entryFiles: [...new Set(manifest.pages.flatMap(routeEntryFiles))],
+    entryFiles: [...new Set([...manifest.pages.flatMap(routeEntryFiles), ...notFoundFiles(ctx)])],
     // A next-compat app's esbuild bundles probe the target's platform files, so its stylesheet
     // crawl resolves them through their redirects (the native path's crawls already do).
     graph: ctx.compat
@@ -90,7 +90,7 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
   });
   if (!ctx.css) return;
   await primeCssGraph(
-    [...new Set(manifest.pages.flatMap(routeSourceFiles))],
+    [...new Set([...manifest.pages.flatMap(routeSourceFiles), ...notFoundFiles(ctx)])],
     ctx.css.appConfigPath,
     ctx.css.graph,
   );
@@ -101,6 +101,23 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
       ctx.cssRoutes.add(route.routePath);
     }
   }
+  // The `404.html` document (render.ts's `writeNotFoundPage`): the root layout's and the root
+  // not-found's stylesheets, as a page under the root layout gets.
+  const notFound = notFoundFiles(ctx);
+  const text = notFound.length ? await extractRouteCss(notFound, ctx.css) : "";
+  if (text.trim().length > 0) {
+    await Deno.writeTextFile(join(ctx.clientOut, NOT_FOUND_CSS_FILE), text);
+    ctx.notFoundCss = `${ctx.assetBase}${CLIENT_PREFIX}${NOT_FOUND_CSS_FILE}`;
+  }
+}
+
+/** The `404.html` document's stylesheet, beside the routes' in the client dir. */
+const NOT_FOUND_CSS_FILE = "_not-found.css";
+
+/** The modules the `404.html` document renders: the root layout and the root not-found. */
+function notFoundFiles(ctx: ExportContext): string[] {
+  const { rootLayout, rootNotFound } = ctx.manifest;
+  return [rootLayout, rootNotFound].filter((f): f is string => f !== null);
 }
 
 /** Each export's boundary manifest, crawled once ({@linkcode boundaryManifest}). */

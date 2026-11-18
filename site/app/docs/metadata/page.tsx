@@ -23,6 +23,16 @@ export const metadata = {
 };`}
       </Code>
 
+      <p>
+        Open Graph and Twitter tags fill in as in Next.js: an <code>openGraph</code> or{" "}
+        <code>twitter</code> object without a <code>title</code> or <code>description</code>{" "}
+        takes the page's; with <code>openGraph</code> set, <code>twitter</code>{" "}
+        takes its title, description and images first; and a <code>twitter</code> card left unset is
+        {" "}
+        <code>summary_large_image</code> with an image, else <code>summary</code>. A{" "}
+        <code>title</code> alone adds no <code>og:title</code>.
+      </p>
+
       <h2>Dynamic metadata</h2>
       <p>
         Export an async <code>generateMetadata</code>{" "}

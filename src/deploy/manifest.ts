@@ -44,6 +44,11 @@ export interface DeployRoute {
   matcher?: string[];
   /** A metadata route (`sitemap.ts`, `robots.ts`, `manifest.ts`), served by the server. */
   metadata?: boolean;
+  /**
+   * `denext export` writes this route handler's GET response (or this metadata file) to a file,
+   * so a static host serves it too: GET only, not `force-dynamic`, every param set enumerated.
+   */
+  staticExport?: boolean;
 }
 
 /** One directory of files the server serves as they are, with the `Cache-Control` it sends. */

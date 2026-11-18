@@ -446,9 +446,23 @@ Deno.test("deploy preset static: refuses an app with server routes, listing each
       assertStringIncludes(err.message, `    ${route}  `);
     }
     assert(!err.message.includes("/blog/[slug]  "), "a static route is not listed");
-    assert(!err.message.includes("/sitemap.xml"), "a metadata route is a warning, not a refusal");
+    assert(!err.message.includes("/sitemap.xml"), "the export writes a metadata route");
     assertEquals(files.size, 0, "nothing is exported or written");
     assertEquals(staticRefusal({ ...manifest, routes: [] }), null);
+    // A route handler the export writes (GET only) is not a refusal; one it can't, is.
+    const handler = (staticExport: boolean) => ({
+      path: "/feed.xml",
+      kind: "route-handler" as const,
+      source: "app/feed.xml/route.ts",
+      reason: "a route handler",
+      methods: ["GET"],
+      ...(staticExport ? { staticExport } : {}),
+    });
+    assertEquals(staticRefusal({ ...manifest, routes: [handler(true)] }), null);
+    assertStringIncludes(
+      staticRefusal({ ...manifest, routes: [handler(false)] }) ?? "",
+      "    /feed.xml  route-handler",
+    );
   } finally {
     await Deno.remove(paths.projectDir, { recursive: true });
   }

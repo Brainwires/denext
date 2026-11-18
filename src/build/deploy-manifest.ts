@@ -29,6 +29,7 @@ import {
   envReads,
   exists,
   filesUnder,
+  handlerExportable,
   handlerMethods,
   jobSchedules,
   middlewareMatcher,
@@ -75,6 +76,7 @@ function metadataRoutes(
     source: rel(projectDir, file!),
     reason: "a metadata route, rendered by the server",
     metadata: true,
+    staticExport: true,
   }));
 }
 
@@ -88,12 +90,15 @@ async function collectRoutes(paths: ProjectPaths, mode: DeployManifest["mode"]) 
     const manifest = await scanRoutes(paths.appDir);
     for (const page of manifest.pages) routes.push(await classifyPage(paths.projectDir, page));
     for (const api of manifest.api) {
+      const text = await readText(api.filePath);
+      const dynamicSegments = api.pattern.some((s) => s.kind !== "static");
       routes.push({
         path: api.routePath,
         kind: "route-handler",
         source: rel(paths.projectDir, api.filePath),
         reason: "a route handler",
-        methods: handlerMethods(await readText(api.filePath)),
+        methods: handlerMethods(text),
+        ...(handlerExportable(text, dynamicSegments) ? { staticExport: true } : {}),
       });
     }
     routes.push(...metadataRoutes(paths.projectDir, manifest));

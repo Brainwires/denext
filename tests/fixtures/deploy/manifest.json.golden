@@ -60,7 +60,8 @@
       "kind": "route-handler",
       "source": "app/sitemap.ts",
       "reason": "a metadata route, rendered by the server",
-      "metadata": true
+      "metadata": true,
+      "staticExport": true
     },
     {
       "path": "/users/[id]",

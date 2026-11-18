@@ -138,6 +138,22 @@ export function handlerMethods(text: string): string[] {
 }
 
 /**
+ * Whether `denext export` writes a route handler's response to a file a static host serves: it
+ * exports GET (and at most HEAD besides), is not `dynamic = "force-dynamic"`, and a dynamic
+ * segment comes with `generateStaticParams`.
+ *
+ * @param text The module's source.
+ * @param dynamicSegments Whether the route pattern has a dynamic segment.
+ * @returns Whether the export writes it.
+ */
+export function handlerExportable(text: string, dynamicSegments: boolean): boolean {
+  const methods = handlerMethods(text);
+  if (!methods.includes("GET") || methods.some((m) => m !== "GET" && m !== "HEAD")) return false;
+  if (DYNAMIC_EXPORT.exec(text)?.[1] === "force-dynamic") return false;
+  return !dynamicSegments || STATIC_PARAMS.test(text);
+}
+
+/**
  * The middleware's `config.matcher`, when it is a string literal or an array of them.
  *
  * @param text The middleware module's source.
