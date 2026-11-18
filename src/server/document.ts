@@ -1026,11 +1026,44 @@ function iconTag(rel: string, icon: string | IconDescriptor): string {
   return tag + ">";
 }
 
+/** The resolved `<title>` text (a merged title is a string; a lone segment's may be an object). */
+function plainTitle(t: Metadata["title"]): string | undefined {
+  return typeof t === "string" ? t : t?.absolute ?? t?.default;
+}
+
+/**
+ * Next's post-processing of the resolved social metadata (`postProcessMetadata`): when
+ * `openGraph` is set, `twitter` takes its missing title, description and images from it (the
+ * title and description falling back to the page's own); then `openGraph` and `twitter`, when
+ * set, take a missing title / description from the page's `title` / `description`; and a
+ * `twitter` card left unset is `summary_large_image` with an image, else `summary`. Neither is
+ * created from `title` alone.
+ */
+function resolveSocial(metadata: Metadata): Pick<Metadata, "openGraph" | "twitter"> {
+  const title = plainTitle(metadata.title) || undefined;
+  const description = metadata.description || undefined;
+  let { openGraph: og, twitter: tw } = metadata;
+  if (og) {
+    tw = {
+      ...tw,
+      title: tw?.title || og.title || title,
+      description: tw?.description || og.description || description,
+      images: tw?.images || og.images,
+    };
+    og = { ...og, title: og.title || title, description: og.description || description };
+  }
+  if (tw) {
+    tw = { ...tw, title: tw.title || title, description: tw.description || description };
+    tw.card ||= list(tw.images).length ? "summary_large_image" : "summary";
+  }
+  return { openGraph: og, twitter: tw };
+}
+
 /** Open Graph + Twitter Card tags. */
 function headSocial(metadata: Metadata): string {
   const base = metadata.metadataBase;
   let head = "";
-  const og = metadata.openGraph;
+  const { openGraph: og, twitter } = resolveSocial(metadata);
   if (og) {
     head += propTag("og:title", og.title) + propTag("og:description", og.description) +
       propTag("og:type", og.type) + propTag("og:url", og.url) +
@@ -1043,7 +1076,7 @@ function headSocial(metadata: Metadata): string {
     for (const a of list(og.audio)) head += mediaTags("og:audio", a, base);
     head += ogArticleTags(og) + ogContactTags(og);
   }
-  return head + headTwitter(metadata.twitter, base);
+  return head + headTwitter(twitter, base);
 }
 
 /** `article:*` tags (Next emits them for `type: "article"` fields). */

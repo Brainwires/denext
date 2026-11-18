@@ -62,6 +62,34 @@ and this project adheres to
 - A request path with percent-encoded unreserved characters (`%7E` for `~`, say) answers a 308 to its decoded spelling; a `public/` file is no longer served under an encoded `/` or `\`.
 - Rendering a plain object (not an element) as a child is an error, as in React; 4.20.0 wrote an `<undefined>` tag.
 
+### Fixed
+
+- **`denext export` writes `404.html`.** The root `app/not-found.tsx` (or the default 404 page)
+  inside the root layout, with their stylesheets, is pre-rendered to `out/404.html` (and
+  `out/404/index.html` with `trailingSlash: true`), as Next's `output: "export"` writes it: the
+  page static hosts serve for a URL with no file.
+- **`denext export` writes route handlers and metadata files.** Each route handler's GET
+  response is written at its URL (`feed.xml`, `api/hello`, each `generateStaticParams` set), and
+  `sitemap.xml`, `robots.txt`, `favicon.ico`, `manifest.webmanifest` and the icon / Open Graph /
+  Twitter images are written too; a static image keeps its extension (`icon.png`) and the pages
+  link it there. A handler with another method than GET, `force-dynamic`, or a failing GET is
+  skipped and listed. The deploy manifest marks what the export writes (`staticExport`), and
+  `staticHost()` no longer refuses an app for a GET route handler or a metadata route.
+- **Metadata image and manifest links carry the `basePath`.** The `icon`, `apple-icon`,
+  `og:image`, `twitter:image` and web-manifest links the file conventions add were written
+  without it, under `denext start` and in an export.
+- **A soft navigation no longer re-downloads the route's client entry.** Each navigation
+  re-imported the incoming route's entry under a fresh `?nav=` query so it would run again,
+  which no HTTP cache could serve (about 17 KB a click on a static export). A route entry now
+  registers its `main` by its URL when it runs, and a navigation to a route the page already
+  loaded calls it again; a route seen for the first time loads its entry by its plain URL. Dev
+  keeps re-importing (the entry is rebuilt in place).
+- **Open Graph and Twitter metadata inherit as in Next.js.** An `openGraph` or `twitter` object
+  without a title or description takes the page's `title` / `description`; with `openGraph` set,
+  `twitter` takes its title, description and images; and an unset `twitter.card` is
+  `summary_large_image` with an image, else `summary`. A `title` alone still adds no
+  `og:title`, as in Next.
+
 ### Security
 
 - **Middleware matchers see every spelling of a path** ([GHSA-7mcj-vqxf-r65h](https://github.com/Brainwires/denext/security/advisories/GHSA-7mcj-vqxf-r65h)). Files under `public/` and dynamic route segments decoded the request path after matchers and config rules had tested it, so another spelling of a guarded path (a percent-encoded character, an encoded separator, or letter case and other aliases on a case-insensitive file system) could skip the middleware. A path with percent-encoded unreserved characters now answers a 308 to its canonical spelling before rules and middleware, and static files are served only under the name they are stored as; encoded separators and NUL are refused. Affects 0.9.0 through 4.20.0.

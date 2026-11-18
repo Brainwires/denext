@@ -18,7 +18,12 @@ import {
   type DeployRouteKind,
 } from "../src/deploy/manifest.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { handlerMethods, jobSchedules, middlewareMatcher } from "../src/build/deploy-scan.ts";
+import {
+  handlerExportable,
+  handlerMethods,
+  jobSchedules,
+  middlewareMatcher,
+} from "../src/build/deploy-scan.ts";
 import { fixtureProject } from "./helpers/deploy-fixture.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 
@@ -257,4 +262,18 @@ Deno.test("deploy scans: handler methods, the middleware matcher, a job's schedu
     "0 2 * * *",
   ]);
   assertEquals(jobSchedules("defineJob({ handler })"), []);
+});
+
+Deno.test("deploy scans: which route handlers a static export writes", () => {
+  const get = "export function GET() {}\n";
+  assert(handlerExportable(get, false), "a GET handler");
+  assert(handlerExportable(get + "export function HEAD() {}", false), "GET + HEAD");
+  assert(!handlerExportable("export function POST() {}", false), "no GET");
+  assert(!handlerExportable(get + "export function POST() {}", false), "GET + POST");
+  assert(
+    !handlerExportable(get + 'export const dynamic = "force-dynamic";', false),
+    "force-dynamic",
+  );
+  assert(!handlerExportable(get, true), "a dynamic segment without generateStaticParams");
+  assert(handlerExportable(get + "export function generateStaticParams() {}", true));
 });

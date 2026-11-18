@@ -522,6 +522,17 @@ const SIGNAL_STATE_ADOPTION =
 `;
 
 /**
+ * The entry statement that registers its `main` by the entry's own URL
+ * (`globalThis.__dnxEntries`), so a soft navigation back to a route whose entry this document
+ * already evaluated calls `main` again (nav-document.ts's `injectRouteEntry`) instead of
+ * re-fetching the module under a cache-busting query to re-evaluate it.
+ */
+const ENTRY_REGISTRATION =
+  `// Soft navigation re-runs main() on this module (cached once) instead of re-fetching it.
+(globalThis.__dnxEntries ??= {})[import.meta.url] = main;
+`;
+
+/**
  * Generate the browser entry source that hydrates a single page route.
  *
  * @param route The page route.
@@ -569,7 +580,7 @@ ${classBoot}  try {
   }
 }
 
-main();
+${ENTRY_REGISTRATION}main();
 `;
 }
 
@@ -1269,7 +1280,7 @@ setResumabilityReboot((islands, state) => {
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}
-// Read by the deferred boot (flight-boot.ts), which imports this entry on an island's trigger.
+${ENTRY_REGISTRATION}// Read by the deferred boot (flight-boot.ts), which imports this entry on an island's trigger.
 export const ready = main();
 `;
 }

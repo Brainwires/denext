@@ -64,3 +64,24 @@ Deno.test("a root icon file auto-injects <link rel=icon> into the page head", as
     await Deno.remove(appDir.replace(/\/app$/, ""), { recursive: true });
   }
 });
+
+Deno.test("under a basePath the auto-injected convention links carry it (where they are served)", async () => {
+  const appDir = await appWith({
+    "page.tsx": "export default function P(){ return null }",
+    "icon.png": "PNG",
+    "apple-icon.png": "PNG",
+  });
+  try {
+    const manifest = await scanRoutes(appDir);
+    const app = createApp({ getManifest: () => manifest, load: defaultLoader, basePath: "/docs" });
+    const html = await (await app(new Request("http://localhost/docs"))).text();
+    assertStringIncludes(html, `<link rel="icon" href="/docs/icon">`);
+    assertStringIncludes(html, `<link rel="apple-touch-icon" href="/docs/apple-icon">`);
+    // …and the icon is answered there.
+    const icon = await app(new Request("http://localhost/docs/icon"));
+    assertEquals(icon.status, 200);
+    await icon.body?.cancel();
+  } finally {
+    await Deno.remove(appDir.replace(/\/app$/, ""), { recursive: true });
+  }
+});

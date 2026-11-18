@@ -86,4 +86,11 @@ export let retainedRoot: Root | null = null;
  * correct. Embedding two independent denext apps on one page is unsupported — the
  * second `startClient` would reconcile its tree into the first app's container.
  */
-export const globalWin = globalThis as { __dnxRoot?: Root | null; __dnxRootless?: boolean };
+export const globalWin = globalThis as {
+  __dnxRoot?: Root | null;
+  __dnxRootless?: boolean;
+  /** Each evaluated route entry's `main`, by the entry's URL (bundle.ts's `ENTRY_REGISTRATION`). */
+  __dnxEntries?: Record<string, () => unknown>;
+  /** Set by the dev server's script. */
+  __denextDev?: boolean;
+};

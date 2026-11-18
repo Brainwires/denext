@@ -118,37 +118,72 @@ function syncScript(parsed: Document, id: string): void {
   jsonIsland(id).textContent = incoming.textContent;
 }
 
+/** Entry URLs a navigation loaded by `<script>` (one that registers no `main` re-runs by a new URL). */
+const loadedEntries = new Set<string>();
+
 /**
- * Re-inject a route's client entry module (cache-busted per nav so it re-evaluates),
- * which re-runs the route → `startClient` → `retainedRoot.render` reconciles in place.
- * The injected `<script>` removes itself after running so they don't pile up. Resolves when
- * the module has evaluated (its synchronous `main()` has rendered) — so a caller can run the
- * DOM swap inside a view transition and await the reconcile before the new-state capture.
+ * Re-run a route's client entry → `startClient` → `retainedRoot.render` reconciles in place.
+ * An entry this document already evaluated registered its `main` by URL (bundle.ts's
+ * `ENTRY_REGISTRATION`): it is called again, so a route visited before fetches nothing. Else the
+ * entry is injected by its plain URL, which the module map and the HTTP cache keep for the next
+ * visit. Only in dev (the entry is rebuilt in place) and for an entry that registers no `main`
+ * (a plugin's, the Flight boot) that was already loaded is it re-imported under a per-nav
+ * `?nav=` stamp so it evaluates again. An injected `<script>` removes itself after running.
+ * Resolves when the entry has run (a re-run `main` has settled; an injected module has
+ * evaluated, its synchronous `main()` rendered) — so a caller can run the DOM swap inside a view
+ * transition and await the reconcile before the new-state capture. Exported for testing.
  */
-function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const src = new URL(entrySrc, url.href);
-    src.searchParams.set("nav", nextNavStamp());
+export function injectRouteEntry(entrySrc: string, url: URL): Promise<void> {
+  const src = new URL(entrySrc, url.href);
+  const dev = globalWin.__denextDev === true;
+  const rerun = dev ? undefined : globalWin.__dnxEntries?.[src.href];
+  return settleWithin((done) => {
+    if (rerun) {
+      Promise.resolve().then(rerun).catch(reportNavFailure).finally(done);
+      return;
+    }
+    if (dev || loadedEntries.has(src.href) || inDocument(src.href)) {
+      src.searchParams.set("nav", nextNavStamp());
+    } else loadedEntries.add(src.href);
     const script = document.createElement("script");
     script.type = "module";
     script.src = src.href;
+    script.addEventListener("load", done, { once: true });
+    script.addEventListener("error", done, { once: true });
+    document.body.appendChild(script);
+    return () => script.remove();
+  });
+}
+
+/**
+ * Run `start` with a `done` callback and resolve once it is called, or after 4 s, then run the
+ * teardown `start` returned. The cap matters: the entry is awaited INSIDE a view transition's
+ * update callback, so a stalled entry chunk (or a nested dynamic import whose failure never
+ * surfaces as the script's `error`, or a `main` that never settles) would otherwise hang the
+ * reconcile until the browser's own ~4 s transition timeout. Cap it so the commit lands promptly.
+ */
+function settleWithin(start: (done: () => void) => (() => void) | void): Promise<void> {
+  return new Promise<void>((resolve) => {
     let settled = false;
-    // Resolve on load/error, but also on a timeout: this promise is awaited INSIDE a view
-    // transition's update callback, so a stalled entry chunk (or a nested dynamic import whose
-    // failure never surfaces as the script's `error`) would otherwise hang the reconcile until
-    // the browser's own ~4 s transition timeout. Cap it so the commit lands promptly.
-    const cleanup = () => {
+    let teardown: (() => void) | void = undefined;
+    const done = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      script.remove();
+      teardown?.();
       resolve();
     };
-    const timer = setTimeout(cleanup, 4000);
-    script.addEventListener("load", cleanup, { once: true });
-    script.addEventListener("error", cleanup, { once: true });
-    document.body.appendChild(script);
+    const timer = setTimeout(done, 4000);
+    teardown = start(done);
   });
+}
+
+/** Whether the document itself loads the module script `href` (the first page's entry). */
+function inDocument(href: string): boolean {
+  for (const el of document.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')) {
+    if (el.src === href) return true;
+  }
+  return false;
 }
 
 /**

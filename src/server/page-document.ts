@@ -237,6 +237,8 @@ export function augmentPageMetadata(
     route: pr.page.route,
     i18n: config.i18n,
     localeInfo: pr.localeInfo,
+    // The conventions are served under the basePath, so they are linked there too.
+    publicPath: config.basePath ? (path) => config.basePath + path : undefined,
     absolutize: (path) => {
       const stable = stableBaseUrl(path, config.canonicalOrigin, metadata.metadataBase);
       if (stable) return stable;

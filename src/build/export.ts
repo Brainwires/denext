@@ -26,8 +26,14 @@ import type {
   StaticExportResult,
 } from "./export-pipeline/context.ts";
 import { setModuleGraphRedirects } from "./module-graph.ts";
+import { writeMetadataFiles, writeRouteHandlers } from "./export-pipeline/static-files.ts";
 import { exportWithoutAppRouter, finishExport, prepareExport } from "./export-pipeline/prepare.ts";
-import { copyPublic, renderAllPages, writeGlobalErrorPage } from "./export-pipeline/render.ts";
+import {
+  copyPublic,
+  renderAllPages,
+  writeGlobalErrorPage,
+  writeNotFoundPage,
+} from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
 import { canonicalPath } from "./canonical-path.ts";
@@ -54,8 +60,12 @@ async function renderExport(ctx: ExportContext): Promise<void> {
   await selfHostExportFonts(ctx);
   // `<Script strategy="worker">`: the app's Partytown, at the path the pages point it at.
   await preparePartytown(paths.config, paths.projectDir, join(ctx.outDir, "_denext", "~partytown"));
-  // 2. Render every page (× each static param set), then the global-error document.
+  // 2. Render every page (× each static param set), then the 404 and global-error documents.
   await renderAllPages(ctx);
+  // 2b. Route handlers' GET responses and the metadata files, at their URLs.
+  await writeRouteHandlers(ctx);
+  await writeMetadataFiles(ctx);
+  await writeNotFoundPage(ctx);
   await writeGlobalErrorPage(ctx);
   // What the build wrote so far (pages, client chunks, fonts): no build step may replace it.
   const builtFiles = await listBuiltFiles(ctx.outDir);
