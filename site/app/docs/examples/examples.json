@@ -649,6 +649,20 @@
       "runFrom": "example"
     },
     {
+      "name": "rtc-viewer-native",
+      "title": "rtc-viewer-native — a full-screen WebRTC viewer with native decode and presentation",
+      "blurb": "A denext desktop app that receives a WebRTC video stream in its own Deno process and shows it full-screen with the lowest latency the machine allows: each compressed frame goes from the runtime's…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/rtc-viewer-native",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext task native:build    # the native library (cargo; once, and after native/ changes)\ndenext task desktop         # open the app: the video full-screen (black until a sender connects)\ndenext task send            # in a second terminal: the runtime's fake camera over WHIP",
+      "runFrom": "example"
+    },
+    {
       "name": "scroll-bench",
       "title": "scroll-bench",
       "blurb": "A scroll benchmark with two apps that draw the same data with the same row designs: a denext app in a Capacitor WebView (web/) and a bare React Native app (native/).",

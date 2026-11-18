@@ -1,0 +1,33 @@
+[package]
+name = "rtcviewer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+publish = false
+description = "The native half of denext's rtc-viewer-native example: hardware video decode and presentation behind a small C ABI that Deno's FFI drives"
+
+[lib]
+# cdylib: the library the desktop extension opens with `Deno.dlopen`. rlib: the integration tests
+# (tests/decode.rs) link the same code directly.
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# AppKit / Metal / Core Animation are Objective-C APIs: objc2 and its generated framework crates.
+# Core Foundation, Core Media, Core Video and VideoToolbox are C APIs, declared by hand in
+# src/platform/macos/sys.rs (a few dozen functions; no extra crates).
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-metal = "0.3"
+objc2-quartz-core = "0.3"
+
+[profile.release]
+# The library sits on the frame path: keep the optimizer on, strip what nothing reads.
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
