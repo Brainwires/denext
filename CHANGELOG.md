@@ -10,7 +10,7 @@ and this project adheres to
 
 ### Added
 
-- **Runtime 3.0.0-denext.26: WebRTC encoded transforms and SFrame.** `RTCRtpScriptTransform`,
+- **Runtime 3.0.0-denext.27: WebRTC encoded transforms and SFrame.** `RTCRtpScriptTransform`,
   `sender.transform` / `receiver.transform` and, in the worker, the `rtctransform` event with
   `RTCRtpScriptTransformer` (`readable`, `writable`, `options`, `generateKeyFrame()`,
   `sendKeyFrameRequest()`, `keyframerequest`) and `KeyFrameRequestEvent`; `RTCEncodedVideoFrame` /
@@ -21,19 +21,19 @@ and this project adheres to
   `SFrameDecryptorStream`, `RTCRtpSFrameEncryptor`, `RTCRtpSFrameDecryptor` and
   `SFrameTransformErrorEvent`; the AES-256-CTR suites and per-packet SFrame are
   `NotSupportedError`.
-- **Runtime 3.0.0-denext.26: `navigator.mediaDevices`, with fake devices.** `MediaDevices`,
+- **Runtime 3.0.0-denext.27: `navigator.mediaDevices`, with fake devices.** `MediaDevices`,
   `MediaDeviceInfo`, `InputDeviceInfo` and `OverconstrainedError`. The runtime has no devices
   (`enumerateDevices()` is empty and `getUserMedia()` rejects with `NotFoundError`) unless
   `DENO_FAKE_MEDIA_DEVICES=1`, the equivalent of Chrome's `--use-fake-device-for-media-stream`: a
   fake camera (640x480 at 30 fps) and microphone (400 Hz, 48 kHz) with constraints, capabilities,
   settings and `applyConstraints()`, whose tracks send real media in the negotiated codec (Opus,
   PCMU, PCMA, G.722, VP8, VP9, H.264, H.265, AV1), restarting the video on a key frame at a PLI.
-- **Runtime 3.0.0-denext.26: WebRTC conformance.** WebRTC's web-platform-tests run in the runtime's
+- **Runtime 3.0.0-denext.27: WebRTC conformance.** WebRTC's web-platform-tests run in the runtime's
   tree (every `webrtc*` directory), and the fixes they found are in: negotiation and SDP, data
   channels (close, send ordering, `bufferedAmount`, ids), the SCTP and ICE transports, `getStats()`
   timestamps, and `RTCRtpEncodingParameters.adaptivePtime`. All `webrtc*` subtests: 1897 of 2824 pass, up from 1452
   of 2503.
-- **Runtime 3.0.0-denext.26: the kernel sandbox reaches the processes a program starts** (opt-in,
+- **Runtime 3.0.0-denext.27: the kernel sandbox reaches the processes a program starts** (opt-in,
   `--kernel-sandbox=enforce`; `auto` still changes nothing). A run hands its grant to every process
   it starts, so a `deno` or a `deno compile` program started inside the sandbox is held to it by its
   own checks too (`NotCapable` instead of a bare `EACCES`), and the subcommands that write the
@@ -53,11 +53,11 @@ and this project adheres to
   compressed frame from an `RTCRtpScriptTransform` worker to a Rust library (`native/`, over FFI),
   which decodes it in hardware and draws it into a native window; no decoded pixel passes through
   JavaScript. A tray icon switches between full screen, a window and hidden. Needs runtime
-  3.0.0-denext.26.
+  3.0.0-denext.27.
 
 ### Changed
 
-- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.26** (the WebRTC, media
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.27** (the WebRTC, media
   device and kernel sandbox additions above).
 - A request path with percent-encoded unreserved characters (`%7E` for `~`, say) answers a 308 to its decoded spelling; a `public/` file is no longer served under an encoded `/` or `\`.
 - Rendering a plain object (not an element) as a child is an error, as in React; 4.20.0 wrote an `<undefined>` tag.
