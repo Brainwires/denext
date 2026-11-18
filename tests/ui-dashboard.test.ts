@@ -355,6 +355,51 @@ Deno.test("dashboard: failed sign-ins are rate limited; while limited even the p
   }
 });
 
+Deno.test("dashboard: sign-ins sent together are counted before their checks run", async () => {
+  const gate = new DashboardGate({ password: PASSWORD });
+  const inner = "http://127.0.0.1:3100";
+  const form = await dashboardLogin(new Request(`${inner}/login`), new URL(`${inner}/login`), gate);
+  const pre = setCookie(form, DASH_LOGIN_COOKIE);
+  const token = new RegExp(`name="${UI_CSRF_FIELD}" value="([^"]+)"`).exec(await form.text())![1];
+  const attempt = (password: string) =>
+    dashboardLogin(
+      new Request(`${inner}/login`, {
+        method: "POST",
+        headers: {
+          host: new URL(inner).host,
+          cookie: pre[0],
+          origin: inner,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ [UI_CSRF_FIELD]: token, password }),
+      }),
+      new URL(`${inner}/login`),
+      gate,
+    );
+  // All in flight at once: every one reaches the limit before any password check has finished.
+  const sent = await Promise.all(Array.from({ length: 24 }, (_, i) => attempt(`wrong ${i}`)));
+  const statuses = sent.map((res) => res.status);
+  assertEquals(statuses.filter((s) => s === 401).length, 5, "the per-peer budget, no more");
+  assertEquals(statuses.filter((s) => s === 429).length, 19);
+  assertEquals((await attempt(PASSWORD)).status, 429, "and the peer now waits");
+});
+
+Deno.test("LoginLimiter: a right password counted ahead of its check costs nothing", () => {
+  const limiter = new LoginLimiter(2, 4, 1_000);
+  limiter.fail("a", 0);
+  limiter.fail("b", 0);
+  limiter.fail("b", 0);
+  limiter.succeed("b", 0);
+  assertEquals(limiter.retryAfter("b", 0), 0, "the peer's failures are forgotten");
+  limiter.fail("c", 0);
+  assertEquals(limiter.retryAfter("d", 0), 0, "and the overall budget got its unit back");
+  limiter.fail("d", 0);
+  assertEquals(limiter.retryAfter("e", 0), 1);
+  limiter.succeed("e", 1_001);
+  limiter.fail("e", 1_001);
+  assertEquals(limiter.retryAfter("f", 1_001), 0, "a new window is not driven below zero");
+});
+
 Deno.test("LoginLimiter: per peer, overall, per window; a success clears only that peer", () => {
   const limiter = new LoginLimiter(2, 3, 1_000);
   limiter.fail("a", 0);

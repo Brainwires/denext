@@ -12,6 +12,7 @@ import { reportCaught, reportUncaught } from "./root-callbacks.ts";
 import { raiseAccessSignal, retrySuspendedTransition, retrySuspense } from "./boundaries.ts";
 
 import { isThenable } from "../../runtime/suspense.ts";
+import { isScriptUrl } from "../nav-scheme.ts";
 import { isControlSignal, isRedirect } from "../../runtime/error-boundary.ts";
 import { getClassSupport } from "./class-support.ts";
 import {
@@ -193,7 +194,7 @@ export function handleThrow(sourceFiber: Fiber, thrown: unknown): Fiber | null {
   // `redirect()` during a client render: Next navigates. Leave the current DOM as it is (the
   // page is about to unload) and stop this render.
   if (isRedirect(thrown) && typeof location !== "undefined") {
-    location.assign(thrown.url);
+    if (!isScriptUrl(thrown.url)) location.assign(thrown.url);
     return null;
   }
   // A Server Action's `notFound()` / `forbidden()` / `unauthorized()` that `useActionState`

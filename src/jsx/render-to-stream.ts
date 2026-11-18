@@ -20,6 +20,7 @@ import {
   type HeadCollector,
 } from "./render-to-string.ts";
 import { hostAttrs, renderHostHtml, reportHoleError } from "./render-shared.ts";
+import { hostTagOf } from "./host-tag.ts";
 import { VNodeRenderer } from "./renderer-base.ts";
 export type { HeadCollector };
 import { enterScope } from "./tree-id.ts";
@@ -144,7 +145,7 @@ class StreamRenderer extends VNodeRenderer<string> {
     head: HeadCollector | null,
   ): Promise<string> {
     const props = node.props ?? {};
-    const tag = node.type as string;
+    const tag = hostTagOf(node);
     return renderHostHtml(tag, props, hostAttrs(props, tag), head, {
       renderChildren: (c, hoist) => this.renderChildren(c, scopes, hoist ? head : null),
       renderTitle: (c) => this.renderChildren(c, scopes, null),

@@ -42,6 +42,7 @@ import {
 export { serializeStyle } from "./dom-attributes.ts";
 import { enterScope, type IdHolder, type IdScope, nextId, rootScope } from "./tree-id.ts";
 import { isoIsland, IsoIslandServer } from "./iso-island-server.ts";
+import { hostTagOf } from "./host-tag.ts";
 export type { IdHolder } from "./tree-id.ts";
 
 /** HTML void elements that must not have a closing tag. */
@@ -772,7 +773,7 @@ function renderVNodeInto(node: VNode, ctx: RenderCtx): void | Promise<void> {
     return appendResult(renderErrorBoundaryToStr(props, ctx), ctx);
   }
   if (isComponentType(type)) return renderElementComponentInto(type, props, ctx);
-  return renderHostInto(type as string, props, ctx, node.key);
+  return renderHostInto(hostTagOf(node), props, ctx, node.key);
 }
 
 /** A component element, or a `client:*` one as an isomorphic island (iso-island-server.ts). */
@@ -1258,7 +1259,7 @@ function attributeFor(
   custom: boolean,
   props: Record<string, unknown>,
 ): string {
-  const action = formActionAttribute(rawName, value);
+  const action = formActionAttribute(rawName, value, tag);
   if (action !== null) return action;
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
   if (typeof value === "function" || typeof value === "symbol" || value == null) return "";
@@ -1273,11 +1274,22 @@ function attributeFor(
   return namedAttribute(prop, aliasedAttrName(prop) ?? prop, value, tag);
 }
 
-/** A server action's endpoint / a permalink for `action`/`formAction`, else null. */
-function formActionAttribute(rawName: string, value: unknown): string | null {
+/**
+ * A server action's endpoint / a permalink for `action`/`formAction`, else null. The permalink
+ * is the app's string (often built from the request, `?next=`): it passes the same scheme check
+ * as a string `action`, and one that is refused renders no attribute.
+ */
+function formActionAttribute(
+  rawName: string,
+  value: unknown,
+  tag: string | undefined,
+): string | null {
   if (rawName !== "action" && rawName !== "formAction") return null;
   const url = formActionUrl(value);
-  return url === null ? null : ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
+  if (url === null) return null;
+  const name = rawName.toLowerCase();
+  const safe = sanitizeUrlAttr(tag, name, url);
+  return safe === null ? "" : ` ${name}="${escapeHtml(safe)}"`;
 }
 
 /** A non-boolean React prop's attribute, under its (aliased) attribute `name`. */

@@ -261,7 +261,7 @@ export interface RequestContext {
   /** Set once the render's cache scope has ended ({@linkcode endCacheScope}). */
   cacheScopeEnded?: boolean;
   /** Routing facts the pipeline resolved (`NextRequest.nextUrl.basePath` / `.locale` read them). */
-  routing?: { basePath: string; locale?: string };
+  routing?: { basePath: string; locale?: string; locales?: readonly string[] };
   /** Memoized read-only view handed out by {@linkcode headers}. */
   readonlyHeaders?: Headers;
   /**

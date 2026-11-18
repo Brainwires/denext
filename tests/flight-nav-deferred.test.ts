@@ -97,11 +97,15 @@ Deno.test("a browser soft navigation gets its payload first, then each deferred 
   slow.resolve({ rows: [1, 2] }); // the slow one settles first here: lines follow settle order
   assertEquals((await reader.read()).value, '{"v":"dnxv1","x":{"rows":[1,2]}}\n');
   fast.reject(new Error("gone"));
-  assertEquals(
-    (await reader.read()).value,
-    '{"v":"dnxv0","x":{"__dnxAwaitError":true,"message":"gone"}}\n',
-    "a rejection arrives as <Await>'s error marker",
-  );
+  // A rejection arrives as <Await>'s error marker: in production with the message an error
+  // boundary gets and the logged digest, never the rejection's own text.
+  const rejected = (await reader.read()).value!;
+  assert(rejected.endsWith("\n") && !rejected.includes("gone"), rejected);
+  const marker = JSON.parse(rejected) as { v: string; x: Record<string, unknown> };
+  assertEquals(marker.v, "dnxv0");
+  assertEquals(marker.x.__dnxAwaitError, true);
+  assertEquals(marker.x.message, "Internal Server Error");
+  assert(/^[0-9a-f]{16}$/.test(String(marker.x.digest)));
   assert((await reader.read()).done);
 });
 

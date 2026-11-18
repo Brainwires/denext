@@ -419,7 +419,9 @@ Deno.test("renderToFlightStream: a REJECTED deferred prop resolves to an error m
   const html = await streamToString(renderToFlightStream(tree));
   const json = JSON.stringify(hydratedFlight(html));
   assertStringIncludes(json, `"__dnxAwaitError":true`);
-  assertStringIncludes(json, `"message":"loader boom"`);
+  // Production: the rejection's own text stays on the server (see defer-error-redaction.test.ts).
+  assertStringIncludes(json, `"message":"Internal Server Error"`);
+  assert(!json.includes("loader boom"));
   assert(!json.includes(`"$":"vh"`), "no unfilled value hole remains");
 });
 

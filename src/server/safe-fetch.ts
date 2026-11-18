@@ -28,19 +28,51 @@ export function isForbiddenAddress(hostname: string): boolean {
   return false;
 }
 
-function isForbiddenIPv4(ip: string): boolean {
+/**
+ * IPv4 ranges that are never fetched, as `[network, prefix length]`: this-network, private,
+ * loopback, link-local (cloud metadata 169.254.169.254 is in it), CGNAT, the IETF protocol
+ * assignments 192.0.0.0/24 (the rest of 192.0.0.0/16 is public), the three documentation nets,
+ * the deprecated 6to4 relay anycast, benchmarking 198.18.0.0/15 (also the pool local proxies
+ * answer made-up addresses from), and multicast + reserved + broadcast (224.0.0.0/3).
+ */
+const FORBIDDEN_IPV4: readonly (readonly [string, number])[] = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.168.0.0", 16],
+  ["100.64.0.0", 10],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 3],
+];
+
+/** A dotted IPv4's four octets, or `null` when it is not four integers in 0-255. */
+function ipv4Octets(ip: string): number[] | null {
   const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = p;
-  return (
-    a === 0 || a === 10 || a === 127 || // this-network, private, loopback
-    (a === 169 && b === 254) || // link-local (incl. cloud metadata 169.254.169.254)
-    (a === 172 && b >= 16 && b <= 31) || // private
-    (a === 192 && b === 168) || // private
-    (a === 100 && b >= 64 && b <= 127) || // CGNAT
-    (a === 192 && b === 0) || // IETF protocol assignments (incl. 192.0.0.0/24)
-    a >= 224 // multicast (224/4) + reserved (240/4) + broadcast
-  );
+  return p.length === 4 && p.every((n) => Number.isInteger(n) && n >= 0 && n <= 255) ? p : null;
+}
+
+/** Four octets as one unsigned 32-bit number. */
+function ipv4Number(p: readonly number[]): number {
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+}
+
+/** {@linkcode FORBIDDEN_IPV4} as `[network number, bits to drop before comparing]`. */
+const FORBIDDEN_IPV4_RANGES: readonly (readonly [number, number])[] = FORBIDDEN_IPV4.map((
+  [network, bits],
+) => [ipv4Number(ipv4Octets(network)!), 32 - bits]);
+
+function isForbiddenIPv4(ip: string): boolean {
+  const p = ipv4Octets(ip);
+  if (p === null) return true; // malformed → refuse (fail closed)
+  const n = ipv4Number(p);
+  return FORBIDDEN_IPV4_RANGES.some(([network, drop]) => (n >>> drop) === (network >>> drop));
 }
 
 /**
@@ -88,6 +120,30 @@ function parseIPv6(input: string): number[] | null {
   return [...head, ...new Array(fill).fill(0), ...tail];
 }
 
+/**
+ * IPv6 prefixes that are never fetched, as `[leading hextets, prefix length]`: unique-local,
+ * link-local, deprecated site-local, multicast, the NAT64 local-use prefix, Teredo (a tunnel
+ * to an IPv4 inside the address), documentation, and discard-only.
+ */
+const FORBIDDEN_IPV6: readonly (readonly [readonly number[], number])[] = [
+  [[0xfc00], 7],
+  [[0xfe80], 10],
+  [[0xfec0], 10],
+  [[0xff00], 8],
+  [[0x0064, 0xff9b, 0x0001], 48],
+  [[0x2001, 0x0000], 32],
+  [[0x2001, 0x0db8], 32],
+  [[0x0100, 0, 0, 0], 64],
+];
+
+/** True when the hextets `g` start with `bits` bits of `prefix`. */
+function hasIPv6Prefix(g: readonly number[], prefix: readonly number[], bits: number): boolean {
+  const whole = bits >> 4;
+  for (let i = 0; i < whole; i++) if (g[i] !== prefix[i]) return false;
+  const drop = 16 - (bits & 15);
+  return drop === 16 || (g[whole] >> drop) === (prefix[whole] >> drop);
+}
+
 function isForbiddenIPv6(ip: string): boolean {
   const g = parseIPv6(ip);
   if (g === null) return true; // unparseable → refuse (fail closed)
@@ -95,25 +151,38 @@ function isForbiddenIPv6(ip: string): boolean {
   const embedded = embeddedIPv4(g);
   if (embedded === "loopback") return true;
   if (embedded) return isForbiddenIPv4(embedded);
-  const hi = (g[0] >> 8) & 255;
-  if (hi === 0xfc || hi === 0xfd) return true; // unique-local fc00::/7
-  return (g[0] & 0xffc0) === 0xfe80; // link-local fe80::/10
+  return FORBIDDEN_IPV6.some(([prefix, bits]) => hasIPv6Prefix(g, prefix, bits));
 }
 
 /**
- * The IPv4 carried in the low 32 bits of a `::1` loopback, IPv4-mapped `::ffff:0:0/96`,
- * deprecated IPv4-compatible `::/96`, or NAT64 `64:ff9b::/96` address — `"loopback"` for
- * `::1`, the dotted IPv4 for the embedding prefixes, null for a plain IPv6 address.
+ * The six leading hextets of the prefixes that carry an IPv4 in their low 32 bits: IPv4-mapped
+ * `::ffff:0:0/96`, deprecated IPv4-compatible `::/96`, IPv4-translated `::ffff:0:0:0/96` and
+ * NAT64 `64:ff9b::/96`.
+ */
+const IPV4_IN_LOW_32: readonly (readonly number[])[] = [
+  [0, 0, 0, 0, 0, 0xffff],
+  [0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0xffff, 0],
+  [0x0064, 0xff9b, 0, 0, 0, 0],
+];
+
+/** Two hextets as a dotted IPv4. */
+function dottedIPv4(hi: number, lo: number): string {
+  return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+}
+
+/**
+ * The IPv4 an IPv6 address carries: in its low 32 bits under one of the
+ * {@linkcode IPV4_IN_LOW_32} prefixes, or in bits 16-47 of a 6to4 `2002::/16` address —
+ * `"loopback"` for `::1`, the dotted IPv4 for the embedding prefixes, null for a plain IPv6
+ * address.
  */
 function embeddedIPv4(g: number[]): string | "loopback" | null {
-  const topZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
-  if (topZero && g[5] === 0 && g[6] === 0 && g[7] === 1) return "loopback";
-  const nat64 = g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 &&
-    g[5] === 0;
-  if ((topZero && (g[5] === 0xffff || g[5] === 0)) || nat64) {
-    return `${(g[6] >> 8) & 255}.${g[6] & 255}.${(g[7] >> 8) & 255}.${g[7] & 255}`;
+  if (g.every((h, i) => h === (i === 7 ? 1 : 0))) return "loopback";
+  if (IPV4_IN_LOW_32.some((prefix) => prefix.every((h, i) => g[i] === h))) {
+    return dottedIPv4(g[6], g[7]);
   }
-  return null;
+  return g[0] === 0x2002 ? dottedIPv4(g[1], g[2]) : null;
 }
 
 /** True if `host` is an IP literal (skip DNS resolution). */

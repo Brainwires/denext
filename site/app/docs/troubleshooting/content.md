@@ -328,6 +328,7 @@ not their full text (a dev build, `denext dev`, and `denext/testing` throw the f
 | 7    | Preact's `useErrorBoundary` in a build whose scan saw none                         |
 | 8    | A route-pattern href (`/blog/[slug]` + `params`) in a build whose scan saw none    |
 | 9    | A server-rendered blur placeholder in a build whose scan saw none                  |
+| 10   | An object rendered as a child that is not an element (data, not JSX)               |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
 dev warnings; the component the production error names is where to start. Codes 6 to 9 come

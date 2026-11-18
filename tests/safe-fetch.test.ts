@@ -542,6 +542,50 @@ Deno.test("isForbiddenAddress blocks malformed / broadcast / multicast / protoco
   assert(!isForbiddenAddress("8.8.8.8"));
 });
 
+Deno.test("isForbiddenAddress blocks the special-purpose ranges and no public neighbor of them", () => {
+  for (
+    const bad of [
+      "192.0.2.1", // TEST-NET-1
+      "192.88.99.1", // deprecated 6to4 relay anycast
+      "198.18.0.1", // benchmarking 198.18.0.0/15
+      "198.19.255.254",
+      "198.51.100.7", // TEST-NET-2
+      "203.0.113.7", // TEST-NET-3
+      "ff02::1", // multicast
+      "fec0::1", // deprecated site-local
+      "::ffff:0:7f00:1", // IPv4-translated 127.0.0.1
+      "::ffff:0:10.0.0.1", // IPv4-translated private
+      "64:ff9b:1::7f00:1", // NAT64 local-use prefix
+      "2002:7f00:1::1", // 6to4 of 127.0.0.1
+      "2002:a9fe:a9fe::", // 6to4 of 169.254.169.254
+      "2002:c0a8:101::1", // 6to4 of 192.168.1.1
+      "2001::1", // Teredo
+      "2001:db8::1", // documentation
+      "100::1", // discard-only
+    ]
+  ) {
+    assert(isForbiddenAddress(bad), `should block ${bad}`);
+  }
+  for (
+    const ok of [
+      "192.0.78.9", // public, inside 192.0.0.0/16 but outside 192.0.0.0/24
+      "192.0.1.1",
+      "192.88.98.1",
+      "198.17.255.1",
+      "198.20.0.1",
+      "198.51.101.1",
+      "203.0.114.1",
+      "2002:5db8:d822::1", // 6to4 of a public IPv4
+      "::ffff:0:5db8:d822", // IPv4-translated public IPv4
+      "2001:4860:4860::8844",
+      "2001:200::1", // public, next to Teredo's 2001::/32
+      "64:ff9b::5db8:d822", // NAT64 of a public IPv4
+    ]
+  ) {
+    assert(!isForbiddenAddress(ok), `should allow ${ok}`);
+  }
+});
+
 Deno.test("safeFetch sends a Uint8Array body with its Content-Length", async () => {
   let sent: Uint8Array = new Uint8Array();
   const fetch = makeSafeFetch({

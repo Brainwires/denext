@@ -18,6 +18,16 @@
 export const REACT_ELEMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.transitional.element");
 /** `$$typeof` of a React element (React ≤18 / legacy brand; still accepted). */
 export const REACT_LEGACY_ELEMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.element");
+/**
+ * Whether `brand` is an element's `$$typeof` (either React brand). Both are symbols, so an
+ * object parsed from JSON never carries one.
+ *
+ * @param brand A value's `$$typeof`.
+ * @returns Whether it marks an element.
+ */
+export function isElementBrand(brand: unknown): boolean {
+  return brand === REACT_ELEMENT_TYPE || brand === REACT_LEGACY_ELEMENT_TYPE;
+}
 /** Brand for a `forwardRef` component. */
 export const REACT_FORWARD_REF_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.forward_ref");
 /** Brand for a `memo` component. */

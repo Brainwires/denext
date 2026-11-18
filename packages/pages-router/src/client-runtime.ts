@@ -256,7 +256,7 @@ async function completeFallback(): Promise<void> {
     return;
   }
   if (data.redirect) {
-    globalThis.location.assign(data.redirect.destination);
+    hardNavigate(data.redirect.destination);
     return;
   }
   if (data.notFound) {
@@ -314,6 +314,22 @@ function withBase(href: string): string {
 }
 
 /**
+ * Load `href` as a document, unless it is a script URL: `location.assign("javascript:…")` runs
+ * the script in this page, and the URL is often the request's (`router.push(query.next)`, a
+ * `getServerSideProps` redirect to it). Tested on the URL as the browser parses it.
+ */
+function hardNavigate(href: string): void {
+  let protocol = "";
+  try {
+    protocol = new URL(href, globalThis.location.href).protocol;
+  } catch {
+    // Not a URL: `assign` throws for it as it always did.
+  }
+  if (/^(?:javascript|vbscript|data):$/.test(protocol)) return;
+  globalThis.location.assign(href);
+}
+
+/**
  * Perform a soft navigation to `href`: fetch its data (running the server's
  * `getServerSideProps`/`getStaticProps`), load its code chunk if new, and
  * re-render the retained root in place. Falls back to a full document load for
@@ -325,7 +341,7 @@ export async function navigate(
 ): Promise<boolean> {
   const target = new URL(href, globalThis.location.href);
   if (target.origin !== globalThis.location.origin || !root) {
-    globalThis.location.assign(href);
+    hardNavigate(href);
     return true;
   }
   // The URL shown in the address bar (`as` overrides the fetched path); it's also
@@ -386,7 +402,7 @@ async function fetchRouteData(nav: Nav, seq: number): Promise<DataResponse | nul
   }
   if (seq !== navSeq) return cancelNav(nav); // a later navigation won the race — drop this one
   if (data.redirect) {
-    globalThis.location.assign(data.redirect.destination);
+    hardNavigate(data.redirect.destination);
     return null;
   }
   if (data.notFound) return failNav(nav);

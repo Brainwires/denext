@@ -11,6 +11,7 @@ import {
   ERR_HOOK_BOUNDARIES_OFF,
   ERR_HREF_PARAMS_OFF,
   ERR_IMAGE_BLUR_OFF,
+  ERR_INVALID_CHILD,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
   type ErrorText,
@@ -53,6 +54,9 @@ const TEXTS: Record<number, ErrorText> = {
     'denext: the page has a blur placeholder (placeholder="blur"), but this build left its ' +
     'clearing out: no source file of the app names `placeholder="blur"`, so the placeholder ' +
     "would stay painted. Name it once in the app's own code (a library is not scanned).",
+  [ERR_INVALID_CHILD]: () =>
+    "denext: objects are not valid as a child. An element is created with JSX or " +
+    "createElement; to render data (a fetched document, a stored record), read its fields.",
 };
 
 /** Install (or, with `false`, remove) the full texts of the client reconciler's errors. */
