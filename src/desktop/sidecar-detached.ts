@@ -605,6 +605,8 @@ export async function serveDetachedControl(
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0, transport: "tcp" });
   const authed = new Set<DetachedLines>();
   const all = new Set<DetachedLines>();
+  /** The handshake deadlines still armed: cleared with the server, so none outlives it. */
+  const deadlines = new Set<ReturnType<typeof setTimeout>>();
   let pending = 0;
   let ready = false;
   let closing = false;
@@ -655,7 +657,11 @@ export async function serveDetachedControl(
     const lines = new DetachedLines(conn);
     all.add(lines);
     pending++;
-    const timer = setTimeout(() => lines.close(), handshakeMs);
+    const timer = setTimeout(() => {
+      deadlines.delete(timer);
+      lines.close();
+    }, handshakeMs);
+    deadlines.add(timer);
     let ok = false;
     try {
       ok = await handshake(lines);
@@ -663,6 +669,7 @@ export async function serveDetachedControl(
       ok = false;
     } finally {
       clearTimeout(timer);
+      deadlines.delete(timer);
       pending--;
     }
     try {
@@ -697,7 +704,7 @@ export async function serveDetachedControl(
     },
     async bye(info) {
       const sends = [...authed].map((l) => l.send({ t: "bye", ...info }));
-      await Promise.race([Promise.all(sends), sleep(500)]);
+      await within(Promise.all(sends), 500);
     },
     close() {
       closing = true;
@@ -705,6 +712,8 @@ export async function serveDetachedControl(
         listener.close();
       } catch { /* closed */ }
       for (const lines of all) lines.close();
+      for (const timer of deadlines) clearTimeout(timer);
+      deadlines.clear();
     },
   };
 }

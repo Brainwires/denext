@@ -53,8 +53,12 @@ import { desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
 import { createSidecarHost } from "../src/desktop/sidecar-host.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 
-/** Network tests hold sockets the server side closes on its own schedule. */
-const NET = { sanitizeOps: false, sanitizeResources: false } as const;
+/**
+ * Two launcher tests start a program that does not exist with an IPC channel: a runtime whose
+ * failed spawn leaves the channel's resource open trips the resource sanitizer there.
+ */
+// sanitizer: the runtime leaves a failed spawn's IPC channel open (fixed in the runtime; lift this once denext pins that runtime)
+const FAILED_SPAWN = { sanitizeResources: false } as const;
 
 /** A temp folder for one test. */
 function tempDir(prefix: string): Promise<string> {
@@ -390,7 +394,9 @@ async function raw(port: number) {
         }
         const left = end - Date.now();
         if (left <= 0) return "timeout";
-        const r = await Promise.race([reader.read(), sleep(left).then(() => "t" as const)]);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<"t">((resolve) => (timer = setTimeout(() => resolve("t"), left)));
+        const r = await Promise.race([reader.read(), late]).finally(() => clearTimeout(timer));
         if (r === "t") return "timeout";
         if (r.done) return null;
         buf += dec.decode(r.value);
@@ -406,7 +412,6 @@ async function raw(port: number) {
 
 Deno.test({
   name: "control: both sides prove the key; ping, status, attachments, ready push",
-  ...NET,
   fn: async () => {
     const key = newDetachedKey();
     const { server, attached } = await testServer(key);
@@ -439,7 +444,6 @@ Deno.test({
 
 Deno.test({
   name: "control: a client with the wrong key is refused, and so is a server with the wrong key",
-  ...NET,
   fn: async () => {
     const key = newDetachedKey();
     const { server } = await testServer(key);
@@ -472,7 +476,6 @@ Deno.test({
 
 Deno.test({
   name: "control: an auth replayed into another connection fails (fresh server nonce)",
-  ...NET,
   fn: async () => {
     const keyText = newDetachedKey();
     const key = await importDetachedKey(keyText);
@@ -502,7 +505,6 @@ Deno.test({
 
 Deno.test({
   name: "control: an oversized line, a slow handshake and too many pending connections are closed",
-  ...NET,
   fn: async () => {
     const key = newDetachedKey();
     const { server } = await testServer(key, { handshakeMs: 300, maxPending: 2 });
@@ -540,7 +542,6 @@ Deno.test({
 Deno.test({
   name:
     "endDetachedSession: shutdown first; a forced kill only of the pid this session's ok named, only when permitted",
-  ...NET,
   fn: async () => {
     const key = newDetachedKey();
     // A sidecar that ends when asked.
@@ -582,7 +583,6 @@ Deno.test({
 Deno.test({
   name:
     "cleanDetachedLeftovers: an undeclared sidecar is shut down and removed; a stale record removed",
-  ...NET,
   fn: async () => {
     const data = await tempDir("leftovers");
     const dir = detachedRegistryDir(data);
@@ -747,7 +747,6 @@ Deno.test("createSidecarHost: a detached sidecar needs the app's data folder", a
 Deno.test({
   name:
     "host: at exit a detached sidecar is let go, before an update it is stopped; leftovers are listed and stopped",
-  ...NET,
   fn: async () => {
     const data = await tempDir("host");
     const dir = detachedRegistryDir(data);
@@ -841,7 +840,6 @@ const NO_SPAWN = {
 Deno.test({
   name:
     "launcher: a recorded instance of this app version is reattached (port, values from its record)",
-  ...NET,
   fn: async () => {
     const data = await tempDir("reattach");
     const dir = detachedRegistryDir(data);
@@ -878,7 +876,7 @@ Deno.test({
 Deno.test({
   name:
     "launcher: another app version's instance is shut down and replaced; keepAcrossUpdates keeps it",
-  ...NET,
+  ...FAILED_SPAWN,
   fn: async () => {
     const data = await tempDir("version");
     const dir = detachedRegistryDir(data);
@@ -921,7 +919,7 @@ Deno.test({
 
 Deno.test({
   name: "launcher: a record whose endpoint does not authenticate is dropped, its pid never touched",
-  ...NET,
+  ...FAILED_SPAWN,
   fn: async () => {
     const data = await tempDir("stale");
     const dir = detachedRegistryDir(data);
@@ -1019,7 +1017,7 @@ async function withApp(
   }
 }
 
-const REAL = { ...NET, ignore: Deno.build.os === "windows" } as const;
+const REAL = { ignore: Deno.build.os === "windows" } as const;
 
 Deno.test({
   name: "real: a detached sidecar outlives its app; the next launch reattaches and stops it",

@@ -1,4 +1,5 @@
 {
   "tests/backend-supabase-realtime-integration.test.ts": [4, 0],
+  "tests/desktop-sidecar-detached.test.ts": [1, 0],
   "tests/watchdog.test.ts": [6, 0]
 }
