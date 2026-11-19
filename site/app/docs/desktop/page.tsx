@@ -6013,7 +6013,9 @@ sc.ready();`}
         </code>. <code>key</code>{" "}
         is 32 random bytes the app makes for each start and hands the sidecar over its IPC channel
         (never in argv or the environment); <code>appVersion</code>{" "}
-        is the version the full-app updater reports (<code>"dev"</code>{" "}
+        is the version the full-app updater reports plus the executable&apos;s size and change time,
+        so a build installed over the old one counts as another version too (
+        <code>"dev"</code>{" "}
         outside a packaged app). Before the module runs, denext&apos;s code in the sidecar opens a
         loopback TCP control endpoint (<code>127.0.0.1</code>, a free port), which needs no
         permission beyond the loopback grant every packaged app has. Both sides prove the key on

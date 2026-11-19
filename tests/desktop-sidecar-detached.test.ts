@@ -191,21 +191,39 @@ Deno.test("detachedChildInitError: the init's fields are checked", () => {
   assertEquals(detachedChildInitError({ ...init, port: "1" }), "init.port");
 });
 
-Deno.test("currentAppVersion: the updater's version in a packaged app, else dev", () => {
+Deno.test("currentAppVersion: the updater's version and the executable's stamp; dev unpackaged", () => {
   const desktop = { updater: { status: () => ({ version: "2.3.4" }) } };
-  assertEquals(currentAppVersion(desktop, true), "2.3.4");
-  assertEquals(currentAppVersion(desktop, false), "dev");
-  assertEquals(currentAppVersion({}, true), "dev");
+  const exe = () => ({ size: 1000, mtime: new Date(5000) });
+  const none = () => null;
+  assertEquals(currentAppVersion(desktop, true, exe), "2.3.4+1000.5000");
+  // Another build of the same version (installed over, no updater): another executable.
   assertEquals(
-    currentAppVersion({
-      updater: {
-        status: () => {
-          throw new Error("x");
+    currentAppVersion(desktop, true, () => ({ size: 1000, mtime: new Date(6000) })),
+    "2.3.4+1000.6000",
+  );
+  // No updater version: the executable alone tells builds apart.
+  assertEquals(currentAppVersion({}, true, exe), "+1000.5000");
+  assertEquals(currentAppVersion({}, true, () => ({ size: 7, mtime: null })), "+7.0");
+  // An executable that cannot be read: the version alone, else "dev".
+  assertEquals(currentAppVersion(desktop, true, none), "2.3.4");
+  assertEquals(currentAppVersion({}, true, none), "dev");
+  assertEquals(currentAppVersion(desktop, false, exe), "dev");
+  assertEquals(
+    currentAppVersion(
+      {
+        updater: {
+          status: () => {
+            throw new Error("x");
+          },
         },
       },
-    }, true),
+      true,
+      none,
+    ),
     "dev",
   );
+  // The default reads the running executable without throwing.
+  assert(currentAppVersion({}, true).startsWith("+"));
 });
 
 // ── the registry ─────────────────────────────────────────────────────────────────────────────

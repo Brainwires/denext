@@ -1002,26 +1002,46 @@ export async function endDetachedSession(
     : { ended: false, reason: `process ${session.info.pid} did not end after a forced kill` };
 }
 
+/** What {@linkcode currentAppVersion} reads of the app's executable (its size and change time). */
+export type ExecutableStamp = () => { size: number; mtime: Date | null } | null;
+
+/** The running executable's size and change time, or `null` when it cannot be read. */
+function executableStamp(): { size: number; mtime: Date | null } | null {
+  try {
+    const { size, mtime } = Deno.statSync(Deno.execPath());
+    return { size, mtime };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * The running app's version as its detached sidecars record it: the version the full-app updater
- * reports in a packaged app, else `"dev"`.
+ * The running app's build as its detached sidecars record it, so a sidecar an older build started
+ * is replaced: in a packaged app the version the full-app updater reports (where it has one),
+ * then the executable's size and change time, which differ for every build whether the app was
+ * updated by the updater or by installing over it; `"dev"` outside a packaged app.
  *
  * @param desktop `Deno.desktop` (tests pass a fake).
  * @param standalone Whether this is a compiled app.
+ * @param stamp Reads the executable (tests pass a fake).
  * @returns The version.
  */
 export function currentAppVersion(
   desktop: unknown = (Deno as unknown as { desktop?: unknown }).desktop,
   standalone: boolean = (Deno.build as { standalone?: boolean }).standalone === true,
+  stamp: ExecutableStamp = executableStamp,
 ): string {
   if (!standalone) return "dev";
+  let version = "";
   try {
     const updater = (desktop as { updater?: { status?: () => { version?: unknown } } })?.updater;
-    const version = updater?.status?.()?.version;
-    return typeof version === "string" && version !== "" ? version : "dev";
-  } catch {
-    return "dev";
-  }
+    const reported = updater?.status?.()?.version;
+    if (typeof reported === "string") version = reported;
+  } catch { /* no updater here */ }
+  const exe = stamp();
+  const build = exe === null ? "" : `${exe.size}.${exe.mtime?.getTime() ?? 0}`;
+  if (version === "" && build === "") return "dev";
+  return build === "" ? version : `${version}+${build}`;
 }
 
 /** One entry of {@linkcode listDetachedSidecars}. */
