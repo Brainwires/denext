@@ -21575,6 +21575,12 @@
               "name": "dangerouslyAllowLocalIP",
               "signature": "dangerouslyAllowLocalIP?: boolean",
               "doc": "**Dangerous.** Allow remote sources resolving to loopback/private IPs (SSRF guard off)."
+            },
+            {
+              "kind": "property",
+              "name": "fetchLocal",
+              "signature": "fetchLocal?: (src: string, request: Request) => Promise<Response>",
+              "doc": "Fetches the local source `src` (a `/…` path, query included) for this request, in place of\na direct read of `publicDir`: the image is taken from the response when it is a 200, and\nanything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint\nis served in front of the app, so a direct read is one no `middleware.ts` sees. See\n{@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache."
             }
           ]
         },
@@ -30370,7 +30376,7 @@
             {
               "kind": "property",
               "name": "routing",
-              "signature": "routing?: { basePath: string; locale?: string }",
+              "signature": "routing?: { basePath: string; locale?: string; locales?: readonly string[] }",
               "doc": "Routing facts the pipeline resolved (`NextRequest.nextUrl.basePath` / `.locale` read them)."
             },
             {
@@ -36868,8 +36874,8 @@
           "slug": "unstable_cache",
           "kind": "function",
           "signature": "unstable_cache<A, R>(fn: (...args: A) => Promise<R> | R, keyParts?: string[], options?: CacheOptions): (...args: A) => Promise<R>",
-          "doc": "Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by keyParts plus the call arguments. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.",
-          "docFull": "Wrap an async data-loading function in a cross-request cache with an optional\nTTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus\nthe call arguments. Tags propagate to the enclosing page render, so\n{@link revalidateTag} purges both the data and any page that read it.\n\nNesting follows Next.js 16. Called inside a `\"use cache\"` (or `\"use cache: private\"`)\nfunction, the call's `tags` reach the outer entry — `revalidateTag` on one of them drops the\nouter entry too — and its `revalidate` caps the outer entry's revalidate (the minimum wins,\nunless the outer body sets `cacheLife()` itself); a stale hit is refreshed in the foreground\nthere, so the outer entry never stores a stale value. Called inside another `unstable_cache`\nloader the cache is bypassed (the outer entry holds the result). A `\"use cache\"` function\ncalled inside a loader keeps its tags and lifetime to itself.",
+          "doc": "Wrap an async data-loading function in a cross-request cache with an optional TTL and tags (Next.js unstable_cache). Results are keyed by the loader (its source text), keyParts and the call arguments; a value the loader closes over is not part of the key, so name it in keyParts. Tags propagate to the enclosing page render, so revalidateTag purges both the data and any page that read it.",
+          "docFull": "Wrap an async data-loading function in a cross-request cache with an optional\nTTL and tags (Next.js `unstable_cache`). Results are keyed by the loader (its source\ntext), `keyParts` and the call arguments; a value the loader closes over is not part of\nthe key, so name it in `keyParts`. Tags propagate to the enclosing page render, so\n{@link revalidateTag} purges both the data and any page that read it.\n\nNesting follows Next.js 16. Called inside a `\"use cache\"` (or `\"use cache: private\"`)\nfunction, the call's `tags` reach the outer entry — `revalidateTag` on one of them drops the\nouter entry too — and its `revalidate` caps the outer entry's revalidate (the minimum wins,\nunless the outer body sets `cacheLife()` itself); a stale hit is refreshed in the foreground\nthere, so the outer entry never stores a stale value. Called inside another `unstable_cache`\nloader the cache is bypassed (the outer entry holds the result). A `\"use cache\"` function\ncalled inside a loader keeps its tags and lifetime to itself.",
           "params": [
             {
               "name": "fn",
@@ -77381,6 +77387,12 @@
               "name": "metadata",
               "signature": "metadata?: boolean",
               "doc": "A metadata route (`sitemap.ts`, `robots.ts`, `manifest.ts`), served by the server."
+            },
+            {
+              "kind": "property",
+              "name": "staticExport",
+              "signature": "staticExport?: boolean",
+              "doc": "`denext export` writes this route handler's GET response (or this metadata file) to a file,\nso a static host serves it too: GET only, not `force-dynamic`, every param set enumerated."
             }
           ]
         },
@@ -81830,6 +81842,12 @@
               "name": "metadata",
               "signature": "metadata?: boolean",
               "doc": "A metadata route (`sitemap.ts`, `robots.ts`, `manifest.ts`), served by the server."
+            },
+            {
+              "kind": "property",
+              "name": "staticExport",
+              "signature": "staticExport?: boolean",
+              "doc": "`denext export` writes this route handler's GET response (or this metadata file) to a file,\nso a static host serves it too: GET only, not `force-dynamic`, every param set enumerated."
             }
           ]
         },
