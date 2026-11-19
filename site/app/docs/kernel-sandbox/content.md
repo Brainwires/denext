@@ -44,8 +44,8 @@ for it with `--kernel-sandbox=enforce`:
   (on Linux) a program read from stdin. They refuse to start rather than run unconfined. `deno
   lint` and the language server's lint plugins are neither covered nor refused: they run with no
   kernel sandbox (`deno lint` warns when `deno.json` sets the key), until confining them lands
-  before 5.0. `deno compile --kernel-sandbox=enforce` is refused too: compiled programs
-  have no enforcer yet.
+  before 5.0. `deno compile --kernel-sandbox=enforce` is refused for a desktop app: its process
+  hosts a browser engine, and that part hasn't landed.
 
 > [!WARNING]
 > **Don't put `"kernelSandbox": "enforce"` in `deno.json`.** The key applies to every command that

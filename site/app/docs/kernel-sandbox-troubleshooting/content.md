@@ -103,8 +103,18 @@ program to a file.
 
 ### `deno compile --kernel-sandbox=enforce` is refused
 
-**Cause:** compiled programs have no kernel enforcer yet. **Fix:** compile with `warn`, `auto` or
-`off`.
+**Cause:** the target is a desktop app (its process hosts a browser engine, which the sandbox can't
+hold yet) or an OS without an enforcer. **Fix:** compile with `warn`, `auto` or `off`.
+`--kernel-sandbox=broker` is always refused: the supervisor isn't built yet.
+
+### A compiled program says it "refuses to start"
+
+`this program was compiled with --kernel-sandbox=enforce and refuses to start: …`
+
+**Cause:** the program confines itself at startup and the OS here can't hold one of its baked
+rules (the message lists them), or it was started inside another sandbox on macOS, which can't
+stack a second profile. **Fix:** the author compiles it with other permissions or with `warn`;
+on macOS, start it outside the outer sandbox.
 
 ## Failures while running
 

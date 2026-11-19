@@ -6,25 +6,70 @@ lead: Compiled binaries and packaged desktop apps are where the kernel sandbox s
 
 > [!IMPORTANT]
 > **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** This page is an outline, filled in as these parts land: today `enforce` covers
-> `deno run` and `deno serve` only, and `deno compile --kernel-sandbox=enforce` is refused because
-> compiled programs have no enforcer yet. The
+> in denext 5.0.** Compiled programs can bake `enforce` and confine themselves at startup. The
+> desktop sections are an outline, filled in as those parts land: a desktop app can't bake
+> `enforce` yet (`deno compile` refuses it). The
 > desktop results below are a draft from the first experiments, being validated (see
 > [Browser engines](#browser-engines-inside-the-sandbox)). The [overview](/docs/kernel-sandbox)
 > has the design.
 
 ## Compiled binaries
 
-**In the full sandbox (design), compiled command-line apps get the full headless
-[guarantee matrix](/docs/kernel-sandbox-guarantees) on every platform**: the same cells as any
-fixed-permission run on that platform and kernel. A compiled app has no window and no browser
-engine, so nothing limits what the sandbox can apply.
+A program built with `deno compile --kernel-sandbox=enforce` (or `denext build --compile` with the
+mode in `compile`'s flags or deno.json's `permissions.kernelSandbox`) holds its baked `--allow-*`
+list with the OS from the moment it starts. No flag is needed when it runs, and none can turn it
+off: the mode is the author's, baked next to the permissions. A compiled command-line program has
+no window and no browser engine, so it gets the headless
+[guarantee matrix](/docs/kernel-sandbox-guarantees) of its platform.
 
-_Being written as this lands._ `deno compile` and `denext build --compile` bake the mode (default
-`auto`) next to the baked `--allow-*` list, and `compile.permissions` feeds the policy. The binary
-ignores the run-time flag and environment, confines itself before any thread starts (no extra
-exec), keeps its code cache in its own folder, and refuses a missing permission on a terminal
-instead of prompting. How to turn that off at build time.
+```sh
+deno compile --kernel-sandbox=enforce --allow-read=./data --allow-net=127.0.0.1:8080 -o app main.ts
+./app   # native code, addons and children are held to ./data and port 8080
+```
+
+What the program does at startup, on Linux and macOS:
+
+- **It confines itself in place, before anything else runs.** The sandbox is applied first thing,
+  while the process has one thread and has opened nothing: there is no second exec, so the PID,
+  the start-up time and `$!` are what they were. (`deno run` re-executes itself; a compiled program
+  has its modules embedded and fetches nothing, so it doesn't need to.)
+- **Its own files stay readable** (the executable, with the modules and assets embedded in it; a
+  self-extracting program's extraction folder, read-only).
+- **It keeps its code cache and extracted native addons in its own folder**,
+  `<temp>/deno-compile-<name>.sandboxed/<policy>`, created for your user alone. A confined program
+  writes nothing else for itself, and never the shared `<temp>/deno-compile-<name>.cache` that an
+  unconfined program of the same name reads. Where that folder can't be made (a read-only temp
+  folder) the program runs without a code cache, and loading an embedded native addon fails.
+- **Its environment is scrubbed** to the `--allow-env` names and the runtime's own short list, as
+  under `deno run --kernel-sandbox=enforce`; the variables of a baked `--env-file` follow the same
+  rule. Children inherit that environment and the sandbox.
+- **A missing permission is refused, never asked for.** The set is fixed, so a program compiled
+  without `--no-prompt` doesn't prompt on a terminal either.
+- **A rule the OS can't hold makes it refuse to start**, naming the rule, exactly as `deno run`
+  does. `deno compile` warns about such rules for the target OS when it builds (for example a
+  host-scoped `--allow-net` for a Linux target), so you find out before you ship.
+
+The other modes:
+
+| Baked mode      | The compiled program                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| none, or `auto` | Runs as before: `auto` applies nothing in 4.x. In denext 5.0 `auto` enforces.              |
+| `enforce`       | Confines itself at startup, or refuses to start where the OS can't hold a rule.            |
+| `warn`          | Prints one line saying how many rules only Deno's checks would hold, and confines nothing. |
+| `off`           | Never confines itself, whatever `auto` comes to mean.                                      |
+| `broker`        | Refused by `deno compile` (the supervising broker isn't built in yet).                     |
+| any, with `-A`  | The sandbox is off: there is nothing to narrow. `-A` with a `--deny-*` holds the denies.   |
+
+`--kernel-sandbox-exec=strict` is baked too: the whole process tree may then execute only the
+`--allow-run` programs.
+
+Inside another sandbox: a compiled program started by a confined `deno run` first intersects its
+baked permissions with the grant it was started under. With `enforce` baked, Linux then adds the
+program's own, narrower layer on top (Landlock domains and seccomp filters nest). macOS can't
+stack a second Seatbelt profile, so there the program refuses to start, saying so, rather than run
+under the wider outer profile.
+
+On Windows a compiled program gets the [small tier](/docs/kernel-sandbox-windows).
 
 ## Packaged desktop apps
 

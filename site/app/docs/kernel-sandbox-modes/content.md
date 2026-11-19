@@ -19,10 +19,11 @@ lead: How to choose what the kernel sandbox does — the --kernel-sandbox flag, 
 - `warn` runs your program normally and prints one line saying how many rules would be left to
   Deno's checks.
 - `--kernel-sandbox-report` prints the full policy and every gap, then runs your program.
-- `enforce` applies the policy (Mode A) to `deno run` and `deno serve` on Linux (x86_64 and
-  aarch64, with Landlock) and macOS, where `deno info --json` reports `enforcerBuilt: true`. It
-  refuses to start over a `fail-open` gap and runs with the `documented` ones listed in the report
-  ([gap kinds](#gap-kinds)). Windows has no enforcer yet.
+- `enforce` applies the policy (Mode A) to `deno run`, `deno serve` and programs compiled with it
+  on Linux (x86_64 and aarch64, with Landlock) and macOS, where `deno info --json` reports
+  `enforcerBuilt: true`. It refuses to start over a `fail-open` gap and runs with the `documented`
+  ones listed in the report ([gap kinds](#gap-kinds)). On Windows only a compiled program enforces,
+  with the [small tier](/docs/kernel-sandbox-windows); `deno run` has no enforcer there yet.
 - `broker` refuses to start: the Mode B supervisor isn't built yet. So does `enforce` when a rule
   only Mode B could hold (on Linux, a host-scoped `--allow-net` or a write deny inside a write
   allow).
@@ -122,8 +123,11 @@ deno compile --kernel-sandbox=warn --allow-read=./data --allow-net=api.example.c
 
 - The mode is baked into the binary, from the flag or else from `deno.json`.
 - The binary ignores the `--kernel-sandbox` flag and `DENO_KERNEL_SANDBOX` at run time.
-- `enforce` and `broker` are refused at compile time: compiled programs have no kernel enforcer
-  yet, so the binary couldn't start.
+- A binary compiled with `enforce` confines itself to its baked permissions when it starts, with
+  no flag at run time ([Compiled binaries](/docs/kernel-sandbox-desktop-and-compiled#compiled-binaries)).
+  `deno compile` warns about rules the target OS could never hold.
+- `broker` is refused at compile time (the supervisor isn't built yet, so the binary couldn't
+  start), and so is `enforce` for a desktop app.
 - A binary compiled with `warn` prints the [warning line](#warn-mode) when it starts.
 
 ## How the mode is chosen
