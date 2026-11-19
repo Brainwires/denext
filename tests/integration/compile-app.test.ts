@@ -515,7 +515,10 @@ Deno.test({
             stopped = true;
             output = shut.output;
             assertEquals(shut.text, "slow done");
-            assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
+            // "Exits at the drain deadline, not never": a hung process is only killed by stop()'s
+            // DRAIN_MS + 10 s cap, so 8 s past the deadline still tells the two apart while leaving
+            // a loaded runner room for the teardown (a GitHub runner once took 3.07 s).
+            assert(shut.exitMs < DRAIN_MS + 8000, `exited ${shut.exitMs} ms after SIGTERM`);
             assertStringIncludes(output, "open handle");
           } finally {
             if (!stopped) output = await app.stop();
@@ -571,7 +574,10 @@ Deno.test({
               const shut = await app.stopDuring("/api/slow");
               stopped = true;
               assertEquals(shut.text, "slow done");
-              assert(shut.exitMs < DRAIN_MS + 3000, `exited ${shut.exitMs} ms after SIGTERM`);
+              // "Exits at the drain deadline, not never": a hung process is only killed by stop()'s
+              // DRAIN_MS + 10 s cap, so 8 s past the deadline still tells the two apart while leaving
+              // a loaded runner room for the teardown (a GitHub runner once took 3.07 s).
+              assert(shut.exitMs < DRAIN_MS + 8000, `exited ${shut.exitMs} ms after SIGTERM`);
             } finally {
               if (!stopped) await app.stop();
             }
