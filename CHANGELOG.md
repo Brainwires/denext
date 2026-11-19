@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.20.1] - 2026-11-19
+
 ### Added
 
 - **Runtime 3.0.0-denext.27: WebRTC encoded transforms and SFrame.** `RTCRtpScriptTransform`,
@@ -22899,7 +22901,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.1...development
+[4.20.1]: https://jsr.io/@denext/denext@4.20.1
 [4.20.0]: https://jsr.io/@denext/denext@4.20.0
 [4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0
