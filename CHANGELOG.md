@@ -71,8 +71,25 @@ and this project adheres to
   a write of `$APPDATA/sidecars`. Not with `run.exec` or `ready.stdout` (config errors). New
   types: `SidecarDetached` and `DetachedSidecarEntry` (`denext/desktop`),
   `DesktopSidecarDetachedConfig` (`denext/server`).
+- **Local IPC for desktop apps and their helpers, with no loopback port.** From `denext/desktop`:
+  `localIpcPath(name, { dir?, appId?, user?, os? })` says where a channel lives (a
+  `<data folder>/ipc/<name>.sock` Unix-domain socket on macOS / Linux, refused past `sun_path`; a
+  `\\.\pipe\<appId>.<user hash>.<name>` named pipe on Windows), `listenLocalIpc(path,
+  onConnection, { signal })` serves it and `connectLocalIpc(path, { timeoutMs, signal })` connects,
+  each connection a pair of web streams (`readable`, `writable`, `close()`, `Symbol.asyncDispose`).
+  Built on the runtime's `node:net`, since `Deno.listen` has no named-pipe transport. On Unix a
+  live server's socket is never taken over, a stale one is replaced, the socket is `0600` and an
+  unsafe folder (another owner, group/world-writable without the sticky bit) is refused. A refused
+  permission check names the grants. Types: `LocalIpcConnection`, `LocalIpcServer`,
+  `LocalIpcPathOptions`, `LocalIpcListenOptions`, `LocalIpcConnectOptions`.
 
 ### Changed
+
+- **A `unix:` entry in a network permission list must be an absolute path**
+  (`desktop.extraPermissions.net` / `netListen` / `netConnect`, a sidecar's `permissions`,
+  `compile.permissions`): the runtime expands no folder token (`$APPDATA`, `$DENO_DESKTOP_DATA`)
+  and no relative path in a network grant and refused to start a binary baked with one; the config
+  check now says so instead.
 
 - **`scripts/package-macos.ts` copies `desktop.bundle.libraries` into the bundle before signing**,
   and its universal merge keeps a Mach-O both arches carry with the same bytes and carries one only

@@ -296,6 +296,19 @@ export {
 } from "./desktop-bundle-libraries.ts";
 export { bundledLibraryPath } from "../desktop/bundled-libraries.ts";
 
+// Local IPC between the app and its helper processes: a Unix-domain socket on macOS / Linux, a named
+// pipe on Windows (over the runtime's `node:net`), no loopback port.
+export {
+  connectLocalIpc,
+  listenLocalIpc,
+  type LocalIpcConnection,
+  type LocalIpcConnectOptions,
+  type LocalIpcListenOptions,
+  localIpcPath,
+  type LocalIpcPathOptions,
+  type LocalIpcServer,
+} from "../desktop/local-ipc.ts";
+
 // The packager's per-app files: `.deno-desktop/app.json` (+ `compile.include`) and the packaged
 // `laufey-launch.json`, called by the scaffolded `scripts/package-*.ts`.
 export {

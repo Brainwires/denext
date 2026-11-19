@@ -662,6 +662,16 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `0600` / `0700` modes have no effect and the user profile's ACL is the protection. Its output
   reaches only its log file (`logs: "file"` / `"both"`), so `ready.stdout` cannot be used, and an
   exit of its own (not through `stop()` or denext's idle / registry checks) reads as a crash.
+- **Local IPC (`listenLocalIpc`):** `Deno.listen` / `Deno.connect` have no named-pipe transport, so
+  the helper runs on the runtime's `node:net`. A `unix:` network grant names one exact path and the
+  runtime expands no folder token in a network grant, so a packaged app cannot bake the per-user
+  socket or pipe path: it grants `netListen` / `netConnect: ["*"]` (and a write of
+  `$APPDATA/ipc`). On Windows the pipe has the default security descriptor (read access for
+  Everyone, so another local user can open it and read what the server writes), the name is
+  machine-wide (a process that creates it first makes the app's listen fail and receives its
+  clients), and the runtime caps a pipe server at its pending-instance count (4, or
+  `NODE_PENDING_PIPE_INSTANCES`) and stops accepting once a connection arrives with every instance
+  in use: authenticate sensitive channels and keep few connections open at once.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no

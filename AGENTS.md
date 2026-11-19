@@ -834,6 +834,10 @@ running). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
 --node-modules [--detached]` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
+Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
+`connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
+`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows; web-stream connections; a packaged app grants
+`netListen` / `netConnect: ["*"]`, as a `unix:` grant cannot name a per-user path): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a

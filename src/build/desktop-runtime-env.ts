@@ -72,6 +72,7 @@ export const DESKTOP_RUNTIME_ENV: readonly string[] = [
   "SESSION_SECRET",
   "SOURCE_DATE_EPOCH",
   "SystemRoot",
+  "USERNAME",
   "USERPROFILE",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",

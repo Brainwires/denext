@@ -28,8 +28,19 @@ export function netHostError(entry: string): string | null {
   if (entry.includes("://")) {
     return `has ${JSON.stringify(entry)}: a host (api.example.com, :3000), not a URL`;
   }
+  if (entry.startsWith("unix:") && !UNIX_SOCKET_PATH.test(entry.slice(5))) {
+    return `has ${JSON.stringify(entry)}: a unix: entry is an absolute socket path ` +
+      "(unix:/run/app.sock, unix:\\\\.\\pipe\\app); the runtime expands no folder token " +
+      "($APPDATA, $DENO_DESKTOP_DATA) or relative path in a network grant and refuses to start";
+  }
   return null;
 }
+
+/**
+ * An absolute path a `unix:` network entry may name, as the runtime parses one: a POSIX `/path`, a
+ * drive path (`C:\x`, `C:/x`) or a UNC / device path (`\\.\pipe\name`).
+ */
+const UNIX_SOCKET_PATH = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
 
 /**
  * The problem with one entry of a `kind` permission list, else `null`: a network entry by
