@@ -21,6 +21,7 @@ import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
 import { boundPort } from "../helpers/port.ts";
+import { withCompileSlot } from "./_compiled-cli.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -412,21 +413,23 @@ Deno.test({
       let compiled = false;
 
       await t.step("compiles", async () => {
-        const r = await run(
-          Deno.execPath(),
-          [
-            "run",
-            "-A",
-            "--config",
-            join(project, "deno.json"),
-            join(FW, "cli.ts"),
-            "build",
-            "--compile",
-            "--output",
-            bin,
+        const r = await withCompileSlot(() =>
+          run(
+            Deno.execPath(),
+            [
+              "run",
+              "-A",
+              "--config",
+              join(project, "deno.json"),
+              join(FW, "cli.ts"),
+              "build",
+              "--compile",
+              "--output",
+              bin,
+              project,
+            ],
             project,
-          ],
-          project,
+          )
         );
         assertEquals(r.code, 0, r.out);
         assertStringIncludes(r.out, "--allow-write=.denext,.storage,app.db");

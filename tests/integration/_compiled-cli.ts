@@ -51,12 +51,14 @@ export function compiledCli(): Promise<string> {
       const source = join(shared.dir, name);
       if (!await exists(source)) {
         await Deno.mkdir(shared.dir, { recursive: true });
-        const { success } = await new Deno.Command(Deno.execPath(), {
-          args: compileCliArgs({ output: source }),
-          cwd: ROOT,
-          stdout: "inherit",
-          stderr: "inherit",
-        }).output();
+        const { success } = await withCompileSlot(() =>
+          new Deno.Command(Deno.execPath(), {
+            args: compileCliArgs({ output: source }),
+            cwd: ROOT,
+            stdout: "inherit",
+            stderr: "inherit",
+          }).output()
+        );
         if (!success) {
           await Deno.remove(source).catch(() => {});
           throw new Error("deno compile of the CLI failed");
@@ -103,6 +105,20 @@ export async function withLock<T>(path: string, fn: () => Promise<T>): Promise<T
   } finally {
     await file.unlock();
   }
+}
+
+/**
+ * Run `fn` while no other `deno compile` of this test process runs. A compile peaks near 2.7 GB,
+ * and the integration files run in parallel inside one CI slot (3.5 GB): two compiles at once
+ * (the compiled-CLI smoke files and `denext build --compile` in compile-app / compile-compat) ran
+ * the slot out of memory and the kernel killed one, which failed with no output.
+ *
+ * @param fn The compile, and only the compile.
+ * @returns What `fn` returned.
+ */
+export function withCompileSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const tmp = Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ?? "/tmp";
+  return withLock(join(tmp, `denext_integration_compile_${Deno.pid}.lock`), fn);
 }
 
 /** {@linkcode withLock}, synchronously (for an `unload` listener). */

@@ -13,6 +13,7 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
 import { boundPort } from "../helpers/port.ts";
+import { withCompileSlot } from "./_compiled-cli.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -216,24 +217,26 @@ async function writeFiles(dir: string, files: Record<string, string>): Promise<v
  * non-zero → the output in the error.
  */
 async function compile(project: string, bin: string, config: string): Promise<void> {
-  const r = await boundedOutput(Deno.execPath(), {
-    args: [
-      "run",
-      "-A",
-      "--config",
-      config,
-      join(FW, "cli.ts"),
-      "build",
-      "--compile",
-      "--output",
-      bin,
-      project,
-    ],
-    cwd: project,
-    env: { NO_COLOR: "1" },
-    // A compile build on a loaded runner: a failure bound, not a latency claim.
-    timeoutMs: 900_000,
-  });
+  const r = await withCompileSlot(() =>
+    boundedOutput(Deno.execPath(), {
+      args: [
+        "run",
+        "-A",
+        "--config",
+        config,
+        join(FW, "cli.ts"),
+        "build",
+        "--compile",
+        "--output",
+        bin,
+        project,
+      ],
+      cwd: project,
+      env: { NO_COLOR: "1" },
+      // A compile build on a loaded runner: a failure bound, not a latency claim.
+      timeoutMs: 900_000,
+    })
+  );
   const out = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
   assertEquals(r.code, 0, out);
 }
