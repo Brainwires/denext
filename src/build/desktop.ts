@@ -226,6 +226,11 @@ export type {
 export type { DesktopWindowMenuItem } from "../desktop/menu-config.ts";
 /** A keyed window the user closed (`runDesktop({ onDockReopen })`'s context). */
 export type { ClosedWindow as DesktopClosedWindow } from "../desktop/window-registry.ts";
+/** What `windows.order()` and `windows.pointer()` answer (the stacking order, the pointer). */
+export type {
+  PointerInfo as DesktopPointerInfo,
+  WindowOrder as DesktopWindowOrder,
+} from "../desktop/window-drag.ts";
 // The machine's aggregate CPU, GPU and memory load, straight from the runtime (no bridge).
 export {
   system,

@@ -776,6 +776,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `desktop.menu.window` items add New Window and Reopen Closed Window, and a Dock click with no
   window showing reopens the last closed one. — `src/desktop/app-windows.ts`,
   `src/desktop/window-store.ts`.
+- **The real window order, and drags between windows** — `getWindowOrder()` is the OS's own
+  z-order of the app's windows (macOS, Windows, Linux on X11; the focus order elsewhere),
+  `getPointer()` the pointer on the screen with the app window under it, and
+  `startDragSession()` / `onDragSession()` follow a drag across the app's windows from the OS,
+  with the pointer in each target page's own coordinates. — `src/desktop/window-drag.ts`,
+  `src/desktop/window.ts`.
 - **Native message boxes for extensions** — `host.confirm({ message, detail, buttons,
   defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
   TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window

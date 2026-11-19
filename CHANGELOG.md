@@ -8,6 +8,31 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The real stacking order of the app's windows, the pointer on the screen, and drags between
+  windows.** From `denext/desktop/window`: `getWindowOrder()` answers `{ ids, source }`, the
+  windows front to back as the OS stacks them (`source: "os"`: macOS, Windows, Linux on X11, where
+  the runtime has `Deno.desktop.windowOrder`), else the order they last had the focus in
+  (`"focus"`); `getPointer()` asks the OS for the pointer's place on the screen, the buttons held
+  and the app window under it (`null` where the OS does not tell); `startDragSession({ data,
+  onMove })` follows a drag from the OS while the button is held, so it crosses the app's windows:
+  the origin gets `onMove` and an `ended` promise, and the window under the pointer hears
+  `onDragSession` events (`enter`, `over`, `leave`, `drop`) with the pointer in its own page's
+  coordinates and the JSON the origin attached. The data stays inside the app. On Wayland, where
+  no client is told the stacking order or the pointer outside its windows, the order is the focus
+  order and a session rejects `unsupported`. From `desktop.ts`: `windows.order()` and
+  `windows.pointer()`.
+- **Terminals: `ptyInfo` names what runs in the terminal, on every OS.** `ptyInfo(id)` from
+  `denext/desktop/client` now answers `{ pid, tty?, process?, argv?, cwd?, foregroundPid?,
+  foregroundGroup? }`: the terminal device, and the name, arguments, folder, id and process group
+  of the process in the terminal's foreground (the command a shell waits for, or the shell at its
+  prompt), asked of the OS at each call. It comes from the runtime's `Deno.Pty.foreground()` and
+  `ttyName` where the runtime has them (macOS, Linux, Windows); before, only Linux gave a name and
+  a folder. Windows has no foreground process group, so there the process is found in the process
+  tree below the terminal's program and `foregroundGroup` / `tty` are never set. A field the OS
+  refuses (a process of another user) is left out.
+
 ## [4.20.0] - 2026-11-17
 
 ### Added

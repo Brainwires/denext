@@ -716,8 +716,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `unsupported`, as it does on Windows under a runtime whose `Deno.openPty` throws `NotSupported`
   there (`error.data.reason` says why). On Windows (10 1809 and later) the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
-  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
-  folder on Linux only.
+  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the terminal's foreground process (name, arguments, folder, id, process group)
+  where the runtime's `Deno.Pty` has `foreground()`; under a runtime without it, only Linux gives
+  the name and folder. Windows has no foreground process group: the process is found in the tree
+  below the terminal's program (a shell's child started last, through nested shells), so a
+  `start /b` job can be named instead, and `foregroundGroup` / `tty` are never set there. A process
+  of another user (`sudo`) hides its arguments and folder on every OS.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
@@ -778,7 +782,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
-  its own window; CEF gets no paths from a file drop (use the webview backend).
+  its own window; no client is told how windows are stacked or where the pointer is outside its own
+  windows, so `getWindowOrder()` answers the focus order (`source: "focus"`), `getPointer()` answers
+  `null` and `startDragSession()` rejects `unsupported` (a drag stays within one window there); CEF gets no paths from a file drop (use the webview backend).
   `startFileDrag` resolves `"failed"` as a normal outcome with the pointer off the app's windows,
   and always under CEF (`fileDragOut` is `false`). Under CEF the runtime's clipboard `change` event
   doesn't fire where the compositor lacks data-control (`Deno.desktop.clipboard.capabilities()`

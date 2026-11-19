@@ -47,6 +47,7 @@ import {
   type WindowConstructor,
   type WindowRegistry,
 } from "./window-registry.ts";
+import type { PointerInfo, WindowOrder } from "./window-drag.ts";
 import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
 import { type DockPresence, startDockHelper } from "./dock-helper.ts";
 import {
@@ -235,6 +236,17 @@ export interface DesktopWindows {
   byKey(key: string): DesktopWindowRef | undefined;
   /** The open windows. */
   list(): DesktopWindowRef[];
+  /**
+   * The ids of the windows on screen, front to back: the OS's own stacking order where it tells
+   * (`source: "os"`: macOS, Windows, Linux on X11), else the order the windows last had the focus
+   * in (`"focus"`).
+   */
+  order(): WindowOrder;
+  /**
+   * The pointer on the screen, the mouse buttons held and the window under it, asked of the OS;
+   * `null` where it does not tell (a Wayland session, a runtime without the call).
+   */
+  pointer(): PointerInfo | null;
   /**
    * The keyed windows open when the app last quit (each with its key, app path and saved bounds),
    * from the window store in the app support folder; `desktop.app.restoreWindows: true` reopens
@@ -632,6 +644,8 @@ function windowsApi(st: SetupState): DesktopWindows {
       return entry ? ref(st, entry) : undefined;
     },
     list: () => st.registry?.list().map((e) => ref(st, e)) ?? [],
+    order: () => st.registry?.order() ?? { ids: [], source: "focus" },
+    pointer: () => st.registry?.pointer() ?? null,
     lastSession: () => st.registry?.lastSession() ?? [],
     forget: (key) => {
       if (st.registry?.forget(key)) st.menu?.refresh();
@@ -1193,6 +1207,8 @@ export function noDesktopWindows(): DesktopAppMenusApi & {
       get: () => undefined,
       byKey: () => undefined,
       list: () => [],
+      order: () => ({ ids: [], source: "focus" }),
+      pointer: () => null,
       lastSession: () => [],
       forget: () => {},
     },

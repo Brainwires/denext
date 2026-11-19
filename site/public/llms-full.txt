@@ -651,7 +651,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
-`pty` (where the runtime has `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
+`pty` (where the runtime has `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start. `ptyInfo(id)` → `{ pid, tty?, process?, argv?, cwd?, foregroundPid?, foregroundGroup? }`: the terminal's foreground process, asked of the OS (where the runtime's `Deno.Pty` has `foreground()`; Windows: found in the process tree, no group, no `tty`).
 `system-stats` (where the runtime has `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
@@ -698,7 +698,7 @@ searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.user
 `setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
 windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
-`{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app
+`{ id, kind, visible, key?, title? }`), `getWindowOrder()` → `{ ids, source: "os" | "focus" }` is the real z-order front to back where the OS tells (macOS, Windows, X11; else focus order), `getPointer()` the pointer on the screen + the app window under it (`null` on Wayland), and `startDragSession({ data, onMove })` / `onDragSession(e => …)` follow a drag across the app's windows from the OS (`enter` / `over` / `leave` / `drop` with the target page's `clientX` / `clientY`; `unsupported` on Wayland); `windows.order()` / `windows.pointer()` in `desktop.ts`; a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame

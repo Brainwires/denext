@@ -2678,7 +2678,23 @@ await killPty(id); // SIGHUP; or "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"`}
         event per about 8 ms or 64 KiB, decoded as UTF-8. Each event carries a <code>seq</code>{" "}
         that grows by one per terminal; the event stream is at-least-once, and{" "}
         <code>onPtyData</code> drops a <code>seq</code> it has seen. <code>ptyInfo(id)</code>{" "}
-        gives the process id and, on Linux, the foreground process&apos;s name and folder.
+        gives the program&apos;s process id, the terminal device (<code>tty</code>) and what runs in
+        the terminal&apos;s foreground right now, asked of the OS at each call: the process&apos;s
+        name (<code>process</code>), arguments (<code>argv</code>), folder (
+        <code>cwd</code>), id (<code>foregroundPid</code>) and process group (
+        <code>foregroundGroup</code>). That is the command a shell is waiting for, or the shell
+        itself at its prompt, so a tab can show <code>vim notes.md</code>{" "}
+        and the folder without a shell integration script. The runtime answers on macOS, Linux and
+        Windows where its <code>Deno.Pty</code> has <code>foreground()</code>{" "}
+        (elsewhere only Linux fills <code>process</code> and{" "}
+        <code>cwd</code>). A field the OS refuses is left out: a <code>sudo</code>{" "}
+        running as another user hides its arguments and folder. Windows has no foreground process
+        group and a ConPTY is not a named device, so there <code>foregroundGroup</code> and{" "}
+        <code>tty</code>{" "}
+        are never set, and the foreground process is found in the process tree: the child a shell
+        started last, followed through nested shells (a program started with <code>start /b</code>
+        {" "}
+        can be named in place of an older one).
       </p>
       <p>
         Each terminal belongs to the window that started it: its events go to that window only, and
@@ -3284,6 +3300,69 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible, titl
         bindings) acts as the main window. A reload releases only what that window&apos;s page held
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
+      </p>
+      <h4 id="desktop-window-order">Stacking order, the pointer and drags between windows</h4>
+      <p>
+        <code>getWindowOrder()</code> from <code>denext/desktop/window</code>{" "}
+        answers the app&apos;s windows as they are stacked on screen right now, the front-most
+        first: <code>{"{ ids, source }"}</code>. With <code>source: "os"</code>{" "}
+        it is the OS&apos;s own z-order (macOS, Windows, Linux on X11, where the runtime has{" "}
+        <code>Deno.desktop.windowOrder</code>), which lists only windows that are on screen: not a
+        hidden or minimized one, nor one on another Space, virtual desktop or workspace. With{" "}
+        <code>source: "focus"</code>{" "}
+        the OS does not tell (a Wayland session, an older runtime) and the list is the order the
+        windows last had the focus in, which a window raised without the focus or an always-on-top
+        window can differ from. <code>getPointer()</code>{" "}
+        asks the OS where the pointer is on the screen, which mouse buttons are held and which
+        window of the app a click there would reach (<code>window</code>, with the pointer in that
+        window&apos;s page as <code>clientX</code> / <code>clientY</code>); it resolves{" "}
+        <code>null</code> where the OS does not tell. From <code>desktop.ts</code> the same two are
+        {" "}
+        <code>windows.order()</code> and <code>windows.pointer()</code>.
+      </p>
+      <p>
+        A page hears pointer events only inside its own window, so a drag from one window of the app
+        to another cannot be followed from the page. <code>startDragSession()</code>{" "}
+        does it from the OS: called from a <code>pointerdown</code> or <code>dragstart</code>{" "}
+        handler, it samples the pointer once per frame while the button is held. The window that
+        started it gets <code>onMove</code>{" "}
+        (the pointer on the screen and the window under it) and an <code>ended</code>{" "}
+        promise; whichever window the pointer is over hears <code>onDragSession</code> events (
+        <code>enter</code>, <code>over</code>, <code>leave</code>,{" "}
+        <code>drop</code>) with the pointer in its own page&apos;s coordinates and the JSON{" "}
+        <code>data</code> the origin attached (on <code>enter</code> and{" "}
+        <code>drop</code>). Releasing the button drops; <code>cancel()</code>{" "}
+        (Escape) ends it with no drop. Nothing is drawn and nothing reaches another application or
+        the OS pasteboard: draw your own drag image, and use <code>startFileDrag</code>{" "}
+        to drag files out of the app.
+      </p>
+      <Code lang="ts">
+        {`import { onDragSession, startDragSession } from "denext/desktop/window";
+
+// The window a tab is dragged from:
+tab.addEventListener("pointerdown", async () => {
+  const drag = await startDragSession({
+    data: { tab: tab.id },
+    onMove: ({ x, y, window }) => moveGhost(x, y, window),
+  });
+  const end = await drag.ended; // { window, x, y, cancelled }
+  if (!end.cancelled && end.window === null) openTabInNewWindow(tab.id, end.x, end.y);
+});
+
+// Every window (the origin too: a drop on itself is a drop):
+onDragSession((e) => {
+  if (e.type === "enter" || e.type === "over") showDropMarker(e.clientX, e.clientY);
+  if (e.type === "leave") hideDropMarker();
+  if (e.type === "drop") adoptTab((e.data as { tab: string }).tab, e.clientX, e.clientY);
+});`}
+      </Code>
+      <p>
+        One session runs at a time, for at most ten minutes, and only the window that started it can
+        cancel it. <code>startDragSession</code> rejects <code>unsupported</code>{" "}
+        where the OS does not tell the pointer (a Wayland session: a Wayland client learns the
+        pointer&apos;s position only inside its own windows), <code>not_dragging</code>{" "}
+        when no button is held and <code>conflict</code>{" "}
+        while another session runs; fall back to a drag within one window there.
       </p>
       <h4 id="desktop-window-keys">Keys, frames and the last session</h4>
       <p>
