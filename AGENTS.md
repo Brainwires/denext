@@ -678,7 +678,7 @@ is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `
 `denext/desktop/window` shares picked / app-folder files). Embedded web views: `createWebView({ url, bounds, partition?, allowPopups?, downloads?, permissions? })`
 from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts another http(s) site in a native view over the page (no bridge, own storage;
 `attachWebView(view, element)` follows an element's visible part; it draws above all HTML, so swap in `capture({ format: "jpeg", scale: 1 })` as an `<img>` + `setVisible(false)` under an overlay;
-`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `downloads: "app"` hands each download to `view.on("will-download", item => …)` (`item.save({ directory: "documents", path })` or a writable picked handle from a page, never an absolute path; an absolute path in `desktop.ts`; `saveAs`/`cancel`/`pause`/`resume`, `item.on("updated" | "done")`, `reveal()`; with no listener it is cancelled), `permissions: "app"` asks `view.setPermissionRequestHandler(req => boolean)` (a throw or 5 minutes without an answer refuses; none set refuses all); `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`, `downloadEvents` / `downloadPause` / `permissionRequests` included). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
 "mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` where
@@ -687,11 +687,16 @@ icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app s
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
 focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
-default keeps it in, invisible, at full timer rate) and the overlay calls
+default keeps it in, invisible, at full timer rate; on macOS an `overlay: true, focusable: false` panel shown again never takes the
+keyboard, `focusWindow()` makes it key without activating the app, `setVisibleOnAllWorkspaces(false)` keeps it on one Space) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
-`setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
+`setQuickActions` sets the macOS Dock menu (separators, `{ title, submenu }`, `checked` / `enabled` there; a click reaches one listening page);
+the backend's own Dock items come first: `runDesktop({ dockMenu, onDockMenuItem })` / `app.setDockMenu([{ id, label }, { type: "separator" }, { label, submenu }])`
+/ `host.onDockMenuItem(fn)` (every Dock click once, `(id, { keyWindow })`, no window open too; ids unique across both), `app.windows.closed()`
+(the reopen list), and for self-tests `getApplicationMenu(window?)` / `getDockMenu()` (host, result) and `getAppMenu()` / `getDockMenu()`
+in `denext/desktop/app` read the native menus back (`appCapabilities().menuSnapshot`). More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
 windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
 `{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app

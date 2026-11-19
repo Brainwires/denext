@@ -8,6 +8,43 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Embedded web views: app-decided downloads and permission requests.** `createWebView({ downloads:
+  "app" })` hands each download to the view's `will-download` event as an item (`id`, `url`,
+  `filename`, `mimeType`, `totalBytes`, live `receivedBytes` / `state` / `path` / `paused` /
+  `canResume`) with `save(target)`, `saveAs()`, `cancel()`, `pause()`, `resume()`, `reveal()` and
+  `on("updated" | "done")`; a download requested while nothing listens is cancelled, and closing the
+  view ends its downloads (`done` with `cancelled`). From a page `save()` takes an app folder and a
+  relative path or a writable picked handle, under the `fs` capability's path rules, never an
+  absolute path; in `desktop.ts` it takes an absolute path. `permissions: "app"` (or `{ prompts:
+  "app" }`) asks `view.setPermissionRequestHandler(handler)`: `true` allows, and anything else, a
+  throw, a rejection or 5 minutes without an answer refuses; with no handler every request is
+  refused. The raw `download` and `permission-request` events carry the runtime's stream (a
+  cancelled request's late answer is dropped). A page load cancels its views' downloads and refuses
+  their requests still waiting for that page. `webViewCapabilities()` reports `downloadEvents`,
+  `downloadPause` and `permissionRequests`; where they are `false` the option is refused
+  `unsupported`.
+- **The backend's Dock menu.** `runDesktop({ dockMenu, onDockMenuItem })`, and `setDockMenu(items |
+  null)` / `onDockMenuItem(fn)` on `runDesktop`'s result and on an extension's host: items `{ id,
+  label, enabled?, checked? }`, separators and `{ label, submenu }`, merged before the pages' quick
+  actions after a separator, ids checked unique across both. Every Dock click reaches the backend's
+  handlers once with `(id, { keyWindow })`, with no window open too. `setQuickActions` takes
+  separators, submenus and `enabled` / `checked` on the Dock (on iOS and Android a separator is left
+  out and a submenu refused).
+- **`windows.closed()`** on `runDesktop`'s `windows`: the keyed windows the user closed, most recent
+  first, the list `onDockReopen` receives, read at any time.
+- **Menu read-back for self-tests.** `getApplicationMenu(window?)` and `getDockMenu()` on
+  `runDesktop`'s result and an extension's host, and `getAppMenu()` / `getDockMenu()` in
+  `denext/desktop/app`, return the native menu as the OS holds it (`MenuSnapshotItem[]`), `null`
+  where the runtime has no read-back; `appCapabilities().menuSnapshot` says which.
+
+### Changed
+
+- **A click on a page's quick action reaches one page.** In a Deno Desktop window a Dock menu choice
+  goes to the key window's page if it listens with `onQuickAction`, else to the page of the window
+  focused most recently that does, instead of every window's page.
+
 ## [4.20.0] - 2026-11-17
 
 ### Added

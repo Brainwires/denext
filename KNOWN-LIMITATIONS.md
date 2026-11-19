@@ -688,7 +688,15 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `https:` only). A reload of the window's page can't reach the views it had open (they stay until
   closed or the window closes). Web views need an engine that hosts them —
   `webViewCapabilities().supported` says; elsewhere `createWebView` rejects `unsupported` — and
-  WKWebView keeps a named partition only on macOS 14 and later (in memory before).
+  WKWebView keeps a named partition only on macOS 14 and later (in memory before). App-decided
+  downloads and permission requests (`downloads: "app"`, `permissions: "app"`) differ by engine:
+  pausing and resuming a download works on CEF and WebView2 only; WKWebView raises only camera and
+  microphone requests; WebKitGTK reports no requesting frame and needs 2.40 or later for download
+  events; CEF remembers an allowed or refused prompt per origin in the view's partition (camera,
+  microphone and screen are asked every time) and starts receiving a waiting download into its own
+  temporary file; WebView2 never raises a screen-capture request (it stays refused). An allowed
+  capture still needs the OS's consent for the app. A page's `save()` writes only into the app's
+  folders or a picked item, and its `reveal()` follows `revealInFileManager`'s rules.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app
