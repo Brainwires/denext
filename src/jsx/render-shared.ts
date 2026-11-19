@@ -55,6 +55,7 @@ import type {
 } from "./render-to-flight.ts";
 import { serializeScalar, serializeThenable, warnDroppedFunctionProps } from "./flight-scalar.ts";
 import { type BrandedSignal, isSignal, signalWireId } from "../runtime/signal-brand.ts";
+import { hostTagOf, isRenderableElement } from "./host-tag.ts";
 
 /** A renderer output that carries both the SSR HTML and the Flight tree for the same subtree. */
 export interface Dual {
@@ -406,7 +407,7 @@ export async function renderHostDual(
   head: HeadCollector | null,
 ): Promise<Dual> {
   const props = node.props ?? {};
-  const tag = node.type as string;
+  const tag = hostTagOf(node);
   // A server-authored `<button onClick={fn}>`: the function is dropped from Flight below and
   // never reaches the browser — say so in dev instead of rendering an inert button.
   if (r.insideIsland === false) warnDroppedFunctionProps(`<${tag}>`, props);
@@ -622,9 +623,10 @@ async function flightOnlyVNode(
     return flightBoundary(props, rendered);
   }
   if (!isComponentType(type)) {
+    const tag = hostTagOf(node);
     const p = await w.serializeProps(props, scopes);
     return flightHost(
-      type as string,
+      tag,
       p,
       await flightOnlyChildren(props.children as VNodeChildren, w, scopes),
       node.key,
@@ -991,7 +993,8 @@ function escapeFlightKey(key: string): string {
   return key.startsWith("$") ? "$" + key : key;
 }
 
-/** Structural check for a VNode (has a `type` and `props`). */
-function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value && "props" in value;
-}
+/**
+ * Whether a prop value (or a component's output) is an element. A data object that merely has
+ * `type` and `props` fields is not: it serializes as the data it is (see ./host-tag.ts).
+ */
+const isVNode = isRenderableElement;

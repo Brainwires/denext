@@ -1,0 +1,102 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --fg: #16181d;
+  --muted: #5d6470;
+  --line: #dde1e7;
+  --accent: #2463eb;
+  --error: #c52a2a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317;
+    --card: #1a1d23;
+    --fg: #e8eaee;
+    --muted: #9aa2ae;
+    --line: #2b3038;
+    --accent: #6c9bff;
+    --error: #ff7b7b;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.content {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+}
+h1 {
+  font-size: 20px;
+  margin: 4px 0;
+}
+h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.lede,
+.note {
+  color: var(--muted);
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+}
+dt {
+  color: var(--muted);
+}
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+button {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+input[type="number"] {
+  width: 3.5em;
+  font: inherit;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+th,
+td {
+  text-align: right;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line);
+}
+th[scope="row"] {
+  text-align: left;
+  font-weight: normal;
+  color: var(--muted);
+}
+.error {
+  color: var(--error);
+}

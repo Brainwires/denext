@@ -28,6 +28,7 @@ import { isPostpone } from "../runtime/postpone.ts";
 import { escapeHtml, type HeadCollector, type ProviderScope } from "./render-to-string.ts";
 import { type IdScope, rootScope, scopePrefix } from "./tree-id.ts";
 import { holeClose, holeOpen, hostAttrs, renderHostHtml } from "./render-shared.ts";
+import { hostTagOf } from "./host-tag.ts";
 import { type PprMode, PprVNodeRenderer } from "./renderer-base.ts";
 
 /** A dynamic hole discovered during a resume pass: its id and (pending) content. */
@@ -92,7 +93,7 @@ class PPRRenderer extends PprVNodeRenderer<string> {
    */
   protected renderHost(node: VNode, scopes: ProviderScope[]): Promise<string> {
     const props = node.props ?? {};
-    const tag = node.type as string;
+    const tag = hostTagOf(node);
     return renderHostHtml(tag, props, hostAttrs(props, tag), this.head, {
       renderChildren: (c, hoist) =>
         hoist ? this.renderChildren(c, scopes) : this.renderUnhoisted(c, scopes),

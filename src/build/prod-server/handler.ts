@@ -5,7 +5,12 @@ import { IMAGE_ENDPOINT } from "../../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { applyDefaultSecurityHeaders } from "../../server/app.ts";
 import { cacheStoreHealthy, cacheStoreKind } from "../../server/cache.ts";
-import { imageOptionsFromConfig, optimizeImage } from "../../server/image-optimizer.ts";
+import {
+  imageOptionsFromConfig,
+  localImageFetcher,
+  optimizeImage,
+} from "../../server/image-optimizer.ts";
+import { copyRemoteAddr } from "../../server/remote-addr.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import { runHealthChecks } from "../../server/health.ts";
@@ -54,6 +59,7 @@ async function serveFrameworkEndpoint(
   request: Request,
   url: URL,
   secure: boolean,
+  localFetch: ReturnType<typeof localImageFetcher> | undefined,
 ): Promise<Response | null> {
   const hstsCfg = paths.config?.hsts;
   // Framework endpoints are read-only: a POST to the image optimizer is a CPU lever that
@@ -69,10 +75,10 @@ async function serveFrameworkEndpoint(
   }
   // Built-in image optimization endpoint.
   if (url.pathname === IMAGE_ENDPOINT) {
-    const res = await optimizeImage(
-      request,
-      imageOptionsFromConfig(paths.config?.images, paths.publicDir),
-    );
+    const res = await optimizeImage(request, {
+      ...imageOptionsFromConfig(paths.config?.images, paths.publicDir),
+      fetchLocal: localFetch,
+    });
     return applyDefaultSecurityHeaders(res, secure, hstsCfg);
   }
   // Client assets may be requested under basePath; strip it before matching.
@@ -110,11 +116,23 @@ export function createProdHandler(
   hasFlight: boolean,
   appHandler: (request: Request) => Promise<Response>,
 ): (request: Request) => Promise<Response> {
+  // The image endpoint is answered here, in front of the app: with a `middleware.ts`, a local
+  // source is fetched through the app (that middleware included), as the visitor's own request.
+  const localFetch = paths.middlewarePath
+    ? localImageFetcher(appHandler, copyRemoteAddr)
+    : undefined;
   return async (request) => {
     const url = new URL(request.url);
     if (url.pathname === LIVE_ENDPOINT && hasFlight) return handleLiveUpgrade(request);
     const secure = url.protocol === "https:";
-    return (await serveFrameworkEndpoint(paths, clientDir, basePath, request, url, secure)) ??
-      appHandler(request);
+    return (await serveFrameworkEndpoint(
+      paths,
+      clientDir,
+      basePath,
+      request,
+      url,
+      secure,
+      localFetch,
+    )) ?? appHandler(request);
   };
 }

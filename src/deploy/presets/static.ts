@@ -17,14 +17,15 @@ export interface StaticPresetOptions {
 
 /**
  * Why a static host cannot serve this app, or `null` when it can: every route that needs a
- * server (ISR, dynamic rendering, route handlers, the middleware). Metadata routes are left out —
- * they are reported as warnings ({@linkcode staticWarnings}).
+ * server (ISR, dynamic rendering, the middleware, a route handler the export cannot write — one
+ * with a method other than GET, `force-dynamic`, or unenumerated params). A GET route handler and
+ * the metadata routes are written by the export as files (`DeployRoute.staticExport`).
  *
  * @param manifest The deploy manifest.
  * @returns The refusal message, or `null`.
  */
 export function staticRefusal(manifest: DeployManifest): string | null {
-  const blocking = serverRoutes(manifest).filter((r) => !r.metadata);
+  const blocking = serverRoutes(manifest).filter((r) => !r.staticExport);
   if (blocking.length === 0) return null;
   return `denext: the static preset is for export-only apps, and ${blocking.length} route(s) ` +
     `need a server:\n${blocking.map((r) => `    ${describeRoute(r)}`).join("\n")}\n` +
@@ -33,19 +34,14 @@ export function staticRefusal(manifest: DeployManifest): string | null {
 }
 
 /**
- * What still works differently on a static host: metadata routes the export does not write,
- * jobs and services that never run, and the image optimizer `<Image>` falls back from.
+ * What still works differently on a static host: jobs and services that never run, and the
+ * image optimizer `<Image>` falls back from.
  *
  * @param manifest The deploy manifest.
  * @returns One line per finding.
  */
 function staticWarnings(manifest: DeployManifest): string[] {
   const out: string[] = [];
-  for (const r of manifest.routes.filter((r) => r.metadata)) {
-    out.push(
-      `static: ${r.path} (${r.source}) is served by the server; the export does not write it`,
-    );
-  }
   if (manifest.jobs.length) out.push("static: jobs/ never run on a static host");
   if (manifest.services.length) out.push("static: services/ never run on a static host");
   if (manifest.images.optimizer) {

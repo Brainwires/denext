@@ -101,6 +101,8 @@ export interface ExportContext {
    * when the app has no global-error.tsx).
    */
   globalErrorEntry?: string;
+  /** The `404.html` document's stylesheet URL, once `emitExportCss` wrote one. */
+  notFoundCss?: string;
   /** Pages written so far. */
   pages: number;
   /** Route paths / pathnames skipped. */
@@ -153,4 +155,10 @@ export function styleHrefsFor(ctx: ExportContext, route: PageRoute): string[] | 
   return ctx.cssRoutes.has(route.routePath)
     ? [`${ctx.assetBase}${CLIENT_PREFIX}${routeId(route.routePath)}.css`]
     : undefined;
+}
+
+/** Record a skipped route / pathname with its reason (the export result lists them). */
+export function skip(ctx: ExportContext, what: string, reason: string): void {
+  ctx.skipped.push(what);
+  console.warn(`  skip ${what} — ${reason}`);
 }

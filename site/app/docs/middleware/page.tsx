@@ -105,6 +105,13 @@ export const config = { matcher: ["/dashboard/:path*"] };`}
       </Code>
 
       <Callout kind="note">
+        A Server Action posts to{" "}
+        <code>/_denext/action/&lt;id&gt;</code>, not to the URL of the page that calls it, so a
+        matcher on a page's path does not select the actions that page uses. Check the session
+        inside each action, or add <code>/_denext/action/:path*</code> to the matcher. See{" "}
+        <a href="/docs/server-actions">Server Actions</a>.
+      </Callout>
+      <Callout kind="note">
         The handler receives a <code>NextRequest</code> with <code>nextUrl</code> and{" "}
         <code>cookies</code>. Set cookies on the response via <code>res.cookies.set(...)</code>{" "}
         — multiple <code>Set-Cookie</code> headers are preserved.

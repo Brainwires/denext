@@ -6,7 +6,7 @@ import { SUSPENSE } from "../../runtime/suspense.ts";
 import { ACTIVITY } from "../../runtime/react-extras.ts";
 import { PROVIDER } from "../../runtime/context.ts";
 import { ERROR_BOUNDARY } from "../../runtime/error-boundary.ts";
-import { TEXT_TYPE } from "../vnode-utils.ts";
+import { invalidChild, TEXT_TYPE } from "../vnode-utils.ts";
 import { componentDisplayName, isComponentType } from "../../runtime/react-brands.ts";
 import { getClassSupport } from "./class-support.ts";
 import { ERR_UPDATE_DEPTH, reconcilerError } from "./errors.ts";
@@ -39,6 +39,9 @@ function tagOf(vnode: VNode): FiberTag {
   if (typeof t === "function") return "component";
   // A non-callable memo/forwardRef object wrapper is also a component.
   if (typeof t === "object" && t !== null && isComponentType(t)) return "component";
+  // A host element's type is its tag. Anything else here is not an element at all: a data
+  // object rendered as a child (`{ a: 1 }`), or one shaped like an element with a non-string type.
+  if (typeof t !== "string") throw invalidChild();
   return "host";
 }
 

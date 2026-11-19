@@ -14,11 +14,12 @@ import { setBasePath } from "../../client/navigation.ts";
 import { FLIGHT_BOOT_FILE, hasFlightBoot } from "../flight-boot.ts";
 import { CLIENT_PREFIX } from "../prod-server/assets.ts";
 import { peelLocale } from "../../server/i18n.ts";
-import { renderGlobalError, renderPage } from "../../server/render-page.ts";
+import { renderGlobalError, renderPage, renderRootNotFound } from "../../server/render-page.ts";
 import { createRequestContext, runWithContext } from "../../server/request-context.ts";
 import { readSegmentConfig } from "../../server/segment-config.ts";
 import type { PageModule } from "../../server/types.ts";
-import { clientEntryFor, type ExportContext, styleHrefsFor } from "./context.ts";
+import { clientEntryFor, type ExportContext, skip, styleHrefsFor } from "./context.ts";
+import { exportedImagePath } from "./static-files.ts";
 
 /** Render one page to a full HTML document string. */
 function renderStatic(
@@ -44,6 +45,9 @@ function renderStatic(
       route,
       i18n,
       localeInfo: i18n ? peelLocale(pathname, i18n) : null,
+      // Under the basePath; a static image file is exported (and so linked) with its
+      // extension, as Next does.
+      publicPath: (path) => ctx.basePath + exportedImagePath(manifest, path),
       absolutize: (path) => {
         if (!base) return null;
         try {
@@ -80,12 +84,6 @@ function paramSetsFor(ctx: ExportContext, route: PageRoute): Promise<RouteParams
 function pageFilePath(outDir: string, pathname: string): string {
   if (pathname === "/") return join(outDir, "index.html");
   return join(outDir, pathname, "index.html");
-}
-
-/** Record a skipped route/pathname with its reason. */
-function skip(ctx: ExportContext, what: string, reason: string): void {
-  ctx.skipped.push(what);
-  console.warn(`  skip ${what} — ${reason}`);
 }
 
 /**
@@ -200,6 +198,38 @@ export async function writeGlobalErrorPage(ctx: ExportContext): Promise<void> {
   const file = join(ctx.outDir, "500.html");
   await Deno.writeTextFile(file, html);
   console.log(`  global-error -> 500.html`);
+}
+
+/**
+ * Pre-render the root not-found UI to `404.html`, the page static hosts (GitHub Pages, Netlify,
+ * Cloudflare Pages, an S3 website) serve for a URL with no file, as Next's `output: "export"`
+ * writes it: `app/not-found.tsx` (or the default 404 UI when there is none) inside the root
+ * layout, the same document the server answers an unmatched URL with. With `trailingSlash`, the
+ * same file is also written to `404/index.html`, as Next does. The document carries the root
+ * layout's and the not-found's stylesheets, and no hydration (as the served one).
+ */
+export async function writeNotFoundPage(ctx: ExportContext): Promise<void> {
+  const request = new Request("http://localhost/404");
+  // A `<Link>` in it prefixes the basePath, as on the pages.
+  setBasePath(ctx.basePath);
+  const html = await runWithContext(createRequestContext(request), async () => {
+    const rendered = await renderRootNotFound(ctx.manifest, ctx.load);
+    return renderDocument({
+      bodyHtml: rendered.html,
+      metadata: rendered.metadata,
+      styles: ctx.notFoundCss ? [ctx.notFoundCss] : undefined,
+      lang: ctx.i18n?.defaultLocale,
+      publicEnv: publicEnv(),
+    });
+  }).finally(() => setBasePath(""));
+  const files = ["404.html"];
+  if (ctx.paths.config?.trailingSlash === true) files.push(join("404", "index.html"));
+  for (const name of files) {
+    const file = join(ctx.outDir, name);
+    await ensureDir(dirname(file));
+    await Deno.writeTextFile(file, html);
+    console.log(`  not-found -> ${name.replaceAll("\\", "/")}`);
+  }
 }
 
 /** Copy the public directory's contents into the output directory. */

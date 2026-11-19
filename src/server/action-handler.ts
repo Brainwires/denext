@@ -33,6 +33,7 @@ import {
 import { safeRedirectLocation } from "./config.ts";
 import { currentContext } from "./request-context.ts";
 import { resolveBoundAction } from "./action-bound.ts";
+import { assertUntainted } from "../runtime/taint.ts";
 
 /**
  * Default max Server Action request body size (bytes) — 1 MiB, matching Next.js'
@@ -259,6 +260,9 @@ function refreshDirectives(): { refresh?: true; updatedTags?: string[] } {
  * `enc: 1` only when a tag was needed, plus the refresh directives the action requested.
  */
 function xhrResult(result: unknown): Response {
+  // A tainted value never crosses to the client (React's Flight refuses it in a Server
+  // Function's return value): the throw is the action failing, answered as a redacted 500.
+  assertUntainted(result);
   const p = prepareWire(result ?? null);
   const envelope = p.tagged ? { result: p.value, enc: WIRE_ENC } : { result: p.value };
   return jsonResponse({ ...envelope, ...refreshDirectives() });

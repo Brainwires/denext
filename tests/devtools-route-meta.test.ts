@@ -291,6 +291,8 @@ const UNBUNDLED_GOLDEN = [
   "  }",
   "}",
   "",
+  "// Soft navigation re-runs main() on this module (cached once) instead of re-fetching it.",
+  "(globalThis.__dnxEntries ??= {})[import.meta.url] = main;",
   "main();",
   "",
 ].join("\n");

@@ -499,6 +499,23 @@ Deno.test("runDeno: a streamed run keeps only a bounded tail, and every line sti
   assert(!result.stdout.startsWith("0000"), "the oldest output dropped");
 });
 
+Deno.test("runDeno: a streamed run whose output arrives as one chunk still keeps only the tail", async () => {
+  // One write of 40 KiB: a single read delivers it, so the tail can't be trimmed chunk by chunk.
+  const program = `const line = (i) => String(i).padStart(4, "0") + "x".repeat(1020) + "\\n";
+Deno.stdout.writeSync(new TextEncoder().encode(Array.from({ length: 40 }, (_, i) => line(i)).join("")));`;
+  const lines: string[] = [];
+  const result = await runDeno(["eval", program], {
+    cwd: Deno.cwd(),
+    onLine: (line) => void lines.push(line),
+  });
+  assertEquals(result.code, 0);
+  assertEquals(lines.filter((l) => l !== "").length, 40, "nothing is lost to the tail");
+  // Bounded by the tail plus at most one later chunk (a pipe may still split the write: Windows does).
+  assert(result.stdout.length < 2 * 8192, `tail kept (${result.stdout.length} chars)`);
+  assert(result.stdout.endsWith("\n") && result.stdout.includes("0039"), "the newest output kept");
+  assert(!result.stdout.startsWith("0000"), "the oldest output dropped");
+});
+
 Deno.test("runDeno: stdin is fed to the child and closed, and json() of non-JSON output is null", async () => {
   const program = `const text = await new Response(Deno.stdin.readable).text();
 console.log("got " + text.toUpperCase());`;

@@ -185,6 +185,59 @@ Deno.test("desktop updater: a tampered file (wrong SHA-256) is refused and stagi
   }
 });
 
+/** A body that never ends, in 64 KiB chunks; `pulled.bytes` counts what was taken from it. */
+function endlessBody(pulled: { bytes: number }): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    pull(controller) {
+      pulled.bytes += 65_536;
+      controller.enqueue(new Uint8Array(65_536));
+    },
+  });
+}
+
+Deno.test("desktop updater: a file longer than the manifest lists is refused, not buffered", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir();
+  const data = await tmpData();
+  await writeOtaManifest(feed, { sequence: 5 }, signingKey);
+  const config = cfg(data, publicKey);
+  const real = createOtaHandler({ dir: feed, basePath: BASE });
+  const pulled = { bytes: 0 };
+  const restore = routeFetch(() => (req) =>
+    req.url.endsWith("/app.js") ? Promise.resolve(new Response(endlessBody(pulled))) : real(req)
+  );
+  try {
+    const err = await assertRejects(() => prepareDesktopUpdate(config), DesktopUpdateError);
+    assertEquals((err as DesktopUpdateError).code, "integrity");
+    assert(err.message.includes("larger than the manifest lists"), err.message);
+    assert(pulled.bytes <= 4 * 65_536, `read stopped at the listed size (pulled ${pulled.bytes})`);
+    assertEquals((await desktopUpdateStatus(config)).staged, null);
+  } finally {
+    restore();
+    await Deno.remove(feed, { recursive: true });
+    await Deno.remove(data, { recursive: true });
+  }
+});
+
+Deno.test("desktop updater: an oversized manifest is refused before it is parsed", async () => {
+  const { publicKey } = await keys();
+  const data = await tmpData();
+  const pulled = { bytes: 0 };
+  const restore = routeFetch(() => () => Promise.resolve(new Response(endlessBody(pulled))));
+  try {
+    const err = await assertRejects(
+      () => checkForDesktopUpdate(cfg(data, publicKey)),
+      DesktopUpdateError,
+    );
+    assertEquals((err as DesktopUpdateError).code, "invalid");
+    assert(err.message.includes("too large"), err.message);
+    assert(pulled.bytes <= 17 * 1024 * 1024, `read stopped at the cap (pulled ${pulled.bytes})`);
+  } finally {
+    restore();
+    await Deno.remove(data, { recursive: true });
+  }
+});
+
 Deno.test("desktop updater: a bad signature is refused", async () => {
   const { publicKey, signingKey } = await keys();
   const feed = await exportDir();

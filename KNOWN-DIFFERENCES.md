@@ -214,6 +214,16 @@ internal design choice with no observable difference lives in
   collector also receives React-19-style in-tree `<meta>`, which React never dedupes.
   `<base>`/`<script>`/`<style>`/`<noscript>` inside `<Head>` reach the head on the server render
   only; a client-side navigation does not update them.
+- **A static export writes one page layout and no RSC payloads.** `next build` with
+  `output: "export"` writes `about.html` without `trailingSlash` and `about/index.html` with it;
+  `denext export` writes `about/index.html` either way, which every static host, the desktop
+  window and the Capacitor shells serve at `/about` (a host that redirects a directory to its
+  trailing slash, such as GitHub Pages, sends `/about` to `/about/`). Next also writes each
+  page's RSC payload (`about.txt`, `__next.*.txt`) for its client router and its internal
+  `_not-found.html`; denext's soft navigation reads the page's HTML, so it writes neither (its
+  `404.html` is the same page). A route handler whose GET fails or answers a non-2xx status is
+  skipped and listed, where Next fails the build. `tests/e2e/next-compat-export-parity.test.ts`
+  holds the rest of the file list to Next's.
 - **`client-only` is inert at build time.** Next fails a build that imports `client-only`
   from the `react-server` layer. denext's compat SSR bundle server-renders the `"use client"`
   tree as well, so it has no such layer and treats `client-only` as an empty marker on both

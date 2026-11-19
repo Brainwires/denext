@@ -123,6 +123,20 @@ function ciBrowserArgs(): string[] {
 }
 
 /**
+ * Close every page the browser still has, each awaiting its own DevTools socket's close.
+ * astral's `Browser.close()` closes the browser's socket, then kills a local Chromium; a page's
+ * socket then closes from Chromium's end, some time after `close()` returned. On a slow machine
+ * (a one-CPU container) the test that opened the page has ended by then, and Deno's sanitizer
+ * reports the page's WebSocket and its pending receive as leaked. A page already closed (or one
+ * that fails to) is skipped.
+ *
+ * @param browser The browser whose pages to close.
+ */
+export async function closePages(browser: Pick<Browser, "pages">): Promise<void> {
+  await Promise.allSettled([...browser.pages].map((page) => page.close()));
+}
+
+/**
  * Launch a headless browser that is torn down even if the run is killed
  * (SIGINT/SIGTERM) before its `finally` — so a cancelled or timed-out run never orphans
  * astral's Chromium child. Always applies {@linkcode ciBrowserArgs}; `extraArgs` are
@@ -146,6 +160,7 @@ export async function launchManagedBrowser(extraArgs: string[] = []): Promise<Br
   (browser as { close: () => Promise<void> }).close = async () => {
     liveBrowsers.delete(tracked);
     removeSignalHandlerIfIdle();
+    await closePages(browser);
     await originalClose();
   };
   return browser;

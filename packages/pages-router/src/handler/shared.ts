@@ -204,6 +204,42 @@ export async function bundleUrls(
   return { entryUrl: await b.urlFor(routePath), cssUrl: await b.cssUrlFor(routePath) };
 }
 
+/**
+ * `Cache-Control` for an answer computed for one request (`getServerSideProps`,
+ * `getInitialProps`): Next.js's own value. Without it a cache in front that stores what carries
+ * no header (Varnish and Fastly do by default) would hand one visitor's page to the next.
+ */
+const PER_REQUEST_CACHE_CONTROL = "private, no-cache, no-store, max-age=0, must-revalidate";
+
+/**
+ * Mark `res` as computed for this request alone, unless the page already chose a
+ * `Cache-Control` (`context.res.setHeader`, applied before this).
+ *
+ * @param res The response.
+ * @param perRequest Whether the page's data came from `getServerSideProps` / `getInitialProps`.
+ * @returns `res`.
+ */
+export function withRequestCacheControl(res: Response, perRequest: boolean): Response {
+  if (perRequest && !res.headers.has("cache-control")) {
+    res.headers.set("cache-control", PER_REQUEST_CACHE_CONTROL);
+  }
+  return res;
+}
+
+/**
+ * One page URL answers three ways — the document, the soft-navigation JSON
+ * (`x-denext-pages-data`) and the prefetch JSON (`x-denext-pages-prefetch`): `Vary` keeps a
+ * shared cache from storing one under the URL and serving it for another (the JSON in place of
+ * the document, for every later visitor).
+ *
+ * @param res A page response.
+ * @returns `res`, varied on both headers.
+ */
+export function withVariantVary(res: Response): Response {
+  res.headers.append("vary", `${DATA_HEADER}, ${PREFETCH_HEADER}`);
+  return res;
+}
+
 /** A HEAD request gets the same status/headers with no body. */
 export function forMethod(request: Request, res: Response): Response {
   return request.method === "HEAD" ? new Response(null, res) : res;

@@ -99,12 +99,17 @@ export function Query() {
   useEffect(() => setReady(true), []);
   const run = async () => {
     const query = (document.getElementById("q") as HTMLInputElement).value;
-    const res = await fetch("/graphql", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const body = await res.text();
+    let body: string;
+    try {
+      const res = await fetch("/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      body = await res.text();
+    } catch {
+      return; // the dev reload an edit starts ended this document's request: the test asks again
+    }
     setOut((o) => ({ n: o.n + 1, body }));
   };
   return (
@@ -147,13 +152,66 @@ async function startDev(dir: string): Promise<{ origin: string; close(): Promise
   throw new Error("denext dev did not serve / within 120 s");
 }
 
-/** Run `query` from the page's client component; the parsed GraphQL response. */
+/** `expr` evaluated in the page, or `null` while the page is navigating (a dev reload). */
+async function inPage(page: Page, expr: string): Promise<unknown> {
+  try {
+    return await page.evaluate(expr);
+  } catch {
+    return null; // the execution context went away with the old document
+  }
+}
+
+/**
+ * Run `query` from the page's client component; the parsed GraphQL response.
+ *
+ * An edit under `denext dev` reloads (or Fast-Refreshes) the open page, at a moment the test does
+ * not choose: a click on the old document, or on the new one before it hydrates, is lost, and
+ * waiting for its answer could only time out. So each attempt waits for the hydrated button,
+ * tags the document, clicks, and waits until either the answer arrives on that same document or
+ * the tag is gone (the page reloaded), in which case it asks again on the new document.
+ */
 async function queryFromPage(page: Page, query: string): Promise<unknown> {
-  const n = Number(await page.evaluate(`document.querySelector("#out").dataset.n`));
-  await page.evaluate(`document.querySelector("#q").value = ${JSON.stringify(query)}`);
-  await (await page.$("#run"))!.click();
-  await pollFor(page, `Number(document.querySelector("#out").dataset.n) > ${n}`);
-  return JSON.parse(String(await page.evaluate(`document.querySelector("#out").textContent`)));
+  const deadline = Date.now() + 90_000;
+  for (let attempt = 1; Date.now() < deadline; attempt++) {
+    const answer = await askOnce(page, query, `q${attempt}`, deadline);
+    if (answer !== undefined) return answer;
+  }
+  throw new Error(`no answer to ${query} from the page within 90 s`);
+}
+
+/** One attempt of {@linkcode queryFromPage}: the answer, or `undefined` to ask again. */
+async function askOnce(page: Page, query: string, tag: string, deadline: number) {
+  if (!await inPage(page, `document.querySelector("#run.ready") !== null`)) {
+    await new Promise((r) => setTimeout(r, 100));
+    return undefined;
+  }
+  const before = await inPage(
+    page,
+    `(globalThis.__gqlQuery = ${JSON.stringify(tag)}, ` +
+      `Number(document.querySelector("#out").dataset.n))`,
+  );
+  if (typeof before !== "number") return undefined;
+  await inPage(
+    page,
+    `document.querySelector("#q").value = ${JSON.stringify(query)}; ` +
+      `document.querySelector("#run").click()`,
+  );
+  // A Fast Refresh keeps the document but may remount the component (its count back to 0) or
+  // swallow the click: an attempt with no answer in 20 s asks again.
+  const end = Math.min(deadline, Date.now() + 20_000);
+  const outcome = `globalThis.__gqlQuery !== ${JSON.stringify(tag)} ? "reloaded" : ` +
+    `Number(document.querySelector("#out").dataset.n) > ${before} ? "answered" : ` +
+    `Number(document.querySelector("#out").dataset.n) < ${before} ? "reloaded" : ""`;
+  while (Date.now() < end) {
+    const state = await inPage(page, outcome);
+    if (state === "answered") {
+      const body = await inPage(page, `document.querySelector("#out").textContent`);
+      return typeof body === "string" ? JSON.parse(body) : undefined;
+    }
+    if (state === "reloaded" || state === null) return undefined;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return undefined;
 }
 
 Deno.test({
@@ -179,7 +237,7 @@ Deno.test({
       // The next query from the same page sees both edits (the dev server noticing the edit takes
       // a moment, so ask until it does, on the same page and server).
       const want = JSON.stringify({ data: { hello: "v2", extra: "added" } });
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + 90_000;
       let last: unknown;
       while (Date.now() < deadline) {
         last = await queryFromPage(page, "{ hello extra }");

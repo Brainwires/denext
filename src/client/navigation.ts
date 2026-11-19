@@ -13,6 +13,7 @@ import { fillPattern, parsePattern, type RouteParams } from "../router/segments.
 import type { StandardSchemaV1 } from "../runtime/define-action.ts";
 import { hydrateDocument, hydrateRoot } from "./reconciler.ts";
 import { setAccessSignalHandler } from "./fiber/boundaries.ts";
+import { isScriptUrl } from "./nav-scheme.ts";
 import { revealStreamedHoles } from "./reveal-holes.ts";
 import {
   type Context,
@@ -465,9 +466,10 @@ export async function navigate(
   // The spelling the server serves (no 308 round trip), which is also the prefetch's key.
   const url = canonicalRoute(new URL(withBase(href), location.href));
 
-  // Cross-origin: fall back to a full navigation.
+  // Cross-origin: fall back to a full navigation, unless the "navigation" is a script URL
+  // (`javascript:` has an opaque origin, so it lands here): that one goes nowhere.
   if (url.origin !== location.origin) {
-    location.href = href;
+    if (!isScriptUrl(href)) location.href = href;
     return;
   }
 

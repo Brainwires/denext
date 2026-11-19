@@ -1,224 +1,224 @@
 {
   "schema": 1,
-  "version": "3.0.0-denext.25",
-  "tag": "denext-runtime-v3.0.0-denext.25",
+  "version": "3.0.0-denext.27",
+  "tag": "denext-runtime-v3.0.0-denext.27",
   "repository": "https://github.com/Brainwires/deno",
   "deno": "2.9.8",
-  "denoSha": "5245792e3110ded8147e4714d111033ce1814596",
-  "laufeySha": "668cc3fcc0f8722150ffec519aa16e0c38149783",
+  "denoSha": "512a5572e766900fdcf44e5d8d31d08583f4e5a1",
+  "laufeySha": "83bd73d7d2ea3e62dd1b9d532db7f16fe3ae2e1a",
   "laufeyApiVersion": 58,
   "targets": {
     "aarch64-apple-darwin": {
       "runtimeLib": "libdenort.dylib",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-webview.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-webview.tar.gz",
-        "sha256": "282b235cd32ffaaa4eca4bb37b64ff0a303fa7ed066d433f1362f875e0adfef7",
-        "size": 33070151,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-apple-darwin-webview.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-apple-darwin-webview.tar.gz",
+        "sha256": "fabc90e10d29a9bb6bde261497d7edcaa762acad8d76b2d27539992cb04f23b3",
+        "size": 33327236,
         "format": "tar.gz"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-cef.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-cef.tar.gz",
-        "sha256": "15ce7fdeab602f4b9905642601be1d26fd9b6f574ca0b1efdd8440e23ff57f8c",
-        "size": 181826597,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-apple-darwin-cef.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-apple-darwin-cef.tar.gz",
+        "sha256": "9dce56066a3fca52798084ee94aca465e70b2516be567a8c2c78e6897284d4f6",
+        "size": 182078342,
         "format": "tar.gz"
       }
     },
     "aarch64-pc-windows-msvc": {
       "runtimeLib": "denort.dll",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-webview.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-webview.zip",
-        "sha256": "b107a3f90d21db70b0a30b9fe24a24c54b84f36f27951e3d02b84f796e0f8b4b",
-        "size": 33733027,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-pc-windows-msvc-webview.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-pc-windows-msvc-webview.zip",
+        "sha256": "8f2a4f5cc5bb01eff0a063afb38b47e00f951dbc9e9ff309120605215deeb180",
+        "size": 33987418,
         "format": "zip"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-cef.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-cef.zip",
-        "sha256": "84251a26a9817059fd470bc9d3e08c23dae08fba82bb5b3ed6e9bc3d17c3c4a2",
-        "size": 213136297,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-pc-windows-msvc-cef.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-pc-windows-msvc-cef.zip",
+        "sha256": "e41785fe1c78b653d8d9638e9a93e5a6e968e4189d0b5ac3cea2d07a29833966",
+        "size": 213390654,
         "format": "zip"
       }
     },
     "aarch64-unknown-linux-gnu": {
       "runtimeLib": "libdenort.so",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-webview.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-webview.tar.gz",
-        "sha256": "f2688c45a0aab1dc798bb90697d792422dac5a89e7772acc8c74c30ea4826e61",
-        "size": 45820710,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-unknown-linux-gnu-webview.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-unknown-linux-gnu-webview.tar.gz",
+        "sha256": "5d0b43190aa2f79c436d43f3b3339189d86ff6b5d961b3ff7c76001eb1d92512",
+        "size": 46087379,
         "format": "tar.gz"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-cef.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-cef.tar.gz",
-        "sha256": "99077168c77dd5cd1ae087e4151b89f300104cb05950fb8ced84754c19f5fdbc",
-        "size": 226494887,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-aarch64-unknown-linux-gnu-cef.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-aarch64-unknown-linux-gnu-cef.tar.gz",
+        "sha256": "1a7f1de7197b68ec44bf29a345bf6d728562663f461eb5f533ec278cb532f3c0",
+        "size": 226756163,
         "format": "tar.gz"
       }
     },
     "x86_64-apple-darwin": {
       "runtimeLib": "libdenort.dylib",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-webview.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-webview.tar.gz",
-        "sha256": "5a612f7d0dd14751feba6ca61cd2dcaee72bf8ae4bca61ae6503492eebd42557",
-        "size": 37497014,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-apple-darwin-webview.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-apple-darwin-webview.tar.gz",
+        "sha256": "577ea236e0d3956c4792802725b3fb20786146147e70cd95ce141fb7c29f0179",
+        "size": 37755033,
         "format": "tar.gz"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-cef.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-cef.tar.gz",
-        "sha256": "814569415ed116ba7d739ef05d250c6621cdf0c60a4cc7bf76a2e7340ea33eca",
-        "size": 194972110,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-apple-darwin-cef.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-apple-darwin-cef.tar.gz",
+        "sha256": "692dcf28a1121cb0ae2ff761e983160fdf2c36481f5c63907125261e903f16f1",
+        "size": 195220087,
         "format": "tar.gz"
       }
     },
     "x86_64-pc-windows-msvc": {
       "runtimeLib": "denort.dll",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-webview.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-webview.zip",
-        "sha256": "542381426d1934bd17abf742a4710345c03960ebbab6ac2fdffd41aea83dc5be",
-        "size": 35704935,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-pc-windows-msvc-webview.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-pc-windows-msvc-webview.zip",
+        "sha256": "579ba59fdcbc634597978a620facc2556d316e236ca32d815aa8dce926ba8999",
+        "size": 35961607,
         "format": "zip"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-cef.zip",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-cef.zip",
-        "sha256": "22a5b371e62187bbef23dba6370656b178752d66de9669ce5c7a0b7b1512de00",
-        "size": 218272346,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-pc-windows-msvc-cef.zip",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-pc-windows-msvc-cef.zip",
+        "sha256": "305ac8a66d39263677c69e65903284074056ad5f63571f6f13fc5190371d9e9a",
+        "size": 218529241,
         "format": "zip"
       }
     },
     "x86_64-unknown-linux-gnu": {
       "runtimeLib": "libdenort.so",
       "webview": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-webview.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-webview.tar.gz",
-        "sha256": "82debce437b6ae93a4ea6a7f8f977dae98f1b8b0529d8edf65cf618a3f05ff02",
-        "size": 44882967,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-unknown-linux-gnu-webview.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-unknown-linux-gnu-webview.tar.gz",
+        "sha256": "54c3053136e688167eaaf6ed62bdc0796f29ba7f172a64c3ebb66166cde849ea",
+        "size": 45151478,
         "format": "tar.gz"
       },
       "cef": {
-        "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-cef.tar.gz",
-        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-cef.tar.gz",
-        "sha256": "fc4684ae2b81e83bf4f9dc13246e9129796dd553230aae90a9d9c941a803e6b8",
-        "size": 209611623,
+        "file": "deno-desktop-runtime-3.0.0-denext.27-x86_64-unknown-linux-gnu-cef.tar.gz",
+        "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.27/deno-desktop-runtime-3.0.0-denext.27-x86_64-unknown-linux-gnu-cef.tar.gz",
+        "sha256": "8a67d386b22ada7c7bd6ab5fc8ca2bc4e8edcca414bf5bf33c65b95697956c33",
+        "size": 209885726,
         "format": "tar.gz"
       }
     }
   },
   "rollback": {
-    "version": "3.0.0-denext.24",
-    "tag": "denext-runtime-v3.0.0-denext.24",
+    "version": "3.0.0-denext.25",
+    "tag": "denext-runtime-v3.0.0-denext.25",
     "repository": "https://github.com/Brainwires/deno",
     "deno": "2.9.8",
-    "denoSha": "7bec8a57bf342644cd4591f4029544265700a8f4",
-    "laufeySha": "dde2507f3a3a7b08f8f03f8f79ffa57d3d0a5ff7",
+    "denoSha": "5245792e3110ded8147e4714d111033ce1814596",
+    "laufeySha": "668cc3fcc0f8722150ffec519aa16e0c38149783",
     "laufeyApiVersion": 58,
     "targets": {
       "aarch64-apple-darwin": {
         "runtimeLib": "libdenort.dylib",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-apple-darwin-webview.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-apple-darwin-webview.tar.gz",
-          "sha256": "1a81e50393e01e7d0ca6bbd02039d25fa89a10236296a406204d7d0e630936c1",
-          "size": 32957814,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-webview.tar.gz",
+          "sha256": "282b235cd32ffaaa4eca4bb37b64ff0a303fa7ed066d433f1362f875e0adfef7",
+          "size": 33070151,
           "format": "tar.gz"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-apple-darwin-cef.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-apple-darwin-cef.tar.gz",
-          "sha256": "ffda49ec5bf32bd2ca000fd41edb69739dc62d6a59423570057e0e2305f34eb9",
-          "size": 181762724,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-apple-darwin-cef.tar.gz",
+          "sha256": "15ce7fdeab602f4b9905642601be1d26fd9b6f574ca0b1efdd8440e23ff57f8c",
+          "size": 181826597,
           "format": "tar.gz"
         }
       },
       "aarch64-pc-windows-msvc": {
         "runtimeLib": "denort.dll",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-pc-windows-msvc-webview.zip",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-pc-windows-msvc-webview.zip",
-          "sha256": "7e65a1c0a8155e7a29664603f8e3e9705457c66af430296a06a42c453f79bad5",
-          "size": 33611417,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-webview.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-webview.zip",
+          "sha256": "b107a3f90d21db70b0a30b9fe24a24c54b84f36f27951e3d02b84f796e0f8b4b",
+          "size": 33733027,
           "format": "zip"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-pc-windows-msvc-cef.zip",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-pc-windows-msvc-cef.zip",
-          "sha256": "3e8f0e598dbacdbda98b3ddd4646917426c2de258c3326b9195641fb8411895a",
-          "size": 213031002,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-cef.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-pc-windows-msvc-cef.zip",
+          "sha256": "84251a26a9817059fd470bc9d3e08c23dae08fba82bb5b3ed6e9bc3d17c3c4a2",
+          "size": 213136297,
           "format": "zip"
         }
       },
       "aarch64-unknown-linux-gnu": {
         "runtimeLib": "libdenort.so",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-unknown-linux-gnu-webview.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-unknown-linux-gnu-webview.tar.gz",
-          "sha256": "e5ddecf568a951500b66efe0170d5a9485a2a787bbaee88e43d8449299bcfdd4",
-          "size": 45690436,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-webview.tar.gz",
+          "sha256": "f2688c45a0aab1dc798bb90697d792422dac5a89e7772acc8c74c30ea4826e61",
+          "size": 45820710,
           "format": "tar.gz"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-aarch64-unknown-linux-gnu-cef.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-aarch64-unknown-linux-gnu-cef.tar.gz",
-          "sha256": "d538486f00023cd79ed2d9e1b9114341f67ba1dfe3de40ed8971f7753239c4a4",
-          "size": 226364787,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-aarch64-unknown-linux-gnu-cef.tar.gz",
+          "sha256": "99077168c77dd5cd1ae087e4151b89f300104cb05950fb8ced84754c19f5fdbc",
+          "size": 226494887,
           "format": "tar.gz"
         }
       },
       "x86_64-apple-darwin": {
         "runtimeLib": "libdenort.dylib",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-apple-darwin-webview.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-apple-darwin-webview.tar.gz",
-          "sha256": "b26495d09729e567afe0a6543ce69da8af332b8316d2630926dba813921f962c",
-          "size": 37371646,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-webview.tar.gz",
+          "sha256": "5a612f7d0dd14751feba6ca61cd2dcaee72bf8ae4bca61ae6503492eebd42557",
+          "size": 37497014,
           "format": "tar.gz"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-apple-darwin-cef.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-apple-darwin-cef.tar.gz",
-          "sha256": "81a719fe159f878b607898a25c53cc8d4d2cf61c19387105ecbbc74c2db5560c",
-          "size": 194899822,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-apple-darwin-cef.tar.gz",
+          "sha256": "814569415ed116ba7d739ef05d250c6621cdf0c60a4cc7bf76a2e7340ea33eca",
+          "size": 194972110,
           "format": "tar.gz"
         }
       },
       "x86_64-pc-windows-msvc": {
         "runtimeLib": "denort.dll",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-pc-windows-msvc-webview.zip",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-pc-windows-msvc-webview.zip",
-          "sha256": "8eec96c2ad312f1f25480f7912fa97c313675b149394c630606c829cff82a537",
-          "size": 35571697,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-webview.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-webview.zip",
+          "sha256": "542381426d1934bd17abf742a4710345c03960ebbab6ac2fdffd41aea83dc5be",
+          "size": 35704935,
           "format": "zip"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-pc-windows-msvc-cef.zip",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-pc-windows-msvc-cef.zip",
-          "sha256": "5315e0689289646a5c0ee1d3115301ddcbf7023b102ff7194af05b0e29181d3d",
-          "size": 218131058,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-cef.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-pc-windows-msvc-cef.zip",
+          "sha256": "22a5b371e62187bbef23dba6370656b178752d66de9669ce5c7a0b7b1512de00",
+          "size": 218272346,
           "format": "zip"
         }
       },
       "x86_64-unknown-linux-gnu": {
         "runtimeLib": "libdenort.so",
         "webview": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-unknown-linux-gnu-webview.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-unknown-linux-gnu-webview.tar.gz",
-          "sha256": "90f7eebf999d28c0ab580ab52b1832c44e2bb2885832d16447ae991971096663",
-          "size": 44736187,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-webview.tar.gz",
+          "sha256": "82debce437b6ae93a4ea6a7f8f977dae98f1b8b0529d8edf65cf618a3f05ff02",
+          "size": 44882967,
           "format": "tar.gz"
         },
         "cef": {
-          "file": "deno-desktop-runtime-3.0.0-denext.24-x86_64-unknown-linux-gnu-cef.tar.gz",
-          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.24/deno-desktop-runtime-3.0.0-denext.24-x86_64-unknown-linux-gnu-cef.tar.gz",
-          "sha256": "a93c7adf9e9a718564ed2589abf12f3666076c8afc266cd8d6de4ea12e3c0aea",
-          "size": 209479293,
+          "file": "deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-denext.25/deno-desktop-runtime-3.0.0-denext.25-x86_64-unknown-linux-gnu-cef.tar.gz",
+          "sha256": "fc4684ae2b81e83bf4f9dc13246e9129796dd553230aae90a9d9c941a803e6b8",
+          "size": 209611623,
           "format": "tar.gz"
         }
       }

@@ -250,6 +250,13 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * effect flush macrotask a sooner flush made moot, and closes its time-slicing MessageChannel once
  * slicing goes idle, so neither outlives the work (the leak fixes the op / resource sanitizers
  * found; trimmed to 77 B over the old budget).
+ * Raised 64,600 → 64,900 B on 2026-11-17 (measured 64,832 B, +337 B): the client reconciler
+ * refuses an object child that is not an element (a host element must carry the element brand)
+ * and a script URL as a navigation target, the checks the server renderers and the attribute
+ * path already make.
+ * Raised 64,900 → 65,000 B on 2026-11-19 (measured 64,916 B): the client's element check also
+ * takes a vnode the real Preact made (Preact's own mark, an own `constructor: undefined`), which a
+ * library importing `npm:preact` by its full specifier hands the reconciler (Deno SaaSKit's icons).
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -266,7 +273,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 64_600;
+const SHARED_BUDGET = 65_000;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {

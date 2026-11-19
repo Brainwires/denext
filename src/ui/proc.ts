@@ -449,6 +449,12 @@ function sinkOf(streaming: boolean): Sink {
       while (streaming && parts.length > 1 && length - parts[0].length >= STREAM_TAIL_CHARS) {
         length -= (parts.shift() as string).length;
       }
+      // One read can carry far more than the tail (a busy reader gets the child's whole output at
+      // once): keep only that chunk's last STREAM_TAIL_CHARS, so the tail stays bounded either way.
+      if (streaming && parts.length === 1 && length > STREAM_TAIL_CHARS) {
+        parts[0] = parts[0].slice(-STREAM_TAIL_CHARS);
+        length = parts[0].length;
+      }
     },
     text(): string {
       return parts.join("");

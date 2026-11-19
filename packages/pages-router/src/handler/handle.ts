@@ -8,7 +8,13 @@ import { PAGES_PREFIX } from "../client-bundle.ts";
 import { previewCookieFrom, previewSecrets, readPreview } from "../preview.ts";
 import { pageRequest, renderData, renderError, renderMatched, renderPrefetch } from "./render.ts";
 import { servePrerendered } from "./prerendered.ts";
-import { DATA_HEADER, forMethod, type HandlerState, PREFETCH_HEADER } from "./shared.ts";
+import {
+  DATA_HEADER,
+  forMethod,
+  type HandlerState,
+  PREFETCH_HEADER,
+  withVariantVary,
+} from "./shared.ts";
 
 /** Framework paths and asset-like requests (they have an extension) are never pages. */
 function looksLikeAsset(pathname: string): boolean {
@@ -55,7 +61,7 @@ async function dispatch(st: HandlerState, request: Request): Promise<Response | 
     const params = matchSegments(entry.pattern, routingPath);
     if (params) {
       const req = pageRequest(entry, params, request, url, pathname, peeled?.locale);
-      return await servePage(st, scan, entry, req, routingPath);
+      return withVariantVary(await servePage(st, scan, entry, req, routingPath));
     }
   }
   return await notFoundPage(st, scan, request, pathname, url);

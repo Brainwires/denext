@@ -8,6 +8,111 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.20.1] - 2026-11-19
+
+### Added
+
+- **Runtime 3.0.0-denext.27: WebRTC encoded transforms and SFrame.** `RTCRtpScriptTransform`,
+  `sender.transform` / `receiver.transform` and, in the worker, the `rtctransform` event with
+  `RTCRtpScriptTransformer` (`readable`, `writable`, `options`, `generateKeyFrame()`,
+  `sendKeyFrameRequest()`, `keyframerequest`) and `KeyFrameRequestEvent`; `RTCEncodedVideoFrame` /
+  `RTCEncodedAudioFrame` with copy constructors, structured clone, and `data` detached on write. A
+  receiver's frames are its RTP packets put back together (no jitter buffer: a frame with a gap is
+  dropped, and AV1 has no depacketizer); what a receiver's transform writes back is dropped, since
+  the runtime has no decoder. SFrame (RFC 9605) runs over Web Crypto with `SFrameEncryptorStream`,
+  `SFrameDecryptorStream`, `RTCRtpSFrameEncryptor`, `RTCRtpSFrameDecryptor` and
+  `SFrameTransformErrorEvent`; the AES-256-CTR suites and per-packet SFrame are
+  `NotSupportedError`.
+- **Runtime 3.0.0-denext.27: `navigator.mediaDevices`, with fake devices.** `MediaDevices`,
+  `MediaDeviceInfo`, `InputDeviceInfo` and `OverconstrainedError`. The runtime has no devices
+  (`enumerateDevices()` is empty and `getUserMedia()` rejects with `NotFoundError`) unless
+  `DENO_FAKE_MEDIA_DEVICES=1`, the equivalent of Chrome's `--use-fake-device-for-media-stream`: a
+  fake camera (640x480 at 30 fps) and microphone (400 Hz, 48 kHz) with constraints, capabilities,
+  settings and `applyConstraints()`, whose tracks send real media in the negotiated codec (Opus,
+  PCMU, PCMA, G.722, VP8, VP9, H.264, H.265, AV1), restarting the video on a key frame at a PLI.
+- **Runtime 3.0.0-denext.27: WebRTC conformance.** WebRTC's web-platform-tests run in the runtime's
+  tree (every `webrtc*` directory), and the fixes they found are in: negotiation and SDP, data
+  channels (close, send ordering, `bufferedAmount`, ids), the SCTP and ICE transports, `getStats()`
+  timestamps, and `RTCRtpEncodingParameters.adaptivePtime`. All `webrtc*` subtests: 1897 of 2824 pass, up from 1452
+  of 2503.
+- **Runtime 3.0.0-denext.27: the kernel sandbox reaches the processes a program starts** (opt-in,
+  `--kernel-sandbox=enforce`; `auto` still changes nothing). A run hands its grant to every process
+  it starts, so a `deno` or a `deno compile` program started inside the sandbox is held to it by its
+  own checks too (`NotCapable` instead of a bare `EACCES`), and the subcommands that write the
+  project or the caches (`deno install`, `deno add`, …) refuse to run inside one. The implicit set
+  makes a sandboxed run work as an unsandboxed one does: a second run is warm (its caches live in
+  `DENO_DIR/sandboxed/`, which `deno clean` removes), `localStorage` and the Cache API work,
+  `--coverage` writes its profile and the lockfile is written. `--kernel-sandbox-exec=strict`
+  limits the programs the whole process tree may start to the `--allow-run` list.
+- **examples/rtc-viewer: a full-screen WebRTC viewer on web standards.** Written once for the web,
+  the desktop (a Deno Desktop window) and mobile (a Capacitor shell): the page receives the stream
+  with `RTCPeerConnection`, takes the encoded frames before the engine decodes them
+  (`RTCRtpScriptTransform`, else Chromium's encoded insertable streams), decodes them with WebCodecs
+  and draws them with WebGPU (WebGL2 as the fallback), with a stats overlay naming each stage in
+  use. A sender page and a CLI sender (`denext task send`) share the app's signalling hub.
+- **examples/rtc-viewer-native: a full-screen WebRTC viewer with native decode and presentation.**
+  A Deno Desktop app that receives the stream (WHIP) in its own Deno process and hands each
+  compressed frame from an `RTCRtpScriptTransform` worker to a Rust library (`native/`, over FFI),
+  which decodes it in hardware and draws it into a native window; no decoded pixel passes through
+  JavaScript. A tray icon switches between full screen, a window and hidden. Needs runtime
+  3.0.0-denext.27.
+
+### Changed
+
+- **denext pins Deno toolchain and Deno Desktop runtime 3.0.0-denext.27** (the WebRTC, media
+  device and kernel sandbox additions above).
+- A request path with percent-encoded unreserved characters (`%7E` for `~`, say) answers a 308 to its decoded spelling; a `public/` file is no longer served under an encoded `/` or `\`.
+- Rendering a plain object (not an element) as a child is an error, as in React; 4.20.0 wrote an `<undefined>` tag.
+
+### Fixed
+
+- **`denext export` writes `404.html`.** The root `app/not-found.tsx` (or the default 404 page)
+  inside the root layout, with their stylesheets, is pre-rendered to `out/404.html` (and
+  `out/404/index.html` with `trailingSlash: true`), as Next's `output: "export"` writes it: the
+  page static hosts serve for a URL with no file.
+- **`denext export` writes route handlers and metadata files.** Each route handler's GET
+  response is written at its URL (`feed.xml`, `api/hello`, each `generateStaticParams` set), and
+  `sitemap.xml`, `robots.txt`, `favicon.ico`, `manifest.webmanifest` and the icon / Open Graph /
+  Twitter images are written too; a static image keeps its extension (`icon.png`) and the pages
+  link it there. A handler with another method than GET, `force-dynamic`, or a failing GET is
+  skipped and listed. The deploy manifest marks what the export writes (`staticExport`), and
+  `staticHost()` no longer refuses an app for a GET route handler or a metadata route.
+- **Metadata image and manifest links carry the `basePath`.** The `icon`, `apple-icon`,
+  `og:image`, `twitter:image` and web-manifest links the file conventions add were written
+  without it, under `denext start` and in an export.
+- **A soft navigation no longer re-downloads the route's client entry.** Each navigation
+  re-imported the incoming route's entry under a fresh `?nav=` query so it would run again,
+  which no HTTP cache could serve (about 17 KB a click on a static export). A route entry now
+  registers its `main` by its URL when it runs, and a navigation to a route the page already
+  loaded calls it again; a route seen for the first time loads its entry by its plain URL. Dev
+  keeps re-importing (the entry is rebuilt in place).
+- **Open Graph and Twitter metadata inherit as in Next.js.** An `openGraph` or `twitter` object
+  without a title or description takes the page's `title` / `description`; with `openGraph` set,
+  `twitter` takes its title, description and images; and an unset `twitter.card` is
+  `summary_large_image` with an image, else `summary`. A `title` alone still adds no
+  `og:title`, as in Next.
+
+### Security
+
+- **Middleware matchers see every spelling of a path** ([GHSA-7mcj-vqxf-r65h](https://github.com/Brainwires/denext/security/advisories/GHSA-7mcj-vqxf-r65h)). Files under `public/` and dynamic route segments decoded the request path after matchers and config rules had tested it, so another spelling of a guarded path (a percent-encoded character, an encoded separator, or letter case and other aliases on a case-insensitive file system) could skip the middleware. A path with percent-encoded unreserved characters now answers a 308 to its canonical spelling before rules and middleware, and static files are served only under the name they are stored as; encoded separators and NUL are refused. Affects 0.9.0 through 4.20.0.
+- **Incoming `x-middleware-*` headers are dropped** ([GHSA-rh94-m978-c5c8](https://github.com/Brainwires/denext/security/advisories/GHSA-rh94-m978-c5c8)). A middleware that copied the request's headers onto its response handed a client's `x-middleware-rewrite` / `x-middleware-override-headers` to the runner as its own instruction. They are now removed before middleware runs, as in Next.js. Affects 0.9.0 through 4.20.0.
+- **`NextRequest.nextUrl.pathname` excludes the locale prefix under `i18n`** ([GHSA-4j9v-55c2-r88v](https://github.com/Brainwires/denext/security/advisories/GHSA-4j9v-55c2-r88v)), and `nextUrl.locale` is set in middleware, as in Next.js, so a path check in middleware code also covers the localized paths. `href` keeps the prefix. Affects 4.20.0 and earlier.
+- **`/_denext/image` reads a local source through the app** ([GHSA-4mfg-gg2p-q3h6](https://github.com/Brainwires/denext/security/advisories/GHSA-4mfg-gg2p-q3h6)). With a middleware file, a local image is fetched through the app's own pipeline with the visitor's headers, so middleware decides as for a direct request; an image answered with credentials is `private`. Affects 4.20.0 and earlier.
+- **`unstable_cache` keys an entry by the cached function too** ([GHSA-pgw4-w5vg-6wx3](https://github.com/Brainwires/denext/security/advisories/GHSA-pgw4-w5vg-6wx3)). Two functions with the same (or no) `keyParts` and the same arguments shared one entry. Existing persisted entries miss once. Affects 0.4.0 through 4.20.0.
+- **An external rewrite no longer forwards internal request markers** ([GHSA-gfmw-j83c-49r3](https://github.com/Brainwires/denext/security/advisories/GHSA-gfmw-j83c-49r3)) such as the background-regeneration token. Affects 2.0.0 through 4.20.0.
+- **A host element needs the element brand** ([GHSA-x7x7-f2gq-c538](https://github.com/Brainwires/denext/security/advisories/GHSA-x7x7-f2gq-c538)). Data shaped like an element (`{ type, props }` from JSON) rendered as one on the server, in Flight and on the client. It now has to carry the brand `createElement` / `jsx` set, as in React; a plain object rendered as a child is an error (reconciler error 10 on the client). Affects 4.20.0 and earlier. A vnode the real Preact made (a library importing `npm:preact` by its full specifier, such as the JSR `@preact-icons/*` packages) still renders: it carries Preact's own mark, an own `constructor: undefined`, which JSON cannot express either.
+- **Server rendering refuses an invalid tag name** ([GHSA-g6mw-x2q7-9jjw](https://github.com/Brainwires/denext/security/advisories/GHSA-g6mw-x2q7-9jjw)) instead of writing it into the markup, as React DOM's server renderer does. Affects 4.20.0 and earlier.
+- **A rejected promise passed to a client component sends the redacted error in production** ([GHSA-q584-928c-w986](https://github.com/Brainwires/denext/security/advisories/GHSA-q584-928c-w986)), the same one an error boundary gets, with the digest the server log prints. Affects 2.0.0 through 4.20.0.
+- **Script URLs are refused by programmatic navigation and `useActionState` permalinks** ([GHSA-4cw5-8vq6-2xr8](https://github.com/Brainwires/denext/security/advisories/GHSA-4cw5-8vq6-2xr8), [GHSA-6fq8-2wcg-2wwp](https://github.com/Brainwires/denext/security/advisories/GHSA-6fq8-2wcg-2wwp)). `router.push`, form navigations, a client-side `redirect()` and a `<Link>` click assigned a `javascript:` URL to `location`; a permalink was written into `action` unchecked. Both now apply the rule rendered URL attributes use. `@denext/pages-router` 0.13.1 fixes its own navigations. Affects 4.20.0 and earlier.
+- **Taint is enforced on Server Action results and Live data** ([GHSA-qqrp-h7wm-cx7p](https://github.com/Brainwires/denext/security/advisories/GHSA-qqrp-h7wm-cx7p)): a tainted value fails the call as in React's Flight. Affects 2.0.0 through 4.20.0.
+- **`safeFetch` refuses the remaining special-purpose address ranges** ([GHSA-69g8-jp57-ccwm](https://github.com/Brainwires/denext/security/advisories/GHSA-69g8-jp57-ccwm)), following the IANA registries (and no longer refuses the public part of `192.0.0.0/16`). Affects 4.20.0 and earlier.
+- **`denext dashboard` counts a sign-in attempt before checking the password** ([GHSA-87mp-ghjh-hhj3](https://github.com/Brainwires/denext/security/advisories/GHSA-87mp-ghjh-hhj3)), so concurrent attempts can't exceed the budget. Affects 4.20.0 and earlier.
+- **The Deno Desktop UI updater bounds what it reads** ([GHSA-6qwq-8v23-hfq6](https://github.com/Brainwires/denext/security/advisories/GHSA-6qwq-8v23-hfq6)): the manifest up to 16 MiB, each file up to its listed size. Affects 2.10.0 through 4.20.0.
+
+### Documentation
+
+- A page's middleware matcher does not select the Server Actions it calls: authorize inside the action.
+
 ## [4.20.0] - 2026-11-17
 
 ### Added
@@ -22796,7 +22901,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.1...development
+[4.20.1]: https://jsr.io/@denext/denext@4.20.1
 [4.20.0]: https://jsr.io/@denext/denext@4.20.0
 [4.19.0]: https://jsr.io/@denext/denext@4.19.0
 [4.18.0]: https://jsr.io/@denext/denext@4.18.0

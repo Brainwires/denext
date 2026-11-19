@@ -39,8 +39,14 @@ Deno.test("stream: class component resolves contextType under a provider", async
 });
 
 Deno.test("flight + html-flight: tolerate a null-props element", async () => {
-  // Some npm libraries construct raw elements with a null props object.
-  const raw = { type: "div", props: null, key: null } as unknown as VNode;
+  // Some npm libraries construct raw elements with a null props object (an element all the
+  // same: it carries the element brand, which a host element needs to render).
+  const raw = {
+    $$typeof: Symbol.for("react.transitional.element"),
+    type: "div",
+    props: null,
+    key: null,
+  } as unknown as VNode;
   // Neither renderer should throw (React treats null props as {}).
   const flight = await renderToFlight(raw);
   assert(flight != null, "flight rendered a null-props element");

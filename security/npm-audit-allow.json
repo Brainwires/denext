@@ -1,4 +1,11 @@
 {
   "$comment": "High / critical npm advisories `deno task audit:npm` (scripts/npm-audit.ts) lets pass while the fixed version is under Deno's minimum dependency age. Each entry: the GHSA id, the package, the reason and `until` (YYYY-MM-DD, UTC), the last day it applies; set it to the day the fix clears the hold and lock the fix then.",
-  "allow": []
+  "allow": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "No fixed picomatch exists yet (latest 4.0.7; the advisory's range widened to <=4.0.7 on 2026-11-17). Reached only at build time through @tanstack/router-plugin (tinyglobby, fdir) and sass's @parcel/watcher, matching glob patterns from the project's own config against its own files; no request or user input reaches a pattern, so the ReDoS is not attacker-reachable in denext or a built app. Lock the fixed version once one is published and clears the dependency-age hold.",
+      "until": "2026-12-01"
+    }
+  ]
 }

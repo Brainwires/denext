@@ -859,6 +859,29 @@ function invalidate(kind: "tag" | "path", value: string): Promise<void> {
 
 // ---- Cross-request data cache ---------------------------------------------
 
+/**
+ * A short, stable digest of a function's source text (two interleaved 32-bit FNV-1a style
+ * lanes, 53 bits): what tells one `unstable_cache` loader from another in a cache key. The same
+ * build gives the same digest on every instance; a new build may not (as in Next.js, whose key
+ * holds the source itself).
+ *
+ * @param fn The function.
+ * @returns The digest, in base 36.
+ */
+function sourceHash(fn: (...args: never[]) => unknown): string {
+  const source = Function.prototype.toString.call(fn);
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
 /** Options accepted by {@link unstable_cache}. */
 export interface CacheOptions {
   /**
@@ -872,8 +895,9 @@ export interface CacheOptions {
 
 /**
  * Wrap an async data-loading function in a cross-request cache with an optional
- * TTL and tags (Next.js `unstable_cache`). Results are keyed by `keyParts` plus
- * the call arguments. Tags propagate to the enclosing page render, so
+ * TTL and tags (Next.js `unstable_cache`). Results are keyed by the loader (its source
+ * text), `keyParts` and the call arguments; a value the loader closes over is not part of
+ * the key, so name it in `keyParts`. Tags propagate to the enclosing page render, so
  * {@link revalidateTag} purges both the data and any page that read it.
  *
  * Nesting follows Next.js 16. Called inside a `"use cache"` (or `"use cache: private"`)
@@ -898,8 +922,12 @@ export function unstable_cache<A extends unknown[], R>(
 ): (...args: A) => Promise<R> {
   const revalidate = unstableRevalidate(options.revalidate, fn);
   const tags = options.tags ?? [];
+  // The loader itself is part of the key, as in Next.js (which keys on `fn.toString()`): two
+  // loaders wrapped with the same `keyParts` (or none) and called with the same arguments are
+  // different data, and one must never be answered with the other's entry.
+  const loader = sourceHash(fn);
   return async (...args: A): Promise<R> => {
-    const key = safeKey([keyParts, args]);
+    const key = safeKey([loader, keyParts, args]);
     // Tag the enclosing render whether or not the data itself is a cache hit.
     collectTags(tags);
     const outer = cacheScopeStorage.getStore();

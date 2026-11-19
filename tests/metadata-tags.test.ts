@@ -442,3 +442,50 @@ Deno.test("head dedup survives Children.map / cloneElement (the key lives on the
   assertStringIncludes(html, 'content="page"');
   assert(!html.includes('content="layout"'), "the earlier duplicate is dropped");
 });
+
+// Next's metadata post-processing (`postProcessMetadata`): openGraph and twitter inherit the
+// page's title / description when set without them; twitter fills from openGraph; neither is
+// created from `title` alone.
+Deno.test("social metadata: title alone emits no og:title / twitter:title (as Next)", () => {
+  const h = head({ title: "Page", description: "About" });
+  assert(!h.includes("og:title"), h);
+  assert(!h.includes("twitter:"), h);
+});
+
+Deno.test("social metadata: openGraph without a title inherits title + description", () => {
+  const h = head({ title: "Page", description: "About", openGraph: { type: "website" } });
+  assertStringIncludes(h, `<meta property="og:title" content="Page">`);
+  assertStringIncludes(h, `<meta property="og:description" content="About">`);
+  // …and twitter fills from it (summary: no image).
+  assertStringIncludes(h, `<meta name="twitter:card" content="summary">`);
+  assertStringIncludes(h, `<meta name="twitter:title" content="Page">`);
+  assertStringIncludes(h, `<meta name="twitter:description" content="About">`);
+});
+
+Deno.test("social metadata: twitter takes openGraph's own title, description and images", () => {
+  const h = head({
+    title: "Page",
+    description: "About",
+    openGraph: { title: "OG", description: "OG about", images: "/og.png" },
+    twitter: { site: "@x", description: "Own" },
+  });
+  assertStringIncludes(h, `<meta property="og:title" content="OG">`);
+  assertStringIncludes(h, `<meta name="twitter:title" content="OG">`);
+  assertStringIncludes(h, `<meta name="twitter:description" content="Own">`, "twitter's own wins");
+  assertStringIncludes(h, `<meta name="twitter:image" content="/og.png">`);
+  assertStringIncludes(h, `<meta name="twitter:card" content="summary_large_image">`);
+  assertStringIncludes(h, `<meta name="twitter:site" content="@x">`);
+});
+
+Deno.test("social metadata: twitter alone inherits the page title + description, not og", () => {
+  const h = head({ title: { absolute: "Abs" }, description: "D", twitter: { creator: "@c" } });
+  assertStringIncludes(h, `<meta name="twitter:title" content="Abs">`);
+  assertStringIncludes(h, `<meta name="twitter:description" content="D">`);
+  assertStringIncludes(h, `<meta name="twitter:card" content="summary">`);
+  assert(!h.includes("og:"), "no openGraph is created");
+});
+
+Deno.test("social metadata: an explicit twitter card is kept", () => {
+  const h = head({ title: "T", openGraph: { images: "/og.png" }, twitter: { card: "app" } });
+  assertStringIncludes(h, `<meta name="twitter:card" content="app">`);
+});

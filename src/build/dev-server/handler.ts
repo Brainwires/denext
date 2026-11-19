@@ -11,7 +11,12 @@ import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
 import { IMAGE_ENDPOINT } from "../../runtime/image.ts";
-import { imageOptionsFromConfig, optimizeImage } from "../../server/image-optimizer.ts";
+import {
+  imageOptionsFromConfig,
+  localImageFetcher,
+  optimizeImage,
+} from "../../server/image-optimizer.ts";
+import { copyRemoteAddr } from "../../server/remote-addr.ts";
 import { extractRouteCss } from "../css.ts";
 import { routeSourceFiles } from "../bundle.ts";
 import { getCss } from "./assets.ts";
@@ -332,10 +337,14 @@ function devRequestHandler(st: DevState, appHandler: RequestHandler): RequestHan
       return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
     }
     if (url.pathname === IMAGE_ENDPOINT) {
-      return optimizeImage(
-        request,
-        imageOptionsFromConfig(st.paths.config?.images, st.paths.publicDir),
-      );
+      // As in production: with a `middleware.ts`, a local source is fetched through the app
+      // (that middleware included), as the visitor's own request.
+      return optimizeImage(request, {
+        ...imageOptionsFromConfig(st.paths.config?.images, st.paths.publicDir),
+        fetchLocal: st.paths.middlewarePath
+          ? localImageFetcher(appHandler, copyRemoteAddr)
+          : undefined,
+      });
     }
     if (url.pathname === ROUTE_CSS_PATH) return routeCssResponse(st, url, devPlatformOf(request));
     const chunk = chunkResponse(st, url);

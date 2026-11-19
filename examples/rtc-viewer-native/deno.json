@@ -1,0 +1,62 @@
+{
+  "workspace": [],
+  "allowScripts": {
+    "deny": [
+      "npm:@parcel/watcher"
+    ]
+  },
+  "version": "0.1.0",
+  "tasks": {
+    "native:build": "cd native && cargo build --release",
+    "native:test": "cd native && cargo test",
+    "native:measure": "cd native && cargo run --release --example measure",
+    "dev": "deno run -A ../../cli.ts dev .",
+    "export": "deno run -A ../../cli.ts export .",
+    "desktop": "deno run -A ../../cli.ts desktop run .",
+    "send": "DENO_FAKE_MEDIA_DEVICES=1 deno run --allow-net=127.0.0.1 --allow-env=DENO_FAKE_MEDIA_DEVICES scripts/send.ts",
+    "test": "cd native && cargo build --release && cd .. && deno test --allow-ffi --allow-read=. --allow-env tests/ tests/native-ffi.check.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/client": "../../src/desktop/client.ts",
+    "@std/path": "jsr:@std/path@^1",
+    "@std/path/posix": "jsr:@std/path@^1/posix",
+    "@std/assert": "jsr:@std/assert@^1"
+  },
+  "lint": {
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
+  },
+  "desktop": {
+    "app": {
+      "name": "RTC Viewer Native",
+      "identifier": "dev.denext.rtcviewernative"
+    }
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "compile": {
+    "include": ["lib/receive-worker.ts"]
+  }
+}

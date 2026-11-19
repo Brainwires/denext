@@ -1,0 +1,73 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "name": "RTC Viewer Native",
+      "identifier": "dev.denext.rtcviewernative"
+    },
+    "window": {
+      "width": 460,
+      "height": 640,
+      "title": "RTC Viewer (native)"
+    },
+    "minSize": {
+      "width": 380,
+      "height": 420
+    },
+    "tray": {
+      "icon": "/tray.png",
+      "tooltip": "RTC Viewer",
+      "menu": [
+        {
+          "id": "fullscreen",
+          "label": "Video full screen"
+        },
+        {
+          "id": "windowed",
+          "label": "Video in a window"
+        },
+        {
+          "id": "hide",
+          "label": "Hide video"
+        },
+        {
+          "separator": true
+        },
+        {
+          "id": "controls",
+          "label": "Show controls"
+        },
+        {
+          "id": "quit",
+          "label": "Quit"
+        }
+      ]
+    },
+    "capabilities": {
+      "extensions": [
+        "./desktop/rtc-viewer.ts"
+      ]
+    },
+    "extraPermissions": {
+      "ffi": [
+        "*"
+      ],
+      "net": [
+        "127.0.0.1"
+      ],
+      "env": [
+        "RTCV_PORT",
+        "RTCV_DISPLAY",
+        "RTCV_WINDOWED",
+        "RTCV_OPEN",
+        "RTCV_NATIVE_LIB",
+        "RTCV_PLAY",
+        "RTCV_LOG_STATS"
+      ]
+    }
+  }
+}

@@ -243,6 +243,19 @@ entry = [
   "examples/clerk/desktop/e2e.ts",
   "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",
+  # examples/rtc-viewer: the Deno Desktop entry, the conformance probe (`deno task probe`) and
+  # the CLI sender (`deno task send`).
+  "examples/rtc-viewer/desktop.ts",
+  "examples/rtc-viewer/probe.ts",
+  "examples/rtc-viewer/cli/send.ts",
+  # examples/rtc-viewer-native: the Deno Desktop entry, its `rtcviewer` extension (loaded by path
+  # from `desktop.capabilities.extensions`), the RTCRtpScriptTransform worker (started by URL),
+  # the WHIP sender (`deno task send`) and the FFI test on the built library (`deno task test`).
+  "examples/rtc-viewer-native/desktop.ts",
+  "examples/rtc-viewer-native/desktop/rtc-viewer.ts",
+  "examples/rtc-viewer-native/lib/receive-worker.ts",
+  "examples/rtc-viewer-native/scripts/send.ts",
+  "examples/rtc-viewer-native/tests/*.ts",
   # examples/companion (Loopy): the Deno Desktop entry and the inbox CLI (`deno task say`).
   "examples/companion/desktop.ts",
   "examples/companion/scripts/loopy-say.ts",
@@ -342,6 +355,22 @@ ignorePatterns = [
   # real host) stays analyzed and is tested against a fake host by tests/hangar.test.ts.
   "examples/hangar/desktop.ts",
   "examples/hangar/desktop/**",
+  # examples/rtc-viewer-native's window and runtime side: the entry, the `rtcviewer` extension, the
+  # transform worker, the app glue (lib/app.ts: Deno.serve, RTCPeerConnection, Worker), the
+  # runtime's UI-thread call, the WHIP sender (the runtime's fake camera) and the control page.
+  # I/O against a native window, a WebRTC peer and the native library, untestable without them;
+  # the native round trips (`cargo test` in native/) and tests/native-ffi.check.ts are their guard. Its
+  # control API, WHIP endpoint, SDP, pump and clip parsing stay analyzed and are tested on fakes by
+  # tests/rtc-viewer-native.test.ts.
+  "examples/rtc-viewer-native/desktop.ts",
+  "examples/rtc-viewer-native/desktop/**",
+  "examples/rtc-viewer-native/lib/app.ts",
+  "examples/rtc-viewer-native/lib/main-thread.ts",
+  "examples/rtc-viewer-native/lib/receive-worker.ts",
+  "examples/rtc-viewer-native/scripts/**",
+  "examples/rtc-viewer-native/tests/**",
+  "examples/rtc-viewer-native/app/**",
+  "examples/rtc-viewer-native/native/**",
   # examples/multiwindow: the Deno Desktop entry and the `counters` desktop extension (loaded by
   # path from denext.config.ts); lib/counters.ts is tested by tests/multiwindow-example.test.ts.
   "examples/multiwindow/desktop.ts",
@@ -357,6 +386,24 @@ ignorePatterns = [
   # per-example duplication + the template's own CRAP aren't reported against them; the
   # byte-identity test is their guard. (examples/native/scripts is an entry point above.)
   "examples/rn-desktop/scripts/**",
+  # examples/rtc-viewer's in-engine half: the viewer and sender components, the encoded-frame tap
+  # and its worker, the WebCodecs decoder, the WebGPU / WebGL2 renderers, the session wiring them,
+  # the canvas test pattern and full screen. They run only in a page with WebRTC, WebCodecs and
+  # WebGPU / WebGL2 (none of which a Deno test has), so CRAP-on-zero-coverage is noise there;
+  # e2e/browser-check.ts (headless Chromium, also ignored) is their guard. The pure parts (the hub,
+  # the protocol, the pipeline's selection, codec strings, stats, shaders, the H.264 encoder) stay
+  # analyzed and are tested by tests/rtc-viewer-*.test.ts.
+  "examples/rtc-viewer/app/**/*.tsx",
+  "examples/rtc-viewer/e2e/**",
+  "examples/rtc-viewer/public/rtc-transform-worker.js",
+  "examples/rtc-viewer/public/styles.css",
+  "examples/rtc-viewer/lib/fullscreen.ts",
+  "examples/rtc-viewer/lib/test-pattern.ts",
+  "examples/rtc-viewer/lib/pipeline/decoder.ts",
+  "examples/rtc-viewer/lib/pipeline/render-*.ts",
+  "examples/rtc-viewer/lib/pipeline/renderer.ts",
+  "examples/rtc-viewer/lib/pipeline/session.ts",
+  "examples/rtc-viewer/lib/pipeline/tap.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
@@ -468,6 +515,17 @@ exports = ["transform", "version"]
 file = "src/compat/remix/client.ts"
 exports = ["Link", "LinkProps", "useParams", "useSearchParams"]
 
+# examples/rtc-viewer-native's lib/ exports read only by its window side (ignored above): the
+# library loader (desktop/rtc-viewer.ts, lib/receive-worker.ts, tests/native-ffi.check.ts) and the WHIP
+# path the app prints (lib/app.ts).
+[[ignoreExports]]
+file = "examples/rtc-viewer-native/lib/native.ts"
+exports = ["findLibrary", "openNative"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer-native/lib/receiver.ts"
+exports = ["WHIP_PATH"]
+
 # examples/hangar's lib/ exports read only by its window side (ignored above: the pages and the
 # real host), so the graph sees no importer: the window sizes and the start-menu prefix
 # (app/window-mode.ts, app/tray-shell.tsx) and the `ps` arguments (lib/deno-host.ts).
@@ -478,3 +536,17 @@ exports = ["PANEL_SIZE", "FULL_SIZE", "START_PREFIX"]
 [[ignoreExports]]
 file = "examples/hangar/lib/processes.ts"
 exports = ["PS_ARGS"]
+
+# examples/rtc-viewer's pure pipeline exports read only by its in-engine half (ignored above: the
+# session and the WebGL2 renderer), so the graph sees no importer.
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/plan.ts"
+exports = ["detectCapabilities"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/shaders.ts"
+exports = ["VIDEO_VERTEX_GLSL", "VIDEO_FRAGMENT_GLSL"]
+
+[[ignoreExports]]
+file = "examples/rtc-viewer/lib/pipeline/stats.ts"
+exports = ["readInbound"]

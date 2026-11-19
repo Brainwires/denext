@@ -35,7 +35,7 @@ import { serveMetadataFile } from "./metadata-files.ts";
 import { requestOrigin } from "./absolute-url.ts";
 import { documentPublicEnv } from "../runtime/public-env.ts";
 import { isAbortError } from "./abort.ts";
-import { isReadMethod, originOptions, reportRequestError } from "./app-config.ts";
+import { isReadMethod, originOptions, REGEN_HEADER, reportRequestError } from "./app-config.ts";
 import {
   addInjectedHeader,
   type AppRuntime,
@@ -78,6 +78,14 @@ setSuspenseOriginTrace((thenable) => {
 function canonicalizePath(state: RequestState): Response | null {
   const { pathname, url } = state;
   const { config } = state.app;
+  // A percent-encoded unreserved character (`%61` for `a`, `%2E` for `.`) is the same path
+  // (RFC 3986 §6.2.2.2), and what decodes a path later reads it so: a dynamic segment's param,
+  // a `public/` file. A matcher or rule tests the pathname as requested, so `/%61dmin/x` would
+  // pass a guard on `/admin/:path*` and still reach what `/admin/x` names. One spelling only.
+  const unescaped = decodeUnreserved(pathname);
+  if (unescaped !== pathname) {
+    return redirectResponse(safeRedirectLocation(unescaped) + url.search, 308);
+  }
   if (pathname.includes("//")) {
     const canonical = pathname.replace(/\/{2,}/g, "/");
     if (canonical !== pathname) {
@@ -96,6 +104,24 @@ function canonicalizePath(state: RequestState): Response | null {
     return redirectResponse(safeRedirectLocation(pathname.replace(/\/+$/, "")) + url.search, 308);
   }
   return null;
+}
+
+/** RFC 3986 unreserved characters: the ones percent-encoding never changes the meaning of. */
+const UNRESERVED = /^[A-Za-z0-9\-._~]$/;
+
+/**
+ * `pathname` with every percent-encoded unreserved character decoded; every other escape
+ * (reserved characters, non-ASCII bytes, a malformed one) is kept as it is.
+ *
+ * @param pathname A URL pathname.
+ * @returns The pathname in its one canonical spelling for those characters.
+ */
+export function decodeUnreserved(pathname: string): string {
+  if (!pathname.includes("%")) return pathname;
+  return pathname.replace(/%([0-9A-Fa-f]{2})/g, (escape, hex) => {
+    const char = String.fromCharCode(parseInt(hex, 16));
+    return UNRESERVED.test(char) ? char : escape;
+  });
 }
 
 /** Config redirects (denext.config): first match wins (permanent → 308, else 307). */
@@ -165,8 +191,9 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
   const runner = config.getMiddleware ? await config.getMiddleware() : null;
   if (!runner) return null;
   state.dispatchRouteType = "proxy";
-  // Matchers see the locale-stripped path (Next strips the i18n prefix before middleware).
-  const outcome = await runner(state.request, resolveLocale(state)?.rest);
+  // First: it replaces `state.request` when the client sent intent headers.
+  const matchPath = prepareForMiddleware(state);
+  const outcome = await runner(state.request, matchPath);
   state.dispatchRouteType = "render";
   state.middlewareMatched = middlewareMatched(outcome);
   // A short-circuit Response still leaves through finalize(): cookies().set() queued in
@@ -196,6 +223,55 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
     }
   }
   return null;
+}
+
+/**
+ * Ready the request for the middleware runner and return the path its matchers test: the
+ * client's `x-middleware-*` headers are dropped, and under `i18n` the locale is resolved first.
+ * Matchers see the locale-stripped path (Next strips the i18n prefix before middleware), and so
+ * does the handler's `NextRequest.nextUrl.pathname`: a guard written against `/admin`, as a
+ * matcher or as a check in the handler, covers `/fr/admin` (and `/en/admin`) too.
+ */
+function prepareForMiddleware(state: RequestState): string | undefined {
+  dropMiddlewareIntentHeaders(state);
+  const locale = resolveLocale(state);
+  if (locale) state.ctx.routing = routingFor(state, locale);
+  return locale?.rest;
+}
+
+/** The prefix of the headers a middleware's RESPONSE states its intent with (Next's protocol). */
+const MIDDLEWARE_INTENT_PREFIX = "x-middleware-";
+
+/**
+ * Remove every `x-middleware-*` header a CLIENT sent, before middleware sees the request. Those
+ * names are the wire protocol of a middleware's own response (`x-middleware-rewrite`,
+ * `x-middleware-next`, `x-middleware-override-headers`, `x-middleware-request-*`): a middleware
+ * that copies request headers onto its response (`NextResponse.next({ headers: request.headers
+ * })`, a proxied upstream reply built from them) would otherwise hand the client's value to the
+ * runner as its own instruction — a rewrite to any route past the middleware's own checks, or a
+ * proxied fetch of any public URL. Next.js filters the same headers from every inbound request.
+ */
+function dropMiddlewareIntentHeaders(state: RequestState): void {
+  let headers: Headers | null = null;
+  for (const name of [...state.request.headers.keys()]) {
+    if (!name.startsWith(MIDDLEWARE_INTENT_PREFIX)) continue;
+    headers ??= new Headers(state.request.headers);
+    headers.delete(name);
+  }
+  if (!headers) return;
+  const rebuilt = new Request(state.request, { headers });
+  copyRemoteAddr(state.request, rebuilt);
+  state.request = rebuilt;
+  routeContextTo(state, rebuilt);
+}
+
+/** The request context's routing facts under `i18n`: base path, resolved locale, the locales. */
+function routingFor(state: RequestState, locale: PeeledLocale): RequestContext["routing"] {
+  return {
+    basePath: state.app.basePath,
+    locale: locale.locale,
+    locales: state.app.config.i18n?.locales,
+  };
 }
 
 /** Rebuild the routed request from a runner outcome that did not supply one. */
@@ -234,6 +310,24 @@ const HOP_HEADERS = new Set([
 ]);
 
 /**
+ * The request headers an external rewrite forwards to the other origin: all but the hop-by-hop
+ * set and denext's own internal markers. The background-regeneration token
+ * (`x-denext-regen`) is a process secret — whoever holds it is exempt from the request deadline
+ * and the concurrency ceiling — and must never leave the process (a regeneration request can
+ * reach a middleware that rewrites it to another origin).
+ *
+ * @param incoming The routed request's headers.
+ * @returns The headers to send.
+ */
+export function externalRewriteHeaders(incoming: Headers): Headers {
+  const headers = new Headers();
+  for (const [k, v] of incoming) {
+    if (!HOP_HEADERS.has(k) && k !== REGEN_HEADER && k !== BATCH_ITEM_HEADER) headers.set(k, v);
+  }
+  return headers;
+}
+
+/**
  * `NextResponse.rewrite("https://other.host/…")`: Next proxies the request to the other
  * origin. denext does the same through the SSRF-guarded `safeFetch` (private/internal
  * addresses are refused, redirects re-validated), forwarding method, body and headers
@@ -245,8 +339,7 @@ async function proxyExternalRewrite(
   extra?: Headers,
 ): Promise<Response> {
   const { request } = state;
-  const headers = new Headers();
-  for (const [k, v] of request.headers) if (!HOP_HEADERS.has(k)) headers.set(k, v);
+  const headers = externalRewriteHeaders(request.headers);
   const body = request.method === "GET" || request.method === "HEAD"
     ? undefined
     : new Uint8Array(await request.arrayBuffer());
@@ -590,7 +683,7 @@ async function dispatch(state: RequestState): Promise<Response> {
   const metaFile = subRequest ? null : await serveMetadata(state, manifest);
   if (metaFile) return metaFile;
   const localeInfo = resolveLocale(state);
-  if (localeInfo) state.ctx.routing = { basePath: state.app.basePath, locale: localeInfo.locale };
+  if (localeInfo) state.ctx.routing = routingFor(state, localeInfo);
   const routingPath = localeInfo ? localeInfo.rest : state.pathname;
   const softNavPost = await stashSoftNavBody(state);
   if (softNavPost instanceof Response) return softNavPost;

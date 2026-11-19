@@ -3,6 +3,7 @@
 // controller the runtime's ErrorBoundary/useErrorBoundary talk to.
 
 import { rootHandleOf } from "./state.ts";
+import { isScriptUrl } from "../nav-scheme.ts";
 import { componentErrorInfo, findErrorBoundary, isClassBoundary } from "./fiber-utils.ts";
 import { reportCaught, reportUncaught } from "./root-callbacks.ts";
 import { flushRoots, scheduleTransitionFlush, scheduleUpdate } from "./scheduler.ts";
@@ -158,7 +159,7 @@ function routeToBoundary(inst: Fiber, error: unknown): void {
 /** Route an event handler's error: a redirect navigates, a control signal rethrows, else a boundary. */
 export function handleEventError(inst: Fiber, error: unknown): void {
   if (isRedirect(error)) {
-    if (typeof location !== "undefined") location.href = error.url;
+    if (typeof location !== "undefined" && !isScriptUrl(error.url)) location.href = error.url;
     return;
   }
   if (isControlSignal(error)) return throwSignal(error);

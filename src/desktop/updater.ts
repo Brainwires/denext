@@ -874,14 +874,63 @@ function assertApp(manifest: OtaManifest, config: DesktopUpdaterConfig): void {
   if (mismatch !== null) throw new DesktopUpdateError("app_mismatch", mismatch);
 }
 
+/**
+ * The most a manifest may weigh. It lists paths and hashes, so megabytes of it is another
+ * document; nothing in it is trusted before it is parsed, so its size is bounded first.
+ */
+const MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * A response's body, refused once it passes `max` bytes instead of buffered: the feed is not
+ * trusted for anything before the signature and the hashes say so, the memory it can make the
+ * app hold included.
+ *
+ * @param response The response to read.
+ * @param max The most bytes its body may have.
+ * @param refusal The error for a longer body.
+ * @returns The body.
+ */
+async function readBounded(
+  response: Response,
+  max: number,
+  refusal: () => DesktopUpdateError,
+): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      throw refusal();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
+}
+
 /** Fetch and validate `${feedUrl}/_denext/ota.json`. */
 async function fetchManifest(config: DesktopUpdaterConfig): Promise<OtaManifest> {
   const base = config.feedUrl.replace(/\/+$/, "");
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const url = `${base}/${OTA_MANIFEST_PATH}`;
   const body = await fetchWith(url, feedHeaders(config), timeoutMs, async (r) => {
+    const bytes = await readBounded(
+      r,
+      MANIFEST_MAX_BYTES,
+      () => new DesktopUpdateError("invalid", "the manifest is too large"),
+    );
     try {
-      return await r.json() as unknown;
+      return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     } catch {
       throw new DesktopUpdateError("network", "the manifest is not valid JSON");
     }
@@ -890,10 +939,11 @@ async function fetchManifest(config: DesktopUpdaterConfig): Promise<OtaManifest>
   return body;
 }
 
-/** Fetch the raw bytes of `${feedUrl}/<relPath>`. */
+/** Fetch the raw bytes of `${feedUrl}/<relPath>`: at most `size` of them, what the manifest lists. */
 function fetchFile(
   config: DesktopUpdaterConfig,
   relPath: string,
+  size: number,
 ): Promise<Uint8Array> {
   const base = config.feedUrl.replace(/\/+$/, "");
   const segments = safeSegments(relPath) ?? [relPath];
@@ -903,7 +953,12 @@ function fetchFile(
     url,
     feedHeaders(config),
     timeoutMs,
-    async (r) => new Uint8Array(await r.arrayBuffer()),
+    (r) =>
+      readBounded(
+        r,
+        size,
+        () => new DesktopUpdateError("integrity", `${relPath} is larger than the manifest lists`),
+      ),
   );
 }
 
@@ -1061,10 +1116,10 @@ export async function prepareDesktopUpdate(
         try {
           bytes = await Deno.readFile(reusableSrc);
         } catch {
-          bytes = await fetchFile(config, file.path);
+          bytes = await fetchFile(config, file.path, file.size);
         }
       } else {
-        bytes = await fetchFile(config, file.path);
+        bytes = await fetchFile(config, file.path, file.size);
       }
       // Invariant 1: verify EVERY staged file against its manifest entry before it counts.
       if (await sha256Hex(bytes) !== file.sha256) {

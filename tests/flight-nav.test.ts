@@ -297,13 +297,12 @@ Deno.test("isomorphic soft-nav applies the iso payload: title, data island, CSS 
     assertEquals(link.href, "http://x/to.css");
     assertEquals(link.getAttribute("data-dnx-css"), "");
 
-    // The route's client entry was re-injected, cache-busted per nav so it re-evaluates.
+    // The route's client entry, never loaded before, was injected by its plain (cacheable) URL.
     const script = d.body.childNodes.find((n: Any) =>
       n.tagName === "SCRIPT" && n.type === "module"
     );
-    assert(script, "route entry <script> re-injected");
-    assertStringIncludes(script.src, "/_denext/to.js");
-    assertStringIncludes(script.src, "nav=");
+    assert(script, "route entry <script> injected");
+    assertEquals(script.src, "http://x/_denext/to.js");
     // The entry "loads": the inject settles and drops its 4 s fallback timer.
     script.dispatch("load");
   } finally {

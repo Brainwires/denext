@@ -39,6 +39,11 @@ export interface AugmentMetadataOptions {
    * export, where the origin (`metadataBase`) is stable.
    */
   onHostDerived?: () => void;
+  /**
+   * The URL a convention image path is linked at: under the app's `basePath`, and in a static
+   * export a static image file's own name (`/icon.png`, as Next writes it). Identity when unset.
+   */
+  publicPath?: (path: string) => string;
 }
 
 /**
@@ -68,7 +73,7 @@ export function augmentMetadataConventions(
  */
 function augmentImages(metadata: Metadata, opts: AugmentMetadataOptions): void {
   augmentOpenGraphImage(metadata, opts);
-  augmentIcons(metadata, opts.manifest);
+  augmentIcons(metadata, opts.manifest, opts.publicPath ?? ((p) => p));
   augmentTwitterImage(metadata, opts);
 }
 
@@ -81,10 +86,10 @@ function augmentOpenGraphImage(metadata: Metadata, opts: AugmentMetadataOptions)
   const ogPath = route.openGraphImage ??
     (manifest.openGraphImage ? OPENGRAPH_IMAGE_PATH : undefined);
   if (!ogPath || metadata.openGraph?.images) return;
-  const abs = absolutize(ogPath);
+  const abs = absolutize(opts.publicPath?.(ogPath) ?? ogPath);
   const file = route.openGraphImage ? manifest.imageRoutes?.get(ogPath) : manifest.openGraphImage;
   const alt = file ? sidecarAlt(file) : undefined;
-  const url = abs ?? ogPath;
+  const url = abs ?? opts.publicPath?.(ogPath) ?? ogPath;
   metadata.openGraph = { ...metadata.openGraph, images: alt ? { url, alt } : url };
   if (abs) onHostDerived?.();
 }
@@ -105,15 +110,19 @@ function sidecarAlt(imageFile: string): string | undefined {
   return alt;
 }
 
-function augmentIcons(metadata: Metadata, manifest: AugmentMetadataOptions["manifest"]): void {
+function augmentIcons(
+  metadata: Metadata,
+  manifest: AugmentMetadataOptions["manifest"],
+  path: (p: string) => string,
+): void {
   if (manifest.icon && !metadata.icon && !metadata.icons?.icon) {
-    metadata.icons = { ...metadata.icons, icon: ICON_PATH };
+    metadata.icons = { ...metadata.icons, icon: path(ICON_PATH) };
   }
   if (manifest.appleIcon && !metadata.icons?.apple) {
-    metadata.icons = { ...metadata.icons, apple: APPLE_ICON_PATH };
+    metadata.icons = { ...metadata.icons, apple: path(APPLE_ICON_PATH) };
   }
   // A `manifest.ts`/`manifest.webmanifest` convention is linked automatically (PWA install).
-  if (manifest.webManifest && !metadata.manifest) metadata.manifest = WEB_MANIFEST_PATH;
+  if (manifest.webManifest && !metadata.manifest) metadata.manifest = path(WEB_MANIFEST_PATH);
 }
 
 /**
@@ -124,7 +133,7 @@ function augmentTwitterImage(metadata: Metadata, opts: AugmentMetadataOptions): 
   const { manifest, route } = opts;
   const twPath = route.twitterImage ?? (manifest.twitterImage ? TWITTER_IMAGE_PATH : undefined);
   if (twPath && !metadata.twitter?.images) {
-    metadata.twitter = { ...metadata.twitter, images: twPath };
+    metadata.twitter = { ...metadata.twitter, images: opts.publicPath?.(twPath) ?? twPath };
   }
 }
 
