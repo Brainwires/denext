@@ -25,8 +25,24 @@ export const REACT_LEGACY_ELEMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("rea
  * @param brand A value's `$$typeof`.
  * @returns Whether it marks an element.
  */
-export function isElementBrand(brand: unknown): boolean {
+function isElementBrand(brand: unknown): boolean {
   return brand === REACT_ELEMENT_TYPE || brand === REACT_LEGACY_ELEMENT_TYPE;
+}
+/**
+ * Whether `node` is an element: it carries a React element brand (`$$typeof`, either symbol), or
+ * it is a vnode Preact's own `createElement` / `h` made. A library that imports Preact by a full
+ * specifier (`npm:preact@^10` in a JSR package, say) reaches the real Preact, not denext's alias,
+ * and its vnodes carry no `$$typeof`; Preact marks each one with an own `constructor` property set
+ * to `undefined` instead, which JSON cannot express either (Preact's own guard against injected
+ * vnodes), so element-shaped data parsed from JSON is still refused.
+ *
+ * @param node An object rendered as a child or passed as a prop.
+ * @returns Whether it was made by `createElement` / `jsx` (React or Preact).
+ */
+export function isBrandedElement(node: object): boolean {
+  return isElementBrand((node as { $$typeof?: unknown }).$$typeof) ||
+    (Object.hasOwn(node, "constructor") &&
+      (node as { constructor?: unknown }).constructor === undefined);
 }
 /** Brand for a `forwardRef` component. */
 export const REACT_FORWARD_REF_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.forward_ref");

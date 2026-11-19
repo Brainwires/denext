@@ -3,13 +3,15 @@
 // An element reaches a renderer as a child or a prop value, and either can be data: a JSON
 // document from a database, a request body, a third-party API. `createElement` / `jsx` stamp
 // every element with a `$$typeof` symbol, which JSON cannot express, so an object that claims
-// to be a host element without it was not created by the app (React's rule since 0.14). Without
+// to be a host element without it was not created by the app (React's rule since 0.14). A vnode
+// the real Preact made (a library importing `npm:preact` directly) is branded Preact's way instead:
+// an own `constructor: undefined`, which JSON cannot express either (`isBrandedElement`). Without
 // this gate `<p>{post.title}</p>` rendered a stored `{ "type": "script", "props": { … } }` as
 // markup. Component, fragment and boundary elements need no brand here: their `type` is a
 // function or a symbol, which JSON cannot express either.
 
 import type { VNode } from "./types.ts";
-import { isElementBrand } from "../runtime/react-brands.ts";
+import { isBrandedElement } from "../runtime/react-brands.ts";
 
 /** React DOM server's `VALID_TAG_REGEX`: what a tag name may be when written into markup. */
 const VALID_TAG = /^[a-zA-Z][a-zA-Z:_.\-\d]*$/;
@@ -26,7 +28,7 @@ export function isRenderableElement(value: unknown): value is VNode {
   if (!("type" in value) || !("props" in value)) return false;
   const type = (value as VNode).type as unknown;
   if (typeof type === "function" || typeof type === "symbol") return true;
-  return isElementBrand((value as VNode).$$typeof);
+  return isBrandedElement(value);
 }
 
 /**
@@ -39,7 +41,7 @@ export function isRenderableElement(value: unknown): value is VNode {
  */
 export function hostTagOf(node: VNode): string {
   const tag = node.type as unknown;
-  if (typeof tag !== "string" || !isElementBrand(node.$$typeof)) {
+  if (typeof tag !== "string" || !isBrandedElement(node)) {
     throw new Error(
       "denext: objects are not valid as a child (found an object with keys {" +
         Object.keys(node).slice(0, 8).join(", ") +

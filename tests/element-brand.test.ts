@@ -195,3 +195,77 @@ Deno.test("client: a component that renders fetched element-shaped data throws i
   }
   assert(threw instanceof Error && threw.message.includes(NOT_A_CHILD));
 });
+
+/**
+ * A vnode as Preact 10's own `createVNode` builds it (`src/create-element.js`): no `$$typeof`, its
+ * mangled internals, and an own `constructor: undefined` — Preact's guard against injected vnodes.
+ * A library that imports `npm:preact` by its full specifier (the JSR `@preact-icons/*` packages
+ * Deno SaaSKit renders) hands the renderer these instead of denext's elements.
+ */
+function preactVNode(type: string, props: Record<string, unknown>): VNode {
+  return {
+    type,
+    props,
+    key: undefined,
+    ref: undefined,
+    __k: null,
+    __: null,
+    __b: 0,
+    __e: null,
+    __c: null,
+    constructor: undefined,
+    __v: 1,
+    __i: -1,
+    __u: 0,
+  } as unknown as VNode;
+}
+
+Deno.test("element brand: a vnode the real Preact made renders on every server renderer", async () => {
+  const icon = () =>
+    preactVNode("svg", {
+      viewBox: "0 0 24 24",
+      children: [preactVNode("path", { d: "M9 19c-4.3 1.4", key: 0 })],
+    });
+  const tree = () => h("p", null, "icon ", icon());
+  for (
+    const html of [
+      await renderToString(tree()),
+      renderToStringSync(tree()),
+      (await renderToHtmlFlight(tree())).html,
+      await streamText(renderToReadableStream(tree())),
+    ]
+  ) {
+    assertStringIncludes(html, '<svg viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4"');
+  }
+  assertStringIncludes(JSON.stringify(await renderToFlight(tree())), '"svg"');
+  assertStringIncludes(await streamText(renderToFlightStream(tree())), '<svg viewBox="0 0 24 24">');
+  assert(isRenderableElement(icon()));
+  assertEquals(hostTagOf(icon()), "svg");
+});
+
+Deno.test("element brand: Preact's mark is only an own `constructor: undefined`, which JSON cannot spell", async () => {
+  // JSON can only give `constructor` a JSON value; the inherited Object.prototype.constructor is
+  // not own. Neither passes as Preact's mark.
+  for (
+    const forged of [
+      JSON.parse('{"type":"div","props":{"children":"x"},"constructor":null}'),
+      JSON.parse('{"type":"div","props":{"children":"x"},"constructor":0}'),
+      JSON.parse('{"type":"div","props":{"children":"x"}}'),
+    ]
+  ) {
+    assert(!isRenderableElement(forged));
+    await assertRejects(() => renderToString(h("p", null, forged)), Error, NOT_A_CHILD);
+  }
+});
+
+Deno.test("client: a vnode the real Preact made normalizes and mounts", async () => {
+  const vnode = preactVNode("svg", { viewBox: "0 0 24 24" });
+  assertEquals(normalizeChildren([vnode]).map((v) => v.type), ["svg"]);
+  assertEquals(normalizeChildrenScoped(["t", [vnode]] as VNodeChild[]).map((v) => v.type), [
+    "#text",
+    "svg",
+  ]);
+  const Icon = () => h("p", null, preactVNode("svg", { viewBox: "0 0 24 24" }));
+  const screen = await render(h(Icon, null));
+  assertStringIncludes(screen.html(), '<svg viewBox="0 0 24 24"');
+});

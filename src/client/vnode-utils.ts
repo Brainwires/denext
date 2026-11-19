@@ -3,7 +3,7 @@
 // arbitrarily-nested-array flattening), and same-type identity.
 
 import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
-import { isElementBrand } from "../runtime/react-brands.ts";
+import { isBrandedElement } from "../runtime/react-brands.ts";
 import { ERR_INVALID_CHILD, reconcilerError } from "./fiber/errors.ts";
 
 /** The synthetic `type` used for text nodes in the client tree. */
@@ -20,11 +20,12 @@ function textVNode(value: string): VNode {
  * it is data (a fetched document, a stored record), never an element the app created, and
  * rendering it would let that data choose the tag and its props (`dangerouslySetInnerHTML`).
  * Component, fragment and boundary elements have a function or symbol `type`, which JSON cannot
- * express either; any other `type` is refused where the fiber is created (fiber-utils.ts).
+ * express either; any other `type` is refused where the fiber is created (fiber-utils.ts). A vnode
+ * the real Preact made carries Preact's own mark instead (`isBrandedElement`).
  */
 function element(c: object): VNode {
   const v = c as VNode;
-  if (isElementBrand(v.$$typeof) || typeof v.type !== "string" || v.type === TEXT_TYPE) return v;
+  if (isBrandedElement(v) || typeof v.type !== "string" || v.type === TEXT_TYPE) return v;
   throw invalidChild();
 }
 
