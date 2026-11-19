@@ -294,11 +294,15 @@ Deno.test({
     );
     await Deno.chmod(`${bin}/docker`, 0o755);
     // In a child (its PATH is the fake's), whose coverage joins the run's under the coverage tasks.
+    // The probe's deadline is the window the fake has to start its shell, fork the sleep and write
+    // its pid: at 500 ms a loaded machine (a niced macOS run) killed the shell before it got there,
+    // and the pid file the test reads below never existed. 5 s keeps the hang bounded, and far
+    // below the 60 s this test asserts, while the fixture reliably reaches its hung state.
     const { value } = await inChild<{ probe: string; probeMs: number; up: number }>({
       imports: `import { dockerCli } from "@repo/src/cli/commands/stack.ts";`,
       body: `const t = Date.now();
 let probe = "answered";
-try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 500); }
+try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 5000); }
 catch (error) { probe = error.message; }
 const probeMs = Date.now() - t;
 const up = await dockerCli(["compose", "-f", "docker-compose.yml", "up", "-d"], ".", true, 200);
@@ -314,7 +318,9 @@ return { probe, probeMs, up: up.code };`,
     assert(value.probeMs < 60_000, `the probe took ${value.probeMs} ms`);
     assertEquals(value.up, 0, "a long `up` ran to its end past the probe deadline");
     // The hung docker's own child (holding its pipes) was killed with it.
-    const child = Number((await Deno.readTextFile(pidFile)).trim());
+    const pid = await Deno.readTextFile(pidFile).catch(() => "");
+    assert(pid !== "", "the fake docker never reached its hung state before the probe deadline");
+    const child = Number(pid.trim());
     let alive = true;
     for (let i = 0; i < 100 && alive; i++) {
       const ps = await new Deno.Command("ps", { args: ["-p", String(child)], stdout: "null" })
