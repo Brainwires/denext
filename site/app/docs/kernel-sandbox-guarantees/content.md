@@ -76,7 +76,10 @@ each request against Deno's own rule and hands back only the file or socket it c
   confined for the whole tree. With no `--allow-run`, no program can start at all.
 - **Ports on older Linux.** Landlock's TCP port rules arrive with Linux 6.7 (ABI 4). Before that,
   the kernel can allow all network or none, not a list of ports, so `enforce` refuses to start
-  over a port list there (a `fail-open` gap).
+  over a port list there (a `fail-open` gap). A server that only listens is the exception:
+  addresses named by `--allow-net-listen` are
+  [bound before the sandbox applies](/docs/kernel-sandbox-linux#listeners-bound-at-startup), on
+  every kernel.
 - **Any host on a granted port.** No kernel filters by host name. Without Mode B, a grant of
   `example.com:443` lets native code reach any host on port 443. On macOS `enforce` runs such a
   grant held by port (a `documented` gap), and any confined code can also resolve any name through
@@ -85,7 +88,13 @@ each request against Deno's own rule and hands back only the file or socket it c
   Linux (ABI 4 and later) and macOS: native code may reach any address on those ports,
   `169.254.169.254` (the cloud metadata address) included. A `documented` gap.
 - **Libraries under a scoped `--allow-ffi`.** Neither Linux nor macOS can hold library loading to
-  the `--allow-ffi` paths. Native code may load any library in the read scope. A `documented` gap.
+  the `--allow-ffi` paths. Native code may load any library in the read scope. A `documented` gap:
+  the dynamic loader opens a library and its dependencies itself, by path, and the kernels'
+  file rules don't separate "load as code" from "read" finely enough to name single libraries
+  (Landlock has no such right; a Seatbelt profile that maps only the `--allow-ffi` paths still let
+  other libraries load in testing). Keep the read scope narrow when you grant FFI.
+- **UDP under a host-scoped grant.** Refused under Mode B (design): a UDP socket can send to any
+  address, so the supervisor can hand out none that holds the grant.
 - **Unix sockets.** The kernel refuses Unix sockets unless the grant calls for them. Once allowed,
   Linux can't tell one socket path from another (Mode B can), and abstract sockets are scoped only
   from 6.12.

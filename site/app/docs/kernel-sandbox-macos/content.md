@@ -70,7 +70,11 @@ Seatbelt can express ports and `localhost`, not host names. Under `enforce`:
 - **Name lookups:** with network allowed, any confined code can resolve any name through the system
   resolver, and a lookup can carry data out.
 
-Mode B (design: not built yet) will make host-scoped grants exact.
+Mode B (design: not built yet) will make host-scoped grants exact: the supervisor resolves and
+connects, the profile denies all network but the supervisor's proxy on `localhost`, and a port
+list of IP addresses or `localhost` is exact under `--kernel-sandbox=broker`. The rules are the
+same as on Linux: see
+[Host-scoped network under Mode B](/docs/kernel-sandbox-linux#host-scoped-network-under-mode-b).
 
 ## Programs and children
 

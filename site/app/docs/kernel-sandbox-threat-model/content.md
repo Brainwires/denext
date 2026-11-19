@@ -83,6 +83,26 @@ kernel enforces itself. Outside the kernel sandbox, an external permission broke
 [protocol v2](/docs/permissions#the-external-permission-broker) already hands back the opened file
 on Unix.
 
+Under `enforce` a swapped path only matters where Deno's rule is finer than the kernel's: for the
+few paths the runtime itself needs readable without a grant. Some operations can't be handed an
+opened file at all, because the thing that opens the file isn't Deno. They stay checked by path:
+
+| Operation                                                                  | Why it takes a path                                                                 |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| SQLite databases (`node:sqlite`, `Deno.openKv`, SQLite through `Deno.SQL`) | SQLite opens the database and its `-wal`, `-shm` and journal files by name          |
+| `Deno.watchFs`, `fs.watch`                                                 | The OS watch services take paths                                                    |
+| `Deno.dlopen`, native addons                                               | The dynamic loader opens the library and its dependencies itself                    |
+| `Deno.Command` (the program, `cwd`), `Deno.chdir`                          | `execve` and `chdir` take paths; a child's own opens are held by the kernel sandbox |
+| Unix-socket paths                                                          | `connect` and `bind` on a Unix socket take a path                                   |
+| `node:wasi` preopens                                                       | Resolved against the preopen's real location on every call                          |
+| npm resolution (`package.json`, `node_modules`)                            | The resolver reads by path                                                          |
+| Desktop: sharing and dragging files                                        | The paths go to the OS share and drag services                                      |
+
+A hard link to a denied file, placed in an allowed folder, is the same file under an allowed
+path: readable, as for Landlock and Seatbelt, which see paths too. Files read whole right after
+the check (`Deno.connectTls({ certFile })`, `Deno.SQL` file reads) are checked a second time as the
+file that actually opened, so a link swapped in between is refused.
+
 ## What counts as an escape
 
 An escape means **breaking a Kernel cell on the platform, kernel and mode that cell names**: for

@@ -106,10 +106,67 @@ kill the process), so they surface as catchable errors in JavaScript.
   port rules. They hold the port, not the address, so native code and children may reach any
   address on those ports, `169.254.169.254` included (a `documented` gap). On an older kernel a
   port list is a `fail-open` gap and `enforce` refuses to start.
+- **Listening only** (`--allow-net-listen=127.0.0.1:8000,localhost:9000`, every entry an address
+  with a port): the addresses are bound before the sandbox applies and handed to whatever listens
+  there (`Deno.serve`, `Deno.listen`, `node:net`, `node:http`). The confined process then has no
+  network access of its own, on every kernel, and the address is held, not just its port. See
+  [Listeners bound at startup](#listeners-bound-at-startup).
 - **Host names** (`--allow-net=api.example.com:443`) need Mode B, where the supervisor resolves the
   name, checks it, connects and passes the socket back. Mode B isn't built yet, so `enforce`
   refuses to start over a host-scoped grant on Linux. Grant by IP address, all network, or run
-  without `enforce`.
+  without `enforce`. [What Mode B holds](#host-scoped-network-under-mode-b) describes the design.
+
+### Listeners bound at startup
+
+With `--allow-net-listen` naming addresses (`127.0.0.1:8000`, `0.0.0.0:8080`, `localhost:9000`,
+which is both loopback addresses), `enforce` binds each one, listening, before it confines the
+process. `--kernel-sandbox-report` lists them:
+
+```
+net:        denied
+listeners:  bound before the sandbox applies: 127.0.0.1:8000
+```
+
+What follows from that:
+
+- The address is bound from startup for the life of the process, whether or not the program
+  listens there. A client that connects before the program accepts waits; it isn't refused.
+- Listening again after a close works, and so do several listeners on one address (`reusePort`,
+  `deno serve --parallel`): each gets the same socket.
+- An address that can't be bound at startup (in use, no IPv6 on the machine) doesn't stop the run.
+  Listening there reports that error.
+- UDP on those addresses is refused.
+- An entry that can't be bound ahead keeps the port rules above: a host name, a subnet, a bare
+  host, port `0`. So does a run with `--inspect`.
+- Only `--allow-net-listen` is bound ahead. An `--allow-net` entry is as often a server to connect
+  to (`--allow-net=localhost:5432`), and the sandbox must not take its port.
+
+### Host-scoped network under Mode B
+
+_Being built: it works where `deno info --json` reports `kernelSandbox.brokerNetBuilt`._ No kernel
+filters by host name, so under Mode B the confined process makes no network socket itself. Every
+socket comes from the supervisor, which holds the grant:
+
+- **Names are resolved by the supervisor,** and only names the grant holds. Each connection goes to
+  exactly the address that was checked.
+- **A granted name can't lead inside.** If `api.example.com` resolves to a loopback, private or
+  link-local address (`169.254.169.254` included), the connection is refused unless the grant also
+  names that address (`--allow-net=db.internal:5432,10.0.0.0/8:5432`). That closes DNS rebinding
+  from a granted public name to your own machine or a cloud metadata service. `localhost` leads to
+  loopback only.
+- **Listening** sockets are bound by the supervisor and handed over.
+- **UDP** (`Deno.listenDatagram`, `node:dgram`, QUIC, WebRTC's UDP candidates) is refused under a
+  host-scoped grant: a UDP socket can send to any address, so it can't be held to the grant.
+  `Deno.resolveDns` still works with a name server the grant names (the supervisor carries each
+  query out).
+- **Native code** has no socket that reaches an address: it can't make one, and `connect` is
+  refused for the whole process tree, so a socket the supervisor handed over can't be pointed
+  somewhere else.
+- **Child processes** have no network under a host-scoped grant. (Planned: an allow-listing proxy
+  the supervisor runs, which `HTTP_PROXY` and `HTTPS_PROXY` point at.)
+- **Not carried by the supervisor yet:** remote modules imported after startup that aren't in the
+  cache, the OpenTelemetry exporter, `Deno.cron`'s control socket, named pipes of `node:net`.
+  These fail under Mode B; none is a way out.
 
 ## Unix sockets and signals
 
