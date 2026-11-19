@@ -669,9 +669,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `$APPDATA/ipc`). On Windows the pipe has the default security descriptor (read access for
   Everyone, so another local user can open it and read what the server writes), the name is
   machine-wide (a process that creates it first makes the app's listen fail and receives its
-  clients), and the runtime caps a pipe server at its pending-instance count (4, or
-  `NODE_PENDING_PIPE_INSTANCES`) and stops accepting once a connection arrives with every instance
-  in use: authenticate sensitive channels and keep few connections open at once.
+  clients): authenticate sensitive channels. A runtime that limits a pipe to its pending-instance
+  count (4, or `NODE_PENDING_PIPE_INSTANCES`) stops accepting for good once a connection arrives
+  with every instance in use; keep few connections open at once there (the runtime's pipes have no
+  instance limit once it carries that fix).
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no
