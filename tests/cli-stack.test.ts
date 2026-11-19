@@ -3,6 +3,7 @@
 // prints — the publishable key always, the secret key and passwords only with --show-secrets.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import { dockerProbe, fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
 import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
 import { inChild } from "./helpers/isolated.ts";
@@ -230,6 +231,43 @@ Deno.test("dockerCli: runs docker, or says it is missing", async () => {
   }
 });
 
+Deno.test("dockerCli: every path names a missing docker, and runs a present one, on any machine", async () => {
+  // In this process, so the branches count in coverage whether or not the host has Docker: an
+  // empty PATH for the missing case, a fake `docker` first on PATH for the present one.
+  const { dockerCli } = await import("../src/cli/commands/stack.ts");
+  const probe = ["compose", "ps", "--format", "json"]; // a probe: the bounded path
+  const old = Deno.env.get("PATH");
+  const dir = await Deno.makeTempDir({ prefix: "dnx-docker-path-" });
+  try {
+    Deno.env.set("PATH", dir);
+    for (
+      const [args, capture] of [[["--version"], true], [["--version"], false], [
+        probe,
+        true,
+      ]] as const
+    ) {
+      const error = await dockerCli([...args], dir, capture).then(() => undefined, (e: Error) => e);
+      assertStringIncludes(error?.message ?? "", "docker is not on PATH");
+    }
+    if (Deno.build.os !== "windows") {
+      await Deno.writeTextFile(join(dir, "docker"), '#!/bin/sh\necho fake-docker "$@"\n', {
+        mode: 0o755,
+      });
+      Deno.env.set("PATH", `${dir}:/usr/bin:/bin`);
+      assertStringIncludes(
+        (await dockerCli(["--version"], dir, true)).stdout,
+        "fake-docker --version",
+      );
+      assertStringIncludes((await dockerCli(probe, dir, true)).stdout, "fake-docker compose ps");
+      assertEquals((await dockerCli(["--version"], dir, false)).code, 0);
+    }
+  } finally {
+    if (old === undefined) Deno.env.delete("PATH");
+    else Deno.env.set("PATH", old);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("dockerCli: a machine without docker gets the install hint, not a spawn error", async () => {
   // `Command.output()` throws a missing binary synchronously; a child with an empty PATH has no
   // docker on any OS.
@@ -413,4 +451,52 @@ Deno.test("stack up: a missing .env over an existing database volume is refused,
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("stack up: a missing .env is written when compose or Docker can't name an existing volume", async () => {
+  // Each answer below means "no volume known": compose fails, prints no JSON, names no project or
+  // no db service, or the volume isn't there. Each must fall through to writing the .env.
+  const answers: Array<{ code: number; stdout: string }> = [
+    { code: 1, stdout: "" },
+    { code: 0, stdout: "not json" },
+    { code: 0, stdout: JSON.stringify({ services: { db: {} } }) },
+    { code: 0, stdout: JSON.stringify({ name: "myapp", services: { web: {} } }) },
+    { code: 0, stdout: JSON.stringify({ name: "myapp", services: { db: {} } }) }, // inspect fails
+  ];
+  for (const config of answers) {
+    const root = await Deno.makeTempDir({ prefix: "dnx-stack-novol-" });
+    try {
+      await Deno.writeTextFile(`${root}/docker-compose.yml`, "services: {}\n");
+      await Deno.writeTextFile(
+        `${root}/.env.example`,
+        "# Generate: openssl rand -hex 24\nPOSTGRES_PASSWORD=\n",
+      );
+      const io: StackIo = {
+        docker: (args) => {
+          if (args.includes("config")) return Promise.resolve({ ...config, stderr: "" });
+          if (args[0] === "volume") return Promise.resolve({ code: 1, stdout: "", stderr: "" });
+          return Promise.resolve({ code: 0, stdout: "[]", stderr: "" });
+        },
+        generate: () => Promise.resolve(),
+        log: () => {},
+        error: () => {},
+      };
+      assertEquals(await runStack(ctx(root, ["up"]), io), 0, config.stdout);
+      assertMatch(await Deno.readTextFile(`${root}/.env`), /^POSTGRES_PASSWORD=[0-9a-f]{48}$/m);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("stack down: a failing compose down is an error, not a quiet success", async () => {
+  const errors: string[] = [];
+  const io: StackIo = {
+    docker: () => Promise.resolve({ code: 3, stdout: "", stderr: "" }),
+    generate: () => Promise.resolve(),
+    log: () => {},
+    error: (line) => void errors.push(line),
+  };
+  assertEquals(await runStack(ctx("/p", ["down"]), io), 1);
+  assertStringIncludes(errors[0], "docker compose down exited 3");
 });
