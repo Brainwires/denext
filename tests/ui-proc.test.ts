@@ -510,7 +510,8 @@ Deno.stdout.writeSync(new TextEncoder().encode(Array.from({ length: 40 }, (_, i)
   });
   assertEquals(result.code, 0);
   assertEquals(lines.filter((l) => l !== "").length, 40, "nothing is lost to the tail");
-  assert(result.stdout.length <= 8192, `tail kept (${result.stdout.length} chars)`);
+  // Bounded by the tail plus at most one later chunk (a pipe may still split the write: Windows does).
+  assert(result.stdout.length < 2 * 8192, `tail kept (${result.stdout.length} chars)`);
   assert(result.stdout.endsWith("\n") && result.stdout.includes("0039"), "the newest output kept");
   assert(!result.stdout.startsWith("0000"), "the oldest output dropped");
 });
