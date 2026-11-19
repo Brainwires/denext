@@ -121,3 +121,35 @@ Deno.test("desktop.update.hosts: each entry is one host, in the config and in th
   const flags = desktopBuildFlags({ desktop: { update: { hosts: ["cdn.example.net"] } } }, "linux");
   assertEquals(flags[0], "--allow-net=127.0.0.1,cdn.example.net,localhost");
 });
+
+Deno.test("netHostError: a unix: entry is an absolute socket path the runtime can parse", () => {
+  for (
+    const entry of [
+      "unix:/run/app/ctl.sock",
+      "unix:C:\\sockets\\app.sock",
+      "unix:C:/sockets/app.sock",
+      "unix:\\\\.\\pipe\\com.acme.app",
+    ]
+  ) assertEquals(netHostError(entry), null, entry);
+  // The runtime expands no folder token in a network grant and refuses a relative path, so a
+  // packaged app baked with one would not start.
+  for (
+    const entry of [
+      "unix:",
+      "unix:ctl.sock",
+      "unix:$APPDATA/ipc/ctl.sock",
+      "unix:$DENO_DESKTOP_DATA/ipc/ctl.sock",
+      "unix:~/ctl.sock",
+      "unix:\\ctl.sock",
+    ]
+  ) {
+    const error = netHostError(entry) ?? "";
+    assertEquals(error.includes("absolute socket path"), true, entry);
+  }
+  assertThrows(
+    () => validate({ desktop: { extraPermissions: { netListen: ["unix:$APPDATA/ipc/a.sock"] } } }),
+    Error,
+    "absolute socket path",
+  );
+  validate({ desktop: { extraPermissions: { net: ["unix:/run/app/ctl.sock"] } } });
+});

@@ -25,6 +25,7 @@ import type { DesktopCapability, DesktopSecureStore } from "../extension.ts";
 import { type SidecarDefinition, sidecarListError } from "../sidecar.ts";
 import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
 import { registerBundledLibraries } from "../bundled-libraries.ts";
+import { registerLocalIpcAppId } from "../local-ipc.ts";
 import { echoCapability } from "./echo.ts";
 import { deviceCapability } from "./device.ts";
 import { fsCapability } from "./fs.ts";
@@ -254,6 +255,9 @@ export async function resolveDesktopCapabilities(
   const explicitId = options.appId ??
     (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier;
   const appId = explicitId ?? DEFAULT_APP_ID;
+  // `localIpcPath`'s default `appId`: only an explicit identifier, as the shared default would put
+  // every app's channels under one name.
+  registerLocalIpcAppId(explicitId);
   const dirs = desktopAppDirs(appId);
   const base = {
     ...desktopLaunchBase(config, caps, explicitId, dirs),

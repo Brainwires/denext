@@ -6110,6 +6110,14 @@ sc.ready();`}
           denext can authenticate, so it could not be found and stopped again safely.
         </li>
       </ul>
+      <p>
+        A detached sidecar&apos;s own service (the PTY server above, say) can listen with{" "}
+        <a href="#desktop-local-ipc">
+          <code>listenLocalIpc</code>
+        </a>{" "}
+        instead of a loopback port: a Unix-domain socket or a named pipe that only the app&apos;s
+        user can reach on macOS and Linux, found again by name with <code>localIpcPath</code>.
+      </p>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
         An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop
@@ -6206,6 +6214,130 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         (it runs from the cache folder, whose path is only known on the user&apos;s machine), unless
         the runtime can scope it as above.
       </p>
+
+      <h3 id="desktop-local-ipc">Local IPC: a channel with no loopback port</h3>
+      <p>
+        A desktop app and its helper processes (a detached sidecar, a CLI of the app) can talk over
+        a Unix-domain socket on macOS and Linux and a named pipe on Windows, with no TCP port
+        another program could reach. <code>Deno.listen</code>{" "}
+        has no named-pipe transport, but the runtime&apos;s <code>node:net</code> does, so{" "}
+        <code>denext/desktop</code> exports one API over it for every OS:
+      </p>
+      <Code lang="ts">
+        {`import { connectLocalIpc, listenLocalIpc, localIpcPath } from "denext/desktop";
+
+const path = localIpcPath("ptyd"); // where the channel "ptyd" lives for this app and user
+
+// The server (the app, or a detached sidecar's own service):
+await using server = await listenLocalIpc(path, (conn) => {
+  conn.readable.pipeTo(conn.writable); // each connection is a pair of web streams
+});
+
+// A client (the app, a CLI, another helper):
+await using conn = await connectLocalIpc(path, { timeoutMs: 2_000 });
+const writer = conn.writable.getWriter();
+await writer.write(new TextEncoder().encode("hello"));
+await writer.close(); // a half close: the reply keeps flowing
+for await (const chunk of conn.readable) console.log(chunk);`}
+      </Code>
+      <ul>
+        <li>
+          <code>localIpcPath(name, {"{"} dir?, appId?, user?, os? {"}"})</code>{" "}
+          — the channel&apos;s path. <code>name</code> is 1 to 64 of <code>[A-Za-z0-9._-]</code>
+          {" "}
+          starting with a letter or digit (anything else is refused: it becomes part of a path).
+          macOS / Linux: <code>&lt;dir&gt;/&lt;name&gt;.sock</code>, <code>dir</code>{" "}
+          defaulting to the app&apos;s data folder + <code>/ipc</code> (created <code>0700</code>
+          {" "}
+          on the first listen). A socket path longer than <code>sun_path</code>{" "}
+          allows (103 bytes on macOS, 107 on Linux) is refused: pass a shorter{" "}
+          <code>dir</code>. Windows:{" "}
+          <code>\\.\pipe\&lt;appId&gt;.&lt;user&gt;.&lt;name&gt;</code>, where <code>user</code>
+          {" "}
+          is a short SHA-256 prefix of the user&apos;s profile folder (not secret, not the user
+          name), so two users of one machine never share a pipe name. <code>appId</code> defaults to
+          {" "}
+          <code>desktop.app.identifier</code>, as <code>resolveDesktopCapabilities</code>{" "}
+          registered it; a process where it did not run (a module sidecar&apos;s worker, a CLI)
+          passes <code>appId</code> (or, on Unix, <code>dir</code>).
+        </li>
+        <li>
+          <code>listenLocalIpc(path, onConnection, {"{"} signal? {"}"})</code>{" "}
+          resolves to a server with <code>path</code>, <code>close()</code> and{" "}
+          <code>Symbol.asyncDispose</code>; <code>close()</code>{" "}
+          stops listening, ends the open connections and removes the socket file. On Unix an
+          existing socket that answers is never taken over (<code>AddrInUse</code>), one that does
+          not (left by a crash) is replaced, a file that is not a socket is refused, and the bound
+          socket is made <code>0600</code>.
+        </li>
+        <li>
+          <code>connectLocalIpc(path, {"{"} timeoutMs?, signal? {"}"})</code> rejects with{" "}
+          <code>NotFound</code> / <code>ConnectionRefused</code> when nothing listens,{" "}
+          <code>TimedOut</code> after <code>timeoutMs</code>{" "}
+          (default 5000) and the signal&apos;s reason on an abort. A connection has{" "}
+          <code>readable</code>, <code>writable</code> (closing it half-closes),{" "}
+          <code>close()</code> (both directions at once) and <code>Symbol.asyncDispose</code>.
+        </li>
+      </ul>
+      <h4 id="desktop-local-ipc-permissions">Permissions</h4>
+      <p>
+        The runtime checks a socket or pipe path for read and write access to the path and for the
+        network grant <code>unix:&lt;path&gt;</code> (<code>--allow-net=unix:&lt;path&gt;</code>, or
+        {" "}
+        <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
+        with the split flags), on Windows as on Unix. A refused check rejects with{" "}
+        <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
+        grant names one exact path, and the runtime expands no folder token (<code>$APPDATA</code>,
+        {" "}
+        <code>$DENO_DESKTOP_DATA</code>) in a network grant, so a packaged app cannot bake the
+        per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
+        <code>netConnect</code> accept a <code>unix:</code>{" "}
+        entry only with an absolute path (anything else is a config error, since the runtime would
+        refuse to start). An app that serves a channel in its data folder grants the folder and the
+        direction:
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  extraPermissions: {
+    write: ["$APPDATA/ipc"],   // and read, under desktop.permissions: "strict"
+    netListen: ["*"],          // the server; netConnect: ["*"] for a client in the app
+  },
+},`}
+      </Code>
+      <p>
+        <code>netListen: ["*"]</code> is an unscoped <code>--allow-net-listen</code>{" "}
+        (any port too); where the runtime has no split flags it is folded into one unscoped{" "}
+        <code>--allow-net</code>.
+      </p>
+      <h4 id="desktop-local-ipc-security">Security</h4>
+      <ul>
+        <li>
+          macOS / Linux: the socket is <code>0600</code>{" "}
+          in a folder that must be owned by the user (or root) and not writable by its group or
+          others unless sticky; otherwise <code>listenLocalIpc</code>{" "}
+          refuses (<code>PermissionDenied</code>), as another user could replace the socket. Other
+          users cannot connect; any process of the same user can.
+        </li>
+        <li>
+          Windows: the runtime creates the pipe&apos;s first instance with{" "}
+          <code>FILE_FLAG_FIRST_PIPE_INSTANCE</code>, so a server never joins a pipe another process
+          created (it fails with <code>AddrInUse</code>), and with{" "}
+          <code>PIPE_REJECT_REMOTE_CLIENTS</code>{" "}
+          (tokio&apos;s default, which the runtime keeps), so a client on another machine is
+          refused. The pipe is created with no security attributes, which gives it Windows&apos;
+          default security descriptor: full control for LocalSystem, Administrators and the creating
+          user, and read access for Everyone and the anonymous account. So another local user can
+          open the pipe for reading and receive what the server writes on that connection, and the
+          pipe namespace is machine-wide: a process (of any user) that creates the name first makes
+          the app&apos;s <code>listenLocalIpc</code>{" "}
+          fail, and the app&apos;s clients then connect to that process instead.
+        </li>
+        <li>
+          So a channel that carries anything sensitive authenticates before it sends: the client
+          proves a secret the server checks (an app can keep one in its own data folder, which other
+          users cannot read), and the server writes nothing to a connection until it has.
+        </li>
+      </ul>
 
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>
       <p>
