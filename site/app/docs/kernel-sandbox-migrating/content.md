@@ -33,6 +33,10 @@ minute.
 
 ### When each command changes
 
+The sandbox switches on by itself in two steps. The first (stage `r3` in the runtime's own
+reports) confines programs whose author fixed their permissions; the second (stage `r4`) also
+confines scripts that run with no terminal.
+
 | Your command                                                                                        | First step                                                                                         | Second step  |
 | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------ |
 | A compiled program (`deno compile`, `denext build --compile`) with partial permissions              | **enforced**                                                                                       | enforced     |

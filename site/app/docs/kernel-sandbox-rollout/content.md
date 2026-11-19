@@ -13,7 +13,15 @@ lead: What the kernel sandbox applies when you set nothing, context by context, 
 ## The defaults
 
 `auto` is the mode a run has when nothing sets one. What `auto` applies depends on the run's
-context and on the rollout stage of the runtime:
+context and on the rollout stage of the runtime. There are three stages, and a runtime is at
+exactly one of them:
+
+- **`preview`**: nothing changes for anyone. The sandbox applies only where you ask for it.
+- **`r3`**: programs whose author fixed their permissions (a compiled program, a strict desktop
+  package, `denext start`) are confined by the kernel, and a script that runs with no terminal,
+  such as a CI job, gets one notice saying it will be next.
+- **`r4`**: those scripts are confined too. From here on, every run whose permissions can't be
+  widened by a prompt is held to them by the kernel.
 
 | Context                                                                    | `preview` | `r3`        | `r4`        |
 | -------------------------------------------------------------------------- | --------- | ----------- | ----------- |

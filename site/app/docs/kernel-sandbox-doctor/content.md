@@ -135,8 +135,10 @@ supervisor not built in, no Landlock).
 
 ### The defaults table
 
-What a run gets with **no setting**, by context, at the rollout stage this runtime is at
-(`preview`, `r3` or `r4`). It is the column of the [defaults table](/docs/kernel-sandbox-rollout#the-defaults)
+What a run gets with **no setting**, by context, at the rollout stage this runtime is at:
+`preview` (nothing is applied unless you ask), `r3` (compiled programs, strict desktop packages
+and `denext start` are confined; scripts with no terminal get a notice) or `r4` (those scripts are
+confined too). It is the column of the [defaults table](/docs/kernel-sandbox-rollout#the-defaults)
 that applies to you today.
 
 ### The dry run
