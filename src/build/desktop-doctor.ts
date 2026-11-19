@@ -253,6 +253,11 @@ export interface DesktopDoctorOptions {
    * `native-addons` check runs when given and it answers a scan.
    */
   readonly linuxNativeAddons?: () => Promise<NativeAddonScan | null>;
+  /**
+   * The `libraries` check's findings (`desktopLibrariesDoctorFindings`: `desktop.bundle.libraries`),
+   * or `null` when the project bundles none; the check runs when given and it answers a list.
+   */
+  readonly bundledLibraries?: () => Promise<readonly DesktopDoctorFinding[] | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -1334,9 +1339,11 @@ export async function runDesktopDoctor(
   const pty = await ptyCheck(options, os, pinVersion);
   const webrtc = await webRtcFindings(options, linuxChecks);
   const addons = await nativeAddonFindings(options);
+  const libraries = await libraryFindings(options);
   const checks = [
     ...checkNames(policy.checks, pty !== null, linux ? runtime : null, webrtc.checks, cefSigning),
     ...addons.checks,
+    ...libraries.checks,
   ];
   return {
     os,
@@ -1351,6 +1358,7 @@ export async function runDesktopDoctor(
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...webrtc.findings,
       ...addons.findings,
+      ...libraries.findings,
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
@@ -1442,6 +1450,19 @@ async function nativeAddonFindings(
       fix: NATIVE_ADDON_LIBNODE_FIX,
     })),
   };
+}
+
+/**
+ * The `libraries` check (none without `options.bundledLibraries`, or when the project bundles no
+ * library): `desktop.bundle.libraries`' findings.
+ */
+async function libraryFindings(
+  options: DesktopDoctorOptions,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  const found = options.bundledLibraries ? await options.bundledLibraries() : null;
+  return found === null
+    ? { checks: [], findings: [] }
+    : { checks: ["libraries"], findings: [...found] };
 }
 
 /** The Linux session checks that run for `runtime`, in order. */

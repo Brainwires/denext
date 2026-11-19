@@ -747,9 +747,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   Schema-validated methods and events, called from the page with typed
   `desktopExtension<typeof ext>()` and `onDesktopEvent`), FFI and Node-API
   addons in the packaged app (`desktop.extraPermissions`, `"*"` for the unscoped
-  flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
-  resolves to `{ window, trust, emit }` for pushing OS events to the page. —
-  `src/desktop/extension.ts`, `src/build/desktop.ts`.
+  flag), the app's own native libraries bundled per target
+  (`desktop.bundle.libraries`, signed with the app, found with
+  `bundledLibraryPath(name)`), and `ctx.runOnMainThread` for C code on the UI
+  thread. `runDesktop` resolves to `{ window, trust, emit }` for pushing OS events
+  to the page. — `src/desktop/extension.ts`, `src/build/desktop.ts`,
+  `src/desktop/bundled-libraries.ts`, `src/build/desktop-bundle-libraries.ts`.
 - **Terminals in a desktop app** — the `pty` capability (where the runtime has
   `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `attachPty` /
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs

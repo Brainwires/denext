@@ -12,6 +12,7 @@ import {
   DesktopStrictPermissionsError,
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
+import { bundleDesktopLibraries } from "./desktop-bundle-libraries.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 import {
   desktopNetSplitFor,
@@ -668,7 +669,8 @@ export async function desktopWithAppVersion<T>(
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
  * existing icon, then
- * the webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own
+ * the webview backend's `laufey-launch.json` beside the executable, the app's own native libraries
+ * for the target (`desktop.bundle.libraries`, {@linkcode bundleDesktopLibraries}), on Linux the bundle's own
  * `.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`
  * link, and on Windows the tree
  * manifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and
@@ -703,6 +705,9 @@ export async function buildDesktopBundle(
     : undefined;
   if (meta) await desktopWindowsCefLayout(o.out, meta);
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
+  // desktop.bundle.libraries for this target (lib/ on Linux, beside the .exe on Windows), before
+  // the tree manifest and signing, which then cover them.
+  await bundleDesktopLibraries(entryUrl, os, o.out, o.target);
   if (os === "linux") await finishLinuxBundle(entryUrl, o.out);
   // The last file written (after laufey-launch.json): see stampWindowsBundleTree. The current
   // package-windows.ts stamps after the VC++ runtime instead (stampDesktopWindowsBundle).

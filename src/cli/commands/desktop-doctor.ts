@@ -27,6 +27,7 @@ import {
   type NativeAddonScan,
 } from "../../build/desktop-native-addons.ts";
 import { join } from "@std/path";
+import { desktopLibrariesDoctorFindings } from "../../build/desktop-bundle-libraries.ts";
 
 /**
  * The project's packaged launch-policy gaps (see `launchPolicyProblems`), from what its config
@@ -116,6 +117,10 @@ export async function desktopDoctor(
     desktopConfig: () => projectDesktopConfig(dir),
     linuxWebRtc: () => projectLinuxWebRtc(dir),
     linuxNativeAddons: () => projectNativeAddons(dir),
+    bundledLibraries: async () => {
+      const desktop = await projectDesktopConfig(dir);
+      return desktop === null ? null : await desktopLibrariesDoctorFindings(dir, desktop);
+    },
     ...seams,
     os,
     ...(linux ? { linux } : {}),

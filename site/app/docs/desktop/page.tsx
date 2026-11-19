@@ -5497,6 +5497,99 @@ export default defineDesktopExtension({
         this way, and its window test checks it on all three OSes along with every other capability.
       </p>
 
+      <h3 id="desktop-bundled-libraries">Bundled native libraries</h3>
+      <p>
+        An app that loads its own native library with <code>Deno.dlopen</code> (a Rust{" "}
+        <code>cdylib</code>, a C library) lists it in{" "}
+        <code>desktop.bundle.libraries</code>, with one build per target. The package scripts copy
+        the build for the target they package into the bundle, and{" "}
+        <code>bundledLibraryPath(name)</code> from <code>denext/desktop</code>{" "}
+        returns where the running app has it, or <code>null</code>{" "}
+        when this build has none for the host. In <code>denext desktop run</code> / <code>dev</code>
+        {" "}
+        it returns the project&apos;s own file for the host OS and architecture, so the same code
+        works before packaging.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  bundle: {
+    libraries: [
+      // {os} darwin | linux | windows, {arch} arm64 | x64, {ext} dylib | so | dll,
+      // {target} the Rust triple (aarch64-apple-darwin, x86_64-unknown-linux-gnu, …)
+      "native/{target}/librullama_audio_ffi.{ext}", // name: "rullama_audio_ffi"
+      { path: "native/{os}-{arch}/libvad.{ext}", optional: true }, // skipped where missing
+      // an explicit per-target map: a target with no entry ships without it
+      { name: "audio", files: { "darwin-arm64": "native/mac/libaudio.dylib", "linux-x64": "native/linux/libaudio.so" } },
+    ],
+  },
+  extraPermissions: { ffi: ["*"] }, // Deno.dlopen needs --allow-ffi (see below)
+},
+
+// desktop.ts, or an extension module: the backend, never the page
+import { bundledLibraryPath } from "denext/desktop";
+const path = bundledLibraryPath("rullama_audio_ffi");
+const audio = path ? Deno.dlopen(path, { level: { parameters: [], result: "f32" } }) : null;`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Entries.</strong> A path pattern (a string, or{" "}
+          <code>{"{ path, name?, optional? }"}</code>) or{" "}
+          <code>{"{ name, files, optional? }"}</code>. A pattern&apos;s name is its file name
+          without the <code>lib</code>{" "}
+          prefix and the extension. Paths are relative to the project, with no <code>..</code> and
+          {" "}
+          <code>/</code> separators, and each names a <code>.dylib</code>, <code>.so</code>{" "}
+          (or a versioned <code>.so.N</code>) or{" "}
+          <code>.dll</code>; names, and the file names bundled for one target, are unique. A missing
+          file fails packaging for that target, naming the path it looked for, unless the entry is
+          {" "}
+          <code>optional</code>.
+        </li>
+        <li>
+          <strong>Where they land.</strong> <code>Contents/Frameworks/</code> in the macOS{" "}
+          <code>.app</code> (so a library that links another bundled one by <code>@rpath</code> or
+          {" "}
+          <code>@executable_path/../Frameworks</code> finds it; install names are not rewritten),
+          {" "}
+          <code>lib/</code> beside the executable in the Linux bundle, and beside the{" "}
+          <code>.exe</code> on Windows. Every installer is built from the bundle, so the{" "}
+          <code>.dmg</code>, <code>.pkg</code>, <code>.tar.gz</code>, <code>.deb</code>,{" "}
+          <code>.rpm</code>, AppImage, <code>.msi</code> and <code>.zip</code>{" "}
+          carry them. A library may not take the name of a file the bundle already has.
+        </li>
+        <li>
+          <strong>Signing.</strong>{" "}
+          On macOS each library is signed with the app&apos;s identity (the Hardened Runtime and a
+          secure timestamp when the app has an identity) before the bundle itself, so the
+          bundle&apos;s seal covers it and library validation passes without{" "}
+          <code>disable-library-validation</code>. On Windows the package script Authenticode-signs
+          every PE file in the bundle, the libraries included.
+        </li>
+        <li>
+          <strong>Universal macOS builds.</strong> <code>--arch universal</code>{" "}
+          lipo-merges a library both arches have, keeps one that is already universal (the same file
+          for both) as it is, and carries one built for one arch alone (where{" "}
+          <code>bundledLibraryPath</code> returns <code>null</code> on the other).
+        </li>
+        <li>
+          <strong>Permissions.</strong> <code>Deno.dlopen</code> needs{" "}
+          <code>--allow-ffi</code>, and a baked grant can name only paths known when the app is
+          packaged: where it gets installed is not (a <code>.deb</code> or <code>.rpm</code>{" "}
+          installs it under{" "}
+          <code>/usr/lib/&lt;package&gt;/lib/</code>, but a tarball, an AppImage or a dragged{" "}
+          <code>.app</code> can be anywhere). So grant <code>ffi: ["*"]</code> in{" "}
+          <code>desktop.extraPermissions</code>; the package run, <code>denext desktop run</code> /
+          {" "}
+          <code>dev</code> and <code>denext desktop doctor</code> say so when the grant is missing.
+          {" "}
+          <code>bundledLibraryPath</code> reads no file (the table comes from{" "}
+          <code>.deno-desktop/config.json</code>, which the generated <code>desktop.ts</code>{" "}
+          imports), so it works under <code>desktop.permissions: "strict"</code>{" "}
+          too, and loading a library needs no read grant.
+        </li>
+      </ul>
+
       <h2 id="desktop-sidecars">Sidecars: a backend next to the window</h2>
       <p>
         An Electron app often spawns its own server and talks to it from the window. A denext

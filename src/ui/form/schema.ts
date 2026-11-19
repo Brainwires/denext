@@ -154,8 +154,9 @@ export function itemSchema(node: SchemaNode): SchemaNode {
 
 /**
  * The `anyOf` branch that matches `value` — the discriminator picker's current selection.
- * An `enum` branch wins on an exact value match; otherwise the first branch whose JSON type
- * matches wins; otherwise the first branch.
+ * An `enum` branch wins on an exact value match; otherwise, among the branches whose JSON type
+ * matches, the first whose `required` keys an object value all has (two object shapes, such as
+ * `{ path }` and `{ name, files }`), else the first of them; otherwise the first branch.
  *
  * @param node A union node.
  * @param value The current value.
@@ -166,8 +167,11 @@ export function branchFor(node: SchemaNode, value: unknown): SchemaNode {
   if (branches.length === 0) return node;
   const exact = branches.find((branch) => branch.enum?.some((option) => option === value));
   if (exact) return exact;
-  const typed = branches.find((branch) => !branch.enum && branch.type === jsonTypeOf(value));
-  return typed ?? branches[0];
+  const typed = branches.filter((branch) => !branch.enum && branch.type === jsonTypeOf(value));
+  const fits = typeof value === "object" && value !== null
+    ? typed.find((branch) => (branch.required ?? []).every((key) => key in value))
+    : undefined;
+  return fits ?? typed[0] ?? branches[0];
 }
 
 /**

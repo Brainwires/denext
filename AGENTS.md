@@ -758,7 +758,12 @@ double-click action, colour scheme — for an app-drawn title bar), `onCloseRequ
 show / hide need the pinned runtime (`unsupported` elsewhere; ask `windowCapabilities()`). React Native desktop
 `View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Node-API addons (an npm package's prebuilt `.node`) load in a
 packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
-`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
+`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). The app's own native
+libraries ship with `desktop.bundle.libraries` (one build per target: `"native/{target}/libx.{ext}"`
+or `{ name, files: { "darwin-arm64": … } }`): copied into each bundle (macOS `Contents/Frameworks`,
+Linux `lib/`, beside the Windows `.exe`) and signed with the app; `bundledLibraryPath(name)` from
+`denext/desktop` finds the running app's copy (the project's file in `desktop run` / `dev`), and
+`Deno.dlopen` needs the same unscoped `ffi`. A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
 leaves it to `confirmAppUpdate()`. Packaging bakes least-privilege guardrails: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,

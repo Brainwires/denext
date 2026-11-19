@@ -1,5 +1,6 @@
 // The `desktop` block of denext.config: the capability allowlist, the app origin and identity,
-// the window, sidecars, updates, installers and the per-OS signing / sandbox options.
+// the window, sidecars, updates, installers, the bundled native libraries and the per-OS signing /
+// sandbox options.
 
 import type { DenextConfig } from "../config.ts";
 import {
@@ -30,6 +31,7 @@ import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { webViewsConfigProblem } from "../../desktop/webview-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
+import { desktopBundleProblem } from "../../desktop/bundled-libraries.ts";
 import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
@@ -615,6 +617,8 @@ export function validateDesktop(
   validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
   validateDesktopWindows((desktop as { windows?: unknown }).windows, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
+  const bundle = desktopBundleProblem((desktop as { bundle?: unknown }).bundle);
+  if (bundle) fail(bundle[0], bundle[1]);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
   validateDesktopPermissions(desktop as Record<string, unknown>, fail);
   validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);

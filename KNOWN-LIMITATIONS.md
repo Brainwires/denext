@@ -644,6 +644,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
   embedded like one inside it. The config that names it is code the build already runs, so it is
   not a confinement boundary; keep the files an app should carry inside the project.
+- **A bundled native library needs the unscoped `--allow-ffi`.** `desktop.bundle.libraries` are
+  loaded with `Deno.dlopen`, and a baked grant names only paths known at packaging time; where the
+  app gets installed is not (a tarball, an AppImage or a dragged `.app` can be anywhere), and the
+  runtime has no folder token for the app's own bundle. So the app sets
+  `desktop.extraPermissions: { ffi: ["*"] }` (or the paths a `.deb` / `.rpm` installs to); the
+  package run, `denext desktop run` / `dev` and `denext desktop doctor` say so. A library that
+  links another bundled one finds it through `@rpath` / `@executable_path/../Frameworks` on macOS,
+  but install names are not rewritten.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no

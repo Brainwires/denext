@@ -32,6 +32,32 @@ and this project adheres to
   a folder. Windows has no foreground process group, so there the process is found in the process
   tree below the terminal's program and `foregroundGroup` / `tty` are never set. A field the OS
   refuses (a process of another user) is left out.
+- **Desktop apps ship their own native libraries: `desktop.bundle.libraries`.** One build per
+  target (OS + architecture), as a path pattern (`"native/{target}/libaudio.{ext}"`, with `{os}`,
+  `{arch}`, `{target}`, `{ext}`; or `{ path, name?, optional? }`) or a per-target map
+  (`{ name, files: { "darwin-arm64": "…" }, optional? }`). The package scripts copy the target's
+  file into each bundle (macOS `Contents/Frameworks`, Linux `lib/`, beside the Windows `.exe`),
+  so every installer carries it; on macOS each library is signed with the app's identity before
+  the bundle (the bundle's seal covers it), and the Windows script Authenticode-signs it with the
+  other PE files. A missing file fails packaging for that target, naming the path, unless the
+  entry is `optional`; unsafe entries (absolute paths, `..`, other extensions, duplicate names or
+  file names) are config errors. `bundledLibraryPath(name)` from `denext/desktop` returns the
+  running app's copy (the project's own file in `denext desktop run` / `dev`), or `null`, reading
+  no file. A universal macOS build lipo-merges a library both arches have and keeps an
+  already-universal one. `Deno.dlopen` needs `desktop.extraPermissions: { ffi: ["*"] }`: the
+  package run, `desktop run` / `dev` and `denext desktop doctor` (a new `libraries` check) say so
+  when it is missing.
+- **The project UI's config form renders a list of alternative shapes as typed rows** (each row
+  its own branch picker and fields) instead of a raw JSON box, and picks the object branch whose
+  required keys a value has.
+
+### Changed
+
+- **`scripts/package-macos.ts` copies `desktop.bundle.libraries` into the bundle before signing**,
+  and its universal merge keeps a Mach-O both arches carry with the same bytes and carries one only
+  one arch has; regenerate it with `denext desktop package --regenerate-scripts` (`denext desktop
+  doctor` flags an older script in an app that bundles libraries). The Linux and Windows scripts
+  need no change (the copy is `buildDesktopBundle`'s).
 
 ## [4.20.0] - 2026-11-17
 

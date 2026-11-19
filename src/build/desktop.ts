@@ -284,6 +284,15 @@ export {
   type DesktopTrust,
 } from "../desktop/transport.ts";
 
+// `desktop.bundle.libraries`: the app's own native libraries, copied into each bundle by the package
+// scripts and found at run time (the packaged bundle's copy, or the project's file in `desktop run`
+// / `dev`).
+export {
+  type BundledDesktopLibraries,
+  bundleDesktopLibraries,
+} from "./desktop-bundle-libraries.ts";
+export { bundledLibraryPath } from "../desktop/bundled-libraries.ts";
+
 // The packager's per-app files: `.deno-desktop/app.json` (+ `compile.include`) and the packaged
 // `laufey-launch.json`, called by the scaffolded `scripts/package-*.ts`.
 export {
