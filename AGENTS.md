@@ -822,10 +822,18 @@ Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop
 `ready()`, `onShutdown`); `import.meta.main` is false. A child of itself (Electron's
 `spawn(process.execPath, [script, "mcp-bridge"])`): `denextSidecar.spawnSelf(args)` (or
 `childCommand(args)` → `{ command, args, env, stdio }` with `"ipc"`) re-runs the app's executable
-headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `app.sidecar(name)` (`status`, `onStatus`,
+headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `detached: true`
+(or `{ exitAfterMs, keepAcrossUpdates }`; module sidecars only) runs it as its own process that
+OUTLIVES the app: the next launch reattaches from `<app data>/sidecars/<name>.json` over a mutually
+authenticated (HMAC both ways) loopback control connection (status `detached` / `reattached`, the
+same port and secrets), quitting leaves it running, `stop()` / `stopSidecars()` / a full-app update
+end it, another app version's instance is replaced; it ends itself once its record is gone; in it
+`denextSidecar.detached.attached` / `onAttachedChange(fn)`; `detachedSidecars()` /
+`stopDetachedSidecar(name)` on `runDesktop`'s result list and stop leftovers (show the user it keeps
+running). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
---node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
+--node-modules [--detached]` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a

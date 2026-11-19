@@ -333,6 +333,7 @@ export {
   type DesktopSecureStoreConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
+  type DesktopSidecarDetachedConfig,
   type DesktopSidecarLoginShellEnvConfig,
   type DesktopSidecarReadyConfig,
   type DesktopSidecarRestartConfig,

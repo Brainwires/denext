@@ -50,6 +50,27 @@ and this project adheres to
 - **The project UI's config form renders a list of alternative shapes as typed rows** (each row
   its own branch picker and fields) instead of a raw JSON box, and picks the object branch whose
   required keys a value has.
+- **Detached sidecars: a module sidecar that outlives the app.** `detached: true` (or
+  `{ exitAfterMs, keepAcrossUpdates }`) on a `run: { module }` sidecar runs it as its own OS
+  process (the app's executable started again headless on the module, in a session of its own,
+  its output appended to its log file) instead of a worker. Quitting the app leaves it running;
+  the next launch finds it in the app's registry (`<app data>/sidecars/<name>.json`, `0600` in a
+  `0700` folder, written atomically) and reattaches over a loopback control connection on which
+  both sides prove a per-start key (HMAC-SHA256 over both nonces, the key never sent; lines capped
+  at 8 KiB, a 5 s handshake, at most 16 unauthenticated connections), with `detached: true` and
+  `reattached: true` on its status and the port, values and secrets it was started with.
+  `sidecar(name).stop()`, `stopSidecars()` and installing a full-app update end it (shutdown, then
+  a forced kill only of the process the authenticated reply named, where the app may signal
+  processes); another app version's instance is replaced at launch unless `keepAcrossUpdates`;
+  undeclared and stale records are cleaned at launch; the sidecar ends itself once its record is
+  gone (an uninstall), when no app attached within 30 s of its start, and after `exitAfterMs`
+  without an attachment. Two instances starting at once share a start lock. In the sidecar:
+  `denextSidecar.detached.attached` / `onAttachedChange(fn)` plus `port`, `bootstrap`, `secrets`,
+  `ready()` and `onShutdown(fn)`. On `runDesktop`'s result: `detachedSidecars()` and
+  `stopDetachedSidecar(name)`. `denext desktop add sidecar --detached` writes one; packaging bakes
+  a write of `$APPDATA/sidecars`. Not with `run.exec` or `ready.stdout` (config errors). New
+  types: `SidecarDetached` and `DetachedSidecarEntry` (`denext/desktop`),
+  `DesktopSidecarDetachedConfig` (`denext/server`).
 
 ### Changed
 
@@ -58,6 +79,10 @@ and this project adheres to
   one arch has; regenerate it with `denext desktop package --regenerate-scripts` (`denext desktop
   doctor` flags an older script in an app that bundles libraries). The Linux and Windows scripts
   need no change (the copy is `buildDesktopBundle`'s).
+- **`SidecarInstance.stop()` (the sidecar launcher contract) may reject** for a detached sidecar
+  that could not be ended; `sidecar(name).stop()` then rejects with the reason and the status reads
+  `failed`. `killSidecarsNow()` takes a reason (`"exit"` lets detached sidecars go, `"update"`
+  stops them), and the sidecar stopper's `kill` receives it.
 
 ## [4.20.0] - 2026-11-17
 

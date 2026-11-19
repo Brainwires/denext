@@ -1489,6 +1489,24 @@ export interface DesktopSidecarConfig {
   expose?: Record<string, string>;
   /** What it needs beyond the app's baseline permissions, baked into the packaged app. */
   permissions?: DesktopExtraPermissions;
+  /**
+   * Run it as its own OS process that outlives the app (a `run.module` sidecar only): the next
+   * launch finds it in the app's registry (`<app data>/sidecars/`) and reattaches over an
+   * authenticated loopback control connection instead of starting another. Quitting leaves it
+   * running; `sidecar(name).stop()`, `stopSidecars()` and a full-app update end it; another app
+   * version's instance is replaced at launch unless `keepAcrossUpdates`. `exitAfterMs` ends it
+   * once no app was attached that long. Its output goes to its log file (`logs: "file"` /
+   * `"both"`) or nowhere. Not with `ready.stdout`.
+   */
+  detached?: boolean | DesktopSidecarDetachedConfig;
+}
+
+/** {@link DesktopSidecarConfig.detached} with options. */
+export interface DesktopSidecarDetachedConfig {
+  /** End it once no app instance was attached this long, at least 1 000 ms (default: never). */
+  exitAfterMs?: number;
+  /** Keep an instance another app version started instead of replacing it (default `false`). */
+  keepAcrossUpdates?: boolean;
 }
 
 /**
