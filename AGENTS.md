@@ -1303,7 +1303,13 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   it scrubs the env to the `--allow-env` names, refuses chmod / utime by path, refuses host-scoped
   `--allow-net`, and hides `.npmrc`. `test` / `bench` / REPL refuse it, so never set
   `"kernelSandbox": "enforce"` in deno.json (it breaks `deno test` and `denext dev`): put the flag on
-  the start task. `broker` still refuses: https://denext.dev/docs/kernel-sandbox
+  the start task. `broker` still refuses. Before enforcing: `denext kernel-sandbox` (this
+  machine's kernel features and a dry run of the `start` grant; a `kernel sandbox` line in
+  `denext doctor`), `denext kernel-sandbox check [-- cmd…]` (runs the app in warn mode, nothing
+  refused, and prints the grants to add). `--kernel-sandbox=warn` reports each access `enforce`
+  would refuse with its grant where the runtime has it (`kernelSandbox.stage` in
+  `deno info --json`; native code and children are seen on macOS only), and
+  `DENO_KERNEL_SANDBOX=off|warn` lowers a run's mode: https://denext.dev/docs/kernel-sandbox
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`

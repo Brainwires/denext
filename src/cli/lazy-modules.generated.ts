@@ -23,6 +23,7 @@ import "./commands/fastlane.ts";
 import "./commands/gen.ts";
 import "./commands/generate.ts";
 import "./commands/job.ts";
+import "./commands/kernel-sandbox.ts";
 import "./commands/mcp.ts";
 import "./commands/migrate.ts";
 import "./commands/migration.ts";

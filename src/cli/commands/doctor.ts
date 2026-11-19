@@ -78,6 +78,15 @@ import {
 } from "../../build/deno-toolchain.ts";
 import { revocationStatusLine } from "../../build/runtime-revocations.ts";
 import {
+  commandGrant,
+  type DryRun,
+  dryRunGrant,
+  type KernelSandboxInfo,
+  machineFeatures,
+  readKernelSandbox,
+  sandboxVerdict,
+} from "../../build/kernel-sandbox.ts";
+import {
   type LinuxLibc,
   linuxLibcProblem,
   minGlibcFor,
@@ -1220,6 +1229,7 @@ export async function collectDoctorReport(
   if (importVersions) checks.push(importVersions);
   const jail = await jailScriptsCheck(paths.projectDir, options);
   if (jail) checks.push(jail);
+  checks.push(...await kernelSandboxChecks(paths.projectDir));
   checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
@@ -1231,6 +1241,80 @@ async function collectDoctorChecks(
   options: { installLog?: string } = {},
 ): Promise<Check[]> {
   return (await collectDoctorReport(dir, options)).checks;
+}
+
+/** What {@link kernelSandboxCheck} reads; injectable so the check is testable without a runtime. */
+export interface KernelSandboxCheckFacts {
+  /** The runtime's `kernelSandbox` report, or null when it has none. */
+  readonly info: KernelSandboxInfo | null;
+  /** The `start` task's command, or null when the project has none. */
+  readonly start: string | null;
+  /** The dry run of a grant ({@link dryRunGrant}). */
+  readonly dryRun: (flags: readonly string[]) => Promise<DryRun | null>;
+}
+
+/**
+ * The kernel sandbox on this machine and for this project: the kernel features found, what the
+ * sandbox does for a run with no terminal, and a dry run of the `start` task's grant (the policy is
+ * compiled on an empty program; nothing of the app runs). Fails, not critically, when `enforce`
+ * would refuse to start the `start` task here. Null on a runtime that reports no kernel sandbox.
+ * `denext kernel-sandbox` prints the long form.
+ *
+ * @param dir The project directory.
+ * @param facts The runtime's report and the dry run (default: read from the project's `deno`).
+ * @returns The check, or null.
+ */
+export async function kernelSandboxCheck(
+  dir: string,
+  facts?: KernelSandboxCheckFacts,
+): Promise<Check | null> {
+  const f = facts ?? {
+    info: await readKernelSandbox(denoExecutable(), dir),
+    start: await startTaskCommand(dir),
+    dryRun: (flags: readonly string[]) => dryRunGrant(denoExecutable(), dir, flags),
+  };
+  const info = f.info;
+  if (!info) return null;
+  const features = machineFeatures(info).filter((x) => x.present).map((x) => x.name);
+  const parts = [
+    `${features.length ? features.join(", ") : "no kernel mechanism"} on ${info.capabilities.os}`,
+    sandboxVerdict(info),
+  ];
+  let ok = true;
+  const grant = f.start ? commandGrant(f.start) : null;
+  if (grant?.allowAll) {
+    parts.push("the start task runs with -A, which leaves nothing for the kernel to hold");
+  } else if (grant) {
+    const dry = await f.dryRun(grant.flags);
+    if (dry?.startup.length) {
+      ok = false;
+      parts.push(
+        `enforce would refuse to start the start task here: ${
+          dry.startup.map((e) => `${e.target} (${e.note ?? "the kernel can't hold it"})`).join("; ")
+        }; fix: change those grants, or run \`denext kernel-sandbox\` for the whole policy`,
+      );
+    } else if (dry) {
+      parts.push(
+        "every rule of the start task's grant can be held here (run `denext kernel-sandbox " +
+          "check` to see what the app needs under enforce)",
+      );
+    }
+  }
+  return { name: "kernel sandbox", ok, detail: parts.join("; "), critical: false };
+}
+
+/** {@link kernelSandboxCheck} as a list: empty on a runtime that reports no kernel sandbox. */
+async function kernelSandboxChecks(dir: string): Promise<Check[]> {
+  const check = await kernelSandboxCheck(dir);
+  return check ? [check] : [];
+}
+
+/** The project's `start` task command, or null. */
+async function startTaskCommand(dir: string): Promise<string | null> {
+  const task = ((await readDenoJson(dir))?.tasks as Record<string, unknown> | undefined)?.start;
+  if (typeof task === "string") return task;
+  const command = (task as { command?: unknown } | undefined)?.command;
+  return typeof command === "string" ? command : null;
 }
 
 /** Whether a failing critical check is present (the non-zero-exit condition). */

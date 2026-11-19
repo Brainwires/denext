@@ -142,27 +142,34 @@ Once the mode is known, the run's context decides what actually applies (`effect
 permission broker (`DENO_PERMISSION_BROKER_PATH`) can't use `enforce`. A prompt that would be
 possible doesn't stop `enforce`: it turns would-be prompts into denials.
 
-In the full sandbox, `auto` will choose `enforce` where the author fixed the permissions (a compiled
-program, or `auto` set explicitly) and `warn` where only the missing terminal or `--no-prompt` fixes
-them. In the preview it applies neither.
+In the full sandbox, `auto` chooses `enforce` where the author fixed the permissions (a compiled
+program, or `auto` set explicitly) and, for one stage, `warn` where only the missing terminal or
+`--no-prompt` fixes them; then `enforce` there too. In the preview it applies neither.
+[Rollout and defaults](/docs/kernel-sandbox-rollout) has the table for each stage. A mode `auto`
+chose never refuses to start: where `enforce` can't hold the grant, the run falls back to `warn`.
 
 Jupyter builds its permissions separately, so the Jupyter kernel has no kernel sandbox layer yet,
 and `enforce` refuses to start there.
 
 ## Warn mode
 
-`warn` runs your program and prints one line to stderr:
+`warn` runs your program and refuses nothing. On the runtime denext 4.20 pins it prints one line
+to stderr:
 
 ```text
 Warning kernel sandbox (warn, preview): nothing is refused; 1 rule(s) would be held by Deno's checks only. Run with --kernel-sandbox-report for the policy.
 ```
 
-The count is the number of rules the operating system would hold more loosely than Deno on this
-machine (the `fail-open` gaps in the report). In the full sandbox (design), warn mode also reads the platform's own
-records of what it would have refused: Seatbelt's entries in the macOS unified log
-(`log stream --predicate 'sender == "Sandbox"'`), and on Linux 6.15 and later the kernel's audit
-records. Landlock has no permissive mode, so on older Linux kernels warn mode can't see what
-native code would have been refused.
+The count is the number of rules `enforce` would refuse to start over on this machine (the
+`fail-open` gaps in the report).
+
+On a runtime with the full warn mode (one whose `deno info --json` has a `kernelSandbox.stage`
+field), that line is followed by one line for each access `enforce` would refuse, each naming who
+made it and the grant that would allow it, and a summary when the program ends. On macOS that
+includes what native code and child processes do; Linux has no report-only mode for file rules,
+so there it covers the policy and the programs the run starts.
+[Warn mode](/docs/kernel-sandbox-warn) has the output, the JSON-lines log
+(`DENO_KERNEL_SANDBOX_WARN_LOG`) and what each platform sees.
 
 ## `--kernel-sandbox-report`
 
@@ -316,21 +323,22 @@ set:
 }
 ```
 
-| Field           | Meaning                                                                                                                                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preview`       | `true` while the sandbox is a preview.                                                                                                                                                                    |
-| `mode`          | The mode that was asked for.                                                                                                                                                                              |
-| `source`        | Where it came from: `default`, `flag`, `env`, `config` or `compiled`.                                                                                                                                     |
-| `effective`     | What applies in this run after [the context rules](#how-the-mode-is-chosen).                                                                                                                              |
-| `wouldApply`    | What `auto` would apply here once enforcement exists.                                                                                                                                                     |
-| `reason`        | A short explanation of `effective`.                                                                                                                                                                       |
-| `enforced`      | Always `false` in this runtime, whatever the mode, a `deno.json` that sets `enforce` included. To tell whether a run there would be confined, read `effective` (`enforce`) with `enforcerBuilt` (`true`). |
-| `enforcerBuilt` | Whether this runtime has an enforcer for this platform: `true` on Linux x86_64 / aarch64 and macOS.                                                                                                       |
-| `osSandbox`     | The mechanism this platform uses: `landlock`, `seccomp`, `seatbelt`, `job-object` or `none`.                                                                                                              |
-| `landlockAbi`   | The Landlock ABI on Linux. Left out when there's no Landlock.                                                                                                                                             |
-| `capabilities`  | What the machine offers, as detected (below).                                                                                                                                                             |
-| `features`      | What this machine's mechanisms could hold (below).                                                                                                                                                        |
-| `warnings`      | Anything worth knowing about this machine or configuration.                                                                                                                                               |
+| Field           | Meaning                                                                                                                                                                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preview`       | `true` while the sandbox is a preview.                                                                                                                                                                                                  |
+| `mode`          | The mode that was asked for.                                                                                                                                                                                                            |
+| `source`        | Where it came from: `default`, `flag`, `env`, `config` or `compiled`.                                                                                                                                                                   |
+| `effective`     | What applies in this run after [the context rules](#how-the-mode-is-chosen).                                                                                                                                                            |
+| `wouldApply`    | What `auto` would apply here once enforcement exists.                                                                                                                                                                                   |
+| `stage`         | How far the rollout of `auto` has come in this runtime: `preview` (`auto` applies nothing), `r3` or `r4` ([the defaults](/docs/kernel-sandbox-rollout#the-defaults)). Left out by a runtime before the stages: treat that as `preview`. |
+| `reason`        | A short explanation of `effective`.                                                                                                                                                                                                     |
+| `enforced`      | Always `false` in this runtime, whatever the mode, a `deno.json` that sets `enforce` included. To tell whether a run there would be confined, read `effective` (`enforce`) with `enforcerBuilt` (`true`).                               |
+| `enforcerBuilt` | Whether this runtime has an enforcer for this platform: `true` on Linux x86_64 / aarch64 and macOS.                                                                                                                                     |
+| `osSandbox`     | The mechanism this platform uses: `landlock`, `seccomp`, `seatbelt`, `job-object` or `none`.                                                                                                                                            |
+| `landlockAbi`   | The Landlock ABI on Linux. Left out when there's no Landlock.                                                                                                                                                                           |
+| `capabilities`  | What the machine offers, as detected (below).                                                                                                                                                                                           |
+| `features`      | What this machine's mechanisms could hold (below).                                                                                                                                                                                      |
+| `warnings`      | Anything worth knowing about this machine or configuration.                                                                                                                                                                             |
 
 `capabilities`:
 

@@ -8,6 +8,31 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext kernel-sandbox`, and a `kernel sandbox` check in `denext doctor`.**
+  `denext kernel-sandbox` prints the kernel mechanisms this machine has (the Landlock ABI and what
+  it adds, seccomp, user namespaces; Seatbelt; the Windows job object and integrity level), what
+  the kernel sandbox applies to the project, the defaults at the runtime's rollout stage, and a
+  dry run of the `start` task's grant: the runtime compiles the kernel policy for those permission
+  flags on an empty program, so nothing of the app runs, and the command says whether
+  `--kernel-sandbox=enforce` would start here or which rules this kernel can't hold (`--task
+  <name>` reads another task, `--json` prints the data). `denext kernel-sandbox check [-- command…]`
+  runs the `start` task (or the command) with the sandbox in warn mode, where nothing is refused,
+  and sorts what the runtime reports into the grants to add (as flags and as `deno.json`
+  `permissions` entries, with who needed each and a caution on paths that usually hold
+  credentials), the rules `enforce` would refuse to start over, what no grant allows, and what is
+  known about the programs the run starts; it exits 1 when it found anything, and `--timeout
+  <seconds>` stops a server. What native code and child processes do is reported where the runtime
+  observes it (macOS, on a runtime with warn mode's observer); on Linux the command says what it
+  couldn't see. `denext doctor` gains a non-critical `kernel sandbox` line with the machine's
+  mechanisms, what applies, and the dry run's verdict. `denext upgrade` names the tasks that start
+  programs or load native code under a partial grant with no mode chosen. Guides:
+  [Warn mode](https://denext.dev/docs/kernel-sandbox-warn),
+  [Preparing for enforcement](https://denext.dev/docs/kernel-sandbox-migrating),
+  [Doctor and dry run](https://denext.dev/docs/kernel-sandbox-doctor),
+  [Rollout and defaults](https://denext.dev/docs/kernel-sandbox-rollout).
+
 ## [4.20.0] - 2026-11-17
 
 ### Added

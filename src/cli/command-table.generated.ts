@@ -46,6 +46,7 @@ const LOADERS: readonly CommandLoader[] = [
   spec("./commands/analyze.ts", "analyzeCommand"),
   spec("./commands/profile.ts", "profileCommand"),
   spec("./commands/crash-report.ts", "crashReportCommand"),
+  spec("./commands/kernel-sandbox.ts", "kernelSandboxCommand"),
   spec("./commands/migrate.ts", "migrateCommand"),
   spec("./commands/migrate.ts", "codemodCommand"),
   spec("./commands/create.ts", "createCommand"),

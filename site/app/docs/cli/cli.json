@@ -1363,6 +1363,34 @@
       ]
     },
     {
+      "name": "kernel-sandbox",
+      "summary": "What the kernel sandbox would do here, and the grants a run needs under it",
+      "usage": "denext kernel-sandbox [action] [options]",
+      "description": "  denext kernel-sandbox [status]         this machine's kernel features, what the sandbox\n                                         does for the project, and a dry run of the `start`\n                                         task's grant (nothing of the app runs)\n  denext kernel-sandbox check [-- cmd…]  run the app in warn mode (default: the `start`\n                                         task) and print the grants to add before enforce;\n                                         nothing is refused. Exits 1 when enforce would\n                                         refuse something.\nDocs: https://denext.dev/docs/kernel-sandbox-migrating",
+      "flags": [
+        {
+          "name": "task",
+          "type": "string",
+          "valueName": "<name>",
+          "description": "The deno.json task to read the grant from and to run (default: start)"
+        },
+        {
+          "name": "timeout",
+          "type": "number",
+          "valueName": "<seconds>",
+          "description": "check: stop the command after this long (a server never ends by itself)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": false,
+          "variadic": false,
+          "description": "status (default) or check"
+        }
+      ]
+    },
+    {
       "name": "lint",
       "summary": "Lint the app (deno lint)",
       "usage": "denext lint [paths] [options] [-- <deno args>]",

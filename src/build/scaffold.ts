@@ -5,6 +5,7 @@
 // auto-memo compiler enabled.
 
 import { basename, join, relative, SEPARATOR } from "@std/path";
+import { startTaskSandboxFlag } from "./kernel-sandbox.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { confineWrites, mfs } from "./migrate-io.ts";
 import { assertInsideProject, OutsideProjectError } from "./project-confine.ts";
@@ -259,7 +260,8 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // to JSR `latest`).
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
-    start: `deno run --allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
+    start:
+      `deno run ${startTaskSandboxFlag()}--allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
     // Through the CLI rather than a bare `deno test`: `deno task` runs a task's `deno` on the
     // Deno that started it (stock), while `denext test` runs on denext's Deno toolchain.
     test: `deno run -A ${cli} test`,

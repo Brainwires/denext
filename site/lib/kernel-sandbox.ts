@@ -8,6 +8,10 @@ import type { NavChild } from "../components/ui.tsx";
 /** The section's sub-pages, in reading order: route suffix and sidebar label. */
 export const KERNEL_SANDBOX_PAGES: readonly { page: string; label: string }[] = [
   { page: "modes", label: "Modes & configuration" },
+  { page: "warn", label: "Warn mode" },
+  { page: "migrating", label: "Preparing for enforcement" },
+  { page: "doctor", label: "Doctor & dry run" },
+  { page: "rollout", label: "Rollout & defaults" },
   { page: "guarantees", label: "Guarantee matrix" },
   { page: "linux", label: "Linux" },
   { page: "macos", label: "macOS" },

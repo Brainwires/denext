@@ -24,6 +24,13 @@ lead: Something that worked before fails under the kernel sandbox. How to tell w
   from `deno.json`, or with `--kernel-sandbox=warn` in place of `--kernel-sandbox=enforce` (the
   variable doesn't lower the flag). If the failure goes away, the kernel refused it.
 
+## Finding it before it fails
+
+Don't wait for a refusal. [`denext kernel-sandbox check`](/docs/kernel-sandbox-migrating#2-find-what-would-be-refused)
+runs the app with the sandbox in [warn mode](/docs/kernel-sandbox-warn) and lists the grants to
+add; `denext kernel-sandbox` says whether this machine's kernel can hold the `start` task's grant
+at all ([doctor and dry run](/docs/kernel-sandbox-doctor)).
+
 ## Turning it down safely
 
 In order of preference:
@@ -158,6 +165,22 @@ scope, not by the `--allow-ffi` list. Keep a library you don't want loaded out o
 IP addresses or `localhost` is held by port on Linux and macOS (any address on those ports,
 `169.254.169.254` included). Block what must stay unreachable outside the process (a firewall, the
 container's network policy).
+
+### A warn run breaks a browser, `sandbox-exec` or `swift build` on macOS
+
+**Cause:** on macOS, `--kernel-sandbox=warn` applies a Seatbelt profile that allows everything
+and reports. macOS doesn't nest profiles, so a program that applies a sandbox of its own refuses
+to start inside it, as it would under `enforce`. **Fix:** start a browser with `--no-sandbox`, or
+run that command with `DENO_KERNEL_SANDBOX_WARN_OBSERVE=0`, which applies nothing to the process
+and reports from the policy and the program advisories only.
+[Warn mode on macOS](/docs/kernel-sandbox-warn#macos-the-reporting-profile).
+
+### A warn run reports nothing about a child process on Linux
+
+**Cause:** Linux has no report-only mode for file rules, so warn mode can't see what native code
+and child processes would be refused there. **Fix:** run the command once with
+`--kernel-sandbox=enforce` where a failure is harmless, or run the check on a Mac.
+[Finding them on Linux](/docs/kernel-sandbox-warn#finding-them-on-linux).
 
 ### Other symptoms
 

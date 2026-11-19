@@ -37,7 +37,8 @@
 _Secure by default_ is part of denext's second mission pillar — a strict hash-based CSP, an
 SSRF-safe image optimizer, same-origin CSRF-defended Server Actions, signed `httpOnly`
 cookies, and Deno's permissions as least-privilege guardrails (checks inside Deno's APIs, not an
-OS sandbox; kernel enforcement is planned: [Permissions](https://denext.dev/docs/permissions))
+OS sandbox, unless a run opts in to the [kernel sandbox](https://denext.dev/docs/kernel-sandbox):
+[Permissions](https://denext.dev/docs/permissions))
 ([MISSION.md](./MISSION.md),
 [the CVE-defense guide](https://denext.dev/docs/security)). If you find a way through any of that,
 we want to hear about it privately first.
@@ -77,6 +78,17 @@ with you. Credit is given in the advisory and the CHANGELOG unless you ask other
   user (the dev server binds loopback unless `--lan` / `--host` opts in, and its assets answer
   only opted-in hosts — see the Tooling section of [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md));
 - the first-party `@denext/*` packages in `packages/`.
+
+**The kernel sandbox's boundary.** Where a run is confined by the kernel sandbox
+(`--kernel-sandbox=enforce`, or `auto` where it enforces), the
+[guarantee matrix](https://denext.dev/docs/kernel-sandbox-guarantees) is the claim. Native code or
+a child process doing what a **kernel-held** cell of the matrix says it can't, on a platform and
+kernel the matrix covers, is a vulnerability: report it privately. What the matrix marks as held by
+Deno's checks only, a gap `--kernel-sandbox-report` prints for the run (`documented`, or `fail-open`
+in a mode that doesn't refuse to start over it), and anything under `warn` or `off` (which refuse
+nothing) are not: they are the documented limits, and a clearer document is a welcome public
+issue. Fixes to the boundary go through a private advisory fork, and the escape test corpus gains
+a probe for each.
 
 **Out of scope**: vulnerabilities in a user's own application code or third-party
 `npm:`/`jsr:` dependencies an app adds; findings that require a compromised host or a

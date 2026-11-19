@@ -142,6 +142,7 @@ import {
   isDenextReleaseVersion,
 } from "./deno-version.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
+import { startTaskSandboxFlag } from "./kernel-sandbox.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
  * deno.json exports); the subpath equals the specifier. React-family entries come
@@ -3186,7 +3187,7 @@ type StartPermissions = "least-privilege" | "server" | "all";
 function startTask(run: string, cli: string, start: StartPermissions): string {
   if (start === "all") return `${run} ${cli} start .`;
   const sys = start === "server" ? ` ${NODE_OS_SYS}` : "";
-  return `deno run --node-modules-dir=none ${LEAST_PRIVILEGE_START}${sys} ${cli} start .`;
+  return `deno run --node-modules-dir=none ${startTaskSandboxFlag()}${LEAST_PRIVILEGE_START}${sys} ${cli} start .`;
 }
 
 function spaTasks(

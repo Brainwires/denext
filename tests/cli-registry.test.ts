@@ -36,6 +36,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "info",
     "init",
     "job",
+    "kernel-sandbox",
     "lint",
     "mcp",
     "migrate",

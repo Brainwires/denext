@@ -15,6 +15,7 @@ import { routesCommand } from "./commands/routes.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { crashReportCommand } from "./commands/crash-report.ts";
+import { kernelSandboxCommand } from "./commands/kernel-sandbox.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { upgradeCommand } from "./commands/upgrade.ts";
 import { denoCommand, toolchainCommand } from "./commands/deno-toolchain.ts";
@@ -73,6 +74,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(analyzeCommand);
   reg.register(profileCommand);
   reg.register(crashReportCommand);
+  reg.register(kernelSandboxCommand);
   // Migration + scaffolding.
   reg.register(migrateCommand);
   reg.register(codemodCommand);

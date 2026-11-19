@@ -504,18 +504,30 @@ You don't have to guess:
   `deno.json` sets `enforce`: read `effective` and `enforcerBuilt` instead. A runtime without the
   sandbox leaves the object out, so a tool can detect the feature by checking for it.
   [Field reference](/docs/kernel-sandbox-modes#deno-info---json--kernelsandbox).
-- **`denext doctor`** (design: not built yet) will check the machine (Landlock ABI and whether
-  it's enabled, seccomp, user namespaces, container or gVisor, Seatbelt availability, an outer
-  sandbox) and list every gap for the project's own `start` grant, plus known npm packages that
-  need extra grants. Until then, `deno info --json` and the report cover the machine.
+- **`denext doctor`** has a `kernel sandbox` line: the kernel mechanisms this machine has, what
+  applies to the project, and whether every rule of the `start` task's grant can be held here.
+  **`denext kernel-sandbox`** prints the long form, with a dry run of that grant that runs nothing
+  of the app. [Doctor and dry run](/docs/kernel-sandbox-doctor).
+- **`--kernel-sandbox=warn`** runs the program and reports each access `enforce` would refuse,
+  with the grant that would allow it; **`denext kernel-sandbox check`** runs the app that way and
+  sorts the result into the grants to add. [Warn mode](/docs/kernel-sandbox-warn),
+  [preparing for enforcement](/docs/kernel-sandbox-migrating).
 
-Nothing is sent anywhere. The report and `deno info --json` (and later `denext doctor`) are the
-whole interface.
+Nothing is sent anywhere. The report, `deno info --json`, warn mode's lines and the two denext
+commands are the whole interface.
 
 ## In this section
 
 - [Modes and configuration](/docs/kernel-sandbox-modes): the flag, the `deno.json` key,
   `deno compile`, the report and `deno info --json`.
+- [Warn mode](/docs/kernel-sandbox-warn): what `enforce` would refuse, reported with the grant
+  that would allow it, and nothing refused.
+- [Preparing for enforcement](/docs/kernel-sandbox-migrating): the upgrade guide, with
+  `denext kernel-sandbox check`.
+- [Doctor and dry run](/docs/kernel-sandbox-doctor): `denext doctor`'s check and
+  `denext kernel-sandbox`.
+- [Rollout and defaults](/docs/kernel-sandbox-rollout): what applies with no setting at each
+  stage, and what gates each change.
 - [Guarantee matrix](/docs/kernel-sandbox-guarantees): what each platform, kernel and mode
   enforces.
 - [Linux](/docs/kernel-sandbox-linux): Landlock, seccomp, ABI by ABI.

@@ -28,6 +28,7 @@ import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
 import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
+import { kernelSandboxUpgradeNote } from "../../build/kernel-sandbox.ts";
 import { commandMeta } from "../command-meta.ts";
 import type { StaleNativeTemplate } from "../../build/native-template-status.ts";
 
@@ -261,6 +262,7 @@ function printOutcome(
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
   reportProjectRepairs(o);
+  reportKernelSandbox(o.path);
   reportNativeTemplates(o.nativeTemplates);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
@@ -454,6 +456,18 @@ function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
       `${relative(dir, editor.path)}: the editor's Deno language server runs TypeScript 7 ` +
       `(DENEXT_TSGO_LSP=0 leaves it out; DENO_UNSTABLE_TSGO_LSP=0 keeps TypeScript 6).`,
   );
+}
+
+/** The kernel sandbox note for a project whose tasks start programs or load native code. */
+function reportKernelSandbox(configPath: string): void {
+  let denoJson: Record<string, unknown> | null = null;
+  try {
+    denoJson = parseJsonc(Deno.readTextFileSync(configPath)) as Record<string, unknown>;
+  } catch {
+    // no readable config: nothing to say
+  }
+  const note = kernelSandboxUpgradeNote(denoJson);
+  if (note) console.log(`\n${note.join("\n")}`);
 }
 
 /** The `.deno/` exclude and the jail exceptions added (or that would be). */
