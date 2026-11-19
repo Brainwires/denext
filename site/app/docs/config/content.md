@@ -492,6 +492,13 @@ See [Writing a plugin](/docs/plugins).
   (`"default"` or `"strict"`, which scopes the baked `--allow-read` / `--allow-env`),
   `installers`, `linux` and `windows` (each OS's launch settings), `extraPermissions`
   and `denoFlags`.
+  `desktop.bundle.libraries` lists the app's own native libraries (for `Deno.dlopen`), one
+  build per target: path patterns (`"native/{target}/libaudio.{ext}"`, with `{os}`, `{arch}`,
+  `{target}`, `{ext}`; or `{ path, name?, optional? }`) or per-target maps
+  (`{ name, files: { "darwin-arm64": "…" }, optional? }`). The package scripts copy each
+  target's file into its bundle and sign it with the app, and `bundledLibraryPath(name)` from
+  `denext/desktop` finds it at run time; see
+  [Desktop apps › Bundled native libraries](/docs/desktop#desktop-bundled-libraries).
   `desktop.backend` is the window engine, `"webview"` (default) or `"cef"`, for every
   target or per OS (`{ macos?, windows?, linux?, default? }`); see
   [Desktop apps › The window engine, per OS](/docs/desktop#desktop-backend).

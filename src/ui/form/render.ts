@@ -447,7 +447,10 @@ function FormRow(one: RowProps): VNode {
     "fieldset",
     { class: "pad-box" },
     h("legend", null, one.row.label, " ", rowButtonsOf(one)),
-    fieldsOf(one.row, one.entry, one.ctx),
+    // A row of alternative shapes is its union widget; an object row, its fields.
+    one.row.kind === "union"
+      ? h(Widget, { spec: one.row, value: one.entry, ctx: one.ctx })
+      : fieldsOf(one.row, one.entry, one.ctx),
   );
 }
 

@@ -542,3 +542,23 @@ Deno.test("a validation message is formatted, not shown with its markers", () =>
   assertStringIncludes(markup, "<code>basePath</code> must start with a slash");
   assertStringIncludes(markup, 'role="alert"', "it is still announced");
 });
+
+Deno.test("a list of alternative shapes (desktop.bundle.libraries) is typed rows of a union, round-tripped", () => {
+  const spec = specAt("desktop", "bundle", "libraries");
+  assertEquals(spec.kind, "list-of-forms");
+  assertEquals(spec.items?.kind, "union");
+  const value = [
+    "native/{target}/libaudio.{ext}",
+    { path: "native/{os}/libvad.{ext}", optional: true },
+    {
+      name: "x",
+      files: { "darwin-arm64": "native/mac/libx.dylib", "linux-x64": "native/libx.so" },
+    },
+  ];
+  assertRoundTrip(spec, value, "list of unions");
+  const html = render(spec, value);
+  // Each row renders its union: the branch picker and the selected branch's typed fields.
+  assertStringIncludes(html, 'value="native/{target}/libaudio.{ext}"');
+  assertStringIncludes(html, 'value="native/mac/libx.dylib"');
+  assert(!html.includes("<textarea"), "no raw JSON box");
+});

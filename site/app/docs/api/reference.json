@@ -16822,6 +16822,140 @@
           ]
         },
         {
+          "name": "DesktopBundleConfig",
+          "slug": "DesktopBundleConfig",
+          "kind": "interface",
+          "signature": "interface DesktopBundleConfig",
+          "doc": "DesktopConfig.bundle: extra files inside the packaged app.",
+          "docFull": "{@link DesktopConfig.bundle}: extra files inside the packaged app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "libraries",
+              "signature": "libraries?: Array<string | DesktopBundleLibraryPath | DesktopBundleLibraryFiles>",
+              "doc": "The app's own native libraries, one file per target (OS + architecture). Each entry is a\nproject-relative path pattern (`\"native/{target}/libaudio.{ext}\"`: `{os}` is `darwin` /\n`linux` / `windows`, `{arch}` `arm64` / `x64`, `{target}` the Rust target triple such as\n`aarch64-apple-darwin`, `{ext}` `dylib` / `so` / `dll`), the same as `{ path, name?, optional? }`,\nor an explicit per-target map `{ name, files, optional? }` (a target with no entry ships\nwithout the library). A pattern's name is its file name without the `lib` prefix and the\nextension. A missing file fails packaging for that target unless the entry is `optional`.\nPaths are relative to the project (no `..`), each naming one `.dylib`, `.so` (`.so.N`) or `.dll`."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryFiles",
+          "slug": "DesktopBundleLibraryFiles",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryFiles",
+          "doc": "A DesktopBundleConfig.libraries entry given as an explicit per-target map.",
+          "docFull": "A {@link DesktopBundleConfig.libraries} entry given as an explicit per-target map.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string",
+              "doc": "The name `bundledLibraryPath` takes."
+            },
+            {
+              "kind": "property",
+              "name": "files",
+              "signature": "files: DesktopBundleLibraryTargets",
+              "doc": "One project-relative file per target; a target with no entry ships without the library."
+            },
+            {
+              "kind": "property",
+              "name": "optional",
+              "signature": "optional?: boolean",
+              "doc": "Skip a listed target whose file is missing (with a note) instead of failing packaging."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryPath",
+          "slug": "DesktopBundleLibraryPath",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryPath",
+          "doc": "A DesktopBundleConfig.libraries entry given as a path pattern.",
+          "docFull": "A {@link DesktopBundleConfig.libraries} entry given as a path pattern.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "path: string",
+              "doc": "The project-relative path pattern (`{os}`, `{arch}`, `{target}`, `{ext}`)."
+            },
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name?: string",
+              "doc": "The name `bundledLibraryPath` takes. Default: the file name without `lib` and extension."
+            },
+            {
+              "kind": "property",
+              "name": "optional",
+              "signature": "optional?: boolean",
+              "doc": "Skip a target whose file is missing (with a note) instead of failing packaging."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryTargets",
+          "slug": "DesktopBundleLibraryTargets",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryTargets",
+          "doc": "The targets a DesktopBundleLibraryFiles map names, each a project-relative file.",
+          "docFull": "The targets a {@link DesktopBundleLibraryFiles} map names, each a project-relative file.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "darwin-arm64",
+              "signature": "\"darwin-arm64\"?: string",
+              "doc": "macOS on Apple silicon (`aarch64-apple-darwin`)."
+            },
+            {
+              "kind": "property",
+              "name": "darwin-x64",
+              "signature": "\"darwin-x64\"?: string",
+              "doc": "macOS on Intel (`x86_64-apple-darwin`)."
+            },
+            {
+              "kind": "property",
+              "name": "linux-arm64",
+              "signature": "\"linux-arm64\"?: string",
+              "doc": "Linux on ARM64 (`aarch64-unknown-linux-gnu`)."
+            },
+            {
+              "kind": "property",
+              "name": "linux-x64",
+              "signature": "\"linux-x64\"?: string",
+              "doc": "Linux on x86-64 (`x86_64-unknown-linux-gnu`)."
+            },
+            {
+              "kind": "property",
+              "name": "windows-arm64",
+              "signature": "\"windows-arm64\"?: string",
+              "doc": "Windows on ARM64 (`aarch64-pc-windows-msvc`)."
+            },
+            {
+              "kind": "property",
+              "name": "windows-x64",
+              "signature": "\"windows-x64\"?: string",
+              "doc": "Windows on x86-64 (`x86_64-pc-windows-msvc`)."
+            }
+          ]
+        },
+        {
           "name": "DesktopCapabilitiesConfig",
           "slug": "DesktopCapabilitiesConfig",
           "kind": "interface",
@@ -17110,6 +17244,12 @@
               "name": "denoFlags",
               "signature": "denoFlags?: string[]",
               "doc": "Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the\npackage scripts: for a project that needs them to build at all. npm resolution needs none:\na project with a package.json or node_modules (a pnpm workspace member included) is built\nwith `--node-modules-dir=none --exclude-unused-npm` already.\nOne flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`,\n`--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`,\n`--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`,\n`--conditions` and `--unstable-*`. Permission flags are refused: they come from\n{@link capabilities} and {@link extraPermissions}."
+            },
+            {
+              "kind": "property",
+              "name": "bundle",
+              "signature": "bundle?: DesktopBundleConfig",
+              "doc": "Extra files the package scripts put inside the app bundle. `libraries`: the app's own native\nlibraries (loaded with `Deno.dlopen`), one build per target, copied into each bundle\n(`Contents/Frameworks` on macOS, `lib/` on Linux, beside the `.exe` on Windows), code-signed\nwith the app and carried by its installers; `bundledLibraryPath(name)` from `denext/desktop`\nfinds the one the running app has."
             }
           ]
         },
@@ -45506,8 +45646,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, the app's own native libraries for the target (desktop.bundle.libraries, bundleDesktopLibraries), on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, the app's own native libraries\nfor the target (`desktop.bundle.libraries`, {@linkcode bundleDesktopLibraries}), on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
           "params": [
             {
               "name": "entryUrl",
@@ -45715,6 +45855,65 @@
           ]
         },
         {
+          "name": "BundledDesktopLibraries",
+          "slug": "BundledDesktopLibraries",
+          "kind": "interface",
+          "signature": "interface BundledDesktopLibraries",
+          "doc": "What bundleDesktopLibraries copied, and what it skipped.",
+          "docFull": "What {@linkcode bundleDesktopLibraries} copied, and what it skipped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "copied",
+              "signature": "readonly copied: string[]",
+              "doc": "The files written into the bundle."
+            },
+            {
+              "kind": "property",
+              "name": "skipped",
+              "signature": "readonly skipped: string[]",
+              "doc": "The optional libraries skipped for want of a file (`name: path`)."
+            }
+          ]
+        },
+        {
+          "name": "bundleDesktopLibraries",
+          "slug": "bundleDesktopLibraries",
+          "kind": "function",
+          "signature": "bundleDesktopLibraries(entryUrl: string, os: DesktopOs, bundle: string, target?: string, log?: (line: string) => void): Promise<BundledDesktopLibraries>",
+          "doc": "Copy the app's native libraries (desktop.bundle.libraries) built for target into bundle: Contents/Frameworks in a macOS .app, lib/ in a Linux bundle directory, beside the .exe on Windows. A library whose file is missing fails the run, naming the path it looked for, unless its entry is optional (then it is skipped with a note); a file the bundle already has (one of the runtime's own) is never overwritten. On macOS call it before code-signing: the script's signing pass signs each library with the app's identity, inside out, before the bundle. Prints desktopLibrariesFfiNote when it copied any.",
+          "docFull": "Copy the app's native libraries (`desktop.bundle.libraries`) built for `target` into `bundle`:\n`Contents/Frameworks` in a macOS `.app`, `lib/` in a Linux bundle directory, beside the `.exe` on\nWindows. A library whose file is missing fails the run, naming the path it looked for, unless\nits entry is `optional` (then it is skipped with a note); a file the bundle already has (one of\nthe runtime's own) is never overwritten. On macOS call it before code-signing: the script's\nsigning pass signs each library with the app's identity, inside out, before the bundle. Prints\n{@linkcode desktopLibrariesFfiNote} when it copied any.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "bundle",
+              "doc": "The .app (macOS) or bundle directory (Linux / Windows) deno desktop wrote."
+            },
+            {
+              "name": "target",
+              "doc": "The Rust target triple being built (aarch64-apple-darwin), or \"host\"."
+            },
+            {
+              "name": "log",
+              "doc": "Where the notes go (default console.log)."
+            }
+          ],
+          "returns": "What was copied and skipped.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "bundleDesktopVcRuntime",
           "slug": "bundleDesktopVcRuntime",
           "kind": "function",
@@ -45737,6 +45936,25 @@
           ],
           "returns": "Whether the runtime was bundled.",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "bundledLibraryPath",
+          "slug": "bundledLibraryPath",
+          "kind": "function",
+          "signature": "bundledLibraryPath(name: string): string | null",
+          "doc": "The absolute path of the bundled native library name (a desktop.bundle.libraries entry) for the running app: inside the packaged bundle (Contents/Frameworks on macOS, lib/ beside the executable on Linux, beside the .exe on Windows), or, in a denext desktop run / dev build, the project's own file for the host OS and architecture. null when this build has no such library for the host target, or outside a desktop app built from the generated entry (which imports .deno-desktop/config.json). Reads no file: loading the library with Deno.dlopen needs --allow-ffi (desktop.extraPermissions: { ffi: [\"*\"] }).",
+          "docFull": "The absolute path of the bundled native library `name` (a `desktop.bundle.libraries` entry) for\nthe running app: inside the packaged bundle (`Contents/Frameworks` on macOS, `lib/` beside the\nexecutable on Linux, beside the `.exe` on Windows), or, in a `denext desktop run` / `dev` build,\nthe project's own file for the host OS and architecture. `null` when this build has no such\nlibrary for the host target, or outside a desktop app built from the generated entry (which\nimports `.deno-desktop/config.json`). Reads no file: loading the library with `Deno.dlopen`\nneeds `--allow-ffi` (`desktop.extraPermissions: { ffi: [\"*\"] }`).",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The library's name: an entry's name, else its file name without lib and the extension (librullama_audio_ffi.dylib → rullama_audio_ffi)."
+            }
+          ],
+          "returns": "The absolute path, or null.",
+          "examples": [
+            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"rullama_audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -49069,6 +49287,12 @@
               "name": "spa",
               "signature": "readonly spa?: unknown",
               "doc": "The config's `spa` section; only `spa.proxy` is read."
+            },
+            {
+              "kind": "property",
+              "name": "bundledLibraries",
+              "signature": "readonly bundledLibraries?: unknown",
+              "doc": "The `desktop.bundle.libraries` table the desktop sync writes (per target, each library's\nproject-relative file), which `bundledLibraryPath` from `denext/desktop` reads."
             }
           ]
         },

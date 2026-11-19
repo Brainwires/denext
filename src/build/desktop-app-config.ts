@@ -11,7 +11,8 @@
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   .deno-desktop/config.json  the runtime slice of `denext.config.ts` the generated `desktop.ts`
-//                            imports (`desktop` and `spa.proxy`, JSON-serialized), so the config
+//                            imports (`desktop` and `spa.proxy`, JSON-serialized, plus the
+//                            `bundledLibraries` table of `desktop.bundle.libraries`), so the config
 //                            module and the plugins it imports are never compiled into the app;
 //                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
@@ -45,6 +46,8 @@ import { addMacosDockHelper } from "./desktop-dock-helper.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { desktopBundledLibraryTable } from "./desktop-bundle-libraries.ts";
+import type { BundledLibraryTable } from "../desktop/bundled-libraries.ts";
 import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/window-config.ts";
 import {
   activationPolicyRuntime,
@@ -829,17 +832,30 @@ async function desktopUpdatePublicKey(config: unknown): Promise<string | undefin
  * @param config The project config.
  * @returns The `.deno-desktop/config.json` value.
  */
-function desktopRuntimeConfig(config: unknown): Record<string, unknown> {
+function desktopRuntimeConfig(
+  config: unknown,
+  libraries?: BundledLibraryTable,
+): Record<string, unknown> {
   const c = config as { desktop?: unknown; spa?: { proxy?: unknown } } | null | undefined;
   const out: Record<string, unknown> = {};
   if (c?.desktop !== undefined) out.desktop = c.desktop;
   if (c?.spa?.proxy !== undefined) out.spa = { proxy: c.spa.proxy };
+  if (libraries !== undefined) out.bundledLibraries = libraries;
   return JSON.parse(JSON.stringify(out));
 }
 
-/** `.deno-desktop/config.json`'s text for `config`. */
-export function desktopRuntimeConfigText(config: unknown): string {
-  return JSON.stringify(desktopRuntimeConfig(config), null, 2) + "\n";
+/**
+ * `.deno-desktop/config.json`'s text for `config`.
+ *
+ * @param config The project config.
+ * @param libraries The `bundledLibraries` table (`desktopBundledLibraryTable`), if any.
+ * @returns The file's text.
+ */
+export function desktopRuntimeConfigText(
+  config: unknown,
+  libraries?: BundledLibraryTable,
+): string {
+  return JSON.stringify(desktopRuntimeConfig(config, libraries), null, 2) + "\n";
 }
 
 /**
@@ -857,10 +873,23 @@ async function entryImportsRuntimeConfig(root: string): Promise<boolean> {
   }
 }
 
-/** Write `.deno-desktop/config.json` (when the entry imports it and it changed), never through a symlink. */
-async function syncRuntimeConfig(
+/**
+ * Write `.deno-desktop/config.json` (when the entry imports it and it changed), never through a
+ * symlink, with the `bundledLibraries` table of `desktop.bundle.libraries`
+ * (`desktopBundledLibraryTable`). `options.projectDir` (`denext desktop run` / `dev` only, which
+ * rewrite the file without it once the build has embedded it) makes the running app answer the
+ * project's own library files instead of the bundle's.
+ *
+ * @param root The project root.
+ * @param config The project config.
+ * @param options The project directory of an unpackaged build.
+ * @returns Whether the file was written, already current, or not needed.
+ * @throws {Error} When `desktop.bundle` is invalid, or the path is a symlink.
+ */
+export async function syncDesktopRuntimeConfig(
   root: string,
   config: unknown,
+  options: { readonly projectDir?: string } = {},
 ): Promise<DesktopAppSyncReport["runtimeConfig"]> {
   if (!await entryImportsRuntimeConfig(root)) return "none";
   const dir = join(root, ".deno-desktop");
@@ -868,7 +897,8 @@ async function syncRuntimeConfig(
   if ((await isSymlink(dir)) || (await isSymlink(path))) {
     throw new Error(`refusing to write through a symlink at ${path}`);
   }
-  const content = desktopRuntimeConfigText(config);
+  const libraries = await desktopBundledLibraryTable(root, config, options.projectDir);
+  const content = desktopRuntimeConfigText(config, libraries);
   if ((await Deno.readTextFile(path).catch(() => undefined)) === content) return "unchanged";
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(path, content);
@@ -979,7 +1009,7 @@ export async function syncDesktopAppConfigAt(
     hiddenModeKnown,
   );
   const appJson = await syncAppJson(root, body);
-  const runtimeConfig = await syncRuntimeConfig(root, config);
+  const runtimeConfig = await syncDesktopRuntimeConfig(root, config);
   const include = await syncInclude(root, body !== null);
   if (body && include === "no-deno-json") {
     console.warn(

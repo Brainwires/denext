@@ -249,11 +249,14 @@ const RULES: readonly Rule[] = [
     ...base(i, "chips"),
     items: widgetFor(itemSchema(i.node), [...i.path, "0"], true),
   })],
-  // An array of objects: a typed sub-form per row.
-  [(i) => typeOf(i.node) === "array" && i.node.items?.properties !== undefined, (i) => ({
-    ...base(i, "list-of-forms"),
-    items: widgetFor(itemSchema(i.node), [...i.path, "0"], true),
-  })],
+  // An array of objects, or of alternative shapes (a path or an options object): a typed
+  // sub-form per row.
+  [(i) =>
+    typeOf(i.node) === "array" &&
+    (i.node.items?.properties !== undefined || Array.isArray(i.node.items?.anyOf)), (i) => ({
+      ...base(i, "list-of-forms"),
+      items: widgetFor(itemSchema(i.node), [...i.path, "0"], true),
+    })],
   // An array denext could not describe (a list of functions): read-only.
   [(i) => typeOf(i.node) === "array", (i) => base(i, "code")],
   // A record: key/value rows.
