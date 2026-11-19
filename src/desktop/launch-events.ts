@@ -130,6 +130,8 @@ export interface DesktopMenuCapabilities {
   readonly tooltips?: boolean;
   /** Destructive items are drawn as such (runtime 2.9.7-denext.20). */
   readonly destructive?: boolean;
+  /** The native menus read back (`getApplicationMenu`, `Deno.dock.getMenu`). */
+  readonly snapshot?: boolean;
 }
 
 /** A click on one of the app's notifications that no live `Notification` owns. */
@@ -259,6 +261,8 @@ export interface DesktopAppApi {
    * while the key window has no menu of its own; on Windows and Linux it is set on every window.
    */
   setApplicationMenu?(menu: DesktopMenuItem[] | null): void;
+  /** The macOS menu bar as it is now, read back from the OS (`null` elsewhere). */
+  getApplicationMenu?(): unknown;
   /** DevTools control: `enabled` is false when the app launched with DevTools off. */
   readonly devtools?: { readonly enabled?: boolean };
   /** `openurl` / `openfile` / `secondinstance`. */

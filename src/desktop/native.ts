@@ -427,23 +427,70 @@ export async function desktopShare(
 // --- dock menu (cap "app"; setQuickActions / onQuickAction) -------------------
 
 /**
- * `setQuickActions` on desktop: the Dock icon's menu (macOS). Resolves `false` where the OS has no
- * such menu (Windows, Linux).
+ * One Dock-menu entry as `setQuickActions` passes it: an action (`id`, `title`, optionally
+ * `enabled` / `checked`), a separator, or a submenu (`title`, `submenu`).
  */
-export async function setDesktopDockMenu(
-  actions: ReadonlyArray<{ id: string; title: string }>,
-): Promise<boolean> {
+export type DesktopDockEntry =
+  | {
+    readonly id: string;
+    readonly title: string;
+    readonly enabled?: boolean;
+    readonly checked?: boolean;
+  }
+  | { readonly type: "separator" }
+  | { readonly title: string; readonly submenu: readonly DesktopDockEntry[] };
+
+/** Dock entries as the `app` capability's wire menu. */
+function dockEntriesWire(entries: readonly DesktopDockEntry[]): unknown[] {
+  return entries.map((e) => {
+    if ("type" in e && e.type === "separator") return "separator";
+    if ("submenu" in e) return { label: e.title, children: dockEntriesWire(e.submenu) };
+    const a = e as { id: string; title: string; enabled?: boolean; checked?: boolean };
+    return {
+      id: a.id,
+      label: a.title,
+      ...(a.enabled === false ? { enabled: false } : {}),
+      ...(a.checked === true ? { checked: true } : {}),
+    };
+  });
+}
+
+/**
+ * `setQuickActions` on desktop: the Dock icon's menu (macOS), after the app's own Dock items.
+ * Resolves `false` where the OS has no such menu (Windows, Linux).
+ */
+export async function setDesktopDockMenu(entries: readonly DesktopDockEntry[]): Promise<boolean> {
   const out = await desktopRpc<{ applied?: unknown }>("app", "setDockMenu", {
-    menu: actions.length === 0 ? null : actions.map((a) => ({ id: a.id, label: a.title })),
+    menu: entries.length === 0 ? null : dockEntriesWire(entries),
   });
   return out?.applied === true;
 }
 
-/** Call `fn` with the id of each Dock-menu item the user chooses. Returns the unsubscribe. */
+/** How many of this page's `onDesktopDockMenu` subscriptions are live. */
+let dockListeners = 0;
+
+/** Tell the backend whether this page listens to its quick actions (best effort). */
+function announceDockListening(on: boolean): void {
+  desktopRpc("app", "subscribeDockMenu", { on }).catch(() => {});
+}
+
+/**
+ * Call `fn` with the id of each of the page's quick actions the user chooses in the Dock menu.
+ * One page hears each click: the key window's if it listens, else the page of the window focused
+ * most recently that listens. Returns the unsubscribe.
+ */
 export function onDesktopDockMenu(fn: (id: string) => void): () => void {
-  return onAppAction((action) => {
+  if (dockListeners++ === 0) announceDockListening(true);
+  const stop = onAppAction((action) => {
     if (action.source === "dock") fn(action.id);
   });
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    stop();
+    if (--dockListeners === 0) announceDockListening(false);
+  };
 }
 
 // --- shell (cap "shell") ----------------------------------------------------

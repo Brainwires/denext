@@ -8,7 +8,8 @@
  * @module
  */
 
-import type { WebViewHandle, WebViewState } from "./webview.ts";
+import type { WebViewDownloadAction, WebViewHandle, WebViewState } from "./webview.ts";
+import { createWebViewMedia, type WebViewMedia } from "./webview-downloads.ts";
 
 /** What a side supplies to build a handle. */
 export interface WebViewOps {
@@ -20,12 +21,26 @@ export interface WebViewOps {
   evaluate(script: string): Promise<unknown>;
   /** Close the view. */
   close(): Promise<void>;
+  /** Decide or control download `id` (`controlDownload`; `target`: `save`'s destination). */
+  control(id: number, action: WebViewDownloadAction, target?: unknown): Promise<void>;
+  /** Answer permission request `id` (`respondToPermissionRequest`). */
+  respond(id: number, allow: boolean): Promise<void>;
+  /** Show a saved download in the file manager. */
+  reveal(path: string, savedTo: unknown): Promise<void>;
+  /** The side's error for a call refused before it reaches the runtime. */
+  fail(code: string, message: string): Error;
+  /** A listener threw (it never stops the others). */
+  onListenerError(err: unknown): void;
+  /** The permission handler's limit (tests shorten it). */
+  readonly answerMs?: number;
 }
 
-/** A view's listeners by event name, and whether it closed. */
+/** A view's listeners by event name, whether it closed, and its downloads and requests. */
 export interface WebViewListeners {
   readonly listeners: Map<string, Set<(e: unknown) => void>>;
   closed: boolean;
+  /** Its downloads and permission requests (set by {@linkcode webViewHandle}). */
+  media?: WebViewMedia;
 }
 
 /** Add `fn` for `event` (a no-op on a closed view); returns the unsubscribe. */
@@ -88,6 +103,17 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
   const act = async (method: string, args: Record<string, unknown> = {}): Promise<void> => {
     await ops.call(method, args);
   };
+  const media = createWebViewMedia({
+    control: ops.control,
+    respond: ops.respond,
+    reveal: ops.reveal,
+    fail: ops.fail,
+    onListenerError: ops.onListenerError,
+    hasListeners: (event) => (v.listeners.get(event)?.size ?? 0) > 0,
+    fire: (event, detail) => fireWebViewListeners(v, event, detail, ops.onListenerError),
+    ...(ops.answerMs !== undefined ? { answerMs: ops.answerMs } : {}),
+  });
+  v.media = media;
   return {
     id,
     setBounds: (b) => act("setBounds", { x: b.x, y: b.y, width: b.width, height: b.height }),
@@ -120,6 +146,7 @@ export function webViewHandle(id: string, v: WebViewListeners, ops: WebViewOps):
         keys: keys.map((k) => typeof k === "string" ? k : { ...k }),
       }),
     on: (event, fn) => addWebViewListener(v, event, fn as (e: unknown) => void),
+    setPermissionRequestHandler: (handler) => media.setPermissionRequestHandler(handler),
     close: () => ops.close(),
   };
 }

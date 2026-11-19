@@ -534,6 +534,10 @@ function hostAppMenus(api: DesktopAppMenusApi | undefined): DesktopAppMenusApi {
     setMenuItemState: none,
     setWindowMenuAppItems: none,
     onAppMenuItem: () => () => {},
+    setDockMenu: none,
+    onDockMenuItem: () => () => {},
+    getApplicationMenu: () => null,
+    getDockMenu: () => null,
   };
 }
 

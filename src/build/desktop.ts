@@ -74,8 +74,12 @@ import {
   noDesktopWindows,
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
-import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
-import type { DesktopAppMenuItemHandler, DesktopAppMenusApi } from "../desktop/app-menus.ts";
+import type { DesktopDockMenuItem, DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type {
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+  DesktopDockMenuItemHandler,
+} from "../desktop/app-menus.ts";
 import type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 import type {
   DesktopNewWindowHandler,
@@ -131,8 +135,10 @@ export type {
   DesktopAppMenuItemContext,
   DesktopAppMenuItemHandler,
   DesktopAppMenusApi,
+  DesktopDockMenuItemHandler,
 } from "../desktop/app-menus.ts";
 export type {
+  DesktopDockMenuItem,
   DesktopMenuAnchor,
   DesktopMenuItemSpec,
   DesktopMenuItemState,
@@ -140,6 +146,7 @@ export type {
   DesktopMenuSpec,
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
+  MenuSnapshotItem,
 } from "../desktop/menu-config.ts";
 /** `desktop.webViews` as resolved ({@linkcode RunDesktopOptions.webViews}). */
 export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
@@ -150,11 +157,22 @@ export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 export type {
   CreateWebViewOptions,
   WebViewBounds,
+  WebViewDownloadAction,
+  WebViewDownloadDestination,
+  WebViewDownloadDone,
+  WebViewDownloadEvent,
+  WebViewDownloadInterruptReason,
+  WebViewDownloadItem,
+  WebViewDownloadState,
   WebViewEventMap,
   WebViewForwardKey,
   WebViewHandle,
   WebViewKeyEvent,
   WebViewLoadState,
+  WebViewPermission,
+  WebViewPermissionHandler,
+  WebViewPermissionRequest,
+  WebViewPermissionRequestEvent,
   WebViewPermissions,
   WebViewState,
 } from "../desktop/webview.ts";
@@ -843,6 +861,22 @@ export interface RunDesktopOptions {
    * (`host.onAppMenuItem`). A throw or a rejection is logged.
    */
   onAppMenuItem?: DesktopAppMenuItemHandler;
+  /**
+   * The app's own Dock menu (macOS; ignored elsewhere), set at launch: items `{ id, label,
+   * enabled?, checked? }`, `{ type: "separator" }` and submenus `{ label, submenu }`, ids unique
+   * and non-empty (a bad menu fails the launch). `setDockMenu` on the result replaces it; the
+   * pages' quick actions (`setQuickActions`) follow it in the same menu, after a separator.
+   */
+  dockMenu?: readonly DesktopDockMenuItem[];
+  /**
+   * Called once per click on a Dock menu item (macOS), the app's own (`dockMenu`, `setDockMenu`)
+   * and the pages' quick actions alike, with its `id` and the key window (`{ id, key? }`, or
+   * `null`): with no window open too. A page's quick action also reaches one page's
+   * `onQuickAction` (the key window's if it listens, else the one focused most recently that
+   * does); the app's own items never reach a page. Extensions get them too (`host.onDockMenuItem`).
+   * A throw or a rejection is logged.
+   */
+  onDockMenuItem?: DesktopDockMenuItemHandler;
   /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
@@ -1994,6 +2028,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
     ...(options.onAppMenuItem ? { onAppMenuItem: options.onAppMenuItem } : {}),
+    ...(options.dockMenu ? { dockMenu: options.dockMenu } : {}),
+    ...(options.onDockMenuItem ? { onDockMenuItem: options.onDockMenuItem } : {}),
     ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;

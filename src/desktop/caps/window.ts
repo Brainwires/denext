@@ -1317,13 +1317,14 @@ export function createWindowController(options: WindowControllerOptions): Window
     : undefined;
   const emit = (event: string, data: unknown, emitOptions?: DesktopEventAppendOptions) =>
     options.emit("window", event, data, emitOptions);
+  const picked = options.picked ?? new PickedPaths();
   const s: WindowState = {
     options,
     win,
     api: options.api,
     emit,
     exit: options.exit ?? Deno.exit,
-    picked: options.picked ?? new PickedPaths(),
+    picked,
     resolve: options.resolveDropped ?? resolveDropped,
     now: options.now ?? Date.now,
     drops: [],
@@ -1338,6 +1339,8 @@ export function createWindowController(options: WindowControllerOptions): Window
       ...(options.appOrigins ? { appOrigins: options.appOrigins } : {}),
       webViewClass: options.webViewClass ?? (Deno as unknown as { WebView?: unknown }).WebView,
       emit,
+      picked,
+      ...(options.dirs ? { dirs: options.dirs } : {}),
     }),
   };
   const capability: DesktopCapability = {
@@ -1350,6 +1353,8 @@ export function createWindowController(options: WindowControllerOptions): Window
       s.pending = undefined;
       s.drops.length = 0;
       quitStateOf(s.api).approved.delete(s);
+      // Its web views' downloads and permission requests that waited for it are settled.
+      s.webViews.pageLoaded();
     },
     methods: {
       ...windowStateMethods(s),
