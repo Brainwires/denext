@@ -121,8 +121,10 @@ Three things follow from that:
   describes. When the program ends, the run waits until its last lines are in (usually a fraction
   of a second, ten seconds at most) before it prints the summary. A program killed with a signal
   prints what had arrived by then.
-- **A warn run starts a second or two slower.** The run starts the system's log stream before it
-  applies the profile and waits for it to be ready. `enforce` has none of this cost.
+- **A warn run starts a moment slower.** The run starts the system's log stream before it applies
+  the profile, and waits until the stream delivers a first line before your code starts: usually
+  a fraction of a second, eight seconds at most on a busy machine. `enforce` has none of this
+  cost.
 - **The program's own system information isn't reported.** `sys` is held by Deno's checks for
   your JavaScript; the runtime itself reads the memory size at startup and does without it under
   `enforce`. A child process reading it is reported.
@@ -205,6 +207,8 @@ A `wouldDeny` line is one access `enforce` would refuse:
 | `grant`   | `{ "flag", "value" }`: the permission that would allow it. Left out when no permission does.                                                                         |
 | `note`    | Why no permission allows it, a caution about the grant, or for `startup` what the kernel would do instead.                                                           |
 
+| `benign` | `true` for an access the operating system's own libraries make in any program and do without ([below](#what-the-systems-own-libraries-do)). Left out otherwise. |
+
 Each distinct access (the same class and target by the same program) is written once per process.
 The file is only appended to, so remove it before a run you want to read alone.
 
@@ -213,6 +217,18 @@ To read the kernel's lines for a past run yourself on macOS, use the run's `tag`
 ```sh
 log show --last 1h --predicate 'sender == "Sandbox" AND eventMessage CONTAINS "denext-ks:4301-73eca307"'
 ```
+
+## What the system's own libraries do
+
+On macOS, Apple's logging and networking libraries read a few preference files and look up their
+own daemons the first time a process uses them, whatever the program is. The enforce profile
+refuses those and the libraries carry on without them. A warn run doesn't print them, count them
+or suggest a grant for them: they aren't your program's doing. They are in the log file with
+`"benign": true`, and `denext kernel-sandbox check` says how many it left out.
+
+The list is short and exact (the network and logging preference files, the `diagnosticd`, `logd`
+and directory-lookup services, the resolver's socket, the network configuration read, the
+text-encoding hint in the home folder). Anything else is reported.
 
 ## Turning warn mode on
 

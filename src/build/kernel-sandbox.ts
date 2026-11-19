@@ -382,6 +382,11 @@ export interface WouldDeny {
   readonly process?: { readonly pid: number; readonly name?: string };
   readonly grant?: Grant;
   readonly note?: string;
+  /**
+   * The OS's own libraries made the access and do without it when refused: logged, never a
+   * grant to add.
+   */
+  readonly benign?: boolean;
 }
 
 /** A process of the run that reported (a `run` line of a warn log). */
@@ -474,6 +479,8 @@ export interface GrantReport {
   readonly ungrantable: readonly WouldDeny[];
   /** Advisories about the programs the run started. */
   readonly advisories: readonly WouldDeny[];
+  /** Accesses by the OS's own libraries that do without them: left out of everything above. */
+  readonly benign: number;
 }
 
 /** Whether `path` is `dir` or lies beneath it. */
@@ -523,8 +530,10 @@ export function grantReport(events: readonly WouldDeny[]): GrantReport {
   const startup: WouldDeny[] = [];
   const ungrantable: WouldDeny[] = [];
   const advisories: WouldDeny[] = [];
+  let benign = 0;
   for (const event of events) {
-    if (event.class === "startup") startup.push(event);
+    if (event.benign) benign++;
+    else if (event.class === "startup") startup.push(event);
     else if (event.source === "advisory") advisories.push(event);
     else if (event.grant) addNeed(byFlag, event, event.grant);
     else ungrantable.push(event);
@@ -532,7 +541,7 @@ export function grantReport(events: readonly WouldDeny[]): GrantReport {
   const changes = [...byFlag].sort(([a], [b]) => a.localeCompare(b)).map(([flag, needs]) =>
     grantChange(flag, needs)
   );
-  return { changes, startup, ungrantable, advisories };
+  return { changes, startup, ungrantable, advisories, benign };
 }
 
 /** The deno.json `permissions` key a flag's values go under. */
@@ -619,8 +628,15 @@ export function renderGrantReport(report: GrantReport, observed: boolean): strin
       report.advisories.map((e) => noted(`  - ${e.target}`, e.note)),
     ),
   ];
-  if (!out.length) return [nothingLine(observed)];
-  out.pop(); // the last section's blank line
+  if (!out.length) out.push(nothingLine(observed), "");
+  if (report.benign) {
+    out.push(
+      `(${report.benign} access(es) by the operating system's own libraries are left out: ` +
+        "they do without them under enforce.)",
+      "",
+    );
+  }
+  out.pop(); // the last blank line
   return out;
 }
 

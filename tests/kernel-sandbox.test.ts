@@ -197,6 +197,21 @@ Deno.test("grantReport sorts a warn run into the changes to make", () => {
   assertEquals(read.neededBy, ["deno", "git", "npm"]);
   assertEquals(read.cautions, ["/Users/me/.npmrc: this path usually holds credentials"]);
   assertEquals(grantReport([]).changes, []);
+  // what the OS's own libraries do is counted apart, never a grant
+  const noisy = grantReport([
+    { class: "sys", target: "net.link.addr", source: "os", benign: true },
+    {
+      class: "read",
+      target: "/Library/Preferences/com.apple.networkd.plist",
+      source: "os",
+      grant: { flag: "--allow-read", value: "/Library/Preferences/com.apple.networkd.plist" },
+      benign: true,
+    },
+  ]);
+  assertEquals([noisy.benign, noisy.changes.length, noisy.ungrantable.length], [2, 0, 0]);
+  const lines = renderGrantReport(noisy, true);
+  assertStringIncludes(lines[0], "Nothing would be refused");
+  assertStringIncludes(lines.at(-1)!, "(2 access(es) by the operating system's own libraries");
 });
 
 Deno.test("renderGrantReport prints flags, the deno.json form and the cautions", () => {
