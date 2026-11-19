@@ -24,6 +24,12 @@
  * has no extra descriptors, so such a program is spawned through `node:child_process`, whose
  * `stdio` array has them, under the same permission checks.
  *
+ * {@linkcode detachedSidecarLauncher} runs a `detached` module sidecar as its own OS process that
+ * outlives the app: the app's executable started again headless on the module (the `spawnSelf`
+ * child shape, `sidecar-child.ts`), in a session / process group of its own, its output appended to
+ * its log file or dropped. At each start it first looks for a running instance in the app's
+ * registry and reattaches to it (see `sidecar-detached.ts`).
+ *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
  * @module
@@ -32,8 +38,30 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 import type { Writable } from "node:stream";
 import { basename, dirname, fromFileUrl, isAbsolute, join } from "@std/path";
-import type { SidecarExit } from "./sidecar.ts";
+import {
+  detachedOptions,
+  SIDECAR_DEFAULTS,
+  SIDECAR_DETACHED_ENV,
+  type SidecarDefinition,
+  type SidecarExit,
+} from "./sidecar.ts";
 import { type SidecarChildBase, sidecarChildHelpersUrl } from "./sidecar-child.ts";
+import { envAll } from "../runtime/env-safe.ts";
+import {
+  connectDetachedControl,
+  type DetachedEnd,
+  type DetachedRecord,
+  detachedRecordPath,
+  type DetachedSession,
+  type DetachedStopOptions,
+  endDetachedSession,
+  newDetachedKey,
+  probeDetachedRecord,
+  readDetachedRecord,
+  removeDetachedRecord,
+  withDetachedLock,
+  writeDetachedRecord,
+} from "./sidecar-detached.ts";
 import type {
   SidecarInstance,
   SidecarLaunchContext,
@@ -520,4 +548,304 @@ export async function resolveSidecarProgram(
   }
   if (Deno.build.os !== "windows") await Deno.chmod(target, 0o755);
   return target;
+}
+
+/** The parts of Node's `ChildProcess` the detached launcher drives. */
+interface DetachedChildProcess {
+  readonly pid?: number;
+  send(msg: unknown): boolean;
+  disconnect(): void;
+  unref(): void;
+  kill(signal?: string): boolean;
+  readonly connected: boolean;
+  on(event: string, fn: (...args: unknown[]) => void): unknown;
+  off(event: string, fn: (...args: unknown[]) => void): unknown;
+}
+
+/** Options for {@linkcode detachedSidecarLauncher}. */
+export interface DetachedLauncherOptions {
+  /** How the app starts itself again (`parentChildBase`); a base with an `error` fails each start. */
+  readonly child: SidecarChildBase;
+  /** The app's registry folder (`<app data>/sidecars`). */
+  readonly registryDir: string;
+  /** The log file its output is appended to (`logs: "file"` / `"both"`); without it, none. */
+  readonly logFile?: string;
+  /** The app's version (`currentAppVersion()`). */
+  readonly appVersion: string;
+  /** How often the sidecar re-reads its record (default 30 000 ms; tests shorten it). */
+  readonly recordPollMs?: number;
+  /** The log file size that rotates it to `.1` at a start (default 5 MB). */
+  readonly logRotateBytes?: number;
+  /** The forced kill (tests). */
+  readonly stopOptions?: DetachedStopOptions;
+}
+
+/** What the start under the lock found or made. */
+interface DetachedAttach {
+  readonly session: DetachedSession;
+  readonly record: DetachedRecord;
+  readonly reattached: boolean;
+}
+
+/** The log file's descriptor (appended, `0600`), rotated to `.1` once it outgrew `rotateBytes`. */
+async function openDetachedLog(path: string, rotateBytes: number): Promise<number> {
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const size = await Deno.stat(path).then((s) => s.size, () => 0);
+  if (size > rotateBytes) await Deno.rename(path, `${path}.1`).catch(() => {});
+  const fs = await import("node:fs");
+  return fs.openSync(path, "a", 0o600);
+}
+
+/** The child's `{ t: "control", port, pid }`, or a rejection once it ends or `ms` passed. */
+function controlMessage(
+  child: DetachedChildProcess,
+  ms: number,
+): Promise<{ port: number; pid: number }> {
+  return new Promise((resolve, reject) => {
+    const off = () => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+    const onMessage = (m: unknown) => {
+      const msg = m as { t?: unknown; port?: unknown; pid?: unknown } | null;
+      if (msg?.t !== "control" || typeof msg.port !== "number" || typeof msg.pid !== "number") {
+        return;
+      }
+      off();
+      resolve({ port: msg.port, pid: msg.pid });
+    };
+    const onExit = (code: unknown, signal: unknown) => {
+      off();
+      reject(new Error(`exited before it served its control endpoint (${signal ?? code})`));
+    };
+    const onError = (err: unknown) => {
+      off();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+    const timer = setTimeout(() => {
+      off();
+      reject(new Error(`did not serve its control endpoint within ${ms} ms`));
+    }, ms);
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+    child.on("error", onError);
+  });
+}
+
+/** What one fresh start has made: the key and its moment. */
+interface DetachedStart {
+  readonly key: string;
+  readonly startedAt: number;
+}
+
+/** The `init` message a fresh detached process gets over its IPC channel (the key travels only here). */
+function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, start: DetachedStart) {
+  const def = ctx.definition;
+  const { exitAfterMs } = detachedOptions(def);
+  return {
+    t: "init",
+    name: def.name,
+    ...(ctx.port !== undefined ? { port: ctx.port } : {}),
+    bootstrap: ctx.bootstrap ?? null,
+    secrets: ctx.secrets,
+    key: start.key,
+    appVersion: o.appVersion,
+    startedAt: start.startedAt,
+    ...(exitAfterMs !== undefined ? { exitAfterMs } : {}),
+    recordPath: detachedRecordPath(o.registryDir, def.name),
+    ...(o.recordPollMs !== undefined ? { recordPollMs: o.recordPollMs } : {}),
+    graceMs: def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs,
+  };
+}
+
+/** The registry record of a fresh start, once the process reported its endpoint. */
+function detachedRecordOf(
+  o: DetachedLauncherOptions,
+  ctx: SidecarLaunchContext,
+  start: DetachedStart,
+  control: { port: number; pid: number },
+): DetachedRecord {
+  return {
+    v: 1,
+    name: ctx.definition.name,
+    pid: control.pid,
+    startedAt: start.startedAt,
+    appVersion: o.appVersion,
+    control: { host: "127.0.0.1", port: control.port },
+    key: start.key,
+    ...(ctx.port !== undefined ? { port: ctx.port } : {}),
+    ...(ctx.values !== undefined ? { values: ctx.values } : {}),
+    secrets: ctx.secrets,
+  };
+}
+
+/**
+ * Spawn the app's executable as the detached process: in a session of its own, stdin closed, its
+ * output appended to the log file (an open descriptor it keeps) or dropped, an IPC channel.
+ */
+async function spawnDetachedProcess(
+  o: DetachedLauncherOptions,
+  ctx: SidecarLaunchContext,
+): Promise<DetachedChildProcess> {
+  const helpers = await import(sidecarChildHelpersUrl()) as {
+    childHelpers(base: SidecarChildBase): {
+      spawnSelf(args: string[], options: Record<string, unknown>): DetachedChildProcess;
+    };
+  };
+  const fd = o.logFile
+    ? await openDetachedLog(o.logFile, o.logRotateBytes ?? 5 * 1024 * 1024)
+    : undefined;
+  const out = fd ?? "ignore";
+  try {
+    // spawnSelf checks the run permission (the same message as a sidecar's own spawnSelf) and
+    // keeps the runtime's own variables out of the child's environment.
+    const child = helpers.childHelpers(o.child).spawnSelf(
+      sidecarArgs(ctx.definition.args, ctx.port),
+      {
+        detached: true,
+        windowsHide: true,
+        stdio: ["ignore", out, out, "ipc"],
+        // The app's environment where it may read it whole (`envAll`: `{}` under a scoped
+        // `--allow-env`), then the sidecar's own variables.
+        env: { ...envAll(), ...sidecarEnv(ctx), [SIDECAR_DETACHED_ENV]: "1" },
+      },
+    );
+    // A failed spawn (a missing executable) is an `error` event: never an uncaught one. The wait
+    // for the control message reports it.
+    child.on("error", () => {});
+    return child;
+  } finally {
+    if (fd !== undefined) (await import("node:fs")).closeSync(fd);
+  }
+}
+
+/** End a detached process this launch spawned but could not attach to (by its handle). */
+function abandonDetached(child: DetachedChildProcess): void {
+  try {
+    child.kill("SIGKILL"); // our own child, by its handle: never a pid read from anywhere
+  } catch { /* gone */ }
+  try {
+    if (child.connected) child.disconnect();
+  } catch { /* gone */ }
+}
+
+/** Start a fresh detached process, record it and attach: under the start lock. */
+async function spawnDetached(
+  o: DetachedLauncherOptions,
+  ctx: SidecarLaunchContext,
+): Promise<DetachedAttach> {
+  const def = ctx.definition;
+  const start: DetachedStart = { key: newDetachedKey(), startedAt: Date.now() };
+  const child = await spawnDetachedProcess(o, ctx);
+  try {
+    child.send(detachedInit(o, ctx, start));
+    const control = await controlMessage(
+      child,
+      def.ready?.timeoutMs ?? SIDECAR_DEFAULTS.readyTimeoutMs,
+    );
+    const record = detachedRecordOf(o, ctx, start, control);
+    await writeDetachedRecord(o.registryDir, record);
+    const session = await connectDetachedControl({
+      port: control.port,
+      key: start.key,
+      name: def.name,
+    });
+    if (!session) {
+      await removeDetachedRecord(o.registryDir, def.name, start.key);
+      throw new Error("its control endpoint did not authenticate");
+    }
+    // Attached: nothing ties the process to the app any more.
+    child.disconnect();
+    child.unref();
+    return { session, record, reattached: false };
+  } catch (err) {
+    abandonDetached(child);
+    throw err;
+  }
+}
+
+/** Reattach to the recorded instance, replace it, or start a fresh one: under the start lock. */
+async function attachOrStart(
+  o: DetachedLauncherOptions,
+  ctx: SidecarLaunchContext,
+): Promise<DetachedAttach> {
+  const def = ctx.definition;
+  const record = await readDetachedRecord(o.registryDir, def.name);
+  if (record) {
+    const session = await probeDetachedRecord(record);
+    if (session) {
+      if (record.appVersion === o.appVersion || detachedOptions(def).keepAcrossUpdates) {
+        return { session, record, reattached: true };
+      }
+      const graceMs = def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs;
+      const result = await endDetachedSession(session, graceMs, o.stopOptions);
+      await removeDetachedRecord(o.registryDir, def.name, record.key);
+      if (!result.ended) {
+        throw new Error(`the instance app version ${record.appVersion} started ${result.reason}`);
+      }
+    } else {
+      // Stale (a reboot, a crash, another process on its port): dropped, its pid never touched.
+      await removeDetachedRecord(o.registryDir, def.name, record.key);
+    }
+  }
+  return await spawnDetached(o, ctx);
+}
+
+/** How the session's end reads as the sidecar's exit. */
+function detachedExit(end: DetachedEnd, asked: boolean): SidecarExit {
+  if (asked) return { code: 0 };
+  if (end.bye?.error !== undefined) return { error: end.bye.error };
+  if (end.bye) return { code: end.bye.code ?? 0 };
+  return { error: "the detached sidecar ended (its control connection closed)" };
+}
+
+/**
+ * Run a detached module sidecar as its own process, or reattach to the one running. Each start
+ * takes the sidecar's start lock (`withDetachedLock`): a recorded instance whose endpoint
+ * authenticates is reattached when it runs this app version (or `keepAcrossUpdates`), else asked to
+ * shut down and replaced; a stale record is dropped. A fresh process gets its init over the IPC
+ * channel, reports its control endpoint, is recorded and authenticated, then the channel is dropped
+ * and the process unreferenced. The instance's `exited` settles when the control connection closes;
+ * `stop()` ends the process (shutdown, then a forced kill of the authenticated pid where permitted)
+ * and removes the record; `detach()` only closes the connection.
+ *
+ * @param options The child base, the registry, the log file and the app version.
+ * @returns The launcher.
+ */
+export function detachedSidecarLauncher(options: DetachedLauncherOptions): SidecarLauncher {
+  return async (ctx) => {
+    const def: SidecarDefinition = ctx.definition;
+    if ("error" in options.child) throw new Error(options.child.error);
+    const { session, record, reattached } = await withDetachedLock(
+      options.registryDir,
+      def.name,
+      () => attachOrStart(options, ctx),
+    );
+    if (!session.ready) void session.whenReady().then(() => ctx.onReadySignal());
+    else ctx.onReadySignal();
+    let asked = false;
+    let detached = false;
+    const exited = session.closed.then((end) => detachedExit(end, asked || detached));
+    return {
+      pid: session.info.pid,
+      exited,
+      detached: true,
+      reattached,
+      ready: reattached && session.ready,
+      ...(record.port !== undefined ? { port: record.port } : {}),
+      ...(record.values !== undefined ? { values: record.values } : {}),
+      detach: () => {
+        detached = true;
+        session.close();
+      },
+      stop: async (graceMs) => {
+        asked = true;
+        const result = await endDetachedSession(session, graceMs, options.stopOptions);
+        await removeDetachedRecord(options.registryDir, def.name, record.key);
+        if (!result.ended) throw new Error(`sidecar ${def.name}: ${result.reason}`);
+      },
+    };
+  };
 }

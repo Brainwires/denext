@@ -14,6 +14,7 @@
  */
 
 import {
+  isDetachedSidecar,
   SIDECAR_DEFAULTS,
   type SidecarDefinition,
   type SidecarExit,
@@ -30,10 +31,22 @@ export interface SidecarInstance {
   /** Settles once the instance has ended, however it ended. */
   readonly exited: Promise<SidecarExit>;
   /**
-   * Ask it to finish, and end it once `graceMs` has passed. Resolves once it has ended. Never
-   * rejects.
+   * Ask it to finish, and end it once `graceMs` has passed. Resolves once it has ended. Rejects
+   * only for a detached sidecar that could not be ended (the reason).
    */
   stop(graceMs: number): Promise<void>;
+  /** A detached sidecar's instance: it runs as its own process. */
+  readonly detached?: boolean;
+  /** A detached sidecar found running (started earlier) rather than started now. */
+  readonly reattached?: boolean;
+  /** Already ready (a reattached sidecar): the ready checks are not run again. */
+  readonly ready?: boolean;
+  /** The port this instance serves on, when it differs from the one picked (a reattach). */
+  readonly port?: number;
+  /** The page-visible values of this instance (a reattach: the ones it was started with). */
+  readonly values?: Readonly<Record<string, string | number | boolean | null>>;
+  /** Let go of a detached sidecar without stopping it (the app quits). */
+  detach?(): void;
 }
 
 /** What a launcher is given for one start. */
@@ -46,6 +59,8 @@ export interface SidecarLaunchContext {
   readonly bootstrap: unknown;
   /** The secrets (per launch of the app). */
   readonly secrets: Readonly<Record<string, string>>;
+  /** The page-visible values (`expose`, secrets resolved). */
+  readonly values?: Readonly<Record<string, string | number | boolean | null>>;
   /**
    * Variables from the user's login shell (`loginShellEnv`), laid under the sidecar's `env`: the
    * host sets them, per launch of the app.
@@ -136,6 +151,13 @@ export interface SidecarHandle {
 export interface SidecarSupervisor extends SidecarHandle {
   /** Start it (from `idle` or `stopped`). */
   start(): void;
+  /** Whether it is a detached sidecar. */
+  readonly detached: boolean;
+  /**
+   * The app quits: a detached sidecar is let go (its control connection closed, nothing stopped
+   * and no restart follows); any other is stopped.
+   */
+  release(): void;
 }
 
 /** A failure that ended a start or a run: why, and what to report. */
@@ -236,6 +258,9 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
   let port = options.port;
   /** Re-picks since the sidecar was last ready (bounded by `SIDECAR_PORT_REPICKS`). */
   let repicks = 0;
+  const detached = isDetachedSidecar(def);
+  /** The current instance's page values, when it brought its own (a reattach). */
+  let instanceValues: SidecarSupervisorOptions["values"];
 
   let status: SidecarStatus = {
     name: def.name,
@@ -244,6 +269,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     restarts: 0,
     since: clock.now(),
     ...(options.port !== undefined ? { port: options.port } : {}),
+    ...(detached ? { detached: true } : {}),
   };
   /** The running instance, while `starting` / `ready` / `stopping`. */
   let instance: SidecarInstance | undefined;
@@ -259,7 +285,9 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     if (patch.state !== "backoff") delete next.retryAt;
     if (patch.state !== "starting" && patch.state !== "ready" && patch.state !== "stopping") {
       delete next.pid;
+      delete next.reattached;
     }
+    if (next.reattached !== true) delete next.reattached;
     status = next as unknown as SidecarStatus;
     for (const l of [...listeners]) {
       try {
@@ -280,7 +308,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     name: def.name,
     state: status.state,
     ...(port !== undefined ? { port, url: `http://127.0.0.1:${port}` } : {}),
-    values: options.values ?? {},
+    values: instanceValues ?? options.values ?? {},
   });
 
   /** The bootstrap value for one start (a function is called with the current info). */
@@ -389,12 +417,53 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     if (!repickAfterConflict(gen)) afterEnd(exit, false);
   };
 
+  /**
+   * Take a launched instance as the current one: its port and page values when it brings its own
+   * (a reattached detached sidecar), its pid, whether it was reattached.
+   */
+  const adopt = (inst: SidecarInstance): void => {
+    instance = inst;
+    if (inst.port !== undefined) port = inst.port;
+    instanceValues = inst.values;
+    set({
+      state: "starting",
+      reattached: inst.reattached === true,
+      ...(inst.pid !== undefined ? { pid: inst.pid } : {}),
+      ...(port !== undefined ? { port } : {}),
+    });
+  };
+
+  /**
+   * How a start ends first: ready (at once for an instance that is already, a reattach), the
+   * instance's end, or the ready timeout.
+   */
+  const firstOutcome = async (
+    inst: SidecarInstance,
+    gen: number,
+    signal: Promise<void>,
+    line: Promise<void>,
+  ): Promise<Outcome> => {
+    const exited = inst.exited.then((exit): Outcome => ({ kind: "exit", exit }));
+    const timeout = deferred<Outcome>();
+    const timer = clock.setTimeout(() => timeout.resolve({ kind: "timeout" }), readyTimeoutMs);
+    const checks = inst.ready ? Promise.resolve(true) : readiness(gen, signal, line);
+    const outcome = await Promise.race([
+      checks.then((ok): Outcome => ok ? { kind: "ready" } : { kind: "timeout" }),
+      exited,
+      timeout.promise,
+    ]);
+    clock.clearTimeout(timer);
+    return outcome;
+  };
+
   /** One start: launch, then race readiness against the end and the timeout. */
   const launchOnce = (isRestart: boolean): void => {
     const gen = ++generation;
     started++;
+    instanceValues = undefined;
     set({
       state: "starting",
+      reattached: false,
       ...(isRestart ? { restarts: status.restarts + 1 } : {}),
     });
     const signal = deferred<void>();
@@ -407,6 +476,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
           ...(port !== undefined ? { port } : {}),
           bootstrap: await bootstrapValue(),
           secrets,
+          ...(options.values ? { values: options.values } : {}),
           onLine: (stream, text) => {
             if (stdoutRe?.test(text)) line.resolve();
             options.onLine?.(stream, text);
@@ -423,19 +493,8 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
         await inst.stop(0);
         return;
       }
-      instance = inst;
-      if (inst.pid !== undefined) set({ state: "starting", pid: inst.pid });
-      const exited = inst.exited.then((exit): Outcome => ({ kind: "exit", exit }));
-      const timeout = deferred<Outcome>();
-      const timer = clock.setTimeout(() => timeout.resolve({ kind: "timeout" }), readyTimeoutMs);
-      const outcome = await Promise.race([
-        readiness(gen, signal.promise, line.promise).then((ok): Outcome =>
-          ok ? { kind: "ready" } : { kind: "timeout" }
-        ),
-        exited,
-        timeout.promise,
-      ]);
-      clock.clearTimeout(timer);
+      adopt(inst);
+      const outcome = await firstOutcome(inst, gen, signal.promise, line.promise);
       if (gen !== generation) return;
       if (outcome.kind === "exit") return endedBeforeReady(gen, outcome.exit);
       if (outcome.kind === "timeout") {
@@ -470,8 +529,23 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
       const exit = await inst.exited;
       stopping = undefined;
       set({ state: "stopped", lastExit: exit });
+    }, (err) => {
+      // A detached sidecar that could not be ended: the reason, as a failure.
+      stopping = undefined;
+      const error = err instanceof Error ? err.message : String(err);
+      set({ state: "failed", lastExit: { error } });
+      throw err;
     });
     return stopping;
+  };
+
+  const release = (): void => {
+    if (!detached) return void stop().catch(() => {});
+    generation++;
+    clearTimers();
+    const inst = instance;
+    instance = undefined;
+    inst?.detach?.();
   };
 
   const onStatus = (listener: (s: SidecarStatus) => void): () => void => {
@@ -487,6 +561,8 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
 
   return {
     name: def.name,
+    detached,
+    release,
     get status() {
       return status;
     },

@@ -1,7 +1,8 @@
 /**
  * The running app's sidecars, as the parts of the desktop runtime that end the app reach them:
- * the full-app updater stops them before it installs an update, and the process's `unload` (any
- * `Deno.exit`) ends program sidecars. Kept tiny and dependency-free so `app-updater.ts` imports it
+ * the full-app updater stops them before it installs an update (detached ones included: the binary
+ * is about to be replaced), and the process's `unload` (any `Deno.exit`) ends program sidecars and
+ * lets detached ones go, still running. Kept tiny and dependency-free so `app-updater.ts` imports it
  * without the sidecar host.
  *
  * Runtime-only.
@@ -9,9 +10,15 @@
  * @module
  */
 
+/**
+ * Why the app ends its sidecars now: `"exit"` (the process ends: a detached sidecar keeps running)
+ * or `"update"` (a full-app update replaces the binary: detached sidecars are stopped too).
+ */
+export type SidecarKillReason = "exit" | "update";
+
 /** How the host ends its sidecars: `kill` now (synchronously), `stop` gracefully. */
 interface SidecarStopper {
-  readonly kill: () => void;
+  readonly kill: (reason: SidecarKillReason) => void;
   readonly stop: () => Promise<void>;
 }
 
@@ -30,17 +37,22 @@ export function registerSidecarStopper(stopper: SidecarStopper): () => void {
   if (!unloadInstalled) {
     unloadInstalled = true;
     try {
-      globalThis.addEventListener("unload", () => killSidecarsNow());
+      globalThis.addEventListener("unload", () => killSidecarsNow("exit"));
     } catch { /* no unload event here */ }
   }
   return () => stoppers.delete(stopper);
 }
 
-/** End every registered sidecar now: before a full-app update is installed, and at exit. */
-export function killSidecarsNow(): void {
+/**
+ * End every registered sidecar now: before a full-app update is installed (`"update"`: detached
+ * sidecars are asked to stop too) and at exit (`"exit"`: detached sidecars are let go, running).
+ *
+ * @param reason Why.
+ */
+export function killSidecarsNow(reason: SidecarKillReason = "exit"): void {
   for (const s of stoppers) {
     try {
-      s.kill();
+      s.kill(reason);
     } catch { /* keep going */ }
   }
 }
@@ -48,7 +60,8 @@ export function killSidecarsNow(): void {
 /**
  * Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before
  * `installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still
- * ends whatever is left.
+ * ends whatever is left. Detached sidecars (`detached: true`) are stopped too, their processes
+ * ended and their registry records removed: there is one behaviour, everything stops.
  *
  * @returns Once every sidecar has stopped.
  * @example

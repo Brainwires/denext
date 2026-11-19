@@ -5742,6 +5742,202 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           <code>spawnSelf</code>.
         </li>
       </ul>
+      <h3 id="desktop-sidecars-detached">Detached sidecars: a process that outlives the app</h3>
+      <p>
+        Every sidecar above ends with the app. A terminal wants its shells to survive quitting: a
+        daemon that keeps running, which the next launch finds and reattaches to.{" "}
+        <code>detached: true</code> on a module sidecar is that contract:
+      </p>
+      <Code lang="ts">
+        {`sidecars: [{
+  name: "ptyd",
+  run: { module: "./desktop/ptyd.ts" },
+  detached: true,                       // or { exitAfterMs: 600_000, keepAcrossUpdates: false }
+  port: "auto",
+  ready: { signal: true },
+  secrets: { token: "$random" },
+  logs: "file",
+}],
+
+// desktop/ptyd.ts: the daemon
+const sc = globalThis.denextSidecar;
+const server = startPtyServer(sc.port, sc.secrets.token);
+sc.detached.onAttachedChange((attached) => {
+  // false: the last app window quit; the shells keep running.
+  server.setBackgroundMode(!attached);
+});
+sc.onShutdown(() => server.closeAll()); // stop(), stopSidecars(), an update
+sc.ready();`}
+      </Code>
+      <ul>
+        <li>
+          A detached sidecar runs as its own OS process, not in a worker: the app&apos;s own
+          executable started again, headless, on the sidecar&apos;s module (the{" "}
+          <a href="#desktop-sidecars-children">child shape</a>{" "}
+          above, started by the app itself), in a session / process group of its own (on Windows,
+          its own console-less process group), its stdin closed and its output appended to its log
+          file (<code>logs: "file"</code> / <code>"both"</code>{" "}
+          — the file stays open in the sidecar, so it keeps logging after the app quit) or dropped (
+          <code>"inherit"</code> /{" "}
+          <code>"none"</code>: an inherited terminal would tie it to the app). It gets{" "}
+          <code>name</code>, <code>port</code>, <code>bootstrap</code>, <code>secrets</code>,{" "}
+          <code>ready()</code>, <code>onShutdown(fn)</code> and{" "}
+          <code>detached: {"{"} attached, onAttachedChange(fn) {"}"}</code>{" "}
+          (whether at least one app instance holds its control connection) on{" "}
+          <code>denextSidecar</code>, with <code>child: true</code>. <code>args</code>,{" "}
+          <code>env</code>, <code>loginShellEnv</code>, <code>port</code>, <code>ready</code> (but
+          {" "}
+          <code>ready.stdout</code>: its output never reaches the app), <code>restart</code>,{" "}
+          <code>expose</code>, <code>proxy</code> and <code>permissions</code> keep their meaning.
+        </li>
+        <li>
+          Quitting the app does not stop it: the app only closes its control connection. The next
+          launch finds it in the app&apos;s registry and reattaches:{" "}
+          <code>sidecar(name).status</code> has <code>detached: true</code> and{" "}
+          <code>reattached: true</code>, the same{" "}
+          <code>pid</code>, and the port, values and secrets it was started with (the record keeps
+          them, so the relaunched app and its page can still talk to it); <code>ready</code>{" "}
+          is not checked again. While the app runs, the control connection closing means the sidecar
+          ended, and <code>restart</code> applies (a restart is a fresh start).
+        </li>
+        <li>
+          <code>sidecar(name).stop()</code> really ends it (its <code>onShutdown</code>{" "}
+          handlers, then exit; within{" "}
+          <code>shutdown.graceMs</code>, at most 30 s) and removes its record;{" "}
+          <code>restart()</code> is stop then a fresh start. <code>stopSidecars()</code>{" "}
+          and installing a full-app update stop detached sidecars too: there is one behaviour,
+          everything stops (the binary is about to be replaced, and on Windows a running copy locks
+          it).
+        </li>
+        <li>
+          Two instances of the app starting at once (without{" "}
+          <code>singleInstance</code>) take a start lock in the registry, so one name never gets two
+          processes: the second reattaches.
+        </li>
+        <li>
+          On <code>runDesktop</code>&apos;s result, <code>detachedSidecars()</code>{" "}
+          lists the registry (<code>
+            {"{"} name, pid, startedAt, appVersion, reachable, declared {"}"}
+          </code>) and <code>stopDetachedSidecar(name)</code>{" "}
+          stops one, a leftover the app no longer declares included. The page sees the two status
+          flags through <code>sidecarStatus</code> / <code>onSidecarStatus</code>.
+        </li>
+        <li>
+          <code>denextSidecar.spawnSelf(args, {"{"} detached: true {"}"})</code>{" "}
+          in an ordinary sidecar is Node&apos;s{" "}
+          <code>detached</code>: a process nothing supervises, records or can find again.{" "}
+          <code>detached: true</code> on the definition is the supported contract.{" "}
+          <code>denext desktop add sidecar --entry … --detached</code> writes one.
+        </li>
+      </ul>
+      <h4 id="desktop-sidecars-detached-registry">The registry and the control connection</h4>
+      <p>
+        Each detached sidecar has a record, <code>&lt;app data&gt;/sidecars/&lt;name&gt;.json</code>
+        {" "}
+        (the folder <code>0700</code>, the record <code>0600</code>, written atomically):{" "}
+        <code>
+          {"{"} v, name, pid, startedAt, appVersion, control: {"{"} host, port{" "}
+          {"}"}, key, port, values, secrets {"}"}
+        </code>. <code>key</code>{" "}
+        is 32 random bytes the app makes for each start and hands the sidecar over its IPC channel
+        (never in argv or the environment); <code>appVersion</code>{" "}
+        is the version the full-app updater reports (<code>"dev"</code>{" "}
+        outside a packaged app). Before the module runs, denext&apos;s code in the sidecar opens a
+        loopback TCP control endpoint (<code>127.0.0.1</code>, a free port), which needs no
+        permission beyond the loopback grant every packaged app has. Both sides prove the key on
+        every connection without sending it: newline-delimited JSON, the client&apos;s and the
+        server&apos;s nonces, an HMAC-SHA256 from each side over a label, its role and both nonces,
+        checked in constant time. Any failure closes the socket with no detail; a line is at most 8
+        KiB, a handshake must finish within 5 s, and at most 16 connections may be waiting to
+        authenticate. An open authenticated connection is an attachment.
+      </p>
+      <h4 id="desktop-sidecars-detached-orphans">What ends a detached sidecar</h4>
+      <ul>
+        <li>
+          <strong>An update:</strong>{" "}
+          a launch whose app version differs from the record&apos;s asks the old process to shut
+          down and starts a fresh one, unless <code>detached.keepAcrossUpdates: true</code>{" "}
+          (rarely right: it keeps code from a superseded build running).
+        </li>
+        <li>
+          <strong>A dropped declaration:</strong>{" "}
+          at launch, a record whose name the app no longer declares as detached is told to shut down
+          and removed (an app that declares no sidecar at all still cleans its registry).
+        </li>
+        <li>
+          <strong>A lost registry:</strong>{" "}
+          the sidecar re-reads its own record every 30 s and whenever an app detaches; once it is
+          gone, unreadable or holds another key (the app was uninstalled, its data reset, or another
+          start replaced it), the sidecar shuts itself down. This is what cleans up after an
+          uninstall.
+        </li>
+        <li>
+          <strong>Idle (opt-in):</strong> <code>detached.exitAfterMs</code>{" "}
+          (at least 1 000) ends it once no app has been attached that long; the timer starts when
+          the last attachment closes and a new one cancels it. By default it stays until stopped.
+        </li>
+        <li>
+          <strong>Stale records:</strong>{" "}
+          a record whose endpoint does not authenticate (after a reboot or a crash) is deleted at
+          the next start, its pid never touched. A sidecar no app attaches to within 30 s of its
+          start ends itself.
+        </li>
+        <li>
+          The OS ends it at logout and shutdown. It is not a login item and is never restarted on
+          its own. Earlier than that: a kill-on-close job object the app was started in (some
+          Windows launchers), <code>KillUserProcesses=yes</code>{" "}
+          in systemd-logind, or a sandbox that ends the app&apos;s whole process tree (Flatpak,
+          Snap).
+        </li>
+      </ul>
+      <h4 id="desktop-sidecars-detached-security">Security</h4>
+      <ul>
+        <li>
+          A detached sidecar keeps running with the app&apos;s baked permissions, its code signature
+          and (macOS) its privacy grants after the last window closed and the app quit, with no Dock
+          icon, tray or window. Tell the user: an app that uses it should show that something keeps
+          running and offer to stop it (<code>detachedSidecars()</code> and{" "}
+          <code>stopDetachedSidecar()</code> exist for that).
+        </li>
+        <li>
+          The record holds the control key and the sidecar&apos;s secrets. Any process running as
+          the same user can read it, and so command the sidecar or read its secrets: the boundary of
+          the user&apos;s other app data, not a defense against same-user malware. Other users
+          cannot (a <code>0600</code> file in a <code>0700</code>{" "}
+          folder). On Windows the modes have no effect: the user profile&apos;s ACL is the
+          protection.
+        </li>
+        <li>
+          Any local process (any user) can connect to the control endpoint; none can authenticate
+          without the key. Both sides prove it, so a process that took the port after the sidecar
+          died cannot pass as it, and the key never crosses the socket. The connection is not
+          encrypted (loopback), so no secret is ever sent over it: a relaunched app reads them from
+          the record.
+        </li>
+        <li>
+          denext never signals a process id it has not authenticated: a forced kill (only where the
+          app holds the <code>run</code> permission) follows only an unanswered{" "}
+          <code>shutdown</code>{" "}
+          past its grace, and only for the pid the sidecar&apos;s own authenticated reply named on
+          that connection, so pid reuse cannot make it kill an unrelated process. Without the
+          permission <code>stop()</code> rejects with the reason and the status reads{" "}
+          <code>failed</code>; the record is removed anyway, so the sidecar ends itself at its next
+          registry check.
+        </li>
+        <li>
+          The sidecar starts no window and no web engine. denext&apos;s pinned runtime admits it
+          only as a fork of the running app (the self-fork rule above); under the stock runtime or
+          {" "}
+          <code>deno run</code> the sidecar needs <code>permissions.run</code>{" "}
+          over the executable, as <code>spawnSelf</code>{" "}
+          does, with the same error. A detached sidecar bakes a write of{" "}
+          <code>$APPDATA/sidecars</code> (its registry) into the packaged app.
+        </li>
+        <li>
+          Only a module sidecar can detach: a program (<code>run.exec</code>) has no control channel
+          denext can authenticate, so it could not be found and stopped again safely.
+        </li>
+      </ul>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
         An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop
@@ -5808,8 +6004,8 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}
         <code>whenReady</code>; <code>stopSidecars()</code> before{" "}
         <code>installAppUpdateAndRelaunch()</code>{" "}
-        gives them their graceful stop, and the install ends whatever is left), and the page from
-        {" "}
+        gives them their graceful stop, detached ones included, and the install ends whatever is
+        left), and the page from{" "}
         <code>denext/desktop/client</code>, token-gated like every bridge call:
       </p>
       <Code lang="ts">

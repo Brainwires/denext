@@ -13,7 +13,11 @@
  *
  * Orphan safety: a module sidecar is a worker of the app's process and cannot outlive it; a program
  * sidecar is sent `SIGTERM` when the app exits (`unload`) or installs a full-app update, and its
- * stdin (a pipe from the app) reaches end-of-file whenever the app's process ends.
+ * stdin (a pipe from the app) reaches end-of-file whenever the app's process ends. A detached
+ * sidecar (`detached: true`) outlives the app on purpose: the app only closes its control
+ * connection at exit, stops it before a full-app update, and at each start reattaches to it or
+ * replaces it; records the app no longer declares, and stale ones, are cleaned at `startAll` (see
+ * `sidecar-detached.ts` for the registry and its policy).
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -25,6 +29,7 @@ import { prepareSidecarModules } from "./sidecar-modules.ts";
 import { encodeBase64Url } from "@std/encoding/base64url";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import {
+  isDetachedSidecar,
   SIDECAR_DEFAULTS,
   type SidecarDefinition,
   type SidecarExposedValue,
@@ -33,6 +38,14 @@ import {
   type SidecarStatus,
 } from "./sidecar.ts";
 import {
+  cleanDetachedLeftovers,
+  currentAppVersion,
+  detachedRegistryDir,
+  type DetachedSidecarEntry,
+  listDetachedSidecars,
+  stopDetachedRecord,
+} from "./sidecar-detached.ts";
+import {
   createSidecarSupervisor,
   type SidecarClock,
   type SidecarHandle,
@@ -40,12 +53,13 @@ import {
   type SidecarSupervisor,
 } from "./sidecar-supervisor.ts";
 import {
+  detachedSidecarLauncher,
   execSidecarLauncher,
   killExecSidecars,
   resolveSidecarProgram,
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
-import { registerSidecarStopper } from "./sidecar-registry.ts";
+import { registerSidecarStopper, type SidecarKillReason } from "./sidecar-registry.ts";
 import { freeLoopbackPort, loopbackPortTaken, pickFreeLoopbackPort } from "../utils/loopback.ts";
 import { parentChildBase, type SidecarChildBase } from "./sidecar-child.ts";
 import {
@@ -89,6 +103,10 @@ export interface SidecarHostOptions {
   readonly captureLoginShellEnv?: (options: LoginShellCaptureOptions) => Promise<LoginShellCapture>;
   /** The app's `PATH` the login shell's is merged with (default `Deno.env`; tests). */
   readonly inheritedPath?: string;
+  /** The app's version a detached sidecar is recorded with (default `currentAppVersion()`). */
+  readonly appVersion?: string;
+  /** How often a detached sidecar re-reads its registry record (tests shorten it). */
+  readonly detachedRecordPollMs?: number;
 }
 
 /** The sidecars of the app, as `runDesktop` drives them. */
@@ -110,8 +128,18 @@ export interface SidecarHost {
    * Stop every sidecar (gracefully, in parallel); resolves once their log files have every line.
    */
   stopAll(): Promise<void>;
-  /** End every sidecar now (synchronously). */
-  killAll(): void;
+  /**
+   * End every sidecar now (synchronously): at exit (`"exit"`, the default) a detached sidecar is
+   * only let go; before an update (`"update"`) it is asked to stop too.
+   */
+  killAll(reason?: SidecarKillReason): void;
+  /** The app's registry of detached sidecars, each probed (`[]` without a data folder). */
+  detachedSidecars(): Promise<DetachedSidecarEntry[]>;
+  /**
+   * Stop a recorded detached sidecar and remove its record: a declared one through its handle, an
+   * undeclared leftover through its record.
+   */
+  stopDetachedSidecar(name: string): Promise<void>;
 }
 
 /** How many picks {@linkcode pickUntaken} tries before it gives up. */
@@ -155,12 +183,37 @@ function isStandalone(): boolean {
   return (Deno.build as { standalone?: boolean }).standalone === true;
 }
 
+/** The log file of a sidecar that writes its own (`logs: "file"` / `"both"`), or `undefined`. */
+function ownLogFile(def: SidecarDefinition, dataDir: string | undefined): string | undefined {
+  const mode = def.logs ?? SIDECAR_DEFAULTS.logs;
+  if ((mode !== "file" && mode !== "both") || !dataDir) return undefined;
+  return join(dataDir, "logs", `sidecar-${def.name}.log`);
+}
+
+/**
+ * A detached sidecar's launcher. It writes its log itself, so it keeps logging after the app quit;
+ * inherited stdio would tie it to the app's terminal, so `"inherit"` / `"none"` drop the output.
+ */
+function detachedLauncherOf(def: SidecarDefinition, options: SidecarHostOptions): SidecarLauncher {
+  const logFile = ownLogFile(def, options.dataDir);
+  const pollMs = options.detachedRecordPollMs;
+  return detachedSidecarLauncher({
+    child: parentChildBase(def.name, options.importMetaUrl, options.denoFlags),
+    registryDir: detachedRegistryDir(options.dataDir!),
+    appVersion: options.appVersion ?? currentAppVersion(),
+    ...(logFile ? { logFile } : {}),
+    ...(options.logRotateBytes !== undefined ? { logRotateBytes: options.logRotateBytes } : {}),
+    ...(pollMs !== undefined ? { recordPollMs: pollMs } : {}),
+  });
+}
+
 /** The default launcher of `def`: a worker for a module, a spawned program for `exec`. */
 async function defaultLauncher(
   def: SidecarDefinition,
   options: SidecarHostOptions,
 ): Promise<SidecarLauncher> {
   const base = options.importMetaUrl ?? `${toFileUrl(Deno.cwd()).href}/`;
+  if (isDetachedSidecar(def)) return detachedLauncherOf(def, options);
   if ("module" in def.run) {
     const entry = sidecarModuleUrl(def, base);
     const child = parentChildBase(def.name, options.importMetaUrl, options.denoFlags);
@@ -384,6 +437,14 @@ function nameArg(args: unknown): string {
 export async function createSidecarHost(options: SidecarHostOptions): Promise<SidecarHost> {
   const problem = sidecarListError(options.sidecars);
   if (problem) throw new Error(`desktop: sidecars${problem}`);
+  const detachedNames = options.sidecars.filter(isDetachedSidecar).map((d) => d.name);
+  if (detachedNames.length > 0 && !options.dataDir) {
+    throw new Error(
+      `desktop: sidecar "${detachedNames[0]}" is detached, which needs the app's data folder for ` +
+        "its registry (runDesktop's appDirs, from resolveDesktopCapabilities)",
+    );
+  }
+  const registryDir = options.dataDir ? detachedRegistryDir(options.dataDir) : undefined;
   const pick = options.pickPort ?? freeLoopbackPort;
   const taken = options.portTaken ?? loopbackPortTaken;
   const supervisors = new Map<string, SidecarSupervisor>();
@@ -406,8 +467,11 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     return s;
   };
 
-  const killAll = () => {
-    for (const s of supervisors.values()) void s.stop();
+  const killAll = (reason: SidecarKillReason = "exit") => {
+    for (const s of supervisors.values()) {
+      if (reason === "exit" && s.detached) s.release();
+      else void s.stop().catch(() => {});
+    }
     killExecSidecars();
   };
   const stopAll = async () => {
@@ -445,9 +509,26 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     ...(proxied ? { proxied } : {}),
     startAll() {
       registerSidecarStopper({ kill: killAll, stop: stopAll });
+      // Undeclared leftovers (an update dropped them) and stale records, in the background.
+      if (registryDir) {
+        void cleanDetachedLeftovers(registryDir, detachedNames, SIDECAR_DEFAULTS.graceMs);
+      }
       for (const s of supervisors.values()) s.start();
     },
     stopAll,
     killAll,
+    detachedSidecars: () =>
+      registryDir ? listDetachedSidecars(registryDir, detachedNames) : Promise.resolve([]),
+    async stopDetachedSidecar(name) {
+      const declared = supervisors.get(name);
+      const running = ["starting", "ready", "backoff", "stopping"];
+      if (declared?.detached && running.includes(declared.status.state)) {
+        return await declared.stop();
+      }
+      if (!registryDir) {
+        throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
+      }
+      await stopDetachedRecord(registryDir, name, SIDECAR_DEFAULTS.graceMs);
+    },
   };
 }

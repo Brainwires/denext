@@ -644,6 +644,16 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
   embedded like one inside it. The config that names it is code the build already runs, so it is
   not a confinement boundary; keep the files an app should carry inside the project.
+- **Detached sidecars:** only a module sidecar can detach (`detached: true`); a program
+  (`run.exec`) has no control channel denext can authenticate, so it cannot be found and stopped
+  again safely. A detached sidecar ends at logout and shutdown, and earlier where the app was
+  started in a kill-on-close job object (some Windows launchers), under systemd-logind's
+  `KillUserProcesses=yes`, or in a sandbox that ends the app's whole process tree (Flatpak, Snap).
+  Its registry record (control key, secrets) is readable by any process of the same user: the
+  boundary of the user's other app data, not a defense against same-user malware; on Windows its
+  `0600` / `0700` modes have no effect and the user profile's ACL is the protection. Its output
+  reaches only its log file (`logs: "file"` / `"both"`), so `ready.stdout` cannot be used, and an
+  exit of its own (not through `stop()` or denext's idle / registry checks) reads as a crash.
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no
