@@ -43,7 +43,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: sleep 60
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@b22319621b56184a647fddfdcbefa300bcb6efc5 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@523fd9da7600e6f2d16304ed10c11b1c346db4ca # pick-runners
         with:
           jobs: >-
             ${{ inputs.job == 'all'
