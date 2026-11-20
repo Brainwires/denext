@@ -8,6 +8,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
+  bundledPinRefusal,
   CHANNEL_KEYCHAIN_SERVICE,
   type ChannelDeps,
   channelMinSequenceIn,
@@ -15,6 +16,7 @@ import {
   compatLegs,
   entriesText,
   main,
+  publishedBundledPinRefusal,
   publishedChannelExpiryWarning,
   readEntries,
   refuseDroppedReleases,
@@ -22,6 +24,12 @@ import {
   withEntry,
 } from "../scripts/runtime-channel.ts";
 import { compatLegsFromTags } from "../scripts/ci/runtime-compat-legs.ts";
+import {
+  CHANNEL_FLOOR,
+  checkBundledRuntime,
+  RESIGN_RUNTIME_CHANNEL,
+  warnChannelExpiry,
+} from "../scripts/release.ts";
 import { documentOf, releaseDocument } from "../scripts/lib/runtime-release-doc.ts";
 import type { RunResult } from "../scripts/runtime-revocations.ts";
 import {
@@ -29,6 +37,7 @@ import {
   freshRuntimeChannel,
   releaseEntryFor,
   type RuntimeChannel,
+  type RuntimeChannelRelease,
   type RuntimeReleaseDocument,
   signRuntimeChannel,
   verifyReleaseDocument,
@@ -760,4 +769,144 @@ Deno.test("entries: canonical text, one per version, and the committed file is c
     "verify",
   ]);
   assert((await signRuntimeChannel(channel, [pair.privateKey])).signatures.length === 1);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The release gate's check of the bundled pin (step 0c) and its channel steps (0b, 1c, 7).
+
+/** A channel entry for `version` (only the fields bundledPinRefusal reads matter). */
+function entry(version: string, over: Partial<RuntimeChannelRelease> = {}): RuntimeChannelRelease {
+  return {
+    version,
+    tag: `denext-runtime-v${version}`,
+    deno: "2.9.8",
+    releasedAt: "2026-11-01T00:00:00Z",
+    minDenext: "4.19.0",
+    esbuild: "0.25.5",
+    laufeyApi: null,
+    minGlibc: null,
+    doc: { sha256: "0".repeat(64), size: 1 },
+    ...over,
+  };
+}
+
+const indexOf = (releases: RuntimeChannelRelease[]): RuntimeChannel => ({
+  schema: 1,
+  issuedAt: "2026-11-20T00:00:00Z",
+  expiresAt: "2027-01-01T00:00:00Z",
+  sequence: 1,
+  releases,
+});
+
+Deno.test("bundledPinRefusal: listed, not yanked or revoked, not behind a security release", () => {
+  const pin = "3.0.0-denext.30";
+  const ok = indexOf([entry("3.0.0-denext.31"), entry(pin)]);
+  assertEquals(bundledPinRefusal(ok, pin, "4.21.0", false), null, "a newer non-security release");
+  assertStringIncludes(
+    bundledPinRefusal(indexOf([entry("3.0.0-denext.31")]), pin, "4.21.0", false)!,
+    `runtime:publish denext-runtime-v${pin} --bundled`,
+  );
+  assertStringIncludes(
+    bundledPinRefusal(
+      indexOf([entry(pin, { yanked: { reason: "broken" } })]),
+      pin,
+      "4.21.0",
+      false,
+    )!,
+    "is yanked (broken)",
+  );
+  assertStringIncludes(bundledPinRefusal(ok, pin, "4.21.0", true)!, "is revoked");
+  const security = indexOf([
+    entry("3.0.0-denext.34", { security: true, minDenext: "4.22.0" }), // needs a newer denext
+    entry("3.0.0-denext.33", { security: true, yanked: { reason: "x" } }), // yanked: not the fix
+    entry("3.0.0-denext.32", { security: true }),
+    entry("3.0.0-denext.31", { security: true, maxDenext: "4.20.9" }), // this denext dropped
+    entry(pin),
+    entry("3.0.0-denext.29", { security: true }), // older: already covered
+  ]);
+  const refusal = bundledPinRefusal(security, pin, "4.21.0", false)!;
+  assertStringIncludes(refusal, "older than the security release 3.0.0-denext.32");
+  assertStringIncludes(refusal, "deno task runtime:pin 3.0.0-denext.32");
+  assertEquals(bundledPinRefusal(security, "3.0.0-denext.32", "4.21.0", false), null);
+  assertStringIncludes(
+    bundledPinRefusal(security, pin, "4.22.0", false)!,
+    "security release 3.0.0-denext.34",
+  );
+});
+
+Deno.test("bundled-pin: no key is a note; an unreadable index refuses; a listed pin passes", async () => {
+  const w = await withKey();
+  try {
+    const none = await publishedBundledPinRefusal({ ...w.deps, keys: [] }, "4.21.0");
+    assertEquals(none.refusal, null);
+    assertStringIncludes(none.note, "no runtime channel key is compiled in");
+    assertStringIncludes(
+      (await publishedBundledPinRefusal(w.deps, "4.21.0")).refusal!,
+      "no published runtime channel index could be read",
+    );
+    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    const listed = await publishedBundledPinRefusal(w.deps, "4.21.0");
+    assertEquals(listed.refusal, null);
+    assertStringIncludes(listed.note, `the bundled runtime ${VERSION} is listed in index #`);
+    w.logged.length = 0;
+    await main(["bundled-pin", "--denext", "4.21.0"], w.deps);
+    assertStringIncludes(w.logged[0], "is listed");
+    // A newer security release refuses the release; the CLI fails with the reason.
+    await main([
+      "publish",
+      "denext-runtime-v3.0.0-denext.99",
+      "--out",
+      join(w.dir, "out"),
+      "--security",
+    ], w.deps);
+    await assertRejects(
+      () => main(["bundled-pin", "--denext", "4.21.0"], w.deps),
+      Error,
+      "older than the security release 3.0.0-denext.99",
+    );
+    // Revoked, per the revoked-runtimes list.
+    const revoked = await publishedBundledPinRefusal(
+      { ...w.deps, revoked: (v) => Promise.resolve(v === VERSION) },
+      "4.21.0",
+    );
+    assertStringIncludes(revoked.refusal!, "is revoked");
+    // A copy that does not verify.
+    w.served.set(new URL("channel.json", CHANNEL_BASES[0]).href, "{}");
+    assertStringIncludes(
+      (await publishedBundledPinRefusal(w.deps, "4.21.0")).refusal!,
+      "could not be verified",
+    );
+  } finally {
+    await cleanup(w);
+  }
+});
+
+Deno.test("release steps 0b / 0c / 1c / 7 for the runtime channel", async () => {
+  const warned: string[] = [];
+  assertEquals(
+    await warnChannelExpiry(() => Promise.resolve("soon"), (l) => warned.push(l)),
+    "soon",
+  );
+  assertEquals(warned, ["0b. runtime channel: warning — soon"]);
+  assertEquals(await warnChannelExpiry(() => Promise.resolve(null), (l) => warned.push(l)), null);
+  const thrown = await warnChannelExpiry(() => Promise.reject(new Error("x")), () => {});
+  assertStringIncludes(thrown!, "could not check its expiry");
+  assertEquals(
+    await checkBundledRuntime("4.21.0", () => Promise.resolve({ refusal: null, note: "fine" })),
+    null,
+  );
+  assertEquals(
+    await checkBundledRuntime("4.21.0", (v) => Promise.resolve({ refusal: `no ${v}`, note: "" })),
+    "no 4.21.0",
+  );
+  assertStringIncludes(
+    (await checkBundledRuntime("4.21.0", () => Promise.reject(new Error("boom"))))!,
+    "could not be checked",
+  );
+  assertEquals(CHANNEL_FLOOR.slice(-2), ["scripts/runtime-channel.ts", "floor"]);
+  assertEquals(RESIGN_RUNTIME_CHANNEL.slice(-3), [
+    "scripts/runtime-channel.ts",
+    "resign",
+    "--if-due",
+  ]);
 });

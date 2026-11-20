@@ -588,6 +588,22 @@ CI: a compromised fork workflow or a replaced release asset has no signature.
    `deno task runtime:publish <the pin's tag> --bundled --min-denext <oldest denext that pins it>`,
    then the pin's `rollback` the same way. `--bundled` skips the compatibility run only for a
    release this checkout compiles in. Then `deno task runtime:verify` must pass on both URLs.
+   This is required before the next denext release: `deno task release` refuses (step 0c) a bundled
+   pin the published index does not list.
+
+**The flow end to end** (each step's output is the next step's only input):
+
+1. Fork (`Brainwires/deno`, branch `development-denext`): bump `cli/Cargo.toml`, the full `denext
+   tests` green on the exact SHA, tag `denext-runtime-v<version>`. The fork's gate is unchanged.
+2. The fork's `denext runtime` workflow builds every target, signs, attests (Sigstore, its own
+   workflow and that tag) and publishes the GitHub release with `manifest.json` and `SHA256SUMS`.
+   Nothing on the fork side signs a channel entry.
+3. Here, on the machine with the key: `runtime:publish <tag>` (below) re-checks every archive,
+   proves compatibility through `runtime-compat.yml` (dispatched on `development`, so the workflow
+   must be there), appends the entry, signs and publishes the document and the index.
+4. Machines move with `denext runtime upgrade` (or the installer) once the entry's `releasedAt`
+   is past their dependency-age hold (24 hours unless the project says otherwise). Nothing changes
+   on a machine until then, and no denext tag is cut.
 
 **Publishing a runtime release** (after the fork's release workflow built, signed, attested and
 published it):
@@ -604,8 +620,9 @@ checks (every archive against `manifest.json` and `SHA256SUMS`, hashed, `gh atte
 against the fork's release workflow and this tag) and signs nothing unless they all pass. It then
 dispatches `runtime-compat.yml -f tag=<tag>` and waits for it once (`--compat-run <id>` reads a run
 that already finished): the candidate toolchain under the latest stable denext and the previous
-minor's last patch (`scripts/ci/runtime-compat-legs.ts`); every leg must be green, and the oldest
-green leg becomes the entry's `minDenext`. The entry goes into `security/runtime-channel.json` (the
+minor's last patch (`scripts/ci/runtime-compat-legs.ts`); the whole run must be green
+(`RUNTIME_COMPAT_JOBS` and at least two `compat (denext <v>)` legs, `scripts/release-ci.ts`), and the
+oldest green leg becomes the entry's `minDenext`. The entry goes into `security/runtime-channel.json` (the
 unsigned source of every entry: a listed release is never removed, only yanked), the index is
 signed (45-day expiry, a sequence above the published one), verified against the keys compiled into
 the checkout, and published: the release document first, then the index, to the web root and in one
@@ -613,7 +630,16 @@ commit to the mirror. `--security` marks a release that fixes a security problem
 will refuse a bundled pin older than the newest such release.
 
 A release whose fork release assets are listed in the channel must keep them forever: a project lock
-names its document, and the document names those assets.
+names its document, and the document names those assets. Never delete a listed release's assets or
+re-tag it, and keep that rule in the fork's tag-ruleset notes.
+
+**What a denext release does with the channel** (`scripts/release.ts`): step 0b warns when the
+published index expires within 15 days; step 0c refuses a bundled pin
+(`src/build/deno-toolchain-pin.json`) that the index does not list, that is yanked or revoked, or that
+is older than the newest `--security` release this denext runs on (`deno task runtime:channel
+bundled-pin` runs the same check; with no channel key compiled in it is only noted); step 1c raises
+the compiled-in sequence floor; step 7 re-signs the index when fewer than 15 days remain. Fix a
+refusal with `deno task runtime:pin <version>` (then the normal release).
 
 **Other verbs.** `deno task runtime:yank <version> --reason "<one line>"` withdraws a broken (not
 dangerous: revoke a dangerous one) release from `runtime upgrade` and re-signs.
@@ -630,8 +656,26 @@ The docs-site deploy must leave `runtime/` alone: its rsync takes `--exclude /ru
 
 ### A bad runtime release
 
+**Yank or revoke?**
+
+|                                               | Yank (broken, not dangerous)                                      | Revoke (security, or data loss)                                                                               |
+| --------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Command                                       | `deno task runtime:yank <version> --reason "<one line>"`          | `deno task revocations add …` (runbook below)                                                                 |
+| Signed by                                     | the channel key                                                   | the revocation key (kept apart)                                                                               |
+| `runtime upgrade` / the installer             | stop offering it                                                  | stop offering it                                                                                              |
+| Machines already on it                        | keep running it, with one warning naming `denext runtime upgrade` | move to the newest installed compatible release it does not revoke, else the bundled rollback, with a warning |
+| `build --compile`, `desktop build \| package` | still allowed                                                     | refused (`DENEXT_ALLOW_REVOKED_RUNTIME` overrides)                                                            |
+| A denext release bundling it                  | refused (step 0c)                                                 | refused (step 0c)                                                                                             |
+| Advisory                                      | no                                                                | yes, always                                                                                                   |
+
+A yanked or revoked release stays listed (a project lock may name it) and its fork assets stay. The
+forward fix is the same for both and needs no denext release: publish the fixed runtime
+(`runtime:publish denext-runtime-v<N+1> [--security]`) and machines take it with `denext runtime
+upgrade` once the hold allows. A denext release is needed only when the bundled pin itself is the bad
+one (offline first use and channel-less machines run it).
+
 A released Deno toolchain or Deno Desktop runtime (`denext-runtime-v<version>` on
-`Brainwires/deno`) that turns out to be broken is revoked through the signed revoked-runtimes list
+`Brainwires/deno`) that turns out to be dangerous is revoked through the signed revoked-runtimes list
 (`src/build/runtime-revocations.ts`; users' side: [the toolchain docs](https://denext.dev/docs/toolchain#revoked-runtimes)).
 The list is ECDSA P-256 signed with a maintainer key; denext verifies it with the two public keys
 compiled into `src/build/runtime-revocation-keys.ts` (the active one and an offline backup). With
@@ -668,7 +712,10 @@ prints it and never writes it to disk.
    <file>` publishes later).
 3. Check from a clean `DENO_DIR`: `denext runtime version` shows the revocation and the rollback.
    Users pick it up within 12 hours, or at once on `runtime version` / `doctor`.
-4. Re-pin. When a fixed runtime N+1 exists, `deno task desktop:pin-runtime denext-runtime-vN+1`:
+4. Publish the fix and re-pin. When a fixed runtime N+1 exists, publish it to the channel first
+   (`deno task runtime:publish denext-runtime-vN+1 --security`): machines can then move with
+   `denext runtime upgrade` without waiting for a denext release. Then `deno task runtime:pin N+1`
+   (or, for a release not in the channel, `deno task desktop:pin-runtime denext-runtime-vN+1`):
    the new pins keep N-1 as their `rollback`, because N is revoked. Otherwise restore the previous
    pins (`git show <last good>:src/build/deno-toolchain-pin.json`, the same for
    `desktop-runtime-pin.json`). `--rollback <tag>` names the fallback release explicitly.

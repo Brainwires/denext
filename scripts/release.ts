@@ -18,11 +18,17 @@
 //      native-plugins.yml runs on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   0b. warn (never abort) when the published revoked-runtimes list expires within 10 days, has
-//      expired or can't be read (`deno task revocations expiry`), while there is time to re-sign
+//      expired or can't be read (`deno task revocations expiry`), while there is time to re-sign;
+//      the same for the runtime channel index within 15 days (`deno task runtime:channel expiry`)
+//   0c. the bundled runtime pin (src/build/deno-toolchain-pin.json) must be a published channel
+//      release, not yanked, not revoked, and not older than the newest `security` release this
+//      denext runs on, else ABORT (`deno task runtime:channel bundled-pin`; with no channel key
+//      compiled in it is only noted)
 //   1. bump the version pins (scripts/bump-version.ts)
 //   1c. raise the compiled-in revoked-runtimes floor to the published list's sequence
 //      (`deno task revocations floor`; a warning on failure, never an abort), so this release
-//      never takes a list older than the one current when it was cut
+//      never takes a list older than the one current when it was cut; the same for the runtime
+//      channel's compiled-in sequence floor (`deno task runtime:channel floor`)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
 //       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
@@ -45,7 +51,8 @@
 //      v<version> and push branch + tag
 //   7. re-sign the signed revoked-runtimes list when fewer than 10 days remain before it expires
 //      (`deno task revocations resign --if-due`, the keychain key; a warning on failure, never an
-//      abort: the list is advisory)
+//      abort: the list is advisory), and the runtime channel index when fewer than 15 days remain
+//      (`deno task runtime:resign --if-due`, its own keychain key; a warning on failure)
 //
 // A release that stopped in step 6 (JSR slow to list the corpus — the wait polls for the exact
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
@@ -81,6 +88,11 @@ import {
 } from "./lib/docs-corpus-package.ts";
 import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
 import { publishedExpiryWarning, realDeps as revocationsDeps } from "./runtime-revocations.ts";
+import {
+  publishedBundledPinRefusal,
+  publishedChannelExpiryWarning,
+  realDeps as channelDeps,
+} from "./runtime-channel.ts";
 import { copyStrippedTree } from "./publish-strip.ts";
 import {
   detectResume,
@@ -445,6 +457,9 @@ async function main(): Promise<void> {
   const base = await capture("git", "rev-parse", "HEAD");
   await checkCi(branch, false, base);
   await warnRevocationExpiry();
+  await warnChannelExpiry();
+  const runtimeRefusal = await checkBundledRuntime(version);
+  if (runtimeRefusal) die(`0c. ${runtimeRefusal}`);
   console.log(`\n=== Releasing denext ${version} ===\n`);
   await prepareRelease(version, false);
   // Step 0 refuses a HEAD whose ci.yml `check` job (fmt + lint + the whole suite) is not green.
@@ -458,6 +473,9 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
   console.log(`\n=== Releasing denext ${version}  (dry run) ===\n`);
   await checkCi(branch, true, await capture("git", "rev-parse", "HEAD"));
   await warnRevocationExpiry();
+  await warnChannelExpiry();
+  const runtimeRefusal = await checkBundledRuntime(version);
+  if (runtimeRefusal) console.warn(`0c. a real run would ABORT: ${runtimeRefusal}`);
   await prepareRelease(version, true);
   console.log("3. docs:api          (skipped — dry run)");
   console.log("3b. badge:tests      (skipped — dry run)");
@@ -488,6 +506,7 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
     );
   }
   console.log("7. revocations      (skipped — dry run; a real run re-signs the list when due)");
+  console.log("7. runtime channel  (skipped — dry run; a real run re-signs the index when due)");
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
 
@@ -658,6 +677,72 @@ async function publishSteps(
     throw err;
   }
   await resignRevocations();
+  await resignRuntimeChannel();
+}
+
+/** Step 7's command for the runtime channel: re-sign the index when fewer than 15 days remain. */
+export const RESIGN_RUNTIME_CHANNEL = [
+  "deno",
+  "run",
+  "-A",
+  "scripts/runtime-channel.ts",
+  "resign",
+  "--if-due",
+];
+
+/**
+ * Step 7, runtime channel: the signed index (src/build/runtime-channel.ts) expires 45 days after
+ * signing, and an expired index stops every `denext runtime upgrade`; a release re-signs it when
+ * fewer than 15 days remain. A failure (no key on this machine, offline) is a warning: commands
+ * keep running the runtime they select without it.
+ */
+async function resignRuntimeChannel(): Promise<void> {
+  console.log("\n7. Runtime channel index: re-sign when fewer than 15 days remain…");
+  const [cmd, ...args] = RESIGN_RUNTIME_CHANNEL;
+  if (await run(cmd, ...args) !== 0) {
+    console.warn(
+      "release: warning — the runtime channel index was not re-signed; run `deno task " +
+        "runtime:resign` on the machine that holds its key before it expires (CONTRIBUTING.md → " +
+        "Releasing a runtime).",
+    );
+  }
+}
+
+/**
+ * Step 0b, runtime channel: warn — never abort — when the published index expires within 15 days,
+ * has expired or can't be read, while there is time to re-sign it.
+ *
+ * @param check The check (test seam; default the published index through the real process).
+ * @param warn Where the warning goes.
+ * @returns The warning printed, or `null`.
+ */
+export async function warnChannelExpiry(
+  check: () => Promise<string | null> = () => publishedChannelExpiryWarning(channelDeps()),
+  warn: (line: string) => void = console.warn,
+): Promise<string | null> {
+  return await warnExpiry("runtime channel", check, warn);
+}
+
+/**
+ * Step 0c: the bundled runtime pin must be one the channel lists, not yanked, not revoked, and not
+ * older than the newest security release this denext runs on (scripts/runtime-channel.ts
+ * bundledPinRefusal). A real run aborts on the refusal; `--dry` reports it.
+ *
+ * @param version The denext version being released.
+ * @param check The check (test seam; default the published index through the real process).
+ * @returns The refusal, or `null`.
+ */
+export async function checkBundledRuntime(
+  version: string,
+  check: (version: string) => Promise<{ refusal: string | null; note: string }> = (v) =>
+    publishedBundledPinRefusal(channelDeps(), v),
+): Promise<string | null> {
+  const { refusal, note } = await check(version).catch((err) => ({
+    refusal: `the bundled runtime pin could not be checked (${err})`,
+    note: "",
+  }));
+  if (!refusal) console.log(`0c. bundled runtime: ${note}`);
+  return refusal;
 }
 
 /** Step 7's command: re-sign the revoked-runtimes list when fewer than 10 days remain. */
@@ -702,9 +787,18 @@ export async function warnRevocationExpiry(
   check: () => Promise<string | null> = () => publishedExpiryWarning(revocationsDeps()),
   warn: (line: string) => void = console.warn,
 ): Promise<string | null> {
+  return await warnExpiry("revoked-runtimes list", check, warn);
+}
+
+/** Step 0b's shape for one signed document: its warning (or a failed check) warned, else noted. */
+async function warnExpiry(
+  what: string,
+  check: () => Promise<string | null>,
+  warn: (line: string) => void,
+): Promise<string | null> {
   const warning = await check().catch((err) => `could not check its expiry (${err})`);
-  if (warning) warn(`0b. revoked-runtimes list: warning — ${warning}`);
-  else console.log("0b. revoked-runtimes list: not near expiry");
+  if (warning) warn(`0b. ${what}: warning — ${warning}`);
+  else console.log(`0b. ${what}: not near expiry`);
   return warning;
 }
 
@@ -717,7 +811,10 @@ export const REVOCATION_FLOOR = ["deno", "run", "-A", "scripts/runtime-revocatio
  * mirror serves. Advisory like the list: a failure (offline) is a warning, never a failed release.
  */
 async function raiseRevocationFloor(dry: boolean): Promise<void> {
-  if (dry) return console.log("1c. revocation floor (skipped — dry run)");
+  if (dry) {
+    console.log("1c. revocation floor (skipped — dry run)");
+    return console.log("1c. runtime channel floor (skipped — dry run)");
+  }
   console.log("1c. Revoked-runtimes floor: the published list's sequence…");
   const [cmd, ...args] = REVOCATION_FLOOR;
   if (await run(cmd, ...args) !== 0) {
@@ -726,7 +823,18 @@ async function raiseRevocationFloor(dry: boolean): Promise<void> {
         "keeps the previous one.",
     );
   }
+  console.log("1c. Runtime channel floor: the published index's sequence…");
+  const [fcmd, ...fargs] = CHANNEL_FLOOR;
+  if (await run(fcmd, ...fargs) !== 0) {
+    console.warn(
+      "release: warning — the compiled-in runtime channel floor was not raised; this release " +
+        "keeps the previous one.",
+    );
+  }
 }
+
+/** Step 1c's command for the runtime channel: raise its compiled-in sequence floor. */
+export const CHANNEL_FLOOR = ["deno", "run", "-A", "scripts/runtime-channel.ts", "floor"];
 
 /** Preconditions (a real run only — --dry previews regardless of tree state). */
 async function checkPreconditions(tag: string, branch: string): Promise<void> {

@@ -93,6 +93,79 @@ export const DESKTOP_WINDOW_JOBS: readonly string[] = [
  */
 export const NATIVE_PLUGINS_JOBS: readonly string[] = ["android", "ios"];
 
+/**
+ * The runtime-compat.yml jobs (the compatibility proof `deno task runtime:publish` waits for before
+ * it signs a runtime release into the channel) that must be green besides its legs: the job that
+ * picks them. Each leg is a matrix job named `compat (denext <version>)`, one per denext release
+ * the candidate runtime must run (the latest stable and the previous minor's last patch), so the
+ * legs are counted ({@linkcode RUNTIME_COMPAT_MIN_LEGS}) rather than listed.
+ */
+export const RUNTIME_COMPAT_JOBS: readonly string[] = ["pick legs and runners"];
+
+/** How many `compat (denext <v>)` legs a runtime-compat run must have run, every one green. */
+export const RUNTIME_COMPAT_MIN_LEGS = 2;
+
+/** A runtime-compat leg's job name, with the denext release it ran. */
+const COMPAT_LEG = /^compat \(denext (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\)$/;
+
+/** One leg of the runtime compatibility proof: a denext release and whether it passed. */
+export interface RuntimeCompatLeg {
+  readonly denext: string;
+  readonly ok: boolean;
+}
+
+/** The verdict on a finished runtime-compat run. */
+export interface RuntimeCompatVerdict {
+  readonly ok: boolean;
+  /** Why not (empty when ok). */
+  readonly problems: readonly string[];
+  readonly legs: readonly RuntimeCompatLeg[];
+}
+
+/**
+ * The verdict on a finished runtime-compat.yml run's jobs: every {@linkcode RUNTIME_COMPAT_JOBS}
+ * job green, at least {@linkcode RUNTIME_COMPAT_MIN_LEGS} `compat (denext <v>)` legs, every leg
+ * green, and no other job failed.
+ *
+ * @param jobs The run's jobs (`gh run view --json jobs`).
+ * @returns The verdict, with the legs it found.
+ */
+export function runtimeCompatVerdict(
+  jobs: readonly { name?: string; status?: string; conclusion?: string | null }[],
+): RuntimeCompatVerdict {
+  const named: CiJob[] = jobs.map((j) => ({
+    name: j.name ?? "",
+    status: j.status ?? "",
+    conclusion: j.conclusion ?? "",
+  }));
+  const legs = compatLegsOf(named);
+  const problems = [
+    ...unmetCiJobs(named, RUNTIME_COMPAT_JOBS),
+    ...legs.filter((leg) => !leg.ok).map((leg) => `compat (denext ${leg.denext}): red`),
+    ...(legs.length < RUNTIME_COMPAT_MIN_LEGS
+      ? [`${legs.length} compat leg(s) ran (at least ${RUNTIME_COMPAT_MIN_LEGS} must)`]
+      : []),
+    ...otherCompatFailures(named),
+  ];
+  return { ok: problems.length === 0, problems, legs };
+}
+
+/** The `compat (denext <v>)` legs of a runtime-compat run, each with whether it passed. */
+function compatLegsOf(jobs: readonly CiJob[]): RuntimeCompatLeg[] {
+  return jobs.flatMap((j) => {
+    const m = COMPAT_LEG.exec(j.name);
+    return m ? [{ denext: m[1], ok: j.conclusion === "success" }] : [];
+  });
+}
+
+/** The jobs of a runtime-compat run that are neither a leg nor required and did not pass. */
+function otherCompatFailures(jobs: readonly CiJob[]): string[] {
+  return jobs
+    .filter((j) => !COMPAT_LEG.test(j.name) && !RUNTIME_COMPAT_JOBS.includes(j.name))
+    .filter((j) => j.conclusion !== "success" && j.conclusion !== "skipped")
+    .map((j) => `${j.name}: ${j.conclusion || j.status}`);
+}
+
 /** The jobs a push to `development` skips: a run that skipped them can't vouch for a release. */
 const HEAVY_JOBS = ["integration", "next-compat", "coverage", "backend-integration"];
 

@@ -43,6 +43,9 @@
 //   deno task runtime:channel floor [--file <keys module>]
 //       raise the compiled-in minimum sequence (RUNTIME_CHANNEL_MIN_SEQUENCE in
 //       src/build/runtime-channel-keys.ts) to the published index's
+//   deno task runtime:channel bundled-pin [--denext <version>]
+//       the release gate's check: the checked-out bundled pin must be a published, un-yanked,
+//       un-revoked release, not older than the newest security release that denext runs on
 //   deno task runtime:channel release-doc <tag> [--out <f>] [--toolchain-pin-out <f>] [--unverified]
 //       write a release's document (and its toolchain pin, for DENEXT_TOOLCHAIN_PIN_FILE); the
 //       runtime-compat workflow uses `--unverified` (no download + attestation pass: the toolchain
@@ -95,6 +98,8 @@ import {
   toolchainRollbackOf,
 } from "./desktop-pin-runtime.ts";
 import { releaseDocument } from "./lib/runtime-release-doc.ts";
+import { runtimeCompatVerdict } from "./release-ci.ts";
+import { VERSION as DENEXT_VERSION } from "../src/version.ts";
 
 /** The keychain item's service (one item per slot). */
 export const CHANNEL_KEYCHAIN_SERVICE = "denext-runtime-channel";
@@ -190,12 +195,7 @@ async function gh(deps: Pick<ChannelDeps, "run">, args: string[], what: string):
 export function compatLegs(
   jobs: readonly { name?: string; conclusion?: string | null }[],
 ): CompatLeg[] {
-  const legs: CompatLeg[] = [];
-  for (const j of jobs) {
-    const m = /^compat \(denext (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\)$/.exec(j.name ?? "");
-    if (m) legs.push({ denext: m[1], ok: j.conclusion === "success" });
-  }
-  return legs;
+  return [...runtimeCompatVerdict(jobs).legs];
 }
 
 /** The id of the runtime-compat dispatch for `tag` made at or after `since`, polling briefly. */
@@ -268,7 +268,12 @@ async function realCompat(deps: ChannelDeps, tag: string, flags: Flags): Promise
     fail(`run ${id} is not a ${COMPAT_WORKFLOW} run for ${tag}`);
   }
   if (view.status !== "completed") fail(`run ${id} has not finished (${view.status})`);
-  return compatLegs(view.jobs ?? []);
+  // The whole run must be green (scripts/release-ci.ts RUNTIME_COMPAT_JOBS), not only its legs.
+  const verdict = runtimeCompatVerdict(view.jobs ?? []);
+  if (!verdict.ok) {
+    fail(`${COMPAT_WORKFLOW} run ${id} is not green: ${verdict.problems.join(", ")}`);
+  }
+  return [...verdict.legs];
 }
 
 async function realReleasedAt(deps: ChannelDeps, tag: string): Promise<string> {
@@ -821,6 +826,104 @@ export async function publishedChannelExpiryWarning(
 }
 
 /**
+ * Why a denext release must not ship with the bundled runtime `version` (the toolchain pin), given
+ * the channel index in force: the pin must be a listed release, not yanked, not revoked, and not
+ * older than the newest `security` release this denext runs on (the "don't ship known
+ * vulnerabilities" rule, made mechanical). `null` when it may ship.
+ *
+ * @param channel The verified index (an expired one still says what was published).
+ * @param version The bundled pin's version.
+ * @param denext The denext version being released.
+ * @param revoked Whether the revoked-runtimes list revokes `version`.
+ * @returns The refusal, or `null`.
+ */
+export function bundledPinRefusal(
+  channel: RuntimeChannel,
+  version: string,
+  denext: string,
+  revoked: boolean,
+): string | null {
+  const entry = channel.releases.find((r) => r.version === version);
+  if (!entry) {
+    return `the bundled runtime ${version} is not a published channel release: publish it first ` +
+      `(\`deno task runtime:publish denext-runtime-v${version} --bundled --min-denext <oldest ` +
+      `denext that pins it>\`)`;
+  }
+  if (entry.yanked) {
+    return `the bundled runtime ${version} is yanked (${entry.yanked.reason}): pin another ` +
+      "(`deno task runtime:pin <version>`)";
+  }
+  if (revoked) {
+    return `the bundled runtime ${version} is revoked: pin a fixed release ` +
+      "(`deno task runtime:pin <version>`)";
+  }
+  const runs = (r: RuntimeChannelRelease) =>
+    compareDenoVersions(r.minDenext, denext) <= 0 &&
+    (r.maxDenext === undefined || compareDenoVersions(denext, r.maxDenext) <= 0);
+  const fix = channel.releases
+    .filter((r) => r.security && !r.yanked && runs(r))
+    .filter((r) => compareDenoVersions(r.version, version) > 0)
+    .sort((a, b) => compareDenoVersions(b.version, a.version))[0];
+  if (fix) {
+    return `the bundled runtime ${version} is older than the security release ${fix.version}: ` +
+      `pin it (\`deno task runtime:pin ${fix.version}\`) — a release never ships a runtime with ` +
+      "a known vulnerability";
+  }
+  return null;
+}
+
+/**
+ * The release gate's check of the checked-out bundled pin against the published index
+ * ({@linkcode bundledPinRefusal}). With no channel key compiled in there is nothing to check
+ * against (a note, no refusal); an index that can't be read or verified is a refusal, since the
+ * pin can't be cleared of a security release then.
+ *
+ * @param deps The process seams.
+ * @param denext The denext version being released.
+ * @returns The refusal (or `null`) and one line for the log.
+ */
+export async function publishedBundledPinRefusal(
+  deps: ChannelDeps,
+  denext: string,
+): Promise<{ refusal: string | null; note: string }> {
+  const files = deps.pinFiles ?? PIN_FILES;
+  const pin = JSON.parse(await Deno.readTextFile(files.toolchain)) as { version?: string };
+  const version = pin.version ?? fail(`${files.toolchain} names no version`);
+  if (deps.keys.length === 0) {
+    return {
+      refusal: null,
+      note: `no runtime channel key is compiled in: the bundled runtime ${version} is unchecked`,
+    };
+  }
+  let channel: RuntimeChannel | null;
+  try {
+    channel = await publishedChannel(deps);
+  } catch (err) {
+    return {
+      refusal: `the published runtime channel index could not be verified (${
+        err instanceof Error ? err.message : err
+      }), so the bundled runtime ${version} can't be checked: \`deno task runtime:verify\``,
+      note: "",
+    };
+  }
+  if (!channel) {
+    return {
+      refusal: `no published runtime channel index could be read (offline?), so the bundled ` +
+        `runtime ${version} can't be checked against the security releases; retry online`,
+      note: "",
+    };
+  }
+  const refusal = bundledPinRefusal(channel, version, denext, await deps.revoked(version));
+  return {
+    refusal,
+    note: refusal
+      ? ""
+      : `the bundled runtime ${version} is listed in index #${channel.sequence}, ` +
+        "not yanked, revoked or behind a security release",
+  };
+}
+
+/**
  * The compiled-in minimum sequence `source` (the keys module) declares.
  *
  * @param source The module's text.
@@ -934,8 +1037,16 @@ async function releaseDoc(deps: ChannelDeps, tag: string, flags: Flags) {
   );
 }
 
+/** `bundled-pin [--denext <version>]`: the release gate's check, as a command. */
+async function bundledPin(deps: ChannelDeps, flags: Flags) {
+  const denext = str(flags, "denext") ?? DENEXT_VERSION;
+  const { refusal, note } = await publishedBundledPinRefusal(deps, denext);
+  if (refusal) fail(refusal);
+  deps.log(note);
+}
+
 const USAGE = "usage: deno task runtime:channel <keygen | publish | yank | resign | verify | " +
-  "expiry | floor | pin | release-doc> (see the header of scripts/runtime-channel.ts)";
+  "expiry | floor | bundled-pin | pin | release-doc> (see the header of scripts/runtime-channel.ts)";
 
 /**
  * The CLI.
@@ -945,6 +1056,7 @@ const USAGE = "usage: deno task runtime:channel <keygen | publish | yank | resig
  */
 export async function main(args: string[], deps: ChannelDeps = realDeps()): Promise<void> {
   const { positionals: [command, arg], flags } = parseArgs(args);
+  const need = (): string => arg ?? fail(USAGE);
   switch (command) {
     case "keygen": {
       const slot = typeof flags.slot === "string" ? flags.slot : "active";
@@ -959,9 +1071,9 @@ export async function main(args: string[], deps: ChannelDeps = realDeps()): Prom
       return deps.log(pub);
     }
     case "publish":
-      return await publishRelease(deps, arg ?? fail(USAGE), flags);
+      return await publishRelease(deps, need(), flags);
     case "yank":
-      return await yank(deps, arg ?? fail(USAGE), flags);
+      return await yank(deps, need(), flags);
     case "resign":
       return await resign(deps, flags);
     case "verify":
@@ -972,10 +1084,12 @@ export async function main(args: string[], deps: ChannelDeps = realDeps()): Prom
     }
     case "floor":
       return await floor(deps, flags);
+    case "bundled-pin":
+      return await bundledPin(deps, flags);
     case "pin":
-      return await pin(deps, arg ?? fail(USAGE), flags);
+      return await pin(deps, need(), flags);
     case "release-doc":
-      return await releaseDoc(deps, arg ?? fail(USAGE), flags);
+      return await releaseDoc(deps, need(), flags);
     default:
       fail(USAGE);
   }
