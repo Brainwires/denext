@@ -93,7 +93,7 @@ jobs:
       plan: ${{ steps.pick.outputs.plan }}
     steps:
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@523fd9da7600e6f2d16304ed10c11b1c346db4ca # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@7475d2c4523faa74d428c3607a8fe195c1f782ac # pick-runners
         with:
           jobs: native_parity=linux-x64
           vars: ${{ toJSON(vars) }}
