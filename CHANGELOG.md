@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The root 404 page uses `app/not-found.tsx`'s own metadata.** Its `metadata` (or
+  `generateMetadata()`) — title, description, `robots` and the rest — is merged over the root
+  layout's, as in Next.js, in `out/404.html` and the server's 404 response alike; "404 — Not Found"
+  stays the title only when the page sets none. Before, the page's metadata was ignored.
+
 ## [4.20.1] - 2026-11-19
 
 ### Added
