@@ -714,15 +714,25 @@ export async function rollbackFor<P extends { version: string; rollback?: R }, R
   return of(previous);
 }
 
-/** The versions the published revoked-runtimes list names (any component, any target). */
-async function revokedVersions(): Promise<(version: string) => Promise<boolean>> {
+/**
+ * Whether a version is on the published revoked-runtimes list (any component, any target),
+ * fetched once now.
+ *
+ * @returns The check.
+ */
+export async function revokedVersions(): Promise<(version: string) => Promise<boolean>> {
   const loaded = await loadRuntimeRevocations({ mode: "force" });
   const names = new Set((loaded.list?.revoked ?? []).map((e) => e.version));
   return (version) => Promise.resolve(names.has(version));
 }
 
-/** A pin file's JSON, or `null` when there is none. */
-async function readPin<T>(path: string): Promise<T | null> {
+/**
+ * A pin file's JSON, or `null` when there is none.
+ *
+ * @param path The pin file.
+ * @returns Its parsed content.
+ */
+export async function readPin<T>(path: string): Promise<T | null> {
   try {
     return JSON.parse(await Deno.readTextFile(path)) as T;
   } catch (err) {
@@ -731,8 +741,18 @@ async function readPin<T>(path: string): Promise<T | null> {
   }
 }
 
-/** A release's runtime and toolchain pins, from its `manifest.json` + `SHA256SUMS`. */
-async function releasePins(
+/**
+ * A release's runtime and toolchain pins, from its `manifest.json` + `SHA256SUMS` (fetched from
+ * the release, or read from the files the `--<prefix>manifest` / `--<prefix>sums` flags name),
+ * every archive cross-checked against both ({@linkcode pinFromRelease},
+ * {@linkcode toolchainPinFromRelease}); not yet attested ({@linkcode attestPin}).
+ *
+ * @param tag The release tag.
+ * @param flag Reads a flag's value.
+ * @param prefix The flag prefix (`rollback-` for the rollback release).
+ * @returns The two pins (`cli` is `null` for a release without CLI archives).
+ */
+export async function releasePins(
   tag: string,
   flag: (name: string) => string | undefined,
   prefix = "",

@@ -558,6 +558,76 @@ only that package, on its own tag:
    `git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z" <commit>` (e.g.
    `photon-v1.1.0`) and `git push origin <pkg>-vX.Y.Z`.
 
+### Releasing a runtime
+
+A denext runtime release (`denext-runtime-v<version>` on `Brainwires/deno`: the Deno toolchain and
+the Deno Desktop runtime from one fork build) reaches machines through the **runtime channel**
+(`src/build/runtime-channel.ts`), without a denext release. The channel is a signed index,
+`https://denext.dev/runtime/channel.json`, plus one unsigned release document per runtime,
+`https://denext.dev/runtime/releases/<version>.json` (exactly the two pins a denext release compiles
+in), trusted only through the SHA-256 the index names. Both are mirrored on the orphan branch
+`denext-runtime-channel` of `Brainwires/deno`.
+
+The index is signed with its **own** ECDSA P-256 key pair, never the revocation list's: the
+revocation key can withdraw a channel key (`deno task revocations revoke-channel-key`), so a stolen
+channel key is never the last word. denext verifies the index with the two public keys compiled
+into `src/build/runtime-channel-keys.ts` (active, backup); with both slots empty the channel is
+absent. Signing happens on the maintainer machine that holds the key (its login keychain), never in
+CI: a compromised fork workflow or a replaced release asset has no signature.
+
+**One-time setup** (a maintainer, by hand; an agent never creates or handles the key):
+
+1. `deno task runtime:keygen` stores a new private key in the login keychain (service
+   `denext-runtime-channel`, account `active`) and prints its public key. Paste it into the first
+   slot of `src/build/runtime-channel-keys.ts`.
+2. `deno task runtime:keygen --slot backup`, paste the public key into the second slot, export the
+   item into the password manager and delete it from the keychain (the backup lives offline).
+3. Commit the keys module and release denext.
+4. Publish the releases already bundled, newest first, with the same
+   `DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root>` the revocation list uses:
+   `deno task runtime:publish <the pin's tag> --bundled --min-denext <oldest denext that pins it>`,
+   then the pin's `rollback` the same way. `--bundled` skips the compatibility run only for a
+   release this checkout compiles in. Then `deno task runtime:verify` must pass on both URLs.
+
+**Publishing a runtime release** (after the fork's release workflow built, signed, attested and
+published it):
+
+```sh
+DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root> \
+  deno task runtime:publish denext-runtime-v<version> [--security]
+deno task runtime:verify
+git add security/runtime-channel.json && git commit   # on development
+```
+
+`runtime:publish` (`scripts/runtime-channel.ts`) builds the release document with the pin script's
+checks (every archive against `manifest.json` and `SHA256SUMS`, hashed, `gh attestation verify`
+against the fork's release workflow and this tag) and signs nothing unless they all pass. It then
+dispatches `runtime-compat.yml -f tag=<tag>` and waits for it once (`--compat-run <id>` reads a run
+that already finished): the candidate toolchain under the latest stable denext and the previous
+minor's last patch (`scripts/ci/runtime-compat-legs.ts`); every leg must be green, and the oldest
+green leg becomes the entry's `minDenext`. The entry goes into `security/runtime-channel.json` (the
+unsigned source of every entry: a listed release is never removed, only yanked), the index is
+signed (45-day expiry, a sequence above the published one), verified against the keys compiled into
+the checkout, and published: the release document first, then the index, to the web root and in one
+commit to the mirror. `--security` marks a release that fixes a security problem; the release gate
+will refuse a bundled pin older than the newest such release.
+
+A release whose fork release assets are listed in the channel must keep them forever: a project lock
+names its document, and the document names those assets.
+
+**Other verbs.** `deno task runtime:yank <version> --reason "<one line>"` withdraws a broken (not
+dangerous: revoke a dangerous one) release from `runtime upgrade` and re-signs.
+`deno task runtime:resign [--if-due]` re-signs the published entries with a fresh expiry (`--if-due`:
+only within 15 days of it); `deno task runtime:channel expiry` warns when that is near.
+`deno task runtime:channel floor` raises the compiled-in minimum sequence
+(`RUNTIME_CHANNEL_MIN_SEQUENCE`) to the published index's. `deno task runtime:pin <version>` copies a
+published release document into the bundled pins, the old pins kept as `rollback`.
+`--with-backup` on any signing verb adds the backup key's signature (a key rotation: sign with both,
+ship a denext release with the new backup slot, then retire the old key).
+
+The docs-site deploy must leave `runtime/` alone: its rsync takes `--exclude /runtime/` (see
+`site/README.md`).
+
 ### A bad runtime release
 
 A released Deno toolchain or Deno Desktop runtime (`denext-runtime-v<version>` on
