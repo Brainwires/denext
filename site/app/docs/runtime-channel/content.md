@@ -4,11 +4,6 @@ slug: runtime-channel
 lead: A denext runtime (the Deno toolchain and the Deno Desktop runtime, from one build) can ship without a denext release. Every denext still bundles a tested runtime; the channel lets you move to a newer one on purpose, verified by a signature and locked by a hash.
 ---
 
-> **Draft.** This page describes the runtime channel as it is being built. The resolver and the
-> `denext runtime` commands are in place; the published channel and the installer's use of it
-> follow. Until a channel is published, denext runs the runtime it bundles, as described in
-> [denext's Deno toolchain](/docs/toolchain).
-
 ## Why there is a channel
 
 Each denext release compiles in one runtime release (the _bundled pin_) and its predecessor (the
@@ -108,6 +103,43 @@ denext runtime prune [--dry-run] [--json]
 Offline, `version`, `list` (installed), `path`, and `use` / `install` of a release that is
 bundled or that the project pin or your default already names (its release document cached) all
 work; `upgrade` and installing anything else fail with the reason.
+
+## The installer
+
+`install.sh` / `install.ps1` install the latest denext, then run `denext runtime upgrade`: the
+newest runtime that denext supports, past the hold, made your default. The scripts never read the
+channel themselves; the binary verifies everything. Two flags move only the runtime:
+
+```sh
+curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime-only            # runtime upgrade only
+curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=3.0.0-denext.31 # install + use that release
+& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly  # Windows
+```
+
+`--runtime-only` (`DENEXT_RUNTIME_ONLY=1`, `-RuntimeOnly`) leaves an installed denext alone (with
+none installed it installs both); `--runtime=<version>` (`DENEXT_RUNTIME_VERSION`, `-Runtime
+<version>`) runs `denext runtime install <version>` and `denext runtime use <version>`. With either,
+a runtime step that fails fails the run; in a plain install it is one warning, and the runtime
+downloads on the first command that needs it. `DENEXT_NO_RUNTIME=1` skips the runtime step. A denext
+from before `denext runtime` gets its own older step (`denext toolchain install`), and
+`--runtime-only` tells you to reinstall it.
+
+## Docker, deploys and compiled apps
+
+A container or a CI machine has no user default, so an unpinned project runs the runtime its denext
+bundles there, whatever your machine runs. Pin it (`denext runtime use <version> --project`) and
+every build runs exactly that release:
+
+- **Docker** (`denext generate docker`, the `docker` and `fly` deploy presets): the image copies
+  `deno.json` in, so its build and its server resolve the pin, checked against its integrity; the
+  generated Dockerfile records it as `LABEL dev.denext.runtime=<version>` (regenerate it when the
+  pin changes). An unpinned project whose machine runs another release is warned, with the fix.
+- **A host's build** (the `generic-host` preset's `build.sh`): the same warning when the build you
+  just ran used your default runtime or `DENEXT_RUNTIME` rather than the pin or the bundled release.
+- **`build --compile`**: the executable runs on the selected release's `denort`;
+  `.denext/deploy-manifest.json` names it (`compile.runtime`) beside the build's own `runtime`.
+- **Desktop packaging** (`denext desktop build | package` and the generated `scripts/package-*.ts`):
+  the Deno Desktop runtime comes from the same selected release as `deno`.
 
 ## Compatibility
 

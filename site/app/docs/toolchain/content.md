@@ -56,10 +56,12 @@ everything it starts: `DENO_BIN` names it, and `deno` on the children's PATH is 
 `completions` never run Deno. A task that calls `deno …` therefore works on a machine with no
 Deno.
 
-The installer runs `denext runtime install` right after installing the binary, and — only when
-no `deno` is on your PATH — `denext runtime link`, so `deno` is the toolchain for your editor,
-git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
-both steps). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
+The installer runs `denext runtime upgrade` right after installing the binary (the newest
+runtime this denext supports, from the [runtime channel](/docs/runtime-channel), made your default),
+and — only when no `deno` is on your PATH — `denext runtime link`, so `deno` is the runtime for your
+editor, git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_RUNTIME=1`
+both steps; `--runtime-only` moves only the runtime of an installed denext, `--runtime=<version>`
+installs that release). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
 (the same variable the installers read) and `~/.denext` otherwise, so a custom-prefix install's
 `deno` sits beside its `denext`. A `deno` you already have is never replaced.
 

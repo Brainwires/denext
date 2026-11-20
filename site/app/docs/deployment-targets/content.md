@@ -41,6 +41,12 @@ starts with the least-privilege flags
 declares a
 `HEALTHCHECK` on `/_denext/health`.
 
+**The image runs the runtime your project pins.** The build copies `deno.json` in, so a project pin
+(`denext runtime use <version> --project`, see [the runtime channel](/docs/runtime-channel#docker-deploys-and-compiled-apps))
+makes the image build and serve exactly that runtime release, checked against the pin's integrity,
+and the Dockerfile records it as `LABEL dev.denext.runtime=<version>`. Without a pin the image runs
+the runtime its denext bundles; `generate docker` warns when your machine runs another one.
+
 **Persistent state goes on a data volume, never on `/app/.denext`.** `/app/.denext` holds the
 build the image was made with (`manifest.json`, the client bundles, the server copies); a volume
 mounted there hides it. A Fly or Railway volume starts empty, so the server finds no build; a
@@ -507,8 +513,10 @@ scp dist/my-app server: && ssh server 'PORT=8080 ./my-app'
 ./my-app db migrate                                      # = denext db migrate
 ```
 
-`denext build --compile` builds the app, then runs `deno compile` on denext's
-Deno toolchain over a generated entry (`.denext/compile/main.ts`) that does
+`denext build --compile` builds the app, then runs `deno compile` on the selected
+denext runtime release (the project pin, else your default, else the bundled one; the same release
+`denext dev` and `build` run, its `denort` included, recorded as `compile.runtime` in
+`.denext/deploy-manifest.json`) over a generated entry (`.denext/compile/main.ts`) that does
 what `denext start` does. The result is one executable with nothing to install
 beside it. It embeds:
 
