@@ -774,7 +774,7 @@ Deno.test("newestAvailableRelease: compatible, not yanked, and past the dependen
     await at("3.0.0-denext.35", "2026-11-19T23:00:00Z"), // too fresh
     await at("3.0.0-denext.34", "2026-11-10T00:00:00Z", { minDenext: "9.0.0" }), // incompatible
     await at(NEWEST, "2026-11-10T00:00:00Z", { yanked: { reason: "broken" } }),
-    await at("3.0.0-denext.32", "2026-11-18T00:00:00Z", { security: true }), // too fresh, no exemption
+    await at("3.0.0-denext.32", "2026-11-19T12:00:00Z", { security: true }), // too fresh, no exemption
     await at(NEWER, "2026-11-01T00:00:00Z"),
   ];
   const cutoff = new Date("2026-11-19T00:00:00Z");
