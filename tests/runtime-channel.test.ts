@@ -53,6 +53,7 @@ import {
   REVOCATION_SIGNATURE_DOMAIN,
 } from "../src/build/runtime-revocations.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
+import { RUNTIME_CHANNEL_PUBLIC_KEYS } from "../src/build/runtime-channel-keys.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 import desktopPin from "../src/build/desktop-runtime-pin.json" with { type: "json" };
 
@@ -712,12 +713,33 @@ Deno.test("loadRuntimeChannel: a run on test keys never writes the cache", async
   });
 });
 
+Deno.test("RUNTIME_CHANNEL_PUBLIC_KEYS: two distinct ECDSA P-256 SPKI keys", async () => {
+  const [active, backup] = RUNTIME_CHANNEL_PUBLIC_KEYS;
+  assert(active !== backup, "the backup is its own key pair");
+  for (const key of [active, backup]) {
+    const spki = Uint8Array.from(atob(key), (c) => c.charCodeAt(0));
+    const imported = await crypto.subtle.importKey(
+      "spki",
+      spki,
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["verify"],
+    );
+    assertEquals((imported.algorithm as EcKeyAlgorithm).namedCurve, "P-256");
+  }
+});
+
 Deno.test("channelKeys: the compiled-in keys unless a test opts in to the keys file", async () => {
   await withCache(async (root) => {
     const file = join(root, "keys.json");
     await Deno.writeTextFile(file, JSON.stringify(["k1", "", 3, "k2"]));
     const env = (k: string) => (k === CHANNEL_KEYS_FILE_ENV ? file : undefined);
-    assertEquals(channelKeys(env), [], "ignored without the opt-in (no key compiled in yet)");
+    assertEquals(
+      channelKeys(env),
+      RUNTIME_CHANNEL_PUBLIC_KEYS.filter((k) => k !== ""),
+      "ignored without the opt-in: the compiled-in keys",
+    );
+    assertEquals(channelKeys(env).length, 2, "both slots are filled");
     honourChannelKeysFileForTests();
     try {
       assertEquals(channelKeys(env), ["k1", "k2"]);

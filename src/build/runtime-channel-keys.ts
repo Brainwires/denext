@@ -14,7 +14,12 @@
  * The compiled-in runtime channel public keys (base64 SPKI, ECDSA P-256): `[active, backup]`.
  * An empty string is an unset slot.
  */
-export const RUNTIME_CHANNEL_PUBLIC_KEYS: readonly [active: string, backup: string] = ["", ""];
+export const RUNTIME_CHANNEL_PUBLIC_KEYS: readonly [active: string, backup: string] = [
+  // active
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM9vtyVvo3gaOdM8IZHy0dabr4q1LKPywi42m3vV+EhpRS0uHZsgYTymKZdBsdVLrYIT8mm7Vb+MPLEf6Q/wXJA==",
+  // backup
+  "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/gbIxefgLKukaFmw0mzFW08ck2EQBCbo7Zh0j5dkAvsPGqiHBUurlBI+nZxW/CK4kMFmJEeMtjPa4ClZTLAegg==",
+];
 
 /**
  * The sequence of the channel index published when this denext was released: an index below it is
