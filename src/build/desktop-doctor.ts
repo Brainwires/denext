@@ -33,11 +33,8 @@
 // starts it on first use, so a failure shows its reason. The sandbox probe runs `unshare` (a user
 // namespace with a nested one, as Chromium checks) and reads one sysctl.
 
-import {
-  DESKTOP_RUNTIME_PIN,
-  type DesktopRuntimePin,
-  type DesktopRuntimeStatus,
-} from "./desktop-runtime.ts";
+import type { DesktopRuntimePin, DesktopRuntimeStatus } from "./desktop-runtime.ts";
+import { activeDesktopRuntimePinOrBundled } from "./runtime-select.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
 import { compareDenoVersions, denoReleaseVersion } from "./deno-version.ts";
 import type { LaunchPolicyProblem } from "./desktop-launch-policy.ts";
@@ -1311,7 +1308,7 @@ export async function runDesktopDoctor(
   options: DesktopDoctorOptions,
 ): Promise<DesktopDoctorReport> {
   const os = options.os ?? Deno.build.os;
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  const pin = options.pin ?? activeDesktopRuntimePinOrBundled();
   const linuxChecks = options.linux ?? os === "linux";
   const laufeyApiVersion = (pin as { laufeyApiVersion?: number }).laufeyApiVersion ?? 0;
   const pinVersion = (pin as { version?: unknown }).version;

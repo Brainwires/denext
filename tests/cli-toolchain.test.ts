@@ -7,6 +7,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, resolve } from "@std/path";
 import {
+  childRuntimeEnv,
   handsToolchainToChildren,
   maybeReexecToolchain,
   type ReexecToolchainDeps,
@@ -775,4 +776,56 @@ Deno.test("desktop run / dev: only an explicitly chosen Deno may fall back to th
     ),
     false,
   );
+});
+
+Deno.test("maybeReexecToolchain: the runtime notice is asked with the resolution and said once per tree", async () => {
+  let asked = 0;
+  const notice = () => (asked++, Promise.resolve("denext: runtime X is available"));
+  const { d, seen, vars } = deps(TOOLCHAIN, { runtimeNotice: notice });
+  assert(await maybeReexecToolchain(true, d));
+  assertEquals([asked, seen.warned], [1, ["denext: runtime X is available"]]);
+  assertEquals(vars.DENEXT_RUNTIME_NOTICED, "1");
+  // Already said in this process tree: not asked again.
+  const again = deps(TOOLCHAIN, { runtimeNotice: notice, vars: { DENEXT_RUNTIME_NOTICED: "1" } });
+  await maybeReexecToolchain(true, again.d);
+  assertEquals([asked, again.seen.warned], [1, []]);
+  // A child already on the toolchain is never asked; a failing notice is no notice.
+  const child = deps(TOOLCHAIN, {
+    runtimeNotice: notice,
+    vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" },
+    denoVersion: "2.9.7-denext.15",
+  });
+  await maybeReexecToolchain(true, child.d);
+  assertEquals(asked, 1);
+  const failing = deps(TOOLCHAIN, { runtimeNotice: () => Promise.reject(new Error("offline")) });
+  assert(await maybeReexecToolchain(true, failing.d));
+  assertEquals(failing.seen.warned, []);
+  // A compiled binary asks it too, as it hands the toolchain to its children.
+  const binary = deps(TOOLCHAIN, { runtimeNotice: notice, standalone: () => true });
+  await maybeReexecToolchain(true, binary.d);
+  assertEquals([asked, binary.seen.warned.length], [2, 1]);
+});
+
+Deno.test("maybeReexecToolchain: a selected release's document hash goes to the child beside the marker", async () => {
+  const selected: DenoToolchainChoice = { ...TOOLCHAIN, integrity: `sha256-${"a".repeat(64)}` };
+  const { d, seen } = deps(selected);
+  assert(await maybeReexecToolchain(true, d));
+  assertEquals(seen.spawned, [[
+    "/cache/deno",
+    "2.9.7-denext.15",
+    JSON.stringify({ DENEXT_RUNTIME_INTEGRITY: `sha256-${"a".repeat(64)}` }),
+  ]]);
+  // An inherited hash is cleared for a child on the bundled pins; none set, nothing added.
+  const leaked = deps(TOOLCHAIN, { vars: { DENEXT_RUNTIME_INTEGRITY: "sha256-old" } });
+  await maybeReexecToolchain(true, leaked.d);
+  assertEquals(leaked.seen.spawned[0][2], JSON.stringify({ DENEXT_RUNTIME_INTEGRITY: "" }));
+  assertEquals(childRuntimeEnv(TOOLCHAIN, () => undefined), {});
+  assertEquals(childRuntimeEnv({ kind: "stock", reason: "x" }, () => "sha256-old"), {
+    DENEXT_RUNTIME_INTEGRITY: "",
+  });
+  // A compiled binary sets it in its own environment for every child.
+  const binary = deps(selected, { standalone: () => true });
+  await maybeReexecToolchain(true, binary.d);
+  assertEquals(binary.vars.DENEXT_RUNTIME_INTEGRITY, `sha256-${"a".repeat(64)}`);
+  assertEquals(binary.vars.DENEXT_TOOLCHAIN_ACTIVE, "2.9.7-denext.15");
 });

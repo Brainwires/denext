@@ -71,6 +71,7 @@ on:
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
       - "src/build/runtime-revocation*.ts" # the revoked-runtimes list the runtime pins are checked against
+      - "src/build/runtime-select.ts" # the runtime release the desktop runtime pin comes from
       - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
       - "src/build/stock-deprecation.ts"

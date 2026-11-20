@@ -97,6 +97,16 @@ export const CHANNEL_KEYS_FILE_ENV = "DENEXT_RUNTIME_CHANNEL_KEYS_FILE";
 /** The versions the channel may list: denext's runtime line (`3.0.0-denext.N`). */
 const CHANNEL_RELEASE_VERSION: RegExp = /^3\.0\.0-denext\.[1-9]\d*$/;
 
+/**
+ * Whether `version` is a version the channel may list (`3.0.0-denext.N`).
+ *
+ * @param version The version.
+ * @returns Whether it is one.
+ */
+export function isChannelReleaseVersion(version: string): boolean {
+  return CHANNEL_RELEASE_VERSION.test(version);
+}
+
 /** How long a fetched index is used before it is fetched again (the revocation list's cadence). */
 const CHANNEL_TTL_MS = 12 * 3600_000;
 /** How long after a failed fetch the next is tried. */

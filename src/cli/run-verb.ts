@@ -29,11 +29,12 @@ import {
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
 import { appUnstableFlags, missingUnstableFlags } from "./unstable-flags.ts";
+import { resolveDenoToolchain, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 import {
-  loadDenoToolchainPin,
-  resolveDenoToolchain,
-  TOOLCHAIN_ACTIVE_ENV,
-} from "../build/deno-toolchain.ts";
+  resolveRuntimeRelease,
+  type RuntimeRelease,
+  runtimeUpdateNotice,
+} from "../build/runtime-select.ts";
 import { currentDenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
 import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
@@ -460,13 +461,13 @@ function mayRespawnSelf(): boolean {
   }
 }
 
-/** The pinned toolchain version, or `null` (none pinned, or an unreadable pin file override). */
-function pinnedToolchainVersion(): string | null {
-  try {
-    return loadDenoToolchainPin().version;
-  } catch {
-    return null; // resolveDenoToolchain() reports a bad DENEXT_TOOLCHAIN_PIN_FILE
-  }
+/**
+ * The release the project in `dir` runs on (src/build/runtime-select.ts: `DENEXT_RUNTIME`, the
+ * project pin, the user default, the bundled pin), or `null` when it can't be selected — the
+ * toolchain resolution then reports why (a broken project pin, an unreadable pin file override).
+ */
+function selectedRelease(dir: string): Promise<RuntimeRelease | null> {
+  return resolveRuntimeRelease({ projectDir: dir }).catch(() => null);
 }
 
 /** The directory a verb's re-exec gates read the project from. */
@@ -575,15 +576,23 @@ async function toolchainChildFlags(
 async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
   const standalone = isStandaloneBinary();
   const { denext } = currentDenoIdentity();
-  const limits = await startLimits(command, gateDir(command, ctx));
-  return await maybeReexecToolchain(toolchainApplies(command, ctx.positionals[0], standalone), {
+  const dir = gateDir(command, ctx);
+  const limits = await startLimits(command, dir);
+  const applies = toolchainApplies(command, ctx.positionals[0], standalone);
+  const handOff = handsToolchainToChildren(command, ctx.positionals[0], standalone);
+  // Only a verb that runs on (or hands down) the toolchain selects a release.
+  const release = applies || handOff ? await selectedRelease(dir) : null;
+  return await maybeReexecToolchain(applies, {
     env: (name) => Deno.env.get(name),
     setEnv: (name, value) => Deno.env.set(name, value),
     denoVersion: Deno.version.deno,
     ...(denext ? { denext } : {}),
-    pinnedVersion: pinnedToolchainVersion(),
+    pinnedVersion: release?.version ?? null,
     standalone: () => standalone,
-    resolve: () => resolveDenoToolchain({ revocations: revocationCheckFor(command) }),
+    resolve: () =>
+      resolveDenoToolchain({ revocations: revocationCheckFor(command), projectDir: dir }),
+    runtimeNotice: () =>
+      release ? runtimeUpdateNotice({ selected: release, projectDir: dir }) : Promise.resolve(null),
     // This child may re-run again before it serves (the CSS / module-config re-exec): it gets
     // `start.limits` as data, never as flags (src/build/resource-limits.ts `hopLimits`).
     spawn: async (deno, marker, env = {}) =>
@@ -610,7 +619,7 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
     execPath: Deno.execPath(),
     pids: { pid: Deno.pid, ppid: Deno.ppid },
     // A verb that runs no project code still hands the toolchain to the `deno` it spawns.
-    handOff: handsToolchainToChildren(command, ctx.positionals[0], standalone),
+    handOff,
   });
 }
 

@@ -224,6 +224,19 @@ export interface DeployManifest {
   version: 1;
   /** The denext version that wrote it. */
   denext: string;
+  /**
+   * The denext runtime release the build ran on: its version, where the choice came from
+   * (`"project"`: the `deno.json` pin, `"default"`: this machine's user default, `"bundled"`:
+   * the release this denext ships with, `"env"` / `"override"` / `"inherited"`), and the
+   * release document's `sha256-<hex>` (`null` for the bundled pins). A deploy that should run the
+   * same release pins it in `deno.json` (`denext runtime use <version> --project`). Absent in a
+   * manifest from before it was recorded; `null` when no release could be told.
+   */
+  runtime?: {
+    version: string | null;
+    source: string;
+    integrity: string | null;
+  } | null;
   /** `"app"` (App Router), `"spa"` (`mode: "spa"`) or `"pages"` (no `app/`; a router plugin). */
   mode: "app" | "spa" | "pages";
   /** `basePath` (`""` when none). */

@@ -26,6 +26,7 @@ import {
   type RuntimeComponent,
 } from "../build/runtime-revocations.ts";
 import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
+import { RUNTIME_INTEGRITY_ENV, RUNTIME_NOTICED_ENV } from "../build/runtime-select.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -916,6 +917,47 @@ export interface ReexecToolchainDeps {
    * instead ({@linkcode handsToolchainToChildren}).
    */
   readonly handOff?: boolean;
+  /**
+   * The "newer runtime available" line (production: src/build/runtime-select.ts
+   * `runtimeUpdateNotice`), asked while the toolchain is resolved and said once per process tree
+   * (`DENEXT_RUNTIME_NOTICED`). Absent: no notice.
+   */
+  readonly runtimeNotice?: () => Promise<string | null>;
+}
+
+/**
+ * {@linkcode ReexecToolchainDeps.resolve}, with the runtime notice asked at the same time (the
+ * channel's cached index answers it; it fetches at most every 12 hours, within its budget) and
+ * said once per process tree. A failing notice is no notice.
+ */
+async function resolveWithNotice(deps: ReexecToolchainDeps): Promise<DenoToolchainChoice> {
+  const ask = deps.runtimeNotice && deps.env(RUNTIME_NOTICED_ENV) !== "1"
+    ? deps.runtimeNotice().catch(() => null)
+    : Promise.resolve(null);
+  const [choice, notice] = await Promise.all([deps.resolve(), ask]);
+  if (notice) {
+    deps.warn(notice);
+    deps.setEnv(RUNTIME_NOTICED_ENV, "1");
+  }
+  return choice;
+}
+
+/**
+ * The environment a child on `choice` gets beside the toolchain marker: the selected release's
+ * document hash (src/build/runtime-select.ts), an empty value that clears one this process
+ * inherited, or nothing.
+ *
+ * @param choice The resolver's choice.
+ * @param env This process's environment.
+ * @returns `{ DENEXT_RUNTIME_INTEGRITY }`, or `{}`.
+ */
+export function childRuntimeEnv(
+  choice: DenoToolchainChoice,
+  env: (name: string) => string | undefined,
+): Record<string, string> {
+  const integrity = choice.kind === "toolchain" ? choice.integrity : undefined;
+  if (integrity) return { [RUNTIME_INTEGRITY_ENV]: integrity };
+  return env(RUNTIME_INTEGRITY_ENV) ? { [RUNTIME_INTEGRITY_ENV]: "" } : {};
 }
 
 /**
@@ -957,10 +999,11 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
   if (deps.env("DENO_BIN")) return false;
   // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
   if (!deps.standalone() && onToolchainNow(deps)) return false;
-  const choice = await deps.resolve();
+  const choice = await resolveWithNotice(deps);
   announceChoice(choice, deps);
   if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
+  for (const [k, v] of Object.entries(childRuntimeEnv(choice, deps.env))) deps.setEnv(k, v);
   deps.setEnv("DENO_BIN", choice.deno);
   const path = (await deps.pathEnv?.(choice.deno))?.PATH;
   if (path) deps.setEnv("PATH", path);
@@ -1057,14 +1100,24 @@ export async function maybeReexecToolchain(
     }
     return false;
   }
-  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await deps.resolve();
+  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await resolveWithNotice(deps);
   if (choice === null) return await reexecForRuntimeFlags(deps);
   announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
-  // The child gets the runtime flags with the spawn; told so, it skips their check.
-  const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
-  deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  // The child gets the runtime flags with the spawn; told so, it skips their check. It loads the
+  // release this process selected (src/build/runtime-select.ts) by its document hash.
+  const told = {
+    ...childRuntimeEnv(choice, deps.env),
+    ...(deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : {}),
+  };
+  deps.exit(
+    await deps.spawn(
+      choice.deno,
+      choice.version,
+      Object.keys(told).length > 0 ? told : undefined,
+    ),
+  );
   return true;
 }
 

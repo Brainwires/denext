@@ -493,3 +493,41 @@ Deno.test("toolchainRemove: prune keeps the pins' rollback releases (what a revo
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("toolchainRemove: prune keeps the runtime releases selected here (project pin, user default)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-selected-" });
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "3.0.0-denext.30", 10],
+      ["deno", "3.0.0-denext.31", 20],
+      ["deno", "3.0.0-denext.32", 30],
+      ["desktop", "3.0.0-denext.31", 5],
+    ]);
+    const project = join(dir, "app");
+    await Deno.mkdir(join(project, ".git"), { recursive: true });
+    await Deno.writeTextFile(join(project, "deno.json"), "{}");
+    const asked: string[] = [];
+    const json = JSON.parse(
+      await captured(() =>
+        toolchainRemove(ctxOf(["prune"], project, {}, true), {
+          roots,
+          ownPins: () => ({
+            deno: "3.0.0-denext.32",
+            desktopRuntime: null,
+            gleam: null,
+            fastlane: null,
+          }),
+          selected: (d) => (asked.push(d), ["3.0.0-denext.31"]),
+        })
+      ),
+    );
+    assertEquals(asked, [project]);
+    assertEquals(json.removed.map((e: { version: string }) => e.version), ["3.0.0-denext.30"]);
+    assertEquals(
+      json.kept.map((e: { kind: string; version: string }) => `${e.kind} ${e.version}`).sort(),
+      ["deno 3.0.0-denext.31", "deno 3.0.0-denext.32", "desktop-runtime 3.0.0-denext.31"],
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

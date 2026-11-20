@@ -31,7 +31,9 @@
 // the fork's patches (`Deno.SQL`) like the toolchain itself.
 //
 // `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
-// `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
+// Which release's pin is "the pin" is src/build/runtime-select.ts's decision:
+// `DENEXT_TOOLCHAIN_PIN_FILE=<json>` (tests and fork development), `DENEXT_RUNTIME`, the project
+// pin, the user default, else the built-in pin.
 
 import { encodeHex } from "@std/encoding/hex";
 import { dirname, join, resolve } from "@std/path";
@@ -68,6 +70,14 @@ import {
   parseDenoVersionOutput,
 } from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
+import { processEnv } from "./signed-envelope.ts";
+import {
+  activeRuntimeRelease,
+  rememberRuntimeRelease,
+  resolveRuntimeRelease,
+  type RuntimeRelease,
+  RuntimeSelectError,
+} from "./runtime-select.ts";
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import {
   decideRevocation,
@@ -219,13 +229,6 @@ const SHIM_MARK = "REM denext toolchain shim";
 
 /** Env reader. */
 type EnvGet = (k: string) => string | undefined;
-const processEnv: EnvGet = (k) => {
-  try {
-    return Deno.env.get(k);
-  } catch {
-    return undefined; // no env permission
-  }
-};
 
 /** Raised when no toolchain build exists for this denext version or this host. */
 export class DenoToolchainUnavailableError extends Error {
@@ -267,24 +270,18 @@ export function denoToolchainTarget(
 }
 
 /**
- * The pin in force: the file `DENEXT_TOOLCHAIN_PIN_FILE` names, else {@linkcode DENO_TOOLCHAIN}.
+ * The toolchain pin in force: the release src/build/runtime-select.ts selects for this process
+ * ({@linkcode activeRuntimeRelease}) — the file `DENEXT_TOOLCHAIN_PIN_FILE` names, `DENEXT_RUNTIME`,
+ * the project pin, the user default, else {@linkcode DENO_TOOLCHAIN} — read synchronously, with
+ * no network.
  *
  * @param env Env reader.
  * @returns The pin.
+ * @throws {Error} For an unreadable pin file, or a selection that cannot run (a broken project
+ *   pin).
  */
 export function loadDenoToolchainPin(env: EnvGet = processEnv): DenoToolchainPin {
-  const file = env(TOOLCHAIN_PIN_FILE_ENV);
-  if (!file) return DENO_TOOLCHAIN;
-  let pin: DenoToolchainPin;
-  try {
-    pin = JSON.parse(Deno.readTextFileSync(file));
-  } catch (err) {
-    throw new Error(`denext: ${TOOLCHAIN_PIN_FILE_ENV}=${file} is not a readable pin: ${err}`);
-  }
-  if (pin?.schema !== 1 || typeof pin.targets !== "object" || pin.targets === null) {
-    throw new Error(`denext: ${TOOLCHAIN_PIN_FILE_ENV}=${file} is not a schema-1 toolchain pin`);
-  }
-  return pin;
+  return activeRuntimeRelease(env).toolchain;
 }
 
 /**
@@ -320,7 +317,7 @@ export function activeToolchainPin(env: EnvGet = processEnv): DenoToolchainPin {
 
 /** What {@linkcode shippingToolchainPin} reads (tests pass a fixture pin and its list). */
 export interface ShippingToolchainOptions {
-  /** The pin in force (default {@linkcode loadDenoToolchainPin}). */
+  /** The pin in force (default: the release src/build/runtime-select.ts resolves). */
   readonly pin?: DenoToolchainPin;
   /** The host's pin key (default {@linkcode denoToolchainTarget}). */
   readonly target?: string;
@@ -328,6 +325,8 @@ export interface ShippingToolchainOptions {
   readonly cacheRoot?: string;
   /** How the list is read (default: `fetch`). */
   readonly revocations?: ToolchainRevocationOptions;
+  /** Where the project pin is read (default the working directory). */
+  readonly projectDir?: string;
 }
 
 /**
@@ -346,7 +345,9 @@ export async function shippingToolchainPin(
   env: EnvGet = processEnv,
   options: ShippingToolchainOptions = {},
 ): Promise<DenoToolchainPin> {
-  const pin = options.pin ?? loadDenoToolchainPin(env);
+  // The release is resolved here, not read from the toolchain marker: a marker leaked from a
+  // parent shell never decides what a release ships (src/build/runtime-select.ts).
+  const pin = options.pin ?? (await selectedRelease(env, options)).toolchain;
   const rollback = rollbackToolchainPin(pin);
   if (!rollback || env(TOOLCHAIN_ACTIVE_ENV) !== rollback.version) return pin;
   const unmarked: EnvGet = (name) => name === TOOLCHAIN_ACTIVE_ENV ? undefined : env(name);
@@ -363,6 +364,29 @@ export async function shippingToolchainPin(
       `the revoked-runtimes list does not revoke ${pin.version} here: refusing to ship ` +
       `${rollback.version}. Unset ${TOOLCHAIN_ACTIVE_ENV} and run the command again.`,
   );
+}
+
+/**
+ * The release src/build/runtime-select.ts selects for a command — `DENEXT_RUNTIME`, the project
+ * pin, the user default, the bundled pins — with a selected release the revoked-runtimes list
+ * revokes here replaced (the bundled pins keep their rollback, {@linkcode selectToolchainPin}).
+ */
+function selectedRelease(
+  env: EnvGet,
+  options: {
+    readonly projectDir?: string;
+    readonly cacheRoot?: string;
+    readonly target?: string;
+    readonly revocations?: ToolchainRevocationOptions;
+  },
+): Promise<RuntimeRelease> {
+  return resolveRuntimeRelease({
+    env,
+    ...(options.projectDir ? { projectDir: options.projectDir } : {}),
+    ...(options.cacheRoot ? { cacheRoot: options.cacheRoot } : {}),
+    ...(options.target ? { target: options.target } : {}),
+    revocations: options.revocations ?? {},
+  });
 }
 
 /**
@@ -1238,6 +1262,12 @@ export type DenoToolchainChoice =
      * (src/build/runtime-revocations.ts): `runningRollback` when `deno` is the pin's `rollback`.
      */
     readonly revocation?: RuntimeRevocationStatus;
+    /**
+     * The `sha256-<hex>` of the selected release's document (src/build/runtime-select.ts), handed
+     * to children as `DENEXT_RUNTIME_INTEGRITY` beside the marker so they load the same release.
+     * Unset for the bundled pins and the overrides.
+     */
+    readonly integrity?: string;
   }
   | {
     readonly kind: "stock";
@@ -1266,6 +1296,8 @@ export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions 
   readonly missingGrants?: (cacheRoot: string) => Promise<string[]>;
   /** `<bin> --version`'s output for a `DENEXT_DENO=<path>` binary, or null (default: run it). */
   readonly versionOutput?: (bin: string) => Promise<string | null>;
+  /** Where the project pin is read (default the working directory). */
+  readonly projectDir?: string;
   /**
    * How the revoked-runtimes list is consulted. Absent: the built-in pin is checked in `fetch` mode
    * (a pin given as `pin` or by `DENEXT_TOOLCHAIN_PIN_FILE` is not checked); given, it is checked
@@ -1418,16 +1450,45 @@ export async function resolveDenoToolchain(
   if (mode.mode === "path") {
     return await pathChoice(mode.path, options.versionOutput ?? denoVersionOutput);
   }
-  let pin: DenoToolchainPin;
+  if (options.pin) return await pinnedChoice(options.pin, env, options, null);
+  let release: RuntimeRelease;
   try {
-    pin = options.pin ?? loadDenoToolchainPin(env);
+    release = await selectedRelease(env, options);
   } catch (err) {
+    // A broken or incompatible project pin / DENEXT_RUNTIME names its own fix.
+    if (err instanceof RuntimeSelectError) throw new DenoToolchainRequiredError(err.message);
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
-  return await pinnedChoice(pin, env, options);
+  // The process's own resolution: its synchronous readers (the esbuild, TypeScript and desktop
+  // runtime pins) follow it.
+  if (!options.env && !options.cacheRoot) rememberRuntimeRelease(release);
+  return await pinnedChoice(release.toolchain, env, options, release);
 }
 
 const errText = (err: unknown) => err instanceof Error ? err.message : String(err);
+
+/** The selected release's notices and the revocation warning, as one warning. */
+function joinedWarning(
+  release: RuntimeRelease | null,
+  warning: string | undefined,
+): string | undefined {
+  const lines = [...release?.notices ?? [], ...warning ? [warning] : []];
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+/** The document hash children get, when `version` is the selected release's own. */
+function childIntegrity(release: RuntimeRelease | null, version: string): string | undefined {
+  return release?.integrity && release.version === version ? release.integrity : undefined;
+}
+
+/** The resolver options with the selected release's desktop pin for the revocation subjects. */
+function withReleaseDesktop(
+  options: ResolveDenoToolchainOptions,
+  release: RuntimeRelease | null,
+): ResolveDenoToolchainOptions {
+  if (!release || options.revocations?.desktopPin) return options;
+  return { ...options, revocations: { ...options.revocations, desktopPin: release.desktop } };
+}
 
 /** A `stock` choice, with its warning when there is one. */
 function stockChoice(reason: string, warning?: string): DenoToolchainChoice {
@@ -1475,28 +1536,36 @@ function grantsRefusal(version: string, missing: readonly string[], cacheRoot: s
     `  ${TOOLCHAIN_ENV}=stock runs it on this Deno instead (no Deno.SQL / postgresClient()).`;
 }
 
-/** The pinned toolchain (installed and verified), or the silent stock choice of {@linkcode pinnedObstacle}. */
+/**
+ * The pinned toolchain (installed and verified), or the silent stock choice of {@linkcode
+ * pinnedObstacle}. `release` is what src/build/runtime-select.ts selected (`null`: a pin given
+ * by the caller).
+ */
 async function pinnedChoice(
   pin: DenoToolchainPin,
   env: EnvGet,
   options: ResolveDenoToolchainOptions,
+  release: RuntimeRelease | null,
 ): Promise<DenoToolchainChoice> {
   const target = options.target ?? denoToolchainTarget();
   const cacheRoot = options.cacheRoot ?? denoToolchainCacheRoot(env);
   // The list is read (and, when stale, fetched within its budget) while the grants are queried.
   const [obstacle, selected] = await Promise.all([
     pinnedObstacle(pin, target, cacheRoot, options.missingGrants ?? queryMissingGrants),
-    selectToolchainPin(pin, env, options, target, cacheRoot),
+    selectToolchainPin(pin, env, withReleaseDesktop(options, release), target, cacheRoot),
   ]);
   if (obstacle) return obstacle;
   try {
     const rt = await ensureDenoToolchain({ ...options, pin: selected.pin, target, cacheRoot });
+    const warning = joinedWarning(release, selected.warning);
+    const integrity = childIntegrity(release, rt.version);
     return {
       kind: "toolchain",
       deno: rt.deno,
       version: rt.version,
-      ...(selected.warning ? { warning: selected.warning } : {}),
+      ...(warning ? { warning } : {}),
       ...(selected.revocation ? { revocation: selected.revocation } : {}),
+      ...(integrity ? { integrity } : {}),
     };
   } catch (err) {
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
