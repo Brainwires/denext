@@ -27,7 +27,9 @@ denext picks one release for `deno`, the `denort` inside `build --compile` binar
 Desktop runtime together, so they can never disagree. The first match wins:
 
 1. `DENEXT_DENO=<path>` or `DENEXT_TOOLCHAIN_PIN_FILE` (development overrides).
-2. `DENEXT_RUNTIME=<version>` for one command.
+2. `DENEXT_RUNTIME=<version>` for one command (`DENEXT_RUNTIME=bundled` for the bundled one). The
+   release must be installed or listed in the channel; a listed one's release document is fetched
+   and verified on first use.
 3. **The project pin**, in the workspace root `deno.json`:
 
    ```json
@@ -38,18 +40,36 @@ Desktop runtime together, so they can never disagree. The first match wins:
    }
    ```
 
-   The integrity is the hash of the release document, which fixes every archive's hash. It is a
-   lock: CI, Docker images and compiled apps get exactly that runtime, with or without the
-   channel, and no key can change its binaries. `denext runtime use <version> --project` writes it.
+   The integrity is `sha256-` and the 64 hex digits of the release document's SHA-256 (the hash
+   the index lists for it), which fixes every archive's hash. It is a lock: CI, Docker images and
+   compiled apps get exactly that runtime, with or without the channel, and no key can change its
+   binaries. A lock whose release document is not cached is fetched from either source and
+   checked against the hash alone; a lock on the bundled runtime needs no download at all.
+   `denext runtime use <version> --project` writes it. denext reads the pin as text, without
+   running project code, and Deno itself ignores the `denext` key.
 4. **Your machine's default**, set by `denext runtime upgrade`, `denext runtime use` and the
    installer. It applies only while it is at least as new as the bundled runtime, unless you chose
    it explicitly with `runtime use <version>`, so an old default never drags a newer denext back.
 5. **The bundled runtime.**
 
 `denext runtime version` shows which rung chose the runtime that runs (`env`, `project`, `default`
-or `bundled`). A machine with a default and a container without one run different runtimes for an
-unpinned project: `denext doctor` says so when the project has a Dockerfile or a deploy adapter,
-and the fix is a project pin.
+or `bundled`). The processes a command starts run the same release as the command, even from
+another directory. `denext build` records the release in `.denext/deploy-manifest.json`
+(`runtime`: version, source, integrity).
+
+A machine with a default and a container without one run different runtimes for an unpinned
+project: `denext doctor` says so when the project has a Dockerfile or a deploy adapter, and the fix
+is a project pin.
+
+### The "newer runtime available" line
+
+A command that runs on the runtime prints `denext: runtime <version> is available: denext runtime
+upgrade` (`--project` when the project pins its runtime) when the channel lists a newer release
+this denext supports and the dependency-age hold lets it in. It is said once per command (not by
+the processes the command starts) and once a day per release, read from the cached index, which
+is refreshed at most every 12 hours within a short time budget: offline, it is simply not said.
+Nothing is printed for an explicit `DENEXT_RUNTIME` or pin file. `DENEXT_RUNTIME_CHANNEL=0` turns
+the channel off, the line with it.
 
 ## Commands
 
@@ -70,7 +90,10 @@ with `--project`) and installs it. Offline, `version`, `list` (installed), `path
 
 ## Compatibility
 
-Each release in the channel declares the oldest denext it was proven with. Before a release is
+Whatever selects it, a release runs only when it is at or above the oldest runtime this denext
+supports, carries the esbuild version denext's build API speaks, and its Deno Desktop runtime
+offers the API level denext's desktop support needs. Each release in the channel also declares
+the oldest denext it was proven with. Before a release is
 signed, it runs denext's test suites under the latest stable denext and the last patch of the
 previous minor; the oldest passing one is recorded. Older denexts keep the runtime they bundle.
 
