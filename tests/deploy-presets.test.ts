@@ -777,3 +777,44 @@ Deno.test("deploy preset fly: a heap limit not below the machine's memory warns"
     await Deno.remove(paths.projectDir, { recursive: true });
   }
 });
+
+Deno.test("deploy preset generic-host: a build on an unpinned non-bundled runtime warns with the fix", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    const run = async (runtime: DeployManifest["runtime"], compile = manifest.compile) => {
+      const { ctx, warnings } = recordingContext(
+        { ...manifest, runtime, compile },
+        paths.projectDir,
+      );
+      await genericHost({ domain: "shop.example" }).prepare(ctx);
+      return warnings.filter((w) => w.includes("runtime"));
+    };
+    const [fromDefault] = await run({
+      version: "3.0.0-denext.31",
+      source: "default",
+      integrity: `sha256-${"a".repeat(64)}`,
+    });
+    assertStringIncludes(fromDefault, "3.0.0-denext.31 (your default runtime)");
+    assertStringIncludes(fromDefault, "the host's build.sh");
+    assertStringIncludes(fromDefault, "denext runtime use 3.0.0-denext.31 --project");
+    const [fromEnv] = await run({ version: "3.0.0-denext.30", source: "env", integrity: null });
+    assertStringIncludes(fromEnv, "(DENEXT_RUNTIME)");
+    // The project pin and the bundled release are what the host selects too; a compiled build
+    // carries its own runtime; an old manifest has no record.
+    for (const source of ["project", "bundled", "inherited"]) {
+      assertEquals(await run({ version: "3.0.0-denext.31", source, integrity: null }), [], source);
+    }
+    assertEquals(
+      await run({ version: "3.0.0-denext.31", source: "default", integrity: null }, {
+        output: "dist/shop",
+        permissions: [],
+        runtime: "3.0.0-denext.31",
+      }),
+      [],
+    );
+    assertEquals(await run(undefined), []);
+    assertEquals(await run({ version: null, source: "default", integrity: null }), []);
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});

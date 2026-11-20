@@ -116,3 +116,28 @@ export function drainMsOf(
 export function stopTimeoutSec(drainMs: number): number | null {
   return drainMs === 0 ? null : Math.ceil(drainMs / 1000) + STOP_MARGIN_S;
 }
+
+/**
+ * The warning for a deploy that builds on another machine (an image, a host's `build.sh`) when
+ * this build ran on a runtime release the project does not pin: this machine's user default or
+ * `DENEXT_RUNTIME`. The other machine has neither, so it builds and runs the release this denext
+ * bundles; pinning the release in `deno.json` makes both run the same one. `null` when the build
+ * ran on the project pin or the bundled release (or the manifest predates the record).
+ *
+ * @param manifest The deploy manifest.
+ * @param preset The preset's name (the warning's prefix).
+ * @param where What builds elsewhere (`the host's build.sh`).
+ * @returns The warning, or `null`.
+ */
+export function runtimeSplitWarning(
+  manifest: DeployManifest,
+  preset: string,
+  where: string,
+): string | null {
+  const rt = manifest.runtime;
+  if (!rt?.version || (rt.source !== "default" && rt.source !== "env")) return null;
+  const why = rt.source === "default" ? "your default runtime" : "DENEXT_RUNTIME";
+  return `${preset}: this build ran on runtime ${rt.version} (${why}), which ${where} does not ` +
+    `select: it builds and runs on the runtime this denext bundles. Pin the release so both run ` +
+    `the same one: denext runtime use ${rt.version} --project`;
+}

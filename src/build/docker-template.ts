@@ -68,6 +68,13 @@ export interface DockerOptions extends StackOptions {
    * configures limits and the pinned toolchain takes them (3.0.0-rc.2 or later). Default: none.
    */
   readonly limits?: readonly string[];
+  /**
+   * The denext runtime release `deno.json` pins (`denext.runtime`), recorded as the image's
+   * `dev.denext.runtime` label. The pin itself travels in with `deno.json`, so the build and the
+   * server resolve exactly that release (verified by its integrity). Default: none (the project
+   * pins no runtime: the image runs the release its denext bundles).
+   */
+  readonly runtime?: string;
 }
 
 /** One file a Docker regeneration would produce, next to what is on disk today. */
@@ -258,14 +265,27 @@ function tlsLines(options: DockerOptions): string {
  */
 function toolchainLayer(options: DockerOptions): string {
   const cli = (options.cli ?? ["jsr:@denext/denext/cli"]).join(" ");
-  return `
+  return `${runtimeLabel(options)}
 # Run on denext's Deno toolchain, as \`dev\` and \`build\` do (Deno.SQL / postgresClient(), the
 # Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
 # \`runtime path\` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \\
-  ln -sf "$(deno run -A ${cli} toolchain path)" /deno-dir/toolchain-bin/deno
+  ln -sf "$(deno run -A ${cli} runtime path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
 `;
+}
+
+/**
+ * The image's record of the runtime release the project pins ({@linkcode DockerOptions.runtime}),
+ * or nothing for an unpinned project.
+ */
+function runtimeLabel(options: DockerOptions): string {
+  if (!options.runtime) return "";
+  return `
+# The denext runtime release deno.json pins ("denext": { "runtime": … }): the build above and
+# everything below run exactly it, checked against the pin's integrity. Regenerate this file when
+# the pin changes (\`denext runtime use <version> --project\`) so the label follows.
+LABEL dev.denext.runtime=${JSON.stringify(options.runtime)}`;
 }
 
 /**

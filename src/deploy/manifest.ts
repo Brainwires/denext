@@ -216,6 +216,11 @@ export interface DeployCompile {
   target?: string;
   /** The `--allow-*` baked into it. */
   permissions: string[];
+  /**
+   * The denext runtime release whose `denort` it runs on (the release the build selected).
+   * Absent when `deno compile` chose its own runtime, or in a manifest from before it was recorded.
+   */
+  runtime?: string;
 }
 
 /** The deploy manifest `denext build` writes to `.denext/deploy-manifest.json`. */

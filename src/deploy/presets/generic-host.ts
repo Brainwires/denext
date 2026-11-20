@@ -17,7 +17,7 @@ import {
   pinnedLimitFlags,
   withLimitFlags,
 } from "../../build/resource-limits.ts";
-import { drainMsOf, stopTimeoutSec } from "./shared.ts";
+import { drainMsOf, runtimeSplitWarning, stopTimeoutSec } from "./shared.ts";
 import {
   projectUnstableNet,
   tlsEnvNames,
@@ -357,7 +357,7 @@ deno install
 deno task build
 # The server runs on the toolchain the build used (Deno.SQL / postgresClient() included).
 mkdir -p "$DENO_DIR/bin"
-ln -sf "$(deno run -A '${cliModule(manifest)}' toolchain path)" "${o.directory}/${TOOLCHAIN_LINK}"
+ln -sf "$(deno run -A '${cliModule(manifest)}' runtime path)" "${o.directory}/${TOOLCHAIN_LINK}"
 `;
 }
 
@@ -537,6 +537,8 @@ export function genericHost(options: GenericHostPresetOptions = {}): DeployAdapt
       await ctx.writeFile(`${o.name}.service`, renderSystemdUnit(ctx.manifest, o));
       if (!ctx.manifest.compile) {
         await ctx.writeFile("build.sh", renderBuildScript(ctx.manifest, o));
+        const split = runtimeSplitWarning(ctx.manifest, "generic-host", "the host's build.sh");
+        if (split) ctx.warn(split);
       }
       if (ctx.manifest.server.tls) await tlsWarnings(ctx);
       else {
