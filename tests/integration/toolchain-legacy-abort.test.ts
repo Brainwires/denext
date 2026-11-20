@@ -1,13 +1,13 @@
 // `denext start` started directly on denext's Deno toolchain serves without Deno's legacy abort.
 //
 // The toolchain re-exec gives its child `--unstable-no-legacy-abort`, but a CLI started ON the
-// pinned toolchain (`toolchain link` puts it on PATH as `deno`; a `deno task` step runs the same
+// pinned toolchain (`runtime link` puts it on PATH as `deno`; a `deno task` step runs the same
 // `deno`) never re-execs, so it served with the legacy behaviour and printed Deno's
 // "request.signal aborts on successful responses (legacy behavior)" notice on the first request
 // that read the signal (the server loop reads it on every request). Now a serving verb on the
 // toolchain without the flag re-runs once on the same binary with it. This runs the real CLI on
 // the pinned toolchain binary, the way a linked `deno` would, with a route handler that reads
-// `request.signal`. It needs the toolchain in the cache (`denext toolchain install`), and skips
+// `request.signal`. It needs the toolchain in the cache (`denext runtime install`), and skips
 // without it.
 
 import { assert, assertEquals } from "@std/assert";

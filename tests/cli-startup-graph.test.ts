@@ -129,7 +129,7 @@ Deno.test("the committed verb table matches buildRegistry() (drift check)", asyn
 });
 
 Deno.test("the CLI's offline cache covers every module a verb can load", async () => {
-  // What `denext toolchain install` (and a remote CLI's first-run warm-up) `deno cache`s.
+  // What `denext runtime install` (and a remote CLI's first-run warm-up) `deno cache`s.
   assertEquals(CLI_MODULES_URL, toFileUrl(OFFLINE_OUT).href);
   const real = Deno.realPathSync(ROOT);
   const graph = new Set(

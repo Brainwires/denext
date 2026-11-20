@@ -1,7 +1,7 @@
 // What `denext <verb> …` hands to Deno when the verb is neither a denext built-in nor one of the
 // project's own: a Deno subcommand (`denext compile …` → `deno compile …`) or a script
 // (`denext main.ts …` → `deno run main.ts …`). The CLI runs the result through the same path as
-// `denext deno …` (src/cli/commands/deno-toolchain.ts `runDenoPassthrough`), so the toolchain
+// `denext deno …` (src/cli/commands/deno.ts `runDenoPassthrough`), so the toolchain
 // choice, `DENEXT_DENO`, stdio, exit code and signals are all that verb's.
 
 import { resolve } from "@std/path";

@@ -258,7 +258,7 @@ Deno.test("deploy preset generic-host: the unit serves on denext's toolchain fro
     assertStringIncludes(build, "deno task build\n");
     assertStringIncludes(
       build,
-      `ln -sf "$(deno run -A 'jsr:@denext/denext@^4.1.0/cli' toolchain path)" "/srv/shop/.deno/bin/deno"`,
+      `ln -sf "$(deno run -A 'jsr:@denext/denext@^4.1.0/cli' runtime path)" "/srv/shop/.deno/bin/deno"`,
     );
     // A compiled build embeds the toolchain's runtime: the unit runs the executable, no script.
     const compiled = recordingContext(

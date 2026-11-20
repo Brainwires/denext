@@ -147,7 +147,7 @@ jobs:
 
       - name: Install the pinned Gleam compiler
         working-directory: app
-        run: deno run -A cli.ts toolchain install --with gleam
+        run: deno run -A cli.ts runtime install --with gleam
 
       - name: Type check
         working-directory: app

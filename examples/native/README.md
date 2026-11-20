@@ -76,7 +76,7 @@ denext task mobile:android         # open in Android Studio
 the Capacitor shells. It's Ruby (`.ruby-version` pins the version), so install
 it with Bundler, then configure it with a gitignored `fastlane/.env`. The lanes
 run `deno task mobile:sync`, so a `deno` must be on `PATH`
-(`denext toolchain link` puts denext's there):
+(`denext runtime link` puts denext's there):
 
 ```sh
 gem install bundler && bundle install     # installs fastlane (see Gemfile)

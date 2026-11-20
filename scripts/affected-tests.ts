@@ -25,7 +25,8 @@ const ROOT = fromFileUrl(new URL("../", import.meta.url));
 export const INDIRECT_TESTS: Readonly<Record<string, readonly RegExp[]>> = {
   "src/build/deno-version.ts": [
     /^tests\/deno-toolchain(?:-[\w-]+)?\.test\.ts$/,
-    /^tests\/toolchain-(?:audit|prune)\.test\.ts$/,
+    /^tests\/toolchain-audit\.test\.ts$/,
+    /^tests\/runtime-prune\.test\.ts$/,
     /^tests\/esbuild-binary\.test\.ts$/,
   ],
 };

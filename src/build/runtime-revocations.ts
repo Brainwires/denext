@@ -22,7 +22,7 @@
 // must no longer be trusted, so a stolen channel key is withdrawn with the other key.
 //
 // Transport is untrusted (trust comes from the signature): denext.dev and a mirror on GitHub,
-// both asked at once within one budget (1.5 s; 5 s for `toolchain status` / `install` /
+// both asked at once within one budget (1.5 s; 5 s for `runtime version` / `install` /
 // `doctor`), the highest valid sequence winning — a stale copy on one never hides a newer list
 // on the other. Each denext release compiles in the sequence published when it was cut
 // (runtime-revocation-keys.ts), so even a fresh machine never takes an older list. The list is
@@ -71,14 +71,14 @@ const REVOCATION_TTL_MS = 12 * 3600_000;
 const FAILED_RETRY_MS = 3600_000;
 /** The time a command may spend fetching the list. */
 export const REVOCATION_FETCH_BUDGET_MS = 1500;
-/** The time `toolchain status` / `install` and `doctor` may spend fetching it. */
+/** The time `runtime version` / `install` and `doctor` may spend fetching it. */
 const REVOCATION_FORCE_BUDGET_MS = 5000;
 /** How long a signed list stays valid when no expiry is given. */
 export const REVOCATION_DEFAULT_EXPIRY_DAYS = 21;
 /** A list with fewer days than this before it expires is re-signed (`deno task release`). */
 export const REVOCATION_RESIGN_DAYS = 10;
 /**
- * `doctor` (and `toolchain status`) warn about a list with fewer days than this before it
+ * `doctor` (and `runtime version`) warn about a list with fewer days than this before it
  * expires: once it lapses denext ignores it, and a revocation stops reaching anyone.
  */
 export const REVOCATION_EXPIRY_WARN_DAYS = 7;
@@ -451,7 +451,7 @@ export type RevocationMode =
   | "cache-only"
   /** Fetch when the cached list is older than its lifetime, within {@linkcode REVOCATION_FETCH_BUDGET_MS}. */
   | "fetch"
-  /** Fetch now, within {@linkcode REVOCATION_FORCE_BUDGET_MS} (`toolchain status`, `install`, `doctor`). */
+  /** Fetch now, within {@linkcode REVOCATION_FORCE_BUDGET_MS} (`runtime version`, `install`, `doctor`). */
   | "force";
 
 /** Options for {@linkcode loadRuntimeRevocations}. */
@@ -837,7 +837,7 @@ export async function assertRuntimeShippable(
   if (refusal) throw new Error(refusal);
 }
 
-/** A runtime's revocation state, for `toolchain status --json` and `doctor`. */
+/** A runtime's revocation state, for `runtime version --json` and `doctor`. */
 export interface RuntimeRevocationStatus {
   /** Whether a key is configured and the check is on (else every other field is empty). */
   readonly configured: boolean;
@@ -891,7 +891,7 @@ export function revocationStatus(
 }
 
 /**
- * One line for a report (`toolchain status`, `doctor`): the list's sequence and expiry, and what
+ * One line for a report (`runtime version`, `doctor`): the list's sequence and expiry, and what
  * it says about the pinned runtime; `ok` is false when the pin is revoked, the list expired, or
  * it expires within {@linkcode REVOCATION_EXPIRY_WARN_DAYS} days.
  *

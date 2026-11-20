@@ -17,7 +17,8 @@ import { doctorCommand, infoCommand } from "./commands/doctor.ts";
 import { crashReportCommand } from "./commands/crash-report.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { upgradeCommand } from "./commands/upgrade.ts";
-import { denoCommand, toolchainCommand } from "./commands/deno-toolchain.ts";
+import { denoCommand } from "./commands/deno.ts";
+import { runtimeCommand } from "./commands/runtime.ts";
 import { fastlaneCommand } from "./commands/fastlane.ts";
 import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
@@ -56,8 +57,8 @@ export function buildRegistry(): CommandRegistry {
   reg.register(lintCommand);
   reg.register(fmtCommand);
   reg.register(checkCommand);
-  // denext's managed Deno toolchain, and running it directly.
-  reg.register(toolchainCommand);
+  // denext's runtime (its Deno build), and running it directly.
+  reg.register(runtimeCommand);
   reg.register(denoCommand);
   // denext's managed fastlane (pinned Ruby + fastlane, installed on first use).
   reg.register(fastlaneCommand);

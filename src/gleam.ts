@@ -15,7 +15,7 @@
  * ```
  *
  * The compiler is denext's pinned Gleam, downloaded and SHA-256-verified into the toolchain cache on
- * first need (`denext toolchain install --with gleam` fetches it ahead, for offline work);
+ * first need (`denext runtime install --with gleam` fetches it ahead, for offline work);
  * `DENEXT_GLEAM=<path>` or the `gleam` option names another. Gleam's JavaScript target needs no
  * Erlang. When no compiler can be had (offline before the first download) the step fails, unless
  * the project has compiled output already, which it keeps with one warning. An app with no Gleam

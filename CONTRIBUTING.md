@@ -666,8 +666,8 @@ prints it and never writes it to disk.
    against the compiled-in public keys, writes `.denext/runtime-revocations.json` and publishes it
    to denext.dev and the mirror (`--no-publish` stops before that; `deno task revocations publish
    <file>` publishes later).
-3. Check from a clean `DENO_DIR`: `denext toolchain status` shows the revocation and the rollback.
-   Users pick it up within 12 hours, or at once on `toolchain status` / `doctor`.
+3. Check from a clean `DENO_DIR`: `denext runtime version` shows the revocation and the rollback.
+   Users pick it up within 12 hours, or at once on `runtime version` / `doctor`.
 4. Re-pin. When a fixed runtime N+1 exists, `deno task desktop:pin-runtime denext-runtime-vN+1`:
    the new pins keep N-1 as their `rollback`, because N is revoked. Otherwise restore the previous
    pins (`git show <last good>:src/build/deno-toolchain-pin.json`, the same for
@@ -710,7 +710,7 @@ ahead of a user's clock is refused.
 Two warnings come first. `deno task release` checks the published list before it bumps anything
 (step 0b) and warns — it never stops — when fewer than 10 days remain, when the list has expired
 or when it can't be read; `deno task revocations expiry` runs the same check on its own. And
-`denext doctor` (with `toolchain status`) warns everyone once fewer than 7 days remain.
+`denext doctor` (with `runtime version`) warns everyone once fewer than 7 days remain.
 
 **The compiled-in floor.** Each release compiles in the sequence of the list published when it
 was cut (`RUNTIME_REVOCATION_MIN_SEQUENCE` in `src/build/runtime-revocation-keys.ts`), so a fresh

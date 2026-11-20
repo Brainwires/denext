@@ -332,7 +332,7 @@ Deno.test("windows corrupt download: DenoToolchainHashError, nothing installed, 
       DenoToolchainRequiredError,
     );
     assertStringIncludes(refused.message, "REFUSING");
-    assertStringIncludes(refused.message, "denext toolchain install");
+    assertStringIncludes(refused.message, "denext runtime install");
   } finally {
     await s.dispose();
   }

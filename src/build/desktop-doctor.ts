@@ -975,7 +975,7 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
       `the runtime ${s.version} needs Deno ${s.deno.required} exactly (stock, or denext's ` +
         `Deno toolchain built from it); \`deno\` is ${s.deno.found ?? "not found"}`,
       `deno upgrade --version ${s.deno.required} (or point DENO_BIN at a Deno ` +
-        `${s.deno.required} binary, or at denext's Deno toolchain: \`denext toolchain path\`)`,
+        `${s.deno.required} binary, or at denext's Deno toolchain: \`denext runtime path\`)`,
     );
   }
   if (s.cache === "unpinned") {

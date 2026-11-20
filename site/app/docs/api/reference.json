@@ -75243,7 +75243,7 @@
               "kind": "property",
               "name": "gleam",
               "signature": "gleam?: string",
-              "doc": "The `gleam` executable. Default: `DENEXT_GLEAM=<path>` when set, else denext's pinned Gleam,\ndownloaded and SHA-256-verified on first need (`denext toolchain install --with gleam` fetches\nit ahead). Name `\"gleam\"` here to use the one on `PATH` instead."
+              "doc": "The `gleam` executable. Default: `DENEXT_GLEAM=<path>` when set, else denext's pinned Gleam,\ndownloaded and SHA-256-verified on first need (`denext runtime install --with gleam` fetches\nit ahead). Name `\"gleam\"` here to use the one on `PATH` instead."
             }
           ]
         },

@@ -8,7 +8,7 @@ export. All configuration is env-driven via `fastlane/.env` (copy from
 
 Run everything from `examples/native` (the directory above this one), including
 the lanes. The lanes call `deno task mobile:sync`, so a `deno` must be on `PATH`
-(`denext toolchain link` puts denext's there).
+(`denext runtime link` puts denext's there).
 
 ```sh
 gem install bundler && bundle install          # installs fastlane (see ../Gemfile)

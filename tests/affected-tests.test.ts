@@ -56,7 +56,7 @@ Deno.test("affected tests: a module's indirect tests are selected without import
     ["tests/deno-toolchain-tsgo.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
     ["tests/deno-toolchain-windows.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
     ["tests/toolchain-audit.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
-    ["tests/toolchain-prune.test.ts", `import "../src/build/toolchain-prune.ts";\n`],
+    ["tests/runtime-prune.test.ts", `import "../src/build/toolchain-prune.ts";\n`],
     ["tests/esbuild-binary.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
     ["tests/gleam-toolchain.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
     ["tests/e2e/deno-toolchain.e2e.test.ts", ""],
@@ -67,8 +67,8 @@ Deno.test("affected tests: a module's indirect tests are selected without import
     "tests/deno-toolchain.test.ts",
     "tests/deno-version.test.ts",
     "tests/esbuild-binary.test.ts",
+    "tests/runtime-prune.test.ts",
     "tests/toolchain-audit.test.ts",
-    "tests/toolchain-prune.test.ts",
   ]);
   // Only for the module that lists them.
   assertEquals(affectedTests(["src/build/other.ts"], tests), []);

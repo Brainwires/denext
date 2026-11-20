@@ -261,7 +261,7 @@ function toolchainLayer(options: DockerOptions): string {
   return `
 # Run on denext's Deno toolchain, as \`dev\` and \`build\` do (Deno.SQL / postgresClient(), the
 # Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
-# \`toolchain path\` re-verifies it and the link puts it first on PATH for everything below.
+# \`runtime path\` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \\
   ln -sf "$(deno run -A ${cli} toolchain path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH

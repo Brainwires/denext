@@ -14,7 +14,7 @@ import { crashReportCheck } from "../../build/crash-report.ts";
 import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandLocks, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
-import { runDenoPassthrough } from "./deno-toolchain.ts";
+import { runDenoPassthrough } from "./deno.ts";
 import { type ProjectPaths, resolveProject, resolveProjectLayout } from "../../build/paths.ts";
 import { readStaticConfig, type StaticConfig } from "../../build/config-static.ts";
 import { setupAppPlugins } from "../../plugin/mod.ts";

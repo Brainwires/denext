@@ -524,21 +524,21 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
       const text of [
         "--allow-run",
         "denext task start",
-        "denext toolchain path",
+        "denext runtime path",
         "DENEXT_DENO=stock",
       ]
     ) assertStringIncludes(grants.refusal, text);
 
     const off = await refusal(resolveDenoToolchain({ ...base, env: envOf({}), fetch: offline }));
     assertStringIncludes(off, "Are you offline?");
-    assertStringIncludes(off, "Fix: run `denext toolchain install`");
+    assertStringIncludes(off, "Fix: run `denext runtime install`");
     assertStringIncludes(off, "DENEXT_DENO=stock");
     assertStringIncludes(off, "DENEXT_DENO=<path>");
     assert(!off.includes("Running on stock Deno"), "never another Deno on its own");
 
     const tampered = await refusal(resolveDenoToolchain({ ...base, env: envOf({}) }));
     assertStringIncludes(tampered, "REFUSING");
-    assertStringIncludes(tampered, "denext toolchain install");
+    assertStringIncludes(tampered, "denext runtime install");
     assertEquals(await names(binDir(f)), [], "the mismatched file was deleted");
 
     const badPin = await refusal(resolveDenoToolchain({
@@ -824,7 +824,7 @@ Deno.test("link / unlink touch only what link created", async () => {
     await assertRejects(
       () => linkDenoToolchain(bin, { env, os: "windows", cacheRoot: root }),
       Error,
-      "was not created by `denext toolchain link`",
+      "was not created by `denext runtime link`",
     );
     await assertRejects(
       () => unlinkDenoToolchain({ env, os: "windows", cacheRoot: root }),

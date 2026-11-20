@@ -1,5 +1,5 @@
 // denext's pinned Deno toolchain as a test runs it: the cached binary (no download), and the
-// environment a `denext toolchain link`ed shell gives a process started on it.
+// environment a `denext runtime link`ed shell gives a process started on it.
 
 import { dirname, join } from "@std/path";
 import { denoToolchainCacheRoot, loadDenoToolchainPin } from "../../src/build/deno-toolchain.ts";
@@ -17,7 +17,7 @@ export function cachedToolchain(): string | null {
   }
 }
 
-/** The environment a `toolchain link`ed shell gives the CLI: the toolchain first on PATH. */
+/** The environment a `runtime link`ed shell gives the CLI: the toolchain first on PATH. */
 export function linkedEnv(deno: string): Record<string, string> {
   const sep = Deno.build.os === "windows" ? ";" : ":";
   return {

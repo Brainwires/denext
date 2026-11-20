@@ -350,7 +350,7 @@ export async function findVitestFiles(root: string = ROOT): Promise<string[]> {
 }
 
 /**
- * Whether a Deno is a denext toolchain build: its `Deno.build.denext` marker (3.0.0-rc.3 on), or a
+ * Whether a Deno is a denext runtime build: its `Deno.build.denext` marker (3.0.0-rc.3 on), or a
  * pre-marker build's version (the pinned `3.0.0-rc.N`, or `2.9.7-denext.17` before the fork took
  * its own version). Upstream Deno of the same number is not.
  *
@@ -388,6 +388,22 @@ export async function toolchainDeno(): Promise<string | null> {
  */
 export function tempRootEnv(root: string): Record<string, string> {
   return { TMPDIR: root, TMP: root, TEMP: root };
+}
+
+/**
+ * The environment every test pass runs with: the temp dir at `root`
+ * ({@linkcode tempRootEnv}), and the runtime user default (`DENEXT_RUNTIME_DEFAULT_FILE`,
+ * src/build/runtime-select.ts) at a file under `root` that never exists — so no test, and no CLI
+ * child a test starts, runs on the developer's own `denext runtime use | upgrade` choice.
+ *
+ * @param root The run's temp root.
+ * @returns The variables.
+ */
+export function passEnv(root: string): Record<string, string> {
+  return {
+    ...tempRootEnv(root),
+    DENEXT_RUNTIME_DEFAULT_FILE: join(root, "no-runtime-default.json"),
+  };
 }
 
 /**
@@ -560,7 +576,7 @@ async function deno(args: string[], bin: string = Deno.execPath()): Promise<bool
   const { success } = await new Deno.Command(bin, {
     args,
     env: {
-      ...(runTempRoot ? tempRootEnv(runTempRoot) : {}),
+      ...(runTempRoot ? passEnv(runTempRoot) : {}),
       ...heapEnv(Deno.build.os, Deno.env.get("DENO_V8_FLAGS"), Deno.systemMemoryInfo().total),
     },
     stdin: "null",

@@ -674,7 +674,7 @@ Deno.test({
  *
  * The child runs with the toolchain marker `path`, so `runVerb`'s toolchain gate keeps it in
  * process whatever Deno runs the tests: on a toolchain build other than the pinned one (a stale
- * `toolchain link`, or the toolchain of an installed `denext` older than this checkout) that gate
+ * `runtime link`, or the toolchain of an installed `denext` older than this checkout) that gate
  * re-runs the entry on the pinned build before the limits gate is reached, and every case below
  * then reads as a limits re-run (exit 7). Only the limits gate is under test here; the limits
  * gate still tells the runtime from the running Deno's own identity.

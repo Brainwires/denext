@@ -6,7 +6,7 @@ import type { CommandSpec } from "../command.ts";
 import { crashReportTest, type CrashReportTestOptions } from "../../build/crash-report.ts";
 import { readEnv } from "../../build/idle-trim.ts";
 import { VERSION } from "../../version.ts";
-import { toolchainBinary } from "./deno-toolchain.ts";
+import { runtimeBinary } from "./deno.ts";
 import { commandMeta } from "../command-meta.ts";
 
 /** What {@linkcode crashReportAction} reads and writes (seams for tests). */
@@ -53,7 +53,7 @@ export const crashReportCommand: CommandSpec = {
   ...commandMeta("crash-report"),
   run: async (ctx) => {
     const code = await crashReportAction(ctx.positionals[0], {
-      binary: toolchainBinary,
+      binary: runtimeBinary,
       env: readEnv,
       print: (line, error) => (error ? console.error : console.log)(line),
     });

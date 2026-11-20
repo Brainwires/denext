@@ -91,6 +91,11 @@ export const RUNTIME_INTEGRITY_ENV = "DENEXT_RUNTIME_INTEGRITY";
 export const RUNTIME_NOTICED_ENV = "DENEXT_RUNTIME_NOTICED";
 /** The user default's file name under the toolchain cache. */
 export const USER_DEFAULT_FILE = "default.json";
+/**
+ * Another file for the user default than `<cache>/default.json` (the test harness points it at a
+ * file that does not exist, so no test sees the machine's own default).
+ */
+export const RUNTIME_DEFAULT_FILE_ENV = "DENEXT_RUNTIME_DEFAULT_FILE";
 /** Where release documents are cached under the toolchain cache (runtime-channel.ts writes it). */
 const RELEASES_DIR = "releases";
 /** The toolchain marker (deno-toolchain.ts `TOOLCHAIN_ACTIVE_ENV`). */
@@ -401,9 +406,39 @@ function safeCacheRoot(env: EnvGet, given?: string): string | null {
   }
 }
 
-/** The user default under `cacheRoot`, or `null` without a cache. */
-function userDefaultIn(cacheRoot: string | null): UserRuntimeDefault | null {
-  return cacheRoot === null ? null : readUserRuntimeDefault(cacheRoot);
+/**
+ * The user default's file: `<cacheRoot>/default.json` when the caller names the cache, else
+ * {@linkcode RUNTIME_DEFAULT_FILE_ENV}, else `<DENO_DIR>/denext-deno/default.json`.
+ *
+ * @param env Env reader (default the process's).
+ * @param cacheRoot The toolchain cache, when the caller names one.
+ * @returns The path, or `null` when the environment names no cache.
+ */
+export function userRuntimeDefaultFile(
+  env: EnvGet = processEnv,
+  cacheRoot?: string,
+): string | null {
+  if (cacheRoot) return join(cacheRoot, USER_DEFAULT_FILE);
+  const override = env(RUNTIME_DEFAULT_FILE_ENV)?.trim();
+  if (override) return override;
+  const root = safeCacheRoot(env);
+  return root === null ? null : join(root, USER_DEFAULT_FILE);
+}
+
+/** The user default in `file`, or `null` without one. */
+function userDefaultIn(file: string | null): UserRuntimeDefault | null {
+  return file === null ? null : readUserRuntimeDefaultFile(file);
+}
+
+/**
+ * The releases this denext bundles: its pins, and their rollback release when both pins name the
+ * same one (`denext runtime use | install` of either needs no channel).
+ *
+ * @param bundled The bundled pins (default {@linkcode BUNDLED_RUNTIME}).
+ * @returns The releases, the bundled one first.
+ */
+export function bundledRuntimeReleases(bundled: RuntimePins = BUNDLED_RUNTIME): RuntimePins[] {
+  return bundledReleases(bundled);
 }
 
 /** The bundled release, and its rollback release when both pins name the same one. */
@@ -564,6 +599,17 @@ export function runtimeIncompatibility(
 // ---------------------------------------------------------------------------------------------
 // The project pin and the user default.
 
+/**
+ * The config a project pin lives in: the workspace root's `deno.json` / `deno.jsonc` for the
+ * project in `dir` (outside a workspace, the nearest config).
+ *
+ * @param dir The project directory.
+ * @returns The path, or `null` when no config is found.
+ */
+export function projectRuntimeConfigPath(dir: string): string | null {
+  return rootConfigOf(dir);
+}
+
 /** The root config of the workspace `dir` is in (its own config outside a workspace), or `null`. */
 function rootConfigOf(dir: string): string | null {
   for (let at = resolve(dir);; at = dirname(at)) {
@@ -647,9 +693,20 @@ export function readProjectRuntimePin(dir: string): ProjectRuntimePin | null {
  * @returns The default.
  */
 export function readUserRuntimeDefault(cacheRoot: string): UserRuntimeDefault | null {
+  return readUserRuntimeDefaultFile(join(cacheRoot, USER_DEFAULT_FILE));
+}
+
+/**
+ * The user default in `file` ({@linkcode userRuntimeDefaultFile}), or `null` when there is none or
+ * it is unreadable or malformed.
+ *
+ * @param file The default's file.
+ * @returns The default.
+ */
+export function readUserRuntimeDefaultFile(file: string): UserRuntimeDefault | null {
   let raw: { schema?: unknown; held?: unknown } | null;
   try {
-    raw = JSON.parse(Deno.readTextFileSync(join(cacheRoot, USER_DEFAULT_FILE)));
+    raw = JSON.parse(Deno.readTextFileSync(file));
   } catch {
     return null;
   }
@@ -665,19 +722,22 @@ export function readUserRuntimeDefault(cacheRoot: string): UserRuntimeDefault | 
  *
  * @param cacheRoot The toolchain cache.
  * @param value The default.
+ * @param file The default's file (default `<cacheRoot>/default.json`).
  */
 export async function writeUserRuntimeDefault(
   cacheRoot: string,
   value: UserRuntimeDefault,
+  file: string = join(cacheRoot, USER_DEFAULT_FILE),
 ): Promise<void> {
   const lock = lockOf(value);
   if (typeof lock === "string") throw new RuntimeSelectError(`the default is malformed: ${lock}`);
-  await Deno.mkdir(cacheRoot, { recursive: true });
-  const tmp = join(cacheRoot, `.tmp-${crypto.randomUUID()}`);
+  const dir = dirname(file);
+  await Deno.mkdir(dir, { recursive: true });
+  const tmp = join(dir, `.tmp-${crypto.randomUUID()}`);
   const text = JSON.stringify({ schema: 1, ...lock, held: value.held }, null, 2) + "\n";
   try {
     await Deno.writeTextFile(tmp, text);
-    await Deno.rename(tmp, join(cacheRoot, USER_DEFAULT_FILE));
+    await Deno.rename(tmp, file);
   } catch (err) {
     await Deno.remove(tmp).catch(() => {});
     throw err;
@@ -714,6 +774,8 @@ interface Ctx {
   readonly env: EnvGet;
   readonly projectDir: string;
   readonly cacheRoot: string | null;
+  /** The user default's file ({@linkcode userRuntimeDefaultFile}). */
+  readonly defaultFile: string | null;
   readonly bundled: RuntimePins;
   readonly compat: CompatTarget;
   readonly envLock?: RuntimeLock;
@@ -726,6 +788,7 @@ function ctxOf(o: ResolveRuntimeSyncOptions): Ctx {
     env,
     projectDir: o.projectDir ?? cwdOr("."),
     cacheRoot: safeCacheRoot(env, o.cacheRoot),
+    defaultFile: userRuntimeDefaultFile(env, o.cacheRoot),
     bundled: o.bundled ?? BUNDLED_RUNTIME,
     compat: o.compat ?? {},
     ...(o.envLock ? { envLock: o.envLock } : {}),
@@ -810,7 +873,7 @@ function envLockSync(version: string, ctx: Ctx): RuntimeLock | null {
   if (ctx.envLock?.version === version) return ctx.envLock;
   const integrity = ctx.env(RUNTIME_INTEGRITY_ENV)?.trim();
   if (integrity && ctx.env(ACTIVE_ENV) === version) return { version, integrity };
-  const known = [safeProjectLock(ctx), userDefaultIn(ctx.cacheRoot)];
+  const known = [safeProjectLock(ctx), userDefaultIn(ctx.defaultFile)];
   return known.find((l) => l?.version === version) ?? null;
 }
 
@@ -916,7 +979,7 @@ export function resolveRuntimeReleaseSync(options: ResolveRuntimeSyncOptions = {
   if (wanted) return envRung(wanted, ctx);
   const project = readProjectRuntimePin(ctx.projectDir);
   if (project) return projectRung(project, ctx);
-  const d = userDefaultIn(ctx.cacheRoot);
+  const d = userDefaultIn(ctx.defaultFile);
   const fromDefault = d ? defaultRung(d, ctx) : null;
   if (fromDefault !== null && typeof fromDefault === "object") return fromDefault;
   return bundledRelease(bundled, "bundled", fromDefault ? [fromDefault] : []);
@@ -957,6 +1020,7 @@ export interface ResolveRuntimeAsyncOptions extends ResolveRuntimeOptions {
 interface AsyncSeams {
   readonly env: EnvGet;
   readonly cacheRoot: string | null;
+  readonly defaultFile: string | null;
   readonly bundled: RuntimePins;
   readonly loadChannel: (mode: "cache-only" | "fetch") => Promise<LoadedChannel>;
   readonly fetchLocked: (lock: RuntimeLock) => Promise<RuntimeReleaseDocument>;
@@ -971,6 +1035,7 @@ function seamsOf(o: ResolveRuntimeAsyncOptions): AsyncSeams {
   return {
     env,
     cacheRoot,
+    defaultFile: userRuntimeDefaultFile(env, o.cacheRoot),
     bundled: o.bundled ?? BUNDLED_RUNTIME,
     loadChannel: o.loadChannel ?? ((mode) => loadRuntimeChannel({ mode, env, cacheRoot: root })),
     fetchLocked: o.fetchLocked ??
@@ -1023,7 +1088,7 @@ async function prefetchEnv(
   const version = s.env(RUNTIME_ENV)?.trim();
   if (!version || !isChannelReleaseVersion(version)) return undefined;
   if (bundledReleases(s.bundled).some((p) => p.toolchain.version === version)) return undefined;
-  const ctx = ctxOf({ ...o, env: s.env, cacheRoot: s.cacheRoot ?? undefined, bundled: s.bundled });
+  const ctx = { ...ctxOf({ ...o, env: s.env, bundled: s.bundled }), cacheRoot: s.cacheRoot };
   const local = envLockSync(version, ctx);
   if (local && lockedPinsSync(local, s.bundled, s.cacheRoot)) return local;
   try {
@@ -1046,7 +1111,7 @@ async function prefetchLocks(o: ResolveRuntimeAsyncOptions, s: AsyncSeams): Prom
     await ensureLocked(project.lock, s).catch(() => {});
     return;
   }
-  const d = userDefaultIn(s.cacheRoot);
+  const d = userDefaultIn(s.defaultFile);
   if (d) await ensureLocked(d, s).catch(() => {});
 }
 
@@ -1073,7 +1138,6 @@ export async function resolveRuntimeRelease(
   const release = resolveRuntimeReleaseSync({
     ...options,
     env: s.env,
-    ...(s.cacheRoot ? { cacheRoot: s.cacheRoot } : {}),
     bundled: s.bundled,
     ...(envLock ? { envLock } : {}),
     entries,

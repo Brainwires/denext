@@ -1,7 +1,7 @@
 // The runtime reference (`/docs/runtime-reference`): one page listing what denext's Deno adds to
 // stock Deno. It must be reachable (nav, page wrapper), say how to tell the runtime apart, and say
 // which runtime its rows apply to without naming the pinned version (a version there goes stale
-// with every pin move; `denext toolchain status` names it), nor call any release the newest.
+// with every pin move; `denext runtime version` names it), nor call any release the newest.
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { NAV } from "../site/components/ui.tsx";

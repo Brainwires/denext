@@ -124,7 +124,7 @@ jobs:
 
       - name: Read the Gleam pin
         # The unit suites that compile real Gleam (tests/gleam.test.ts, tests/migrate-lustre.test.ts)
-        # run with denext's pinned Gleam, which `toolchain install --with gleam` below downloads into
+        # run with denext's pinned Gleam, which `runtime install --with gleam` below downloads into
         # <DENO_DIR>/denext-deno/gleam/<version>/<target> and SHA-256-verifies
         # (src/build/gleam-toolchain.ts). The cache below only saves that download (~10 MB); the CLI
         # still verifies what it finds there before running it. The same step as e2e.yml's.
@@ -180,7 +180,7 @@ jobs:
 
       - name: Install the pinned Gleam compiler
         # From the cache above when the pin is unchanged (verified, not downloaded again).
-        run: deno run -A cli.ts toolchain install --with gleam
+        run: deno run -A cli.ts runtime install --with gleam
 
       - name: Type check
         # The toolchain's checker: native TypeScript 7, as `denext check` and the dev overlay run it.

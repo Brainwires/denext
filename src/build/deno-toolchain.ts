@@ -221,7 +221,7 @@ const CACHE_DESCR = "Deno toolchain cache";
 const MAX_DOWNLOAD = 1024 ** 3;
 /** The way out of every toolchain failure. */
 /** What every refusal to run without the toolchain names: the fix, and the explicit opt-outs. */
-const TOOLCHAIN_FIX = "  Fix: run `denext toolchain install` (online), then retry.\n" +
+const TOOLCHAIN_FIX = "  Fix: run `denext runtime install` (online), then retry.\n" +
   `  Or opt out explicitly: ${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the ` +
   `\`deno\` on PATH), ${TOOLCHAIN_ENV}=<path> runs that deno binary.`;
 /** The one line {@linkcode linkDenoToolchain}'s Windows shim carries (what unlink checks). */
@@ -1530,7 +1530,7 @@ function grantsRefusal(version: string, missing: readonly string[], cacheRoot: s
     `${missing.join(" ")} for ${cacheRoot}), and project code runs on the toolchain, not on ` +
     `Deno ${Deno.version.deno}.\n` +
     "  Run the command on the toolchain itself: `denext task start` (a task's `deno` is the " +
-    "toolchain), the binary `denext toolchain path` prints, or the image / unit " +
+    "toolchain), the binary `denext runtime path` prints, or the image / unit " +
     "`denext deploy prepare` writes.\n" +
     `  Or grant ${missing.join(" ")} so it re-runs itself on the toolchain.\n` +
     `  ${TOOLCHAIN_ENV}=stock runs it on this Deno instead (no Deno.SQL / postgresClient()).`;
@@ -1658,7 +1658,7 @@ export async function selectToolchainPin(
 
 /**
  * The toolchain this machine would run for the pin in force — the pin, or its rollback when the
- * revoked-runtimes list revokes it here — as `toolchain status` / `install` / `path` and `doctor`
+ * revoked-runtimes list revokes it here — as `runtime version` / `install` / `path` and `doctor`
  * report it: the list read in `mode`, whatever toolchain marker this process inherited.
  *
  * @param mode How the list is read (`force` fetches now, within its 5 s budget).
@@ -1680,7 +1680,7 @@ export function toolchainSelection(
 }
 
 // ---------------------------------------------------------------------------------------------
-// `denext toolchain status` / `denext doctor`'s view.
+// `denext runtime version` / `denext doctor`'s view.
 
 /** The toolchain's state on this machine. */
 export interface DenoToolchainStatus {
@@ -1767,7 +1767,7 @@ async function cacheState(
   return { state: await cachedSlotState(slot, verify), path: join(dir, exe) };
 }
 
-/** A compiled executable fetches the toolchain before any command but `toolchain` / `completions`. */
+/** A compiled executable fetches the toolchain before any command but `runtime` / `completions`. */
 const MISSING_STANDALONE_TEXT = "not cached yet (downloaded on the first denext command)";
 
 /**
@@ -1815,7 +1815,7 @@ export async function denoToolchainStatus(
   const pin = options.pin ?? loadDenoToolchainPin(env);
   // From the running Deno alone: denext's Deno (its `Deno.build.denext` marker, or a pre-marker
   // build's version) of the pin's version. An inherited marker, an older `-denext.N` build (a stale
-  // `toolchain link`) or upstream Deno of the pinned number is not the pinned toolchain; a
+  // `runtime link`) or upstream Deno of the pinned number is not the pinned toolchain; a
   // `DENEXT_DENO=<path>` binary has no version to check, so there the marker its own launch set
   // ("path") counts.
   const active = mode.mode === "path"
@@ -2110,7 +2110,7 @@ async function installedTsgoProblem(
 }
 
 // ---------------------------------------------------------------------------------------------
-// `denext toolchain link | unlink`: an opt-in `deno` on PATH.
+// `denext runtime link | unlink`: an opt-in `deno` on PATH.
 
 /** Options for {@linkcode linkDenoToolchain} / {@linkcode unlinkDenoToolchain}. */
 export interface DenoToolchainLinkOptions {
@@ -2194,7 +2194,7 @@ export async function linkDenoToolchain(
   const existing = await Deno.lstat(link).catch(() => null);
   if (existing && !await isOurLink(link, os, root)) {
     throw new Error(
-      `denext: ${link} exists and was not created by \`denext toolchain link\`; ` +
+      `denext: ${link} exists and was not created by \`denext runtime link\`; ` +
         "remove it yourself first.",
     );
   }
@@ -2238,7 +2238,7 @@ export async function staleToolchainLink(
   if (target === null || pin.version === null) return null;
   if (isUnder(join(root, pin.version), target)) return null;
   return `denext: ${link} points at ${target}, not the pinned toolchain ${pin.version}; ` +
-    "run `denext toolchain link` again (or `denext toolchain unlink`).";
+    "run `denext runtime link` again (or `denext runtime unlink`).";
 }
 
 /**
@@ -2255,7 +2255,7 @@ export async function unlinkDenoToolchain(
   const link = linkPath(env, os);
   if (!(await Deno.lstat(link).catch(() => null))) return null;
   if (!await isOurLink(link, os, options.cacheRoot ?? denoToolchainCacheRoot(env))) {
-    throw new Error(`denext: ${link} was not created by \`denext toolchain link\`; left alone.`);
+    throw new Error(`denext: ${link} was not created by \`denext runtime link\`; left alone.`);
   }
   await Deno.remove(link);
   return link;

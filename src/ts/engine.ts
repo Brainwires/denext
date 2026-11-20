@@ -95,7 +95,7 @@ export async function nativeCheckDecision(
     supported,
     warning: tsgo.state === "refused"
       ? `denext: ${tsgo.detail}; type-checking with the in-process TypeScript instead ` +
-        `(\`denext toolchain install\` re-downloads it).`
+        `(\`denext runtime install\` re-downloads it).`
       : undefined,
   };
 }

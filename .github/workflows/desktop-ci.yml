@@ -23,7 +23,7 @@
 #      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
 #      mounted and the .pkg through `installer`. And install.ps1 against a loopback release, and
 #      install.ps1 / install.sh against this commit's own binary build (the toolchain step included)
-#      and the real latest release (which may predate the `toolchain` verb: denext < 4.0).
+#      and the real latest release (which may predate the `runtime` verb: denext < 4.0).
 #      Windows on Arm (windows-11-arm) runs the desktop suites, install.ps1 and the Arm64 package +
 #      .msi natively, required for a release like every other job.
 #   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
@@ -138,6 +138,8 @@ on:
       - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
+      - "src/cli/commands/deno.ts" # the runtime binary `runtime path | link` names
+      - "src/cli/commands/runtime*.ts" # `denext runtime`, which the installer jobs run
       - "src/cli/dev-attach.ts"
       - "src/cli/register.ts"
       - "src/cli/shared.ts"
@@ -888,7 +890,7 @@ jobs:
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
       # This commit's installer with this commit's binary (a local release: DENEXT_ARTIFACTS, still
-      # checksum-verified), so the `toolchain install` step runs against a binary that has the verb.
+      # checksum-verified), so the `runtime install` step runs against a binary that has the verb.
       - name: Install this commit's binary build, toolchain included, run it, uninstall
         shell: powershell
         env:
@@ -912,8 +914,8 @@ jobs:
           $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
           $v = & $exe --version
           if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
-          & $exe toolchain status
-          if ($LASTEXITCODE -ne 0) { throw 'toolchain status failed' }
+          & $exe runtime version
+          if ($LASTEXITCODE -ne 0) { throw 'runtime version failed' }
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
 
@@ -945,7 +947,7 @@ jobs:
         shell: pwsh
         run: deno test -A tests/install-ps1.test.ts
       # This commit's installer with this commit's Arm64 binary (a local release: DENEXT_ARTIFACTS,
-      # still checksum-verified), so `toolchain install` fetches the pinned Windows on Arm toolchain.
+      # still checksum-verified), so `runtime install` fetches the pinned Windows on Arm toolchain.
       - name: Install this commit's Arm64 binary build, toolchain included, run it, uninstall
         shell: powershell
         env:
@@ -969,8 +971,8 @@ jobs:
           $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
           $v = & $exe --version
           if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
-          & $exe toolchain status
-          if ($LASTEXITCODE -ne 0) { throw 'toolchain status failed' }
+          & $exe runtime version
+          if ($LASTEXITCODE -ne 0) { throw 'runtime version failed' }
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
       - name: Install the latest release for real, run it, uninstall
@@ -1037,7 +1039,7 @@ jobs:
 
   # install.sh end to end on Linux and macOS (Apple Silicon): this commit's binary (a local
   # release, the toolchain step included), then the real latest release, which may predate the
-  # `toolchain` verb (denext < 4.0). macOS is where the installer strips the download's
+  # `runtime` verb (denext < 4.0). macOS is where the installer strips the download's
   # quarantine and writes a login shell's profile; Homebrew users get the same binary.
   install-sh:
     name: install.sh (${{ matrix.os }} — this commit's build + the real latest one)
@@ -1080,7 +1082,7 @@ jobs:
             echo "::error::the toolchain step did not complete"; exit 1
           fi
           "$RUNNER_TEMP/denext-head/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'
-          "$RUNNER_TEMP/denext-head/bin/denext" toolchain status
+          "$RUNNER_TEMP/denext-head/bin/denext" runtime version
       - name: Install the latest release for real, run it
         shell: bash
         env:

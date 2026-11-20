@@ -1117,7 +1117,7 @@ export function denoVersionMismatchMessage(
     `(stock, or denext's Deno toolchain built from it), but \`${deno}\` is Deno ${found}.\n` +
     `  Install it with:  deno upgrade --version ${pin.deno}\n` +
     `  Or point DENO_BIN at a Deno ${pin.deno} binary, or at denext's Deno toolchain ` +
-    `(\`denext toolchain path\`; desktop run / dev build with it).\n` +
+    `(\`denext runtime path\`; desktop run / dev build with it).\n` +
     `  Or, ${STOCK_WAY_OUT}.`;
 }
 

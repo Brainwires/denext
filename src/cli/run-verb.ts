@@ -611,7 +611,7 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
     pathEnv: (deno) => denoPathEnv(deno),
-    // Already on the toolchain but started without its runtime flags (`toolchain link`'s `deno`,
+    // Already on the toolchain but started without its runtime flags (`runtime link`'s `deno`,
     // a `deno task` step): a serving verb re-runs once with them.
     legacyAbort: !standalone && servesInProcess(command) && mayRespawnSelf()
       ? legacyAbortActive

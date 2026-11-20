@@ -397,7 +397,7 @@ const TOOLCHAIN_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
  * Whether a verb runs the project's code — and so runs on denext's Deno toolchain: the serve and
  * build verbs, `test` / `check` / `job`, `analyze` / `profile` / `doctor`, `desktop
  * run|dev|build|package`, `mobile dev|build`, and every verb a project or plugin contributes.
- * Help, `--version`, scaffolding, dependency edits, `toolchain`, `upgrade` and `create` stay on
+ * Help, `--version`, scaffolding, dependency edits, `runtime`, `upgrade` and `create` stay on
  * the Deno that started the CLI.
  *
  * @param command The verb's name and where it came from.
@@ -416,12 +416,12 @@ export function runsProjectCode(
 }
 
 /**
- * The verbs a compiled binary runs without any Deno: `toolchain` manages the toolchain itself (its
- * `status` must never download it) and `completions` only prints a script. Every other verb may
+ * The verbs a compiled binary runs without any Deno: `runtime` manages the toolchain itself (its
+ * `version` must never download it) and `completions` only prints a script. Every other verb may
  * spawn `deno` — a module verb's pinned-denext re-exec, `fmt` / `lint` / `add`, the UI's and MCP's
  * children — so a binary hands those the toolchain up front.
  */
-const DENO_FREE_VERBS: ReadonlySet<string> = new Set(["toolchain", "completions"]);
+const DENO_FREE_VERBS: ReadonlySet<string> = new Set(["runtime", "completions"]);
 
 /**
  * Whether denext's Deno toolchain applies to a verb in THIS process: in a compiled binary, every
@@ -451,7 +451,7 @@ export function toolchainApplies(
  * no project code — `fmt`, `lint`, `add`, `create`, `generate`, `migrate`, `upgrade`, `ui`, `mcp`,
  * `task`, … — so their children (`deno fmt`, the UI's and MCP's `deno` children, a task's steps)
  * run on the toolchain, as they do under the binary. The project-code verbs re-exec instead
- * ({@linkcode toolchainApplies}); `toolchain` and `completions` run no Deno at all.
+ * ({@linkcode toolchainApplies}); `runtime` and `completions` run no Deno at all.
  *
  * @param command The verb's name and where it came from.
  * @param action Its first positional (the `desktop` / `mobile` action).
@@ -1012,7 +1012,7 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
 
 /**
  * The half of {@linkcode maybeReexecToolchain} for a process ALREADY on the toolchain — started on
- * it directly (`toolchain link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
+ * it directly (`runtime link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
  * `2.9.7-denext.N` build) rather than re-exec'd onto it, so without the toolchain's runtime flags
  * ({@linkcode toolchainRuntimeFlags}). A serving verb whose `Deno.serve` still runs the legacy abort
  * re-runs once on this same binary with them; the child is told so ({@linkcode RUNTIME_FLAGS_ENV})
@@ -1074,7 +1074,7 @@ async function recheckedChoice(deps: ReexecToolchainDeps): Promise<DenoToolchain
  * version, and a process whose Deno is that marker's version (or the pinned version, or a
  * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
  * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
- * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
+ * `runtime link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
  * (`DENEXT_DENO=stock`) or no pin continues the command in-process; a process without the grants
  * to start the toolchain refuses with the resolver's `refusal` (its ways out); a toolchain that can't be had (offline, no build for this host, a failed download)
  * throws the resolver's `denext:` error with the fix — never another Deno. A serving verb already

@@ -5,12 +5,13 @@
 # The binary is a CLI, not a second copy of the framework: inside a project it defers to the
 # denext version that project pins, so `denext build` builds exactly what `deno task build`
 # would. It is all you need - Deno itself is not: after installing the binary the script runs
-# `denext toolchain install`, which downloads denext's own Deno build (SHA-256-verified) into
+# `denext runtime install`, which downloads denext's own Deno build (SHA-256-verified) into
 # Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` ...).
-# When no `deno` is on your Path it also runs `denext toolchain link`, so `deno` is that toolchain
+# When no `deno` is on your Path it also runs `denext runtime link`, so `deno` is that toolchain
 # (%USERPROFILE%\.denext\bin\deno.cmd); an existing `deno` is never replaced or shadowed. Either
 # step failing (offline, say) is one warning, not a failed install: the binary downloads the
-# toolchain on first need instead.
+# toolchain on first need instead. A release that predates `denext runtime` (an older
+# DENEXT_VERSION) skips both steps.
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
@@ -22,9 +23,9 @@
 #                    verified (needs the GitHub CLI, `gh`, signed in)
 #   DENEXT_MODIFY_PATH  `0` leaves your user Path alone (the script prints the line to add);
 #                    `1` (the default) or `all` adds denext's bin to it. DENEXT_NO_PATH=1 is `0`.
-#   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
+#   DENEXT_NO_TOOLCHAIN  `1` skips `denext runtime install` (and the link): the toolchain then
 #                    downloads on the first command that needs it
-#   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your Path)
+#   DENEXT_NO_DENO_LINK  `1` skips `denext runtime link` (no `deno` is put on your Path)
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.zip` and
 #                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub - for
 #                    testing a build; the checksum is still required and checked
@@ -84,10 +85,10 @@ function Install-Denext {
 
   if ($Uninstall) {
     Assert-SafeInstallRoot $root
-    # The `deno` link `toolchain link` made (only a link of its own; anything else is left).
+    # The `deno` link `runtime link` made (only a link of its own; anything else is left).
     $installed = Join-Path $bin 'denext.exe'
-    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-ToolchainVerb $installed)) {
-      Invoke-DenextAt $root $installed @('toolchain', 'unlink') | Out-Null
+    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-RuntimeVerb $installed)) {
+      Invoke-DenextAt $root $installed @('runtime', 'unlink') | Out-Null
     }
     Remove-DenextPath $bin
     Uninstall-DenextFiles $root
@@ -368,67 +369,68 @@ function Write-DownloadProgress([long]$done, $total, [switch]$Completed) {
 # Install denext's Deno toolchain through the new binary, and - when this machine has no `deno` -
 # link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the toolchain
 # on the first command that needs it. An existing `deno` is never replaced: the link is made only
-# when Path has none, and `toolchain link` itself refuses to overwrite a file it did not create.
+# when Path has none, and `runtime link` itself refuses to overwrite a file it did not create.
 function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
   if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
-  if (-not (Test-ToolchainVerb $exe)) {
-    Write-Host ("denext: $(& $exe --version) predates denext's Deno toolchain (denext 4.0); " +
-      'skipping that step - this release runs on the deno on your Path.')
+  if (-not (Test-RuntimeVerb $exe)) {
+    Write-Host ("denext: $(& $exe --version) predates ``denext runtime``; skipping that step - it " +
+      "downloads denext's Deno on the first command that needs it (a release before 4.0 runs on " +
+      'the deno on your Path).')
     return
   }
   Write-Host "denext: installing denext's Deno toolchain"
-  if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
+  if ((Invoke-Denext $exe @('runtime', 'install')) -ne 0) {
     # A release that pins a toolchain before 2.9.7-denext.21 has no Windows on Arm build: the
     # Arm64 binary runs every verb that needs Deno on the deno on your Path instead.
     if ($target -like 'aarch64-*') {
       Write-Host ("denext: no Windows on Arm Deno toolchain could be installed (releases pinning " +
         'one older than 2.9.7-denext.21 have none); denext runs the deno on your Path until ' +
-        '`denext toolchain install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
+        '`denext runtime install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
       return
     }
     Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
-      'first command that needs it (or run `denext toolchain install`).')
+      'first command that needs it (or run `denext runtime install`).')
     return
   }
   $existing = Get-Command deno -ErrorAction SilentlyContinue
   if ($existing) {
-    Write-Host ("denext: denext uses its own Deno ($(Get-ToolchainVersion $exe)); your deno at " +
+    Write-Host ("denext: denext uses its own Deno ($(Get-RuntimeVersion $exe)); your deno at " +
       "$($existing.Source) is not changed or used by denext")
     return
   }
   if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
-  if ((Invoke-DenextAt $root $exe @('toolchain', 'link')) -ne 0) {
+  if ((Invoke-DenextAt $root $exe @('runtime', 'link')) -ne 0) {
     Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
   }
 }
 
-# The Deno toolchain version the binary at $exe pins (`2.9.7-denext.22`), or 'the pinned build'.
-function Get-ToolchainVersion([string]$exe) {
+# The Deno version the binary at $exe runs on (`2.9.7-denext.22`), or 'the pinned build':
+# `runtime version --json` nests it as `runtime.version`.
+function Get-RuntimeVersion([string]$exe) {
   $ErrorActionPreference = 'Continue'
   try {
-    $status = (& $exe toolchain status --json 2>$null) -join "`n" | ConvertFrom-Json
-    if ($status.version) { return "$($status.version)" }
+    $status = (& $exe runtime version --json 2>$null) -join "`n" | ConvertFrom-Json
+    if ($status.runtime.version) { return "$($status.runtime.version)" }
   } catch {
     # An older binary, or no answer: say it generally.
   }
   return 'the pinned build'
 }
 
-# Whether the binary at $exe has the `toolchain` verb, which denext 4.0 added: an older release
-# (DENEXT_VERSION=v3.x) answers it with `unknown command`. A version it cannot read is assumed new.
-function Test-ToolchainVerb([string]$exe) {
+# Whether the binary at $exe has the `runtime` verb: an older release (an earlier DENEXT_VERSION)
+# answers `runtime --help` with `unknown command` and a non-zero exit.
+function Test-RuntimeVerb([string]$exe) {
   $ErrorActionPreference = 'Continue'
   try {
-    $version = "$(& $exe --version 2>$null)"
+    & $exe runtime --help *> $null
+    return $LASTEXITCODE -eq 0
   } catch {
-    return $true
+    return $false
   }
-  if ($version -match '^denext (\d+)\.') { return [int]$Matches[1] -ge 4 }
-  return $true
 }
 
 # Invoke-Denext with DENEXT_INSTALL set to $root for that one run (and restored after, since the
-# script runs in the caller's session): `toolchain link` / `unlink` put `deno` in its bin/, beside
+# script runs in the caller's session): `runtime link` / `unlink` put `deno` in its bin/, beside
 # the binary in the bin/ this install put on Path, even when DENEXT_INSTALL was not set and the
 # binary would otherwise derive another home (an HOME variable set by Git for Windows or MSYS).
 function Invoke-DenextAt([string]$root, [string]$exe, [string[]]$arguments) {
@@ -554,7 +556,7 @@ function Uninstall-DenextFiles([string]$root) {
 }
 
 # Delete $path, retrying for up to five seconds while Windows holds it. Uninstall runs denext.exe
-# (`toolchain unlink`) just before it deletes it, and the file can stay held for a moment after that
+# (`runtime unlink`) just before it deletes it, and the file can stay held for a moment after that
 # process has exited - an antivirus scan of the freshly run binary ("being used by another
 # process"), the image of a process still tearing down ("Access ... is denied"). A hold that
 # outlasts the retries (denext still running, a real permission problem) still fails the uninstall.

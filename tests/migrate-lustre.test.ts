@@ -338,7 +338,7 @@ async function realGleam(): Promise<{ bin: string | null; why: string }> {
   if (status.state === "cached" && status.path) return { bin: status.path, why: "" };
   return {
     bin: null,
-    why: `no Gleam compiler (${status.detail}): run \`denext toolchain install --with gleam\` ` +
+    why: `no Gleam compiler (${status.detail}): run \`denext runtime install --with gleam\` ` +
       "or set DENEXT_TEST_GLEAM to compile and export the migrated app",
   };
 }

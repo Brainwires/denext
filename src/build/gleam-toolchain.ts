@@ -6,7 +6,7 @@
 // mismatch before anything is extracted, extracted, renamed into place, stamped last.
 //
 // "First need" is `denext add gleam:<package>`, the `gleam()` plugin at dev / build, or the prefetch
-// `denext toolchain install --with gleam`. Gleam's JavaScript target needs no Erlang, so this one
+// `denext runtime install --with gleam`. Gleam's JavaScript target needs no Erlang, so this one
 // binary is the whole of it. Linux takes the static musl builds, which run on any distribution.
 //
 // Resolution: an explicit `gleam` option, then `DENEXT_GLEAM=<path>` (that binary, unverified),
@@ -60,7 +60,7 @@ export const GLEAM_TOOLCHAIN: GleamToolchainPin = pinJson as GleamToolchainPin;
 export const GLEAM_ENV = "DENEXT_GLEAM";
 
 /** The command that fetches the pinned Gleam ahead of time (for offline work). */
-export const GLEAM_PREFETCH = "denext toolchain install --with gleam";
+export const GLEAM_PREFETCH = "denext runtime install --with gleam";
 
 /** Env reader. */
 type EnvGet = (k: string) => string | undefined;
@@ -162,7 +162,7 @@ export async function resolveGleamToolchain(
   };
 }
 
-/** The pinned Gleam on this machine (`denext toolchain status`). */
+/** The pinned Gleam on this machine (`denext runtime version`). */
 export interface GleamToolchainStatus {
   /** `pinned`, or `path` under `DENEXT_GLEAM`. */
   readonly mode: "pinned" | "path";

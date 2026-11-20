@@ -39,7 +39,7 @@ DENEXT_ARTIFACTS="$ART" DENEXT_NO_DENO_LINK=1 sh "$ART/install.sh"
 export PATH="$HOME/.denext/bin:$PATH"
 if command -v deno >/dev/null 2>&1; then fail "the installer linked deno despite the opt-out"; fi
 denext --version
-denext toolchain status
+denext runtime version
 
 denext create my-app --yes
 cd my-app
@@ -93,7 +93,7 @@ echo "--- no toolchain and no deno: one error naming the fix"
 if DENEXT_DENO=stock denext fmt --check > /tmp/no-deno-refusal.log 2>&1; then
   fail "denext fmt ran with no Deno at all"
 fi
-grep -q "denext toolchain install" /tmp/no-deno-refusal.log ||
+grep -q "denext runtime install" /tmp/no-deno-refusal.log ||
   { cat /tmp/no-deno-refusal.log; fail "the refusal does not name the fix"; }
 echo "ok: refused with the fix"
 

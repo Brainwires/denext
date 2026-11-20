@@ -6,13 +6,14 @@
 # The binary is a CLI, not a second copy of the framework: inside a project it defers to the
 # denext version that project pins, so `denext build` builds exactly what `deno task build`
 # would. It is all you need — Deno itself is not: after installing the binary the script runs
-# `denext toolchain install`, which downloads denext's own Deno build (SHA-256-verified) into
+# `denext runtime install`, which downloads denext's own Deno build (SHA-256-verified) into
 # Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` …).
-# When no `deno` is on your PATH it also runs `denext toolchain link`, so `deno` is that toolchain
+# When no `deno` is on your PATH it also runs `denext runtime link`, so `deno` is that toolchain
 # (a link at ~/.denext/bin/deno); an existing `deno` is never replaced, shadowed or used by
 # denext. Either step failing (offline, say) is one warning, not a failed install: the binary
 # downloads the toolchain on the first command that needs it instead (and a command that can't
-# get it stops with the fix, never running another Deno).
+# get it stops with the fix, never running another Deno). A release that predates `denext runtime`
+# (an older DENEXT_VERSION) skips both steps.
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
@@ -21,9 +22,9 @@
 #                    build attestation can't be verified (never on a checksum mismatch)
 #   DENEXT_REQUIRE_ATTESTATION  `1` refuses to install unless the archive's build attestation is
 #                    verified (needs the GitHub CLI, `gh`, signed in)
-#   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
+#   DENEXT_NO_TOOLCHAIN  `1` skips `denext runtime install` (and the link): the toolchain then
 #                    downloads on the first command that needs it
-#   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your PATH)
+#   DENEXT_NO_DENO_LINK  `1` skips `denext runtime link` (no `deno` is put on your PATH)
 #   DENEXT_MODIFY_PATH  where to add denext's bin to PATH: `1` (your login shell's rc file),
 #                    `all` (every installed shell's), `0` (nowhere) — the same as the flags below
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.tar.gz` and
@@ -39,7 +40,7 @@
 #                       there is no terminal to ask on)
 #   --modify-path=all   …and in every other installed shell's (bash, zsh, fish, nushell, ~/.profile)
 #   --no-modify-path    change no rc file (the script prints the line to add)
-#   --uninstall         remove the binary, the `deno` link `toolchain link` made, and every PATH
+#   --uninstall         remove the binary, the `deno` link `runtime link` made, and every PATH
 #                       block this script wrote
 #
 # A script run through a pipe can't change the PATH of the shell that started it; what it can do is
@@ -298,7 +299,7 @@ main() {
   parse_args "$@"
   INSTALL_DIR="${DENEXT_INSTALL:-$HOME/.denext}"
   BIN_DIR="$INSTALL_DIR/bin"
-  # `toolchain link` / `unlink` put `deno` in $DENEXT_INSTALL/bin: name the directory this run
+  # `runtime link` / `unlink` put `deno` in $DENEXT_INSTALL/bin: name the directory this run
   # resolved, so the link lands beside the binary in the bin/ that goes on PATH.
   DENEXT_INSTALL="$INSTALL_DIR"
   export DENEXT_INSTALL
@@ -637,11 +638,11 @@ setup_path() {
   fi
 }
 
-# --uninstall: the `deno` link `toolchain link` made (only its own), the binary, the PATH blocks
+# --uninstall: the `deno` link `runtime link` made (only its own), the binary, the PATH blocks
 # in every shell's startup files, then bin/ and the install directory when nothing else is left.
 uninstall() {
-  if [ -x "$BIN_DIR/denext" ] && has_toolchain_verb "$BIN_DIR/denext"; then
-    "$BIN_DIR/denext" toolchain unlink >/dev/null 2>&1 || true
+  if [ -x "$BIN_DIR/denext" ] && has_runtime_verb "$BIN_DIR/denext"; then
+    "$BIN_DIR/denext" runtime unlink >/dev/null 2>&1 || true
   fi
   rm -f "$BIN_DIR/denext"
   {
@@ -652,51 +653,52 @@ uninstall() {
   rmdir "$BIN_DIR" 2>/dev/null || true
   rmdir "$INSTALL_DIR" 2>/dev/null || true
   echo "denext: removed denext from $INSTALL_DIR"
-  echo "  (denext's Deno toolchain cache stays; \`denext toolchain uninstall --all\` before"
+  echo "  (denext's Deno toolchain cache stays; \`denext runtime uninstall --all\` before"
   echo "  this removes it)"
 }
 
 # Install denext's Deno toolchain through the new binary, and — when this machine has no `deno`
 # — link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the
 # toolchain on the first command that needs it. An existing `deno` is never replaced: the link
-# is made only when PATH has none, and `toolchain link` itself refuses to overwrite a file it
+# is made only when PATH has none, and `runtime link` itself refuses to overwrite a file it
 # did not create.
 install_toolchain() {
   [ "${DENEXT_NO_TOOLCHAIN:-}" = "1" ] && return 0
-  if ! has_toolchain_verb "$1"; then
-    echo "denext: $("$1" --version) predates denext's Deno toolchain (denext 4.0); skipping that"
-    echo "  step — this release runs on the deno on your PATH."
+  if ! has_runtime_verb "$1"; then
+    echo "denext: $("$1" --version) predates \`denext runtime\`; skipping that step — it downloads"
+    echo "  denext's Deno on the first command that needs it (a release before 4.0 runs on the"
+    echo "  deno on your PATH)."
     return 0
   fi
   echo "denext: installing denext's Deno toolchain"
-  if ! "$1" toolchain install; then
+  if ! "$1" runtime install; then
     echo "denext: warning — the Deno toolchain could not be installed now; it downloads on the" >&2
-    echo "  first command that needs it (or run \`denext toolchain install\`)." >&2
+    echo "  first command that needs it (or run \`denext runtime install\`)." >&2
     return 0
   fi
   if command -v deno >/dev/null 2>&1; then
-    echo "denext: denext uses its own Deno ($(toolchain_version "$1")); your deno at" \
+    echo "denext: denext uses its own Deno ($(runtime_version "$1")); your deno at" \
       "$(command -v deno | sed "s|^$HOME/|~/|") is not changed or used by denext"
     return 0
   fi
   [ "${DENEXT_NO_DENO_LINK:-}" = "1" ] && return 0
-  if ! "$1" toolchain link; then
+  if ! "$1" runtime link; then
     echo "denext: warning — could not link \`deno\` to the toolchain (\`denext deno …\` still" >&2
     echo "  runs it)." >&2
   fi
 }
 
-# The Deno toolchain version the binary at $1 pins (`2.9.7-denext.22`), or `the pinned build`.
-toolchain_version() {
-  v="$("$1" toolchain status --json 2>/dev/null | sed -n 's/^  "version": "\([^"]*\)".*/\1/p' | head -n 1)"
+# The Deno version the binary at $1 runs on (`2.9.7-denext.22`), or `the pinned build`:
+# `runtime version --json` nests it as `runtime.version`, the first 4-space-indented "version".
+runtime_version() {
+  v="$("$1" runtime version --json 2>/dev/null | sed -n 's/^    "version": "\([^"]*\)".*/\1/p' | head -n 1)"
   echo "${v:-the pinned build}"
 }
 
-# Whether the binary at $1 has the `toolchain` verb, which denext 4.0 added: an older release
-# (DENEXT_VERSION=v3.x) answers it with `unknown command`. A version it cannot read is assumed new.
-has_toolchain_verb() {
-  major="$("$1" --version 2>/dev/null | sed -n 's/^denext \([0-9][0-9]*\)\..*/\1/p' | head -n 1)"
-  [ -z "$major" ] || [ "$major" -ge 4 ]
+# Whether the binary at $1 has the `runtime` verb: an older release (an earlier DENEXT_VERSION)
+# answers `runtime --help` with `unknown command` and a non-zero exit.
+has_runtime_verb() {
+  "$1" runtime --help >/dev/null 2>&1
 }
 
 main "$@"

@@ -76,12 +76,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   binary instead.
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
-  error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
+  error naming `denext runtime install`; `DENEXT_DENO=stock` runs stock Deno instead, without
   `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
   2.9.7-denext.21, 2026-10-19; later runtimes are covered by CI's `windows-11-arm` job only). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
-  no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
+  no GPU) these pass: `denext runtime install` (`deno --version` reports `2.9.7-denext.21`,
   `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
   renders and hydrates, closing the window quits the verb cleanly); the desktop kitchen sink's
   window test on both backends with unsigned builds, the full-app update install, trial and
@@ -100,7 +100,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **A CLI installed from JSR caches its verbs after the install, not during it.** `deno install
   -g jsr:@denext/denext/cli` caches the entrypoint (Deno's install has no post-install step); every
   verb's modules, and the framework modules a verb loads by URL, are cached by
-  `denext toolchain install` or by the CLI's first online run (in the background). A verb used
+  `denext runtime install` or by the CLI's first online run (in the background). A verb used
   offline before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
   service.** The pinned runtime's `deno lsp` runs the dated 7.1 nightly the toolchain pins by
@@ -332,7 +332,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **The compiled `denext` binary re-execs the denext the project pins** for every module-loading
   verb (`dev`, `build`, `export`, `start`, …), on denext's Deno toolchain (downloaded on first
   need; no Deno install required). Offline on first use, with no toolchain cached, it stops with
-  the fix (`denext toolchain install` once online); `DENEXT_DENO=stock` runs a `deno` on PATH
+  the fix (`denext runtime install` once online); `DENEXT_DENO=stock` runs a `deno` on PATH
   instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.

@@ -532,7 +532,7 @@ The `next-auth` parity check (`tests/react-parity.test.ts`) holds these modules 
 
 ## Type checking (TypeScript 7)
 
-On a Deno toolchain that type-checks natively (see `denext toolchain status`), type errors come
+On a Deno toolchain that type-checks natively (see `denext runtime version`), type errors come
 from TypeScript 7.0's compiler rather than `tsc` 6:
 
 - Union types print sorted (TypeScript 7's stable type ordering): `"dark" | "light"` where `tsc` 6

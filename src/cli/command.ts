@@ -298,6 +298,51 @@ export function suggest(
   return best !== undefined && bestDist <= threshold ? best : undefined;
 }
 
+/** `denext runtime <action>` → its `denext runtime` equivalent. */
+const TOOLCHAIN_ACTIONS: Readonly<Record<string, string>> = {
+  status: "version",
+  install: "install",
+  path: "path",
+  link: "link",
+  unlink: "unlink",
+  uninstall: "uninstall",
+  prune: "prune",
+};
+
+/**
+ * Verbs denext removed, each with the command that replaced it (for the action given, when there
+ * is one): never an alias, only the "did you mean" of their unknown-command error.
+ */
+const RETIRED_VERBS: Readonly<Record<string, (action: string | undefined) => string>> = {
+  toolchain: (action) => `denext runtime ${TOOLCHAIN_ACTIONS[action ?? ""] ?? "version"}`,
+};
+
+/** The line under a retired verb's suggestion. */
+const RETIRED_HINT: Readonly<Record<string, string>> = {
+  toolchain:
+    "The toolchain verb is now `denext runtime` (`denext runtime --help` lists its actions).",
+};
+
+/**
+ * The error for a verb nothing registers: a retired verb names its replacement (for the action
+ * given), any other the closest known name within reach.
+ */
+function unknownVerbOutcome(
+  verb: string,
+  at: number,
+  after: string[],
+  known: readonly string[],
+): ParseOutcome {
+  const base = { kind: "error" as const, message: `unknown command "${verb}"` };
+  const unknownVerb = { name: verb, index: at };
+  if (Object.hasOwn(RETIRED_VERBS, verb)) {
+    const suggestion = RETIRED_VERBS[verb](after[verbIndex(after)]);
+    return { ...base, suggestion, hint: RETIRED_HINT[verb], unknownVerb };
+  }
+  const near = suggest(verb, known);
+  return { ...base, suggestion: near ? `denext ${near}` : undefined, unknownVerb };
+}
+
 /** A registry of commands with parsing, dispatch, and help rendering. */
 export class CommandRegistry {
   readonly #byName = new Map<string, CommandSpec>();
@@ -357,15 +402,7 @@ export class CommandRegistry {
       return { kind: "help", command: topic < 0 ? undefined : this.get(after[topic]) };
     }
     const command = this.get(verb);
-    if (!command) {
-      const near = suggest(verb, [...this.names(), ...extraVerbs]);
-      return {
-        kind: "error",
-        message: `unknown command "${verb}"`,
-        suggestion: near ? `denext ${near}` : undefined,
-        unknownVerb: { name: verb, index: at },
-      };
-    }
+    if (!command) return unknownVerbOutcome(verb, at, after, [...this.names(), ...extraVerbs]);
     // The command's argv is every token but the verb — leading global flags included.
     return parseCommandArgv(command, [...leading, ...after]);
   }
