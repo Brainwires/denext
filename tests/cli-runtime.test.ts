@@ -802,3 +802,43 @@ Deno.test("the served documents are the channel's own text (fixture sanity)", as
   assertEquals(releaseDocumentText(f.doc), f.text);
   assertEquals(f.entry.doc.sha256, f.integrity.slice("sha256-".length));
 });
+
+// ---------------------------------------------------------------------------------------------
+// path / link / unlink, in process (on a DENEXT_DENO=<path> binary: nothing is downloaded)
+
+Deno.test({
+  name: "runtime path / link / unlink: name, link and unlink the binary in force",
+  // A shell script stands in for `deno` (its --version answers the probe).
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  await withWorld(async (w) => {
+    // Inside the toolchain cache, where `runtime unlink` recognises a link of its own.
+    await Deno.mkdir(join(w.cacheRoot, "fake"), { recursive: true });
+    const fake = join(w.cacheRoot, "fake", "deno");
+    await Deno.writeTextFile(fake, "#!/bin/sh\necho 'deno 2.9.8 (stable, release, x86_64)'\n", {
+      mode: 0o755,
+    });
+    const home = join(w.root, "home");
+    const saved = ["DENEXT_DENO", "DENEXT_INSTALL", "DENO_DIR"].map((k) =>
+      [k, Deno.env.get(k)] as const
+    );
+    Deno.env.set("DENO_DIR", join(w.root, "deno-dir"));
+    Deno.env.set("DENEXT_DENO", fake);
+    Deno.env.set("DENEXT_INSTALL", home);
+    try {
+      assertEquals(await run(w, ["path"]), 0, text(w.err));
+      assertEquals(w.out, [fake]);
+      assertEquals(await run(w, ["link"]), 0, text(w.err));
+      assertStringIncludes(text(w.out), `linked ${join(home, "bin", "deno")}`);
+      assertStringIncludes(text(w.out), "Put it on PATH");
+      assert((await Deno.lstat(join(home, "bin", "deno"))).isSymlink);
+      assertEquals(await run(w, ["unlink"]), 0, text(w.err));
+      assertStringIncludes(text(w.out), "removed");
+      assertEquals(await Deno.lstat(join(home, "bin", "deno")).catch(() => null), null);
+      assertEquals(await run(w, ["unlink"]), 0);
+      assertStringIncludes(text(w.out), "nothing to unlink");
+    } finally {
+      for (const [k, v] of saved) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+    }
+  });
+});
