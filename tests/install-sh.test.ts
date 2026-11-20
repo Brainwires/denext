@@ -66,14 +66,25 @@ if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; 
 /** The released `denext` stand-in (see {@linkcode Release.create}). */
 const DENEXT_STUB = `#!/bin/sh
 [ "$1" = "--version" ] && { echo "denext \${STUB_VERSION:-9.9.9} (binary)"; exit 0; }
+# Its help names the runtime verb it has: none before 4.0, \`toolchain\` from 4.0 until the
+# runtime channel (STUB_VERSION=4.x), \`runtime\` after.
+if [ "$1" = "--help" ]; then
+  case "\${STUB_VERSION:-}" in
+    3.*) echo "denext — Commands:" ;;
+    4.*) echo "  denext toolchain      Manage denext's Deno toolchain (install | status | …)" ;;
+    *) echo "  denext runtime        Manage denext's runtime: its Deno build (version | …)" ;;
+  esac
+  exit 0
+fi
 echo "$*" >> "$DENEXT_STUB_LOG"
 # Where \`runtime link\` / \`unlink\` would put \`deno\`: the install dir they were handed.
-case "$1 $2" in "runtime link" | "runtime unlink") echo "$DENEXT_INSTALL" >> "$DENEXT_STUB_LOG.install" ;; esac
-# A release that predates \`denext runtime\` (here every 3.x) answers it with \`unknown command\`.
-case "\${STUB_VERSION:-}" in 3.*) [ "$1" = "runtime" ] && {
-  echo "denext: unknown command \"runtime\"" >&2; exit 1; } ;; esac
-[ "$1 $2" = "runtime install" ] && [ -n "$STUB_TOOLCHAIN_FAIL" ] && exit 1
-[ "$1 $2" = "runtime version" ] && printf '{\n  "runtime": {\n    "version": "2.9.7-denext.99",\n    "source": "bundled"\n  },\n  "toolchain": {\n    "mode": "managed",\n    "version": "2.9.7-denext.1"\n  }\n}\n'
+case "$1 $2" in "runtime link" | "runtime unlink" | "toolchain link" | "toolchain unlink")
+  echo "$DENEXT_INSTALL" >> "$DENEXT_STUB_LOG.install" ;; esac
+case "$1 $2" in "runtime upgrade" | "runtime install" | "toolchain install")
+  [ -n "$STUB_RUNTIME_FAIL" ] && exit 1 ;; esac
+[ "$1 $2" = "runtime use" ] && [ -n "$STUB_USE_FAIL" ] && exit 1
+[ "$1 $2" = "runtime version" ] && printf '{\n  "runtime": {\n    "version": "3.0.0-denext.99",\n    "source": "default"\n  },\n  "toolchain": {\n    "mode": "managed",\n    "version": "3.0.0-denext.1"\n  }\n}\n'
+[ "$1 $2" = "toolchain status" ] && printf '{\n  "version": "2.9.7-denext.99",\n  "esbuild": {\n    "version": "0.25.5"\n  }\n}\n'
 exit 0
 `;
 
@@ -160,8 +171,8 @@ class Release {
       { mode: 0o755 },
     );
     // The archive holds a `denext` that answers `--version` like the real binary and records
-    // every other invocation (the `runtime --help` probe, `runtime install`, `runtime link`) in
-    // $DENEXT_STUB_LOG; STUB_TOOLCHAIN_FAIL=1 makes `runtime install` fail as an offline
+    // every other invocation but `--help` (`runtime upgrade`, `runtime link`, …) in
+    // $DENEXT_STUB_LOG; STUB_RUNTIME_FAIL=1 makes the runtime install fail as an offline
     // machine's would.
     const stage = join(r.dir, "stage");
     await Deno.mkdir(stage);
@@ -273,8 +284,8 @@ Deno.test("install.sh: a good checksum installs the binary", { ignore: NO_SH }, 
       `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}`,
       "https://github.com/Brainwires/denext/releases/download/v9.9.9/SHA256SUMS",
     ], "latest is resolved, the archive fetched, and the combined checksum file is enough");
-    // No `deno` on this PATH: the toolchain is installed and linked as `deno`.
-    assertEquals(run.calls, ["runtime --help", "runtime install", "runtime link"]);
+    // No `deno` on this PATH: the newest runtime is installed and linked as `deno`.
+    assertEquals(run.calls, ["runtime upgrade", "runtime link"]);
     assertEquals(run.stderr, "");
   } finally {
     await r.remove();
@@ -291,12 +302,12 @@ Deno.test("install.sh: runtime link / unlink get the install dir it resolved", {
     // No DENEXT_INSTALL (empty reads as unset): the default ~/.denext, named to the binary.
     const run = await r.run({ DENEXT_INSTALL: "" });
     assertEquals(run.code, 0, run.stderr);
-    assertEquals(run.calls, ["runtime --help", "runtime install", "runtime link"]);
+    assertEquals(run.calls, ["runtime upgrade", "runtime link"]);
     const home = join(r.dir, ".denext");
     assertEquals(await read(), [home]);
     assert((await Deno.stat(join(home, "bin", "denext"))).isFile);
     const gone = await r.run({ DENEXT_INSTALL: "" }, [], ["--uninstall"]);
-    assertEquals(gone.calls, ["runtime --help", "runtime unlink"]);
+    assertEquals(gone.calls, ["runtime unlink"]);
     assertEquals(await read(), [home, home]);
     // A custom prefix is passed through as is.
     await Deno.remove(handed);
@@ -416,12 +427,12 @@ Deno.test("install.sh: an existing deno is kept — the runtime installs, nothin
     assertEquals(run.code, 0, run.stderr);
     assertEquals(
       run.calls,
-      ["runtime --help", "runtime install", "runtime version --json"],
+      ["runtime upgrade", "runtime version --json"],
       "never link over a deno the user has",
     );
     assertStringIncludes(
       run.stdout,
-      "denext uses its own Deno (2.9.7-denext.99); your deno at ~/with-deno/deno is not " +
+      "denext uses its own Deno (3.0.0-denext.99); your deno at ~/with-deno/deno is not " +
         "changed or used by denext",
     );
     assert(!run.stdout.includes("keeping your deno"), run.stdout);
@@ -431,15 +442,15 @@ Deno.test("install.sh: an existing deno is kept — the runtime installs, nothin
   }
 });
 
-Deno.test("install.sh: DENEXT_NO_DENO_LINK / DENEXT_NO_TOOLCHAIN opt out of each step", {
+Deno.test("install.sh: DENEXT_NO_DENO_LINK / DENEXT_NO_RUNTIME opt out of each step", {
   ignore: NO_SH,
 }, async () => {
   const r = await Release.create();
   try {
     const noLink = await r.run({ DENEXT_NO_DENO_LINK: "1" });
     assertEquals(noLink.code, 0, noLink.stderr);
-    assertEquals(noLink.calls, ["runtime --help", "runtime install"]);
-    const none = await r.run({ DENEXT_NO_TOOLCHAIN: "1" });
+    assertEquals(noLink.calls, ["runtime upgrade"]);
+    const none = await r.run({ DENEXT_NO_RUNTIME: "1" });
     assertEquals(none.code, 0, none.stderr);
     assertEquals(none.calls, []);
     assert(await r.installed());
@@ -448,27 +459,23 @@ Deno.test("install.sh: DENEXT_NO_DENO_LINK / DENEXT_NO_TOOLCHAIN opt out of each
   }
 });
 
-Deno.test("install.sh: a toolchain that cannot be installed is one warning, not a failure", {
+Deno.test("install.sh: a runtime that cannot be installed is one warning, not a failure", {
   ignore: NO_SH,
 }, async () => {
   const r = await Release.create();
   try {
-    const run = await r.run({ STUB_TOOLCHAIN_FAIL: "1" });
+    const run = await r.run({ STUB_RUNTIME_FAIL: "1" });
     assertEquals(run.code, 0, run.stderr);
     assert(await r.installed());
-    assertEquals(
-      run.calls,
-      ["runtime --help", "runtime install"],
-      "no link to a toolchain that is not there",
-    );
+    assertEquals(run.calls, ["runtime upgrade"], "no link to a runtime that is not there");
     assertStringIncludes(run.stderr, "could not be installed now");
-    assertStringIncludes(run.stderr, "denext runtime install");
+    assertStringIncludes(run.stderr, "denext runtime upgrade");
   } finally {
     await r.remove();
   }
 });
 
-Deno.test("install.sh: a release that predates `denext runtime` installs with a note", {
+Deno.test("install.sh: a release before 4.0 (no runtime verb at all) installs with a note", {
   ignore: NO_SH,
 }, async () => {
   const r = await Release.create();
@@ -476,13 +483,149 @@ Deno.test("install.sh: a release that predates `denext runtime` installs with a 
     const run = await r.run({ STUB_VERSION: "3.4.14", DENEXT_VERSION: "v3.4.14" });
     assertEquals(run.code, 0, run.stderr);
     assert(await r.installed());
-    assertEquals(
-      run.calls,
-      ["runtime --help"],
-      "probes the verb, then never runs `runtime install`",
-    );
-    assertStringIncludes(run.stdout, "denext 3.4.14 (binary) predates `denext runtime`");
+    assertEquals(run.calls, [], "never asks a 3.x binary for a runtime verb");
+    assertStringIncludes(run.stdout, "denext 3.4.14 (binary) predates denext's Deno toolchain");
     assert(!run.stderr.includes("warning"), run.stderr);
+    const gone = await r.run({ STUB_VERSION: "3.4.14" }, [], ["--uninstall"]);
+    assertEquals([gone.code, gone.calls], [0, []]);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a 4.x release before `denext runtime` gets its own toolchain step", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ STUB_VERSION: "4.20.1", DENEXT_VERSION: "v4.20.1" });
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls, ["toolchain install", "toolchain link"]);
+    const withDeno = join(r.dir, "with-deno");
+    await Deno.mkdir(withDeno);
+    await Deno.writeTextFile(join(withDeno, "deno"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const kept = await r.run({ STUB_VERSION: "4.20.1" }, [withDeno]);
+    assertEquals(kept.calls, ["toolchain install", "toolchain status --json"]);
+    assertStringIncludes(kept.stdout, "denext uses its own Deno (2.9.7-denext.99)");
+    const failed = await r.run({ STUB_VERSION: "4.20.1", STUB_RUNTIME_FAIL: "1" });
+    assertEquals([failed.code, failed.calls], [0, ["toolchain install"]]);
+    assertStringIncludes(failed.stderr, "denext toolchain install");
+    // Its uninstall still removes the `deno` link it made.
+    const gone = await r.run({ STUB_VERSION: "4.20.1" }, [], ["--uninstall"]);
+    assertEquals([gone.code, gone.calls], [0, ["toolchain unlink"]]);
+    // A runtime version can't be installed through it.
+    const asked = await r.run({ STUB_VERSION: "4.20.1" }, [], ["--runtime=3.0.0-denext.31"]);
+    assertEquals(asked.code, 1);
+    assertStringIncludes(asked.stderr, "predates `denext runtime`");
+    assertEquals(asked.calls, []);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: --runtime-only moves only the runtime of the installed denext", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    assertEquals((await r.run()).code, 0);
+    const run = await r.run({}, [], ["--runtime-only"]);
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.urls, [], "the binary is not downloaded again");
+    assertEquals(run.calls, ["runtime upgrade", "runtime link"]);
+    assertStringIncludes(run.stdout, "updating only its runtime");
+    // The environment form, and a failure: fatal here, since the runtime is what was asked for.
+    const failed = await r.run({ DENEXT_RUNTIME_ONLY: "1", STUB_RUNTIME_FAIL: "1" });
+    assertEquals(failed.code, 1);
+    assertEquals(failed.urls, []);
+    assertStringIncludes(failed.stderr, "the runtime could not be installed");
+    assertStringIncludes(failed.stderr, "denext runtime upgrade");
+    // An installed binary from before `denext runtime` is reported with the fix.
+    const old = await r.run({ STUB_VERSION: "4.20.1" }, [], ["--runtime-only"]);
+    assertEquals(old.code, 1);
+    assertEquals(old.calls, []);
+    assertStringIncludes(old.stderr, "predates `denext runtime`");
+    assertStringIncludes(old.stderr, "without --runtime-only");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: --runtime-only with nothing installed installs both", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({}, [], ["--runtime-only"]);
+    assertEquals(run.code, 0, run.stderr);
+    assert(await r.installed());
+    assertStringIncludes(run.stdout, "installing it and its runtime");
+    assertEquals(run.calls, ["runtime upgrade", "runtime link"]);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: --runtime=<version> installs that release and makes it the default", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({}, [], ["--runtime=3.0.0-denext.31"]);
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.calls, [
+      "runtime install 3.0.0-denext.31",
+      "runtime use 3.0.0-denext.31",
+      "runtime link",
+    ]);
+    // On the installed binary only, from the environment.
+    const only = await r.run({ DENEXT_RUNTIME_VERSION: "3.0.0-denext.30" }, [], [
+      "--runtime-only",
+    ]);
+    assertEquals(only.code, 0, only.stderr);
+    assertEquals(only.urls, []);
+    assertEquals(only.calls.slice(0, 2), [
+      "runtime install 3.0.0-denext.30",
+      "runtime use 3.0.0-denext.30",
+    ]);
+    // A failure to make it the default is fatal; nothing is linked.
+    const failed = await r.run({ STUB_USE_FAIL: "1" }, [], [
+      "--runtime-only",
+      "--runtime=3.0.0-denext.31",
+    ]);
+    assertEquals(failed.code, 1);
+    assertEquals(failed.calls, ["runtime install 3.0.0-denext.31", "runtime use 3.0.0-denext.31"]);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: the runtime flags are checked before anything runs", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    for (
+      const [env, args, says] of [
+        [{}, ["--runtime"], "takes a version"],
+        [{}, ["--runtime=3.0;rm -rf /"], "is not a runtime version"],
+        [{}, ["--runtime=--all"], "is not a runtime version"],
+        [{ DENEXT_NO_RUNTIME: "1" }, ["--runtime-only"], "nothing to do"],
+        [
+          { DENEXT_NO_RUNTIME: "1", DENEXT_RUNTIME_VERSION: "3.0.0-denext.31" },
+          [],
+          "nothing to do",
+        ],
+      ] as const
+    ) {
+      const run = await r.run({ ...env }, [], [...args]);
+      assertEquals(run.code, 2, `${args.join(" ")}: ${run.stderr}`);
+      assertStringIncludes(run.stderr, says);
+      assertEquals([run.urls, run.calls], [[], []]);
+    }
+    const help = await r.run({}, [], ["--help"]);
+    assertStringIncludes(help.stdout, "--runtime-only");
+    assertStringIncludes(help.stdout, "--runtime=<version>");
   } finally {
     await r.remove();
   }
@@ -1154,7 +1297,7 @@ Deno.test("install.sh: --uninstall removes the binary, the deno link and every P
     const gone = await r.run({ SHELL: "/bin/zsh" }, [shells], ["--uninstall"]);
     assertEquals(gone.code, 0, gone.stderr);
     assertEquals(gone.urls, [], "nothing is fetched");
-    assertEquals(gone.calls, ["runtime --help", "runtime unlink"]);
+    assertEquals(gone.calls, ["runtime unlink"]);
     assertEquals(await r.installed(), false);
     for (
       const f of [
@@ -1195,10 +1338,10 @@ Deno.test("install.sh: the archive download shows a progress bar on a terminal, 
 }, async () => {
   const r = await Release.create();
   try {
-    const piped = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"]);
+    const piped = await r.run({ DENEXT_NO_RUNTIME: "1" }, [], ["--no-modify-path"]);
     assertEquals(piped.code, 0, piped.stderr);
     assertEquals(piped.progress, [], "stderr is not a terminal: quiet");
-    const tty = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+    const tty = await r.run({ DENEXT_NO_RUNTIME: "1" }, [], ["--no-modify-path"], {
       tty: true,
     });
     assertEquals(tty.code, 0, tty.stdout + tty.stderr);
@@ -1263,7 +1406,7 @@ Deno.test("install.sh: with no curl it downloads with GNU wget, hardened, checks
   try {
     await Deno.remove(join(r.stubs, "curl"));
     const bin = await noCurlPath(r.dir);
-    const run = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+    const run = await r.run({ DENEXT_NO_RUNTIME: "1" }, [], ["--no-modify-path"], {
       basePath: [bin],
     });
     assertEquals(run.code, 0, run.stderr);
@@ -1276,7 +1419,7 @@ Deno.test("install.sh: with no curl it downloads with GNU wget, hardened, checks
     ]);
     // A token is never put on wget's command line: the lookup takes the redirect instead.
     const token = await r.run(
-      { DENEXT_NO_TOOLCHAIN: "1", GITHUB_TOKEN: "ghs_secret123" },
+      { DENEXT_NO_RUNTIME: "1", GITHUB_TOKEN: "ghs_secret123" },
       [],
       ["--no-modify-path"],
       { basePath: [bin] },
@@ -1288,7 +1431,7 @@ Deno.test("install.sh: with no curl it downloads with GNU wget, hardened, checks
     // A wrong checksum is still refused.
     await Deno.writeTextFile(join(r.served, "SHA256SUMS"), `${"f".repeat(64)}  ${ASSET}\n`);
     await Deno.writeTextFile(join(r.served, `${ASSET}.sha256`), `${"f".repeat(64)}  ${ASSET}\n`);
-    const bad = await r.run({ DENEXT_NO_TOOLCHAIN: "1" }, [], ["--no-modify-path"], {
+    const bad = await r.run({ DENEXT_NO_RUNTIME: "1" }, [], ["--no-modify-path"], {
       basePath: [bin],
     });
     assertEquals(bad.code, 1);

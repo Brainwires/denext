@@ -10,7 +10,8 @@
 # exists), then scaffolds an app and runs it through `denext` only: `denext task dev` serves,
 # `denext build` + `denext start` serve, `denext test`, `denext fmt`, `denext lint` and
 # `denext task build` work. With the toolchain turned off and no Deno it must refuse with the fix.
-# Last, the installer's default links `deno` to the toolchain. Every wait is bounded.
+# Then the installer's default links `deno` to the runtime, and `--runtime-only --runtime=<v>`
+# moves only the runtime (the user default), never the binary. Every wait is bounded.
 set -eu
 
 ART="${ART:-/art}"
@@ -109,4 +110,25 @@ if ! grep -Eq '^denext [^ ]+ \(Brainwires\)$' /tmp/no-deno-version.txt; then
     { cat /tmp/no-deno-version.txt; fail "deno is not the toolchain"; }
 fi
 deno task build
+
+echo "--- --runtime-only --runtime=<version>: only the runtime moves"
+# A field of \`denext runtime version --json\` (a dotted path) outside any project, read with the
+# linked deno.
+runtime_field() {
+  (cd "$HOME" && denext runtime version --json) |
+    deno eval --quiet "const j = JSON.parse(await new Response(Deno.stdin.readable).text());
+console.log(String('$1'.split('.').reduce((o, k) => o?.[k], j)));"
+}
+bundled="$(runtime_field bundled.version)"
+# The bundled release needs no channel, so this holds before any runtime is published too.
+binary_before="$(sha256sum "$HOME/.denext/bin/denext" | cut -d' ' -f1)"
+DENEXT_ARTIFACTS="$ART" sh "$ART/install.sh" --runtime-only --runtime="$bundled" > /tmp/no-deno-rt.log 2>&1 ||
+  { cat /tmp/no-deno-rt.log; fail "--runtime-only --runtime=$bundled failed"; }
+grep -q "updating only its runtime" /tmp/no-deno-rt.log ||
+  { cat /tmp/no-deno-rt.log; fail "--runtime-only reinstalled the binary"; }
+[ "$(sha256sum "$HOME/.denext/bin/denext" | cut -d' ' -f1)" = "$binary_before" ] ||
+  fail "--runtime-only replaced the binary"
+[ "$(runtime_field default.version)" = "$bundled" ] || fail "the user default is not $bundled"
+[ "$(runtime_field runtime.source)" = "default" ] || fail "the selected runtime is not the default"
+echo "ok: --runtime-only set the default runtime to $bundled and left the binary alone"
 echo "no-deno e2e: ALL OK"

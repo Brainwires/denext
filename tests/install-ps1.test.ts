@@ -252,7 +252,7 @@ else if (Deno.args[0] === "hold") await new Promise((r) => setTimeout(r, Number(
     release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
     const root = join(dir, "home");
-    assertEquals((await install(release, root, { DENEXT_NO_TOOLCHAIN: "1" })).code, 0);
+    assertEquals((await install(release, root, { DENEXT_NO_RUNTIME: "1" })).code, 0);
     // While it runs, Windows refuses to delete its image - as it can for a moment after a run.
     held = new Deno.Command(join(root, "bin", "denext.exe"), { args: ["hold", "3000"] })
       .spawn().status;
@@ -285,21 +285,21 @@ Deno.test("install.ps1: Windows on Arm installs the Arm64 binary", {
     const root = join(dir, "home");
     const run = await install(release, root, {
       PROCESSOR_ARCHITECTURE: "ARM64",
-      STUB_TOOLCHAIN_FAIL: "1",
+      STUB_RUNTIME_FAIL: "1",
     });
     assertEquals(run.code, 0, run.out);
     assertStringIncludes(run.out, "for aarch64-pc-windows-msvc");
     assert(release.hits.includes(`/dl/v9.9.9/${ARM_ASSET}`), release.hits.join());
     assert(!release.hits.includes(`/dl/v9.9.9/${ASSET}`), "never fetches the x64 build");
     assert(await exists(join(root, "bin", "denext.exe")));
-    // The stand-in binary's `runtime install` fails, as a release pinning a toolchain older than
-    // 2.9.7-denext.21 does on Windows on Arm (no toolchain build): a note naming the deno it runs
-    // instead, not a failure warning.
-    assertStringIncludes(run.out, "no Windows on Arm Deno toolchain could be installed");
-    assert(!run.out.includes("could not be installed now"), run.out);
+    // The stand-in binary's `runtime upgrade` fails (offline): one warning, the install stands. (The
+    // Windows on Arm note about toolchains older than 2.9.7-denext.21 belongs to the 4.x
+    // `toolchain` step only; every release with `denext runtime` has an Arm64 runtime.)
+    assertStringIncludes(run.out, "could not be installed now");
+    assert(!run.out.includes("no Windows on Arm Deno toolchain"), run.out);
     const x64 = await install(release, join(dir, "x64"), {
       PROCESSOR_ARCHITECTURE: "AMD64",
-      STUB_TOOLCHAIN_FAIL: "1",
+      STUB_RUNTIME_FAIL: "1",
     });
     assertEquals(x64.code, 0, x64.out);
     if (Deno.build.arch === "aarch64") {
@@ -408,7 +408,7 @@ Deno.test("install.ps1: a signed-in gh must verify the archive's build attestati
     release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
     const log = join(dir, "gh.log");
-    const quiet = { DENEXT_NO_TOOLCHAIN: "1", STUB_GH_LOG: log };
+    const quiet = { DENEXT_NO_RUNTIME: "1", STUB_GH_LOG: log };
     const ok = await install(release, join(dir, "ok"), {
       ...quiet,
       STUB_GH_AUTH: "1",
@@ -496,7 +496,7 @@ Deno.test("install.ps1: a denext.exe whose Authenticode signature does not verif
     release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
     const root = join(dir, "home");
-    const run = await install(release, root, { DENEXT_NO_TOOLCHAIN: "1", DENEXT_INSECURE: "1" });
+    const run = await install(release, root, { DENEXT_NO_RUNTIME: "1", DENEXT_INSECURE: "1" });
     assert(run.code !== 0, run.out);
     assertStringIncludes(run.out, "Authenticode signature is");
     assert(!(await exists(join(root, "bin", "denext.exe"))));
@@ -541,7 +541,7 @@ Deno.test("install.ps1: a Windows system file vouched for only by a catalog is r
     release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
     const root = join(dir, "home");
-    const run = await install(release, root, { DENEXT_NO_TOOLCHAIN: "1", DENEXT_INSECURE: "1" });
+    const run = await install(release, root, { DENEXT_NO_RUNTIME: "1", DENEXT_INSECURE: "1" });
     assert(run.code !== 0, run.out);
     assertStringIncludes(run.out, "is a Windows system file");
     assert(!run.out.includes("Authenticode signature verified"), run.out);
@@ -613,7 +613,7 @@ Deno.test("install.ps1: a rate-limited API falls back to the releases/latest red
   }
 });
 
-Deno.test("install.ps1: the runtime step never fails the install; DENEXT_NO_TOOLCHAIN skips it", {
+Deno.test("install.ps1: the runtime step never fails the install; DENEXT_NO_RUNTIME skips it", {
   ignore: NOT_WINDOWS,
 }, async () => {
   const dir = await Deno.makeTempDir();
@@ -622,23 +622,23 @@ Deno.test("install.ps1: the runtime step never fails the install; DENEXT_NO_TOOL
     const zip = await runtimeZip(dir);
     release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
-    // The stand-in binary cannot run `runtime install`: one warning, and the install stands.
+    // The stand-in binary cannot run `runtime upgrade`: one warning, and the install stands.
     const root = join(dir, "home");
     const log = join(dir, "calls.log");
-    const run = await install(release, root, { STUB_TOOLCHAIN_FAIL: "1", STUB_LOG: log });
+    const run = await install(release, root, { STUB_RUNTIME_FAIL: "1", STUB_LOG: log });
     assertEquals(run.code, 0, run.out);
-    assertStringIncludes(run.out, "installing denext's Deno toolchain");
+    assertStringIncludes(run.out, "installing the newest denext runtime this denext supports");
     assertStringIncludes(run.out, "could not be installed now");
-    assertStringIncludes(run.out, "denext runtime install");
+    assertStringIncludes(run.out, "denext runtime upgrade");
     assert(await exists(join(root, "bin", "denext.exe")));
     assertEquals(
       (await Deno.readTextFile(log)).split("\n").filter(Boolean),
-      ["runtime --help", "runtime install"],
-      "probes the verb, then no link to a runtime that is not there",
+      ["runtime upgrade"],
+      "no link to a runtime that is not there",
     );
-    const skipped = await install(release, join(dir, "other"), { DENEXT_NO_TOOLCHAIN: "1" });
+    const skipped = await install(release, join(dir, "other"), { DENEXT_NO_RUNTIME: "1" });
     assertEquals(skipped.code, 0, skipped.out);
-    assert(!skipped.out.includes("Deno toolchain"), skipped.out);
+    assert(!skipped.out.includes("denext runtime"), skipped.out);
   } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });
@@ -656,7 +656,7 @@ Deno.test("install.ps1: DENEXT_ARTIFACTS installs a local build, still checksum-
     const zip = await releaseZip(art);
     await Deno.writeTextFile(join(art, "SHA256SUMS"), `${await sha256(zip)}  ${ASSET}\n`);
     const root = join(dir, "home");
-    const run = await install(release, root, { DENEXT_ARTIFACTS: art, DENEXT_NO_TOOLCHAIN: "1" });
+    const run = await install(release, root, { DENEXT_ARTIFACTS: art, DENEXT_NO_RUNTIME: "1" });
     assertEquals(run.code, 0, run.out);
     assertStringIncludes(run.out, "checksum verified");
     assertEquals(release.hits, [], "nothing is fetched");
@@ -694,43 +694,56 @@ async function stubZip(dir: string, source: string): Promise<Uint8Array> {
 }
 
 /**
- * A zip holding a compiled `denext.exe` stand-in that answers `--version` as `denext <version>
- * (binary)` and, like a release that predates `denext runtime`, refuses every other verb as
- * `unknown command` after logging it to $STUB_LOG.
+ * A zip holding a compiled `denext.exe` stand-in from before `denext runtime`: `--version` answers
+ * `denext <version> (binary)`; a 4.x one lists `denext toolchain` in its `--help` and accepts the
+ * `toolchain` verbs (logged to $STUB_LOG; `toolchain install` fails with STUB_RUNTIME_FAIL), while
+ * a 3.x one lists neither and refuses every other verb as `unknown command`, after logging it.
  */
 async function preRuntimeZip(dir: string, version: string): Promise<Uint8Array> {
   return await stubZip(
     dir,
-    `if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
-else {
+    `const four = ${JSON.stringify(version)}.startsWith("4.");
+if (Deno.args[0] === "--version") console.log("denext ${version} (binary)");
+else if (Deno.args[0] === "--help") {
+  if (four) console.log("  denext toolchain      Manage denext's Deno toolchain (install | …)");
+} else {
   const log = Deno.env.get("STUB_LOG");
   if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
-  console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
-  Deno.exit(1);
+  if (!four || Deno.args[0] !== "toolchain") {
+    console.error(\`denext: unknown command "\${Deno.args[0]}"\`);
+    Deno.exit(1);
+  }
+  if (Deno.args[1] === "install" && Deno.env.get("STUB_RUNTIME_FAIL")) Deno.exit(1);
+  if (Deno.args[1] === "status") console.log(JSON.stringify({ version: "2.9.7-denext.99" }));
 }
 `,
   );
 }
 
 /**
- * A zip holding a compiled `denext.exe` stand-in with the `runtime` verb: it logs every call but
- * `--version` to $STUB_LOG, answers `runtime --help`, fails `runtime install` when
- * STUB_TOOLCHAIN_FAIL is set (as an offline machine's would), prints the nested
- * `runtime version --json`, and succeeds at everything else.
+ * A zip holding a compiled `denext.exe` stand-in with the `runtime` verb: `--help` lists it, every
+ * other call but `--version` is logged to $STUB_LOG, `runtime upgrade` / `runtime install` fail when
+ * STUB_RUNTIME_FAIL is set (as an offline machine's would) and `runtime use` when STUB_USE_FAIL is,
+ * `runtime version --json` prints the nested answer, and everything else succeeds.
  */
 async function runtimeZip(dir: string): Promise<Uint8Array> {
   return await stubZip(
     dir,
     `if (Deno.args[0] === "--version") console.log("denext 9.9.9 (binary)");
-else {
+else if (Deno.args[0] === "--help") {
+  console.log("  denext runtime        Manage denext's runtime: its Deno build (version | …)");
+} else {
   const log = Deno.env.get("STUB_LOG");
   if (log) Deno.writeTextFileSync(log, Deno.args.join(" ") + "\\n", { append: true });
   const verb = Deno.args.slice(0, 2).join(" ");
-  if (verb === "runtime install" && Deno.env.get("STUB_TOOLCHAIN_FAIL")) Deno.exit(1);
+  if ((verb === "runtime upgrade" || verb === "runtime install") && Deno.env.get("STUB_RUNTIME_FAIL")) {
+    Deno.exit(1);
+  }
+  if (verb === "runtime use" && Deno.env.get("STUB_USE_FAIL")) Deno.exit(1);
   if (verb === "runtime version") {
     console.log(JSON.stringify({
-      runtime: { version: "2.9.7-denext.99", source: "bundled" },
-      toolchain: { mode: "managed", version: "2.9.7-denext.1" },
+      runtime: { version: "3.0.0-denext.99", source: "default" },
+      toolchain: { mode: "managed", version: "3.0.0-denext.1" },
     }, null, 2));
   }
 }
@@ -739,22 +752,26 @@ else {
 }
 
 Deno.test(
-  "install.ps1: Test-RuntimeVerb probes `runtime --help`; Get-RuntimeVersion reads runtime.version",
+  "install.ps1: Get-RuntimeVerb reads --help; Get-RuntimeVersion reads either verb's JSON",
   {
     ignore: NOT_WINDOWS,
   },
   async () => {
     const dir = await Deno.makeTempDir();
     try {
-      // A .cmd stand-in: with STUB_OLD set it refuses `runtime` as a release that predates it does.
+      // A .cmd stand-in whose help and version follow STUB_KIND (runtime, toolchain, old, mute).
       const stub = join(dir, "denext.cmd");
       await Deno.writeTextFile(
         stub,
         [
           "@echo off",
-          'if defined STUB_OLD (echo denext: unknown command "%1" 1>&2& exit /b 1)',
-          'if "%1 %2"=="runtime --help" exit /b 0',
-          'if "%1 %2 %3"=="runtime version --json" (echo {"runtime": {"version": "2.9.7-denext.99"}, "toolchain": {"version": "2.9.7-denext.1"}}& exit /b 0)',
+          'if "%1"=="--help" (if "%STUB_KIND%"=="runtime" echo   denext runtime        Manage it)',
+          'if "%1"=="--help" (if "%STUB_KIND%"=="toolchain" echo   denext toolchain      Manage it)',
+          'if "%1"=="--help" exit /b 0',
+          'if "%1"=="--version" (if "%STUB_KIND%"=="old" (echo denext 3.4.14 ^(binary^)) else (echo denext 9.9.9 ^(binary^)))',
+          'if "%1"=="--version" exit /b 0',
+          'if "%1 %2 %3"=="runtime version --json" (echo {"runtime": {"version": "3.0.0-denext.99"}, "toolchain": {"version": "3.0.0-denext.1"}}& exit /b 0)',
+          'if "%1 %2 %3"=="toolchain status --json" (echo {"version": "2.9.7-denext.99"}& exit /b 0)',
           "exit /b 1",
           "",
         ].join("\r\n"),
@@ -763,18 +780,24 @@ Deno.test(
         "",
         `
 $stub = '${stub}'
-"has=$(Test-RuntimeVerb $stub)"
+foreach ($kind in @('runtime', 'toolchain', 'old', 'mute')) {
+  $env:STUB_KIND = $kind
+  "$kind=$(Get-RuntimeVerb $stub)"
+}
 "version=$(Get-RuntimeVersion $stub)"
-$env:STUB_OLD = '1'
-"oldhas=$(Test-RuntimeVerb $stub)"
-"oldversion=$(Get-RuntimeVersion $stub)"
+"tversion=$(Get-RuntimeVersion $stub 'toolchain')"
+$env:STUB_KIND = 'old'
 `,
       );
-      const lines = Object.fromEntries(out.trim().split("\n").map((l) => l.split(/=(.*)/s, 2)));
-      assertEquals(lines.has, "True", out);
-      assertEquals(lines.version, "2.9.7-denext.99", "the selected runtime's, not the toolchain's");
-      assertEquals(lines.oldhas, "False", out);
-      assertEquals(lines.oldversion, "the pinned build");
+      const lines = Object.fromEntries(
+        out.trim().split("\n").map((l) => l.trim().split(/=(.*)/s, 2)),
+      );
+      assertEquals(lines.runtime, "runtime", out);
+      assertEquals(lines.toolchain, "toolchain", out);
+      assertEquals(lines.old, "none", out);
+      assertEquals(lines.mute, "runtime", "a help that names neither, on 4.0 or later: current");
+      assertEquals(lines.version, "3.0.0-denext.99", "the selected runtime's, not the toolchain's");
+      assertEquals(lines.tversion, "2.9.7-denext.99");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -797,23 +820,102 @@ Deno.test(
       const log = join(dir, "calls.log");
       const run = await install(release, root, { STUB_LOG: log });
       assertEquals(run.code, 0, run.out);
-      assertStringIncludes(run.out, "denext 3.4.14 (binary) predates `denext runtime`");
+      assertStringIncludes(run.out, "denext 3.4.14 (binary) predates denext's Deno toolchain");
       assert(!run.out.includes("could not be installed"), run.out);
       const removed = await install(release, root, { STUB_LOG: log }, ["-Uninstall"]);
       assertEquals(removed.code, 0, removed.out);
       assert(!removed.out.includes("unknown command"), removed.out);
       assert(!(await exists(root)));
-      assertEquals(
-        (await Deno.readTextFile(log)).split("\n").filter(Boolean),
-        ["runtime --help", "runtime --help"],
-        "only the probe (install, then uninstall): never `runtime install` or `unlink`",
-      );
+      assert(!(await exists(log)), "a 3.x binary is never asked for a runtime verb");
     } finally {
       await release.close();
       await Deno.remove(dir, { recursive: true });
     }
   },
 );
+
+Deno.test("install.ps1: a 4.x release gets its own toolchain step, and its uninstall unlinks", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v4.20.1");
+  try {
+    const zip = await preRuntimeZip(dir, "4.20.1");
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    const log = join(dir, "calls.log");
+    const run = await install(release, root, { STUB_LOG: log });
+    assertEquals(run.code, 0, run.out);
+    assertStringIncludes(run.out, "installing denext's Deno toolchain");
+    const asked = await install(release, join(dir, "asked"), { STUB_LOG: log }, [
+      "-Runtime",
+      "3.0.0-denext.31",
+    ]);
+    assert(asked.code !== 0, asked.out);
+    assertStringIncludes(asked.out, "predates `denext runtime`");
+    const removed = await install(release, root, { STUB_LOG: log }, ["-Uninstall"]);
+    assertEquals(removed.code, 0, removed.out);
+    const calls = (await Deno.readTextFile(log)).split("\n").filter(Boolean);
+    assertEquals(calls[0], "toolchain install");
+    assertEquals(calls.at(-1), "toolchain unlink");
+    assert(!calls.some((c) => c.startsWith("runtime")), calls.join());
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: -RuntimeOnly / -Runtime move only the runtime, and fail when it fails", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await runtimeZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    assertEquals((await install(release, root, { DENEXT_NO_RUNTIME: "1" })).code, 0);
+    const log = join(dir, "calls.log");
+    const read = async () => {
+      const calls = (await Deno.readTextFile(log)).split("\n").filter(Boolean);
+      await Deno.remove(log);
+      return calls;
+    };
+    release.hits.length = 0;
+    const only = await install(release, root, { STUB_LOG: log }, ["-RuntimeOnly"]);
+    assertEquals(only.code, 0, only.out);
+    assertStringIncludes(only.out, "updating only its runtime");
+    assertEquals(release.hits, [], "the binary is not downloaded again");
+    assertEquals((await read())[0], "runtime upgrade");
+    const pinned = await install(release, root, { STUB_LOG: log, DENEXT_RUNTIME_ONLY: "1" }, [
+      "-Runtime",
+      "3.0.0-denext.31",
+    ]);
+    assertEquals(pinned.code, 0, pinned.out);
+    assertEquals((await read()).slice(0, 2), [
+      "runtime install 3.0.0-denext.31",
+      "runtime use 3.0.0-denext.31",
+    ]);
+    const failed = await install(release, root, { STUB_LOG: log, STUB_RUNTIME_FAIL: "1" }, [
+      "-RuntimeOnly",
+    ]);
+    assert(failed.code !== 0, failed.out);
+    assertStringIncludes(failed.out, "the runtime could not be installed");
+    assertEquals(await read(), ["runtime upgrade"]);
+    const bad = await install(release, root, {}, ["-Runtime", "3.0;x"]);
+    assert(bad.code !== 0, bad.out);
+    assertStringIncludes(bad.out, "is not a runtime version");
+    const none = await install(release, root, { DENEXT_NO_RUNTIME: "1" }, ["-RuntimeOnly"]);
+    assert(none.code !== 0, none.out);
+    assertStringIncludes(none.out, "nothing to do");
+    assertEquals(release.hits, []);
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum names", async () => {
   const script = await Deno.readTextFile(SCRIPT);
@@ -1012,13 +1114,21 @@ if ((Get-UserPath) -ceq "$raw") { 'same' } else { 'different' }`);
 
 Deno.test("install.ps1: the flags are parameters of the script and of Install-Denext", async () => {
   const script = await Deno.readTextFile(SCRIPT);
-  assertStringIncludes(
-    script,
-    "param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)",
-  );
+  const params = [
+    "[switch]$Uninstall,",
+    "[switch]$ModifyPath,",
+    "[switch]$NoModifyPath,",
+    "[switch]$RuntimeOnly,",
+    "[string]$Runtime = ''",
+  ];
+  const block = (indent: string) =>
+    `param(\n${params.map((p) => `${indent}  ${p}`).join("\n")}\n${indent})`;
+  assertStringIncludes(script, block(""), "the script's");
+  assertStringIncludes(script, block("  "), "Install-Denext's");
   assert(
     script.trimEnd().endsWith(
-      "Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath",
+      "Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath `\n" +
+        "  -RuntimeOnly:$RuntimeOnly -Runtime $Runtime",
     ),
   );
   // The user Path is read raw and written as REG_EXPAND_SZ, never round-tripped expanded.

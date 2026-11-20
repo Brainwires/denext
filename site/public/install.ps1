@@ -5,13 +5,20 @@
 # The binary is a CLI, not a second copy of the framework: inside a project it defers to the
 # denext version that project pins, so `denext build` builds exactly what `deno task build`
 # would. It is all you need - Deno itself is not: after installing the binary the script runs
-# `denext runtime install`, which downloads denext's own Deno build (SHA-256-verified) into
-# Deno's cache, and every verb runs on it (`denext task dev`, `denext test`, `denext fmt` ...).
-# When no `deno` is on your Path it also runs `denext runtime link`, so `deno` is that toolchain
+# `denext runtime upgrade`, which installs the newest denext runtime (denext's own Deno build) this
+# denext supports, verified by the binary against the signed runtime channel, and makes it this
+# machine's default; every verb runs on it (`denext task dev`, `denext test`, `denext fmt` ...).
+# When no `deno` is on your Path it also runs `denext runtime link`, so `deno` is that runtime
 # (%USERPROFILE%\.denext\bin\deno.cmd); an existing `deno` is never replaced or shadowed. Either
-# step failing (offline, say) is one warning, not a failed install: the binary downloads the
-# toolchain on first need instead. A release that predates `denext runtime` (an older
-# DENEXT_VERSION) skips both steps.
+# step failing (offline, say) is one warning, not a failed install: the binary downloads its
+# runtime on first need instead. This script never reads the channel itself. A release from before
+# `denext runtime` (DENEXT_VERSION=v4.20.1) gets its own `denext toolchain install` (+ link), and
+# one before 4.0 neither.
+#
+# -RuntimeOnly (DENEXT_RUNTIME_ONLY=1): with denext already installed here, skip the binary and
+# run `denext runtime upgrade` only (without one, install both). -Runtime <version>
+# (DENEXT_RUNTIME_VERSION): `denext runtime install <version>` + `denext runtime use <version>`.
+# With either, the runtime is what was asked for, so its step failing fails the run.
 #
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
@@ -23,8 +30,10 @@
 #                    verified (needs the GitHub CLI, `gh`, signed in)
 #   DENEXT_MODIFY_PATH  `0` leaves your user Path alone (the script prints the line to add);
 #                    `1` (the default) or `all` adds denext's bin to it. DENEXT_NO_PATH=1 is `0`.
-#   DENEXT_NO_TOOLCHAIN  `1` skips `denext runtime install` (and the link): the toolchain then
+#   DENEXT_NO_RUNTIME  `1` skips `denext runtime upgrade` (and the link): the runtime then
 #                    downloads on the first command that needs it
+#   DENEXT_RUNTIME_ONLY  `1` is -RuntimeOnly
+#   DENEXT_RUNTIME_VERSION  a runtime version (`3.0.0-denext.31`) is -Runtime <version>
 #   DENEXT_NO_DENO_LINK  `1` skips `denext runtime link` (no `deno` is put on your Path)
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.zip` and
 #                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub - for
@@ -41,6 +50,8 @@
 # -ModifyPath says the default explicitly. Flags go through a scriptblock:
 #
 #   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -NoModifyPath
+#   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly
+#   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Runtime 3.0.0-denext.31
 #
 # To uninstall, run the script with -Uninstall (it removes the Path entry too):
 #
@@ -52,10 +63,22 @@
 # Everything runs from Install-Denext, called on the last line, so a download that is cut short
 # runs nothing: `iex` parses the whole script first, and a truncated one never reaches the call.
 
-param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)
+param(
+  [switch]$Uninstall,
+  [switch]$ModifyPath,
+  [switch]$NoModifyPath,
+  [switch]$RuntimeOnly,
+  [string]$Runtime = ''
+)
 
 function Install-Denext {
-  param([switch]$Uninstall, [switch]$ModifyPath, [switch]$NoModifyPath)
+  param(
+    [switch]$Uninstall,
+    [switch]$ModifyPath,
+    [switch]$NoModifyPath,
+    [switch]$RuntimeOnly,
+    [string]$Runtime = ''
+  )
   Set-StrictMode -Version Latest
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest's progress bar is very slow on 5.1
@@ -82,18 +105,44 @@ function Install-Denext {
     Join-Path $HOME '.denext'
   }
   $bin = Join-Path $root 'bin'
+  $installed = Join-Path $bin 'denext.exe'
+
+  # What the runtime step is asked for: -RuntimeOnly / -Runtime, else their environment forms.
+  $script:DenextRuntimeOnly = $RuntimeOnly -or ($env:DENEXT_RUNTIME_ONLY -eq '1')
+  $script:DenextRuntimeVersion = if ($Runtime) { $Runtime } else { "$env:DENEXT_RUNTIME_VERSION" }
+  if ($script:DenextRuntimeVersion -and $script:DenextRuntimeVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9.+-]*$') {
+    throw "denext: -Runtime $($script:DenextRuntimeVersion) is not a runtime version (3.0.0-denext.31)"
+  }
+  if (($env:DENEXT_NO_RUNTIME -eq '1') -and ($script:DenextRuntimeOnly -or $script:DenextRuntimeVersion)) {
+    throw 'denext: DENEXT_NO_RUNTIME=1 skips the runtime, which -RuntimeOnly / -Runtime ask for: nothing to do'
+  }
 
   if ($Uninstall) {
     Assert-SafeInstallRoot $root
-    # The `deno` link `runtime link` made (only a link of its own; anything else is left).
-    $installed = Join-Path $bin 'denext.exe'
-    if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-RuntimeVerb $installed)) {
-      Invoke-DenextAt $root $installed @('runtime', 'unlink') | Out-Null
+    # The `deno` link `runtime link` (or an older release's `toolchain link`) made (only a link of
+    # its own; anything else is left).
+    if (Test-Path -LiteralPath $installed -PathType Leaf) {
+      $verb = Get-RuntimeVerb $installed
+      if ($verb -ne 'none') { Invoke-DenextAt $root $installed @($verb, 'unlink') | Out-Null }
     }
     Remove-DenextPath $bin
     Uninstall-DenextFiles $root
     Write-Host "denext: removed denext from $root and its bin from your user Path"
     return
+  }
+
+  if ($script:DenextRuntimeOnly) {
+    if (Test-Path -LiteralPath $installed -PathType Leaf) {
+      if ((Get-RuntimeVerb $installed) -ne 'runtime') {
+        throw ("denext: $(& $installed --version) at $installed predates ``denext runtime``, so " +
+          '-RuntimeOnly can''t move its runtime. Run the installer without -RuntimeOnly to install ' +
+          'the latest denext and its runtime.')
+      }
+      Write-Host "denext: $(& $installed --version) is installed; updating only its runtime"
+      Install-DenextRuntime $installed 'x86_64-pc-windows-msvc' $root
+      return
+    }
+    Write-Host "denext: no denext at $installed yet: installing it and its runtime"
   }
 
   # The binaries for this machine, best first. Windows on Arm gets the native Arm64 build; a
@@ -166,7 +215,7 @@ function Install-Denext {
   $exe = Join-Path $bin 'denext.exe'
   Write-Host "denext: installed $(& $exe --version) to $exe"
 
-  Install-DenoToolchain $exe $target $root
+  Install-DenextRuntime $exe $target $root
 
   if (-not (Test-ModifyPath -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath)) {
     if (-not (Test-PathEntry $env:Path $bin)) {
@@ -366,67 +415,118 @@ function Write-DownloadProgress([long]$done, $total, [switch]$Completed) {
   }
 }
 
-# Install denext's Deno toolchain through the new binary, and - when this machine has no `deno` -
-# link `deno` to it. Never fatal: a failure is one warning, and the binary downloads the toolchain
-# on the first command that needs it. An existing `deno` is never replaced: the link is made only
-# when Path has none, and `runtime link` itself refuses to overwrite a file it did not create.
-function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
-  if ($env:DENEXT_NO_TOOLCHAIN -eq '1') { return }
-  if (-not (Test-RuntimeVerb $exe)) {
-    Write-Host ("denext: $(& $exe --version) predates ``denext runtime``; skipping that step - it " +
-      "downloads denext's Deno on the first command that needs it (a release before 4.0 runs on " +
-      'the deno on your Path).')
+# Install the runtime through the binary at $exe: the newest one it supports (`runtime upgrade`,
+# which also makes it this machine's default), or the -Runtime version asked for (`runtime install`
+# + `runtime use`); then, when this machine has no `deno`, link `deno` to it. Every check is the
+# binary's. In a plain install a failure is one warning (the binary downloads its runtime on first
+# need); with -RuntimeOnly or -Runtime it throws. An existing `deno` is never replaced: the link is
+# made only when Path has none, and `runtime link` itself refuses to overwrite a file it did not
+# create. A release from before `denext runtime` gets its own toolchain step.
+function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
+  if ($env:DENEXT_NO_RUNTIME -eq '1') { return }
+  $verb = Get-RuntimeVerb $exe
+  $asked = $script:DenextRuntimeVersion
+  $strict = $script:DenextRuntimeOnly -or $asked
+  if ($verb -ne 'runtime') {
+    if ($asked) {
+      throw ("denext: $(& $exe --version) predates ``denext runtime``, so it can't install runtime " +
+        "$asked; install a newer denext (leave DENEXT_VERSION unset).")
+    }
+    if ($verb -eq 'toolchain') { Install-DenoToolchain $exe $target $root }
+    else {
+      Write-Host ("denext: $(& $exe --version) predates denext's Deno toolchain (denext 4.0); " +
+        'skipping that step - this release runs on the deno on your Path.')
+    }
     return
   }
+  if ($asked) {
+    Write-Host "denext: installing denext runtime $asked"
+    $fix = "denext runtime install $asked; denext runtime use $asked"
+    $ok = ((Invoke-Denext $exe @('runtime', 'install', $asked)) -eq 0) -and
+      ((Invoke-Denext $exe @('runtime', 'use', $asked)) -eq 0)
+  } else {
+    Write-Host 'denext: installing the newest denext runtime this denext supports'
+    $fix = 'denext runtime upgrade'
+    $ok = (Invoke-Denext $exe @('runtime', 'upgrade')) -eq 0
+  }
+  if (-not $ok) {
+    if ($strict) {
+      throw "denext: the runtime could not be installed (see above); nothing else changed. Fix the cause and run ``$fix`` (or this installer again)."
+    }
+    Write-Warning ('denext: the denext runtime could not be installed now; it downloads on the ' +
+      "first command that needs it (or run ``$fix``).")
+    return
+  }
+  Connect-DenoLink $exe $root 'runtime'
+}
+
+# With the runtime in place: tell a machine that has its own `deno` that it is left alone, else
+# link `deno` to it (`<verb> link`: `runtime`, or an older release's `toolchain`).
+function Connect-DenoLink([string]$exe, [string]$root, [string]$verb) {
+  $existing = Get-Command deno -ErrorAction SilentlyContinue
+  if ($existing) {
+    Write-Host ("denext: denext uses its own Deno ($(Get-RuntimeVersion $exe $verb)); your deno at " +
+      "$($existing.Source) is not changed or used by denext")
+    return
+  }
+  if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
+  if ((Invoke-DenextAt $root $exe @($verb, 'link')) -ne 0) {
+    Write-Warning "denext: could not link ``deno`` to the $verb (``denext deno ...`` still runs it)."
+  }
+}
+
+# A release from denext 4.0 until `denext runtime` (DENEXT_VERSION=v4.20.1): `toolchain install`
+# (+ `toolchain link`), never fatal.
+function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
   Write-Host "denext: installing denext's Deno toolchain"
-  if ((Invoke-Denext $exe @('runtime', 'install')) -ne 0) {
+  if ((Invoke-Denext $exe @('toolchain', 'install')) -ne 0) {
     # A release that pins a toolchain before 2.9.7-denext.21 has no Windows on Arm build: the
     # Arm64 binary runs every verb that needs Deno on the deno on your Path instead.
     if ($target -like 'aarch64-*') {
       Write-Host ("denext: no Windows on Arm Deno toolchain could be installed (releases pinning " +
         'one older than 2.9.7-denext.21 have none); denext runs the deno on your Path until ' +
-        '`denext runtime install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
+        '`denext toolchain install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
       return
     }
     Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
-      'first command that needs it (or run `denext runtime install`).')
+      'first command that needs it (or run `denext toolchain install`).')
     return
   }
-  $existing = Get-Command deno -ErrorAction SilentlyContinue
-  if ($existing) {
-    Write-Host ("denext: denext uses its own Deno ($(Get-RuntimeVersion $exe)); your deno at " +
-      "$($existing.Source) is not changed or used by denext")
-    return
-  }
-  if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
-  if ((Invoke-DenextAt $root $exe @('runtime', 'link')) -ne 0) {
-    Write-Warning 'denext: could not link `deno` to the toolchain (`denext deno ...` still runs it).'
-  }
+  Connect-DenoLink $exe $root 'toolchain'
 }
 
-# The Deno version the binary at $exe runs on (`2.9.7-denext.22`), or 'the pinned build':
-# `runtime version --json` nests it as `runtime.version`.
-function Get-RuntimeVersion([string]$exe) {
+# The runtime version the binary at $exe runs (`3.0.0-denext.31`), or 'the pinned build':
+# `runtime version --json` nests it as `runtime.version`; an older release's `toolchain status
+# --json` ($verb = 'toolchain') has it at the top.
+function Get-RuntimeVersion([string]$exe, [string]$verb = 'runtime') {
   $ErrorActionPreference = 'Continue'
   try {
-    $status = (& $exe runtime version --json 2>$null) -join "`n" | ConvertFrom-Json
-    if ($status.runtime.version) { return "$($status.runtime.version)" }
+    if ($verb -eq 'toolchain') {
+      $status = (& $exe toolchain status --json 2>$null) -join "`n" | ConvertFrom-Json
+      if ($status.version) { return "$($status.version)" }
+    } else {
+      $status = (& $exe runtime version --json 2>$null) -join "`n" | ConvertFrom-Json
+      if ($status.runtime.version) { return "$($status.runtime.version)" }
+    }
   } catch {
     # An older binary, or no answer: say it generally.
   }
   return 'the pinned build'
 }
 
-# Whether the binary at $exe has the `runtime` verb: an older release (an earlier DENEXT_VERSION)
-# answers `runtime --help` with `unknown command` and a non-zero exit.
-function Test-RuntimeVerb([string]$exe) {
+# Which runtime verb the binary at $exe has: 'runtime' (`denext runtime ...`), 'toolchain' (denext
+# 4.0 up to the runtime channel) or 'none' (before 4.0). Read from its --help, which runs no project
+# code and downloads nothing (asking an older binary for `runtime` would forward it to Deno); a
+# binary whose help names neither is taken by its version: before 4.0 'none', else 'runtime'.
+function Get-RuntimeVerb([string]$exe) {
   $ErrorActionPreference = 'Continue'
-  try {
-    & $exe runtime --help *> $null
-    return $LASTEXITCODE -eq 0
-  } catch {
-    return $false
-  }
+  $help = ''
+  try { $help = (& $exe --help 2>$null) -join "`n" } catch { $help = '' }
+  if ($help -match 'denext runtime ') { return 'runtime' }
+  if ($help -match 'denext toolchain ') { return 'toolchain' }
+  try { $version = "$(& $exe --version 2>$null)" } catch { $version = '' }
+  if ($version -match '^denext (\d+)\.' -and [int]$Matches[1] -lt 4) { return 'none' }
+  return 'runtime'
 }
 
 # Invoke-Denext with DENEXT_INSTALL set to $root for that one run (and restored after, since the
@@ -628,4 +728,5 @@ function Remove-DenextPath([string]$dir) {
   Set-UserPath ($kept -join ';')
 }
 
-Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath
+Install-Denext -Uninstall:$Uninstall -ModifyPath:$ModifyPath -NoModifyPath:$NoModifyPath `
+  -RuntimeOnly:$RuntimeOnly -Runtime $Runtime

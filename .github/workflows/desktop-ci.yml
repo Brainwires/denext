@@ -22,7 +22,7 @@
 #      and uninstall for real: the .msi per-user and per-machine (hosted runners are admin) with an
 #      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
 #      mounted and the .pkg through `installer`. And install.ps1 against a loopback release, and
-#      install.ps1 / install.sh against this commit's own binary build (the toolchain step included)
+#      install.ps1 / install.sh against this commit's own binary build (the runtime step included)
 #      and the real latest release (which may predate the `runtime` verb: denext < 4.0).
 #      Windows on Arm (windows-11-arm) runs the desktop suites, install.ps1 and the Arm64 package +
 #      .msi natively, required for a release like every other job.
@@ -891,7 +891,7 @@ jobs:
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
       # This commit's installer with this commit's binary (a local release: DENEXT_ARTIFACTS, still
       # checksum-verified), so the `runtime install` step runs against a binary that has the verb.
-      - name: Install this commit's binary build, toolchain included, run it, uninstall
+      - name: Install this commit's binary build, runtime included, run it, uninstall
         shell: powershell
         env:
           DENEXT_NO_PATH: "1"
@@ -907,15 +907,23 @@ jobs:
           Set-Content -Encoding ascii -Path (Join-Path $art 'SHA256SUMS') -Value "$hash  $asset"
           $env:DENEXT_ARTIFACTS = $art
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext-head'
+          # The release this commit bundles, by name (`runtime install <v>` + `runtime use <v>`): it
+          # needs no published channel, and a failure fails the installer.
+          $env:DENEXT_RUNTIME_VERSION = (Get-Content -Raw src/build/deno-toolchain-pin.json | ConvertFrom-Json).version
           $out = & ./scripts/install.ps1 *>&1 | Out-String
           Write-Host $out
-          if ($out -notmatch "installing denext's Deno toolchain") { throw 'the toolchain step did not run' }
-          if ($out -match 'could not be installed now|predates') { throw 'the toolchain step failed' }
+          if ($out -notmatch "installing denext runtime $([regex]::Escape($env:DENEXT_RUNTIME_VERSION))") { throw 'the runtime step did not run' }
+          if ($out -match 'could not be installed now|predates') { throw 'the runtime step failed' }
           $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
           $v = & $exe --version
           if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
           & $exe runtime version
           if ($LASTEXITCODE -ne 0) { throw 'runtime version failed' }
+          # --runtime-only: the installed binary stays, only the runtime step runs again.
+          $only = & ./scripts/install.ps1 -RuntimeOnly *>&1 | Out-String
+          Write-Host $only
+          if ($only -notmatch 'updating only its runtime') { throw '-RuntimeOnly did not keep the binary' }
+          $env:DENEXT_RUNTIME_VERSION = $null
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
 
@@ -948,7 +956,7 @@ jobs:
         run: deno test -A tests/install-ps1.test.ts
       # This commit's installer with this commit's Arm64 binary (a local release: DENEXT_ARTIFACTS,
       # still checksum-verified), so `runtime install` fetches the pinned Windows on Arm toolchain.
-      - name: Install this commit's Arm64 binary build, toolchain included, run it, uninstall
+      - name: Install this commit's Arm64 binary build, runtime included, run it, uninstall
         shell: powershell
         env:
           DENEXT_NO_PATH: "1"
@@ -964,15 +972,23 @@ jobs:
           Set-Content -Encoding ascii -Path (Join-Path $art 'SHA256SUMS') -Value "$hash  $asset"
           $env:DENEXT_ARTIFACTS = $art
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext-head'
+          # The release this commit bundles, by name (`runtime install <v>` + `runtime use <v>`): it
+          # needs no published channel, and a failure fails the installer.
+          $env:DENEXT_RUNTIME_VERSION = (Get-Content -Raw src/build/deno-toolchain-pin.json | ConvertFrom-Json).version
           $out = & ./scripts/install.ps1 *>&1 | Out-String
           Write-Host $out
-          if ($out -notmatch "installing denext's Deno toolchain") { throw 'the toolchain step did not run' }
-          if ($out -match 'could not be installed now|predates|no Windows on Arm Deno toolchain') { throw 'the toolchain step failed' }
+          if ($out -notmatch "installing denext runtime $([regex]::Escape($env:DENEXT_RUNTIME_VERSION))") { throw 'the runtime step did not run' }
+          if ($out -match 'could not be installed now|predates|no Windows on Arm Deno toolchain') { throw 'the runtime step failed' }
           $exe = Join-Path $env:DENEXT_INSTALL 'bin\denext.exe'
           $v = & $exe --version
           if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
           & $exe runtime version
           if ($LASTEXITCODE -ne 0) { throw 'runtime version failed' }
+          # --runtime-only: the installed binary stays, only the runtime step runs again.
+          $only = & ./scripts/install.ps1 -RuntimeOnly *>&1 | Out-String
+          Write-Host $only
+          if ($only -notmatch 'updating only its runtime') { throw '-RuntimeOnly did not keep the binary' }
+          $env:DENEXT_RUNTIME_VERSION = $null
           & ./scripts/install.ps1 -Uninstall
           if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }
       - name: Install the latest release for real, run it, uninstall
@@ -1061,7 +1077,7 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.8"
-      - name: Install this commit's binary build, toolchain included, run it
+      - name: Install this commit's binary build, runtime included, run it
         shell: bash
         run: |
           set -euo pipefail
@@ -1075,14 +1091,21 @@ jobs:
           deno run -A scripts/compile-cli.ts --output "$RUNNER_TEMP/denext"
           tar czf "$art/$asset" -C "$RUNNER_TEMP" denext
           (cd "$art" && { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } > SHA256SUMS)
-          out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh 2>&1)"
+          # The release this commit bundles, by name (`runtime install <v>` + `runtime use <v>`): it
+          # needs no published channel, and a failure fails the installer.
+          runtime="$(deno eval -q 'console.log(JSON.parse(Deno.readTextFileSync("src/build/deno-toolchain-pin.json")).version)')"
+          out="$(DENEXT_ARTIFACTS="$art" DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh --runtime="$runtime" 2>&1)"
           printf '%s\n' "$out"
-          printf '%s\n' "$out" | grep -F "installing denext's Deno toolchain" >/dev/null
+          printf '%s\n' "$out" | grep -F "installing denext runtime $runtime" >/dev/null
           if printf '%s\n' "$out" | grep -E 'could not be installed now|predates' >/dev/null; then
-            echo "::error::the toolchain step did not complete"; exit 1
+            echo "::error::the runtime step did not complete"; exit 1
           fi
           "$RUNNER_TEMP/denext-head/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'
           "$RUNNER_TEMP/denext-head/bin/denext" runtime version
+          # --runtime-only: the installed binary stays, only the runtime step runs again.
+          only="$(DENEXT_INSTALL="$RUNNER_TEMP/denext-head" sh scripts/install.sh --runtime-only --runtime="$runtime" 2>&1)"
+          printf '%s\n' "$only"
+          printf '%s\n' "$only" | grep -F "updating only its runtime" >/dev/null
       - name: Install the latest release for real, run it
         shell: bash
         env:
