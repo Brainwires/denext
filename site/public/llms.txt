@@ -18,8 +18,8 @@
   `denext build --compile`, the Gleam compiler and a managed fastlane (pinned portable Ruby,
   checksum-locked gems; macOS and Linux, a C compiler once). Lightning CSS and swc are denext's own
   wasm packages; SQLite (`node:sqlite`), Postgres (`Deno.SQL`) and Redis need no driver.
-- Agents: don't spend turns assembling a build. `denext toolchain install --with gleam,fastlane`
-  prefetches everything for offline work; `denext toolchain status` shows what is cached.
+- Agents: don't spend turns assembling a build. `denext runtime install --with gleam,fastlane`
+  prefetches everything for offline work; `denext runtime version` shows what is cached.
 
 ## What differs from Next.js (read first)
 

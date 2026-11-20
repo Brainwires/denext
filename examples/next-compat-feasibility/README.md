@@ -122,7 +122,7 @@ denext?** — reproducibly.
   start + curl the homepage on port 8912. Every stage is logged under
   `$TMPDIR/denext-dropin/<app>/logs`; the verdict lands in `REPORT.md` next to
   the script. It needs `git`, `curl` and a `deno` on `PATH` (or `DENO_BIN`;
-  `denext toolchain link` provides one); `npm` is optional. `SKIP_SETUP=1` reuses
+  `denext runtime link` provides one); `npm` is optional. `SKIP_SETUP=1` reuses
   an earlier clone, `OUT` moves the work dir, `DENEXT` points at another
   checkout.
   ```sh

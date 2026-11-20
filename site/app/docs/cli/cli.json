@@ -543,9 +543,9 @@
     },
     {
       "name": "deno",
-      "summary": "Run denext's Deno toolchain with the given arguments",
+      "summary": "Run denext's runtime (its Deno) with the given arguments",
       "usage": "denext deno [args...] [-- <deno args>]",
-      "description": "Runs denext's pinned Deno (downloaded and verified on first use) with the arguments\nverbatim, and exits with its code:\n  denext deno test              deno test on the toolchain (Vitest/Jest compat)\n  denext deno task check        a deno task whose `deno …` steps run on it too\n  denext deno --version",
+      "description": "Runs the Deno of denext's selected runtime (downloaded and verified on first use) with\nthe arguments verbatim, and exits with its code:\n  denext deno test              deno test on the runtime (Vitest/Jest compat)\n  denext deno task check        a deno task whose `deno …` steps run on it too\n  denext deno --version",
       "flags": [],
       "positionals": [
         {
@@ -958,7 +958,7 @@
       "name": "fastlane",
       "summary": "Run denext's managed fastlane (pinned; installed on first use)",
       "usage": "denext fastlane [args...] [-- <deno args>]",
-      "description": "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n  denext fastlane ios beta flavor:staging\n  denext fastlane android release track:production\nThe first run installs fastlane 2.240.1 on a pinned portable Ruby\ninto denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\nthe Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n  denext toolchain install --with fastlane   install it ahead of time\n  DENEXT_FASTLANE=<path>                     run that fastlane instead (unverified)",
+      "description": "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n  denext fastlane ios beta flavor:staging\n  denext fastlane android release track:production\nThe first run installs fastlane 2.240.1 on a pinned portable Ruby\ninto denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\nthe Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n  denext runtime install --with fastlane   install it ahead of time\n  DENEXT_FASTLANE=<path>                     run that fastlane instead (unverified)",
       "flags": [],
       "positionals": [
         {
@@ -2277,6 +2277,59 @@
       ]
     },
     {
+      "name": "runtime",
+      "summary": "Manage denext's runtime: its Deno build (version | list | install | upgrade | use | …)",
+      "usage": "denext runtime <action> [versions...] [options]",
+      "description": "denext runs the commands that execute project code on its own Deno build (stock Deno\nplus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256 verified on first\nuse. Your own `deno` is never replaced. Which release runs: DENEXT_RUNTIME, else the project\npin (\"denext\": { \"runtime\": … } in deno.json), else your default, else the release this\ndenext bundles. New releases come from a signed channel, without a denext release.\n  denext runtime version        What runs here and why, the bundled pin, the channel, Gleam,\n                                fastlane (alias: info; --verify re-hashes the cache)\n  denext runtime list           Installed releases; with the channel: available, held,\n                                yanked, incompatible (--all: every listed release)\n  denext runtime install [<version>]   Download + verify a release (default: the selected one)\n  denext runtime install --with gleam,fastlane   …and the pinned Gleam / managed fastlane\n  denext runtime upgrade        The newest compatible release past your dependency-age hold:\n                                installs it and makes it your default (--project: the\n                                project pin; --dry-run: say what it would do)\n  denext runtime use <version|latest|bundled>   Install it and make it your default (kept\n                                even under a newer denext), or the project pin (--project)\n  denext runtime path           Print the selected release's binary (installs it first)\n  denext runtime link           Put it on PATH as ~/.denext/bin/deno (opt-in;\n                                $DENEXT_INSTALL/bin when that is set)\n  denext runtime unlink         Remove that link (only what link created)\n  denext runtime uninstall <version>   Remove a cached release (its Deno and Deno Desktop\n                                runtime); one in use only with --force\n  denext runtime uninstall --all       Remove every cached release but those in use\n  denext runtime prune          Keep only what is in use here (the selected release, your\n                                default, the bundled pin and its rollback, the project's\n                                pins), Gleam and fastlane included\n  (--json for scripts; uninstall and prune show the space freed, --dry-run lists it)",
+      "flags": [
+        {
+          "name": "verify",
+          "type": "boolean",
+          "description": "version: re-hash the cached binary instead of the size + mtime check"
+        },
+        {
+          "name": "with",
+          "type": "string",
+          "valueName": "<tool>",
+          "description": "install: also fetch these pinned tools (gleam, fastlane)"
+        },
+        {
+          "name": "project",
+          "type": "boolean",
+          "description": "upgrade, use: write the project pin (deno.json) instead of your default"
+        },
+        {
+          "name": "all",
+          "type": "boolean",
+          "description": "list: every release the channel lists; uninstall: every cached release"
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "uninstall: remove a release even when it is in use"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "upgrade: say what it would do; uninstall, prune: list what would be removed"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "version | info | list | install | upgrade | use | path | link | unlink | uninstall | prune"
+        },
+        {
+          "name": "versions",
+          "required": false,
+          "variadic": true,
+          "description": "install / use: the release (use: also latest or bundled); uninstall: the releases"
+        }
+      ]
+    },
+    {
       "name": "stack",
       "summary": "Start, stop, inspect and operate the local Docker stack (app, Postgres, MinIO), like supabase start",
       "usage": "denext stack <action> [target] [options]",
@@ -2554,54 +2607,6 @@
           "required": false,
           "variadic": false,
           "description": "Test files/dirs (default: all)"
-        }
-      ]
-    },
-    {
-      "name": "toolchain",
-      "summary": "Manage denext's Deno toolchain (install | status | path | link | unlink | uninstall | prune)",
-      "usage": "denext toolchain <action> [versions...] [options]",
-      "description": "denext runs the commands that execute project code on its own pinned Deno build\n(stock Deno plus Deno.SQL and Vitest/Jest compat in deno test), downloaded and SHA-256\nverified on first use. Your own `deno` is never replaced. DENEXT_DENO=stock opts out.\n  denext toolchain install      Download + verify it now (fails when it can't)\n  denext toolchain install --with gleam   …and the pinned Gleam compiler\n  denext toolchain install --with fastlane   …and the managed fastlane (Ruby + gems)\n  denext toolchain status       Pinned versions (Deno, Gleam, fastlane), cache state (--json)\n  denext toolchain path         Print the binary's path (installs it first)\n  denext toolchain link         Put it on PATH as ~/.denext/bin/deno (opt-in;\n                                $DENEXT_INSTALL/bin when that is set)\n  denext toolchain unlink       Remove that link (only what link created)\n  denext toolchain uninstall <version>   Remove a cached version (its Deno toolchain and\n                                Deno Desktop runtime); the pinned one only with --force\n  denext toolchain uninstall --all       Remove every cached version but the pinned one\n  denext toolchain prune        Remove every version but the one this denext pins (and the\n                                one the project here pins), Gleam and fastlane included\n  (uninstall and prune show the space freed; --dry-run lists it, --json for scripts)",
-      "flags": [
-        {
-          "name": "verify",
-          "type": "boolean",
-          "description": "status: re-hash the cached binary instead of the size + mtime check"
-        },
-        {
-          "name": "with",
-          "type": "string",
-          "valueName": "<tool>",
-          "description": "install: also fetch these pinned tools (gleam, fastlane)"
-        },
-        {
-          "name": "all",
-          "type": "boolean",
-          "description": "uninstall: every cached version (the pinned one too with --force)"
-        },
-        {
-          "name": "force",
-          "type": "boolean",
-          "description": "uninstall: remove a version even when it is the pinned one"
-        },
-        {
-          "name": "dry-run",
-          "type": "boolean",
-          "description": "uninstall, prune: list what would be removed and the space it frees; remove nothing"
-        }
-      ],
-      "positionals": [
-        {
-          "name": "action",
-          "required": true,
-          "variadic": false,
-          "description": "install | status | path | link | unlink | uninstall | prune"
-        },
-        {
-          "name": "versions",
-          "required": false,
-          "variadic": true,
-          "description": "uninstall: the versions to remove"
         }
       ]
     },

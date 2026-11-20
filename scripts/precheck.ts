@@ -235,7 +235,7 @@ if (import.meta.main) {
   await step(
     outcomes,
     "type-check (denext's toolchain, TypeScript 7)",
-    "fix the TS errors above (no toolchain yet: denext toolchain install)",
+    "fix the TS errors above (no toolchain yet: denext runtime install)",
     // `.vitest.ts` files resolve `vitest` only on the toolchain, which now checks everything.
     () => deno(typeCheckArgs(checkable)),
   );

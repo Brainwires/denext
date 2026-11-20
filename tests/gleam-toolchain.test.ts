@@ -1,7 +1,7 @@
 // src/build/gleam-toolchain.ts: the pinned Gleam compiler — the pin table, a verified tar.gz / zip
 // install from a LOCAL fixture server (no network) into the toolchain cache, the refusals (SHA-256
 // mismatch, offline, network denied, no build for the host), the `DENEXT_GLEAM` override, and the
-// `toolchain status` view. The real download runs only with DENEXT_TEST_GLEAM_DOWNLOAD=1.
+// `runtime version` view. The real download runs only with DENEXT_TEST_GLEAM_DOWNLOAD=1.
 
 import {
   assert,

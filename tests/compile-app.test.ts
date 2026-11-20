@@ -336,6 +336,8 @@ Deno.test({
       );
       await Deno.chmod(fake, 0o755);
       const result = await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+      // An explicit `deno` compiles onto its own runtime: no denext runtime release is recorded.
+      assertEquals(result.runtime, null);
       const argv = (await Deno.readTextFile(record)).trim().split("\n");
       const flag = (name: string) =>
         argv.flatMap((a, i) => (a === name && argv[i + 1] !== undefined ? [argv[i + 1]] : []));

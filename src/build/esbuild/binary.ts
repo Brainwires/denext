@@ -208,7 +208,7 @@ export interface EsbuildBinaryStatus {
 }
 
 /**
- * Which esbuild the next build spawns, without downloading anything (`denext toolchain status`).
+ * Which esbuild the next build spawns, without downloading anything (`denext runtime version`).
  *
  * @param options Seams; all default to the process.
  * @returns The source, the binary when present, and a line for a report.

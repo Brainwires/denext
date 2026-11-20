@@ -59,7 +59,7 @@ lucide — so the comparison holds on a real app, not a toy.
 `ssr:false` island). One known difference: the native home also runs a `useAsyncEffect` demo, a
 denext-only API the Next fixture cannot mirror, so the native home is a few hundred bytes heavier
 than a strict mirror. Pins: next 16.4.2, react/react-dom 19.3.1 (`bench/package.json`). Run the
-harness under the toolchain Deno (`denext toolchain path`), since the bundle `--define` folding
+harness under the toolchain Deno (`denext runtime path`), since the bundle `--define` folding
 only applies there. On a loaded machine, `bench/run.ts --layers=1,real --no-wait` reports bytes
 only (sizes are deterministic).
 

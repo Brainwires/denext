@@ -25,7 +25,7 @@ interface Job {
 
 /**
  * Whether a step builds with (or installs) the pinned Gleam: the Lustre e2e tests, or
- * `toolchain install --with gleam` ahead of the unit suites that compile real Gleam.
+ * `runtime install --with gleam` ahead of the unit suites that compile real Gleam.
  */
 function buildsWithGleam(step: Step): boolean {
   return /test:e2e|lustre\.e2e|DENEXT_TEST_GLEAM_DOWNLOAD=1|--with gleam/.test(step.run ?? "");
@@ -61,7 +61,7 @@ Deno.test("ci.yml's unit tests run the real Gleam suites, on the pinned Gleam it
     jobs: Record<string, Job & { steps: Array<Step & { env?: Record<string, string> }> }>;
   };
   const steps = ci.jobs.check.steps;
-  const install = steps.findIndex((s) => /toolchain install --with gleam/.test(s.run ?? ""));
+  const install = steps.findIndex((s) => /runtime install --with gleam/.test(s.run ?? ""));
   const unit = steps.findIndex((s) => s.run === "deno task test:unit");
   assert(
     install >= 0 && install < unit,

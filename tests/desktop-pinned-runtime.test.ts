@@ -1306,7 +1306,7 @@ Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock warns (naming DENO_BIN
     assertStringIncludes(text, "packaging still requires Deno 9.9.9");
     // Deprecated, after the fallback's own warning.
     assertStringIncludes(logs.at(-1)!, "denext 5.0 drops stock Deno support");
-    assertStringIncludes(logs.at(-1)!, "`denext toolchain install`, and unset DENEXT_DENO");
+    assertStringIncludes(logs.at(-1)!, "`denext runtime install`, and unset DENEXT_DENO");
     assertEquals(f.hits(), 0);
   } finally {
     await f.close();

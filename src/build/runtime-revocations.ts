@@ -17,10 +17,12 @@
 // replay floor is the sequence of the cached list as SIGNED (re-verified under the keys in force):
 // the unsigned bookkeeping file beside it records the key set it was written under and can lower
 // the floor but never raise it, so no local write can turn the check off for good. Unknown fields
-// are ignored; an unknown `schema` is ignored as a whole.
+// are ignored; an unknown `schema` is ignored as a whole. The list may also carry
+// `revokedChannelKeys`: runtime channel signing keys (runtime-channel.ts, a separate key pair) that
+// must no longer be trusted, so a stolen channel key is withdrawn with the other key.
 //
 // Transport is untrusted (trust comes from the signature): denext.dev and a mirror on GitHub,
-// both asked at once within one budget (1.5 s; 5 s for `toolchain status` / `install` /
+// both asked at once within one budget (1.5 s; 5 s for `runtime version` / `install` /
 // `doctor`), the highest valid sequence winning — a stale copy on one never hides a newer list
 // on the other. Each denext release compiles in the sequence published when it was cut
 // (runtime-revocation-keys.ts), so even a fresh machine never takes an older list. The list is
@@ -29,9 +31,26 @@
 // none. With no public key compiled in, the whole check is a no-op: no cache read, no fetch.
 
 import { join } from "@std/path";
-import { denoCacheDir } from "./deno-cache-dir.ts";
-import { fromBase64, toBase64 } from "./ota-signing.ts";
-import { encodeHex } from "@std/encoding/hex";
+import {
+  checkPayloadHeader,
+  type EnvGet,
+  fetchDue as signedFetchDue,
+  fetchTextCapped,
+  freshHeader,
+  keySetId,
+  netGrantedByQuery,
+  parseEnvelope,
+  processEnv,
+  readCacheState,
+  readKeysFile,
+  resignDue,
+  type SignedCacheState,
+  type SignedEnvelope,
+  signWithKeys,
+  toolchainCacheRoot,
+  verifyingKey,
+  writeQuietly,
+} from "./signed-envelope.ts";
 import {
   RUNTIME_REVOCATION_MIN_SEQUENCE,
   RUNTIME_REVOCATION_PUBLIC_KEYS,
@@ -52,14 +71,14 @@ const REVOCATION_TTL_MS = 12 * 3600_000;
 const FAILED_RETRY_MS = 3600_000;
 /** The time a command may spend fetching the list. */
 export const REVOCATION_FETCH_BUDGET_MS = 1500;
-/** The time `toolchain status` / `install` and `doctor` may spend fetching it. */
+/** The time `runtime version` / `install` and `doctor` may spend fetching it. */
 const REVOCATION_FORCE_BUDGET_MS = 5000;
 /** How long a signed list stays valid when no expiry is given. */
 export const REVOCATION_DEFAULT_EXPIRY_DAYS = 21;
 /** A list with fewer days than this before it expires is re-signed (`deno task release`). */
 export const REVOCATION_RESIGN_DAYS = 10;
 /**
- * `doctor` (and `toolchain status`) warn about a list with fewer days than this before it
+ * `doctor` (and `runtime version`) warn about a list with fewer days than this before it
  * expires: once it lapses denext ignores it, and a revocation stops reaching anyone.
  */
 export const REVOCATION_EXPIRY_WARN_DAYS = 7;
@@ -116,6 +135,12 @@ export interface RuntimeRevocationList {
   /** The Unix time in seconds at signing; only ever grows. */
   readonly sequence: number;
   readonly revoked: readonly RuntimeRevocation[];
+  /**
+   * Runtime channel signing keys that must no longer be trusted (runtime-channel.ts), each the
+   * SHA-256 of its SPKI bytes, hex. A denext whose channel key is listed ignores every channel
+   * index that key signs. Absent: none.
+   */
+  readonly revokedChannelKeys?: readonly string[];
 }
 
 /** The served document. */
@@ -152,57 +177,7 @@ export class RevocationListError extends Error {
   }
 }
 
-/** Env reader. */
-type EnvGet = (name: string) => string | undefined;
-const processEnv: EnvGet = (name) => {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined;
-  }
-};
-
-const encoder = new TextEncoder();
-const ECDSA = { name: "ECDSA", namedCurve: "P-256" } as const;
-const SIGN = { name: "ECDSA", hash: "SHA-256" } as const;
-
-/** The bytes a signature covers. */
-function signedBytes(signed: string): Uint8Array {
-  return encoder.encode(REVOCATION_SIGNATURE_DOMAIN + signed);
-}
-
-/** Whether `signature` over `signed` verifies with any of `keys` (base64 SPKI). */
-async function verifiesWithAny(
-  signed: string,
-  signature: string,
-  keys: readonly string[],
-): Promise<boolean> {
-  for (const key of keys) {
-    try {
-      const pub = await crypto.subtle.importKey(
-        "spki",
-        fromBase64(key) as BufferSource,
-        ECDSA,
-        false,
-        ["verify"],
-      );
-      const sig = fromBase64(signature) as BufferSource;
-      if (await crypto.subtle.verify(SIGN, pub, sig, signedBytes(signed) as BufferSource)) {
-        return true;
-      }
-    } catch {
-      // A malformed key or signature verifies nothing.
-    }
-  }
-  return false;
-}
-
 const invalid = (why: string) => new RevocationListError("invalid", `the list is invalid: ${why}`);
-
-/** Whether `v` is an RFC 3339 timestamp `Date.parse` reads. */
-function isTime(v: unknown): v is string {
-  return typeof v === "string" && /^\d{4}-\d\d-\d\dT/.test(v) && !Number.isNaN(Date.parse(v));
-}
 
 /** `v` when it is absent or a string matching `ok`, else a refusal naming `field`. */
 function optionalString(v: unknown, field: string, ok: (s: string) => boolean): void {
@@ -257,38 +232,38 @@ function checkEntry(raw: unknown): RuntimeRevocation | null {
  * @throws {RevocationListError} When a known field is malformed.
  */
 export function checkRevocationList(raw: unknown): RuntimeRevocationList {
+  const header = checkPayloadHeader(raw, invalid);
   const p = raw as Record<string, unknown>;
-  if (p?.schema !== 1) throw invalid("schema must be 1");
-  if (!isTime(p.issuedAt) || !isTime(p.expiresAt)) throw invalid("bad issuedAt / expiresAt");
-  if (!Number.isSafeInteger(p.sequence) || (p.sequence as number) < 0) {
-    throw invalid("sequence must be a non-negative integer");
-  }
   if (!Array.isArray(p.revoked)) throw invalid("revoked must be a list");
   const revoked = p.revoked.map(checkEntry).filter((e): e is RuntimeRevocation => e !== null);
+  const channelKeys = checkRevokedChannelKeys(p.revokedChannelKeys);
   return {
     schema: 1,
-    issuedAt: p.issuedAt,
-    expiresAt: p.expiresAt,
-    sequence: p.sequence as number,
+    ...header,
     revoked,
+    ...(channelKeys.length > 0 ? { revokedChannelKeys: channelKeys } : {}),
   };
 }
 
+/** `revokedChannelKeys` checked: absent, or a list of SHA-256 hex digests (lower-cased). */
+function checkRevokedChannelKeys(raw: unknown): string[] {
+  if (raw === undefined) return [];
+  const ok = Array.isArray(raw) &&
+    raw.every((k) => typeof k === "string" && /^[0-9a-fA-F]{64}$/.test(k));
+  if (!ok) throw invalid("revokedChannelKeys must be a list of SHA-256 hex digests");
+  return [...new Set((raw as string[]).map((k) => k.toLowerCase()))];
+}
+
 /** The envelope inside `text`, checked for shape and size only. */
-function envelopeOf(text: string): RevocationEnvelope {
-  if (encoder.encode(text).byteLength > REVOCATION_MAX_BYTES) {
+function envelopeOf(text: string): SignedEnvelope {
+  const e = parseEnvelope(text, REVOCATION_MAX_BYTES);
+  if (e === "size") {
     throw new RevocationListError("size", `the list is larger than ${REVOCATION_MAX_BYTES} bytes`);
   }
-  let e: Partial<RevocationEnvelope> | null;
-  try {
-    e = JSON.parse(text);
-  } catch {
-    e = null;
-  }
-  if (typeof e?.signed !== "string" || typeof e.signature !== "string") {
+  if (e === "format") {
     throw new RevocationListError("format", "not a { signed, signature } envelope");
   }
-  return e as RevocationEnvelope;
+  return e;
 }
 
 /** Options for {@linkcode verifyRevocationDocument}. */
@@ -316,7 +291,7 @@ export async function verifyRevocationDocument(
   options: VerifyRevocationOptions = {},
 ): Promise<RuntimeRevocationList | null> {
   const e = envelopeOf(text);
-  if (!await verifiesWithAny(e.signed, e.signature, keys)) {
+  if (await verifyingKey(e, REVOCATION_SIGNATURE_DOMAIN, keys) === null) {
     throw new RevocationListError("signature", "the signature does not verify");
   }
   let payload: { schema?: unknown };
@@ -363,8 +338,8 @@ export async function signRevocationList(
 ): Promise<RevocationEnvelope> {
   checkRevocationList(list);
   const signed = JSON.stringify(list);
-  const sig = await crypto.subtle.sign(SIGN, key, signedBytes(signed) as BufferSource);
-  return { signed, signature: toBase64(new Uint8Array(sig)) };
+  const [signature] = await signWithKeys(signed, REVOCATION_SIGNATURE_DOMAIN, [key]);
+  return { signed, signature };
 }
 
 /**
@@ -375,20 +350,20 @@ export async function signRevocationList(
  * @param revoked The entries.
  * @param now The signing time.
  * @param previous The list this one replaces, if any.
+ * @param revokedChannelKeys The revoked runtime channel keys (SPKI SHA-256 hex) to carry.
  * @returns The payload to sign.
  */
 export function freshRevocationList(
   revoked: readonly RuntimeRevocation[],
   now: Date,
   previous?: { readonly sequence: number },
+  revokedChannelKeys: readonly string[] = [],
 ): RuntimeRevocationList {
-  const sequence = Math.max(Math.floor(now.getTime() / 1000), (previous?.sequence ?? -1) + 1);
   return {
     schema: 1,
-    issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + REVOCATION_DEFAULT_EXPIRY_DAYS * DAY_MS).toISOString(),
-    sequence,
+    ...freshHeader(now, REVOCATION_DEFAULT_EXPIRY_DAYS, previous),
     revoked,
+    ...(revokedChannelKeys.length > 0 ? { revokedChannelKeys } : {}),
   };
 }
 
@@ -407,8 +382,7 @@ export function revocationResignDue(
   now: number = Date.now(),
   days: number = REVOCATION_RESIGN_DAYS,
 ): boolean {
-  const expires = Date.parse(list.expiresAt);
-  return Number.isNaN(expires) || expires - now < days * DAY_MS;
+  return resignDue(list.expiresAt, now, days);
 }
 
 /** Whether this process honours {@linkcode REVOCATION_KEYS_FILE_ENV} (tests only). */
@@ -437,12 +411,7 @@ export function honourRevocationKeysFileForTests(on = true): void {
 export function revocationKeys(env: EnvGet = processEnv): string[] {
   const file = keysFileHonoured ? env(REVOCATION_KEYS_FILE_ENV) : undefined;
   if (!file) return RUNTIME_REVOCATION_PUBLIC_KEYS.filter((k) => k !== "");
-  try {
-    const keys: unknown = JSON.parse(Deno.readTextFileSync(file));
-    return Array.isArray(keys) ? keys.filter((k) => typeof k === "string" && k !== "") : [];
-  } catch {
-    return [];
-  }
+  return readKeysFile(file);
 }
 
 /**
@@ -452,7 +421,7 @@ export function revocationKeys(env: EnvGet = processEnv): string[] {
  * @returns The directory.
  */
 export function revocationCacheRoot(env: EnvGet = processEnv): string {
-  return join(denoCacheDir(env), "denext-deno");
+  return toolchainCacheRoot(env);
 }
 
 /**
@@ -462,47 +431,16 @@ export function revocationCacheRoot(env: EnvGet = processEnv): string {
  * @param keys The public keys.
  * @returns The hex digest.
  */
-export async function revocationKeySetId(keys: readonly string[]): Promise<string> {
-  const text = [...keys].sort().join("\n");
-  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(text))));
+export function revocationKeySetId(keys: readonly string[]): Promise<string> {
+  return keySetId(keys);
 }
 
 /** The cache's bookkeeping (unsigned: it can lower the replay floor, never raise it). */
-interface RevocationState {
-  readonly schema: 1;
-  /** The key set it was written under ({@linkcode revocationKeySetId}). */
-  readonly keys: string;
-  /** The sequence of the list accepted last. */
-  readonly sequence: number;
-  /** When the list was last fetched (epoch ms). */
-  readonly fetchedAt: number;
-  /** When a fetch last failed (epoch ms). */
-  readonly failedAt?: number;
-}
+type RevocationState = SignedCacheState;
 
 /** The bookkeeping, when it was written under the key set `keys` (else `null`). */
-async function readState(root: string, keys: string): Promise<RevocationState | null> {
-  try {
-    const s = JSON.parse(await Deno.readTextFile(join(root, STATE_FILE)));
-    return s?.schema === 1 && s.keys === keys && Number.isSafeInteger(s.sequence) &&
-        Number.isFinite(s.fetchedAt)
-      ? s
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Write `text` to `root/name` atomically; best effort (a read-only cache only fetches sooner). */
-async function writeQuietly(root: string, name: string, text: string): Promise<void> {
-  const tmp = join(root, `.tmp-${crypto.randomUUID()}-${name}`);
-  try {
-    await Deno.mkdir(root, { recursive: true });
-    await Deno.writeTextFile(tmp, text);
-    await Deno.rename(tmp, join(root, name));
-  } catch {
-    await Deno.remove(tmp).catch(() => {});
-  }
+function readState(root: string, keys: string): Promise<RevocationState | null> {
+  return readCacheState(root, STATE_FILE, keys);
 }
 
 /** How the check reaches the list. */
@@ -513,7 +451,7 @@ export type RevocationMode =
   | "cache-only"
   /** Fetch when the cached list is older than its lifetime, within {@linkcode REVOCATION_FETCH_BUDGET_MS}. */
   | "fetch"
-  /** Fetch now, within {@linkcode REVOCATION_FORCE_BUDGET_MS} (`toolchain status`, `install`, `doctor`). */
+  /** Fetch now, within {@linkcode REVOCATION_FORCE_BUDGET_MS} (`runtime version`, `install`, `doctor`). */
   | "force";
 
 /** Options for {@linkcode loadRuntimeRevocations}. */
@@ -562,43 +500,6 @@ const NOT_CONFIGURED: LoadedRevocations = {
   expired: null,
 };
 
-/** Whether the process may reach `url`'s host without being asked (never prompts). */
-async function netGrantedByQuery(url: string): Promise<boolean> {
-  try {
-    const host = new URL(url).host;
-    return (await Deno.permissions.query({ name: "net", host })).state === "granted";
-  } catch {
-    return false;
-  }
-}
-
-/** The body of a GET of `url`, capped at {@linkcode REVOCATION_MAX_BYTES}, until `signal`. */
-async function fetchCapped(
-  url: string,
-  signal: AbortSignal,
-  fetchImpl: typeof fetch,
-): Promise<string> {
-  const res = await fetchImpl(url, { signal });
-  if (!res.ok || !res.body) {
-    await res.body?.cancel().catch(() => {});
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for await (const chunk of res.body) {
-    size += chunk.byteLength;
-    if (size > REVOCATION_MAX_BYTES) throw new Error("too large");
-    chunks.push(chunk);
-  }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    all.set(c, at);
-    at += c.byteLength;
-  }
-  return new TextDecoder().decode(all);
-}
-
 /** What one source gave: a list, an expired list, or nothing. */
 interface Fetched {
   readonly text: string;
@@ -621,7 +522,7 @@ async function fetchVerified(
   const one = async (url: string): Promise<Fetched | null> => {
     if (!await netGranted(url)) return null;
     try {
-      const text = await fetchCapped(url, signal, o.fetch);
+      const text = await fetchTextCapped(url, signal, o.fetch, REVOCATION_MAX_BYTES);
       const list = await verifyRevocationDocument(text, keys, o);
       return list ? { text, list } : null;
     } catch (err) {
@@ -659,13 +560,7 @@ async function readCached(
 
 /** Whether `mode` fetches now, given the cache's bookkeeping. */
 function fetchDue(mode: RevocationMode, state: RevocationState | null, now: number): boolean {
-  if (mode === "force") return true;
-  if (mode !== "fetch") return false;
-  if (state === null) return true;
-  const age = now - state.fetchedAt;
-  if (age >= 0 && age < REVOCATION_TTL_MS) return false;
-  const sinceFailure = now - (state.failedAt ?? -Infinity);
-  return !(sinceFailure >= 0 && sinceFailure < FAILED_RETRY_MS);
+  return signedFetchDue(mode, state, now, REVOCATION_TTL_MS, FAILED_RETRY_MS);
 }
 
 /** Whether the check runs at all: a key is configured and {@linkcode REVOCATION_CHECK_ENV} is not `0`. */
@@ -942,7 +837,7 @@ export async function assertRuntimeShippable(
   if (refusal) throw new Error(refusal);
 }
 
-/** A runtime's revocation state, for `toolchain status --json` and `doctor`. */
+/** A runtime's revocation state, for `runtime version --json` and `doctor`. */
 export interface RuntimeRevocationStatus {
   /** Whether a key is configured and the check is on (else every other field is empty). */
   readonly configured: boolean;
@@ -996,7 +891,7 @@ export function revocationStatus(
 }
 
 /**
- * One line for a report (`toolchain status`, `doctor`): the list's sequence and expiry, and what
+ * One line for a report (`runtime version`, `doctor`): the list's sequence and expiry, and what
  * it says about the pinned runtime; `ok` is false when the pin is revoked, the list expired, or
  * it expires within {@linkcode REVOCATION_EXPIRY_WARN_DAYS} days.
  *

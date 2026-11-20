@@ -40,7 +40,7 @@ export interface GleamOptions {
   dir?: string;
   /**
    * The `gleam` executable. Default: `DENEXT_GLEAM=<path>` when set, else denext's pinned Gleam,
-   * downloaded and SHA-256-verified on first need (`denext toolchain install --with gleam` fetches
+   * downloaded and SHA-256-verified on first need (`denext runtime install --with gleam` fetches
    * it ahead). Name `"gleam"` here to use the one on `PATH` instead.
    */
   gleam?: string;

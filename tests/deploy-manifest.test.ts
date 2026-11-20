@@ -3,6 +3,7 @@
 // tests/fixtures/deploy/manifest.json.golden. Refresh the golden deliberately with
 // `DENEXT_UPDATE_GOLDEN=1 deno test -A tests/deploy-manifest.test.ts`.
 
+import { activeRuntimeRelease } from "../src/build/runtime-select.ts";
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
@@ -29,9 +30,16 @@ import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 
 const GOLDEN = fromFileUrl(new URL("./fixtures/deploy/manifest.json.golden", import.meta.url));
 
-/** The manifest with the framework version normalized (it changes every release). */
+/**
+ * The manifest with the framework version and the runtime release normalized (they change every
+ * release, and the runtime with the machine's user default).
+ */
 function normalized(manifest: DeployManifest): string {
-  return serializeDeployManifest({ ...manifest, denext: "<version>" });
+  return serializeDeployManifest({
+    ...manifest,
+    denext: "<version>",
+    runtime: { version: "<runtime>", source: "<source>", integrity: null },
+  });
 }
 
 Deno.test("deploy manifest: the fixture's manifest matches the golden", async () => {
@@ -67,6 +75,7 @@ Deno.test("deploy manifest: two collections of one tree are byte-identical", asy
 const V1_FIELDS = [
   "version",
   "denext",
+  "runtime",
   "mode",
   "basePath",
   "trailingSlash",
@@ -91,6 +100,9 @@ Deno.test("deploy manifest: the version-1 schema — fields, kinds, sorted lists
     assertEquals(DEPLOY_MANIFEST_VERSION, 1);
     assertEquals(manifest.version, 1);
     assertEquals(Object.keys(manifest), V1_FIELDS);
+    // The runtime release the build ran on (src/build/runtime-select.ts).
+    const { version, source, integrity } = activeRuntimeRelease();
+    assertEquals(manifest.runtime, { version, source, integrity });
     const kinds: DeployRouteKind[] = ["static", "isr", "dynamic", "route-handler", "middleware"];
     for (const route of manifest.routes) assert(kinds.includes(route.kind), route.path);
     const keys = manifest.routes.map((r) => r.path);

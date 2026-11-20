@@ -18,7 +18,7 @@ export const fastlaneMeta: CommandMeta = {
     `The first run installs fastlane ${FASTLANE_TOOLCHAIN.fastlane} on a pinned portable Ruby\n` +
     "into denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\n" +
     "the Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n" +
-    "  denext toolchain install --with fastlane   install it ahead of time\n" +
+    "  denext runtime install --with fastlane   install it ahead of time\n" +
     `  ${FASTLANE_ENV}=<path>                     run that fastlane instead (unverified)`,
   positionals: [{ name: "args", help: "fastlane's arguments", variadic: true }],
 };

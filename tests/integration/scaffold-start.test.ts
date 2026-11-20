@@ -155,7 +155,7 @@ Deno.test({
 Deno.test({
   name:
     "denext create: the start task on denext's toolchain serves without the legacy-abort notice",
-  // The pinned toolchain, already in the cache: started on it directly (a `toolchain link`ed
+  // The pinned toolchain, already in the cache: started on it directly (a `runtime link`ed
   // `deno`), the least-privilege task cannot re-run itself with `--unstable-no-legacy-abort`, so
   // the scaffolded deno.json's `"unstable": ["no-legacy-abort"]` is what turns it on.
   ignore: TOOLCHAIN === null,

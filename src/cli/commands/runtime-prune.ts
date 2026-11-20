@@ -1,7 +1,9 @@
-// `denext toolchain uninstall <version…> | uninstall --all | prune`: remove cached toolchain
-// versions (src/build/toolchain-prune.ts decides and deletes). The versions in use are the ones
+// `denext runtime uninstall <version…> | uninstall --all | prune`: remove cached runtime
+// releases (src/build/toolchain-prune.ts decides and deletes). The versions in use are the ones
 // this denext pins and, inside a project that pins another denext, the ones that denext pins —
-// read from its published pin files on JSR, since it may not be cached.
+// read from its published pin files on JSR, since it may not be cached — plus the runtime
+// releases selected here (src/build/runtime-select.ts): the project's, its pin's and the user
+// default's.
 
 import { dirname, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";
@@ -9,10 +11,17 @@ import { commandCwd } from "../shared.ts";
 import { pinnedDenextCli, pinnedVersion } from "../self-exec.ts";
 import { VERSION } from "../../version.ts";
 import {
+  DENO_TOOLCHAIN,
   type DenoToolchainPin,
   loadDenoToolchainPin,
   staleToolchainLink,
 } from "../../build/deno-toolchain.ts";
+import {
+  readProjectRuntimePin,
+  readUserRuntimeDefaultFile,
+  resolveRuntimeReleaseSync,
+  userRuntimeDefaultFile,
+} from "../../build/runtime-select.ts";
 import { DESKTOP_RUNTIME_PIN } from "../../build/desktop-runtime.ts";
 import { GLEAM_TOOLCHAIN } from "../../build/gleam-toolchain.ts";
 import { FASTLANE_TOOLCHAIN } from "../../build/fastlane-toolchain.ts";
@@ -54,16 +63,28 @@ export interface ToolchainPruneDeps {
    * published pin files on jsr.io.
    */
   readonly pinsOf?: (version: string) => Promise<DenextPins | null>;
+  /**
+   * The runtime releases selected for the project in `dir` (default: the release it runs on, its
+   * project pin and the user default; src/build/runtime-select.ts).
+   */
+  readonly selected?: (dir: string) => string[];
 }
 
-/** This denext's own pins. */
-function ownPins(): DenextPins {
-  let pin: DenoToolchainPin | null = null;
+/** The bundled toolchain pin, or the `DENEXT_TOOLCHAIN_PIN_FILE` override's (`null`: unreadable). */
+function ownToolchainPin(): DenoToolchainPin | null {
   try {
-    pin = loadDenoToolchainPin();
+    return Deno.env.get("DENEXT_TOOLCHAIN_PIN_FILE") ? loadDenoToolchainPin() : DENO_TOOLCHAIN;
   } catch {
-    pin = null;
+    return null;
   }
+}
+
+/**
+ * This denext's own pins: the bundled toolchain (or the `DENEXT_TOOLCHAIN_PIN_FILE` override) and
+ * desktop runtime with their rollbacks.
+ */
+function ownPins(): DenextPins {
+  const pin = ownToolchainPin();
   return {
     deno: pin?.version ?? null,
     desktopRuntime: DESKTOP_RUNTIME_PIN.version ?? null,
@@ -138,6 +159,32 @@ export function projectDenextVersion(dir: string): string | null | undefined {
   return null;
 }
 
+/**
+ * The runtime releases selected on this machine (src/build/runtime-select.ts), all kept: the one
+ * the project in `dir` runs on, its project pin and the user default.
+ */
+function selectedRuntimes(dir: string): string[] {
+  const out: (string | null | undefined)[] = [];
+  try {
+    out.push(resolveRuntimeReleaseSync({ projectDir: dir }).version);
+  } catch {
+    // A broken selection: the pins below still count.
+  }
+  try {
+    out.push(readProjectRuntimePin(dir)?.lock.version);
+  } catch {
+    // A malformed project pin keeps nothing.
+  }
+  const file = userRuntimeDefaultFile();
+  if (file) out.push(readUserRuntimeDefaultFile(file)?.version);
+  return out.filter((v): v is string => typeof v === "string");
+}
+
+/** The selected-runtime reader: the seam, none when the pins are injected (tests), else the machine's. */
+function selectedOf(deps: ToolchainPruneDeps): (dir: string) => string[] {
+  return deps.selected ?? (deps.ownPins ? () => [] : selectedRuntimes);
+}
+
 /** The versions in use, and a note when the project's could not be told. */
 async function versionsInUse(
   dir: string,
@@ -163,7 +210,7 @@ async function versionsInUse(
     all.map((p) => p.rollback?.[k]).filter((v): v is string => typeof v === "string");
   return {
     inUse: {
-      deno: [...pick("deno"), ...rollbacks("deno")],
+      deno: [...pick("deno"), ...rollbacks("deno"), ...selectedOf(deps)(dir)],
       desktopRuntime: [...pick("desktopRuntime"), ...rollbacks("desktopRuntime")],
       gleam: pick("gleam"),
       fastlane: pick("fastlane"),
@@ -196,31 +243,31 @@ function requestOf(ctx: CommandContext): ToolchainRemovalRequest | string {
   const action = ctx.positionals[0];
   if (action === "prune") {
     return ctx.positionals.length > 1
-      ? "denext: `toolchain prune` takes no version (use `toolchain uninstall <version>`)"
+      ? "denext: `runtime prune` takes no version (use `runtime uninstall <version>`)"
       : { action: "prune" };
   }
   const versions = ctx.positionals.slice(1);
   if (ctx.flags.all === true) {
     return versions.length > 0
-      ? "denext: `toolchain uninstall --all` takes no version"
+      ? "denext: `runtime uninstall --all` takes no version"
       : { action: "all" };
   }
   if (versions.length === 0) {
-    return "denext: name a version to uninstall (`denext toolchain uninstall <version>`), or " +
-      "pass --all; `denext toolchain status` and `prune --dry-run` show what is cached";
+    return "denext: name a version to uninstall (`denext runtime uninstall <version>`), or " +
+      "pass --all; `denext runtime list` and `prune --dry-run` show what is cached";
   }
   return { action: "uninstall", versions };
 }
 
 /**
- * `denext toolchain uninstall <version…> | uninstall --all | prune` (`--force`, `--dry-run`,
+ * `denext runtime uninstall <version…> | uninstall --all | prune` (`--force`, `--dry-run`,
  * `--json`). Exits 1 when a named version is in use (without `--force`), is not cached, or could
  * not be deleted.
  *
  * @param ctx The command context.
  * @param deps Seams for tests.
  */
-export async function toolchainRemove(
+export async function runtimeRemove(
   ctx: CommandContext,
   deps: ToolchainPruneDeps = {},
 ): Promise<void> {
@@ -307,7 +354,7 @@ function printJson(r: RemovalRun): void {
 /** An entry's name in a message. */
 const nameOf = (e: ToolchainCacheEntry) => `${KIND_LABEL[e.kind]} ${e.version}`;
 
-/** The human report of {@linkcode toolchainRemove}. */
+/** The human report of {@linkcode runtimeRemove}. */
 function report(r: RemovalRun): void {
   console.log("");
   for (const o of r.outcomes) console.log(outcomeLine(o, r.dryRun));

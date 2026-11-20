@@ -57,13 +57,13 @@ const CAUSE: Readonly<Record<StockDenoPath, string>> = {
 };
 
 const FIX: Readonly<Record<StockDenoPath, string>> = {
-  "deno-env": "unset DENEXT_DENO (`denext toolchain install` fetches denext's Deno ahead)",
-  "deno-path": "unset DENEXT_DENO, or point it at denext's Deno (`denext toolchain path`)",
+  "deno-env": "unset DENEXT_DENO (`denext runtime install` fetches denext's Deno ahead)",
+  "deno-path": "unset DENEXT_DENO, or point it at denext's Deno (`denext runtime path`)",
   "desktop-env": "unset DENEXT_DESKTOP_RUNTIME (denext's pinned runtime downloads on first use)",
-  "desktop-mismatch": "`denext toolchain install`, and unset DENEXT_DENO / DENO_BIN",
-  "esbuild": "`denext toolchain install` (the toolchain carries a verified esbuild)",
+  "desktop-mismatch": "`denext runtime install`, and unset DENEXT_DENO / DENO_BIN",
+  "esbuild": "`denext runtime install` (the toolchain carries a verified esbuild)",
   "stock-process": "run it with `denext task <name>` or `denext test`, on denext's Deno " +
-    "(`denext toolchain install`)",
+    "(`denext runtime install`)",
 };
 
 /**

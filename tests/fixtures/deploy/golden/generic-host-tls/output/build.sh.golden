@@ -12,4 +12,4 @@ deno install
 deno task build
 # The server runs on the toolchain the build used (Deno.SQL / postgresClient() included).
 mkdir -p "$DENO_DIR/bin"
-ln -sf "$(deno run -A 'jsr:@denext/denext@^4.1.0/cli' toolchain path)" "/srv/shop/.deno/bin/deno"
+ln -sf "$(deno run -A 'jsr:@denext/denext@^4.1.0/cli' runtime path)" "/srv/shop/.deno/bin/deno"

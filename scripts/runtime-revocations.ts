@@ -21,6 +21,10 @@
 //       rewrite an entries file in canonical form (fields in a fixed order, targets sorted,
 //       entries by component then newest version first); --check only refuses one that isn't
 //   deno task revocations resign [--if-due] [--no-publish]     fresh expiry + sequence, same entries
+//   deno task revocations revoke-channel-key <spki sha256 hex> | --key <base64 spki> [--no-publish]
+//       withdraw a runtime channel signing key (src/build/runtime-channel.ts): the published list
+//       plus the key's id in `revokedChannelKeys`; every denext then ignores an index only that key
+//       signs. Record it in security/runtime-revocations.json as well, so `sign` keeps it
 //   deno task revocations verify [<file>]               a file, or the published copies
 //   deno task revocations expiry                        warn when the published list expires
 //       within 10 days, has expired or can't be read (`deno task release` step 0b runs the same)
@@ -60,6 +64,7 @@ import {
   verifyRevocationDocument,
 } from "../src/build/runtime-revocations.ts";
 import { fromBase64, toBase64 } from "../src/build/ota-signing.ts";
+import { spkiSha256 } from "../src/build/signed-envelope.ts";
 import { compareDenoVersions } from "../src/build/deno-version.ts";
 import toolchainPinJson from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 import runtimePinJson from "../src/build/desktop-runtime-pin.json" with { type: "json" };
@@ -108,8 +113,15 @@ const fail = (message: string): never => {
   throw new RevocationsCommandError(message);
 };
 
-/** Run a command for real (stderr inherited, so `security` / `gh` can say what failed). */
-async function realRun(cmd: string, args: string[], stdin?: string): Promise<RunResult> {
+/**
+ * Run a command for real (stderr inherited, so `security` / `gh` can say what failed).
+ *
+ * @param cmd The program.
+ * @param args Its arguments.
+ * @param stdin Text written to its stdin (as a stream, never on a command line).
+ * @returns Its exit code and standard output.
+ */
+export async function realRun(cmd: string, args: string[], stdin?: string): Promise<RunResult> {
   const piped = stdin !== undefined;
   const child = new Deno.Command(cmd, {
     args,
@@ -170,18 +182,24 @@ function slotOf(raw: unknown): string {
  * @param deps Seams.
  * @param slot `active` or `backup`.
  * @param force Replace an existing item.
+ * @param service The keychain item's service (default the revocation list's).
  * @returns The public key (base64 SPKI).
  */
-export async function keygen(deps: RevocationsDeps, slot: string, force: boolean): Promise<string> {
+export async function keygen(
+  deps: Pick<RevocationsDeps, "run">,
+  slot: string,
+  force: boolean,
+  service: string = KEYCHAIN_SERVICE,
+): Promise<string> {
   const exists = await deps.run("security", [
     "find-generic-password",
     "-s",
-    KEYCHAIN_SERVICE,
+    service,
     "-a",
     slot,
   ]);
   if (exists.code === 0 && !force) {
-    fail(`the keychain already holds ${KEYCHAIN_SERVICE} / ${slot}; --force replaces it`);
+    fail(`the keychain already holds ${service} / ${slot}; --force replaces it`);
   }
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -193,26 +211,37 @@ export async function keygen(deps: RevocationsDeps, slot: string, force: boolean
   const add = await deps.run(
     "security",
     ["-i"],
-    `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${slot} -w ${pkcs8}\n`,
+    `add-generic-password -U -s ${service} -a ${slot} -w ${pkcs8}\n`,
   );
   if (add.code !== 0) fail("storing the key in the keychain failed (security -i)");
   return spki;
 }
 
-/** The signing key from the keychain (`active` slot unless `slot`). */
-async function signingKey(deps: RevocationsDeps, slot = "active"): Promise<CryptoKey> {
+/**
+ * A signing key from the keychain (`security find-generic-password -w`; never printed).
+ *
+ * @param deps Seams.
+ * @param slot `active` (default) or `backup`.
+ * @param service The keychain item's service (default the revocation list's).
+ * @param keygenTask The task that makes one, for the message.
+ * @returns The private key.
+ */
+export async function signingKey(
+  deps: Pick<RevocationsDeps, "run">,
+  slot = "active",
+  service: string = KEYCHAIN_SERVICE,
+  keygenTask = "deno task revocations keygen",
+): Promise<CryptoKey> {
   const got = await deps.run("security", [
     "find-generic-password",
     "-s",
-    KEYCHAIN_SERVICE,
+    service,
     "-a",
     slot,
     "-w",
   ]);
   if (got.code !== 0) {
-    fail(
-      `no ${KEYCHAIN_SERVICE} / ${slot} key in the keychain (\`deno task revocations keygen\`)`,
-    );
+    fail(`no ${service} / ${slot} key in the keychain (\`${keygenTask}\`)`);
   }
   try {
     return await crypto.subtle.importKey(
@@ -223,7 +252,7 @@ async function signingKey(deps: RevocationsDeps, slot = "active"): Promise<Crypt
       ["sign"],
     );
   } catch {
-    return fail(`the keychain item ${KEYCHAIN_SERVICE} / ${slot} is not a P-256 private key`);
+    return fail(`the keychain item ${service} / ${slot} is not a P-256 private key`);
   }
 }
 
@@ -300,16 +329,20 @@ export async function publishedExpiryWarning(
     `on the machine that holds the key; otherwise run ${resign} before then`;
 }
 
-/** Sign `revoked` above `previous`, then verify it against the compiled-in keys. */
+/**
+ * Sign `revoked` above `previous`, then verify it against the compiled-in keys. The withdrawn
+ * channel keys are `previous`'s unless `revokedChannelKeys` names them.
+ */
 export async function signFresh(
   deps: RevocationsDeps,
   revoked: readonly RuntimeRevocation[],
   previous: RuntimeRevocationList | null,
+  revokedChannelKeys: readonly string[] = previous?.revokedChannelKeys ?? [],
 ): Promise<{ text: string; list: RuntimeRevocationList }> {
   if (deps.keys.length === 0) {
     fail("no revocation public key is compiled in (src/build/runtime-revocation-keys.ts)");
   }
-  const list = freshRevocationList(revoked, deps.now(), previous ?? undefined);
+  const list = freshRevocationList(revoked, deps.now(), previous ?? undefined, revokedChannelKeys);
   const envelope: RevocationEnvelope = await signRevocationList(list, await signingKey(deps));
   const text = JSON.stringify(envelope) + "\n";
   try {
@@ -405,14 +438,52 @@ export function canonicalEntries(raw: unknown, source = "the entries"): RuntimeR
 }
 
 /**
- * An entries file's canonical text: `{ "revoked": [...] }`, two-space indented, one trailing
- * newline — the same bytes for the same entries, whatever order they were written in.
+ * An entries file's canonical text: `{ "revoked": [...] }` (plus `revokedChannelKeys`, sorted,
+ * when there are any), two-space indented, one trailing newline — the same bytes for the same
+ * entries, whatever order they were written in.
  *
  * @param entries The entries.
+ * @param revokedChannelKeys The withdrawn runtime channel keys (SPKI SHA-256 hex).
  * @returns The text.
  */
-export function canonicalEntriesText(entries: readonly RuntimeRevocation[]): string {
-  return JSON.stringify({ revoked: canonicalEntries([...entries]) }, null, 2) + "\n";
+export function canonicalEntriesText(
+  entries: readonly RuntimeRevocation[],
+  revokedChannelKeys: readonly string[] = [],
+): string {
+  const keys = canonicalChannelKeys(revokedChannelKeys);
+  return JSON.stringify(
+    {
+      revoked: canonicalEntries([...entries]),
+      ...(keys.length ? { revokedChannelKeys: keys } : {}),
+    },
+    null,
+    2,
+  ) + "\n";
+}
+
+/**
+ * Withdrawn channel keys in canonical form: lower-case SHA-256 hex, de-duplicated, sorted.
+ *
+ * @param raw The keys (an entries file's `revokedChannelKeys`, or absent).
+ * @param source The file's name, for messages.
+ * @returns The keys.
+ */
+export function canonicalChannelKeys(raw: unknown, source = "the entries"): string[] {
+  if (raw === undefined) return [];
+  if (
+    !Array.isArray(raw) || !raw.every((k) => typeof k === "string" && /^[0-9a-fA-F]{64}$/.test(k))
+  ) {
+    fail(`${source}: revokedChannelKeys must be a list of SHA-256 hex digests`);
+  }
+  return [...new Set((raw as string[]).map((k) => k.toLowerCase()))].sort();
+}
+
+/** An entries file's `revokedChannelKeys` (a bare list of entries has none). */
+function fileChannelKeys(raw: unknown, source: string): string[] {
+  return Array.isArray(raw) ? [] : canonicalChannelKeys(
+    (raw as { revokedChannelKeys?: unknown } | null)?.revokedChannelKeys,
+    source,
+  );
 }
 
 /** A pinned runtime and the rollback its pin names. */
@@ -470,9 +541,18 @@ export function pinImpact(
 // ---------------------------------------------------------------------------------------------
 // Publishing.
 
-/** `gh api` with a JSON body; its JSON answer. */
-async function ghApi(
-  deps: RevocationsDeps,
+/**
+ * `gh api` on the fork (`Brainwires/deno`, where the revocation list's and the runtime channel's
+ * mirrors live) with an optional JSON body.
+ *
+ * @param deps Seams.
+ * @param method The HTTP method.
+ * @param path The path under `repos/Brainwires/deno/`.
+ * @param body The JSON body, fed on stdin.
+ * @returns Its JSON answer, or `null` when `gh` fails.
+ */
+export async function ghApi(
+  deps: Pick<RevocationsDeps, "run">,
   method: string,
   path: string,
   body?: unknown,
@@ -614,6 +694,38 @@ async function add(deps: RevocationsDeps, flags: Record<string, string | boolean
   await writeAndPublish(deps, await signFresh(deps, revoked, current), flags);
 }
 
+/**
+ * The id `revoke-channel-key` withdraws: a SHA-256 hex positional, or `--key <base64 spki>`.
+ *
+ * @param arg The positional.
+ * @param flags The flags.
+ * @returns The lower-case hex id.
+ */
+export async function channelKeyId(
+  arg: string | undefined,
+  flags: Record<string, string | boolean>,
+): Promise<string> {
+  if (typeof flags.key === "string") {
+    return await spkiSha256(flags.key) ?? fail("--key must be a base64 SPKI public key");
+  }
+  if (arg && /^[0-9a-fA-F]{64}$/.test(arg)) return arg.toLowerCase();
+  return fail("revoke-channel-key needs <spki sha256 hex> or --key <base64 spki>");
+}
+
+/** `revoke-channel-key`: the published list plus one withdrawn channel key. */
+async function revokeChannelKey(
+  deps: RevocationsDeps,
+  arg: string | undefined,
+  flags: Record<string, string | boolean>,
+) {
+  const id = await channelKeyId(arg, flags);
+  const current = await publishedList(deps) ??
+    fail("no published list to add to (offline, or `deno task revocations init` first)");
+  const keys = canonicalChannelKeys([...(current.revokedChannelKeys ?? []), id]);
+  await writeAndPublish(deps, await signFresh(deps, current.revoked, current, keys), flags);
+  deps.log(`withdrew channel key ${id}; record it in security/runtime-revocations.json too`);
+}
+
 /** `resign`: the published entries, fresh expiry and sequence; `--if-due` only near expiry. */
 async function resign(deps: RevocationsDeps, flags: Record<string, string | boolean>) {
   if (deps.keys.length === 0) {
@@ -647,6 +759,23 @@ function refuseDropped(
   );
 }
 
+/** A withdrawn channel key the published list holds and `keys` leave out, refused unless `allow`. */
+function refuseDroppedChannelKeys(
+  current: RuntimeRevocationList | null,
+  keys: readonly string[],
+  allow: boolean,
+): void {
+  const dropped = (current?.revokedChannelKeys ?? []).filter((k) => !keys.includes(k));
+  if (dropped.length === 0 || allow) return;
+  fail(
+    `the published list #${current!.sequence} withdraws the channel key(s) ${
+      dropped.join(", ")
+    }, ` +
+      "which the entries file leaves out (signing it would trust them again); " +
+      "--allow-unrevoke signs anyway",
+  );
+}
+
 /** `sign`'s old `--force` covered two different risks; it now refuses, naming the split flags. */
 const SIGN_FORCE_SPLIT = "`sign --force` is gone: --skip-published-check signs when the " +
   "published list can't be read or verified, and --allow-unrevoke signs an entries file that " +
@@ -657,14 +786,17 @@ const SIGN_FORCE_SPLIT = "`sign --force` is gone: --skip-published-check signs w
  * published one; prints what it does to the checked-out pins first.
  */
 async function sign(deps: RevocationsDeps, file: string, flags: Record<string, string | boolean>) {
-  const entries = canonicalEntries(JSON.parse(await Deno.readTextFile(file)), file);
+  const raw = JSON.parse(await Deno.readTextFile(file));
+  const entries = canonicalEntries(raw, file);
+  const channelKeys = fileChannelKeys(raw, file);
   const impact = pinImpact(entries, deps.pins ?? checkedOutPins());
   deps.log(`${file}: ${entries.length} revoked; the checked-out pins:`);
   for (const line of impact.lines) deps.log(line);
   if (flags.force !== undefined) fail(SIGN_FORCE_SPLIT);
   const current = await publishedForSign(deps, flags["skip-published-check"] === true);
   refuseDropped(current, entries, flags["allow-unrevoke"] === true);
-  await writeAndPublish(deps, await signFresh(deps, entries, current), flags);
+  refuseDroppedChannelKeys(current, channelKeys, flags["allow-unrevoke"] === true);
+  await writeAndPublish(deps, await signFresh(deps, entries, current, channelKeys), flags);
 }
 
 /**
@@ -703,7 +835,8 @@ async function canonical(
   flags: Record<string, string | boolean>,
 ) {
   const text = await Deno.readTextFile(file);
-  const want = canonicalEntriesText(canonicalEntries(JSON.parse(text), file));
+  const raw = JSON.parse(text);
+  const want = canonicalEntriesText(canonicalEntries(raw, file), fileChannelKeys(raw, file));
   if (text === want) return deps.log(`${file} is in canonical form`);
   if (flags.check === true) {
     fail(`${file} is not in canonical form: run \`deno task revocations canonical ${file}\``);
@@ -724,6 +857,7 @@ async function verify(deps: RevocationsDeps, file: string | undefined) {
       `  ${e.component} ${e.version} (${e.targets?.join(", ") ?? "every target"}): ${e.reason}`,
     );
   }
+  for (const k of list!.revokedChannelKeys ?? []) deps.log(`  channel key ${k}: withdrawn`);
 }
 
 /**
@@ -758,15 +892,35 @@ async function floor(deps: RevocationsDeps, flags: Record<string, string | boole
   const current = await publishedList(deps) ??
     fail("could not read the published list (offline, or none published yet: `init`)");
   const file = typeof flags.file === "string" ? flags.file : KEYS_MODULE;
+  await raiseFloor(deps.log, current.sequence, file, minSequenceIn, withMinSequence);
+}
+
+/**
+ * Raise the compiled-in minimum sequence a keys module declares to `sequence` (never lower it).
+ *
+ * @param log Prints a line.
+ * @param sequence The published document's sequence.
+ * @param file The keys module.
+ * @param read Reads the floor from the module's text.
+ * @param write Returns the module's text with a new floor.
+ */
+export async function raiseFloor(
+  log: (line: string) => void,
+  sequence: number,
+  file: string,
+  read: (source: string) => number,
+  write: (source: string, sequence: number) => string,
+): Promise<void> {
   const source = await Deno.readTextFile(file);
-  const was = minSequenceIn(source);
-  if (current.sequence <= was) return deps.log(`the compiled-in floor stays at #${was}`);
-  await Deno.writeTextFile(file, withMinSequence(source, current.sequence));
-  deps.log(`raised the compiled-in floor #${was} → #${current.sequence} (${file})`);
+  const was = read(source);
+  if (sequence <= was) return log(`the compiled-in floor stays at #${was}`);
+  await Deno.writeTextFile(file, write(source, sequence));
+  log(`raised the compiled-in floor #${was} → #${sequence} (${file})`);
 }
 
 const USAGE = "usage: deno task revocations <keygen | init | add | sign | canonical | resign | " +
-  "verify | expiry | publish | floor> (see the header of scripts/runtime-revocations.ts)";
+  "revoke-channel-key | verify | expiry | publish | floor> (see the header of " +
+  "scripts/runtime-revocations.ts)";
 
 /**
  * The CLI.
@@ -792,6 +946,8 @@ export async function main(args: string[], deps: RevocationsDeps = realDeps()): 
       return await add(deps, flags);
     case "resign":
       return await resign(deps, flags);
+    case "revoke-channel-key":
+      return await revokeChannelKey(deps, arg, flags);
     case "sign":
       return await sign(deps, arg ?? fail(USAGE), flags);
     case "canonical":

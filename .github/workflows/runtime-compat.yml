@@ -1,0 +1,164 @@
+# The compatibility proof for a runtime release before it is signed into the runtime channel
+# (src/build/runtime-channel.ts): the candidate Deno toolchain of `denext-runtime-v<version>` run
+# under the denext releases still supported — the latest stable release and the last patch of the
+# minor before it (scripts/ci/runtime-compat-legs.ts). Each leg checks out that denext tag, points
+# DENEXT_TOOLCHAIN_PIN_FILE at the candidate's toolchain pin (built from the release's manifest and
+# SHA256SUMS by scripts/runtime-channel.ts `release-doc --unverified`; the toolchain install
+# re-checks every archive's SHA-256) and runs ci.yml's type check, unit and integration suites on it.
+#
+# `deno task runtime:publish <tag>` dispatches it on the maintainer machine and waits once; it signs
+# nothing until every leg is green, and records the oldest green leg as the entry's `minDenext`.
+# The job names (`compat (denext <version>)`) are what it reads. Dispatch only: no push, no
+# schedule.
+#
+#   gh workflow run runtime-compat.yml --ref development -f tag=denext-runtime-v3.0.0-denext.31
+
+name: Runtime compat
+run-name: runtime-compat ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The runtime release tag (denext-runtime-v<version>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-compat-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  # Picks the denext legs, then every leg's runner (Brainwires/.github's pick-runners action): our
+  # pools first, GitHub's image as overflow.
+  runners:
+    name: pick legs and runners
+    # runners-first: the picker must not wait in the queue it shortens (as ci.yml's `runners` job)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # the repository's queued / running jobs
+    outputs:
+      legs: ${{ steps.legs.outputs.legs }}
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - name: Check the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            denext-runtime-v3.0.0-denext.[0-9]*) ;;
+            *) echo "::error::not a runtime release tag: $TAG"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # every tag
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # the bootstrap (see ci.yml's header)
+
+      - id: legs
+        run: echo "legs=$(deno run -A scripts/ci/runtime-compat-legs.ts)" >> "$GITHUB_OUTPUT"
+
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@7475d2c4523faa74d428c3607a8fe195c1f782ac # pick-runners
+        with:
+          jobs: "compat_0=linux-x64 compat_1=linux-x64"
+          vars: ${{ toJSON(vars) }}
+          runner-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+  compat:
+    name: compat (denext ${{ matrix.denext }})
+    needs: runners
+    if: ${{ !cancelled() && needs.runners.outputs.legs != '' && needs.runners.outputs.legs != '[]' }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.slot] || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.runners.outputs.legs) }}
+    steps:
+      - name: Check out the runtime channel tooling (development)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: development
+          path: tooling
+
+      - name: Check out denext ${{ matrix.denext }}
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ matrix.tag }}
+          path: app
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6" # bootstraps the candidate toolchain step below
+
+      - name: Set up a JDK
+        # The Android halves of the native templates are compiled with javac (tests/_jdk.ts), as in
+        # ci.yml's check job.
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21.0.13"
+          check-latest: false
+
+      - name: Write the candidate's toolchain pin
+        working-directory: tooling
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          pin="$RUNNER_TEMP/candidate-toolchain-pin.json"
+          deno run -A scripts/runtime-channel.ts release-doc "$TAG" --unverified \
+            --toolchain-pin-out "$pin"
+          echo "DENEXT_TOOLCHAIN_PIN_FILE=$pin" >> "$GITHUB_ENV"
+
+      - name: Read the Gleam pin
+        # As ci.yml's check job: the unit suites that compile real Gleam run on the pinned Gleam.
+        id: gleam-pin
+        working-directory: app
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
+      - name: Put the candidate toolchain on PATH
+        working-directory: app
+        run: deno run -A scripts/ci/toolchain-on-path.ts
+
+      - name: Install the pinned Gleam compiler
+        working-directory: app
+        run: deno run -A cli.ts runtime install --with gleam
+
+      - name: Type check
+        working-directory: app
+        run: deno check cli.ts mod.ts
+
+      - name: Unit tests
+        working-directory: app
+        run: deno task test:unit
+        env:
+          DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
+
+      - name: Integration tests
+        working-directory: app
+        run: deno task test:integration

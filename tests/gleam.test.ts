@@ -3,7 +3,7 @@
 // 1.15.0, `typescript_declarations = true`), committed as Gleam wrote it: these tests type-check
 // TypeScript against it under Deno, drive the plugin and `denext add gleam:` through a fake
 // `gleam`, and — with a real `gleam` (`DENEXT_TEST_GLEAM`, denext's pinned one once
-// `denext toolchain install --with gleam` cached it, or one on PATH) — compile a project end to end.
+// `denext runtime install --with gleam` cached it, or one on PATH) — compile a project end to end.
 
 import {
   assert,
@@ -316,7 +316,7 @@ if (DOWNLOAD_ROOT) {
  * A real `gleam`, or null (and why): with DENEXT_TEST_GLEAM_DOWNLOAD=1 the pinned one, downloaded
  * and verified into a temp cache (the path users take); else `DENEXT_TEST_GLEAM`, used as given
  * (CI sets it to the pinned one it installed, so a broken install fails rather than skips); else
- * denext's pinned one when `denext toolchain install --with gleam` cached it; else `gleam` on PATH.
+ * denext's pinned one when `denext runtime install --with gleam` cached it; else `gleam` on PATH.
  */
 async function realGleam(): Promise<{ bin: string | null; why: string }> {
   if (DOWNLOAD_ROOT) {

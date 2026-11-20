@@ -6,7 +6,7 @@
 //
 // It also writes src/cli/lazy-modules.generated.ts (every module the entrypoint imports on demand,
 // for `deno compile --include`) and src/cli/offline-modules.generated.ts (those plus every module a
-// verb loads by URL: what `denext toolchain install` caches for a CLI installed from JSR).
+// verb loads by URL: what `denext runtime install` caches for a CLI installed from JSR).
 //
 // The verbs' descriptions (the table's data, about 100 KiB of help text: name, summary, usage,
 // flags, positionals, …) are written by hand in src/cli/commands/meta/<module>.ts, one
@@ -60,7 +60,7 @@ export const ENTRY_LAZY_MODULES: readonly string[] = [
   "./run-verb.ts",
   "./plugin-commands.ts",
   "./unknown-verb.ts",
-  "./commands/deno-toolchain.ts",
+  "./commands/deno.ts",
 ];
 
 /** How a verb's full spec is reached: an exported spec, or a factory over the registry. */
@@ -273,7 +273,7 @@ function offlineModulesSource(modules: readonly string[]): string {
 // Every module a \`denext\` verb can load: the on-demand CLI modules (./lazy-modules.generated.ts),
 // the framework's \`exports\` (a build or a server loads them by URL: the client runtime, the
 // compat layers) and the modules src/ reaches through a computed URL (a worker, a bundler run in
-// a child, a module a transform injects). \`denext toolchain install\` and a remote CLI's first run
+// a child, a module a transform injects). \`denext runtime install\` and a remote CLI's first run
 // \`deno cache\` this file (src/cli/cli-cache.ts), so a CLI installed from JSR works offline.
 // Nothing imports it at run time.
 

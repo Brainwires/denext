@@ -1126,7 +1126,7 @@ cache uses Deno's built-in `node:sqlite`.)
   SHA-256-verified before it is extracted or run, and never replacing the `deno` on `PATH`.
   The compiled `denext` binary needs no Deno installed: the installer fetches the toolchain (and
   links it as `deno` only when none is on `PATH`), and every child the CLI starts finds it first
-  on `PATH`. `denext toolchain install|status|path|link|unlink`, and `uninstall <version>|--all`
+  on `PATH`. `denext runtime install|status|path|link|unlink`, and `uninstall <version>|--all`
   / `prune` to remove cached versions with the space freed; `DENEXT_DENO=stock` opts out,
   and a toolchain that can't be had stops the command with the fix (never another Deno). See
   [the toolchain](https://denext.dev/docs/toolchain). — `src/cli/self-exec.ts`,
@@ -1193,7 +1193,7 @@ cache uses Deno's built-in `node:sqlite`.)
   `job` (run, list and inspect background jobs), `db` / `migration` (migrations and the
   Supabase CLI's database verbs), `stack up|down|status|logs|health|passwd|roll|backup|restore`
   (the self-hosted Docker stack), `dashboard` (the stack's password-protected Database UI),
-  `toolchain`, `desktop run|dev|build|package|add|publish-update`,
+  `runtime version|list|install|upgrade|use|path|link|unlink|uninstall|prune`, `desktop run|dev|build|package|add|publish-update`,
   `mobile add|add-ota|dev|fingerprint|assets|build|submit|doctor|privacy|inspect`, `ota
   keygen|manifest`, `migrate`, `codemod`, `mcp` / `mcp init` (the agent
   server below), `fallow init`, `version`. **A project can add its own verbs two ways**: a

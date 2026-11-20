@@ -80,6 +80,7 @@ import {
   type RuntimeRevocation,
   type RuntimeRevocationList,
 } from "./runtime-revocations.ts";
+import { activeDesktopRuntimePin, activeDesktopRuntimePinOrBundled } from "./runtime-select.ts";
 
 /** The toolchain marker a command sets on the processes it starts (deno-toolchain.ts). */
 const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
@@ -828,7 +829,7 @@ const RUNTIME_CACHE_DESCR = "desktop runtime cache";
 export interface EnsureDesktopRuntimeOptions {
   readonly target: string;
   readonly backend: DesktopRuntimeBackend;
-  /** Defaults to {@linkcode DESKTOP_RUNTIME_PIN}. */
+  /** Defaults to the selected release's (src/build/runtime-select.ts `activeDesktopRuntimePin`). */
   readonly pin?: DesktopRuntimePin;
   /** Defaults to `<Deno cache>/denext-desktop-runtime`. */
   readonly cacheRoot?: string;
@@ -956,7 +957,7 @@ export function ensureDesktopRuntime(
 async function ensureDesktopRuntimeInTask(
   options: EnsureDesktopRuntimeOptions,
 ): Promise<ResolvedDesktopRuntime> {
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  const pin = options.pin ?? activeDesktopRuntimePin();
   const artifact = pinnedArtifact(pin, options.target, options.backend);
   const cacheRoot = options.cacheRoot ?? cacheRootFor();
   const dir = desktopRuntimeDir(cacheRoot, pin, options.target, options.backend);
@@ -1116,7 +1117,7 @@ export function denoVersionMismatchMessage(
     `(stock, or denext's Deno toolchain built from it), but \`${deno}\` is Deno ${found}.\n` +
     `  Install it with:  deno upgrade --version ${pin.deno}\n` +
     `  Or point DENO_BIN at a Deno ${pin.deno} binary, or at denext's Deno toolchain ` +
-    `(\`denext toolchain path\`; desktop run / dev build with it).\n` +
+    `(\`denext runtime path\`; desktop run / dev build with it).\n` +
     `  Or, ${STOCK_WAY_OUT}.`;
 }
 
@@ -1594,7 +1595,8 @@ async function selectDesktopPin(
   target: string,
   log: (line: string) => void,
 ): Promise<DesktopRuntimePin> {
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  // The release src/build/runtime-select.ts selects, whose `deno desktop` CLI this process runs.
+  const pin = options.pin ?? activeDesktopRuntimePin(options.env, options.projectDir);
   const rollback = rollbackDesktopPin(pin);
   const marked = rollback?.version !== undefined && env(TOOLCHAIN_ACTIVE_ENV) === rollback.version;
   if (!marked && !checksPin(options)) return pin;
@@ -1722,7 +1724,10 @@ export async function resolveDesktopRuntimeEnv(
   if (runtimeMode(env) === "stock") return await stockRuntimeEnv(options, env, log);
   const localDir = env(RUNTIME_DIR_ENV);
   if (localDir) {
-    const lib = runtimeLibFor(options.pin ?? DESKTOP_RUNTIME_PIN, target);
+    const lib = runtimeLibFor(
+      options.pin ?? activeDesktopRuntimePinOrBundled(options.env, options.projectDir),
+      target,
+    );
     const local = await localRuntimeEnv(localDir, lib, target);
     log(
       `  denext: using the LOCAL Deno Desktop runtime at ${localDir} (${RUNTIME_DIR_ENV}); it is ` +
@@ -1774,7 +1779,7 @@ export async function resolveDesktopRuntimeEnv(
 export function desktopRuntimeDenoFlags(
   runtimeEnv: Readonly<Record<string, string>>,
   denoFlags: readonly string[] = [],
-  pin: { readonly version: string } = DESKTOP_RUNTIME_PIN,
+  pin: { readonly version: string } = activeDesktopRuntimePinOrBundled(),
 ): string[] {
   if (!runtimeEnv.DENORT_DESKTOP_BIN || !needsNoLegacyAbortFlag(pin.version)) return [];
   return ["--unstable-no-legacy-abort"].filter((flag) => !denoFlags.includes(flag));
@@ -1798,7 +1803,7 @@ export function desktopRuntimeDenoFlags(
 export function desktopNetSplit(
   env: EnvGet = processEnv,
   deno: DenoIdentity = currentDenoIdentity(),
-  pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
+  pin: Pick<DesktopRuntimePin, "version"> = activeDesktopRuntimePinOrBundled(env),
 ): boolean {
   const mode = (env(RUNTIME_ENV) ?? "").trim().toLowerCase();
   if (mode === "stock" || env(RUNTIME_DIR_ENV)) return false;
@@ -1965,7 +1970,8 @@ async function cacheState(
 export async function desktopRuntimeStatus(
   options: DesktopRuntimeEnvOptions & { readonly verify?: boolean },
 ): Promise<DesktopRuntimeStatus> {
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  const pin = options.pin ??
+    activeDesktopRuntimePinOrBundled(options.env, options.projectDir);
   const target = options.target ?? desktopRuntimeTarget();
   const base = { version: pin.version, target, deno: { found: null, required: pin.deno } };
   const override = await overrideStatus(options, options.env ?? processEnv, base);

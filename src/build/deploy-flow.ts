@@ -44,6 +44,7 @@ function compileOf(
     output: relative(paths.projectDir, compile.output).replaceAll("\\", "/"),
     ...(compile.target ? { target: compile.target } : {}),
     permissions: compile.permissions,
+    ...(compile.runtime ? { runtime: compile.runtime } : {}),
   };
 }
 

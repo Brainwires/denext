@@ -2,7 +2,7 @@
 // a Gemfile.lock with checksums), a verified install from a LOCAL fixture server (no network) with
 // a fake `bundle install`, the refusals (SHA-256 mismatch, offline, no compiler, a failed gem
 // build, Windows), the re-install on a changed pin, the isolated environment runs get, the
-// `DENEXT_FASTLANE` override and the `toolchain status` view. `denext fastlane`'s runner
+// `DENEXT_FASTLANE` override and the `runtime version` view. `denext fastlane`'s runner
 // (src/cli/commands/fastlane.ts) is covered at the end.
 
 import {
