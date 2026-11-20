@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **`denext runtime` replaces `denext toolchain`.** One verb manages denext's runtime (its Deno
+  build): `version` (alias `info`: the release that runs, why — `DENEXT_RUNTIME`, the project pin,
+  your default or the bundled one — its integrity, the bundled runtime, the channel's offer and the
+  tools beside it), `list` (installed releases and the channel's verdict on each: available, held,
+  yanked, incompatible), `install [<version>] [--with gleam,fastlane]`, `upgrade [--project]
+  [--dry-run]` (the newest compatible release from the signed runtime channel once the
+  dependency-age hold lets it in, made your default or the project pin `"denext": { "runtime": {
+  version, integrity } }`), `use <version | latest | bundled> [--project]`, `path`, `link`,
+  `unlink`, `uninstall` and `prune`, each with `--json`. `denext toolchain` is removed with no
+  alias; its error names the `denext runtime` action that replaced it (`toolchain status` →
+  `runtime version`). The installers, generated Dockerfiles and generic-host build scripts call
+  the new verb. `DENEXT_RUNTIME_DEFAULT_FILE` names another file for your default.
+
 ### Fixed
 
 - **The root 404 page uses `app/not-found.tsx`'s own metadata.** Its `metadata` (or

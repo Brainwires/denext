@@ -100,7 +100,7 @@ for its loopback port on denext's toolchain) with `Restart=always`, `Environment
 with nginx or Caddy for TLS and the connection ceiling. For a zero-downtime
 restart run two units on two ports and switch the upstream, or accept the drain
 window (below). A `Deno.SQL` Postgres client needs the unit's `deno` to be denext's
-toolchain (`denext toolchain path`). Long-lived work in `services/` runs inside this one
+toolchain (`denext runtime path`). Long-lived work in `services/` runs inside this one
 process under [a supervisor](/docs/services), so the unit's restart policy only has to cover
 the server. Recipe:
 [Deployment › Self-host](/docs/deploy#self-host-systemd).
@@ -734,7 +734,7 @@ That is the skew rule in `src/cli/self-exec.ts`:
 
 That child runs on denext's own Deno toolchain, downloaded and SHA-256-verified
 on first need, so no Deno install is required. Offline on first use, with no
-toolchain cached, the command stops and prints the fix (`denext toolchain
+toolchain cached, the command stops and prints the fix (`denext runtime
 install` once online, or an explicit `DENEXT_DENO=stock | <path>` opt-out); it
 never runs another Deno on its own ([Known limitations](/docs/limitations)).
 

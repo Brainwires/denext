@@ -161,9 +161,9 @@ RUN deno task build
 
 # Run on denext's Deno toolchain, as `dev` and `build` do (Deno.SQL / postgresClient(), the
 # Prisma adapter). The build above already downloaded it into DENO_DIR and verified its SHA-256;
-# `toolchain path` re-verifies it and the link puts it first on PATH for everything below.
+# `runtime path` re-verifies it and the link puts it first on PATH for everything below.
 RUN mkdir -p /deno-dir/toolchain-bin && \
-  ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli toolchain path)" /deno-dir/toolchain-bin/deno
+  ln -sf "$(deno run -A --config deno.json jsr:@denext/denext@^4.0.0/cli runtime path)" /deno-dir/toolchain-bin/deno
 ENV PATH=/deno-dir/toolchain-bin:$PATH
 
 # Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
@@ -470,7 +470,7 @@ WorkingDirectory=/srv/my-app
 Environment=PORT=3000
 Environment=SESSION_SECRET=…
 Environment=DENEXT_CANONICAL_ORIGIN=https://example.com
-# The toolchain binary `denext toolchain path` prints (here linked into the app's DENO_DIR).
+# The toolchain binary `denext runtime path` prints (here linked into the app's DENO_DIR).
 Environment=DENO_DIR=/srv/my-app/.deno
 ExecStart=/srv/my-app/.deno/bin/deno run --allow-net --allow-read --allow-env --allow-write=.denext jsr:@denext/denext@^4.0.0/cli start .
 Restart=always
@@ -481,7 +481,7 @@ WantedBy=multi-user.target
 Run `denext task build` (or `deno task build`) in your deploy step, then
 `systemctl restart my-app`. The server runs on [denext's Deno toolchain](/docs/toolchain), the
 runtime `dev` and `build` use (`Deno.SQL` / `postgresClient()` included): point `ExecStart` at
-the binary `denext toolchain path` prints (a link to it keeps the unit stable across upgrades).
+the binary `denext runtime path` prints (a link to it keeps the unit stable across upgrades).
 Started there, the least-privilege `start` spawns no child process, so it needs no `--allow-run`.
 On any other `deno` it stops with the ways out instead of serving without the toolchain. The
 `generic-host` preset (`denext deploy prepare --preset generic-host --domain <host>`) writes this

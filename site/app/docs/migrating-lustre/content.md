@@ -31,7 +31,7 @@ denext task dev
 ```
 
 The first `dev` / `build` downloads denext's pinned Gleam (SHA-256-verified) and Lustre from Hex.
-`denext toolchain install --with gleam` fetches the compiler ahead, for offline work.
+`denext runtime install --with gleam` fetches the compiler ahead, for offline work.
 
 ---
 

@@ -42,7 +42,7 @@ scoop install denext/denext                      # Scoop (Windows)
 winget install Brainwires.denext                 # winget (Windows)
 # or, with Deno already installed:
 deno install -A -g -n denext jsr:@denext/denext/cli
-denext toolchain install   # then: the toolchain, and every verb cached for offline use`}
+denext runtime install   # then: the toolchain, and every verb cached for offline use`}
       </Code>
       <p>
         A script run through a pipe can&apos;t change the PATH of the shell that started it, so{" "}
@@ -64,9 +64,9 @@ denext toolchain install   # then: the toolchain, and every verb cached for offl
 curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
       </Code>
       <p>
-        After installing the binary, the installer runs <code>denext toolchain install</code>{" "}
+        After installing the binary, the installer runs <code>denext runtime install</code>{" "}
         — denext's own Deno build, downloaded into Deno's cache and SHA-256-verified — and, only
-        when no <code>deno</code> is on your PATH, <code>denext toolchain link</code>, so{" "}
+        when no <code>deno</code> is on your PATH, <code>denext runtime link</code>, so{" "}
         <code>deno</code> runs that toolchain too (a link at{" "}
         <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). A <code>deno</code>{" "}
         you have is never replaced, and never used by denext either.{" "}
@@ -90,7 +90,7 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         answer at once. The compiled binary embeds every verb; a CLI installed from JSR with{" "}
         <code>deno install</code>{" "}
         caches each verb's modules on its first online run (in the background) or in{" "}
-        <code>denext toolchain install</code>, so run that once before working offline.
+        <code>denext runtime install</code>, so run that once before working offline.
       </p>
       <p>
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext

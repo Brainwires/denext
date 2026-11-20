@@ -4,9 +4,10 @@ slug: runtime-channel
 lead: A denext runtime (the Deno toolchain and the Deno Desktop runtime, from one build) can ship without a denext release. Every denext still bundles a tested runtime; the channel lets you move to a newer one on purpose, verified by a signature and locked by a hash.
 ---
 
-> **Draft.** This page describes the runtime channel as it is being built. The commands below
-> arrive with the `denext runtime` verbs; until then denext runs the runtime it bundles, as
-> described in [denext's Deno toolchain](/docs/toolchain).
+> **Draft.** This page describes the runtime channel as it is being built. The resolver and the
+> `denext runtime` commands are in place; the published channel and the installer's use of it
+> follow. Until a channel is published, denext runs the runtime it bundles, as described in
+> [denext's Deno toolchain](/docs/toolchain).
 
 ## Why there is a channel
 
@@ -74,19 +75,39 @@ the channel off, the line with it.
 ## Commands
 
 ```text
-denext runtime version [--json] [--verify]   what runs here and why
+denext runtime version [--json] [--verify]   what runs here and why (alias: info)
 denext runtime list [--json] [--all]         installed; with the channel: available, held, yanked, incompatible
 denext runtime install [<version>] [--with gleam,fastlane]
 denext runtime upgrade [--project] [--dry-run] [--json]
-denext runtime use <version|latest|bundled> [--project]
+denext runtime use <version|latest|bundled> [--project] [--json]
 denext runtime path | link | unlink
-denext runtime uninstall <version> | --all [--force]
+denext runtime uninstall <version> | --all [--force] [--dry-run] [--json]
 denext runtime prune [--dry-run] [--json]
 ```
 
-`upgrade` takes the newest release this denext supports, moves your default (or the project pin
-with `--project`) and installs it. Offline, `version`, `list` (installed), `path` and
-`use <installed version>` work; `upgrade` and installing an uncached release fail with the reason.
+- `version` names the release that runs, the rung that chose it (`DENEXT_RUNTIME`, the project
+  pin and its file, your default, the bundled runtime), its integrity and any notice (a default
+  that was skipped, a withdrawn release), then the bundled runtime and its rollback, the oldest
+  runtime this denext supports, your default, the channel (from its cache, no network) with the
+  newer release it offers, and the revocation list and the tools beside the runtime. It exits 1
+  when the selection can't run (a malformed or incompatible project pin).
+- `list` shows the installed releases and the ones in use (the one that runs is starred), the
+  release `upgrade` would take and the one the hold keeps out, each with the channel's verdict:
+  `available`, `held`, `yanked` (with the reason), `incompatible` (with why) or `unlisted`. `--all`
+  adds every release the channel lists. Offline, the channel is shown as unavailable.
+- `upgrade` takes the newest release this denext supports that the hold lets in, installs it and
+  makes it your default (or the project pin with `--project`). A default `upgrade` writes gives way
+  to a newer denext's bundled runtime; one you chose with `use` does not. It says when a newer
+  release is held, and when the newest needs a newer denext. With nothing newer it changes nothing;
+  without a verified channel it fails with the reason.
+- `use <version>` installs that release and makes it your default (kept even under a newer
+  denext), or with `--project` writes the project pin. `use latest` takes what `upgrade` would,
+  `use bundled` removes your default (with `--project`, pins the bundled runtime).
+- `install` with no version installs the release selected here; with a version, that release.
+
+Offline, `version`, `list` (installed), `path`, and `use` / `install` of a release that is
+bundled or that the project pin or your default already names (its release document cached) all
+work; `upgrade` and installing anything else fail with the reason.
 
 ## Compatibility
 
@@ -105,8 +126,8 @@ previous minor; the oldest passing one is recorded. Older denexts keep the runti
 
 ## The dependency-age hold
 
-`upgrade`, `install` with no version and the installer take the newest compatible release whose
-publication is older than the dependency-age rule in force: the root `deno.json`'s
+`upgrade`, `use latest` and the installer take the newest compatible release whose publication
+is older than the dependency-age rule in force: the root `deno.json`'s
 `minimumDependencyAge`, else `.npmrc`, else 24 hours. They print the same one-line explanation
 `denext upgrade` prints. Naming a version (`runtime install <version>`, `runtime use <version>`)
 is your choice and is not held. There is no exception for security releases: a flag that skipped

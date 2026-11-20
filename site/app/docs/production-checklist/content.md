@@ -87,7 +87,7 @@ Each line: what to set → where it is documented. Config keys go in
   `denext task start` already grants it. →
   [Health & readiness](/docs/deploy#13-health--readiness)
 - Run the server on denext's Deno toolchain (`denext task start`, the binary
-  `denext toolchain path` prints, or what `denext deploy prepare` writes): on another Deno the
+  `denext runtime path` prints, or what `denext deploy prepare` writes): on another Deno the
   least-privilege `start` stops and says so, since `Deno.SQL` / `postgresClient()` would be
   missing. → [Toolchain](/docs/toolchain)
 - Know what your `start` is granted. `denext create` and a migrated Next.js App Router, SPA or
