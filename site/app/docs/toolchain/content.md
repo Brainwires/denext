@@ -23,8 +23,8 @@ fetched the first time a command needs it.
 | A Gleam install                                       | The [pinned Gleam compiler](#gleam), fetched on first need; no Erlang                                                      |
 | Ruby, Bundler and fastlane                            | [Managed fastlane](#fastlane) on a pinned portable Ruby with checksum-locked gems (macOS and Linux; a C compiler once)     |
 
-Working offline? `denext toolchain install --with gleam,fastlane` fetches all of it ahead of time,
-`denext toolchain status` shows what is cached, and `uninstall` / `prune` reclaim the space
+Working offline? `denext runtime install --with gleam,fastlane` fetches all of it ahead of time,
+`denext runtime version` shows what is cached, and `uninstall` / `prune` reclaim the space
 ([Commands](#commands)). The framework's runtime pulls nothing from npm (CI enforces it); your app
 can still use `npm:` and `jsr:` libraries, and a `package.json` project brought over from Node.js
 resolves its packages [as Node.js does](#npm-packages-as-on-nodejs). Less setup saves people hours,
@@ -52,14 +52,16 @@ own. A compiled binary has no `deno` of its own — its executable is denext —
 that may run Deno it resolves the toolchain (downloading it on first need) and hands it to
 everything it starts: `DENO_BIN` names it, and `deno` on the children's PATH is it. That covers
 `denext task …`, `test`, `fmt`, `lint`, `check`, `add`, the project-pinned re-exec of `dev` /
-`build` / `start`, `create`, `migrate`, `generate`, `ui` and `mcp`; only `toolchain` and
+`build` / `start`, `create`, `migrate`, `generate`, `ui` and `mcp`; only `runtime` and
 `completions` never run Deno. A task that calls `deno …` therefore works on a machine with no
 Deno.
 
-The installer runs `denext toolchain install` right after installing the binary, and — only when
-no `deno` is on your PATH — `denext toolchain link`, so `deno` is the toolchain for your editor,
-git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_TOOLCHAIN=1`
-both steps). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
+The installer runs `denext runtime upgrade` right after installing the binary (the newest
+runtime this denext supports, from the [runtime channel](/docs/runtime-channel), made your default),
+and — only when no `deno` is on your PATH — `denext runtime link`, so `deno` is the runtime for your
+editor, git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_RUNTIME=1`
+both steps; `--runtime-only` moves only the runtime of an installed denext, `--runtime=<version>`
+installs that release). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
 (the same variable the installers read) and `~/.denext` otherwise, so a custom-prefix install's
 `deno` sits beside its `denext`. A `deno` you already have is never replaced.
 
@@ -67,18 +69,18 @@ The CLI's entrypoint is thin: it loads only the argument parser and a generated 
 verb's name, flags and help, and imports a verb's own code when that verb runs, so `denext
 --version` and `--help` never load the dev server, the bundler or `denext/server`. A CLI installed
 from JSR (`deno install -A -g -n denext jsr:@denext/denext/cli`) therefore fetches each verb's code
-the first time that verb runs. `denext toolchain install` also caches every verb's code together
+the first time that verb runs. `denext runtime install` also caches every verb's code together
 with everything a verb loads by URL rather than by import: the framework modules a build bundles
 or a server loads (the client runtime, the compat layers, every `denext/*` entry point) and the
 helpers it runs in a child process (the desktop sidecar bundler, the MDX worker). The CLI's first
 online run does the same in the background (a failed attempt retries after 10 minutes). After
 either, `denext build`, `denext desktop …` and every other verb work offline (`--cached-only`,
-`denext ui --offline`), so run `denext toolchain install` once after a JSR install. The binary
+`denext ui --offline`), so run `denext runtime install` once after a JSR install. The binary
 embeds every verb already.
 
 When the toolchain can't be had (offline on first use, a host with no build, a failed or
 mismatching download) the command stops with one error that names the fix — run
-`denext toolchain install` once you are online — and the explicit opt-outs. denext never runs
+`denext runtime install` once you are online — and the explicit opt-outs. denext never runs
 another Deno on its own. With `DENEXT_DENO=stock` the binary runs a stock `deno` — `DENO_BIN`,
 `~/.deno/bin/deno`, then `deno` on PATH — and with none of those it stops with the same kind of
 error.
@@ -99,7 +101,7 @@ code switch to it on their own, and the others hand it to the `deno` they start:
 | `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)        | yes                   |
 | `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp` | the `deno` they start |
 | `migration`, `db`, `gen` (they import the project's config)                   | the `deno` they start |
-| help, `--version`, `toolchain`, `completions`                                 | no (they run no Deno) |
+| help, `--version`, `runtime`, `completions`                                   | no (they run no Deno) |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
 the same arguments, working directory, standard streams and exit code, with Ctrl-C and `SIGTERM`
@@ -113,7 +115,7 @@ drop the deny list: the child is refused (or asked) instead. Everything that com
 `deno desktop`) runs on the toolchain too. The child carries `DENEXT_TOOLCHAIN_ACTIVE=<version>`,
 so it never switches twice. Only the running version decides: a process whose `Deno.version.deno`
 is not the pinned build (stock Deno that inherited the marker inside `denext task`, or an older
-`-denext.N` that a `toolchain link` from before a denext upgrade still points at) switches to the
+`-denext.N` that a `runtime link` from before a denext upgrade still points at) switches to the
 pinned one.
 
 From runtime `3.0.0-rc.5`, `request.signal` aborts only when a response is not delivered (the
@@ -122,7 +124,7 @@ that relied on the old abort after every delivered response opts back in with
 `--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or `DENO_LEGACY_ABORT=1` (use the
 handler's `info.completed` to learn that a response was delivered). An older toolchain needs
 `--unstable-no-legacy-abort` for that, which the switch passes to it. A server verb (`dev`,
-`start`, `profile`) started on such a toolchain directly (the `deno` that `toolchain link` puts on
+`start`, `profile`) started on such a toolchain directly (the `deno` that `runtime link` puts on
 PATH, or a `deno task` step running it) checks whether it has that flag, with one loopback
 request, and re-runs once on the same binary with it when it does not. The `deno.json` that
 `denext create` and `denext migrate` write carries `"unstable": ["no-legacy-abort"]`, which turns
@@ -180,7 +182,7 @@ supported list on musl or an older glibc, rather than downloading a binary that 
   modification time; otherwise it is re-hashed, and a missing stamp means a fresh download. That
   fast path is the same trust Deno gives its own module cache: whoever can write to `DENO_DIR`
   can change what runs, so keep a shared or group-writable `DENO_DIR` to trusted users (or run
-  `denext toolchain status --verify`).
+  `denext runtime version --verify`).
 - Before it opens the cache's lock files or trusts a cached binary, denext checks every directory
   from `DENO_DIR` down to the binary's (on macOS and Linux): one owned by another user (root
   aside), or writable by every user without the sticky bit, stops the command, since that user
@@ -211,19 +213,19 @@ supported list on musl or an older glibc, rather than downloading a binary that 
 
 denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
 first use, or behind a failed or mismatching download, a command that needs the toolchain stops
-with one error that says why, names the fix (`denext toolchain install`) and the two explicit
+with one error that says why, names the fix (`denext runtime install`) and the two explicit
 opt-outs above. A command that runs project code (`start`, `dev`, `build`, `job`, …) in a process
 that lacks the grants to install and run the toolchain (`--allow-run`, and read/write on the cache
 directory) stops too, rather than run on another Deno, where `Deno.SQL` (`postgresClient()`, the
 Prisma adapter) and the toolchain's other changes would be missing. That is the case for the
 least-privilege `start` task `denext create` scaffolds (`deno run --allow-net --allow-read
 --allow-env --allow-write=.denext …`) when stock Deno runs it, so launch it on the toolchain
-instead: `denext task start` (a task's `deno` is the toolchain), the binary `denext toolchain path`
+instead: `denext task start` (a task's `deno` is the toolchain), the binary `denext runtime path`
 prints, or the Dockerfile / systemd unit that [`denext deploy prepare`](/docs/deploy) writes, which
 run the server on the toolchain directly. Started on the toolchain, that `start` spawns no child
 process, so it needs no `--allow-run`. Running `start` with `-A` (or with `--allow-run` and write
 access to the cache) also works: it re-runs itself on the toolchain. `DENEXT_DENO=stock` keeps the
-command on the Deno that started it. `denext toolchain status` says which Deno a command runs on.
+command on the Deno that started it. `denext runtime version` says which Deno a command runs on.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
@@ -234,17 +236,17 @@ that runs project code on stock Deno says so once, with the fix, on stderr:
 
 ```
 denext: deprecated: DENEXT_DENO=stock runs this command on stock Deno. denext 5.0 drops stock Deno support.
-  Fix: unset DENEXT_DENO (`denext toolchain install` fetches denext's Deno ahead). DENEXT_NO_DEPRECATION_WARNINGS=1 hides this notice.
+  Fix: unset DENEXT_DENO (`denext runtime install` fetches denext's Deno ahead). DENEXT_NO_DEPRECATION_WARNINGS=1 hides this notice.
 ```
 
-| What runs on stock Deno                                                 | The fix                                                          |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `DENEXT_DENO=stock`                                                     | unset it                                                         |
-| `DENEXT_DENO=<path>` at a stock Deno binary                             | point it at denext's Deno, or unset it                           |
-| `DENEXT_DESKTOP_RUNTIME=stock`                                          | unset it (the pinned runtime downloads on first use)             |
-| `desktop run` / `dev` falling back to the stock Deno Desktop runtime    | `denext toolchain install`, and unset `DENEXT_DENO` / `DENO_BIN` |
-| the npm esbuild (the [esbuild](#esbuild) fallback)                      | `denext toolchain install`                                       |
-| `createTestApp()` under a plain `deno test` / `deno task` on stock Deno | run it with `denext test` or `denext task <name>`                |
+| What runs on stock Deno                                                 | The fix                                                        |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `DENEXT_DENO=stock`                                                     | unset it                                                       |
+| `DENEXT_DENO=<path>` at a stock Deno binary                             | point it at denext's Deno, or unset it                         |
+| `DENEXT_DESKTOP_RUNTIME=stock`                                          | unset it (the pinned runtime downloads on first use)           |
+| `desktop run` / `dev` falling back to the stock Deno Desktop runtime    | `denext runtime install`, and unset `DENEXT_DENO` / `DENO_BIN` |
+| the npm esbuild (the [esbuild](#esbuild) fallback)                      | `denext runtime install`                                       |
+| `createTestApp()` under a plain `deno test` / `deno task` on stock Deno | run it with `denext test` or `denext task <name>`              |
 
 The notice is printed once per process tree: the first one sets `DENEXT_STOCK_DEPRECATION_SHOWN=1`
 in the command's environment, so the processes it starts stay quiet.
@@ -298,16 +300,16 @@ for those hosts (`--deny-net`, or a least-privilege process that would be prompt
 at all.
 
 - `denext start` and `denext job` read the cached list only: a production boot never touches the
-  network for it. A Docker image gets the check when it is built, where `denext toolchain path`
+  network for it. A Docker image gets the check when it is built, where `denext runtime path`
   runs.
-- `denext toolchain status`, `toolchain install` and `denext doctor` fetch it every time (5 seconds
+- `denext runtime version`, `runtime install` and `denext doctor` fetch it every time (5 seconds
   at most) and print the list's sequence, its expiry and what it says about the pinned toolchain.
-  `toolchain status --json` carries the same as `revocation`: `revoked`, `reason`, `advisory`,
+  `runtime version --json` carries the same as `revocation`: `revoked`, `reason`, `advisory`,
   `fixedIn`, `runningRollback`, `running`, `listSequence`, `listExpiresAt` (and `expiredAt` for a
   list that was ignored because it expired). `doctor` warns about a revoked pin, an expired list and
   a list with fewer than 7 days left before it expires (it is ignored from then on, until the
   maintainers re-sign it).
-- `toolchain prune` keeps the rollback release's cache, so the fallback works offline.
+- `runtime prune` keeps the rollback release's cache, so the fallback works offline.
 - The toolchain marker denext hands the processes it starts (`DENEXT_TOOLCHAIN_ACTIVE`) never
   skips the check or picks the fallback on its own, so a value leaked from a parent shell or a
   copied CI environment changes nothing: a process running the fallback asks again and moves to the
@@ -341,7 +343,7 @@ there is no `npm:esbuild` import. The binary it starts is, in order:
    This fallback is [deprecated](#stock-deno-is-deprecated) and goes away in denext 5.0.
 
 A toolchain esbuild that does not match its pin (or is missing from the zip) is never installed:
-builds use the npm one and print one warning saying why. `denext toolchain status` shows which
+builds use the npm one and print one warning saying why. `denext runtime version` shows which
 esbuild the next build runs and where it comes from. An idle esbuild process never keeps a command
 alive.
 
@@ -353,7 +355,7 @@ musl builds), downloaded on first need — `denext add gleam:`, or the `gleam()`
 build — into `<DENO_DIR>/denext-deno/gleam/<version>/<platform>/`, verified before it is extracted
 and installed atomically under the same cache lock. Gleam's JavaScript target needs no Erlang.
 
-`denext toolchain install --with gleam` fetches it ahead of time, and `denext toolchain status`
+`denext runtime install --with gleam` fetches it ahead of time, and `denext runtime version`
 lists its version and whether it is cached. Offline (or with `--deny-net`) before the first download,
 a command that needs it stops with an error naming that command. `DENEXT_GLEAM=<path>` runs another
 `gleam` instead, unverified; a `gleam` on `PATH` is never used unless you name it there.
@@ -370,7 +372,7 @@ directory renamed into place. The gems build C extensions, so the first install 
 compiler (the Command Line Tools on macOS, `cc` and `make` on Linux). macOS and Linux (arm64, x64)
 are supported, and Windows is not.
 
-`denext toolchain install --with fastlane` installs it ahead of time, and `denext toolchain status`
+`denext runtime install --with fastlane` installs it ahead of time, and `denext runtime version`
 lists it. `DENEXT_FASTLANE=<path>` runs another fastlane instead, unverified; a `fastlane` on `PATH`
 is never used unless you name it there.
 
@@ -462,32 +464,40 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 ## Commands
 
 ```sh
-denext toolchain install       # download + verify now (fails when it can't)
-denext toolchain install --with gleam   # …and the pinned Gleam compiler
-denext toolchain install --with fastlane   # …and the managed fastlane (portable Ruby + gems)
-denext toolchain status        # pinned versions (Deno, TypeScript, Gleam, fastlane), cache state, whether this run is on it, which esbuild builds use (--json, --verify)
-denext toolchain path          # the binary's path (installs it first)
-denext toolchain link          # opt-in: ~/.denext/bin/deno ($DENEXT_INSTALL/bin) → the toolchain, and the PATH line to add
-denext toolchain unlink        # removes that link, and only a link it created
-denext toolchain uninstall <version>   # remove a cached version: its Deno toolchain and Deno Desktop runtime
-denext toolchain uninstall --all       # every cached version but the pinned one (--force: that one too)
-denext toolchain prune         # every version but the pinned ones (this denext's, and the project's here)
-denext deno <args…>            # run the toolchain's deno with <args…> verbatim; its exit code
+denext runtime version       # what runs here and why (env, project pin, your default, bundled), its integrity, the bundled pin, the channel, Gleam, fastlane, which esbuild builds use (alias: info; --json, --verify)
+denext runtime list          # installed releases; with the channel: available, held, yanked, incompatible (--all: every listed release; --json)
+denext runtime install       # download + verify the selected release now (fails when it can't)
+denext runtime install <version>   # a named release (from the channel, the project pin or your default)
+denext runtime install --with gleam,fastlane   # …and the pinned Gleam compiler / the managed fastlane (portable Ruby + gems)
+denext runtime upgrade       # the newest compatible release past your dependency-age hold: installs it, makes it your default (--project: the project pin; --dry-run; --json)
+denext runtime use <version|latest|bundled>   # install it and make it your default, kept under a newer denext (--project: the project pin)
+denext runtime path          # the selected release's binary (installs it first)
+denext runtime link          # opt-in: ~/.denext/bin/deno ($DENEXT_INSTALL/bin) → that binary, and the PATH line to add
+denext runtime unlink        # removes that link, and only a link it created
+denext runtime uninstall <version>   # remove a cached release: its Deno and Deno Desktop runtime
+denext runtime uninstall --all       # every cached release but those in use (--force: those too)
+denext runtime prune         # keep only what is in use here
+denext deno <args…>            # run the runtime's deno with <args…> verbatim; its exit code
 denext <deno verb> <args…>     # the same for any verb denext doesn't define (falls through to Deno's verb)
 ```
 
+The `toolchain` verb of earlier denext releases is gone, with no alias: it is an unknown command
+whose suggestion names the `denext runtime` action that replaced it. Which release runs, the project pin and the signed
+channel `upgrade` reads are on [the runtime channel](/docs/runtime-channel) page.
+
 `link` is the only command that puts the toolchain on your `PATH`, and only after you add the line
 it prints. Windows gets a `deno.cmd` shim. `unlink` refuses to touch a `deno` it didn't create. After a denext
-upgrade pins a newer toolchain, `denext toolchain status` warns that the link points at the old one
+upgrade pins a newer toolchain, `denext runtime version` warns that the link points at the old one
 and `link` replaces it (commands switch to the pinned build either way).
 
 Every version denext ever ran on stays cached until you remove it — each Deno toolchain is about
 70 MB, a Deno Desktop runtime more. `uninstall <version>` removes that version's toolchain (its
 esbuild, TypeScript compiler and `denort` live inside it) and the Deno Desktop runtime of the same
-version. `prune` keeps only what is in use: the Deno toolchain, Deno Desktop runtime, Gleam and
-fastlane this denext pins, and — inside a project that pins another denext — the ones that version
-pins (read from its published pin files; offline, `prune` removes nothing unless `--force`). The
-version this denext pins is refused unless you pass `--force`. Each prints what it removed and the
+version. `prune` keeps only what is in use: the selected release, your default, the release this denext
+bundles and its rollback, the project's pin, the Gleam and fastlane this denext pins, and — inside
+a project that pins another denext — the ones that version pins (read from its published pin
+files; offline, `prune` removes nothing unless `--force`). A release in use is refused by
+`uninstall` unless you pass `--force`. Each prints what it removed and the
 space freed; `--dry-run` only lists it, and `--json` reports it for scripts. They hold the cache
 lock, so they never delete a download in progress.
 
@@ -501,7 +511,7 @@ From `2.9.7-denext.22` the toolchain's CLI archive ships the native TypeScript 7
 every other command that type-checks run it. It is installed only when its binary and the whole
 `typescript-check/` directory hash to the pin; a compiler that doesn't is refused, never installed,
 and the toolchain type-checks with its in-process TypeScript 6.0.3 instead, with one warning.
-`denext toolchain status` prints a `typescript` line: the version and `native, verified`, why it
+`denext runtime version` prints a `typescript` line: the version and `native, verified`, why it
 was refused, or that it arrives with the toolchain.
 
 `DENEXT_NATIVE_CHECK=0` (or `false` / `off`) keeps the in-process TypeScript 6.0.3, and a
@@ -549,7 +559,7 @@ The same CLI archive ships a second TypeScript 7 build in `typescript-lsp/`: the
 (`7.1.0-dev.20261017.1` today) that `deno lsp` runs as its TypeScript 7 ("tsgo") language service.
 The toolchain installs it beside `deno` under the same rule as the compiler (its binary and the
 whole directory must hash to the pin's `tsgoLsp` entry, else it is refused and never installed),
-and `denext toolchain status` prints a `typescript lsp` line for it.
+and `denext runtime version` prints a `typescript lsp` line for it.
 
 It is the default editor backend. From runtime `3.0.0-rc.3` (so in the pinned build too) it is the runtime's
 own default: its `deno lsp` runs TypeScript 7 with no setting at all, or with an empty
@@ -572,8 +582,8 @@ TypeScript 6 service:
 | One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)       |
 | What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (from `3.0.0-rc.3` this alone keeps TypeScript 7) |
 
-The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
-puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
+The editor runs whichever `deno` it finds, so point it at the toolchain: `denext runtime link`
+puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext runtime path` prints.
 A `deno` that doesn't find `typescript-lsp/` beside itself downloads the same pinned build into
 `DENO_DIR` on first use and checks it against the integrity compiled into the runtime. Stock Deno
 has no TypeScript 7 backend and keeps its TypeScript 6 service.
@@ -1013,7 +1023,7 @@ way. The Deno release a build is made from is the pin's `deno` field (2.9.7 up t
 [Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.8 exactly" check use. Releases are tagged
 `denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
-stock Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
+stock Deno): `denext upgrade` moves the pin, or `denext runtime install` fetches it.
 
 ### Identity
 
@@ -1032,7 +1042,7 @@ denext 3.0.0-rc.5 (Brainwires)
 
 denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
 process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
-already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
+already runs on the toolchain, `denext runtime version`, `denext doctor`, the native type check,
 the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.8
 exactly" check and the direction-split network flags. A Deno without the marker is stock Deno whatever
 its number. A build from before the marker is recognised by its version only:
@@ -1138,5 +1148,5 @@ The first command that runs project code — or the installer, ahead of time —
 downloads the pinned build for the platform into `<DENO_DIR>/denext-deno/`, verifies its SHA-256
 against the pin, records a stamp and re-runs itself on it. Every child process it starts (tasks,
 the UI, the MCP server, builds) finds that `deno` first on `PATH`. The `deno` on your `PATH` is never
-replaced (`denext toolchain link` opts in), and a failed download stops the command with the fix
+replaced (`denext runtime link` opts in), and a failed download stops the command with the fix
 (earlier versions fell back to stock Deno with one warning). From `2.9.7-denext.17` the same download also carries esbuild 0.25.5.

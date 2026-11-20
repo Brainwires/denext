@@ -28,7 +28,10 @@ and this project adheres to
   (project pin, user default, `DENEXT_RUNTIME` or bundled), the channel's state and the old status
   rows; `list` the installed releases with the channel's verdict on each; `use <version | latest |
   bundled> [--project]` sets the default (held) or the project pin; `install [<version>]
-  [--with gleam,fastlane]`.
+  [--with gleam,fastlane]`; `upgrade [--project] [--dry-run]`; `path`, `link`, `unlink`,
+  `uninstall` and `prune`, each with `--json`. `list` gives each release the channel's verdict
+  (available, held, yanked, incompatible). `DENEXT_RUNTIME_DEFAULT_FILE` names another file for
+  your default.
 - **The installers install the newest runtime, and can move only the runtime.** `install.sh` /
   `install.ps1` install the latest denext, then run `denext runtime upgrade` (the binary verifies
   everything; the scripts never read the channel). `--runtime-only` (`DENEXT_RUNTIME_ONLY=1`,
@@ -52,7 +55,8 @@ and this project adheres to
 
 - **`denext toolchain` is gone; use `denext runtime`.** `toolchain status` is `runtime version`,
   `toolchain install | path | link | unlink | uninstall | prune` are the same `runtime` verbs. The
-  old verb is an unknown command whose suggestion names the `runtime` equivalent.
+  old verb is an unknown command whose suggestion names the `runtime` equivalent. The installers,
+  generated Dockerfiles and generic-host build scripts call the new verb.
 
 ### Fixed
 

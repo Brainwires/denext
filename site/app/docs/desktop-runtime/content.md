@@ -1011,7 +1011,7 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
 ## Runtime releases
 
 Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`;
-`denext toolchain status` names it).
+`denext runtime version` names it).
 
 **Naming.** Up to `2.9.7-denext.22` a release was named after the Deno release it was built from
 plus `-denext.<n>`. The next releases were `3.0.0-rc.1` through `3.0.0-rc.6`: the fork's own
