@@ -270,8 +270,18 @@ export interface AppCapabilities {
   readonly cameraAccessReason: string | null;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
-  /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
+  /**
+   * `setQuickActions` (in `denext/mobile`) and `setDockMenu` set the dock menu: the Dock icon's menu
+   * on macOS, the taskbar button's jump list on Windows (see `jumpList`).
+   */
   readonly dockMenu: boolean;
+  /**
+   * Windows: the dock menu is the jump list's tasks. It is flat (a submenu's items are listed in
+   * its place between separators), disabled items are left out and checkmarks are not shown;
+   * choosing a task starts the app, and with `desktop.app.singleInstance` the running app gets
+   * the click.
+   */
+  readonly jumpList: boolean;
   /**
    * {@linkcode getAppMenu} / {@linkcode getDockMenu} read the native menus back (`"unknown"` on a
    * runtime that has the calls but does not say; `false` on one without them).
@@ -377,6 +387,7 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     cameraAccessReason: text(raw, "cameraAccessReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
+    jumpList: flag("jumpList"),
     menuSnapshot: oneOf(raw, "menuSnapshot", [true, false]),
     dockVisibility: flag("dockVisibility"),
     backendTray: flag("backendTray"),

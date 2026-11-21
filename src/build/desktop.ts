@@ -892,14 +892,16 @@ export interface RunDesktopOptions {
    */
   onAppMenuItem?: DesktopAppMenuItemHandler;
   /**
-   * The app's own Dock menu (macOS; ignored elsewhere), set at launch: items `{ id, label,
+   * The app's own Dock menu (macOS, and Windows as the jump list's tasks on a runtime that has
+   * one; ignored elsewhere), set at launch: items `{ id, label,
    * enabled?, checked? }`, `{ type: "separator" }` and submenus `{ label, submenu }`, ids unique
    * and non-empty (a bad menu fails the launch). `setDockMenu` on the result replaces it; the
    * pages' quick actions (`setQuickActions`) follow it in the same menu, after a separator.
    */
   dockMenu?: readonly DesktopDockMenuItem[];
   /**
-   * Called once per click on a Dock menu item (macOS), the app's own (`dockMenu`, `setDockMenu`)
+   * Called once per click on a Dock menu item (macOS; on Windows a jump-list task, including one
+   * that started the app), the app's own (`dockMenu`, `setDockMenu`)
    * and the pages' quick actions alike, with its `id` and the key window (`{ id, key? }`, or
    * `null`): with no window open too. A page's quick action also reaches one page's
    * `onQuickAction` (the key window's if it listens, else the one focused most recently that

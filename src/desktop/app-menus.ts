@@ -121,7 +121,8 @@ export interface DesktopAppMenusApi {
    */
   onAppMenuItem(fn: DesktopAppMenuItemHandler): () => void;
   /**
-   * Set the app's own Dock menu (macOS; a no-op elsewhere), or clear it with `null` (or `[]`):
+   * Set the app's own Dock menu (macOS; on Windows the taskbar button's jump list where
+   * `appCapabilities().jumpList` says so; a no-op elsewhere), or clear it with `null` (or `[]`):
    * items `{ id, label, enabled?, checked? }`, `{ type: "separator" }` and submenus
    * `{ label, submenu }`. The pages' quick actions (`setQuickActions`) follow it in the same menu,
    * after a separator. Ids must be non-empty and unique, across the pages' quick actions too:

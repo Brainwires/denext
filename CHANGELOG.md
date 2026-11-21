@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **The dock menu on Windows: the taskbar jump list.** On a runtime that reports one
+  (`appCapabilities().jumpList`), `setDockMenu` / `runDesktop({ dockMenu })` and the pages'
+  `setQuickActions` write the "Tasks" of the jump list the taskbar button and the Start menu entry
+  show, and `appCapabilities().dockMenu` is `true` there as on macOS. A jump list is flat: a
+  submenu's items are listed in its place between separators, disabled items are left out and
+  checkmarks are not shown. Choosing a task starts the app; with `desktop.app.singleInstance` the
+  running app gets it as the dock menu's click (`onDockMenuItem`, `onQuickAction`), and an app the
+  task started gets it as it starts, for the items `runDesktop({ dockMenu })` sets at launch.
 - **Embedded web views: app-decided downloads and permission requests.** `createWebView({ downloads:
   "app" })` hands each download to the view's `will-download` event as an item (`id`, `url`,
   `filename`, `mimeType`, `totalBytes`, live `receivedBytes` / `state` / `path` / `paused` /

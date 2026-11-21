@@ -1,6 +1,7 @@
 // The Dock menu and the menu read-back (src/desktop/caps/app.ts, app-windows.ts, app-menus.ts,
 // menu-config.ts, native.ts, mobile/quick-actions.ts, desktop/app.ts): the backend's Dock menu
-// (`setDockMenu`, `runDesktop({ dockMenu })`) checked and merged before the pages' quick actions,
+// (`setDockMenu`, `runDesktop({ dockMenu })`) checked and merged before the pages' quick actions
+// (macOS, and Windows' jump list where the runtime reports one),
 // colliding ids refused both ways, every click delivered once to the backend's handlers (with no
 // window open too) and a page's item to exactly one listening page, `windows.closed()`, the
 // application / Dock menu read-back passed through and feature-probed, and the page side's wire —
@@ -224,6 +225,52 @@ Deno.test("dock menu: runDesktop({ dockMenu }) is set at launch; a bad one fails
   assertEquals(linux.dock.sets, 0);
 });
 
+Deno.test("dock menu: on Windows it is the jump list where the runtime reports one", async () => {
+  const jumpList = { menuCapabilities: () => ({ dockMenu: true, jumpList: true }) };
+  const seen: string[] = [];
+  const win = setup({
+    os: "windows",
+    api: jumpList,
+    dockMenu: [{ id: "new", label: "New window" }],
+    onDockMenuItem: (id) => void seen.push(id),
+  });
+  // Set at launch, merged with the pages' quick actions as on macOS.
+  assertEquals(win.dock.menu, [{ item: { label: "New window", id: "new", enabled: true } }]);
+  assertEquals(await win.rpc("setDockMenu", { menu: [{ id: "q", label: "Q" }] }), {
+    applied: true,
+  });
+  assertEquals(win.dock.menu?.length, 3);
+  const caps = await win.rpc("capabilities", {}) as { dockMenu: boolean; jumpList: boolean };
+  assertEquals([caps.dockMenu, caps.jumpList], [true, true]);
+  // A task's click (live, or one that started the app) is the dock menu's click.
+  win.dock.click("new");
+  win.dock.click("q");
+  assertEquals(seen, ["new", "q"]);
+
+  // A Windows runtime without a jump list: nothing set.
+  for (const api of [{}, { menuCapabilities: () => ({ jumpList: false }) }]) {
+    const old = setup({ os: "windows", api, dockMenu: [{ id: "a", label: "A" }] });
+    assertEquals(old.dock.sets, 0);
+    assertEquals(await old.rpc("setDockMenu", { menu: [{ id: "q", label: "Q" }] }), {
+      applied: false,
+    });
+    const c = await old.rpc("capabilities", {}) as { dockMenu: boolean; jumpList: boolean };
+    assertEquals([c.dockMenu, c.jumpList], [false, false]);
+  }
+  // Only Windows reads jumpList; macOS reports a Dock menu, not a jump list.
+  const linux = setup({ os: "linux", api: jumpList, dockMenu: [{ id: "a", label: "A" }] });
+  assertEquals(linux.dock.sets, 0);
+  const mac = await setup({ api: jumpList }).rpc("capabilities", {}) as {
+    dockMenu: boolean;
+    jumpList: boolean;
+  };
+  assertEquals([mac.dockMenu, mac.jumpList], [true, false]);
+  // No Deno.dock at all: no jump list either.
+  const noDock = setup({ os: "windows", api: jumpList, dock: null });
+  const d = await noDock.rpc("capabilities", {}) as { dockMenu: boolean; jumpList: boolean };
+  assertEquals([d.dockMenu, d.jumpList], [false, false]);
+});
+
 Deno.test("dock menu: each click reaches the backend once, with no window open too; never a page for its own", async () => {
   const seen: Array<[string, unknown]> = [];
   const { s, main, dock, rpc } = setup({
@@ -440,6 +487,28 @@ Deno.test("dock menu page: setQuickActions sends separators, submenus, enabled a
   assertEquals(await setDesktopDockMenu([]).catch((e) => isDesktopBridgeError(e)), true);
 });
 
+Deno.test("dock menu page: setQuickActions reaches the Windows jump list where the runtime applies it", async () => {
+  const menus: unknown[] = [];
+  await inDesktop({
+    app: {
+      setDockMenu: (args) => {
+        menus.push((args as { menu: unknown }).menu);
+        return { applied: true };
+      },
+    },
+  }, async () => {
+    await setQuickActions([
+      { id: "a", title: "A" },
+      { title: "More", submenu: [{ id: "b", title: "B" }] },
+    ]);
+    // The page sends the menu as it is; the runtime flattens it into tasks.
+    assertEquals(menus, [[
+      { id: "a", label: "A" },
+      { label: "More", children: [{ id: "b", label: "B" }] },
+    ]]);
+  });
+});
+
 Deno.test("dock menu page: on iOS / Android separators are left out and a submenu is refused", async () => {
   const sets: unknown[] = [];
   const plugin = {
@@ -499,6 +568,13 @@ Deno.test("menu read-back page: getAppMenu / getDockMenu pass the runtime's menu
     assertEquals(await getAppMenu(), menu);
     assertEquals(await getDockMenu(), null);
     assertEquals((await appCapabilities()).menuSnapshot, true);
+    assertEquals((await appCapabilities()).jumpList, false);
+  });
+  await inDesktop({
+    app: { capabilities: () => ({ dockMenu: true, jumpList: true }) },
+  }, async () => {
+    const caps = await appCapabilities();
+    assertEquals([caps.dockMenu, caps.jumpList], [true, true]);
   });
   await inDesktop({
     app: { getAppMenu: () => "junk", getDockMenu: () => menu, capabilities: () => ({}) },

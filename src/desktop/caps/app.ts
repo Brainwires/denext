@@ -7,8 +7,9 @@
  *
  * Runtime APIs: `BrowserWindow.setApplicationMenu`, `Deno.Tray`, `Deno.dock`. They exist under the
  * stock runtime too; denext's pinned runtime adds keyboard accelerators on every OS
- * (`Deno.desktop.menuCapabilities()`), menu icons and tooltips. The dock menu is macOS-only (the
- * OS has no other). A badge is the Dock icon's on macOS, a prefix of the window titles on Windows,
+ * (`Deno.desktop.menuCapabilities()`), menu icons and tooltips. The dock menu is the Dock icon's on
+ * macOS and, where the runtime reports `jumpList`, the taskbar button's jump list on Windows
+ * (Linux has none). A badge is the Dock icon's on macOS, a prefix of the window titles on Windows,
  * and on Linux a count on the app's launcher where a dock reads launcher badges (runtime
  * 2.9.7-denext.11), else the same title prefix.
  *
@@ -513,9 +514,22 @@ function applyAppLevelMenu(s: AppState): void {
   } catch { /* an older runtime's: the key window's menu stays */ }
 }
 
-/** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
+/**
+ * Whether the dock menu can be set here: macOS with `Deno.dock.setMenu`, or Windows where the
+ * runtime writes it as the taskbar button's jump list ({@linkcode jumpListWorks}).
+ */
 function dockMenuWorks(s: AppState): boolean {
-  return s.os === "darwin" && typeof s.dock?.setMenu === "function";
+  if (typeof s.dock?.setMenu !== "function") return false;
+  return s.os === "darwin" || jumpListWorks(s);
+}
+
+/**
+ * Windows, on a runtime whose `menuCapabilities()` reports `jumpList`: the dock menu is the
+ * jump list's tasks (flat: a submenu's items in its place between separators, disabled items left
+ * out; a task's click starts the app, which the single-instance lock hands to the running one).
+ */
+function jumpListWorks(s: AppState): boolean {
+  return s.os === "windows" && s.options.api?.menuCapabilities?.()?.jumpList === true;
 }
 
 /** The first id of `menu` that `other` uses too. */
@@ -895,6 +909,7 @@ async function appCapabilities(s: AppState) {
     cameraAccessReason: facts.cameraAccessReason,
     bounce: typeof dock?.bounce === "function",
     dockMenu: dockMenuWorks(s),
+    jumpList: dockMenuWorks(s) && jumpListWorks(s),
     menuSnapshot: menuSnapshotCapability(s, caps.snapshot),
     ...trayAndDockCapabilities(s, trayReason === null),
   };

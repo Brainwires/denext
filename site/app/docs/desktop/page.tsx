@@ -4748,8 +4748,9 @@ await bounce({ critical: true }); // until the app is focused`}
         <li id="desktop-dock-menu">
           The Dock menu is <code>denext/mobile</code>&apos;s <code>setQuickActions</code> /{" "}
           <code>onQuickAction</code>: the same calls that set an iOS or Android app&apos;s
-          home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
-          none, and the call does nothing there). On the Dock an entry may also be a separator (
+          home-screen quick actions set the Dock icon&apos;s menu on macOS and the taskbar
+          button&apos;s jump list on Windows (Linux has none, and the call does nothing there). On
+          the Dock an entry may also be a separator (
           <code>{`{ type: "separator" }`}</code>), a submenu (<code>{`{ title, submenu }`}</code>)
           or a disabled or checked action (<code>enabled: false</code>,{" "}
           <code>checked: true</code>); on iOS and Android a separator is left out,{" "}
@@ -4757,6 +4758,24 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>TypeError</code>). A choice reaches one page only: the key window&apos;s if it
           listens with{" "}
           <code>onQuickAction</code>, else the page of the window focused most recently that does.
+        </li>
+        <li id="desktop-jump-list">
+          On Windows the same menu, the backend&apos;s items and the pages&apos; quick actions, is
+          the &quot;Tasks&quot; of the jump list the taskbar button and the Start menu entry show on
+          a right click, where denext&apos;s runtime writes one (
+          <code>appCapabilities().jumpList</code>; <code>dockMenu</code>{" "}
+          is true on macOS and there). A jump list is flat: a submenu&apos;s items are listed in its
+          place between separators, disabled items and roles are left out, and checkmarks are not
+          shown. Choosing a task starts the app&apos;s executable again with the item&apos;s id;
+          with <code>desktop.app.singleInstance</code>{" "}
+          the running app gets it as an ordinary click (<code>onDockMenuItem</code>,{" "}
+          <code>onQuickAction</code>) and no second window opens. When the app isn&apos;t running,
+          or runs without the lock, the instance the task starts gets the click as it starts: an
+          item of <code>runDesktop({`{ dockMenu }`})</code> (set at launch) reaches{" "}
+          <code>onDockMenuItem</code>, while one the app or a page sets later (a later{" "}
+          <code>setDockMenu</code>, a page&apos;s quick action) isn&apos;t known yet and is dropped.
+          The tasks stay in the jump list after the app quits, until the app sets an empty dock
+          menu.
         </li>
         <li>
           The backend has a Dock menu of its own: <code>setDockMenu(items | null)</code> and{" "}

@@ -171,10 +171,11 @@ export interface DesktopWindowMenuAppItem {
 }
 
 /**
- * One entry of the backend's Dock menu (macOS; `setDockMenu` on `runDesktop`'s result and an
- * extension's host, `runDesktop({ dockMenu })`): an item (`id`, `label`, optionally `enabled`
- * and `checked`), a separator, or a submenu (`label`, `submenu`). Ids are unique across every
- * level and across the pages' quick actions merged into the same menu.
+ * One entry of the backend's Dock menu (macOS, Windows' jump list; `setDockMenu` on
+ * `runDesktop`'s result and an extension's host, `runDesktop({ dockMenu })`): an item (`id`,
+ * `label`, optionally `enabled` and `checked`), a separator, or a submenu (`label`, `submenu`).
+ * Ids are unique across every level and across the pages' quick actions merged into the same
+ * menu.
  */
 export type DesktopDockMenuItem =
   | {

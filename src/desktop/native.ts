@@ -456,8 +456,9 @@ function dockEntriesWire(entries: readonly DesktopDockEntry[]): unknown[] {
 }
 
 /**
- * `setQuickActions` on desktop: the Dock icon's menu (macOS), after the app's own Dock items.
- * Resolves `false` where the OS has no such menu (Windows, Linux).
+ * `setQuickActions` on desktop: the Dock icon's menu (macOS) or the taskbar button's jump list
+ * (Windows, on a runtime that has one), after the app's own Dock items. Resolves `false` where
+ * the OS has no such menu (Linux, an older Windows runtime).
  */
 export async function setDesktopDockMenu(entries: readonly DesktopDockEntry[]): Promise<boolean> {
   const out = await desktopRpc<{ applied?: unknown }>("app", "setDockMenu", {

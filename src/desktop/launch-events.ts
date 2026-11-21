@@ -132,6 +132,10 @@ export interface DesktopMenuCapabilities {
   readonly destructive?: boolean;
   /** The native menus read back (`getApplicationMenu`, `Deno.dock.getMenu`). */
   readonly snapshot?: boolean;
+  /** `Deno.dock.setMenu` shows the menu (macOS; Windows as the jump list). */
+  readonly dockMenu?: boolean;
+  /** The dock menu is the Windows taskbar button's jump list. */
+  readonly jumpList?: boolean;
 }
 
 /** A click on one of the app's notifications that no live `Notification` owns. */

@@ -1,8 +1,9 @@
 /**
  * Home-screen quick actions (the long-press shortcuts on the app icon) for `denext/mobile`,
  * over the `AppShortcuts` plugin (`@capawesome/capacitor-app-shortcuts`) in the shell. In a Deno
- * Desktop window on macOS they are the Dock icon's menu (Windows and Linux have none), where they
- * may also be separators, submenus and checked or disabled items. On the web there are none:
+ * Desktop window on macOS they are the Dock icon's menu, where they may also be separators,
+ * submenus and checked or disabled items; on Windows (a runtime with a jump list) the taskbar
+ * button's jump list, flattened; Linux has none. On the web there are none:
  * setting them is a no-op and no action ever arrives.
  *
  * @module
@@ -152,7 +153,11 @@ function toShortcut(action: QuickAction) {
  *
  * In a Deno Desktop window, the Dock icon's menu on macOS: titles (no subtitles or icons),
  * separators (`{ type: "separator" }`), submenus (`{ title, submenu }`), and `enabled` /
- * `checked`; nothing on Windows and Linux. The page's entries follow the app's own Dock items
+ * `checked`. On Windows, where `appCapabilities().jumpList` is true, the taskbar button's jump list
+ * tasks: flat (a submenu's actions are listed in its place between separators), disabled actions
+ * left out, no checkmarks; choosing one starts the app, and with `desktop.app.singleInstance` the
+ * running app gets the choice (else the instance it started does). Nothing on Linux. The page's
+ * entries follow the app's own Dock items
  * (`setDockMenu` / `runDesktop({ dockMenu })` in `desktop.ts`) after a separator, and an id one of
  * those uses is refused (`validation`). A choice reaches one page's {@linkcode onQuickAction} (the
  * key window's if it listens, else the one focused most recently that does) and the backend's
@@ -210,7 +215,8 @@ let fanout: Fanout<string> | undefined;
  *
  * On iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`
  * in an app without scenes), which `denext mobile add quick-actions` wires. In a Deno Desktop
- * window it reports the page's Dock-menu items chosen (macOS): each choice reaches one page only,
+ * window it reports the page's Dock-menu items chosen (macOS; Windows' jump list): each choice
+ * reaches one page only,
  * the key window's if it subscribed, else the page of the window focused most recently that did.
  *
  * @param callback Called with the chosen action's id.
