@@ -477,18 +477,19 @@ window.scenarios = {
     await frames(4);
     const s = sc();
     // Frame gaps (rAF to rAF) over the fling AND the settle after it: progressive slices run
-    // between frames, so they show here, not in the scroll-to-frame work below.
-    let maxGap = 0;
+    // between frames, so they show here, not in the scroll-to-frame work below. Every gap is
+    // kept (the test compares their distribution; one stall on a busy machine is the maximum).
+    const gaps = [];
     let gapLast = performance.now();
     let gapOn = true;
     const gapLoop = () => {
       const t = performance.now();
-      maxGap = Math.max(maxGap, t - gapLast);
+      gaps.push(t - gapLast);
       gapLast = t;
       if (gapOn) requestAnimationFrame(gapLoop);
     };
     requestAnimationFrame(gapLoop);
-    let maxWork = 0;
+    const works = [];
     let maxRows = 0;
     let workStart = -1;
     let rendersAtStart = 0;
@@ -501,7 +502,7 @@ window.scenarios = {
       s.scrollTop += 900;
       requestAnimationFrame(() => {
         if (workStart >= 0) {
-          maxWork = Math.max(maxWork, performance.now() - workStart);
+          works.push(performance.now() - workStart);
           maxRows = Math.max(maxRows, renders - rendersAtStart);
         }
         workStart = -1;
@@ -513,11 +514,36 @@ window.scenarios = {
     // Poll (bounded) for the slices to finish: no placeholder left, on two frames in a row.
     const left = await settled(() => host.querySelectorAll("[data-vl-placeholder]").length, (n) => n === 0, 600);
     gapOn = false;
-    return { maxWork: Math.round(maxWork), maxRows, maxGap: Math.round(maxGap), placeholders, left };
+    const tenths = (xs) => xs.map((x) => Math.round(x * 10) / 10);
+    return { works: tenths(works), maxRows, gaps: tenths(gaps), placeholders, left };
   },
 };
 window.__ready = true;
 `;
+
+/** One `progressive` scenario run: per-frame work and frame gaps (ms), rows, placeholders. */
+interface Progressive {
+  works: number[];
+  gaps: number[];
+  maxRows: number;
+  placeholders: number;
+  left: number;
+}
+
+/** Runs of each progressive mode, alternating. */
+const PROGRESSIVE_ROUNDS = 3;
+
+/** The `p` quantile of `xs` (nearest rank; 0 for none). */
+function percentile(xs: readonly number[], p: number): number {
+  if (xs.length === 0) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)];
+}
+
+/** The median of `xs`. */
+function medianOf(xs: readonly number[]): number {
+  return percentile(xs, 0.5);
+}
 
 const HTML = (script: string) =>
   `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}</style></head>` +
@@ -774,25 +800,43 @@ Deno.test({
     await t.step(
       "progressive: heavy rows — per-frame list work with and without (A6, T1)",
       async () => {
-        const off = await run<Record<string, number>>("window.scenarios.progressive(false)");
-        const on = await run<Record<string, number>>("window.scenarios.progressive(true)");
-        report.progressive = { off, on };
-        assert(on.placeholders > 0, "placeholders were shown while flinging");
-        assertEquals(on.left, 0, "every row rendered its content after the fling");
-        // Rows rendered inside a scroll frame are the work's deterministic measure.
-        assert(
-          on.maxRows < off.maxRows,
-          `progressive frames render fewer rows (${on.maxRows} < ${off.maxRows})`,
-        );
-        // Milliseconds are wall-clock: asserted only on an idle machine.
-        const [load1] = Deno.loadavg();
-        if (load1 < 4) {
-          assert(
-            on.maxWork < off.maxWork,
-            `progressive frames are lighter (${on.maxWork} < ${off.maxWork} ms)`,
-          );
-          assert(on.maxGap < off.maxGap, `shorter frame gaps (${on.maxGap} < ${off.maxGap} ms)`);
+        // Rounds alternate the modes, so a change in the machine's load hits both alike.
+        const rounds: { off: Progressive; on: Progressive }[] = [];
+        for (let i = 0; i < PROGRESSIVE_ROUNDS; i++) {
+          const off = await run<Progressive>("window.scenarios.progressive(false)");
+          const on = await run<Progressive>("window.scenarios.progressive(true)");
+          rounds.push({ off, on });
         }
+        const summary = (mode: "off" | "on") => ({
+          maxRows: Math.max(...rounds.map((r) => r[mode].maxRows)),
+          work: medianOf(rounds.map((r) => percentile(r[mode].works, 0.75))),
+          gap: medianOf(rounds.map((r) => percentile(r[mode].gaps, 0.75))),
+          maxGap: Math.max(...rounds.map((r) => Math.max(...r[mode].gaps))),
+        });
+        const off = summary("off");
+        const on = summary("on");
+        report.progressive = { off, on };
+        for (const { on } of rounds) {
+          assert(on.placeholders > 0, "placeholders were shown while flinging");
+          assertEquals(on.left, 0, "every row rendered its content after the fling");
+        }
+        // Rows rendered inside a scroll frame are the work's deterministic measure.
+        for (const r of rounds) {
+          assert(
+            r.on.maxRows < r.off.maxRows,
+            `progressive frames render fewer rows (${r.on.maxRows} < ${r.off.maxRows})`,
+          );
+        }
+        // Milliseconds are wall-clock, so the modes are compared by their typical frame (the
+        // 75th percentile of each run's frames, the median over the rounds), never by one
+        // frame: a single stall on a loaded machine is both runs' maximum. Without progressive
+        // rendering every scroll frame renders a screenful of heavy rows (some 30 ms); with it,
+        // a frame renders placeholders and the content follows in 6 ms slices between frames.
+        assert(
+          on.work < off.work,
+          `progressive frames are lighter (p75 ${on.work} < ${off.work} ms)`,
+        );
+        assert(on.gap < off.gap, `shorter frame gaps (p75 ${on.gap} < ${off.gap} ms)`);
       },
     );
 
