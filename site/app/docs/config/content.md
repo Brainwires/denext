@@ -486,7 +486,9 @@ See [Writing a plugin](/docs/plugins).
   `deepLinks`, `singleInstance`, and `allowedNavigationOrigins` (the exact origins
   besides the app's own the window may navigate to; any other `http(s)` navigation
   opens in the user's browser; needs the pinned runtime). The rest of `desktop`:
-  `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
+  `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars); a `detached` one
+  takes `{ exitAfterMs, keepAcrossUpdates, version }`:
+  [surviving updates](/docs/desktop#desktop-sidecars-detached-updates)),
   `preload`, `inspectable`, the first window (`window`, whose `macosHiddenMode`
   picks how macOS hides it, `titleBar`, `backdrop`, `minSize`, `maxSize`), `menu` (the backend's "Window" submenu: `newWindow`,
   `reopenClosed`, `list`, `items`; and `menus`, the app's own top-level menus beside the

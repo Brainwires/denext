@@ -96,7 +96,7 @@ import type { DesktopTraySettings } from "../desktop/tray-config.ts";
 import { createSpeechCapability } from "../desktop/caps/speech.ts";
 import { mergeSidecars, SIDECAR_CHILD_ENV, type SidecarDefinition } from "../desktop/sidecar.ts";
 import type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
-import type { SidecarHost } from "../desktop/sidecar-host.ts";
+import type { SidecarHost, StopDetachedSidecarOptions } from "../desktop/sidecar-host.ts";
 import type { DetachedSidecarEntry } from "../desktop/sidecar-detached.ts";
 
 /** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
@@ -292,8 +292,9 @@ export {
   type SidecarStatus,
 } from "../desktop/sidecar.ts";
 export type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
-export { stopSidecars } from "../desktop/sidecar-registry.ts";
+export { stopSidecars, type StopSidecarsOptions } from "../desktop/sidecar-registry.ts";
 export type { DetachedSidecarEntry } from "../desktop/sidecar-detached.ts";
+export type { StopDetachedSidecarOptions } from "../desktop/sidecar-host.ts";
 
 // Which desktop world the app runs in (stock loopback vs the denext-pinned runtime's in-process
 // memory transport at a stable origin): the env the runtime publishes, and the types the handler's
@@ -1058,20 +1059,22 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
    */
   sidecar(name: string): SidecarHandle;
   /**
-   * The app's registry of detached sidecars (`detached: true`): every recorded one, whether its
-   * endpoint authenticated just now (`reachable`) and whether the app still declares it
-   * (`declared`). An app that uses detached sidecars should show that something keeps running
-   * after it quit and offer to stop it; this is the list. `[]` in a sidecar's child.
+   * The app's registry of detached sidecars (`detached: true`): every recorded instance (with its
+   * `version` key, if it has one), whether its endpoint authenticated just now (`reachable`) and
+   * whether the app declares that instance (`declared`). An app that uses detached sidecars should
+   * show that something keeps running after it quit and offer to stop it; this is the list. `[]`
+   * in a sidecar's child.
    */
   detachedSidecars(): Promise<DetachedSidecarEntry[]>;
   /**
-   * Stop a recorded detached sidecar (shutdown, then a forced kill of the authenticated process
-   * where the app may signal processes) and remove its record: a declared one as
-   * `sidecar(name).stop()` does, a leftover the app no longer declares through its record. Rejects
-   * when none is recorded, or it could not be ended (its record is removed anyway, so it ends
-   * itself at its next registry check).
+   * Stop a recorded detached sidecar instance (shutdown, then a forced kill of the authenticated
+   * process where the app may signal processes) and remove its record: the declared one as
+   * `sidecar(name).stop()` does, any other (a leftover the app no longer declares, an instance of
+   * another version key: `{ version }`) through its record. `version` defaults to the one the app
+   * declares for `name`, else none. Rejects when none is recorded, or it could not be ended (its
+   * record is removed anyway, so it ends itself at its next registry check).
    */
-  stopDetachedSidecar(name: string): Promise<void>;
+  stopDetachedSidecar(name: string, options?: StopDetachedSidecarOptions): Promise<void>;
   /**
    * Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session
    * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled
@@ -2331,7 +2334,7 @@ function detachedRegistryApi(
   if (host) {
     return {
       detachedSidecars: () => host.detachedSidecars(),
-      stopDetachedSidecar: (name) => host.stopDetachedSidecar(name),
+      stopDetachedSidecar: (name, options) => host.stopDetachedSidecar(name, options),
     };
   }
   return {
@@ -2340,12 +2343,12 @@ function detachedRegistryApi(
       const m = await import("../desktop/sidecar-detached.ts");
       return await m.listDetachedSidecars(m.detachedRegistryDir(dataDir!), []);
     },
-    stopDetachedSidecar: async (name) => {
+    stopDetachedSidecar: async (name, options = {}) => {
       const m = await import("../desktop/sidecar-detached.ts");
       if (!dataDir) {
         throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
       }
-      await m.stopDetachedRecord(m.detachedRegistryDir(dataDir), name, 5_000);
+      await m.stopDetachedRecord(m.detachedRegistryDir(dataDir), name, 5_000, {}, options.version);
     },
   };
 }
@@ -2357,7 +2360,10 @@ function detachedRegistryApi(
 async function cleanDetachedRegistry(dataDir: string | undefined): Promise<void> {
   if (!(await hasDetachedRegistry(dataDir))) return;
   const m = await import("../desktop/sidecar-detached.ts");
-  await m.cleanDetachedLeftovers(m.detachedRegistryDir(dataDir!), [], 5_000);
+  const dir = m.detachedRegistryDir(dataDir!);
+  // This build declares none (nothing to record); another installed version's declarations still
+  // protect theirs.
+  await m.cleanDetachedLeftovers(dir, [], 5_000, await m.installedDetachedNames(dir));
 }
 
 /** The app's sidecar host, or `undefined` when it declares none (the module is then never loaded). */

@@ -10,8 +10,16 @@
  *
  * The registry: one record `<name>.json` per detached sidecar in `<app data>/sidecars/` (created
  * `0700`, records `0600`, written atomically: a temp file then a rename), holding `{ v: 1, name,
- * pid, startedAt, appVersion, control: { host, port }, key, port?, values?, secrets? }`. `key` is 32
- * random bytes the app made for this start; `pid` is informational only.
+ * version?, pid, startedAt, appVersion, control: { host, port }, key, port?, values?, secrets? }`;
+ * a sidecar with a version key (`detached.version`) is one instance per key,
+ * `<name>@<version>.json`. `key` is 32 random bytes the app made for this start; `pid` is
+ * informational only.
+ *
+ * The declarations: each packaged app version that launches records the detached sidecars it
+ * declares, with its executable's path and build stamp, in `<app data>/sidecars/installed/`.
+ * Launch-time cleanup stops a recorded instance only when no installed version declares its name
+ * (a declaration whose executable is gone or was replaced is dropped), so two installed versions
+ * of an app sharing a data folder never reap each other's sidecars.
  *
  * The control protocol: newline-delimited JSON, at most 8 KiB a line, both sides proving the key
  * without sending it (HMAC-SHA256 over a label, the role and both nonces, verified with
@@ -64,6 +72,12 @@ const DETACHED_REGISTRY_FOLDER = "sidecars";
 
 /** A sidecar name (as `sidecar.ts` validates it). */
 const NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
+/** A version key (as `sidecar.ts` validates `detached.version`). */
+const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** A record file: `<name>.json` or `<name>@<version>.json`. */
+const RECORD_FILE_RE = /^([a-z][a-z0-9-]{0,63})(?:@([A-Za-z0-9][A-Za-z0-9._-]{0,63}))?\.json$/;
+/** The declarations' folder inside the registry. */
+const DECLARATIONS_FOLDER = "installed";
 /** 16 bytes, base64url without padding. */
 const NONCE_RE = /^[A-Za-z0-9_-]{22}$/;
 /** 32 bytes, base64url without padding. */
@@ -75,6 +89,8 @@ export interface DetachedRecord {
   readonly v: 1;
   /** The sidecar's name. */
   readonly name: string;
+  /** The instance's version key (`detached.version`), when it has one. */
+  readonly version?: string;
   /** The process id the sidecar reported (informational: never signalled on its own say-so). */
   readonly pid: number;
   /** When it was started (epoch ms). */
@@ -104,14 +120,26 @@ export function detachedRegistryDir(dataDir: string): string {
 }
 
 /**
- * The record file of one sidecar.
+ * One instance's id in the registry's file names: `<name>`, or `<name>@<version>`.
+ *
+ * @param name The sidecar's name.
+ * @param version Its version key, if any.
+ * @returns The id.
+ */
+export function detachedInstanceId(name: string, version?: string): string {
+  return version === undefined ? name : `${name}@${version}`;
+}
+
+/**
+ * The record file of one sidecar instance.
  *
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
- * @returns `<registryDir>/<name>.json`.
+ * @param version Its version key, if any.
+ * @returns `<registryDir>/<name>.json` (or `<name>@<version>.json`).
  */
-export function detachedRecordPath(registryDir: string, name: string): string {
-  return join(registryDir, `${name}.json`);
+export function detachedRecordPath(registryDir: string, name: string, version?: string): string {
+  return join(registryDir, `${detachedInstanceId(name, version)}.json`);
 }
 
 /** `value` is a plain object. */
@@ -138,13 +166,18 @@ function valuesOk(value: unknown): boolean {
 }
 
 /**
- * A record parsed and checked, or `null` when the text is not one (or names another sidecar).
+ * A record parsed and checked, or `null` when the text is not one (or names another instance).
  *
  * @param text The file's text.
  * @param name The sidecar it must name, when known.
+ * @param version The version key it must carry, when known (`null`: none).
  * @returns The record, or `null`.
  */
-export function parseDetachedRecord(text: string, name?: string): DetachedRecord | null {
+export function parseDetachedRecord(
+  text: string,
+  name?: string,
+  version?: string | null,
+): DetachedRecord | null {
   let r: unknown;
   try {
     r = JSON.parse(text);
@@ -153,6 +186,7 @@ export function parseDetachedRecord(text: string, name?: string): DetachedRecord
   }
   if (!isObject(r) || r.v !== 1 || typeof r.name !== "string" || !NAME_RE.test(r.name)) return null;
   if (name !== undefined && r.name !== name) return null;
+  if (version !== undefined && (r.version ?? null) !== version) return null;
   return requiredFieldsOk(r) && optionalFieldsOk(r) ? r as unknown as DetachedRecord : null;
 }
 
@@ -164,27 +198,33 @@ function requiredFieldsOk(r: Record<string, unknown>): boolean {
     isInt(control.port, 1, 65535) && typeof r.key === "string" && KEY_RE.test(r.key);
 }
 
-/** A record's optional fields: `port`, `values`, `secrets`. */
+/** A record's optional fields: `version`, `port`, `values`, `secrets`. */
 function optionalFieldsOk(r: Record<string, unknown>): boolean {
   const secretsOk = r.secrets === undefined || (isObject(r.secrets) && allStrings(r.secrets));
-  return (r.port === undefined || isInt(r.port, 1, 65535)) && valuesOk(r.values) && secretsOk;
+  const versionOk = r.version === undefined ||
+    (typeof r.version === "string" && VERSION_RE.test(r.version));
+  return versionOk && (r.port === undefined || isInt(r.port, 1, 65535)) && valuesOk(r.values) &&
+    secretsOk;
 }
 
 /**
- * Read one record; `null` when there is none or it is not a valid record.
+ * Read one instance's record; `null` when there is none or it is not a valid record.
  *
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
+ * @param version Its version key, if any.
  * @returns The record, or `null`.
  */
 export async function readDetachedRecord(
   registryDir: string,
   name: string,
+  version?: string,
 ): Promise<DetachedRecord | null> {
   try {
     return parseDetachedRecord(
-      await Deno.readTextFile(detachedRecordPath(registryDir, name)),
+      await Deno.readTextFile(detachedRecordPath(registryDir, name, version)),
       name,
+      version ?? null,
     );
   } catch {
     return null;
@@ -209,12 +249,13 @@ export async function writeDetachedRecord(
   record: DetachedRecord,
 ): Promise<void> {
   await ensureRegistryDir(registryDir);
-  const temp = join(registryDir, `.${record.name}.${crypto.randomUUID()}.tmp`);
+  const id = detachedInstanceId(record.name, record.version);
+  const temp = join(registryDir, `.${id}.${crypto.randomUUID()}.tmp`);
   try {
     await Deno.writeTextFile(temp, JSON.stringify(record) + "\n", { mode: 0o600, createNew: true });
     // The process umask may have narrowed the mode, never widened it; set it exactly.
     if (Deno.build.os !== "windows") await Deno.chmod(temp, 0o600);
-    await Deno.rename(temp, detachedRecordPath(registryDir, record.name));
+    await Deno.rename(temp, detachedRecordPath(registryDir, record.name, record.version));
   } catch (err) {
     await Deno.remove(temp).catch(() => {});
     throw err;
@@ -228,17 +269,19 @@ export async function writeDetachedRecord(
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
  * @param key The key the record must hold.
+ * @param version The instance's version key, if any.
  */
 export async function removeDetachedRecord(
   registryDir: string,
   name: string,
   key?: string,
+  version?: string,
 ): Promise<void> {
-  const path = detachedRecordPath(registryDir, name);
+  const path = detachedRecordPath(registryDir, name, version);
   if (key !== undefined) {
     const text = await Deno.readTextFile(path).catch(() => undefined);
     if (text === undefined) return;
-    const current = parseDetachedRecord(text, name);
+    const current = parseDetachedRecord(text, name, version ?? null);
     // A record that is not valid any more is removed as well; another key's record is kept.
     if (current && current.key !== key) return;
   }
@@ -246,7 +289,7 @@ export async function removeDetachedRecord(
 }
 
 /**
- * Every valid record of the registry, by name.
+ * Every valid record of the registry, by instance id (`<name>`, `<name>@<version>`).
  *
  * @param registryDir The registry folder.
  * @returns The records (none when the folder does not exist).
@@ -255,13 +298,14 @@ export async function listDetachedRecords(registryDir: string): Promise<Detached
   const out: DetachedRecord[] = [];
   try {
     for await (const entry of Deno.readDir(registryDir)) {
-      const m = /^([a-z][a-z0-9-]{0,63})\.json$/.exec(entry.name);
+      const m = RECORD_FILE_RE.exec(entry.name);
       if (!entry.isFile || !m) continue;
-      const record = await readDetachedRecord(registryDir, m[1]);
+      const record = await readDetachedRecord(registryDir, m[1], m[2]);
       if (record) out.push(record);
     }
   } catch { /* no registry */ }
-  return out.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const id = (r: DetachedRecord) => detachedInstanceId(r.name, r.version);
+  return out.sort((a, b) => id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0);
 }
 
 /** Options for {@linkcode withDetachedLock}. */
@@ -303,13 +347,14 @@ async function lockIsStale(path: string, staleMs: number): Promise<boolean> {
 }
 
 /**
- * Run `fn` holding the start lock of one sidecar: `<registryDir>/<name>.lock`, created with
+ * Run `fn` holding the start lock of one sidecar instance: `<registryDir>/<id>.lock` (`id`: the
+ * name, or `<name>@<version>`, {@linkcode detachedInstanceId}), created with
  * `createNew` (an exclusive create), so two instances of the app never start two detached sidecars
  * of one name. The holder refreshes the file's time every third of `staleMs`; a lock not refreshed
  * for `staleMs` (its holder is gone) is broken.
  *
  * @param registryDir The registry folder.
- * @param name The sidecar's name.
+ * @param name The instance's id (the sidecar's name, or `<name>@<version>`).
  * @param fn What runs under the lock.
  * @param options The timings.
  * @returns What `fn` returns.
@@ -1053,10 +1098,32 @@ export function currentAppVersion(
   return build === "" ? version : `${version}+${build}`;
 }
 
+/** A detached sidecar instance an app declares: its name and version key, if any. */
+export interface DetachedDeclaration {
+  /** The sidecar's name. */
+  readonly name: string;
+  /** Its `detached.version`, when it has one. */
+  readonly version?: string;
+}
+
+/** `declared` as declarations (a bare name is an unversioned one). */
+function declarationsOf(
+  declared: readonly (string | DetachedDeclaration)[],
+): DetachedDeclaration[] {
+  return declared.map((d) => typeof d === "string" ? { name: d } : d);
+}
+
+/** Whether `record` is the instance one of `declared` names (same name and version key). */
+function declares(declared: readonly DetachedDeclaration[], record: DetachedRecord): boolean {
+  return declared.some((d) => d.name === record.name && d.version === record.version);
+}
+
 /** One entry of {@linkcode listDetachedSidecars}. */
 export interface DetachedSidecarEntry {
   /** The sidecar's name. */
   readonly name: string;
+  /** The instance's version key (`detached.version`), when it has one. */
+  readonly version?: string;
   /** The process id it reported (informational). */
   readonly pid: number;
   /** When it was started (epoch ms). */
@@ -1065,7 +1132,7 @@ export interface DetachedSidecarEntry {
   readonly appVersion: string;
   /** Whether its endpoint authenticated just now. */
   readonly reachable: boolean;
-  /** Whether the running app declares a detached sidecar of that name. */
+  /** Whether the running app declares this instance (its name, with the same version key). */
   readonly declared: boolean;
 }
 
@@ -1073,36 +1140,39 @@ export interface DetachedSidecarEntry {
  * The registry's records, each probed: what an app shows to offer stopping leftovers.
  *
  * @param registryDir The registry folder.
- * @param declared The names of the app's detached sidecars.
+ * @param declared The app's detached sidecars (names, or `{ name, version }`).
  * @returns The entries.
  */
 export async function listDetachedSidecars(
   registryDir: string,
-  declared: readonly string[],
+  declared: readonly (string | DetachedDeclaration)[],
 ): Promise<DetachedSidecarEntry[]> {
   const records = await listDetachedRecords(registryDir);
+  const decl = declarationsOf(declared);
   return await Promise.all(records.map(async (r) => {
     const session = await probeDetachedRecord(r);
     session?.close();
     return {
       name: r.name,
+      ...(r.version !== undefined ? { version: r.version } : {}),
       pid: session?.info.pid ?? r.pid,
       startedAt: r.startedAt,
       appVersion: r.appVersion,
       reachable: session !== null,
-      declared: declared.includes(r.name),
+      declared: declares(decl, r),
     };
   }));
 }
 
 /**
- * Stop the detached sidecar a record names and remove the record: a stale record (nothing proves
- * its key) is removed without touching its pid.
+ * Stop the detached sidecar instance a record names and remove the record: a stale record (nothing
+ * proves its key) is removed without touching its pid.
  *
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
  * @param graceMs The shutdown grace.
  * @param options The kill (tests).
+ * @param version The instance's version key, if any.
  * @returns Once it is gone; rejects when there is no such record, or it could not be ended (the
  *   record is removed anyway: the sidecar then ends itself at its next registry check).
  */
@@ -1111,38 +1181,202 @@ export async function stopDetachedRecord(
   name: string,
   graceMs: number,
   options: DetachedStopOptions = {},
+  version?: string,
 ): Promise<void> {
-  const record = await readDetachedRecord(registryDir, name);
-  if (!record) throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
+  const id = detachedInstanceId(name, version);
+  const record = await readDetachedRecord(registryDir, name, version);
+  if (!record) throw new Error(`sidecar ${id}: no detached sidecar of that name is recorded`);
   const session = await probeDetachedRecord(record);
   const result = session ? await endDetachedSession(session, graceMs, options) : { ended: true };
-  await removeDetachedRecord(registryDir, name, record.key);
-  if (!result.ended) throw new Error(`sidecar ${name}: ${result.reason}`);
+  await removeDetachedRecord(registryDir, name, record.key, version);
+  if (!result.ended) throw new Error(`sidecar ${id}: ${result.reason}`);
 }
 
 /**
- * Stop and remove every recorded detached sidecar the app no longer declares (an update dropped
- * it), and every stale record. Failures are logged, never thrown.
+ * Stop and remove every recorded detached sidecar no installed version of the app declares (an
+ * update dropped it), and every stale record of an instance the app does not run itself. An
+ * instance of a name the app or another installed version still declares is kept: the app's own
+ * instance its launcher reattaches to, and one of another version key until the app or the user
+ * stops it. Failures are logged, never thrown.
  *
  * @param registryDir The registry folder.
- * @param declared The names of the app's detached sidecars.
+ * @param declared The running app's detached sidecars (names, or `{ name, version }`).
  * @param graceMs The shutdown grace.
- * @returns The names it removed.
+ * @param installed The names other installed versions of the app declare
+ *   ({@linkcode installedDetachedNames}).
+ * @returns The instance ids it removed.
  */
 export async function cleanDetachedLeftovers(
   registryDir: string,
-  declared: readonly string[],
+  declared: readonly (string | DetachedDeclaration)[],
   graceMs: number,
+  installed: readonly string[] = [],
 ): Promise<string[]> {
+  const decl = declarationsOf(declared);
+  const kept = new Set([...decl.map((d) => d.name), ...installed]);
   const removed: string[] = [];
   for (const record of await listDetachedRecords(registryDir)) {
-    if (declared.includes(record.name)) continue;
+    // The running app's own instance: its launcher reattaches to it, replaces it or drops it.
+    if (declares(decl, record)) continue;
+    const id = detachedInstanceId(record.name, record.version);
     try {
-      await stopDetachedRecord(registryDir, record.name, graceMs);
-      removed.push(record.name);
+      if (kept.has(record.name)) {
+        // Still declared somewhere: kept while it answers; a stale record goes, its pid untouched.
+        const session = await probeDetachedRecord(record);
+        session?.close();
+        if (session) continue;
+        await removeDetachedRecord(registryDir, record.name, record.key, record.version);
+      } else {
+        await stopDetachedRecord(registryDir, record.name, graceMs, {}, record.version);
+      }
+      removed.push(id);
     } catch (err) {
       console.error(`desktop: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return removed;
+}
+
+// ── the declarations of the installed app versions ─────────────────────────────────────────────
+
+/** The running build as a declaration names it: its executable and build stamp. */
+export interface DetachedBuild {
+  /** The app version (`currentAppVersion()`). */
+  readonly appVersion: string;
+  /** The executable's path. */
+  readonly exe: string;
+  /** The executable's size and change time, `<size>.<mtime ms>`. */
+  readonly stamp: string;
+}
+
+/** One installed version's declaration file. */
+interface DeclarationFile extends DetachedBuild {
+  readonly v: 1;
+  readonly declared: readonly DetachedDeclaration[];
+  readonly at: number;
+}
+
+/** Reads a file's size and change time (tests pass a fake; default `Deno.stat`). */
+export type DetachedStat = (path: string) => Promise<{ size: number; mtime: Date | null }>;
+
+/** The stamp of `info`: `<size>.<mtime ms>`. */
+function stampOf(info: { size: number; mtime: Date | null }): string {
+  return `${info.size}.${info.mtime?.getTime() ?? 0}`;
+}
+
+/**
+ * The running packaged build, as its declaration records it, or `null` outside a packaged app
+ * (a `dev` run is no installed version).
+ *
+ * @param appVersion The app version (`currentAppVersion()`).
+ * @param stat Reads the executable (tests).
+ * @returns The build, or `null`.
+ */
+export async function currentDetachedBuild(
+  appVersion: string,
+  stat: DetachedStat = Deno.stat,
+): Promise<DetachedBuild | null> {
+  if (appVersion === "dev") return null;
+  try {
+    const exe = Deno.execPath();
+    return { appVersion, exe, stamp: stampOf(await stat(exe)) };
+  } catch {
+    return null;
+  }
+}
+
+/** The declaration file of `appVersion`: `<registry>/installed/<sha-256 prefix>.json`. */
+async function declarationPath(registryDir: string, appVersion: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(appVersion));
+  const hex = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return join(registryDir, DECLARATIONS_FOLDER, `${hex}.json`);
+}
+
+/**
+ * Record the detached sidecars the running build declares (`0600`, atomically), so another
+ * installed version's launch keeps them. A failure is logged, never thrown.
+ *
+ * @param registryDir The registry folder.
+ * @param build The running build ({@linkcode currentDetachedBuild}).
+ * @param declared Its detached sidecars.
+ */
+export async function recordDetachedDeclarations(
+  registryDir: string,
+  build: DetachedBuild,
+  declared: readonly (string | DetachedDeclaration)[],
+): Promise<void> {
+  const file: DeclarationFile = {
+    v: 1,
+    ...build,
+    declared: declarationsOf(declared),
+    at: Date.now(),
+  };
+  const path = await declarationPath(registryDir, build.appVersion);
+  const dir = join(registryDir, DECLARATIONS_FOLDER);
+  const temp = join(dir, `.${crypto.randomUUID()}.tmp`);
+  try {
+    await ensureRegistryDir(dir);
+    await Deno.writeTextFile(temp, JSON.stringify(file) + "\n", { mode: 0o600, createNew: true });
+    if (Deno.build.os !== "windows") await Deno.chmod(temp, 0o600);
+    await Deno.rename(temp, path);
+  } catch (err) {
+    await Deno.remove(temp).catch(() => {});
+    console.error(`desktop: could not record the detached sidecars this version declares: ${err}`);
+  }
+}
+
+/** A declaration file parsed and checked, or `null`. */
+function parseDeclaration(text: string): DeclarationFile | null {
+  let d: unknown;
+  try {
+    d = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObject(d) || d.v !== 1 || typeof d.appVersion !== "string") return null;
+  if (typeof d.exe !== "string" || typeof d.stamp !== "string" || !Array.isArray(d.declared)) {
+    return null;
+  }
+  const ok = d.declared.every((x) =>
+    isObject(x) && typeof x.name === "string" && NAME_RE.test(x.name) &&
+    (x.version === undefined || (typeof x.version === "string" && VERSION_RE.test(x.version)))
+  );
+  return ok ? d as unknown as DeclarationFile : null;
+}
+
+/**
+ * The names the installed versions of the app declare as detached sidecars: every declaration
+ * whose executable still exists with the build stamp it recorded. One whose executable is gone or
+ * was replaced (uninstalled, updated over), or that is not a valid declaration, is deleted.
+ *
+ * @param registryDir The registry folder.
+ * @param stat Reads an executable (tests; default `Deno.stat`).
+ * @returns The names.
+ */
+export async function installedDetachedNames(
+  registryDir: string,
+  stat: DetachedStat = Deno.stat,
+): Promise<string[]> {
+  const dir = join(registryDir, DECLARATIONS_FOLDER);
+  const names = new Set<string>();
+  const entries: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      if (e.isFile && /^[0-9a-f]{24}\.json$/.test(e.name)) entries.push(e.name);
+    }
+  } catch {
+    return [];
+  }
+  for (const entry of entries) {
+    const path = join(dir, entry);
+    const decl = parseDeclaration(await Deno.readTextFile(path).catch(() => ""));
+    const now = decl ? await stat(decl.exe).then(stampOf, () => null) : null;
+    if (!decl || now !== decl.stamp) {
+      await Deno.remove(path).catch(() => {});
+      continue;
+    }
+    for (const d of decl.declared) names.add(d.name);
+  }
+  return [...names].sort();
 }

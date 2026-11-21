@@ -185,11 +185,24 @@ export interface SidecarDetached {
    */
   readonly exitAfterMs?: number;
   /**
-   * Keep a running instance started by another version of the app instead of replacing it at
-   * launch (default `false`: an update replaces it, so code from a superseded build does not
-   * linger). Should be rare.
+   * Let the instance outlive app updates (default `false`: an update stops it, and a launch of
+   * another app version replaces it, so code from a superseded build does not linger). With
+   * `true`, installing a full-app update (`installAppUpdateAndRelaunch()`,
+   * `stopSidecars({ forUpdate: true })`) lets it go running, on macOS and Linux, and the next
+   * launch reattaches to it whatever app version started it. On Windows an update still stops it:
+   * the install cannot be swapped while a process runs from it.
    */
   readonly keepAcrossUpdates?: boolean;
+  /**
+   * A version key the app chooses for this instance, such as the protocol version its clients
+   * speak (1 to 64 of `[A-Za-z0-9._-]`, starting with a letter or digit). Instances are then
+   * `name` + `version`: a launch reattaches to the instance of its own key, whatever app version
+   * started it, and starts a new one beside instances of other keys, which keep running until
+   * the app or the user stops them (`stopDetachedSidecar(name, { version })`). Implies
+   * `keepAcrossUpdates`. Launch-time cleanup never stops an instance of a name some installed
+   * version of the app still declares.
+   */
+  readonly version?: string;
 }
 
 /** A value a sidecar shares with the page ({@linkcode SidecarDefinition.expose}). */
@@ -285,8 +298,10 @@ export interface SidecarDefinition {
    * loopback control connection (status `detached: true`, `reattached: true`; its port, secrets and
    * values are the ones it was started with, and `ready` is not checked again). Quitting the app
    * leaves it running; `sidecar(name).stop()`, `stopSidecars()` and installing a full-app update
-   * end it. An instance started by another app version is replaced at launch unless
-   * `keepAcrossUpdates`. In the sidecar: `denextSidecar.detached.attached` /
+   * end it (an update lets one with `keepAcrossUpdates` or a `version` go running, on macOS and
+   * Linux). An instance started by another app version is replaced at launch unless
+   * `keepAcrossUpdates`; with a `version`, instances are per key and run side by side. In the
+   * sidecar: `denextSidecar.detached.attached` /
    * `onAttachedChange(fn)`. Not with `run.exec` (a foreign program has no control channel denext
    * can authenticate) nor `ready.stdout` (its output does not reach the app).
    */
@@ -771,7 +786,7 @@ function detachedObjectError(detached: Record<string, unknown>): string | null {
   const ms = detached.exitAfterMs;
   const keep = detached.keepAcrossUpdates;
   return first([
-    () => unknownOption(detached, "detached", ["exitAfterMs", "keepAcrossUpdates"]),
+    () => unknownOption(detached, "detached", ["exitAfterMs", "keepAcrossUpdates", "version"]),
     () =>
       ms === undefined || (isMs(ms) && (ms as number) >= 1000)
         ? null
@@ -780,15 +795,23 @@ function detachedObjectError(detached: Record<string, unknown>): string | null {
       keep === undefined || typeof keep === "boolean"
         ? null
         : "detached.keepAcrossUpdates must be a boolean",
+    () =>
+      detached.version === undefined ||
+        (typeof detached.version === "string" && DETACHED_VERSION_RE.test(detached.version))
+        ? null
+        : "detached.version must be 1 to 64 of [A-Za-z0-9._-], starting with a letter or digit",
   ]);
 }
+
+/** A detached sidecar's version key. */
+const DETACHED_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** The problem with `detached`, or `null`. */
 function detachedError(d: Record<string, unknown>): string | null {
   const detached = d.detached;
   if (detached === undefined || detached === false) return null;
   if (detached !== true && !isObject(detached)) {
-    return "detached must be a boolean or { exitAfterMs, keepAcrossUpdates }";
+    return "detached must be a boolean or { exitAfterMs, keepAcrossUpdates, version }";
   }
   return detachedConflictError(d) ?? (detached === true ? null : detachedObjectError(detached));
 }
@@ -805,19 +828,38 @@ export function isDetachedSidecar(definition: SidecarDefinition): boolean {
 }
 
 /**
- * A detached sidecar's settled options: `exitAfterMs` (`undefined`: none) and `keepAcrossUpdates`.
+ * A detached sidecar's settled options: `exitAfterMs` (`undefined`: none), `keepAcrossUpdates`
+ * (`true` with a `version`, which implies it) and `version` (`undefined`: none).
  *
  * @param definition The sidecar.
  * @returns The options.
  */
 export function detachedOptions(
   definition: SidecarDefinition,
-): { exitAfterMs?: number; keepAcrossUpdates: boolean } {
+): { exitAfterMs?: number; keepAcrossUpdates: boolean; version?: string } {
   const d = typeof definition.detached === "object" ? definition.detached : {};
   return {
     ...(d.exitAfterMs !== undefined ? { exitAfterMs: d.exitAfterMs } : {}),
-    keepAcrossUpdates: d.keepAcrossUpdates === true,
+    keepAcrossUpdates: d.keepAcrossUpdates === true || d.version !== undefined,
+    ...(d.version !== undefined ? { version: d.version } : {}),
   };
+}
+
+/**
+ * Whether a full-app update lets this detached sidecar go running instead of stopping it:
+ * `keepAcrossUpdates` (or a `version`), on macOS and Linux. Windows cannot swap an install a
+ * process still runs from, so there an update stops it.
+ *
+ * @param definition The sidecar.
+ * @param os The OS (default the running one).
+ * @returns Whether it survives the update.
+ */
+export function detachedSurvivesUpdate(
+  definition: SidecarDefinition,
+  os: string = Deno.build.os,
+): boolean {
+  return isDetachedSidecar(definition) && os !== "windows" &&
+    detachedOptions(definition).keepAcrossUpdates;
 }
 
 /** The problem with the scalar fields (`args`, `cwd`, `port`, `portEnv`, `logs`, `proxy`). */

@@ -50,6 +50,7 @@ import { envAll } from "../runtime/env-safe.ts";
 import {
   connectDetachedControl,
   type DetachedEnd,
+  detachedInstanceId,
   type DetachedRecord,
   detachedRecordPath,
   type DetachedSession,
@@ -643,7 +644,7 @@ interface DetachedStart {
 /** The `init` message a fresh detached process gets over its IPC channel (the key travels only here). */
 function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, start: DetachedStart) {
   const def = ctx.definition;
-  const { exitAfterMs } = detachedOptions(def);
+  const { exitAfterMs, version } = detachedOptions(def);
   return {
     t: "init",
     name: def.name,
@@ -654,7 +655,7 @@ function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, sta
     appVersion: o.appVersion,
     startedAt: start.startedAt,
     ...(exitAfterMs !== undefined ? { exitAfterMs } : {}),
-    recordPath: detachedRecordPath(o.registryDir, def.name),
+    recordPath: detachedRecordPath(o.registryDir, def.name, version),
     ...(o.recordPollMs !== undefined ? { recordPollMs: o.recordPollMs } : {}),
     graceMs: def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs,
   };
@@ -667,9 +668,11 @@ function detachedRecordOf(
   start: DetachedStart,
   control: { port: number; pid: number },
 ): DetachedRecord {
+  const { version } = detachedOptions(ctx.definition);
   return {
     v: 1,
     name: ctx.definition.name,
+    ...(version !== undefined ? { version } : {}),
     pid: control.pid,
     startedAt: start.startedAt,
     appVersion: o.appVersion,
@@ -753,7 +756,7 @@ async function spawnDetached(
       name: def.name,
     });
     if (!session) {
-      await removeDetachedRecord(o.registryDir, def.name, start.key);
+      await removeDetachedRecord(o.registryDir, def.name, start.key, record.version);
       throw new Error("its control endpoint did not authenticate");
     }
     // Attached: nothing ties the process to the app any more.
@@ -772,22 +775,24 @@ async function attachOrStart(
   ctx: SidecarLaunchContext,
 ): Promise<DetachedAttach> {
   const def = ctx.definition;
-  const record = await readDetachedRecord(o.registryDir, def.name);
+  const { keepAcrossUpdates, version } = detachedOptions(def);
+  const record = await readDetachedRecord(o.registryDir, def.name, version);
   if (record) {
     const session = await probeDetachedRecord(record);
     if (session) {
-      if (record.appVersion === o.appVersion || detachedOptions(def).keepAcrossUpdates) {
+      // This app version's instance, or (keepAcrossUpdates, a version key) any app version's.
+      if (record.appVersion === o.appVersion || keepAcrossUpdates) {
         return { session, record, reattached: true };
       }
       const graceMs = def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs;
       const result = await endDetachedSession(session, graceMs, o.stopOptions);
-      await removeDetachedRecord(o.registryDir, def.name, record.key);
+      await removeDetachedRecord(o.registryDir, def.name, record.key, version);
       if (!result.ended) {
         throw new Error(`the instance app version ${record.appVersion} started ${result.reason}`);
       }
     } else {
       // Stale (a reboot, a crash, another process on its port): dropped, its pid never touched.
-      await removeDetachedRecord(o.registryDir, def.name, record.key);
+      await removeDetachedRecord(o.registryDir, def.name, record.key, version);
     }
   }
   return await spawnDetached(o, ctx);
@@ -820,7 +825,7 @@ export function detachedSidecarLauncher(options: DetachedLauncherOptions): Sidec
     if ("error" in options.child) throw new Error(options.child.error);
     const { session, record, reattached } = await withDetachedLock(
       options.registryDir,
-      def.name,
+      detachedInstanceId(def.name, detachedOptions(def).version),
       () => attachOrStart(options, ctx),
     );
     if (!session.ready) void session.whenReady().then(() => ctx.onReadySignal());
@@ -843,7 +848,7 @@ export function detachedSidecarLauncher(options: DetachedLauncherOptions): Sidec
       stop: async (graceMs) => {
         asked = true;
         const result = await endDetachedSession(session, graceMs, options.stopOptions);
-        await removeDetachedRecord(options.registryDir, def.name, record.key);
+        await removeDetachedRecord(options.registryDir, def.name, record.key, record.version);
         if (!result.ended) throw new Error(`sidecar ${def.name}: ${result.reason}`);
       },
     };

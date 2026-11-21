@@ -154,6 +154,22 @@ and this project adheres to
   hand; once one does, `desktopBuildFlags`'s `unixSocketTokens` bakes `unix:$DENO_DESKTOP_DATA/ipc/
   <name>.sock` for each listed channel, both directions. Windows named pipes get nothing. The config
   check validates the channel names. Type: `DesktopLocalIpcConfig` (`denext/server`).
+- **Detached sidecars that persist across updates, with versions side by side.** A detached
+  sidecar's `keepAcrossUpdates: true` now really outlives app updates: installing a full-app
+  update (`installAppUpdateAndRelaunch()`, `stopSidecars({ forUpdate: true })`) lets it go running
+  on macOS and Linux instead of stopping it (on Windows the install cannot be swapped while a
+  process runs from it, so an update still stops it; on Linux the update helper waits up to 60 s
+  for it before swapping). `detached.version` (a key of the app's choosing, such as a protocol
+  version) makes instances `name` + `version` (`<name>@<version>.json` in the registry): a launch
+  reattaches to its own key's instance whatever app version started it and starts a new one beside
+  the others, which keep running until `stopDetachedSidecar(name, { version })` stops them; it
+  implies `keepAcrossUpdates`. `detachedSidecars()` entries carry `version`. Launch-time cleanup
+  stops a recorded instance only when no installed version of the app declares its name: each
+  packaged build records its declarations with its executable's path and build stamp in `<app
+  data>/sidecars/installed/`, dropped once that executable is gone or replaced. Instances are still
+  only those the app recorded and that authenticate with the record's key. Types:
+  `StopSidecarsOptions`, `StopDetachedSidecarOptions` (`denext/desktop`); `version` on
+  `SidecarDetached` / `DesktopSidecarDetachedConfig`.
 
 ### Changed
 
@@ -178,6 +194,10 @@ and this project adheres to
   `runDesktopPackageMain(main, { os, entryUrl: import.meta.url })`, which hands them to
   `desktop.packageHooks.post`; regenerate with `denext desktop package --regenerate-scripts`.
   `runDesktopPackageMain`'s `main` may return the artifact paths.
+- **`killSidecarsNow("update")` lets a detached sidecar that survives updates go** (its
+  `keepAcrossUpdates` or `version`, on macOS and Linux) instead of stopping it, and
+  `cleanDetachedLeftovers` keeps every instance of a name the app or another installed version
+  declares (a stale one is dropped).
 
 ### Fixed
 

@@ -2137,6 +2137,8 @@
     "SidecarState:typeAlias",
     "SidecarStatus:interface",
     "SigntoolCertificateDeps:interface",
+    "StopDetachedSidecarOptions:interface",
+    "StopSidecarsOptions:interface",
     "StoreCommandResult:interface",
     "StoreCommandRunner:typeAlias",
     "StoreCommandRunnerSync:typeAlias",

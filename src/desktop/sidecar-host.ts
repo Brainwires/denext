@@ -15,9 +15,11 @@
  * sidecar is sent `SIGTERM` when the app exits (`unload`) or installs a full-app update, and its
  * stdin (a pipe from the app) reaches end-of-file whenever the app's process ends. A detached
  * sidecar (`detached: true`) outlives the app on purpose: the app only closes its control
- * connection at exit, stops it before a full-app update, and at each start reattaches to it or
- * replaces it; records the app no longer declares, and stale ones, are cleaned at `startAll` (see
- * `sidecar-detached.ts` for the registry and its policy).
+ * connection at exit, stops it before a full-app update (unless it survives updates:
+ * `keepAcrossUpdates` or a `version`, on macOS and Linux), and at each start reattaches to it or
+ * replaces it. At `startAll` a packaged build records what it declares (`installed/`), and records
+ * of names no installed version declares, and stale ones, are cleaned (see `sidecar-detached.ts`
+ * for the registry and its policy).
  *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
@@ -29,6 +31,8 @@ import { prepareSidecarModules } from "./sidecar-modules.ts";
 import { encodeBase64Url } from "@std/encoding/base64url";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import {
+  detachedOptions,
+  detachedSurvivesUpdate,
   isDetachedSidecar,
   SIDECAR_DEFAULTS,
   type SidecarDefinition,
@@ -40,9 +44,14 @@ import {
 import {
   cleanDetachedLeftovers,
   currentAppVersion,
+  currentDetachedBuild,
+  type DetachedDeclaration,
   detachedRegistryDir,
   type DetachedSidecarEntry,
+  type DetachedStat,
+  installedDetachedNames,
   listDetachedSidecars,
+  recordDetachedDeclarations,
   stopDetachedRecord,
 } from "./sidecar-detached.ts";
 import {
@@ -59,7 +68,11 @@ import {
   resolveSidecarProgram,
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
-import { registerSidecarStopper, type SidecarKillReason } from "./sidecar-registry.ts";
+import {
+  registerSidecarStopper,
+  type SidecarKillReason,
+  type StopSidecarsOptions,
+} from "./sidecar-registry.ts";
 import { freeLoopbackPort, loopbackPortTaken, pickFreeLoopbackPort } from "../utils/loopback.ts";
 import { parentChildBase, type SidecarChildBase } from "./sidecar-child.ts";
 import {
@@ -107,6 +120,19 @@ export interface SidecarHostOptions {
   readonly appVersion?: string;
   /** How often a detached sidecar re-reads its registry record (tests shorten it). */
   readonly detachedRecordPollMs?: number;
+  /** Reads an executable's size and change time for the declarations (tests; `Deno.stat`). */
+  readonly detachedStat?: DetachedStat;
+  /** The OS whose update rules apply (tests; default the running one). */
+  readonly os?: string;
+}
+
+/** Options for {@linkcode SidecarHost.stopDetachedSidecar}. */
+export interface StopDetachedSidecarOptions {
+  /**
+   * The instance's version key (`detached.version`). Default: the version the app declares for
+   * that name, else none (an unversioned instance).
+   */
+  readonly version?: string;
 }
 
 /** The sidecars of the app, as `runDesktop` drives them. */
@@ -126,20 +152,22 @@ export interface SidecarHost {
   startAll(): void;
   /**
    * Stop every sidecar (gracefully, in parallel); resolves once their log files have every line.
+   * With `forUpdate`, a detached sidecar that survives updates is let go instead.
    */
-  stopAll(): Promise<void>;
+  stopAll(options?: StopSidecarsOptions): Promise<void>;
   /**
    * End every sidecar now (synchronously): at exit (`"exit"`, the default) a detached sidecar is
-   * only let go; before an update (`"update"`) it is asked to stop too.
+   * only let go; before an update (`"update"`) it is asked to stop too, unless it survives updates
+   * (`keepAcrossUpdates` or a `version`, on macOS and Linux).
    */
   killAll(reason?: SidecarKillReason): void;
   /** The app's registry of detached sidecars, each probed (`[]` without a data folder). */
   detachedSidecars(): Promise<DetachedSidecarEntry[]>;
   /**
-   * Stop a recorded detached sidecar and remove its record: a declared one through its handle, an
-   * undeclared leftover through its record.
+   * Stop a recorded detached sidecar instance and remove its record: the declared one through its
+   * handle, any other (an undeclared leftover, another version key's instance) through its record.
    */
-  stopDetachedSidecar(name: string): Promise<void>;
+  stopDetachedSidecar(name: string, options?: StopDetachedSidecarOptions): Promise<void>;
 }
 
 /** How many picks {@linkcode pickUntaken} tries before it gives up. */
@@ -418,6 +446,26 @@ async function buildSupervisor(
   return supervisor;
 }
 
+/**
+ * At a launch: record what this packaged build declares, then stop the recorded instances no
+ * installed version declares and drop the stale ones. Never throws (each step logs its failure).
+ */
+async function cleanAtLaunch(
+  registryDir: string,
+  declared: readonly DetachedDeclaration[],
+  options: SidecarHostOptions,
+): Promise<void> {
+  try {
+    const stat = options.detachedStat ?? Deno.stat;
+    const build = await currentDetachedBuild(options.appVersion ?? currentAppVersion(), stat);
+    if (build) await recordDetachedDeclarations(registryDir, build, declared);
+    const installed = await installedDetachedNames(registryDir, stat);
+    await cleanDetachedLeftovers(registryDir, declared, SIDECAR_DEFAULTS.graceMs, installed);
+  } catch (err) {
+    console.error(`desktop: cleaning the detached sidecar registry failed: ${err}`);
+  }
+}
+
 /** The `{ name }` argument of a page call, checked. */
 function nameArg(args: unknown): string {
   const name = (args as { name?: unknown } | null)?.name;
@@ -437,13 +485,22 @@ function nameArg(args: unknown): string {
 export async function createSidecarHost(options: SidecarHostOptions): Promise<SidecarHost> {
   const problem = sidecarListError(options.sidecars);
   if (problem) throw new Error(`desktop: sidecars${problem}`);
-  const detachedNames = options.sidecars.filter(isDetachedSidecar).map((d) => d.name);
-  if (detachedNames.length > 0 && !options.dataDir) {
+  const detachedDecl: DetachedDeclaration[] = options.sidecars.filter(isDetachedSidecar).map(
+    (d) => {
+      const { version } = detachedOptions(d);
+      return version === undefined ? { name: d.name } : { name: d.name, version };
+    },
+  );
+  if (detachedDecl.length > 0 && !options.dataDir) {
     throw new Error(
-      `desktop: sidecar "${detachedNames[0]}" is detached, which needs the app's data folder for ` +
-        "its registry (runDesktop's appDirs, from resolveDesktopCapabilities)",
+      `desktop: sidecar "${detachedDecl[0].name}" is detached, which needs the app's data folder ` +
+        "for its registry (runDesktop's appDirs, from resolveDesktopCapabilities)",
     );
   }
+  const definitions = new Map(options.sidecars.map((d) => [d.name, d]));
+  /** Whether an update lets sidecar `name` go running rather than stopping it. */
+  const survivesUpdate = (name: string) =>
+    detachedSurvivesUpdate(definitions.get(name)!, options.os ?? Deno.build.os);
   const registryDir = options.dataDir ? detachedRegistryDir(options.dataDir) : undefined;
   const pick = options.pickPort ?? freeLoopbackPort;
   const taken = options.portTaken ?? loopbackPortTaken;
@@ -467,15 +524,21 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     return s;
   };
 
+  /** Whether `s` is let go (left running) rather than stopped, for `reason`. */
+  const letGo = (s: SidecarSupervisor, reason: SidecarKillReason) =>
+    s.detached && (reason === "exit" || survivesUpdate(s.name));
   const killAll = (reason: SidecarKillReason = "exit") => {
     for (const s of supervisors.values()) {
-      if (reason === "exit" && s.detached) s.release();
+      if (letGo(s, reason)) s.release();
       else void s.stop().catch(() => {});
     }
     killExecSidecars();
   };
-  const stopAll = async () => {
-    await Promise.all([...supervisors.values()].map((s) => s.stop()));
+  const stopAll = async (opts: StopSidecarsOptions = {}) => {
+    await Promise.all([...supervisors.values()].map((s) => {
+      if (opts.forUpdate === true && letGo(s, "update")) return s.release();
+      return s.stop();
+    }));
     // What the sidecars printed up to their exit is in their log files before this returns.
     await Promise.all(sinks.map((s) => s.written()));
   };
@@ -509,26 +572,32 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     ...(proxied ? { proxied } : {}),
     startAll() {
       registerSidecarStopper({ kill: killAll, stop: stopAll });
-      // Undeclared leftovers (an update dropped them) and stale records, in the background.
+      // This build's declarations, then the leftovers no installed version declares (an update
+      // dropped them) and stale records, in the background.
       if (registryDir) {
-        void cleanDetachedLeftovers(registryDir, detachedNames, SIDECAR_DEFAULTS.graceMs);
+        void cleanAtLaunch(registryDir, detachedDecl, options);
       }
       for (const s of supervisors.values()) s.start();
     },
     stopAll,
     killAll,
     detachedSidecars: () =>
-      registryDir ? listDetachedSidecars(registryDir, detachedNames) : Promise.resolve([]),
-    async stopDetachedSidecar(name) {
+      registryDir ? listDetachedSidecars(registryDir, detachedDecl) : Promise.resolve([]),
+    async stopDetachedSidecar(name, opts = {}) {
       const declared = supervisors.get(name);
+      const own = detachedDecl.find((d) => d.name === name);
+      const version = "version" in opts ? opts.version : own?.version;
       const running = ["starting", "ready", "backoff", "stopping"];
-      if (declared?.detached && running.includes(declared.status.state)) {
+      if (
+        declared?.detached && own && own.version === version &&
+        running.includes(declared.status.state)
+      ) {
         return await declared.stop();
       }
       if (!registryDir) {
         throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
       }
-      await stopDetachedRecord(registryDir, name, SIDECAR_DEFAULTS.graceMs);
+      await stopDetachedRecord(registryDir, name, SIDECAR_DEFAULTS.graceMs, {}, version);
     },
   };
 }

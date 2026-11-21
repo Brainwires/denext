@@ -6237,7 +6237,7 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
         {`sidecars: [{
   name: "ptyd",
   run: { module: "./desktop/ptyd.ts" },
-  detached: true,                       // or { exitAfterMs: 600_000, keepAcrossUpdates: false }
+  detached: true,                       // or { exitAfterMs, keepAcrossUpdates, version }
   port: "auto",
   ready: { signal: true },
   secrets: { token: "$random" },
@@ -6290,9 +6290,8 @@ sc.ready();`}
           handlers, then exit; within{" "}
           <code>shutdown.graceMs</code>, at most 30 s) and removes its record;{" "}
           <code>restart()</code> is stop then a fresh start. <code>stopSidecars()</code>{" "}
-          and installing a full-app update stop detached sidecars too: there is one behaviour,
-          everything stops (the binary is about to be replaced, and on Windows a running copy locks
-          it).
+          and installing a full-app update stop detached sidecars too (the binary is about to be
+          replaced), unless one survives updates (below).
         </li>
         <li>
           Two instances of the app starting at once (without{" "}
@@ -6302,10 +6301,10 @@ sc.ready();`}
         <li>
           On <code>runDesktop</code>&apos;s result, <code>detachedSidecars()</code>{" "}
           lists the registry (<code>
-            {"{"} name, pid, startedAt, appVersion, reachable, declared {"}"}
-          </code>) and <code>stopDetachedSidecar(name)</code>{" "}
-          stops one, a leftover the app no longer declares included. The page sees the two status
-          flags through <code>sidecarStatus</code> / <code>onSidecarStatus</code>.
+            {"{"} name, version?, pid, startedAt, appVersion, reachable, declared {"}"}
+          </code>) and <code>stopDetachedSidecar(name, {"{"} version? {"}"})</code>{" "}
+          stops one instance, a leftover the app no longer declares included. The page sees the two
+          status flags through <code>sidecarStatus</code> / <code>onSidecarStatus</code>.
         </li>
         <li>
           <code>denextSidecar.spawnSelf(args, {"{"} detached: true {"}"})</code>{" "}
@@ -6313,6 +6312,68 @@ sc.ready();`}
           <code>detached</code>: a process nothing supervises, records or can find again.{" "}
           <code>detached: true</code> on the definition is the supported contract.{" "}
           <code>denext desktop add sidecar --entry … --detached</code> writes one.
+        </li>
+      </ul>
+      <h4 id="desktop-sidecars-detached-updates">Surviving updates, and versions side by side</h4>
+      <Code lang="ts">
+        {`sidecars: [{
+  name: "ptyd",
+  run: { module: "./desktop/ptyd.ts" },
+  detached: { version: "proto-3" }, // or { keepAcrossUpdates: true } without versions
+  port: "auto",
+}],
+
+// desktop.ts: retire the daemons of older protocols once nothing needs them
+const app = await runDesktop({ /* … */ });
+for (const d of await app.detachedSidecars()) {
+  if (d.name === "ptyd" && d.version !== "proto-3" && !(await stillInUse(d))) {
+    await app.stopDetachedSidecar("ptyd", { version: d.version });
+  }
+}`}
+      </Code>
+      <ul>
+        <li>
+          <code>detached.keepAcrossUpdates: true</code>{" "}
+          makes the instance outlive app updates: installing a full-app update (
+          <code>installAppUpdateAndRelaunch()</code>, or{" "}
+          <code>stopSidecars({"{"} forUpdate: true {"}"})</code>{" "}
+          before it) lets it go running instead of stopping it, and the next launch reattaches to it
+          whatever app version started it. On macOS the install is swapped in one atomic rename, so
+          the running instance is untouched. On Linux the update helper waits up to 60 s for the
+          processes running from the install before it swaps anyway, so a surviving instance delays
+          the relaunch by that much. On Windows an update still stops it: the install folder cannot
+          be renamed while a process runs from it. A plain <code>stopSidecars()</code>{" "}
+          still stops everything.
+        </li>
+        <li>
+          <code>detached.version</code> (1 to 64 of{" "}
+          <code>[A-Za-z0-9._-]</code>, a key of the app&apos;s choosing such as the protocol its
+          clients speak) makes instances <code>name</code> + <code>version</code>: the record is
+          {" "}
+          <code>&lt;name&gt;@&lt;version&gt;.json</code>{" "}
+          with a start lock of its own. A launch reattaches to the instance of its own key, whatever
+          app version started it, and starts a new one beside instances of other keys, which keep
+          running (an old daemon keeps its sessions) until the app or the user stops them with{" "}
+          <code>stopDetachedSidecar(name, {"{"} version {"}"})</code>. A version implies{" "}
+          <code>keepAcrossUpdates</code>.
+        </li>
+        <li>
+          <strong>Installed versions.</strong>{" "}
+          Each packaged build that launches records the detached sidecars it declares, with its
+          executable&apos;s path and build stamp, in{" "}
+          <code>&lt;app data&gt;/sidecars/installed/</code>{" "}
+          (<code>0600</code>). Launch-time cleanup stops a recorded instance only when no installed
+          version declares its name: two installs of one app sharing a data folder (a stable and a
+          beta build) never reap each other&apos;s sidecars, and an instance of an older version key
+          of a still-declared name is kept (a stale one is dropped, its pid untouched). A
+          declaration whose executable is gone or was replaced (uninstalled, updated over) is
+          deleted, so a name only an old build declared is reaped at the next launch. A{" "}
+          <code>denext desktop run</code> / <code>dev</code> build records none.
+        </li>
+        <li>
+          Instances are still only the app&apos;s own: each is found through its record, signalled
+          only after its endpoint authenticated with the record&apos;s key, and a stopped instance
+          is the one that proved it.
         </li>
       </ul>
       <h4 id="desktop-sidecars-detached-registry">The registry and the control connection</h4>
@@ -6342,14 +6403,17 @@ sc.ready();`}
       <ul>
         <li>
           <strong>An update:</strong>{" "}
-          a launch whose app version differs from the record&apos;s asks the old process to shut
-          down and starts a fresh one, unless <code>detached.keepAcrossUpdates: true</code>{" "}
-          (rarely right: it keeps code from a superseded build running).
+          installing it stops the instance, and a launch whose app version differs from the
+          record&apos;s asks the old process to shut down and starts a fresh one, unless{" "}
+          <code>detached.keepAcrossUpdates: true</code> or a <code>detached.version</code>{" "}
+          (it keeps code from a superseded build running: give it a protocol version so a new build
+          can tell).
         </li>
         <li>
           <strong>A dropped declaration:</strong>{" "}
-          at launch, a record whose name the app no longer declares as detached is told to shut down
-          and removed (an app that declares no sidecar at all still cleans its registry).
+          at launch, a record whose name no installed version of the app declares as detached is
+          told to shut down and removed (an app that declares no sidecar at all still cleans its
+          registry).
         </li>
         <li>
           <strong>A lost registry:</strong>{" "}

@@ -1523,10 +1523,12 @@ export interface DesktopSidecarConfig {
    * Run it as its own OS process that outlives the app (a `run.module` sidecar only): the next
    * launch finds it in the app's registry (`<app data>/sidecars/`) and reattaches over an
    * authenticated loopback control connection instead of starting another. Quitting leaves it
-   * running; `sidecar(name).stop()`, `stopSidecars()` and a full-app update end it; another app
-   * version's instance is replaced at launch unless `keepAcrossUpdates`. `exitAfterMs` ends it
-   * once no app was attached that long. Its output goes to its log file (`logs: "file"` /
-   * `"both"`) or nowhere. Not with `ready.stdout`.
+   * running; `sidecar(name).stop()`, `stopSidecars()` and a full-app update end it, but an update
+   * lets one with `keepAcrossUpdates` or a `version` go running (macOS, Linux); another app
+   * version's instance is replaced at launch unless `keepAcrossUpdates`. `version` makes
+   * instances per key that run side by side. `exitAfterMs` ends it once no app was attached that
+   * long. Its output goes to its log file (`logs: "file"` / `"both"`) or nowhere. Not with
+   * `ready.stdout`.
    */
   detached?: boolean | DesktopSidecarDetachedConfig;
 }
@@ -1549,8 +1551,17 @@ export interface DesktopPackageHooksConfig {
 export interface DesktopSidecarDetachedConfig {
   /** End it once no app instance was attached this long, at least 1 000 ms (default: never). */
   exitAfterMs?: number;
-  /** Keep an instance another app version started instead of replacing it (default `false`). */
+  /**
+   * Let it outlive app updates (default `false`): a full-app update leaves it running (macOS,
+   * Linux; Windows still stops it) and a launch of another app version reattaches to it.
+   */
   keepAcrossUpdates?: boolean;
+  /**
+   * A version key of the app's choosing (a protocol version; 1 to 64 of `[A-Za-z0-9._-]`): one
+   * instance per key, side by side, each kept until the app or the user stops it. Implies
+   * `keepAcrossUpdates`.
+   */
+  version?: string;
 }
 
 /**

@@ -343,8 +343,10 @@ export async function downloadAppUpdate(
  * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
  * The app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open (detached
- * ones are asked to stop and their records removed); to give them their graceful shutdown,
- * `await stopSidecars()` (from `denext/desktop`) before calling it.
+ * ones are asked to stop and their records removed, except on macOS and Linux one with
+ * `detached.keepAcrossUpdates` or a `detached.version`, which is let go running); to give them
+ * their graceful shutdown, `await stopSidecars({ forUpdate: true })` (from `denext/desktop`)
+ * before calling it.
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
