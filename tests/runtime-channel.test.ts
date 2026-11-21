@@ -53,7 +53,10 @@ import {
   REVOCATION_SIGNATURE_DOMAIN,
 } from "../src/build/runtime-revocations.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
-import { RUNTIME_CHANNEL_PUBLIC_KEYS } from "../src/build/runtime-channel-keys.ts";
+import {
+  RUNTIME_CHANNEL_MIN_SEQUENCE,
+  RUNTIME_CHANNEL_PUBLIC_KEYS,
+} from "../src/build/runtime-channel-keys.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 import desktopPin from "../src/build/desktop-runtime-pin.json" with { type: "json" };
 
@@ -548,6 +551,13 @@ function fakeNet(served: Map<string, string>) {
 
 const indexUrl = (base: string) => new URL("channel.json", base).href;
 const granted = () => Promise.resolve(true);
+/**
+ * The loader's replay floor, injected: the fixtures are dated `NOW`, and `deno task release`
+ * raises the compiled-in {@linkcode RUNTIME_CHANNEL_MIN_SEQUENCE} to the live index's sequence at
+ * every release, so a test that left the default in place would start failing the day a release
+ * passed `NOW`. The default itself is pinned by its own test below, relative to the floor.
+ */
+const NO_FLOOR = { minSequence: 0 } as const;
 
 async function withCache(fn: (root: string) => Promise<void>): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "denext-channel-" });
@@ -570,6 +580,7 @@ Deno.test("loadRuntimeChannel: both bases at once, the higher sequence wins, cac
       new Map([[indexUrl(CHANNEL_BASES[0]), older], [indexUrl(CHANNEL_BASES[1]), newer]]),
     );
     const o = {
+      ...NO_FLOOR,
       keys: [a.pub],
       revokedKeys: [],
       cacheRoot: root,
@@ -607,7 +618,7 @@ Deno.test("loadRuntimeChannel: an older index is a replay once a newer one is he
   const a = await pair();
   await withCache(async (root) => {
     const newer = await signed(fresh(), a.priv);
-    const o = { keys: [a.pub], revokedKeys: [], cacheRoot: root, netGranted: granted };
+    const o = { ...NO_FLOOR, keys: [a.pub], revokedKeys: [], cacheRoot: root, netGranted: granted };
     await loadRuntimeChannel({
       ...o,
       now: () => T,
@@ -644,7 +655,13 @@ Deno.test("loadRuntimeChannel: absent with no key, when off, with every key with
   const a = await pair();
   await withCache(async (root) => {
     const net = fakeNet(new Map());
-    const base = { cacheRoot: root, fetch: net.fetch, netGranted: granted, revokedKeys: [] };
+    const base = {
+      ...NO_FLOOR,
+      cacheRoot: root,
+      fetch: net.fetch,
+      netGranted: granted,
+      revokedKeys: [],
+    };
     assertEquals((await loadRuntimeChannel({ ...base, keys: [] })).absent, "no-key");
     assertEquals((await loadRuntimeChannel({ ...base, keys: [a.pub], mode: "off" })).absent, "off");
     assertEquals(
@@ -700,6 +717,7 @@ Deno.test("loadRuntimeChannel: a run on test keys never writes the cache", async
   await withCache(async (root) => {
     const net = fakeNet(new Map([[indexUrl(CHANNEL_BASES[0]), await signed(fresh(), a.priv)]]));
     const got = await loadRuntimeChannel({
+      ...NO_FLOOR,
       keys: [a.pub],
       revokedKeys: [],
       cacheRoot: root,
@@ -711,6 +729,30 @@ Deno.test("loadRuntimeChannel: a run on test keys never writes the cache", async
     assert(got.channel);
     assertEquals([...Deno.readDirSync(root)].length, 0);
   });
+});
+
+Deno.test("loadRuntimeChannel: the default floor is the compiled-in minimum sequence", async () => {
+  const a = await pair();
+  // Dated relative to whatever the last release raised the floor to: one second below is a
+  // replay, exactly at it is taken.
+  const floor = RUNTIME_CHANNEL_MIN_SEQUENCE;
+  assert(Number.isSafeInteger(floor) && floor >= 0);
+  const at = (sequence: number) => new Date(Math.max(sequence, 0) * 1000);
+  for (const [sequence, taken] of [[floor - 1, floor === 0], [floor, true]] as const) {
+    await withCache(async (root) => {
+      const index = await signed(fresh(undefined, at(sequence)), a.priv);
+      const got = await loadRuntimeChannel({
+        keys: [a.pub],
+        revokedKeys: [],
+        cacheRoot: root,
+        mode: "force",
+        now: () => at(sequence).getTime(),
+        fetch: fakeNet(new Map([[indexUrl(CHANNEL_BASES[0]), index]])).fetch,
+        netGranted: granted,
+      });
+      assertEquals(got.channel !== null, taken, `sequence ${sequence} against floor ${floor}`);
+    });
+  }
 });
 
 Deno.test("RUNTIME_CHANNEL_PUBLIC_KEYS: two distinct ECDSA P-256 SPKI keys", async () => {
