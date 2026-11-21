@@ -116,6 +116,13 @@ and this project adheres to
   reason: "timeout" }`, on the page's handle and `desktop.ts`'s alike. The runtime has no time
   limit of its own and reports no event for this refusal; a cancellation it reports (the page
   navigated, the engine withdrew the request, the view closed) has no `reason`.
+- **A web view download's `reveal()` works from the page for a file saved anywhere.** The page's
+  `item.reveal()` shows exactly the file that download wrote (the path the runtime reported for
+  it), including one saved through `saveAs()` or into a picked folder, which were `forbidden`
+  before. The page names no path: the host refuses any path but that download's own
+  (`forbidden`), one it has no file for (`not_found`), and a reveal while the app may not run the
+  file manager (`not_enabled`; the `shell` capability's `reveal` bakes that grant). Bridge method
+  `webViewCall` `revealDownload` `{ download, path }`.
 
 ### Changed
 

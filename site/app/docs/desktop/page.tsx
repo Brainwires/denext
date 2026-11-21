@@ -4157,14 +4157,16 @@ view.setPermissionRequestHandler(({ origin, permissions, frame }) =>
             <code>reveal()</code>
           </strong>{" "}
           shows the saved file in Finder, Explorer or the file manager; it rejects{" "}
-          <code>not_found</code> before the download has a path. From a page it is{" "}
-          <code>revealInFileManager</code> with its rules (the <code>shell</code> capability with
-          {" "}
-          <code>reveal</code>{" "}
-          on; a file in the app&apos;s folders, or the picked file it was saved to), so a file saved
-          through <code>saveAs()</code> or into a picked folder is <code>forbidden</code> there.
-          {" "}
-          <code>desktop.ts</code>&apos;s reveals any path.
+          <code>not_found</code>{" "}
+          before the download has a path. From a page it shows exactly the file that download wrote,
+          the path the runtime reported for it, wherever that is: an app folder, a picked folder, or
+          a place the user chose in{" "}
+          <code>saveAs()</code>&apos;s dialog. The item is the capability: the page names no path,
+          and the host refuses (
+          <code>forbidden</code>) any path but that download&apos;s own, so a page cannot use it to
+          show another file. It needs the app to run the file manager (the run grant the{" "}
+          <code>shell</code> capability&apos;s <code>reveal</code> bakes), else{" "}
+          <code>not_enabled</code>. <code>desktop.ts</code>&apos;s reveals any path.
         </li>
         <li>
           <strong>The permission handler</strong> gets{" "}

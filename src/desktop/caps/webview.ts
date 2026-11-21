@@ -15,7 +15,9 @@
  *   canGoForward }`; `capture` `{ format?, quality? }` → `{ base64, type }`; `evaluate`
  *   `{ script }` → `{ value }`; `controlDownload` `{ download, action, target? }` (`target`, for
  *   `"save"` only, a `{ directory, path }` destination resolved here, never an absolute path) and
- *   `respondToPermissionRequest` `{ request, allow }` → `null`.
+ *   `respondToPermissionRequest` `{ request, allow }` → `null`; `revealDownload` `{ download, path }`
+ *   → `null` shows that download's own file (the path the runtime reported it wrote; any other path
+ *   is `forbidden`) in the file manager, once the app may run the OS's tool (`not_enabled` else).
  * - Event `webview` `{ id, event, detail }` to the window's page, for each view the page made
  *   (`detail` the draft's `WebViewEventMap` shape); `closed` is the last one for an id. The
  *   runtime's `key` event is `keydown` or `keyup` by its `type`. `download` and
@@ -117,6 +119,9 @@ const STATUS: Readonly<Record<string, number>> = {
   limit: 429,
   closed: 410,
   failed: 500,
+  forbidden: 403,
+  not_found: 404,
+  not_enabled: 403,
 };
 
 /** The slice of the runtime's `Deno.WebView` used here. */
@@ -222,7 +227,15 @@ interface Entry extends WebViewListeners {
   readonly undecided: Set<number>;
   /** A page's view: its permission requests still waiting for the page's answer. */
   readonly unanswered: Set<number>;
+  /**
+   * A page's view: the file each download wrote, as the runtime reported it (the only path the
+   * page's `reveal()` may show; at most {@linkcode MAX_DOWNLOAD_PATHS}, the oldest dropped).
+   */
+  readonly downloadPaths: Map<number, string>;
 }
+
+/** How many downloads' paths a page's view remembers for `reveal()`. */
+const MAX_DOWNLOAD_PATHS = 256;
 
 /** What {@linkcode createWebViewHost} returns. */
 export interface WebViewHost {
@@ -641,6 +654,7 @@ function dropView(h: HostState, entry: Entry, tellPage: boolean): void {
   h.views.delete(entry.id);
   entry.undecided.clear();
   entry.unanswered.clear();
+  entry.downloadPaths.clear();
   if (entry.owner === "page" && tellPage) {
     h.options.emit("webview", { id: entry.id, event: "closed", detail: {} });
   }
@@ -656,11 +670,23 @@ function dropView(h: HostState, entry: Entry, tellPage: boolean): void {
  * next event, or with the view.
  */
 function trackPageMedia(entry: Entry, event: string, detail: unknown): void {
-  const d = detail as { id?: unknown; state?: unknown };
+  const d = detail as { id?: unknown; state?: unknown; path?: unknown };
   if (typeof d.id !== "number") return;
+  if (event === "download" && typeof d.path === "string" && d.path !== "") {
+    rememberDownloadPath(entry, d.id, d.path);
+  }
   const set = event === "download" ? entry.undecided : entry.unanswered;
   if (d.state === "requested") set.add(d.id);
   else set.delete(d.id);
+}
+
+/** Remember the file download `id` wrote (re-inserted: the map's order is oldest first). */
+function rememberDownloadPath(entry: Entry, id: number, path: string): void {
+  entry.downloadPaths.delete(id);
+  entry.downloadPaths.set(id, path);
+  if (entry.downloadPaths.size > MAX_DOWNLOAD_PATHS) {
+    entry.downloadPaths.delete(entry.downloadPaths.keys().next().value!);
+  }
 }
 
 /** The page loaded again: its views' waiting downloads are cancelled, their requests refused. */
@@ -768,6 +794,7 @@ function open(h: HostState, raw: unknown, owner: Owner): Entry {
     closed: false,
     undecided: new Set(),
     unanswered: new Set(),
+    downloadPaths: new Map(),
   };
   h.views.set(entry.id, entry);
   follow(h, entry);
@@ -1010,6 +1037,16 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
     respondToRequest(entry, id, a.allow);
     return null;
   },
+  revealDownload: async (h, entry, a) => {
+    const id = mediaId(a.download, "download");
+    if (typeof a.path !== "string" || a.path === "") throw invalid("path must be a string");
+    const own = entry.downloadPaths.get(id);
+    if (own === undefined) throw fail("not_found", `download ${id} has no file yet`);
+    // The download's own file is the capability: any other path is refused.
+    if (a.path !== own) throw fail("forbidden", "reveal() shows only the file the download wrote");
+    await (h.options.revealPath ?? revealFromPage)(own);
+    return null;
+  },
 };
 
 /** The download actions. */
@@ -1114,10 +1151,35 @@ function respondToRequest(entry: Entry, id: number, allow: boolean): void {
   entry.unanswered.delete(id);
 }
 
+/** The OS's file-manager command that shows `path` (the `shell` capability's `reveal`). */
+function revealCommand(path: string): [string, string[]] {
+  const os = Deno.build.os === "darwin" || Deno.build.os === "windows" ? Deno.build.os : "linux";
+  return shellPathCommand(os, "reveal", path);
+}
+
 /** Show `path` in the file manager with the OS's tool (the `shell` capability's `reveal`). */
 async function revealWithOsTool(path: string): Promise<void> {
-  const os = Deno.build.os === "darwin" || Deno.build.os === "windows" ? Deno.build.os : "linux";
-  const [cmd, args] = shellPathCommand(os, "reveal", path);
+  const [cmd, args] = revealCommand(path);
+  await runShellTool(cmd, args);
+}
+
+/**
+ * A page's `reveal()` of its download's own file: the OS's tool, once the app may run it (the run
+ * grant the `shell` capability's `reveal` bakes), else `not_enabled`.
+ */
+async function revealFromPage(path: string): Promise<void> {
+  const [cmd, args] = revealCommand(path);
+  let state = "denied";
+  try {
+    state = (await Deno.permissions.query({ name: "run", command: cmd })).state;
+  } catch { /* no permission API: refused below */ }
+  if (state !== "granted") {
+    throw fail(
+      "not_enabled",
+      `reveal() needs the app to run the file manager (${cmd}): enable the shell capability ` +
+        "with reveal (`denext desktop add shell`)",
+    );
+  }
   await runShellTool(cmd, args);
 }
 

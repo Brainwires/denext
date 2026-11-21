@@ -105,6 +105,7 @@ function controller(opts: {
   viewClass?: unknown;
   dirs?: { data: string; cache: string; documents: string };
   picked?: PickedPaths;
+  revealPath?: (path: string) => Promise<void>;
 } = {}) {
   const made: FakeView[] = [];
   const win = Object.assign(new EventTarget(), {
@@ -124,6 +125,7 @@ function controller(opts: {
     appOrigins: () => [],
     ...(opts.dirs ? { dirs: opts.dirs } : {}),
     ...(opts.picked ? { picked: opts.picked } : {}),
+    ...(opts.revealPath ? { revealPath: opts.revealPath } : {}),
   });
   const call = async (method: string, args: unknown) =>
     await c.capability.methods[method].handler(args, {} as DesktopCapCtx);
@@ -672,16 +674,13 @@ Deno.test("web view media: a request the handler leaves unanswered fires cancell
 
 Deno.test("web view media page: will-download, save to an app folder, reveal, permission handler, close", async () => {
   await withDirs(async (dirs) => {
-    const ctl = controller({ dirs });
     const shell: unknown[] = [];
+    const ctl = controller({ dirs, revealPath: (path) => (shell.push(path), Promise.resolve()) });
     const methods: Record<string, FakeMethod> = {};
     for (const name of ["webViewCapabilities", "webViewCreate", "webViewCall"]) {
       methods[name] = (args) => ctl.call(name, args);
     }
-    const rt = createFakeDesktopRuntime({
-      window: methods,
-      shell: { reveal: (a) => (shell.push(a), { ok: true }) },
-    });
+    const rt = createFakeDesktopRuntime({ window: methods });
     const forward = ctl.emits.push.bind(ctl.emits);
     ctl.emits.push = (...items) => {
       for (const e of items) rt.emit("window", e.event, e.data);
@@ -723,15 +722,42 @@ Deno.test("web view media page: will-download, save to an app folder, reveal, pe
       });
       await until(() => dones.length === 1);
       await item.reveal();
-      assertEquals(shell, [{ path: join(dirs.documents, "f.zip") }]);
-      // A picked file saved to is revealed by its handle.
+      assertEquals(shell, [join(dirs.documents, "f.zip")]);
+      // Saved through saveAs() to a place of the user's choosing (outside every app folder): its
+      // own file is revealed, the item being the capability.
       v.download({ id: 3, state: "requested", receivedBytes: 0 });
       await until(() => items.length === 2);
-      const handle = new PickedPaths().add("/x", "readwrite");
-      await items[1].save({ directory: { picked: handle }, path: "" }).catch(() => {});
-      v.download({ id: 3, state: "progressing", receivedBytes: 1, path: "/x" });
-      await until(() => items[1].path === "/x");
-      await items[1].reveal().catch(() => {});
+      await items[1].saveAs();
+      v.download({ id: 3, state: "completed", receivedBytes: 1, path: "/Users/u/Desktop/f.zip" });
+      await until(() => items[1].path === "/Users/u/Desktop/f.zip");
+      await items[1].reveal();
+      assertEquals(shell.at(-1), "/Users/u/Desktop/f.zip");
+      // Any other path is refused, and so is a download with no file or one the view never had.
+      const other = await rejection(() =>
+        ctl.call("webViewCall", {
+          id: String(v.id),
+          method: "revealDownload",
+          args: { download: 3, path: "/etc/passwd" },
+        })
+      );
+      assertEquals(other.code, "forbidden");
+      const unknown = await rejection(() =>
+        ctl.call("webViewCall", {
+          id: String(v.id),
+          method: "revealDownload",
+          args: { download: 99, path: "/Users/u/Desktop/f.zip" },
+        })
+      );
+      assertEquals(unknown.code, "not_found");
+      const bad = await rejection(() =>
+        ctl.call("webViewCall", {
+          id: String(v.id),
+          method: "revealDownload",
+          args: { download: 3 },
+        })
+      );
+      assertEquals(bad.code, "validation");
+      assertEquals(shell.length, 2);
       // The permission handler, through the wire.
       view.setPermissionRequestHandler((req) => req.permissions.includes("microphone"));
       v.fire("permission-request", {

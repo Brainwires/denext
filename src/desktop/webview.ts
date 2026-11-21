@@ -336,9 +336,10 @@ export interface WebViewDownloadItem {
   resume(): Promise<void>;
   /**
    * Show the saved file in Finder / Explorer / the file manager. Rejects `not_found` before it
-   * has a path. From the page this is `revealInFileManager`, with its rules: the `shell` capability
-   * with `reveal` on, and a file in the app's folders or the picked file it was saved to (a file
-   * saved through `saveAs()` or into a picked folder is outside them: `forbidden`).
+   * has a path. From the page it shows exactly the file the download wrote, wherever that is (an
+   * app folder, a picked folder, a place the user chose in `saveAs()`'s dialog), and nothing else:
+   * the item is the capability, not a path the page names. The app must be able to run the file
+   * manager (the run grant of the `shell` capability's `reveal`), else `not_enabled`.
    */
   reveal(): Promise<void>;
   /**
@@ -657,15 +658,6 @@ function markClosed(v: ViewState): void {
   v.listeners.clear();
 }
 
-/** Show a saved download in the file manager through the `shell` capability's `reveal`. */
-async function revealSaved(path: string, savedTo: unknown): Promise<void> {
-  const to = savedTo as { directory?: { picked?: unknown }; path?: unknown } | undefined;
-  const handle = to?.directory?.picked;
-  // Saved to a picked file: reveal it by its handle; anything else by its path.
-  const args = typeof handle === "string" && to?.path === "" ? { handle } : { path };
-  await desktopRpc("shell", "reveal", args);
-}
-
 /** One call on view `v` (rejects `closed` once it closed, without a request). */
 async function viewCall<O = unknown>(
   v: ViewState,
@@ -713,7 +705,10 @@ function handleOf(v: ViewState): WebViewHandle {
     respond: async (request, allow) => {
       await viewCall(v, "respondToPermissionRequest", { request, allow });
     },
-    reveal: revealSaved,
+    // The download's own file, which the host checks against the path the runtime reported.
+    reveal: async (path, download) => {
+      await viewCall(v, "revealDownload", { download, path });
+    },
     fail: (code, message) => desktopError(CAP, "webViewCall", code, message),
     onListenerError: (err) =>
       queueMicrotask(() => {

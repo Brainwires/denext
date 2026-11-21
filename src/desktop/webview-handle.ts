@@ -25,8 +25,8 @@ export interface WebViewOps {
   control(id: number, action: WebViewDownloadAction, target?: unknown): Promise<void>;
   /** Answer permission request `id` (`respondToPermissionRequest`). */
   respond(id: number, allow: boolean): Promise<void>;
-  /** Show a saved download in the file manager. */
-  reveal(path: string, savedTo: unknown): Promise<void>;
+  /** Show download `id`'s file, `path` (the one the runtime reported), in the file manager. */
+  reveal(path: string, id: number): Promise<void>;
   /** The side's error for a call refused before it reaches the runtime. */
   fail(code: string, message: string): Error;
   /** A listener threw (it never stops the others). */

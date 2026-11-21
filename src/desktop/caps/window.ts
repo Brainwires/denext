@@ -261,6 +261,8 @@ export interface WindowControllerOptions {
   readonly appOrigins?: () => readonly string[];
   /** The runtime's `Deno.WebView` class (tests; default the runtime's). */
   readonly webViewClass?: unknown;
+  /** How a web view's download is shown in the file manager (tests; default the OS's tool). */
+  readonly revealPath?: (path: string) => Promise<void>;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -1341,6 +1343,7 @@ export function createWindowController(options: WindowControllerOptions): Window
       emit,
       picked,
       ...(options.dirs ? { dirs: options.dirs } : {}),
+      ...(options.revealPath ? { revealPath: options.revealPath } : {}),
     }),
   };
   const capability: DesktopCapability = {

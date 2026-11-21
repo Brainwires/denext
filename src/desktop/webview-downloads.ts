@@ -49,8 +49,8 @@ export interface WebViewMediaOps {
   control(id: number, action: WebViewDownloadAction, target?: unknown): Promise<void>;
   /** Answer permission request `id`. */
   respond(id: number, allow: boolean): Promise<void>;
-  /** Show a saved download in the file manager (`savedTo`: what `save` was given, if anything). */
-  reveal(path: string, savedTo: unknown): Promise<void>;
+  /** Show download `id`'s file, `path` (the one the runtime reported), in the file manager. */
+  reveal(path: string, id: number): Promise<void>;
   /** Whether anything listens to `event` on the view. */
   hasListeners(event: string): boolean;
   /** Hand `detail` to the view's `event` listeners. */
@@ -80,7 +80,6 @@ interface LiveDownload {
   readonly data: WebViewDownloadEvent;
   readonly updated: Set<(item: WebViewDownloadItem) => void>;
   readonly done: Set<(done: WebViewDownloadDone) => void>;
-  savedTo?: unknown;
   over: boolean;
   /** Its item (made once: `will-download` and `updated` hand the same object). */
   item?: WebViewDownloadItem;
@@ -165,10 +164,7 @@ function itemOf(m: MediaState, live: LiveDownload): WebViewDownloadItem {
     get canResume() {
       return live.data.canResume === true;
     },
-    save: async (target) => {
-      await control("save", target);
-      live.savedTo = target;
-    },
+    save: (target) => control("save", target),
     saveAs: () => control("saveAs"),
     cancel: () => control("cancel"),
     pause: () => control("pause"),
@@ -178,7 +174,7 @@ function itemOf(m: MediaState, live: LiveDownload): WebViewDownloadItem {
       if (path === undefined || path === "") {
         return Promise.reject(m.ops.fail("not_found", "the download has no path yet"));
       }
-      return m.ops.reveal(path, live.savedTo);
+      return m.ops.reveal(path, d.id);
     },
     on: listenOn(live) as WebViewDownloadItem["on"],
   };
