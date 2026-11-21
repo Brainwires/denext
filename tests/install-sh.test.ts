@@ -904,15 +904,17 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   assertStringIncludes(workflow, "needs: [runners, binaries, smoke]");
   assertStringIncludes(workflow, "fail_on_unmatched_files: true");
   // Every third-party action is a full commit SHA with the version it is beside it; the org's own
-  // runner picker (Brainwires/.github, untagged) is a full commit SHA too.
+  // runner picker (Brainwires/.github, untagged) is a full commit SHA too, its comment optionally
+  // naming the picker build in parentheses (`# pick-runners (ETA overflow)`).
   const uses = workflow.split("\n").filter((l) => /^\s*-?\s*uses:/.test(l));
   assert(uses.length >= 8, `found ${uses.length} uses:`);
   for (const line of uses) {
     assert(
       /uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(line.trim()) ||
-        /uses: Brainwires\/\.github\/actions\/pick-runners@[0-9a-f]{40} # pick-runners$/.test(
-          line.trim(),
-        ),
+        /uses: Brainwires\/\.github\/actions\/pick-runners@[0-9a-f]{40} # pick-runners(?: \([^)]+\))?$/
+          .test(
+            line.trim(),
+          ),
       line,
     );
   }
