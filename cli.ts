@@ -47,8 +47,8 @@ function lazy<T>(path: string): Promise<T> {
 /** Run `deno <args>` on denext's Deno (a Deno verb, a script, `denext deno …`); never returns. */
 async function runDenoPassthrough(args: string[], cwd: string, forwarded: boolean): Promise<never> {
   const { runDenoPassthrough: run } = await lazy<
-    typeof import("./src/cli/commands/deno-toolchain.ts")
-  >("./commands/deno-toolchain.ts");
+    typeof import("./src/cli/commands/deno.ts")
+  >("./commands/deno.ts");
   return await run(args, cwd, forwarded);
 }
 

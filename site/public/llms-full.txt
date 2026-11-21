@@ -596,7 +596,7 @@ artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass t
 Run the lanes with `denext fastlane ios beta` (`denext create --fastlane` scaffolds them): denext's
 managed fastlane, a pinned fastlane on a pinned portable Ruby installed on first use into the
 toolchain cache (SHA-256-verified Ruby, checksum-locked gems; needs a C compiler once; macOS and
-Linux, not Windows; `toolchain install --with fastlane`, `DENEXT_FASTLANE=<path>` overrides it;
+Linux, not Windows; `runtime install --with fastlane`, `DENEXT_FASTLANE=<path>` overrides it;
 plugins need a Gemfile and `bundle exec`).
 Profile the installed app on an Android device: `denext profile --android [--package <appId>]
 [--device <serial>]` reaches its debuggable WebView over adb and reports CPU, heap and leaks like
@@ -802,7 +802,7 @@ as a new history entry (WebView2 as a GET, so a form POST loses its body; CEF ke
 WebKitGTK decides a page with no child frames at the navigation action, before the load, and a page with
 child frames, a redirect, a reload or back / forward at the response (the request already sent); there every
 `kind` is `"other"` with no `initiator`, and back / forward and reloads are included. `desktop.app.origin` takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext toolchain status` names it), and the runtime takes its own version: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins one runtime release (`denext runtime version` names it), and the runtime takes its own version: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1182,7 +1182,7 @@ a `code` override gets `inline` / `lang`). Docs: https://denext.dev/docs/markdow
 JavaScript in a `gleam/` project and maps `@gleam/` in `deno.json`; import it typed as
 `@gleam/<package>/<module>.mjs`. `plugins: [gleam()]` (from `denext/gleam`) recompiles your own
 `gleam/src/**/*.gleam` at dev and build. The compiler is denext's pinned Gleam (no Erlang needed),
-downloaded and SHA-256-verified on first need beside the Deno toolchain; `denext toolchain install
+downloaded and SHA-256-verified on first need beside the Deno toolchain; `denext runtime install
 --with gleam` fetches it ahead for offline work, `DENEXT_GLEAM=<path>` runs another one.
 `denext create my-app --template lustre` starts an app with one Lustre counter used as an island
 (`lustreIsland`), a custom element (`lustreElement`) and a server view (`defineLustreView`).
@@ -1331,7 +1331,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
   `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
-  (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
+  (`denext runtime install`) — denext never runs another Deno on its own. Downloads of the
   toolchain and the Deno Desktop runtime give up on a stalled connection after 10 s with no response
   (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 20 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
   `0` removes either) and retry on a new connection (`DENEXT_DOWNLOAD_ATTEMPTS`, 4 in all; none
@@ -1340,12 +1340,17 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
-  plain `deno task` still runs stock Deno. `denext toolchain install|status|path|link|unlink`;
-  `denext toolchain uninstall <version>|--all` and `prune` remove cached versions (the pinned one
-  only with `--force`; `--dry-run`, `--json`).
+  plain `deno task` still runs stock Deno. `denext runtime version` says which release runs and
+  why (`DENEXT_RUNTIME`, the project pin `"denext": { "runtime": { version, integrity } }` in
+  deno.json, your default, or the bundled one); `denext runtime upgrade [--project]` takes the
+  newest compatible release from the signed runtime channel once your dependency-age hold lets it
+  in (no denext release needed), `use <version|latest|bundled> [--project]` picks one, and
+  `list | install | path | link | unlink` work as named; `denext runtime uninstall
+  <version>|--all` and `prune` remove cached releases (one in use only with `--force`;
+  `--dry-run`, `--json`).
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
-  runs it on the toolchain (with no toolchain it refuses, naming `denext toolchain install`;
-  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
+  runs it on the toolchain (with no toolchain it refuses, naming `denext runtime install`;
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime install` (+ `runtime link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
   TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
@@ -1776,7 +1781,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.20.1"` — The denext framework version.
+- `VERSION: "4.21.0"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.

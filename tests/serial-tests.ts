@@ -31,6 +31,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/clerk-example.test.ts",
   "tests/cli-help-dir.test.ts",
   "tests/cli-plugin-add-remove.test.ts",
+  "tests/cli-runtime.test.ts",
   "tests/cli-stack.test.ts",
   // Sets DENEXT_STATE_DIR and clears the standalone variables around `runStandalone`.
   "tests/compile-app.test.ts",
@@ -107,6 +108,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/react-native-uniwind-css.test.ts",
   // Sets the variables a migrated load context reads (`process.env.*`) and runs it.
   "tests/remix-load-context.test.ts",
+  // Points DENEXT_TOOLCHAIN_PIN_FILE / DENEXT_RUNTIME_DEFAULT_FILE at missing files and stubs fetch.
+  "tests/runtime-prune.test.ts",
   "tests/scaffold-monorepo.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",

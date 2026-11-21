@@ -15,7 +15,7 @@ async function referenceDeno(): Promise<{ deno: string } | { skip: string }> {
   if (Deno.version.deno === DENO_TOOLCHAIN.deno) return { deno: Deno.execPath() };
   return {
     skip: `denext's Deno toolchain is not installed and this Deno is ${Deno.version.deno}, not ` +
-      `${DENO_TOOLCHAIN.deno} — run \`denext toolchain install\` to check the Deno verb list`,
+      `${DENO_TOOLCHAIN.deno} — run \`denext runtime install\` to check the Deno verb list`,
   };
 }
 

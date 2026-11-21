@@ -72,7 +72,7 @@ Deno.test("resolveDenoExecutable: DENO_BIN, then a deno execPath, then ~/.deno/b
 Deno.test("resolveDenoExecutable: a compiled binary with no Deno anywhere refuses with the fix", () => {
   const err = assertThrows(() => resolveDenoExecutable(seams({ vars: { PATH: "/usr/bin" } })));
   assertEquals((err as Error).message, NO_DENO_MESSAGE);
-  assertStringIncludes(NO_DENO_MESSAGE, "denext toolchain install");
+  assertStringIncludes(NO_DENO_MESSAGE, "denext runtime install");
   assert(NO_DENO_MESSAGE.startsWith("denext:"), "printed by the CLI without a stack");
   // Outside a binary the bare name is still a PATH lookup, as before.
   assertEquals(resolveDenoExecutable(seams({ standalone: false })), "deno");

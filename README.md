@@ -71,8 +71,8 @@ Everything else is pinned to your denext release and fetched the first time a co
   zero-npm Redis client.
 - **The Gleam compiler** and **managed fastlane** (a pinned portable Ruby, checksum-locked gems;
   macOS and Linux, and the first install needs a C compiler), each SHA-256-verified.
-- **Offline and housekeeping**: `denext toolchain install --with gleam,fastlane` fetches it all
-  ahead of time; `toolchain status`, `uninstall` and `prune` keep the cache in check.
+- **Offline and housekeeping**: `denext runtime install --with gleam,fastlane` fetches it all
+  ahead of time; `runtime version`, `uninstall` and `prune` keep the cache in check.
 
 The framework's runtime pulls nothing from npm (CI enforces it), while your app can still use
 `npm:` and `jsr:` libraries. Less setup is hours a person keeps, and compute and tokens an AI agent
@@ -394,9 +394,13 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
 
 1. `curl -fsSL https://denext.dev/install.sh | sh` — the released binary for macOS and Linux
    (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). The installer then
-   runs `denext toolchain install`, and — only when no `deno` is on your PATH — `denext
-   toolchain link`, so `deno` is that toolchain too (`DENEXT_NO_DENO_LINK=1` skips the link,
-   `DENEXT_NO_TOOLCHAIN=1` both; an existing `deno` is never replaced). It adds `~/.denext/bin`
+   runs `denext runtime upgrade` (the newest runtime this denext supports, verified by the binary
+   against the signed runtime channel; when the channel can't be read, the runtime this denext
+   bundles, `denext runtime install`) and — only when no `deno` is on your PATH — `denext
+   runtime link`, so `deno` is that runtime too (`DENEXT_NO_DENO_LINK=1` skips the link,
+   `DENEXT_NO_RUNTIME=1` both; an existing `deno` is never replaced). `sh -s -- --runtime-only`
+   moves only the runtime of an installed denext; `--runtime=<version>` installs that release and
+   makes it the default (`-RuntimeOnly` / `-Runtime <version>` on Windows). It adds `~/.denext/bin`
    to PATH in your shell's startup file (one marked block; it asks on a terminal;
    `sh -s -- --no-modify-path` or `--modify-path=all` choose, `--uninstall` removes it all). On
    Windows, `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no
@@ -406,7 +410,7 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    (Homebrew, macOS and Linux), `scoop bucket add denext https://github.com/Brainwires/scoop-denext`
    then `scoop install denext/denext` (Scoop), `winget install Brainwires.denext` (winget).
 2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno (then
-   `denext toolchain install` fetches the toolchain and caches every verb for offline use).
+   `denext runtime install` fetches the toolchain and caches every verb for offline use).
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
    scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version. Deno

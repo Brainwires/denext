@@ -11,7 +11,7 @@ name: Native plugins
 #
 #   android  a debug .apk (Gradle)
 #   ios      an unsigned Release build (xcodebuild; no certificates on the runner), then the
-#            same build through denext's managed fastlane on Apple silicon: `denext toolchain
+#            same build through denext's managed fastlane on Apple silicon: `denext runtime
 #            install --with fastlane` (the pinned portable Ruby, the gems' C extensions built
 #            with the runner's Xcode clang) and `denext fastlane ios build unsigned:true`
 #
@@ -29,6 +29,7 @@ on:
       - "src/build/mobile-*.ts"
       - "src/build/fastlane-*"
       - "src/cli/commands/fastlane.ts"
+      - "src/cli/commands/runtime.ts" # `denext runtime install --with fastlane`
       - ".github/workflows/native-plugins.yml"
   workflow_dispatch:
     inputs:
@@ -156,8 +157,8 @@ jobs:
           xcodebuild -version
           xcrun clang --version
           xcrun --show-sdk-path
-      - name: Install the managed fastlane (denext toolchain install --with fastlane)
-        run: $DENEXT toolchain install --with fastlane
+      - name: Install the managed fastlane (denext runtime install --with fastlane)
+        run: $DENEXT runtime install --with fastlane
       - name: The managed Ruby is the arm64 build
         run: |
           set -euo pipefail

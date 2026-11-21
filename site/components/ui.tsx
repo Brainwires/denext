@@ -95,6 +95,7 @@ export const NAV: {
       { slug: "bundling", label: "Bundling & flags" },
       { slug: "testing", label: "Testing" },
       { slug: "toolchain", label: "Deno toolchain" },
+      { slug: "runtime-channel", label: "Runtime channel" },
       { slug: "doctor-audit", label: "Doctor & audit" },
       { slug: "ui", label: "Project UI" },
       { slug: "deploy", label: "Deployment" },

@@ -28,7 +28,7 @@ export interface DenoExecutableSeams {
 export const NO_DENO_MESSAGE =
   "denext: there is no Deno to run — denext's Deno toolchain is not installed here and no " +
   "`deno` is on PATH.\n" +
-  "  Run `denext toolchain install` (it downloads denext's Deno, SHA-256-verified), then retry.\n" +
+  "  Run `denext runtime install` (it downloads denext's Deno, SHA-256-verified), then retry.\n" +
   "  If that fails (offline, an unsupported host), install Deno from https://deno.com, or point " +
   "DENO_BIN / DENEXT_DENO at a deno binary. (DENEXT_DENO=stock turns the toolchain off.)";
 

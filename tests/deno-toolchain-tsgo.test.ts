@@ -1,6 +1,6 @@
 // The native TypeScript compiler half of src/build/deno-toolchain.ts and src/ts/engine.ts:
 // a toolchain zip's `typescript-check/` is installed beside `deno` only when its binary and whole directory
-// hash to the pin (else refused and recorded in the stamp), `toolchain status` reports it, and the
+// hash to the pin (else refused and recorded in the stamp), `runtime version` reports it, and the
 // type-check engine decision falls back to the runtime's in-process TypeScript when the compiler
 // is unverified or the project opts out. Served from a LOCAL fixture server; no network.
 

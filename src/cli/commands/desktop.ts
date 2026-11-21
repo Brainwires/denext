@@ -57,12 +57,12 @@ import { desktopMediaCapture } from "../../build/desktop-media-capture.ts";
 import {
   assertStockRuntimeUsable,
   DESKTOP_RUNTIME_ATTEST_ENV,
-  DESKTOP_RUNTIME_PIN,
   DESKTOP_RUNTIME_VERIFY_ENV,
   type DesktopRuntimePin,
   projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
+import { activeDesktopRuntimePinOrBundled } from "../../build/runtime-select.ts";
 import { needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
@@ -811,7 +811,7 @@ export function packageScriptWarnings(
   name: string,
   age: PackageScriptAge,
   format: string | undefined,
-  pin: Pick<DesktopRuntimePin, "version"> = DESKTOP_RUNTIME_PIN,
+  pin: Pick<DesktopRuntimePin, "version"> = activeDesktopRuntimePinOrBundled(),
 ): string[] {
   const out: string[] = [];
   if (!age.runtime) {

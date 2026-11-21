@@ -42,7 +42,7 @@ scoop install denext/denext                      # Scoop (Windows)
 winget install Brainwires.denext                 # winget (Windows)
 # or, with Deno already installed:
 deno install -A -g -n denext jsr:@denext/denext/cli
-denext toolchain install   # then: the toolchain, and every verb cached for offline use`}
+denext runtime install   # then: the toolchain, and every verb cached for offline use`}
       </Code>
       <p>
         A script run through a pipe can&apos;t change the PATH of the shell that started it, so{" "}
@@ -64,17 +64,34 @@ denext toolchain install   # then: the toolchain, and every verb cached for offl
 curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
       </Code>
       <p>
-        After installing the binary, the installer runs <code>denext toolchain install</code>{" "}
-        — denext's own Deno build, downloaded into Deno's cache and SHA-256-verified — and, only
-        when no <code>deno</code> is on your PATH, <code>denext toolchain link</code>, so{" "}
-        <code>deno</code> runs that toolchain too (a link at{" "}
+        To move only the runtime of a denext you already have, without reinstalling the binary, pass
+        {" "}
+        <code>--runtime-only</code> (it runs <code>denext runtime upgrade</code>);{" "}
+        <code>--runtime=&lt;version&gt;</code>{" "}
+        installs that runtime release and makes it your default. On Windows the same flags are{" "}
+        <code>-RuntimeOnly</code> and <code>-Runtime &lt;version&gt;</code> (and{" "}
+        <code>DENEXT_RUNTIME_ONLY=1</code> / <code>DENEXT_RUNTIME_VERSION</code>{" "}
+        everywhere). With either flag, a runtime that can&apos;t be installed fails the run:
+      </p>
+      <Code lang="sh">
+        {`curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime-only
+curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=<version>
+& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly`}
+      </Code>
+      <p>
+        After installing the binary, the installer runs <code>denext runtime upgrade</code>{" "}
+        — the newest denext runtime (denext's own Deno build) this denext supports, verified by the
+        binary against the signed <a href="/docs/runtime-channel">runtime channel</a>{" "}
+        and made your machine's default — and, only when no <code>deno</code> is on your PATH,{" "}
+        <code>denext runtime link</code>, so <code>deno</code> runs that runtime too (a link at{" "}
         <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). A <code>deno</code>{" "}
         you have is never replaced, and never used by denext either.{" "}
-        <code>DENEXT_NO_DENO_LINK=1</code> skips the link and <code>DENEXT_NO_TOOLCHAIN=1</code>
-        {" "}
-        both steps; a failed download (offline) is one warning, and the binary fetches the toolchain
-        on the first command that needs it instead — a command that can&apos;t get it stops with the
-        fix rather than run another Deno. Every verb that runs Deno —{" "}
+        <code>DENEXT_NO_DENO_LINK=1</code> skips the link and <code>DENEXT_NO_RUNTIME=1</code>{" "}
+        both steps; when the channel can&apos;t be read, the installer installs the runtime this
+        denext bundles instead (<code>denext runtime install</code>) and links that. A failed
+        download (offline) is one warning, and the binary fetches the toolchain on the first command
+        that needs it instead — a command that can&apos;t get it stops with the fix rather than run
+        another Deno. Every verb that runs Deno —{" "}
         <code>
           denext task …
         </code>, <code>denext test</code>, <code>denext fmt</code>,{" "}
@@ -90,7 +107,7 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         answer at once. The compiled binary embeds every verb; a CLI installed from JSR with{" "}
         <code>deno install</code>{" "}
         caches each verb's modules on its first online run (in the background) or in{" "}
-        <code>denext toolchain install</code>, so run that once before working offline.
+        <code>denext runtime install</code>, so run that once before working offline.
       </p>
       <p>
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext

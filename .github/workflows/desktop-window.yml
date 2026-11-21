@@ -104,7 +104,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: sleep 60
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@b22319621b56184a647fddfdcbefa300bcb6efc5 # pick-runners
+        uses: Brainwires/.github/actions/pick-runners@9ba7db292c456d71728680b8fedd038c2eb4b441 # pick-runners (ETA overflow)
         with:
           jobs: window_test_windows=windows-x64 summary=linux-x64
           vars: ${{ toJSON(vars) }}

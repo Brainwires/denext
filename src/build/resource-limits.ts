@@ -237,7 +237,7 @@ export function supportsLimitsWhy(runtime: string | undefined): string {
       "stock Deno (unset DENEXT_DENO=stock)";
   }
   if (runtime === "path") return "a DENEXT_DENO=<path> Deno's version is unknown";
-  return `this Deno (${runtime}) has no resource-limit flags — \`denext toolchain install\``;
+  return `this Deno (${runtime}) has no resource-limit flags — \`denext runtime install\``;
 }
 
 /** The warning when configured limits can't be applied to the server process. */
@@ -266,7 +266,7 @@ export function compileLimitFlags(
     warn(limitsNotAppliedWarning(
       flags,
       "only a denext Deno toolchain with resource-limit flags bakes them into an executable " +
-        "(`denext toolchain install`, and no DENEXT_DENO=stock)",
+        "(`denext runtime install`, and no DENEXT_DENO=stock)",
     ));
   }
   return baked;

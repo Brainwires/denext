@@ -3,7 +3,7 @@
 #   sh examples/rtc-viewer/e2e/browser-check.sh [--engine webkit] [--case cli-auto]
 # from the repository root, on a machine with Playwright's browsers
 # (`deno run -A npm:playwright-core@1.63.0 install chromium webkit`). $DENO is denext's Deno
-# (`denext toolchain path`); the CLI sender needs its WebRTC.
+# (`denext runtime path`); the CLI sender needs its WebRTC.
 set -eu
 DENO="${DENO:-deno}"
 PORT="${RTC_PORT:-3317}"

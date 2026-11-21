@@ -45,7 +45,7 @@ denext 3.0.0-denext.21 (Brainwires)
 | `Deno.build.denext`        | The runtime's version, a string, in the main thread and in workers. `undefined` on stock Deno.                                                                                                    | `3.0.0-rc.3` |
 | `deno --version` last line | `denext <version> (Brainwires)`; `deno -V` stays one line.                                                                                                                                        | `3.0.0-rc.3` |
 | `Deno.version.deno`        | The fork's own version (`3.0.0-denext.21`), also in the user agent (`Deno/3.0.0-denext.21`). Before `3.0.0-rc.1` it was `2.9.7-denext.N`.                                                         | `3.0.0-rc.1` |
-| `deno upgrade`             | Refuses to run in a release build, and the background update check is off: upstream's channels would replace the fork with stock Deno. Use `denext upgrade` or `denext toolchain install`.        | `3.0.0-rc.1` |
+| `deno upgrade`             | Refuses to run in a release build, and the background update check is off: upstream's channels would replace the fork with stock Deno. Use `denext upgrade` or `denext runtime install`.          | `3.0.0-rc.1` |
 | Release channel            | `deno --version` says `stable`, the channel of the Deno release the build is made from (2.9.8). `npm` `engines.deno` ranges are checked against that release, not against the prerelease version. | `3.0.0-rc.1` |
 
 The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then `3.0.0-rc.1` …
@@ -57,7 +57,7 @@ denext's runtime is the forward line. Every "Since" cell below names the full re
 before every `3.0.0` release, so `2.9.7-denext.16` is not `3.0.0-denext.16`. `3.0.0-denext.14` and
 `3.0.0-denext.15` were never released; their work shipped in `3.0.0-denext.16`. No release between `3.0.0-denext.18` and
 `3.0.0-denext.21` was published; that work shipped in `3.0.0-denext.21`.
-Every row below applies to the runtime denext pins (`denext toolchain status` names it); a later
+Every row below applies to the runtime denext pins (`denext runtime version` names it); a later
 release's rows are added once denext pins it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno

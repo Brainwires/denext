@@ -83,7 +83,7 @@ export const FASTLANE_TOOLCHAIN: FastlaneToolchainPin = pinJson as FastlaneToolc
 export const FASTLANE_ENV = "DENEXT_FASTLANE";
 
 /** The command that installs the managed fastlane ahead of time (for offline work). */
-export const FASTLANE_PREFETCH = "denext toolchain install --with fastlane";
+export const FASTLANE_PREFETCH = "denext runtime install --with fastlane";
 
 /**
  * A short hash of the fastlane pin (the Ruby per host, the Gemfile and its lock): the generated CI
@@ -574,7 +574,7 @@ export async function pluginfileGems(projectDir: string): Promise<string[]> {
   return [...text.matchAll(/^\s*gem\s+["']([^"']+)["']/gm)].map((m) => m[1]);
 }
 
-/** The managed fastlane on this machine (`denext toolchain status`, `mobile doctor`). */
+/** The managed fastlane on this machine (`denext runtime version`, `mobile doctor`). */
 export interface FastlaneToolchainStatus {
   /** `pinned`, or `path` under `DENEXT_FASTLANE`. */
   readonly mode: "pinned" | "path";

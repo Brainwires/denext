@@ -86,8 +86,8 @@ binary is all a denext app uses.
 To work offline, fetch it ahead of time:
 
 ```sh
-denext toolchain install --with gleam
-denext toolchain status     # lists the pinned Gleam and whether it is cached
+denext runtime install --with gleam
+denext runtime version     # lists the pinned Gleam and whether it is cached
 ```
 
 | Setting                      | Effect                                                   |

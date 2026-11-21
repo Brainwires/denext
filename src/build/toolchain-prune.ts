@@ -1,4 +1,4 @@
-// Removing cached toolchain versions: `denext toolchain uninstall <version>`, `uninstall --all` and
+// Removing cached toolchain versions: `denext runtime uninstall <version>`, `uninstall --all` and
 // `prune`. Every version denext ever ran on stays in Deno's cache — the Deno toolchain at
 // `denext-deno/<version>/` (its esbuild, native TypeScript compiler and denort inside it), the
 // Deno Desktop runtime at `denext-desktop-runtime/<version>/`, and beside them the managed Gleam

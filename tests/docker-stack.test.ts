@@ -340,8 +340,8 @@ Deno.test("every Dockerfile serves on denext's toolchain, linked before its CMD"
     ] as const
   ) {
     const file = renderDockerfile(options);
-    // `toolchain path` installs the pinned build SHA-256-verified (the build already did).
-    assertStringIncludes(file, "jsr:@denext/denext/cli toolchain path");
+    // `runtime path` installs the pinned build SHA-256-verified (the build already did).
+    assertStringIncludes(file, "jsr:@denext/denext/cli runtime path");
     const path = file.indexOf("ENV PATH=/deno-dir/toolchain-bin:$PATH");
     assert(path > 0, file);
     assert(path < file.indexOf("\nCMD "), "linked before the server starts");

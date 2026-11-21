@@ -18,8 +18,9 @@
 import { basename, dirname, isAbsolute, join, relative } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
 import { warnStockDeprecation } from "../build/stock-deprecation.ts";
-import { stockPathOf } from "./self-exec.ts";
+import { childRuntimeEnv, stockPathOf } from "./self-exec.ts";
 import { REVOCATION_NOTICED_ENV } from "../build/runtime-revocations.ts";
+import { processEnv } from "../build/signed-envelope.ts";
 import {
   denoToolchainCacheRoot,
   resolveDenoToolchain,
@@ -198,6 +199,9 @@ export async function forwardedDeno(): Promise<ForwardedDeno> {
   const marker: Record<string, string> = choice.kind === "toolchain"
     ? {
       [TOOLCHAIN_ACTIVE_ENV]: choice.version,
+      // The selected release's document hash (src/build/runtime-select.ts): a denext the
+      // forwarded command starts loads the same release.
+      ...childRuntimeEnv(choice, processEnv),
       // Said once here: the forwarded command's own denext processes stay quiet about it.
       ...(choice.revocation?.revoked ? { [REVOCATION_NOTICED_ENV]: "1" } : {}),
     }

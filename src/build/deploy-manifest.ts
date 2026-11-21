@@ -37,6 +37,7 @@ import {
   rel,
 } from "./deploy-scan.ts";
 import { compileBuildFlags } from "./compile-app.ts";
+import { activeRuntimeRelease } from "./runtime-select.ts";
 import { detectDockerStack, resolveStack } from "./docker-detect.ts";
 import { stackEnv } from "./docker-stack.ts";
 import { pinnedIdleTrim, readEnv } from "./idle-trim.ts";
@@ -252,6 +253,16 @@ function cacheOf(config: DenextConfig): DeployManifest["cache"] {
   return { store: store === "sqlite" || store === "memory" ? store : "custom" };
 }
 
+/** The runtime release this build runs on (src/build/runtime-select.ts), or `null`. */
+function buildRuntime(): DeployManifest["runtime"] {
+  try {
+    const { version, source, integrity } = activeRuntimeRelease();
+    return { version, source, integrity };
+  } catch {
+    return null;
+  }
+}
+
 /** Options for {@linkcode collectDeployManifest}. */
 export interface CollectOptions {
   /** What `build --compile` produced (null: no executable). */
@@ -278,6 +289,7 @@ export async function collectDeployManifest(
   return {
     version: DEPLOY_MANIFEST_VERSION,
     denext: VERSION,
+    runtime: buildRuntime(),
     mode,
     basePath: config.basePath ?? "",
     trailingSlash: config.trailingSlash === true,

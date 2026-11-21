@@ -17,6 +17,9 @@ import {
   RELEASE_CI_JOBS,
   releaseCiHint,
   releaseCiVerdict,
+  RUNTIME_COMPAT_JOBS,
+  RUNTIME_COMPAT_MIN_LEGS,
+  runtimeCompatVerdict,
   unmetCiJobs,
 } from "../scripts/release-ci.ts";
 import { revocationResignDue } from "../src/build/runtime-revocations.ts";
@@ -512,4 +515,45 @@ Deno.test("release step 7: the revoked-runtimes list is re-signed when fewer tha
   assert(revocationResignDue(expiring(1), now));
   // Lapsed (the releases paused): re-signed on the next one.
   assert(revocationResignDue(expiring(-5), now));
+});
+
+Deno.test("runtime compat proof: the picker green, at least two legs, every leg green, nothing failed", () => {
+  const green = (name: string) => ({ name, status: "completed", conclusion: "success" });
+  const legs = [green("compat (denext 4.21.0)"), green("compat (denext 4.20.1)")];
+  const ok = runtimeCompatVerdict([green("pick legs and runners"), ...legs]);
+  assertEquals(ok.ok, true, ok.problems.join());
+  assertEquals(ok.legs, [{ denext: "4.21.0", ok: true }, { denext: "4.20.1", ok: true }]);
+  assertEquals(RUNTIME_COMPAT_MIN_LEGS, 2);
+
+  const noPicker = runtimeCompatVerdict(legs);
+  assertEquals(noPicker.problems, ["pick legs and runners: missing"]);
+  const oneLeg = runtimeCompatVerdict([green("pick legs and runners"), legs[0]]);
+  assertEquals(oneLeg.problems, ["1 compat leg(s) ran (at least 2 must)"]);
+  const red = runtimeCompatVerdict([
+    green("pick legs and runners"),
+    legs[0],
+    { name: "compat (denext 4.20.1)", status: "completed", conclusion: "failure" },
+  ]);
+  assertEquals(red.ok, false);
+  assertEquals(red.problems, ["compat (denext 4.20.1): red"]);
+  const other = runtimeCompatVerdict([
+    green("pick legs and runners"),
+    ...legs,
+    { name: "something new", status: "in_progress", conclusion: "" },
+    { name: "skipped one", status: "completed", conclusion: "skipped" },
+    { status: "completed", conclusion: null },
+  ]);
+  assertEquals(other.problems, ["something new: in_progress", ": completed"]);
+});
+
+Deno.test("runtime compat proof: its jobs are runtime-compat.yml's, and publish reads it", async () => {
+  const wf = await Deno.readTextFile(
+    new URL("../.github/workflows/runtime-compat.yml", import.meta.url),
+  );
+  for (const job of RUNTIME_COMPAT_JOBS) assertStringIncludes(wf, `name: ${job}\n`, job);
+  assertStringIncludes(wf, "name: compat (denext ${{ matrix.denext }})");
+  const publish = await Deno.readTextFile(
+    new URL("../scripts/runtime-channel.ts", import.meta.url),
+  );
+  assertStringIncludes(publish, "runtimeCompatVerdict(view.jobs");
 });

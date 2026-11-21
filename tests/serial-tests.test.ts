@@ -29,6 +29,7 @@ import {
   findVitestFiles,
   heapEnv,
   isToolchainBuild,
+  passEnv,
   profiledModules,
   reEmitCovered,
   removeTempRoot,
@@ -379,6 +380,16 @@ Deno.test("test-run: heapEnv gives a Windows pass a larger V8 heap, and nothing 
 
 Deno.test("test-run: tempRootEnv points every platform's temp-dir variable at the root", () => {
   assertEquals(tempRootEnv("/r"), { TMPDIR: "/r", TMP: "/r", TEMP: "/r" });
+});
+
+Deno.test("test-run: every pass runs with the temp root and no runtime user default of the machine", async () => {
+  const env = passEnv("/r");
+  assertEquals({ TMPDIR: env.TMPDIR, TMP: env.TMP, TEMP: env.TEMP }, tempRootEnv("/r"));
+  assertEquals(env.DENEXT_RUNTIME_DEFAULT_FILE, join("/r", "no-runtime-default.json"));
+  // The resolver reads the default from that file, not from <DENO_DIR>/denext-deno/default.json.
+  const { userRuntimeDefaultFile } = await import("../src/build/runtime-select.ts");
+  const get = (k: string) => env[k];
+  assertEquals(userRuntimeDefaultFile(get), env.DENEXT_RUNTIME_DEFAULT_FILE);
 });
 
 Deno.test("test-run: removeTempRoot removes a full root and tolerates a missing one", async () => {

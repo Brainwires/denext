@@ -48,3 +48,25 @@ not code). `/search` is the single route with a bundle — its island fetches
 
 Add interactivity to a page (a `"use client"` island) and only that route picks
 up a hydration bundle — the rest stay static. That's the default, not a mode.
+
+## Deploying
+
+The site is static: build it from the repository root with `deno task docs:build` (it ends with
+this directory's `export`, `search-index` and `seo`), then copy `site/out/` into the web root that
+serves https://denext.dev:
+
+```sh
+rsync -a --delete --exclude /runtime/ site/out/ <host>:<denext.dev web root>/
+```
+
+`--exclude /runtime/` is required. The web root's `runtime/` directory is not part of the site:
+it holds the maintainer-signed files denext fetches, published straight into the web root by their
+own tools —
+
+- `runtime/revocations.json`, the revoked-runtimes list (`deno task revocations`);
+- `runtime/channel.json` and `runtime/releases/<version>.json`, the runtime channel index and
+  release documents (`deno task runtime:publish`).
+
+Without the exclude, `--delete` removes them on every docs deploy, and denext then treats the list
+and the channel as absent. Serve them as plain static files (`application/json`, no
+transformation, no long cache: the docs nginx config sends `Cache-Control: no-store` for everything).

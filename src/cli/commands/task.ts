@@ -12,7 +12,7 @@
 
 import type { CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs } from "../shared.ts";
-import { runDenoPassthrough } from "./deno-toolchain.ts";
+import { runDenoPassthrough } from "./deno.ts";
 import { commandMeta } from "../command-meta.ts";
 
 export const taskCommand: CommandSpec = {

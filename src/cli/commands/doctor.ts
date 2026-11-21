@@ -14,7 +14,7 @@ import { crashReportCheck } from "../../build/crash-report.ts";
 import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandLocks, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
-import { runDenoPassthrough } from "./deno-toolchain.ts";
+import { runDenoPassthrough } from "./deno.ts";
 import { type ProjectPaths, resolveProject, resolveProjectLayout } from "../../build/paths.ts";
 import { readStaticConfig, type StaticConfig } from "../../build/config-static.ts";
 import { setupAppPlugins } from "../../plugin/mod.ts";
@@ -73,9 +73,15 @@ import { desktopRuntimeStatus, projectDesktopBackend } from "../../build/desktop
 import {
   DENO_TOOLCHAIN,
   denoToolchainStatus,
+  loadDenoToolchainPin,
   type ToolchainSelection,
   toolchainSelection,
 } from "../../build/deno-toolchain.ts";
+import {
+  BUNDLED_RUNTIME,
+  resolveRuntimeReleaseSync,
+  type RuntimeRelease,
+} from "../../build/runtime-select.ts";
 import { revocationStatusLine } from "../../build/runtime-revocations.ts";
 import {
   type LinuxLibc,
@@ -1101,6 +1107,60 @@ export async function runtimeRevocationsCheck(
   return { name: "runtime revocations", ok: line.ok, detail: line.detail, critical: false };
 }
 
+/** The toolchain pin of the release this project runs on, else the bundled one. */
+function selectedToolchainPin() {
+  try {
+    return loadDenoToolchainPin();
+  } catch {
+    return DENO_TOOLCHAIN;
+  }
+}
+
+/** Whether the project in `dir` ships through a container or a deploy adapter. */
+async function shipsElsewhere(dir: string, config: unknown): Promise<boolean> {
+  if ((config as { deploy?: { adapter?: unknown } } | null)?.deploy?.adapter) return true;
+  for (const name of ["Dockerfile", "docker-compose.yml", "compose.yaml"]) {
+    if ((await Deno.stat(join(dir, name)).catch(() => null))?.isFile) return true;
+  }
+  return false;
+}
+
+/**
+ * The runtime this machine runs the project on against the one a container or CI runs it on:
+ * with no project pin, a user default (`denext runtime use | upgrade`) makes this machine run
+ * another release than a Docker image or a deploy adapter's host, which has no default and runs
+ * the bundled pin. Warns when the project ships that way, naming `denext runtime use --project`.
+ * `null` when the two agree, the project pins its runtime, or it ships no such way. Advisory.
+ *
+ * @param dir The project directory.
+ * @param config The loaded `denext.config` (its `deploy.adapter`).
+ * @param select The selection (test seam; default {@linkcode resolveRuntimeReleaseSync}).
+ * @returns The check, or `null`.
+ */
+export async function runtimeSplitCheck(
+  dir: string,
+  config: unknown,
+  select: () => RuntimeRelease = () => resolveRuntimeReleaseSync({ projectDir: dir }),
+): Promise<Check | null> {
+  let release: RuntimeRelease;
+  try {
+    release = select();
+  } catch {
+    return null; // a broken project pin: the toolchain check reports it
+  }
+  const bundled = BUNDLED_RUNTIME.toolchain.version;
+  if (release.source !== "default" || release.version === bundled) return null;
+  if (!await shipsElsewhere(dir, config)) return null;
+  return {
+    name: "runtime split",
+    ok: false,
+    detail: `this machine runs runtime ${release.version} (your default), but a container or ` +
+      `CI host has no default and runs the bundled ${bundled}: pin one for every machine with ` +
+      "`denext runtime use <version> --project`",
+    critical: false,
+  };
+}
+
 /**
  * On Linux, whether denext's Deno binaries (the toolchain, `denort`, the Deno Desktop runtime) run
  * on this host: glibc at or above the pin's minimum, not musl. `null` off Linux.
@@ -1113,7 +1173,7 @@ export async function linuxLibcCheck(
 ): Promise<Check | null> {
   if ((options.os ?? Deno.build.os) !== "linux") return null;
   const libc = options.libc ?? await probeLinuxLibc();
-  const min = minGlibcFor(DENO_TOOLCHAIN);
+  const min = minGlibcFor(selectedToolchainPin());
   const problem = linuxLibcProblem(libc, min);
   const found = libc.kind === "glibc"
     ? `glibc ${libc.version}`
@@ -1218,8 +1278,11 @@ export async function collectDoctorReport(
   if (localImports) checks.push(localImports);
   const importVersions = await importVersionsCheck(paths.projectDir);
   if (importVersions) checks.push(importVersions);
-  const jail = await jailScriptsCheck(paths.projectDir, options);
-  if (jail) checks.push(jail);
+  const advisories = await Promise.all([
+    jailScriptsCheck(paths.projectDir, options),
+    runtimeSplitCheck(paths.projectDir, paths.config),
+  ]);
+  checks.push(...advisories.filter((c): c is Check => c !== null));
   checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };

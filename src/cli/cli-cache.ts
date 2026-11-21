@@ -9,7 +9,7 @@
 // version:
 //
 //   * in the background on the first run of a remote CLI (`warmCliModules`, any verb);
-//   * and in the foreground from `denext toolchain install` (`cacheCliModules`), the post-install
+//   * and in the foreground from `denext runtime install` (`cacheCliModules`), the post-install
 //     step the installers and the docs run.
 //
 // A local checkout (`file:`) and a compiled binary (its modules are embedded) need neither.
@@ -25,7 +25,7 @@ import { childDeadlineMs } from "../build/serial-child.ts";
 
 /** The module whose graph is every module a verb can load (scripts/gen-command-table.ts). */
 // Spelled so no tool reads it as an import: this module is itself in that graph (through
-// `denext toolchain install`), and the URL is only ever handed to `deno cache`.
+// `denext runtime install`), and the URL is only ever handed to `deno cache`.
 export const CLI_MODULES_URL: string =
   new URL(["./offline-modules", "generated.ts"].join("."), import.meta.url)
     .href;
@@ -138,7 +138,7 @@ async function cacheArgs(url: string, configArgs?: string[]): Promise<string[]> 
 }
 
 /**
- * Cache every on-demand CLI module now (`denext toolchain install`). No-op for a local checkout or
+ * Cache every on-demand CLI module now (`denext runtime install`). No-op for a local checkout or
  * a binary.
  *
  * @param url The offline-modules URL (the running CLI's own, by default).

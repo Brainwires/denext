@@ -14,6 +14,11 @@ import { join } from "@std/path";
 import { isStack, type StackOptions } from "./docker-stack.ts";
 import { detectDockerMode, type DockerMode, type DockerOptions } from "./docker-template.ts";
 import { usesPostgres } from "./generate-ops.ts";
+import {
+  readProjectRuntimePin,
+  resolveRuntimeReleaseSync,
+  type RuntimeRelease,
+} from "./runtime-select.ts";
 import { configDisablesIdleTrim, pinnedIdleTrim, readEnv } from "./idle-trim.ts";
 import { configuredLimitFlags, pinnedLimitFlags, withLimitFlags } from "./resource-limits.ts";
 import {
@@ -514,6 +519,49 @@ export async function resolveDocker(
       : {}),
     ...(mode === "server" ? await dockerLimits(dir, stack.startCommand, warnings) : {}),
     ...await dockerTls(dir, mode, warnings),
+    ...dockerRuntime(dir, warnings),
   };
   return { options, detection, warnings };
+}
+
+/**
+ * The denext runtime release the image runs: the project pin (`denext.runtime` in deno.json),
+ * which the image's `deno.json` carries in, so its build and its server resolve the same release,
+ * verified by its integrity; recorded as `runtime` for the Dockerfile's label. An unpinned project
+ * builds on the bundled release of the denext its lock names, so when this machine runs another
+ * one (its user default, `DENEXT_RUNTIME`) that split is a warning with the fix.
+ *
+ * @param dir The project root.
+ * @param warnings Where the warning goes.
+ * @param select The release this machine selects (test seam).
+ * @returns `{ runtime }` for a pinned project, else nothing.
+ */
+export function dockerRuntime(
+  dir: string,
+  warnings: string[],
+  select: () => RuntimeRelease = () => resolveRuntimeReleaseSync({ projectDir: dir }),
+): { runtime?: string } {
+  let pin: ReturnType<typeof readProjectRuntimePin>;
+  try {
+    pin = readProjectRuntimePin(dir);
+  } catch (err) {
+    warnings.push(err instanceof Error ? err.message : String(err));
+    return {};
+  }
+  if (pin) return { runtime: pin.lock.version };
+  let here: RuntimeRelease;
+  try {
+    here = select();
+  } catch {
+    return {}; // nothing here to compare with
+  }
+  if ((here.source === "default" || here.source === "env") && here.version) {
+    const why = here.source === "default" ? "your default runtime" : "DENEXT_RUNTIME";
+    warnings.push(
+      `the image builds and runs on the runtime its denext bundles, not ${here.version} (${why} ` +
+        `here), because deno.json pins none; pin it so both run the same release: ` +
+        `denext runtime use ${here.version} --project`,
+    );
+  }
+  return {};
 }

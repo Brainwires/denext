@@ -37,8 +37,8 @@ Deno.test("the notice names the cause, 5.0, the fix and the opt-out, on every st
     "deno-env": ["DENEXT_DENO=stock", "unset DENEXT_DENO"],
     "deno-path": ["DENEXT_DENO points at a stock Deno binary", "unset DENEXT_DENO, or point it"],
     "desktop-env": ["DENEXT_DESKTOP_RUNTIME=stock", "unset DENEXT_DESKTOP_RUNTIME"],
-    "desktop-mismatch": ["stock Deno Desktop runtime", "`denext toolchain install`"],
-    "esbuild": ["npm esbuild", "`denext toolchain install`"],
+    "desktop-mismatch": ["stock Deno Desktop runtime", "`denext runtime install`"],
+    "esbuild": ["npm esbuild", "`denext runtime install`"],
     "stock-process": ["plain `deno task`", "run it with `denext task <name>`"],
   };
   for (const [path, [cause, fix]] of Object.entries(paths) as [StockDenoPath, string[]][]) {

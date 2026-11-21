@@ -8,6 +8,65 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.21.0] - 2026-11-21
+
+### Added
+
+- **Runtime-only upgrades: `denext runtime upgrade`.** A new denext runtime (denext's Deno build and
+  its Deno Desktop runtime) no longer needs a denext release to reach your machine. Runtime releases
+  are published to a signed runtime channel (`https://denext.dev/runtime/channel.json`, mirrored on
+  GitHub; ECDSA P-256, its own key pair, 45-day expiry, a sequence that only grows), and
+  `denext runtime upgrade` installs the newest one this denext supports, past the dependency-age
+  hold (24 hours unless the project sets `minimumDependencyAge`), and makes it your default.
+  `--project` pins it in the project's `deno.json` instead (`"denext": { "runtime": { "version",
+  "integrity" } }`): a lock on the release document's hash, so CI, Docker images, `build --compile`
+  and desktop packaging run exactly that release, with no signature or network needed once it is
+  cached. The channel never changes the runtime by itself: a command runs the project pin, then your
+  default, then the release this denext bundles, and says once a day when a newer one is available.
+  A release needing a newer denext names `denext upgrade`; a yanked one stops being offered; a revoked
+  one falls back to the newest installed release it does not revoke.
+- **`denext runtime version | list | install | upgrade | use | path | link | unlink | uninstall |
+  prune`.** One verb family over the runtime: `version` (alias `info`) says what runs here and why
+  (project pin, user default, `DENEXT_RUNTIME` or bundled), the channel's state and the old status
+  rows; `list` the installed releases with the channel's verdict on each; `use <version | latest |
+  bundled> [--project]` sets the default (held) or the project pin; `install [<version>]
+  [--with gleam,fastlane]`; `upgrade [--project] [--dry-run]`; `path`, `link`, `unlink`,
+  `uninstall` and `prune`, each with `--json`. `list` gives each release the channel's verdict
+  (available, held, yanked, incompatible). `DENEXT_RUNTIME_DEFAULT_FILE` names another file for
+  your default.
+- **The installers install the newest runtime, and can move only the runtime.** `install.sh` /
+  `install.ps1` install the latest denext, then run `denext runtime upgrade` (the binary verifies
+  everything; the scripts never read the channel). `--runtime-only` (`DENEXT_RUNTIME_ONLY=1`,
+  `-RuntimeOnly`) leaves an installed denext alone and moves only its runtime;
+  `--runtime=<version>` (`DENEXT_RUNTIME_VERSION`, `-Runtime <version>`) installs that release and
+  makes it the default. Either one fails the run when the runtime step fails. A denext from before
+  `denext runtime` still gets its own toolchain step, and `--uninstall` removes its `deno` link.
+- **Docker images, deploy hosts and compiled apps record the runtime they run.** A project that pins
+  a runtime gets `LABEL dev.denext.runtime=<version>` in its generated Dockerfile (the pin travels in
+  with `deno.json`, so the image builds and serves exactly that release); an unpinned project whose
+  machine runs another release than the bundled one is warned by `generate docker`, `deploy prepare`
+  (docker, fly, generic-host) and `denext doctor`, with `denext runtime use <version> --project` as
+  the fix. `.denext/deploy-manifest.json` records the build's runtime and, for `build --compile`,
+  the release whose `denort` the executable runs on.
+
+### Changed
+
+- **`DENEXT_NO_TOOLCHAIN` is now `DENEXT_NO_RUNTIME`** for the installers.
+
+### Removed
+
+- **`denext toolchain` is gone; use `denext runtime`.** `toolchain status` is `runtime version`,
+  `toolchain install | path | link | unlink | uninstall | prune` are the same `runtime` verbs. The
+  old verb is an unknown command whose suggestion names the `runtime` equivalent. The installers,
+  generated Dockerfiles and generic-host build scripts call the new verb.
+
+### Fixed
+
+- **The root 404 page uses `app/not-found.tsx`'s own metadata.** Its `metadata` (or
+  `generateMetadata()`) — title, description, `robots` and the rest — is merged over the root
+  layout's, as in Next.js, in `out/404.html` and the server's 404 response alike; "404 — Not Found"
+  stays the title only when the page sets none. Before, the page's metadata was ignored.
+
 ## [4.20.1] - 2026-11-19
 
 ### Added
@@ -22901,7 +22960,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.20.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.21.0...development
+[4.21.0]: https://jsr.io/@denext/denext@4.21.0
 [4.20.1]: https://jsr.io/@denext/denext@4.20.1
 [4.20.0]: https://jsr.io/@denext/denext@4.20.0
 [4.19.0]: https://jsr.io/@denext/denext@4.19.0

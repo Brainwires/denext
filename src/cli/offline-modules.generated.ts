@@ -3,7 +3,7 @@
 // Every module a `denext` verb can load: the on-demand CLI modules (./lazy-modules.generated.ts),
 // the framework's `exports` (a build or a server loads them by URL: the client runtime, the
 // compat layers) and the modules src/ reaches through a computed URL (a worker, a bundler run in
-// a child, a module a transform injects). `denext toolchain install` and a remote CLI's first run
+// a child, a module a transform injects). `denext runtime install` and a remote CLI's first run
 // `deno cache` this file (src/cli/cli-cache.ts), so a CLI installed from JSR works offline.
 // Nothing imports it at run time.
 

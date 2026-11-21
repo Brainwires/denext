@@ -27,6 +27,22 @@ export const MIN_DENO_VERSION = "2.9.0";
 /** The first release of denext's Deno under its own version (see {@linkcode isDenextDenoVersion}). */
 export const FIRST_OWN_VERSION_RUNTIME = "3.0.0-rc.1";
 
+/**
+ * The oldest denext runtime release this denext runs on when one is selected rather than bundled
+ * (a project pin, a user default or `DENEXT_RUNTIME`; src/build/runtime-select.ts): the first
+ * bundled pin of a channel-aware denext. Below it a project pin is an error naming `denext runtime
+ * use --project`, and a user default is skipped with one notice. Features of newer runtimes keep
+ * degrading through the `supports*()` gates in this file; this is the hard floor under them.
+ */
+export const MIN_RUNTIME = "3.0.0-denext.27";
+
+/**
+ * The laufey API level denext's desktop glue needs from a selected runtime's Deno Desktop runtime
+ * (the bundled pin's at {@linkcode MIN_RUNTIME}). A release that records a lower one, or none, is
+ * not selected.
+ */
+export const MIN_RUNTIME_LAUFEY_API = 58;
+
 /** Whether `version` (e.g. `Deno.version.deno`) satisfies {@linkcode MIN_DENO_VERSION}. */
 export function denoVersionOk(version: string, min: string = MIN_DENO_VERSION): boolean {
   const a = parts(version);

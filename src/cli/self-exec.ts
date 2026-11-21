@@ -26,6 +26,7 @@ import {
   type RuntimeComponent,
 } from "../build/runtime-revocations.ts";
 import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
+import { RUNTIME_INTEGRITY_ENV, RUNTIME_NOTICED_ENV } from "../build/runtime-select.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -396,7 +397,7 @@ const TOOLCHAIN_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
  * Whether a verb runs the project's code — and so runs on denext's Deno toolchain: the serve and
  * build verbs, `test` / `check` / `job`, `analyze` / `profile` / `doctor`, `desktop
  * run|dev|build|package`, `mobile dev|build`, and every verb a project or plugin contributes.
- * Help, `--version`, scaffolding, dependency edits, `toolchain`, `upgrade` and `create` stay on
+ * Help, `--version`, scaffolding, dependency edits, `runtime`, `upgrade` and `create` stay on
  * the Deno that started the CLI.
  *
  * @param command The verb's name and where it came from.
@@ -415,12 +416,12 @@ export function runsProjectCode(
 }
 
 /**
- * The verbs a compiled binary runs without any Deno: `toolchain` manages the toolchain itself (its
- * `status` must never download it) and `completions` only prints a script. Every other verb may
+ * The verbs a compiled binary runs without any Deno: `runtime` manages the toolchain itself (its
+ * `version` must never download it) and `completions` only prints a script. Every other verb may
  * spawn `deno` — a module verb's pinned-denext re-exec, `fmt` / `lint` / `add`, the UI's and MCP's
  * children — so a binary hands those the toolchain up front.
  */
-const DENO_FREE_VERBS: ReadonlySet<string> = new Set(["toolchain", "completions"]);
+const DENO_FREE_VERBS: ReadonlySet<string> = new Set(["runtime", "completions"]);
 
 /**
  * Whether denext's Deno toolchain applies to a verb in THIS process: in a compiled binary, every
@@ -450,7 +451,7 @@ export function toolchainApplies(
  * no project code — `fmt`, `lint`, `add`, `create`, `generate`, `migrate`, `upgrade`, `ui`, `mcp`,
  * `task`, … — so their children (`deno fmt`, the UI's and MCP's `deno` children, a task's steps)
  * run on the toolchain, as they do under the binary. The project-code verbs re-exec instead
- * ({@linkcode toolchainApplies}); `toolchain` and `completions` run no Deno at all.
+ * ({@linkcode toolchainApplies}); `runtime` and `completions` run no Deno at all.
  *
  * @param command The verb's name and where it came from.
  * @param action Its first positional (the `desktop` / `mobile` action).
@@ -916,6 +917,47 @@ export interface ReexecToolchainDeps {
    * instead ({@linkcode handsToolchainToChildren}).
    */
   readonly handOff?: boolean;
+  /**
+   * The "newer runtime available" line (production: src/build/runtime-select.ts
+   * `runtimeUpdateNotice`), asked while the toolchain is resolved and said once per process tree
+   * (`DENEXT_RUNTIME_NOTICED`). Absent: no notice.
+   */
+  readonly runtimeNotice?: () => Promise<string | null>;
+}
+
+/**
+ * {@linkcode ReexecToolchainDeps.resolve}, with the runtime notice asked at the same time (the
+ * channel's cached index answers it; it fetches at most every 12 hours, within its budget) and
+ * said once per process tree. A failing notice is no notice.
+ */
+async function resolveWithNotice(deps: ReexecToolchainDeps): Promise<DenoToolchainChoice> {
+  const ask = deps.runtimeNotice && deps.env(RUNTIME_NOTICED_ENV) !== "1"
+    ? deps.runtimeNotice().catch(() => null)
+    : Promise.resolve(null);
+  const [choice, notice] = await Promise.all([deps.resolve(), ask]);
+  if (notice) {
+    deps.warn(notice);
+    deps.setEnv(RUNTIME_NOTICED_ENV, "1");
+  }
+  return choice;
+}
+
+/**
+ * The environment a child on `choice` gets beside the toolchain marker: the selected release's
+ * document hash (src/build/runtime-select.ts), an empty value that clears one this process
+ * inherited, or nothing.
+ *
+ * @param choice The resolver's choice.
+ * @param env This process's environment.
+ * @returns `{ DENEXT_RUNTIME_INTEGRITY }`, or `{}`.
+ */
+export function childRuntimeEnv(
+  choice: DenoToolchainChoice,
+  env: (name: string) => string | undefined,
+): Record<string, string> {
+  const integrity = choice.kind === "toolchain" ? choice.integrity : undefined;
+  if (integrity) return { [RUNTIME_INTEGRITY_ENV]: integrity };
+  return env(RUNTIME_INTEGRITY_ENV) ? { [RUNTIME_INTEGRITY_ENV]: "" } : {};
 }
 
 /**
@@ -957,10 +999,11 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
   if (deps.env("DENO_BIN")) return false;
   // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
   if (!deps.standalone() && onToolchainNow(deps)) return false;
-  const choice = await deps.resolve();
+  const choice = await resolveWithNotice(deps);
   announceChoice(choice, deps);
   if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
+  for (const [k, v] of Object.entries(childRuntimeEnv(choice, deps.env))) deps.setEnv(k, v);
   deps.setEnv("DENO_BIN", choice.deno);
   const path = (await deps.pathEnv?.(choice.deno))?.PATH;
   if (path) deps.setEnv("PATH", path);
@@ -969,7 +1012,7 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
 
 /**
  * The half of {@linkcode maybeReexecToolchain} for a process ALREADY on the toolchain — started on
- * it directly (`toolchain link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
+ * it directly (`runtime link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
  * `2.9.7-denext.N` build) rather than re-exec'd onto it, so without the toolchain's runtime flags
  * ({@linkcode toolchainRuntimeFlags}). A serving verb whose `Deno.serve` still runs the legacy abort
  * re-runs once on this same binary with them; the child is told so ({@linkcode RUNTIME_FLAGS_ENV})
@@ -1031,7 +1074,7 @@ async function recheckedChoice(deps: ReexecToolchainDeps): Promise<DenoToolchain
  * version, and a process whose Deno is that marker's version (or the pinned version, or a
  * `DENEXT_DENO=<path>` child: marker `path`) never re-execs. Neither a leaked marker (an
  * absolute-path stock `deno` inside `denext task`) nor an older `-denext.N` build (a stale
- * `toolchain link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
+ * `runtime link`) counts as the toolchain: they re-exec onto the pinned one. An explicit opt-out
  * (`DENEXT_DENO=stock`) or no pin continues the command in-process; a process without the grants
  * to start the toolchain refuses with the resolver's `refusal` (its ways out); a toolchain that can't be had (offline, no build for this host, a failed download)
  * throws the resolver's `denext:` error with the fix — never another Deno. A serving verb already
@@ -1057,14 +1100,24 @@ export async function maybeReexecToolchain(
     }
     return false;
   }
-  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await deps.resolve();
+  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await resolveWithNotice(deps);
   if (choice === null) return await reexecForRuntimeFlags(deps);
   announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
-  // The child gets the runtime flags with the spawn; told so, it skips their check.
-  const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
-  deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  // The child gets the runtime flags with the spawn; told so, it skips their check. It loads the
+  // release this process selected (src/build/runtime-select.ts) by its document hash.
+  const told = {
+    ...childRuntimeEnv(choice, deps.env),
+    ...(deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : {}),
+  };
+  deps.exit(
+    await deps.spawn(
+      choice.deno,
+      choice.version,
+      Object.keys(told).length > 0 ? told : undefined,
+    ),
+  );
   return true;
 }
 

@@ -74,8 +74,8 @@ platform with no build) and the stock `deno` they fall back to is older or missi
 **Fix.** Fetch the toolchain once you are online, or point denext at a Deno 2.9+ binary.
 
 ```sh
-denext toolchain install
-denext toolchain status      # which Deno a command runs on, and why
+denext runtime install
+denext runtime version      # which Deno a command runs on, and why
 # or
 DENO_BIN=/path/to/deno denext task build
 ```

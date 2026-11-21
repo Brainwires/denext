@@ -109,6 +109,11 @@ export interface CompileAppResult {
   output: string;
   /** The `--allow-*` baked into it. */
   permissions: string[];
+  /**
+   * The denext runtime release whose `denort` it runs on (the release the resolver selected, the
+   * same one `dev` and `build` run), or `null` when `deno compile` chose its own (another Deno).
+   */
+  runtime: string | null;
   /** The signing step's outcome, when signing was asked for. */
   signing?: CompileSignResult;
   /**
@@ -432,6 +437,15 @@ export async function denortBinary(
   // when there is one, is what this process already runs on).
   await (deps.shippable ?? shippableDenort)(version, triple);
   return (await (deps.ensure ?? ensureDenort)({ pin, target: key })).denort;
+}
+
+/**
+ * The runtime release a compile onto `denort` ({@linkcode denortBinary}'s answer) runs on: the
+ * toolchain's own release, or `null` when `deno compile` chose its own runtime.
+ */
+function compiledRuntime(denort: string | undefined): string | null {
+  if (denort === undefined) return null;
+  return toolchainVersion() ?? null;
 }
 
 /** Refuse a denort the revoked-runtimes list revokes for `triple`. */
@@ -881,5 +895,5 @@ export async function compileApp(
   ];
   await runDenoCompile(deno, args, paths.projectDir, denort, lock, output);
   const signing = await signOutput(output, paths.projectDir, compile, permissions, options);
-  return { output, permissions, signing, skipped };
+  return { output, permissions, runtime: compiledRuntime(denort), signing, skipped };
 }

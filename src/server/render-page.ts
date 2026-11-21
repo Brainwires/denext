@@ -1429,8 +1429,18 @@ export async function renderRootNotFound(
   load: ModuleLoader,
 ): Promise<RenderedPage> {
   let content: VNode;
+  // Next.js uses the not-found page's own `metadata` / `generateMetadata()` (title,
+  // description, robots …), merged over the layout's; the default title applies only beneath it.
+  let notFoundMeta: Metadata | undefined;
   if (manifest.rootNotFound) {
-    const nf = (await load(manifest.rootNotFound)) as { default: () => VNode };
+    const nf = (await load(manifest.rootNotFound)) as {
+      default: () => VNode;
+      metadata?: Metadata;
+      generateMetadata?: () => Metadata | Promise<Metadata>;
+    };
+    notFoundMeta = typeof nf.generateMetadata === "function"
+      ? await nf.generateMetadata()
+      : nf.metadata;
     content = h(nf.default, {});
   } else {
     content = h("div", { class: "denext-not-found" }, [
@@ -1449,7 +1459,11 @@ export async function renderRootNotFound(
   }
 
   const html = await renderToString(content);
-  const metadata = mergeMetadata([...layoutMetas, { title: "404 — Not Found" }]);
+  const metadata = mergeMetadata([
+    ...layoutMetas,
+    { title: "404 — Not Found" },
+    ...(notFoundMeta ? [notFoundMeta] : []),
+  ]);
   return { html, metadata, status: 404, config: DEFAULT_SEGMENT_CONFIG };
 }
 

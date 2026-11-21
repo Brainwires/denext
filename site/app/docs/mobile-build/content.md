@@ -364,7 +364,7 @@ installs both into the [toolchain cache](/docs/toolchain#fastlane),
 
 Several of fastlane's gems build C extensions, so the first install needs a C compiler: the Command
 Line Tools on macOS (Xcode has them), `cc` and `make` on Linux (`build-essential` on
-Debian/Ubuntu, `gcc make` on Fedora). It takes a minute or two. `denext toolchain install --with
+Debian/Ubuntu, `gcc make` on Fedora). It takes a minute or two. `denext runtime install --with
 fastlane` installs it ahead of time. macOS and Linux, on arm64 and x64, are supported. Windows is
 not: fastlane's iOS half needs macOS, so run the lanes on a Mac, or for Android on Linux or macOS
 (in CI, for example).

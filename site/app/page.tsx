@@ -130,7 +130,7 @@ const ARRIVES: Card[] = [
   {
     title: "Offline, and tidy",
     body:
-      "denext toolchain install --with gleam,fastlane fetches everything ahead of time; toolchain status shows what's cached, and uninstall and prune reclaim the space.",
+      "denext runtime install --with gleam,fastlane fetches everything ahead of time; runtime version shows what's cached, and uninstall and prune reclaim the space.",
   },
 ];
 

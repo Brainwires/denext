@@ -117,6 +117,43 @@ Deno.test("renderRootNotFound: custom not-found is wrapped by the root layout", 
   assertEquals(page.metadata.description, "shell layout");
 });
 
+Deno.test("renderRootNotFound: the not-found page's own metadata wins over the layout's and the default", async () => {
+  const NotFound = () => h("p", null, "gone");
+  const Layout = ({ children }: { children: VNode }) => h("div", null, children);
+  const nfMeta: Metadata = {
+    title: "Lost in space",
+    description: "no such page",
+    robots: { index: false },
+  };
+  const load: ModuleLoader = (p) =>
+    Promise.resolve(
+      p.includes("layout")
+        ? { default: Layout, metadata: { title: "Site", description: "the site" } }
+        : { default: NotFound, metadata: nfMeta },
+    );
+  const page = await renderRootNotFound(
+    manifest({ rootNotFound: "app/not-found.tsx", rootLayout: "app/layout.tsx" }),
+    load,
+  );
+  assertEquals(page.metadata.title, "Lost in space");
+  assertEquals(page.metadata.description, "no such page");
+  assertEquals(page.metadata.robots, { index: false });
+
+  // generateMetadata() is used too, and a not-found without a title keeps the default.
+  const load2: ModuleLoader = (p) =>
+    Promise.resolve(
+      p.includes("layout")
+        ? { default: Layout }
+        : { default: NotFound, generateMetadata: () => Promise.resolve({ description: "d" }) },
+    );
+  const page2 = await renderRootNotFound(
+    manifest({ rootNotFound: "app/not-found.tsx", rootLayout: "app/layout.tsx" }),
+    load2,
+  );
+  assertEquals(page2.metadata.title, "404 — Not Found");
+  assertEquals(page2.metadata.description, "d");
+});
+
 Deno.test("renderGlobalError: returns null when no global-error module exists", async () => {
   const load: ModuleLoader = () => Promise.reject(new Error("nope"));
   const page = await renderGlobalError(manifest({}), load, new Error("boom"));

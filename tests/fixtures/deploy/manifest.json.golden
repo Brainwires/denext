@@ -1,6 +1,11 @@
 {
   "version": 1,
   "denext": "<version>",
+  "runtime": {
+    "version": "<runtime>",
+    "source": "<source>",
+    "integrity": null
+  },
   "mode": "app",
   "basePath": "",
   "trailingSlash": false,

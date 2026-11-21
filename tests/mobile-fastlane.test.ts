@@ -201,7 +201,7 @@ Deno.test("native-plugins.yml: the iOS job (macos-15, arm64) installs the manage
   const runs = ios.steps.map((s) => s.run ?? "").join("\n");
   // Apple silicon asserted, not assumed; the install ahead of time; the lane; its own artifact.
   assertStringIncludes(runs, 'test "$(uname -m)" = arm64');
-  assertStringIncludes(runs, "$DENEXT toolchain install --with fastlane");
+  assertStringIncludes(runs, "$DENEXT runtime install --with fastlane");
   assertStringIncludes(runs, "darwin-aarch64/ruby/bin/ruby");
   assertStringIncludes(runs, "$DENEXT mobile add fastlane");
   assertStringIncludes(runs, "$DENEXT fastlane ios build unsigned:true");
@@ -573,7 +573,7 @@ Deno.test("doctor --release: whether `denext fastlane` can run on this host", as
     compiler: fine,
   });
   assertStringIncludes(invalid, "does not match its pin");
-  assertStringIncludes(invalid, "denext toolchain install --with fastlane");
+  assertStringIncludes(invalid, "denext runtime install --with fastlane");
   const [path] = await managed({
     status: () =>
       Promise.resolve(status({ mode: "path", state: "n/a", ok: false, detail: "X — NOT FOUND" })),

@@ -6,8 +6,10 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
+  canonicalChannelKeys,
   canonicalEntries,
   canonicalEntriesText,
+  channelKeyId,
   checkedOutPins,
   entryFromFlags,
   KEYCHAIN_SERVICE,
@@ -747,5 +749,120 @@ Deno.test("sign: a published list that can't be read or verified is refused unle
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("revoke-channel-key: withdraws a channel key; add, resign and sign keep it; dropping it is refused", async () => {
+  const f = await withKey();
+  const dir = await Deno.makeTempDir();
+  try {
+    const out = join(dir, "list.json");
+    await publishedWith(f, freshRevocationList([], new Date(NOW.getTime() - 86_400_000)));
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const spki = toBase64(new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)));
+    const id = await channelKeyId(undefined, { key: spki });
+    assertEquals(id.length, 64);
+    assertEquals(await channelKeyId(id.toUpperCase(), {}), id, "a hex id is lower-cased");
+    await assertRejects(() => channelKeyId("nope", {}), Error, "--key <base64 spki>");
+    await assertRejects(() => channelKeyId(undefined, { key: "%%%" }), Error, "base64 SPKI");
+
+    await main(["revoke-channel-key", "--key", spki, "--out", out, "--no-publish"], f.deps);
+    const withdrawn = await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+      now: NOW.getTime(),
+    });
+    assertEquals(withdrawn?.revokedChannelKeys, [id]);
+    assertStringIncludes(f.logged.join("\n"), `withdrew channel key ${id}`);
+
+    // add and resign carry the withdrawn key forward.
+    f.published.text = await Deno.readTextFile(out);
+    await main([
+      "add",
+      "--component",
+      "cli",
+      "--version",
+      "3.0.0-denext.3",
+      "--reason",
+      "x",
+      "--out",
+      out,
+      "--no-publish",
+    ], f.deps);
+    const added = await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+      now: NOW.getTime(),
+    });
+    assertEquals(added?.revokedChannelKeys, [id]);
+    f.published.text = await Deno.readTextFile(out);
+    await main(["resign", "--out", out, "--no-publish"], f.deps);
+    assertEquals(
+      (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+        now: NOW.getTime(),
+      }))
+        ?.revokedChannelKeys,
+      [id],
+    );
+
+    // sign from an entries file: one that leaves the key out is refused, one that keeps it signs.
+    f.published.text = await Deno.readTextFile(out);
+    const entry = { component: "cli", version: "3.0.0-denext.3", reason: "x" };
+    const entries = join(dir, "entries.json");
+    await Deno.writeTextFile(entries, JSON.stringify({ revoked: [entry] }));
+    await assertRejects(
+      () => main(["sign", entries, "--out", out, "--no-publish"], f.deps),
+      Error,
+      "trust them again",
+    );
+    await Deno.writeTextFile(
+      entries,
+      canonicalEntriesText([entry as RuntimeRevocation], [id.toUpperCase()]),
+    );
+    assertStringIncludes(await Deno.readTextFile(entries), `"revokedChannelKeys": [\n    "${id}"`);
+    await main(["canonical", entries, "--check"], f.deps);
+    await main(["sign", entries, "--out", out, "--no-publish"], f.deps);
+    assertEquals(
+      (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+        now: NOW.getTime(),
+      }))
+        ?.revokedChannelKeys,
+      [id],
+    );
+    // --allow-unrevoke lets an entries file drop it.
+    await Deno.writeTextFile(entries, JSON.stringify({ revoked: [entry] }));
+    f.published.text = await Deno.readTextFile(out);
+    await main(["sign", entries, "--out", out, "--no-publish", "--allow-unrevoke"], f.deps);
+    assertEquals(
+      (await verifyRevocationDocument(await Deno.readTextFile(out), [f.pub], {
+        now: NOW.getTime(),
+      }))
+        ?.revokedChannelKeys,
+      undefined,
+    );
+    // verify lists a withdrawn key.
+    await main(["revoke-channel-key", id, "--out", out, "--no-publish"], {
+      ...f.deps,
+      published: () => Promise.resolve(f.published.text),
+    });
+    f.logged.length = 0;
+    await main(["verify", out], f.deps);
+    assertStringIncludes(f.logged.join("\n"), `channel key ${id}: withdrawn`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("canonicalChannelKeys: lower-cased, de-duplicated and sorted; anything else refused", () => {
+  const a = "A".repeat(64);
+  const b = "0".repeat(64);
+  assertEquals(canonicalChannelKeys(undefined), []);
+  assertEquals(canonicalChannelKeys([a, a.toLowerCase(), b]), [b, a.toLowerCase()]);
+  for (const bad of ["x", ["short"], [1], {}]) {
+    try {
+      canonicalChannelKeys(bad, "f.json");
+      throw new Error("accepted");
+    } catch (err) {
+      assertStringIncludes((err as Error).message, "f.json: revokedChannelKeys");
+    }
   }
 });

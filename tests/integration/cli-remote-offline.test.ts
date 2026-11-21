@@ -2,7 +2,7 @@
 // verb's implementation on first use, so caching the entrypoint alone leaves the verbs uncached.
 // This serves the checkout over loopback HTTP as a stand-in for JSR, caches only the entrypoint's
 // graph (what an install caches), shows that a verb then fails under `--cached-only`, and that both
-// ways the CLI caches its verbs — the background warm-up on any first run, and `denext toolchain
+// ways the CLI caches its verbs — the background warm-up on any first run, and `denext runtime
 // install` — make it load offline.
 //
 // Opt-in and heavy (a fresh DENO_DIR downloads every dependency of every verb):
@@ -90,8 +90,8 @@ Deno.test({
       const before = await offline(["routes", project]);
       assertNotEquals(before.code, 0, "the verb's modules were not in the cache yet");
 
-      // `denext toolchain install` (here with an explicit toolchain path: no download) caches them.
-      const install = await run(["run", "-A", "--config", config, cli, "toolchain", "install"], {
+      // `denext runtime install` (here with an explicit toolchain path: no download) caches them.
+      const install = await run(["run", "-A", "--config", config, cli, "runtime", "install"], {
         DENEXT_DENO: Deno.execPath(),
       });
       assertEquals(install.code, 0, install.err);
