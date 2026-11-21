@@ -17,9 +17,11 @@
 // Each new pin keeps the pin it replaces as its `rollback`: the release denext runs instead when
 // the signed revoked-runtimes list revokes the pinned one (src/build/runtime-revocations.ts). When
 // the replaced pin is itself revoked (or is the same release), its own `rollback` is kept instead,
-// so a revoked release never becomes the fallback. `--rollback <tag>` names the fallback release
-// explicitly; its archives get the same checks and attestation as the pinned ones
-// (`--rollback-manifest` / `--rollback-sums` / `--rollback-archives` read it locally).
+// so a revoked release never becomes the fallback, and a release older than MIN_RUNTIME
+// (src/build/deno-version.ts) is never kept: denext refuses to run it. `--rollback <tag>` names the
+// fallback release explicitly (refused below MIN_RUNTIME); its archives get the same checks and
+// attestation as the pinned ones (`--rollback-manifest` / `--rollback-sums` / `--rollback-archives`
+// read it locally).
 //
 // Reads the release's `manifest.json` and `SHA256SUMS` and checks EVERY archive against both: the
 // manifest's sha256 must equal the SHA256SUMS line for the same file, every SHA256SUMS archive must
@@ -72,6 +74,7 @@ import {
   FIRST_MARKER_RUNTIME,
   isDenextReleaseVersion,
   mediaCapturePinProblem,
+  MIN_RUNTIME,
   pinnedDenoReleaseVersion,
 } from "../src/build/deno-version.ts";
 
@@ -696,22 +699,36 @@ export function runtimeRollbackOf(pin: PinFile): RuntimeRollback {
  * The `rollback` a new pin of `version` carries, from the pin it replaces (`previous`, `null`
  * when there is none): that pin — unless it is the same release (re-pinned: its own rollback
  * stays) or it is revoked itself, when ITS rollback is kept: a revoked release is never a fallback.
+ * A candidate older than `floor` (this denext's {@linkcode MIN_RUNTIME}) is dropped: denext refuses
+ * to run a release below its floor, so it could never be the fallback.
  *
  * @param previous The pin being replaced.
  * @param version The new pin's version.
  * @param revoked Whether a version is on the revoked-runtimes list.
  * @param of The pin → rollback mapping.
+ * @param floor The oldest release a rollback may name (`undefined`: no floor).
  * @returns The rollback, or `undefined` for none.
  */
-export async function rollbackFor<P extends { version: string; rollback?: R }, R>(
+export async function rollbackFor<
+  P extends { version: string; rollback?: R },
+  R extends { version: string },
+>(
   previous: P | null,
   version: string,
   revoked: (version: string) => Promise<boolean>,
   of: (pin: P) => R,
+  floor?: string,
 ): Promise<R | undefined> {
   if (previous === null) return undefined;
-  if (previous.version === version || await revoked(previous.version)) return previous.rollback;
-  return of(previous);
+  const candidate = previous.version === version || await revoked(previous.version)
+    ? previous.rollback
+    : of(previous);
+  return candidate && belowFloor(candidate.version, floor) ? undefined : candidate;
+}
+
+/** Whether `version` is older than `floor` (never, with no floor). */
+function belowFloor(version: string, floor: string | undefined): boolean {
+  return floor !== undefined && compareDenoVersions(version, floor) < 0;
 }
 
 /**
@@ -775,6 +792,8 @@ export async function releasePins(
 export interface PinMainOptions {
   /** Whether a version is revoked (default: the published revoked-runtimes list, fetched). */
   readonly revoked?: (version: string) => Promise<boolean>;
+  /** The oldest release a rollback may name (default {@linkcode MIN_RUNTIME}). */
+  readonly minRuntime?: string;
 }
 
 /** The rollbacks the new pins carry: `--rollback <tag>`'s release (attested), else the old pins'. */
@@ -784,10 +803,17 @@ async function rollbacks(
   attest: (pin: PinFile, options: AttestPinOptions) => Promise<void>,
   options: PinMainOptions,
 ): Promise<{ runtime?: RuntimeRollback; toolchain?: ToolchainRollback }> {
+  const floor = options.minRuntime ?? MIN_RUNTIME;
   const forced = args.flag("--rollback");
   if (forced) {
     if (forced === args.tag) fail("--rollback must name an earlier release than the one pinned");
     const r = await releasePins(forced, args.flag, "rollback-");
+    if (belowFloor(r.pin.version, floor)) {
+      fail(
+        `--rollback ${r.pin.version} is older than ${floor}, the oldest runtime this denext runs ` +
+          "(MIN_RUNTIME, src/build/deno-version.ts): it could never be the fallback",
+      );
+    }
     await attest(r.pin, { archives: args.flag("--rollback-archives"), cli: r.cli });
     return {
       runtime: runtimeRollbackOf(r.pin),
@@ -799,8 +825,8 @@ async function rollbacks(
   if (runtime === null && toolchain === null) return {};
   const revoked = options.revoked ?? await revokedVersions();
   return {
-    runtime: await rollbackFor(runtime, args.version, revoked, runtimeRollbackOf),
-    toolchain: await rollbackFor(toolchain, args.version, revoked, toolchainRollbackOf),
+    runtime: await rollbackFor(runtime, args.version, revoked, runtimeRollbackOf, floor),
+    toolchain: await rollbackFor(toolchain, args.version, revoked, toolchainRollbackOf, floor),
   };
 }
 

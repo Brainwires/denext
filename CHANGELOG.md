@@ -131,6 +131,16 @@ and this project adheres to
   `failed`. `killSidecarsNow()` takes a reason (`"exit"` lets detached sidecars go, `"update"`
   stops them), and the sidecar stopper's `kill` receives it.
 
+### Fixed
+
+- **The bundled runtime's rollback is a release this denext runs.** 4.21.0 bundled runtime
+  3.0.0-denext.27 with 3.0.0-denext.25 as its rollback (the release run when the revoked-runtimes
+  list revokes the bundled one) but refused to run anything older than 3.0.0-denext.27, so
+  `denext runtime list` showed 3.0.0-denext.25 as both the rollback and incompatible. The oldest
+  supported runtime is now 3.0.0-denext.25, which has the laufey API and esbuild denext needs, and
+  `deno task runtime:pin` / `desktop:pin-runtime` never keep a rollback older than it (a named
+  `--rollback` below it is refused).
+
 ## [4.21.0] - 2026-11-21
 
 ### Added

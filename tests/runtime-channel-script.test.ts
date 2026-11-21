@@ -613,6 +613,11 @@ Deno.test("pin: a published document becomes the bundled pin, the old pin kept a
     assertEquals([toolchain.version, desktop.version], [next, next]);
     assertEquals([toolchain.rollback.version, desktop.rollback.version], [VERSION, VERSION]);
     assertEquals(toolchain.rollback.rollback, undefined, "a rollback never nests");
+    // Re-pinned with the kept rollback below the floor (MIN_RUNTIME): none, never one denext refuses.
+    await main(["pin", next], { ...w.deps, minRuntime: "3.0.0-denext.28" });
+    for (const file of [w.deps.pinFiles!.toolchain, w.deps.pinFiles!.desktop]) {
+      assertEquals(JSON.parse(await Deno.readTextFile(file)).rollback, undefined, file);
+    }
     await assertRejects(() => main(["pin", "3.0.0-denext.99"], w.deps), Error, "does not list");
     // A yanked release needs --allow-yanked.
     await main(["yank", next, "--reason", "broken", "--out", join(w.dir, "out")], w.deps);

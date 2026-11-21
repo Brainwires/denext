@@ -694,6 +694,16 @@ Deno.test("rollbackFor: the replaced pin, unless it is the same release or itsel
     (await rollbackFor(old, "2.0.0", notRevoked, toolchainRollbackOf))?.version,
     "1.0.0",
   );
+  // A candidate below the floor (MIN_RUNTIME, which denext refuses to run) is never the rollback.
+  assertEquals(
+    await rollbackFor(old, "3.0.0", notRevoked, toolchainRollbackOf, "2.0.1"),
+    undefined,
+  );
+  assertEquals(await rollbackFor(old, "3.0.0", revoked, toolchainRollbackOf, "1.5.0"), undefined);
+  assertEquals(
+    (await rollbackFor(old, "3.0.0", notRevoked, toolchainRollbackOf, "2.0.0"))?.version,
+    "2.0.0",
+  );
   const rt = runtimeRollbackOf(pins("2.0.0", "1.0.0").runtime);
   assertEquals([rt.version, (rt as Record<string, unknown>).rollback, rt.repository], [
     "2.0.0",
@@ -762,13 +772,14 @@ Deno.test("desktop:pin-runtime writes the replaced pins as the new pins' rollbac
     };
     const fresh = await releaseFiles(dir, "2.9.7-denext.5");
     const attested: string[] = [];
-    const run = async (revokedVersions: string[], extra: string[] = []) => {
+    // The fixtures predate MIN_RUNTIME: the floor is lowered under them unless a step sets one.
+    const run = async (revokedVersions: string[], extra: string[] = [], minRuntime = "0.0.0") => {
       await pinMain(
         [fresh.tag, "--manifest", fresh.args[0], "--sums", fresh.args[1], ...extra],
         out,
         (pin) => (attested.push(pin.version), Promise.resolve()),
         toolchainOut,
-        { revoked: (v) => Promise.resolve(revokedVersions.includes(v)) },
+        { revoked: (v) => Promise.resolve(revokedVersions.includes(v)), minRuntime },
       );
       return {
         runtime: JSON.parse(await Deno.readTextFile(out)) as PinFile,
@@ -806,6 +817,23 @@ Deno.test("desktop:pin-runtime writes the replaced pins as the new pins' rollbac
     );
     assertEquals(attested, ["2.9.7-denext.5", "2.9.7-denext.2"]);
     await assertRejects(() => run([], ["--rollback", fresh.tag]));
+    // Below the floor: a named rollback is refused, a replaced pin is dropped, never written.
+    await assertRejects(
+      () =>
+        run([], [
+          "--rollback",
+          forced.tag,
+          "--rollback-manifest",
+          forced.args[0],
+          "--rollback-sums",
+          forced.args[1],
+        ], "2.9.7-denext.3"),
+      Error,
+      "older than 2.9.7-denext.3",
+    );
+    await write(pins("2.9.7-denext.4", "2.9.7-denext.3"));
+    const floored = await run(["2.9.7-denext.4"], [], "2.9.7-denext.4");
+    assertEquals([floored.runtime.rollback, floored.toolchain.rollback], [undefined, undefined]);
   } finally {
     console.log = log;
     await Deno.remove(dir, { recursive: true });
@@ -821,6 +849,12 @@ Deno.test("the checked-in pins name one earlier release as their rollback, unnes
   // Both from the same release (libdenort must match the `deno desktop` CLI).
   assertEquals(tc.rollback?.version, rt.rollback?.version);
   assert(tc.rollback!.version !== tc.version);
+  // A rollback this denext refuses to run (below MIN_RUNTIME) could never be the fallback.
+  const { compareDenoVersions, MIN_RUNTIME } = await import("../src/build/deno-version.ts");
+  assert(
+    compareDenoVersions(tc.rollback!.version!, MIN_RUNTIME) >= 0,
+    `the rollback ${tc.rollback!.version} is older than MIN_RUNTIME ${MIN_RUNTIME}`,
+  );
   assertEquals((tc.rollback as unknown as Record<string, unknown>).rollback, undefined);
   assertEquals((rt.rollback as unknown as Record<string, unknown>).rollback, undefined);
   // Every target the pin runs on has a rollback build, each a https release asset of its tag.
