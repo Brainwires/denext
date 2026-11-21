@@ -342,8 +342,9 @@ export async function downloadAppUpdate(
  * the new version, which `runDesktop` confirms once its window has loaded (or, with
  * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
- * The app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open; to give
- * them their graceful shutdown, `await stopSidecars()` (from `denext/desktop`) before calling it.
+ * The app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open (detached
+ * ones are asked to stop and their records removed); to give them their graceful shutdown,
+ * `await stopSidecars()` (from `denext/desktop`) before calling it.
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
@@ -356,7 +357,7 @@ export function installAppUpdateAndRelaunch(
   options: { force?: boolean } = {},
 ): { quitting: boolean } {
   const updater = requireUpdater();
-  killSidecarsNow();
+  killSidecarsNow("update");
   const issue = () =>
     updater.applyAndRelaunch(options.force === true ? { force: true } : {}).quitting === true;
   try {

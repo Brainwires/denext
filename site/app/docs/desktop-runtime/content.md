@@ -472,6 +472,35 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   app may read).
 - **Upstream:** planned.
 
+### The window order and the pointer
+
+- **What:** `Deno.desktop.windowOrder()` lists the app's on-screen windows as the OS stacks them,
+  front to back, and `Deno.desktop.pointer()` answers where the pointer is on the screen, which
+  mouse buttons are held and which window of the app a click there would reach, asked of the OS
+  at each call. Both are `null` on Wayland, where no client is told either
+  (`windowCapabilities().windowOrder` / `.pointer`).
+- **Why:** an app with several windows could only guess which one is in front, from the order
+  they were focused in (wrong for a window raised without the focus, an always-on-top window, or
+  another app's window in between), and a page hears the pointer only inside its own window, so a
+  drag from one window of the app to another could not be followed.
+- **Layer:** laufey (AppKit's window list and mouse location, `EnumWindows` / `GetCursorPos` /
+  `WindowFromPoint`, the X server's root window), Deno runtime, denext (`getWindowOrder`,
+  `getPointer`, `startDragSession` / `onDragSession` in `denext/desktop/window`).
+- **Upstream:** not proposed.
+
+### What runs in a terminal
+
+- **What:** `Deno.Pty.foreground()` names the process in a terminal's foreground (the command a
+  shell is waiting for, or the shell at its prompt) with its process group, name, arguments and
+  working directory, and `Deno.Pty.ttyName` the terminal device. macOS and Linux read the
+  terminal's foreground process group; Windows, which has none, finds the process in the tree
+  below the terminal's program.
+- **Why:** a terminal app shows what each tab runs. The runtime holds the terminal's master
+  descriptor and never exposed it, so an app had to call `proc_pidinfo` over FFI on macOS, read
+  `/proc` on Linux, and had nothing on Windows.
+- **Layer:** Deno runtime (`ext/pty`), denext (`ptyInfo` in `denext/desktop/client`).
+- **Upstream:** not proposed (`Deno.openPty` itself is this runtime's).
+
 ### Native file dialogs
 
 - **What:** `Deno.desktop.dialog.showOpenDialog` / `showSaveDialog`: the OS's own panels,

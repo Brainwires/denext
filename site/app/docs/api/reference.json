@@ -16822,6 +16822,140 @@
           ]
         },
         {
+          "name": "DesktopBundleConfig",
+          "slug": "DesktopBundleConfig",
+          "kind": "interface",
+          "signature": "interface DesktopBundleConfig",
+          "doc": "DesktopConfig.bundle: extra files inside the packaged app.",
+          "docFull": "{@link DesktopConfig.bundle}: extra files inside the packaged app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "libraries",
+              "signature": "libraries?: Array<string | DesktopBundleLibraryPath | DesktopBundleLibraryFiles>",
+              "doc": "The app's own native libraries, one file per target (OS + architecture). Each entry is a\nproject-relative path pattern (`\"native/{target}/libaudio.{ext}\"`: `{os}` is `darwin` /\n`linux` / `windows`, `{arch}` `arm64` / `x64`, `{target}` the Rust target triple such as\n`aarch64-apple-darwin`, `{ext}` `dylib` / `so` / `dll`), the same as `{ path, name?, optional? }`,\nor an explicit per-target map `{ name, files, optional? }` (a target with no entry ships\nwithout the library). A pattern's name is its file name without the `lib` prefix and the\nextension. A missing file fails packaging for that target unless the entry is `optional`.\nPaths are relative to the project (no `..`), each naming one `.dylib`, `.so` (`.so.N`) or `.dll`."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryFiles",
+          "slug": "DesktopBundleLibraryFiles",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryFiles",
+          "doc": "A DesktopBundleConfig.libraries entry given as an explicit per-target map.",
+          "docFull": "A {@link DesktopBundleConfig.libraries} entry given as an explicit per-target map.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name: string",
+              "doc": "The name `bundledLibraryPath` takes."
+            },
+            {
+              "kind": "property",
+              "name": "files",
+              "signature": "files: DesktopBundleLibraryTargets",
+              "doc": "One project-relative file per target; a target with no entry ships without the library."
+            },
+            {
+              "kind": "property",
+              "name": "optional",
+              "signature": "optional?: boolean",
+              "doc": "Skip a listed target whose file is missing (with a note) instead of failing packaging."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryPath",
+          "slug": "DesktopBundleLibraryPath",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryPath",
+          "doc": "A DesktopBundleConfig.libraries entry given as a path pattern.",
+          "docFull": "A {@link DesktopBundleConfig.libraries} entry given as a path pattern.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "path: string",
+              "doc": "The project-relative path pattern (`{os}`, `{arch}`, `{target}`, `{ext}`)."
+            },
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "name?: string",
+              "doc": "The name `bundledLibraryPath` takes. Default: the file name without `lib` and extension."
+            },
+            {
+              "kind": "property",
+              "name": "optional",
+              "signature": "optional?: boolean",
+              "doc": "Skip a target whose file is missing (with a note) instead of failing packaging."
+            }
+          ]
+        },
+        {
+          "name": "DesktopBundleLibraryTargets",
+          "slug": "DesktopBundleLibraryTargets",
+          "kind": "interface",
+          "signature": "interface DesktopBundleLibraryTargets",
+          "doc": "The targets a DesktopBundleLibraryFiles map names, each a project-relative file.",
+          "docFull": "The targets a {@link DesktopBundleLibraryFiles} map names, each a project-relative file.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "darwin-arm64",
+              "signature": "\"darwin-arm64\"?: string",
+              "doc": "macOS on Apple silicon (`aarch64-apple-darwin`)."
+            },
+            {
+              "kind": "property",
+              "name": "darwin-x64",
+              "signature": "\"darwin-x64\"?: string",
+              "doc": "macOS on Intel (`x86_64-apple-darwin`)."
+            },
+            {
+              "kind": "property",
+              "name": "linux-arm64",
+              "signature": "\"linux-arm64\"?: string",
+              "doc": "Linux on ARM64 (`aarch64-unknown-linux-gnu`)."
+            },
+            {
+              "kind": "property",
+              "name": "linux-x64",
+              "signature": "\"linux-x64\"?: string",
+              "doc": "Linux on x86-64 (`x86_64-unknown-linux-gnu`)."
+            },
+            {
+              "kind": "property",
+              "name": "windows-arm64",
+              "signature": "\"windows-arm64\"?: string",
+              "doc": "Windows on ARM64 (`aarch64-pc-windows-msvc`)."
+            },
+            {
+              "kind": "property",
+              "name": "windows-x64",
+              "signature": "\"windows-x64\"?: string",
+              "doc": "Windows on x86-64 (`x86_64-pc-windows-msvc`)."
+            }
+          ]
+        },
+        {
           "name": "DesktopCapabilitiesConfig",
           "slug": "DesktopCapabilitiesConfig",
           "kind": "interface",
@@ -17110,6 +17244,12 @@
               "name": "denoFlags",
               "signature": "denoFlags?: string[]",
               "doc": "Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the\npackage scripts: for a project that needs them to build at all. npm resolution needs none:\na project with a package.json or node_modules (a pnpm workspace member included) is built\nwith `--node-modules-dir=none --exclude-unused-npm` already.\nOne flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`,\n`--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`,\n`--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`,\n`--conditions` and `--unstable-*`. Permission flags are refused: they come from\n{@link capabilities} and {@link extraPermissions}."
+            },
+            {
+              "kind": "property",
+              "name": "bundle",
+              "signature": "bundle?: DesktopBundleConfig",
+              "doc": "Extra files the package scripts put inside the app bundle. `libraries`: the app's own native\nlibraries (loaded with `Deno.dlopen`), one build per target, copied into each bundle\n(`Contents/Frameworks` on macOS, `lib/` on Linux, beside the `.exe` on Windows), code-signed\nwith the app and carried by its installers; `bundledLibraryPath(name)` from `denext/desktop`\nfinds the one the running app has."
             }
           ]
         },
@@ -17830,6 +17970,38 @@
               "name": "permissions",
               "signature": "permissions?: DesktopExtraPermissions",
               "doc": "What it needs beyond the app's baseline permissions, baked into the packaged app."
+            },
+            {
+              "kind": "property",
+              "name": "detached",
+              "signature": "detached?: boolean | DesktopSidecarDetachedConfig",
+              "doc": "Run it as its own OS process that outlives the app (a `run.module` sidecar only): the next\nlaunch finds it in the app's registry (`<app data>/sidecars/`) and reattaches over an\nauthenticated loopback control connection instead of starting another. Quitting leaves it\nrunning; `sidecar(name).stop()`, `stopSidecars()` and a full-app update end it; another app\nversion's instance is replaced at launch unless `keepAcrossUpdates`. `exitAfterMs` ends it\nonce no app was attached that long. Its output goes to its log file (`logs: \"file\"` /\n`\"both\"`) or nowhere. Not with `ready.stdout`."
+            }
+          ]
+        },
+        {
+          "name": "DesktopSidecarDetachedConfig",
+          "slug": "DesktopSidecarDetachedConfig",
+          "kind": "interface",
+          "signature": "interface DesktopSidecarDetachedConfig",
+          "doc": "DesktopSidecarConfig.detached with options.",
+          "docFull": "{@link DesktopSidecarConfig.detached} with options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "exitAfterMs",
+              "signature": "exitAfterMs?: number",
+              "doc": "End it once no app instance was attached this long, at least 1 000 ms (default: never)."
+            },
+            {
+              "kind": "property",
+              "name": "keepAcrossUpdates",
+              "signature": "keepAcrossUpdates?: boolean",
+              "doc": "Keep an instance another app version started instead of replacing it (default `false`)."
             }
           ]
         },
@@ -45512,8 +45684,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, the app's own native libraries for the target (desktop.bundle.libraries, bundleDesktopLibraries), on Linux the bundle's own .desktop entry rewritten from the config and its Node-API addons checked for a libnode link, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable). The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, the app's own native libraries\nfor the target (`desktop.bundle.libraries`, {@linkcode bundleDesktopLibraries}), on Linux the bundle's own\n`.desktop` entry rewritten from the config and its Node-API addons checked for a `libnode`\nlink, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable). The microphone or camera on a runtime that does not enforce the launch\nfile's grant is refused before the build.",
           "params": [
             {
               "name": "entryUrl",
@@ -45721,6 +45893,65 @@
           ]
         },
         {
+          "name": "BundledDesktopLibraries",
+          "slug": "BundledDesktopLibraries",
+          "kind": "interface",
+          "signature": "interface BundledDesktopLibraries",
+          "doc": "What bundleDesktopLibraries copied, and what it skipped.",
+          "docFull": "What {@linkcode bundleDesktopLibraries} copied, and what it skipped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "copied",
+              "signature": "readonly copied: string[]",
+              "doc": "The files written into the bundle."
+            },
+            {
+              "kind": "property",
+              "name": "skipped",
+              "signature": "readonly skipped: string[]",
+              "doc": "The optional libraries skipped for want of a file (`name: path`)."
+            }
+          ]
+        },
+        {
+          "name": "bundleDesktopLibraries",
+          "slug": "bundleDesktopLibraries",
+          "kind": "function",
+          "signature": "bundleDesktopLibraries(entryUrl: string, os: DesktopOs, bundle: string, target?: string, log?: (line: string) => void): Promise<BundledDesktopLibraries>",
+          "doc": "Copy the app's native libraries (desktop.bundle.libraries) built for target into bundle: Contents/Frameworks in a macOS .app, lib/ in a Linux bundle directory, beside the .exe on Windows. A library whose file is missing fails the run, naming the path it looked for, unless its entry is optional (then it is skipped with a note); a file the bundle already has (one of the runtime's own) is never overwritten. On macOS call it before code-signing: the script's signing pass signs each library with the app's identity, inside out, before the bundle. Prints desktopLibrariesFfiNote when it copied any.",
+          "docFull": "Copy the app's native libraries (`desktop.bundle.libraries`) built for `target` into `bundle`:\n`Contents/Frameworks` in a macOS `.app`, `lib/` in a Linux bundle directory, beside the `.exe` on\nWindows. A library whose file is missing fails the run, naming the path it looked for, unless\nits entry is `optional` (then it is skipped with a note); a file the bundle already has (one of\nthe runtime's own) is never overwritten. On macOS call it before code-signing: the script's\nsigning pass signs each library with the app's identity, inside out, before the bundle. Prints\n{@linkcode desktopLibrariesFfiNote} when it copied any.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "bundle",
+              "doc": "The .app (macOS) or bundle directory (Linux / Windows) deno desktop wrote."
+            },
+            {
+              "name": "target",
+              "doc": "The Rust target triple being built (aarch64-apple-darwin), or \"host\"."
+            },
+            {
+              "name": "log",
+              "doc": "Where the notes go (default console.log)."
+            }
+          ],
+          "returns": "What was copied and skipped.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "bundleDesktopVcRuntime",
           "slug": "bundleDesktopVcRuntime",
           "kind": "function",
@@ -45746,6 +45977,25 @@
           "denextOnly": true
         },
         {
+          "name": "bundledLibraryPath",
+          "slug": "bundledLibraryPath",
+          "kind": "function",
+          "signature": "bundledLibraryPath(name: string): string | null",
+          "doc": "The absolute path of the bundled native library name (a desktop.bundle.libraries entry) for the running app: inside the packaged bundle (Contents/Frameworks on macOS, lib/ beside the executable on Linux, beside the .exe on Windows), or, in a denext desktop run / dev build, the project's own file for the host OS and architecture. null when this build has no such library for the host target, or outside a desktop app built from the generated entry (which imports .deno-desktop/config.json). Reads no file: loading the library with Deno.dlopen needs --allow-ffi (desktop.extraPermissions: { ffi: [\"*\"] }).",
+          "docFull": "The absolute path of the bundled native library `name` (a `desktop.bundle.libraries` entry) for\nthe running app: inside the packaged bundle (`Contents/Frameworks` on macOS, `lib/` beside the\nexecutable on Linux, beside the `.exe` on Windows), or, in a `denext desktop run` / `dev` build,\nthe project's own file for the host OS and architecture. `null` when this build has no such\nlibrary for the host target, or outside a desktop app built from the generated entry (which\nimports `.deno-desktop/config.json`). Reads no file: loading the library with `Deno.dlopen`\nneeds `--allow-ffi` (`desktop.extraPermissions: { ffi: [\"*\"] }`).",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The library's name: an entry's name, else its file name without lib and the extension (librullama_audio_ffi.dylib → rullama_audio_ffi)."
+            }
+          ],
+          "returns": "The absolute path, or null.",
+          "examples": [
+            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"rullama_audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "cefHelperEntitlements",
           "slug": "cefHelperEntitlements",
           "kind": "function",
@@ -45759,6 +46009,27 @@
             }
           ],
           "returns": "The helper's default entitlements, if it is a Renderer, GPU or Plugin helper.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "connectLocalIpc",
+          "slug": "connectLocalIpc",
+          "kind": "function",
+          "signature": "connectLocalIpc(path: string, options?: LocalIpcConnectOptions): Promise<LocalIpcConnection>",
+          "doc": "Connect to the local IPC channel at path (from localIpcPath).",
+          "docFull": "Connect to the local IPC channel at `path` (from {@linkcode localIpcPath}).",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The socket or pipe path."
+            },
+            {
+              "name": "options",
+              "doc": "A timeout (default 5000 ms) and an AbortSignal."
+            }
+          ],
+          "returns": "The connection.",
           "examples": [],
           "denextOnly": true
         },
@@ -48871,6 +49142,56 @@
           ]
         },
         {
+          "name": "DesktopPointerInfo",
+          "slug": "DesktopPointerInfo",
+          "kind": "interface",
+          "signature": "interface DesktopPointerInfo",
+          "doc": "The pointer, as pointer answers the page.",
+          "docFull": "The pointer, as `pointer` answers the page.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number",
+              "doc": "The pointer on the screen."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number",
+              "doc": "Its vertical place (see `x`)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons: number",
+              "doc": "The buttons held, as a DOM `MouseEvent.buttons`."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string | null",
+              "doc": "The id of the app window under the pointer, or `null`."
+            },
+            {
+              "kind": "property",
+              "name": "clientX",
+              "signature": "readonly clientX?: number",
+              "doc": "The pointer in that window's page (CSS pixels at zoom 1), when the window is known."
+            },
+            {
+              "kind": "property",
+              "name": "clientY",
+              "signature": "readonly clientY?: number",
+              "doc": "Its vertical place in the page (see `clientX`)."
+            }
+          ]
+        },
+        {
           "name": "DesktopPostedNotification",
           "slug": "DesktopPostedNotification",
           "kind": "interface",
@@ -49082,6 +49403,18 @@
             },
             {
               "kind": "method",
+              "name": "detachedSidecars",
+              "signature": "detachedSidecars(): Promise<DetachedSidecarEntry[]>",
+              "doc": "The app's registry of detached sidecars (`detached: true`): every recorded one, whether its\nendpoint authenticated just now (`reachable`) and whether the app still declares it\n(`declared`). An app that uses detached sidecars should show that something keeps running\nafter it quit and offer to stop it; this is the list. `[]` in a sidecar's child."
+            },
+            {
+              "kind": "method",
+              "name": "stopDetachedSidecar",
+              "signature": "stopDetachedSidecar(name: string): Promise<void>",
+              "doc": "Stop a recorded detached sidecar (shutdown, then a forced kill of the authenticated process\nwhere the app may signal processes) and remove its record: a declared one as\n`sidecar(name).stop()` does, a leftover the app no longer declares through its record. Rejects\nwhen none is recorded, or it could not be ended (its record is removed anyway, so it ends\nitself at its next registry check)."
+            },
+            {
+              "kind": "method",
               "name": "onBeforeQuit",
               "signature": "onBeforeQuit(fn: () => boolean | Promise<boolean>): () => void",
               "doc": "Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session\nend), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled\nwhen it returns (or resolves) `false`. Every guard — this and the extensions' `onBeforeQuit`\nhosts — gets 5 seconds together, after which the quit goes on; a throw is logged and does not\ncancel. The 5 seconds stop counting while an extension's `host.confirm` box opened during the\nguards' turn is up, except for the OS's session end. Returns the unsubscribe. Outside the\ndesktop runtime `fn` is never called."
@@ -49123,6 +49456,12 @@
               "name": "spa",
               "signature": "readonly spa?: unknown",
               "doc": "The config's `spa` section; only `spa.proxy` is read."
+            },
+            {
+              "kind": "property",
+              "name": "bundledLibraries",
+              "signature": "readonly bundledLibraries?: unknown",
+              "doc": "The `desktop.bundle.libraries` table the desktop sync writes (per target, each library's\nproject-relative file), which `bundledLibraryPath` from `denext/desktop` reads."
             }
           ]
         },
@@ -50444,6 +50783,32 @@
           ]
         },
         {
+          "name": "DesktopWindowOrder",
+          "slug": "DesktopWindowOrder",
+          "kind": "interface",
+          "signature": "interface DesktopWindowOrder",
+          "doc": "The app's windows front to back, and where the order came from.",
+          "docFull": "The app's windows front to back, and where the order came from.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "ids",
+              "signature": "readonly ids: string[]",
+              "doc": "The ids of the windows that are on screen, the front-most first."
+            },
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "readonly source: \"os\" | \"focus\"",
+              "doc": "`\"os\"`: the OS's own stacking order. `\"focus\"`: the OS does not tell (a Wayland session, a\nruntime without the call), so this is the order the windows last had the focus in, which a\nwindow raised without focus or an always-on-top window can differ from."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowRef",
           "slug": "DesktopWindowRef",
           "kind": "interface",
@@ -50577,6 +50942,18 @@
               "name": "list",
               "signature": "list(): DesktopWindowRef[]",
               "doc": "The open windows."
+            },
+            {
+              "kind": "method",
+              "name": "order",
+              "signature": "order(): WindowOrder",
+              "doc": "The ids of the windows on screen, front to back: the OS's own stacking order where it tells\n(`source: \"os\"`: macOS, Windows, Linux on X11), else the order the windows last had the focus\nin (`\"focus\"`)."
+            },
+            {
+              "kind": "method",
+              "name": "pointer",
+              "signature": "pointer(): PointerInfo | null",
+              "doc": "The pointer on the screen, the mouse buttons held and the window under it, asked of the OS;\n`null` where it does not tell (a Wayland session, a runtime without the call)."
             },
             {
               "kind": "method",
@@ -50837,6 +51214,56 @@
           "denextOnly": true
         },
         {
+          "name": "DetachedSidecarEntry",
+          "slug": "DetachedSidecarEntry",
+          "kind": "interface",
+          "signature": "interface DetachedSidecarEntry",
+          "doc": "One entry of listDetachedSidecars.",
+          "docFull": "One entry of {@linkcode listDetachedSidecars}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "name",
+              "signature": "readonly name: string",
+              "doc": "The sidecar's name."
+            },
+            {
+              "kind": "property",
+              "name": "pid",
+              "signature": "readonly pid: number",
+              "doc": "The process id it reported (informational)."
+            },
+            {
+              "kind": "property",
+              "name": "startedAt",
+              "signature": "readonly startedAt: number",
+              "doc": "When it was started (epoch ms)."
+            },
+            {
+              "kind": "property",
+              "name": "appVersion",
+              "signature": "readonly appVersion: string",
+              "doc": "The app version that started it."
+            },
+            {
+              "kind": "property",
+              "name": "reachable",
+              "signature": "readonly reachable: boolean",
+              "doc": "Whether its endpoint authenticated just now."
+            },
+            {
+              "kind": "property",
+              "name": "declared",
+              "signature": "readonly declared: boolean",
+              "doc": "Whether the running app declares a detached sidecar of that name."
+            }
+          ]
+        },
+        {
           "name": "embedDesktopTreeManifest",
           "slug": "embedDesktopTreeManifest",
           "kind": "function",
@@ -50947,6 +51374,204 @@
               "name": "mediaCapture",
               "signature": "readonly mediaCapture?: boolean",
               "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`, which detects a\nruntime with media capture). Without it a config with the microphone or camera on is\nrefused."
+            }
+          ]
+        },
+        {
+          "name": "listenLocalIpc",
+          "slug": "listenLocalIpc",
+          "kind": "function",
+          "signature": "listenLocalIpc(path: string, onConnection: (conn: LocalIpcConnection) => void, options?: LocalIpcListenOptions): Promise<LocalIpcServer>",
+          "doc": "Serve the local IPC channel at path (from localIpcPath): onConnection gets each accepted connection (one that throws closes that connection).",
+          "docFull": "Serve the local IPC channel at `path` (from {@linkcode localIpcPath}): `onConnection` gets each\naccepted connection (one that throws closes that connection).\n\nOn macOS / Linux the socket's folder is created `0700` when missing and must otherwise be owned\nby this user and not writable by its group or others (unless sticky); an existing socket that\nanswers is never taken over (`AddrInUse`), one that does not (left by a crash) is replaced; the\nbound socket is made `0600`. On Windows the pipe is created as the first instance of its name\n(`AddrInUse` when another process holds it).",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The socket or pipe path."
+            },
+            {
+              "name": "onConnection",
+              "doc": "Called with each accepted connection."
+            },
+            {
+              "name": "options",
+              "doc": "An AbortSignal that closes the server."
+            }
+          ],
+          "returns": "The listening server.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LocalIpcConnection",
+          "slug": "LocalIpcConnection",
+          "kind": "interface",
+          "signature": "interface LocalIpcConnection extends AsyncDisposable",
+          "doc": "One local IPC connection, as a pair of web streams.",
+          "docFull": "One local IPC connection, as a pair of web streams.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "readable",
+              "signature": "readonly readable: ReadableStream<Uint8Array>",
+              "doc": "What the other side writes. Ends when the other side closes its `writable`."
+            },
+            {
+              "kind": "property",
+              "name": "writable",
+              "signature": "readonly writable: WritableStream<Uint8Array>",
+              "doc": "What the other side reads. Closing it ends the other side's `readable` (a half close)."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): void",
+              "doc": "Destroy the connection at once (both directions; unsent bytes are dropped)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "AsyncDisposable"
+            }
+          ]
+        },
+        {
+          "name": "LocalIpcConnectOptions",
+          "slug": "LocalIpcConnectOptions",
+          "kind": "interface",
+          "signature": "interface LocalIpcConnectOptions",
+          "doc": "Options for connectLocalIpc.",
+          "docFull": "Options for {@linkcode connectLocalIpc}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "signal",
+              "signature": "readonly signal?: AbortSignal",
+              "doc": "Aborting it gives up on the connection attempt (rejects with the signal's reason)."
+            },
+            {
+              "kind": "property",
+              "name": "timeoutMs",
+              "signature": "readonly timeoutMs?: number",
+              "doc": "Give up after this many milliseconds (default 5000), rejecting with `TimedOut`."
+            }
+          ]
+        },
+        {
+          "name": "LocalIpcListenOptions",
+          "slug": "LocalIpcListenOptions",
+          "kind": "interface",
+          "signature": "interface LocalIpcListenOptions",
+          "doc": "Options for listenLocalIpc.",
+          "docFull": "Options for {@linkcode listenLocalIpc}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "signal",
+              "signature": "readonly signal?: AbortSignal",
+              "doc": "Aborting it closes the server (like {@linkcode LocalIpcServer.close})."
+            }
+          ]
+        },
+        {
+          "name": "localIpcPath",
+          "slug": "localIpcPath",
+          "kind": "function",
+          "signature": "localIpcPath(name: string, options?: LocalIpcPathOptions): string",
+          "doc": "Where the local IPC channel name lives for this app and user:",
+          "docFull": "Where the local IPC channel `name` lives for this app and user:\n\n- macOS / Linux: `<dir>/<name>.sock`, `dir` defaulting to the app's data folder + `/ipc`. A path\n  longer than `sun_path` allows (103 bytes on macOS, 107 on Linux, counted in UTF-8) is refused:\n  pass a shorter `dir`.\n- Windows: `\\\\.\\pipe\\<appId>.<user>.<name>`.\n\nPure apart from reading the environment for the defaults; creates nothing.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The channel's name: 1 to 64 of [A-Za-z0-9._-], starting with a letter or digit."
+            },
+            {
+              "name": "options",
+              "doc": "The folder, app identifier, user token and OS (see LocalIpcPathOptions)."
+            }
+          ],
+          "returns": "The socket or pipe path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LocalIpcPathOptions",
+          "slug": "LocalIpcPathOptions",
+          "kind": "interface",
+          "signature": "interface LocalIpcPathOptions",
+          "doc": "Options for localIpcPath.",
+          "docFull": "Options for {@linkcode localIpcPath}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "dir",
+              "signature": "readonly dir?: string",
+              "doc": "macOS / Linux: the folder the socket goes in. Default: the app's data folder + `/ipc`\n(`~/Library/Application Support/<appId>/ipc`, `$XDG_DATA_HOME|~/.local/share /<appId>/ipc`),\nwhich {@linkcode listenLocalIpc} creates `0700`. Ignored on Windows."
+            },
+            {
+              "kind": "property",
+              "name": "appId",
+              "signature": "readonly appId?: string",
+              "doc": "The app's identifier, sanitized to `[A-Za-z0-9._-]`. Default: `desktop.app.identifier`, as\n`resolveDesktopCapabilities` registered it in this process. Required where nothing registered\none (a module sidecar's worker, a CLI) and the path needs it: on Windows, and on Unix without\n`dir`."
+            },
+            {
+              "kind": "property",
+              "name": "user",
+              "signature": "readonly user?: string",
+              "doc": "Windows: the per-user part of the pipe name (`[A-Za-z0-9._-]`). Default: a short SHA-256 hex\nprefix of the user's profile folder (else the user name), stable, not secret, and never the\nraw name, so two users of one machine never share a pipe name. Ignored on Unix."
+            },
+            {
+              "kind": "property",
+              "name": "os",
+              "signature": "readonly os?: \"darwin\" | \"linux\" | \"windows\"",
+              "doc": "The OS whose shape to compute (default: the running one)."
+            }
+          ]
+        },
+        {
+          "name": "LocalIpcServer",
+          "slug": "LocalIpcServer",
+          "kind": "interface",
+          "signature": "interface LocalIpcServer extends AsyncDisposable",
+          "doc": "A listening local IPC channel.",
+          "docFull": "A listening local IPC channel.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "The socket or pipe path it listens on."
+            },
+            {
+              "kind": "method",
+              "name": "close",
+              "signature": "close(): Promise<void>",
+              "doc": "Stop listening, end the open connections and, on Unix, remove the socket file."
+            }
+          ],
+          "extends": [
+            {
+              "type": "AsyncDisposable"
             }
           ]
         },
@@ -52382,6 +53007,38 @@
               "name": "permissions",
               "signature": "readonly permissions?: SidecarPermissions",
               "doc": "What the sidecar needs beyond the app's baseline permissions, baked into the packaged app. A\nmodule sidecar runs with the app's permissions (one process); this widens them."
+            },
+            {
+              "kind": "property",
+              "name": "detached",
+              "signature": "readonly detached?: boolean | SidecarDetached",
+              "doc": "Run it as a separate OS process that outlives the app (a module sidecar only): the app's own\nexecutable started again, headless, on the module, in a session of its own, its output in the\nlog file (`logs: \"file\"` / `\"both\"`) or nowhere. At the next launch the app finds it in its\nregistry (`<app data>/sidecars/<name>.json`) and reattaches over a mutually authenticated\nloopback control connection (status `detached: true`, `reattached: true`; its port, secrets and\nvalues are the ones it was started with, and `ready` is not checked again). Quitting the app\nleaves it running; `sidecar(name).stop()`, `stopSidecars()` and installing a full-app update\nend it. An instance started by another app version is replaced at launch unless\n`keepAcrossUpdates`. In the sidecar: `denextSidecar.detached.attached` /\n`onAttachedChange(fn)`. Not with `run.exec` (a foreign program has no control channel denext\ncan authenticate) nor `ready.stdout` (its output does not reach the app)."
+            }
+          ]
+        },
+        {
+          "name": "SidecarDetached",
+          "slug": "SidecarDetached",
+          "kind": "interface",
+          "signature": "interface SidecarDetached",
+          "doc": "SidecarDefinition.detached with options.",
+          "docFull": "{@linkcode SidecarDefinition.detached} with options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "exitAfterMs",
+              "signature": "readonly exitAfterMs?: number",
+              "doc": "End the detached sidecar once no app instance has been attached to it for this long (at least\n1 000 ms). The timer starts when the last attachment closes and a new one cancels it. Default:\nnone: it keeps running until it is stopped (outliving the app is the point)."
+            },
+            {
+              "kind": "property",
+              "name": "keepAcrossUpdates",
+              "signature": "readonly keepAcrossUpdates?: boolean",
+              "doc": "Keep a running instance started by another version of the app instead of replacing it at\nlaunch (default `false`: an update replaces it, so code from a superseded build does not\nlinger). Should be rare."
             }
           ]
         },
@@ -52839,6 +53496,18 @@
               "name": "retryAt",
               "signature": "readonly retryAt?: number",
               "doc": "When the next start is due, while in `backoff` (epoch ms)."
+            },
+            {
+              "kind": "property",
+              "name": "detached",
+              "signature": "readonly detached?: boolean",
+              "doc": "Set for a {@linkcode SidecarDefinition.detached} sidecar: it runs as its own process."
+            },
+            {
+              "kind": "property",
+              "name": "reattached",
+              "signature": "readonly reattached?: boolean",
+              "doc": "Set while a detached sidecar's current run was found already running (started by an earlier\nlaunch of the app, or another instance) rather than started by this launch."
             }
           ]
         },
@@ -52919,8 +53588,8 @@
           "slug": "stopSidecars",
           "kind": "function",
           "signature": "stopSidecars(): Promise<void>",
-          "doc": "Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left.",
-          "docFull": "Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before\n`installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still\nends whatever is left.",
+          "doc": "Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.",
+          "docFull": "Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before\n`installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still\nends whatever is left. Detached sidecars (`detached: true`) are stopped too, their processes\nended and their registry records removed: there is one behaviour, everything stops.",
           "params": [],
           "returns": "Once every sidecar has stopped.",
           "examples": [
@@ -54888,7 +55557,7 @@
           "kind": "function",
           "signature": "installAppUpdateAndRelaunch(options: { force?: boolean }): { quitting: boolean }",
           "doc": "Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).",
-          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).\n\nThe app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open; to give\nthem their graceful shutdown, `await stopSidecars()` (from `denext/desktop`) before calling it.",
+          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).\n\nThe app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open (detached\nones are asked to stop and their records removed); to give them their graceful shutdown,\n`await stopSidecars()` (from `denext/desktop`) before calling it.",
           "params": [
             {
               "name": "options",
@@ -55685,8 +56354,8 @@
           "slug": "ptyInfo-fn",
           "kind": "function",
           "signature": "ptyInfo(id: string): Promise<PtyInfo>",
-          "doc": "A terminal's process id, and (on Linux) the foreground process's name and folder.",
-          "docFull": "A terminal's process id, and (on Linux) the foreground process's name and folder.",
+          "doc": "A terminal's process id and device, and what runs in its foreground: the process's name, arguments, folder, id and process group (PtyInfo). Asked of the OS at each call.",
+          "docFull": "A terminal's process id and device, and what runs in its foreground: the process's name,\narguments, folder, id and process group ({@linkcode PtyInfo}). Asked of the OS at each call.",
           "params": [
             {
               "name": "id",
@@ -55702,8 +56371,8 @@
           "slug": "PtyInfo-iface",
           "kind": "interface",
           "signature": "interface PtyInfo",
-          "doc": "What ptyInfo resolves to.",
-          "docFull": "What {@linkcode ptyInfo} resolves to.",
+          "doc": "What ptyInfo resolves to: the terminal's program, and what runs in its foreground right now (the command a shell is waiting for, or the shell itself at its prompt).",
+          "docFull": "What {@linkcode ptyInfo} resolves to: the terminal's program, and what runs in its foreground\nright now (the command a shell is waiting for, or the shell itself at its prompt).\n\nThe foreground fields are there where the runtime's `Deno.Pty` has `foreground()` (macOS, Linux\nand Windows); on a runtime without it only Linux fills `process` and `cwd`. Each is left out\nwhen the OS refuses it (a process of another user, such as a `sudo`, hides its arguments and\nfolder) and once the terminal's program has ended.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -55717,15 +56386,39 @@
             },
             {
               "kind": "property",
+              "name": "tty",
+              "signature": "readonly tty?: string",
+              "doc": "The terminal device (`/dev/ttys004`, `/dev/pts/3`); never on Windows (a ConPTY has none)."
+            },
+            {
+              "kind": "property",
               "name": "process",
               "signature": "readonly process?: string",
-              "doc": "The foreground process's name (`vim`), where the OS tells it (Linux)."
+              "doc": "The foreground process's name (`vim`; on Windows the image name, `vim.exe`)."
+            },
+            {
+              "kind": "property",
+              "name": "argv",
+              "signature": "readonly argv?: string[]",
+              "doc": "The foreground process's arguments, the program first."
             },
             {
               "kind": "property",
               "name": "cwd",
               "signature": "readonly cwd?: string",
-              "doc": "The foreground process's working directory, where the OS tells it (Linux)."
+              "doc": "The foreground process's working directory."
+            },
+            {
+              "kind": "property",
+              "name": "foregroundPid",
+              "signature": "readonly foregroundPid?: number",
+              "doc": "The foreground process's id."
+            },
+            {
+              "kind": "property",
+              "name": "foregroundGroup",
+              "signature": "readonly foregroundGroup?: number",
+              "doc": "The terminal's foreground process group (macOS, Linux). Windows has no foreground process\ngroup: there the foreground process is found in the process tree below the terminal's program\n(a shell's child started last, followed through nested shells)."
             }
           ]
         },
@@ -56088,6 +56781,18 @@
               "name": "retryAt",
               "signature": "readonly retryAt?: number",
               "doc": "When the next start is due, while in `backoff` (epoch ms)."
+            },
+            {
+              "kind": "property",
+              "name": "detached",
+              "signature": "readonly detached?: boolean",
+              "doc": "Set for a {@linkcode SidecarDefinition.detached} sidecar: it runs as its own process."
+            },
+            {
+              "kind": "property",
+              "name": "reattached",
+              "signature": "readonly reattached?: boolean",
+              "doc": "Set while a detached sidecar's current run was found already running (started by an earlier\nlaunch of the app, or another instance) rather than started by this launch."
             }
           ]
         },
@@ -56598,6 +57303,56 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopPointer",
+          "slug": "DesktopPointer",
+          "kind": "interface",
+          "signature": "interface DesktopPointer",
+          "doc": "The pointer on the screen (getPointer).",
+          "docFull": "The pointer on the screen ({@linkcode getPointer}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number",
+              "doc": "Where it is, in the coordinates of {@linkcode getScreens} and a window's bounds."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number",
+              "doc": "Its vertical place (see `x`)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons: number",
+              "doc": "The mouse buttons held, as a DOM `MouseEvent.buttons` (`1`: the primary button)."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string | null",
+              "doc": "The id of the app window a click there would go to (the window on top at that point, counting\nevery application's windows), or `null`: another app's window, the desktop, a menu."
+            },
+            {
+              "kind": "property",
+              "name": "clientX",
+              "signature": "readonly clientX?: number",
+              "doc": "The pointer in that window's page (CSS pixels at zoom 1), when `window` is set."
+            },
+            {
+              "kind": "property",
+              "name": "clientY",
+              "signature": "readonly clientY?: number",
+              "doc": "Its vertical place in the page (see `clientX`)."
+            }
+          ]
+        },
+        {
           "name": "DesktopWindowHandle",
           "slug": "DesktopWindowHandle",
           "kind": "interface",
@@ -56722,6 +57477,32 @@
           ]
         },
         {
+          "name": "DesktopWindowOrder",
+          "slug": "DesktopWindowOrder",
+          "kind": "interface",
+          "signature": "interface DesktopWindowOrder",
+          "doc": "The app's windows front to back (getWindowOrder).",
+          "docFull": "The app's windows front to back ({@linkcode getWindowOrder}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "ids",
+              "signature": "readonly ids: string[]",
+              "doc": "The ids of the windows that are on screen, the front-most first."
+            },
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "readonly source: \"os\" | \"focus\"",
+              "doc": "`\"os\"`: the OS's own stacking order. `\"focus\"`: the OS does not tell (a Wayland session, a\nruntime without the call), so this is the order the windows last had the focus in; a window\nraised without the focus, or an always-on-top window, can be elsewhere in the real order."
+            }
+          ]
+        },
+        {
           "name": "DraggableElement",
           "slug": "DraggableElement",
           "kind": "interface",
@@ -56802,6 +57583,226 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DragSession",
+          "slug": "DragSession",
+          "kind": "interface",
+          "signature": "interface DragSession",
+          "doc": "A drag session this window started (startDragSession).",
+          "docFull": "A drag session this window started ({@linkcode startDragSession}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "Its id."
+            },
+            {
+              "kind": "property",
+              "name": "ended",
+              "signature": "readonly ended: Promise<DragSessionEnd>",
+              "doc": "Resolves once the button is released (a drop) or the session is cancelled."
+            },
+            {
+              "kind": "method",
+              "name": "cancel",
+              "signature": "cancel(): Promise<void>",
+              "doc": "Cancel it (Escape): the window under the pointer gets `leave`, none gets `drop`."
+            }
+          ]
+        },
+        {
+          "name": "DragSessionEnd",
+          "slug": "DragSessionEnd",
+          "kind": "interface",
+          "signature": "interface DragSessionEnd",
+          "doc": "How a drag session ended (DragSession.ended).",
+          "docFull": "How a drag session ended ({@linkcode DragSession.ended}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string | null",
+              "doc": "The id of the window it was dropped on, or `null` (dropped outside the app, or cancelled)."
+            },
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number",
+              "doc": "The pointer on the screen at the end."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number",
+              "doc": "Its vertical place (see `x`)."
+            },
+            {
+              "kind": "property",
+              "name": "cancelled",
+              "signature": "readonly cancelled: boolean",
+              "doc": "It was cancelled: no window got a `drop`."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "readonly reason?: string",
+              "doc": "With `cancelled`: `\"cancelled\"` ({@linkcode DragSession.cancel}), `\"timeout\"` (ten minutes),\n`\"unavailable\"` (the OS stopped telling the pointer)."
+            }
+          ]
+        },
+        {
+          "name": "DragSessionEvent",
+          "slug": "DragSessionEvent",
+          "kind": "interface",
+          "signature": "interface DragSessionEvent",
+          "doc": "What a window is told about a drag session passing over it (onDragSession).",
+          "docFull": "What a window is told about a drag session passing over it ({@linkcode onDragSession}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "session",
+              "signature": "readonly session: string",
+              "doc": "The session's id."
+            },
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type: \"enter\" | \"over\" | \"leave\" | \"drop\"",
+              "doc": "`\"enter\"`: the pointer came over this window. `\"over\"`: it moved within it. `\"leave\"`: it\nleft (or the session was cancelled: `cancelled`). `\"drop\"`: the button was released here."
+            },
+            {
+              "kind": "property",
+              "name": "origin",
+              "signature": "readonly origin: string",
+              "doc": "The id of the window that started the session (this one, for a drag within one window)."
+            },
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number",
+              "doc": "The pointer on the screen."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number",
+              "doc": "Its vertical place (see `x`)."
+            },
+            {
+              "kind": "property",
+              "name": "clientX",
+              "signature": "readonly clientX?: number",
+              "doc": "The pointer in this window's page (CSS pixels at zoom 1): `enter`, `over`, `drop`."
+            },
+            {
+              "kind": "property",
+              "name": "clientY",
+              "signature": "readonly clientY?: number",
+              "doc": "Its vertical place in the page (see `clientX`)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons: number",
+              "doc": "The mouse buttons held."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data?: unknown",
+              "doc": "What the origin attached ({@linkcode DragSessionOptions.data}): `enter` and `drop`."
+            },
+            {
+              "kind": "property",
+              "name": "cancelled",
+              "signature": "readonly cancelled?: boolean",
+              "doc": "`leave`: the session was cancelled."
+            }
+          ]
+        },
+        {
+          "name": "DragSessionMove",
+          "slug": "DragSessionMove",
+          "kind": "interface",
+          "signature": "interface DragSessionMove",
+          "doc": "What the window that started a drag session is told as it goes (DragSession).",
+          "docFull": "What the window that started a drag session is told as it goes ({@linkcode DragSession}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number",
+              "doc": "The pointer on the screen."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number",
+              "doc": "Its vertical place (see `x`)."
+            },
+            {
+              "kind": "property",
+              "name": "buttons",
+              "signature": "readonly buttons: number",
+              "doc": "The mouse buttons held."
+            },
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: string | null",
+              "doc": "The id of the app window under the pointer, or `null`."
+            }
+          ]
+        },
+        {
+          "name": "DragSessionOptions",
+          "slug": "DragSessionOptions",
+          "kind": "interface",
+          "signature": "interface DragSessionOptions",
+          "doc": "Options for startDragSession.",
+          "docFull": "Options for {@linkcode startDragSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data?: unknown",
+              "doc": "What is dragged, as JSON (at most 64 KiB): the window under the pointer gets a copy with\n`enter` and `drop`. It stays inside the app: nothing is put on the OS pasteboard."
+            },
+            {
+              "kind": "property",
+              "name": "intervalMs",
+              "signature": "readonly intervalMs?: number",
+              "doc": "How often the pointer is sampled, in ms (8 to 100; default 16)."
+            },
+            {
+              "kind": "property",
+              "name": "onMove",
+              "signature": "readonly onMove?: (move: DragSessionMove) => void",
+              "doc": "Called as the pointer moves or the window under it changes."
+            }
+          ]
         },
         {
           "name": "DroppedFile",
@@ -56892,6 +57893,18 @@
           "denextOnly": true
         },
         {
+          "name": "getPointer",
+          "slug": "getPointer",
+          "kind": "function",
+          "signature": "getPointer(): Promise<DesktopPointer | null>",
+          "doc": "Where the pointer is on the screen, the buttons held and the app window under it, asked of the OS: it answers outside the app's windows too, which a page's own pointer events do not.",
+          "docFull": "Where the pointer is on the screen, the buttons held and the app window under it, asked of the\nOS: it answers outside the app's windows too, which a page's own pointer events do not.",
+          "params": [],
+          "returns": "The pointer, or null where the OS does not tell (a Wayland session, a runtime without the call).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getScreens",
           "slug": "getScreens",
           "kind": "function",
@@ -56914,6 +57927,20 @@
           "returns": "The preferences.",
           "examples": [
             "```ts\nimport { getTitleBarPreferences, onTitleBarPreferencesChange } from \"denext/desktop/window\";\n\nconst place = (p: { side: \"left\" | \"right\" }) => document.body.dataset.buttons = p.side;\nplace(await getTitleBarPreferences());\nonTitleBarPreferencesChange(place);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "getWindowOrder",
+          "slug": "getWindowOrder",
+          "kind": "function",
+          "signature": "getWindowOrder(): Promise<DesktopWindowOrder>",
+          "doc": "The app's windows as they are stacked on screen right now, front to back: the real z-order from the OS where it tells (macOS, Windows, Linux on X11), else the order the windows last had the focus in. A hidden or minimized window, and one on another Space / virtual desktop / workspace, is not listed under \"os\".",
+          "docFull": "The app's windows as they are stacked on screen right now, front to back: the real z-order\nfrom the OS where it tells (macOS, Windows, Linux on X11), else the order the windows last had\nthe focus in. A hidden or minimized window, and one on another Space / virtual desktop /\nworkspace, is not listed under `\"os\"`.",
+          "params": [],
+          "returns": "The window ids, and whether the OS gave the order.",
+          "examples": [
+            "```ts\nimport { getWindowOrder } from \"denext/desktop/window\";\n\nconst { ids, source } = await getWindowOrder();\nconst front = ids[0]; // the window in front\n```"
           ],
           "denextOnly": true
         },
@@ -57060,6 +58087,23 @@
             {
               "name": "handler",
               "doc": "Called with the current displays."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onDragSession",
+          "slug": "onDragSession",
+          "kind": "function",
+          "signature": "onDragSession(handler: (event: DragSessionEvent) => void): () => void",
+          "doc": "Hear the drag sessions that pass over this window (startDragSession, from this window or another of the app): enter, over, leave and drop, with the pointer in this page's coordinates and the data the origin attached.",
+          "docFull": "Hear the drag sessions that pass over this window ({@linkcode startDragSession}, from this\nwindow or another of the app): `enter`, `over`, `leave` and `drop`, with the pointer in this\npage's coordinates and the data the origin attached.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each event."
             }
           ],
           "returns": "A function that unsubscribes.",
@@ -57770,6 +58814,25 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "startDragSession",
+          "slug": "startDragSession",
+          "kind": "function",
+          "signature": "startDragSession(options?: DragSessionOptions): Promise<DragSession>",
+          "doc": "Start a drag that can cross the app's windows, from a pointerdown or dragstart handler (while the mouse button is held). The OS is asked where the pointer is once per frame for as long as the button stays down, so the session follows the pointer over any window of the app and outside them: onMove reports the pointer on the screen and the window under it, the window under the pointer hears onDragSession events with the pointer in ITS page's coordinates, and releasing the button drops there.",
+          "docFull": "Start a drag that can cross the app's windows, from a `pointerdown` or `dragstart` handler\n(while the mouse button is held). The OS is asked where the pointer is once per frame for as\nlong as the button stays down, so the session follows the pointer over any window of the app\nand outside them: `onMove` reports the pointer on the screen and the window under it, the window\nunder the pointer hears {@linkcode onDragSession} events with the pointer in ITS page's\ncoordinates, and releasing the button drops there.\n\nNothing is drawn: show your own drag image (in the origin window, and in the target window on\nits `enter`). One session runs at a time. Rejects `unsupported` where the OS does not tell the\npointer (a Wayland session, a runtime without the call), `not_dragging` when no button is held\nand `conflict` while another session runs.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The data to carry, the sampling interval and the move callback."
+            }
+          ],
+          "returns": "The session.",
+          "examples": [
+            "```ts\nimport { onDragSession, startDragSession } from \"denext/desktop/window\";\n\ntab.addEventListener(\"pointerdown\", async () => {\n  const drag = await startDragSession({ data: { tab: tab.id } });\n  const end = await drag.ended;\n  if (!end.cancelled && end.window === null) detachIntoNewWindow(tab, end.x, end.y);\n});\n// in every window:\nonDragSession((e) => {\n  if (e.type === \"drop\") adoptTab((e.data as { tab: string }).tab, e.clientX!, e.clientY!);\n});\n```"
+          ],
           "denextOnly": true
         },
         {

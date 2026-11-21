@@ -281,6 +281,17 @@ export interface DesktopAppApi {
   };
   /** The connected displays, primary first. */
   screens?(): DesktopScreen[];
+  /**
+   * The runtime ids (`BrowserWindow.windowId`) of the app's on-screen windows as the OS stacks
+   * them, front to back; `null` where the OS does not tell (a Wayland session). Absent on a
+   * runtime without the call.
+   */
+  windowOrder?(): readonly number[] | null;
+  /**
+   * The pointer on the screen, the buttons held and the runtime id of the app window under it,
+   * asked of the OS; `null` where the OS does not tell. Absent on a runtime without the call.
+   */
+  pointer?(): { x: number; y: number; buttons: number; windowId: number | null } | null;
   /** What window features this backend supports (`fileDialogs`, `state`, `fileDragOut`, …). */
   windowCapabilities?(): Record<string, boolean>;
   /**

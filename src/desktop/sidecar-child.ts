@@ -38,8 +38,10 @@ import { dirname, fromFileUrl, join } from "@std/path";
 import process from "node:process";
 import { currentDenoIdentity, supportsExecArgv } from "../build/deno-version.ts";
 import {
+  isDetachedSidecar,
   SIDECAR_CHILD_ARGC_ENV,
   SIDECAR_CHILD_ENV,
+  SIDECAR_DETACHED_ENV,
   type SidecarDefinition,
   sidecarModuleUrl,
 } from "./sidecar.ts";
@@ -319,6 +321,11 @@ export interface SidecarChildLaunch {
   readonly definition: SidecarDefinition;
   /** The child's own arguments (its `process.argv.slice(2)`). */
   readonly args: readonly string[];
+  /**
+   * Whether this launch is the detached sidecar itself (started by the app's detached launcher,
+   * {@linkcode SIDECAR_DETACHED_ENV}), not a `spawnSelf` child.
+   */
+  readonly detached?: boolean;
 }
 
 /** The input of {@linkcode sidecarChildLaunch}. */
@@ -335,6 +342,20 @@ export interface SidecarChildLaunchInput {
   readonly entryPath: string | undefined;
   /** The app's sidecars (merged). */
   readonly sidecars: readonly SidecarDefinition[];
+  /** {@linkcode SIDECAR_DETACHED_ENV}'s value (`"1"`: the detached sidecar itself). */
+  readonly detachedMarker?: string | undefined;
+}
+
+/**
+ * `{ detached: true }` when the launch is the detached sidecar itself: only the app's detached
+ * launcher sets the marker, and only a detached definition honours it (a stray marker on another
+ * sidecar's child is ignored).
+ */
+function detachedLaunch(
+  marker: string | undefined,
+  definition: SidecarDefinition,
+): { detached?: true } {
+  return marker === "1" && isDetachedSidecar(definition) ? { detached: true } : {};
 }
 
 /**
@@ -364,7 +385,7 @@ export function sidecarChildLaunch(input: SidecarChildLaunchInput): SidecarChild
   if (!definition || !("module" in definition.run)) {
     throw new Error(`desktop: ${SIDECAR_CHILD_ENV}="${name}" names no module sidecar of this app`);
   }
-  return { name, definition, args: own };
+  return { name, definition, args: own, ...detachedLaunch(input.detachedMarker, definition) };
 }
 
 /** Read and remove a variable (`undefined` without `--allow-env`). */
@@ -392,9 +413,11 @@ export function readSidecarChildLaunch(
 ): SidecarChildLaunch | null {
   const marker = takeEnv(SIDECAR_CHILD_ENV);
   const argc = takeEnv(SIDECAR_CHILD_ARGC_ENV);
+  const detachedMarker = takeEnv(SIDECAR_DETACHED_ENV);
   return sidecarChildLaunch({
     marker,
     argc,
+    detachedMarker,
     args: Deno.args,
     standalone: isStandalone(),
     entryPath: entryPathOf(importMetaUrl),
@@ -540,7 +563,9 @@ export interface RunSidecarChildOptions {
  * Run the sidecar's module as this process's work: a bundled backend's packages ready (already
  * unpacked by the app, once per version), `process.argv` set, `globalThis.denextSidecar` installed
  * (`child: true`; no port, bootstrap or secrets; `childCommand` / `spawnSelf` for a grandchild),
- * then the module imported. Resolves once the module is evaluated; the process then ends when its
+ * then the module imported. The detached sidecar itself (`launch.detached`) first takes its init
+ * from the app over the IPC channel and opens its control endpoint (`sidecar-detached-child.ts`),
+ * and its `denextSidecar` has the port, bootstrap, secrets and `detached` too. Resolves once the module is evaluated; the process then ends when its
  * work is done, with its exit code.
  *
  * @param launch The child launch.
@@ -570,6 +595,19 @@ export async function runSidecarChild(
     entry.startsWith("file:") ? fromFileUrl(entry) : entry,
     ...launch.args,
   ];
+  const helpersOfChild = helpers.childHelpers(
+    parentChildBase(def.name, options.importMetaUrl, options.denoFlags),
+  );
+  if (launch.detached) {
+    const { runDetachedSidecarChild } = await import("./sidecar-detached-child.ts");
+    await runDetachedSidecarChild({
+      name: def.name,
+      entry,
+      childHelpers: helpersOfChild,
+      process: process as never,
+    });
+    return;
+  }
   (globalThis as { denextSidecar?: unknown }).denextSidecar = Object.freeze({
     name: def.name,
     child: true,
@@ -578,7 +616,7 @@ export async function runSidecarChild(
     secrets: Object.freeze({}),
     ready: () => {},
     onShutdown: () => {},
-    ...helpers.childHelpers(parentChildBase(def.name, options.importMetaUrl, options.denoFlags)),
+    ...helpersOfChild,
   });
   await import(entry);
 }

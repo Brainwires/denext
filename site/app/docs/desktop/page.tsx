@@ -2678,7 +2678,23 @@ await killPty(id); // SIGHUP; or "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"`}
         event per about 8 ms or 64 KiB, decoded as UTF-8. Each event carries a <code>seq</code>{" "}
         that grows by one per terminal; the event stream is at-least-once, and{" "}
         <code>onPtyData</code> drops a <code>seq</code> it has seen. <code>ptyInfo(id)</code>{" "}
-        gives the process id and, on Linux, the foreground process&apos;s name and folder.
+        gives the program&apos;s process id, the terminal device (<code>tty</code>) and what runs in
+        the terminal&apos;s foreground right now, asked of the OS at each call: the process&apos;s
+        name (<code>process</code>), arguments (<code>argv</code>), folder (
+        <code>cwd</code>), id (<code>foregroundPid</code>) and process group (
+        <code>foregroundGroup</code>). That is the command a shell is waiting for, or the shell
+        itself at its prompt, so a tab can show <code>vim notes.md</code>{" "}
+        and the folder without a shell integration script. The runtime answers on macOS, Linux and
+        Windows where its <code>Deno.Pty</code> has <code>foreground()</code>{" "}
+        (elsewhere only Linux fills <code>process</code> and{" "}
+        <code>cwd</code>). A field the OS refuses is left out: a <code>sudo</code>{" "}
+        running as another user hides its arguments and folder. Windows has no foreground process
+        group and a ConPTY is not a named device, so there <code>foregroundGroup</code> and{" "}
+        <code>tty</code>{" "}
+        are never set, and the foreground process is found in the process tree: the child a shell
+        started last, followed through nested shells (a program started with <code>start /b</code>
+        {" "}
+        can be named in place of an older one).
       </p>
       <p>
         Each terminal belongs to the window that started it: its events go to that window only, and
@@ -3300,6 +3316,69 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible, titl
         bindings) acts as the main window. A reload releases only what that window&apos;s page held
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
+      </p>
+      <h4 id="desktop-window-order">Stacking order, the pointer and drags between windows</h4>
+      <p>
+        <code>getWindowOrder()</code> from <code>denext/desktop/window</code>{" "}
+        answers the app&apos;s windows as they are stacked on screen right now, the front-most
+        first: <code>{"{ ids, source }"}</code>. With <code>source: "os"</code>{" "}
+        it is the OS&apos;s own z-order (macOS, Windows, Linux on X11, where the runtime has{" "}
+        <code>Deno.desktop.windowOrder</code>), which lists only windows that are on screen: not a
+        hidden or minimized one, nor one on another Space, virtual desktop or workspace. With{" "}
+        <code>source: "focus"</code>{" "}
+        the OS does not tell (a Wayland session, an older runtime) and the list is the order the
+        windows last had the focus in, which a window raised without the focus or an always-on-top
+        window can differ from. <code>getPointer()</code>{" "}
+        asks the OS where the pointer is on the screen, which mouse buttons are held and which
+        window of the app a click there would reach (<code>window</code>, with the pointer in that
+        window&apos;s page as <code>clientX</code> / <code>clientY</code>); it resolves{" "}
+        <code>null</code> where the OS does not tell. From <code>desktop.ts</code> the same two are
+        {" "}
+        <code>windows.order()</code> and <code>windows.pointer()</code>.
+      </p>
+      <p>
+        A page hears pointer events only inside its own window, so a drag from one window of the app
+        to another cannot be followed from the page. <code>startDragSession()</code>{" "}
+        does it from the OS: called from a <code>pointerdown</code> or <code>dragstart</code>{" "}
+        handler, it samples the pointer once per frame while the button is held. The window that
+        started it gets <code>onMove</code>{" "}
+        (the pointer on the screen and the window under it) and an <code>ended</code>{" "}
+        promise; whichever window the pointer is over hears <code>onDragSession</code> events (
+        <code>enter</code>, <code>over</code>, <code>leave</code>,{" "}
+        <code>drop</code>) with the pointer in its own page&apos;s coordinates and the JSON{" "}
+        <code>data</code> the origin attached (on <code>enter</code> and{" "}
+        <code>drop</code>). Releasing the button drops; <code>cancel()</code>{" "}
+        (Escape) ends it with no drop. Nothing is drawn and nothing reaches another application or
+        the OS pasteboard: draw your own drag image, and use <code>startFileDrag</code>{" "}
+        to drag files out of the app.
+      </p>
+      <Code lang="ts">
+        {`import { onDragSession, startDragSession } from "denext/desktop/window";
+
+// The window a tab is dragged from:
+tab.addEventListener("pointerdown", async () => {
+  const drag = await startDragSession({
+    data: { tab: tab.id },
+    onMove: ({ x, y, window }) => moveGhost(x, y, window),
+  });
+  const end = await drag.ended; // { window, x, y, cancelled }
+  if (!end.cancelled && end.window === null) openTabInNewWindow(tab.id, end.x, end.y);
+});
+
+// Every window (the origin too: a drop on itself is a drop):
+onDragSession((e) => {
+  if (e.type === "enter" || e.type === "over") showDropMarker(e.clientX, e.clientY);
+  if (e.type === "leave") hideDropMarker();
+  if (e.type === "drop") adoptTab((e.data as { tab: string }).tab, e.clientX, e.clientY);
+});`}
+      </Code>
+      <p>
+        One session runs at a time, for at most ten minutes, and only the window that started it can
+        cancel it. <code>startDragSession</code> rejects <code>unsupported</code>{" "}
+        where the OS does not tell the pointer (a Wayland session: a Wayland client learns the
+        pointer&apos;s position only inside its own windows), <code>not_dragging</code>{" "}
+        when no button is held and <code>conflict</code>{" "}
+        while another session runs; fall back to a drag within one window there.
       </p>
       <h4 id="desktop-window-keys">Keys, frames and the last session</h4>
       <p>
@@ -5637,6 +5716,99 @@ export default defineDesktopExtension({
         this way, and its window test checks it on all three OSes along with every other capability.
       </p>
 
+      <h3 id="desktop-bundled-libraries">Bundled native libraries</h3>
+      <p>
+        An app that loads its own native library with <code>Deno.dlopen</code> (a Rust{" "}
+        <code>cdylib</code>, a C library) lists it in{" "}
+        <code>desktop.bundle.libraries</code>, with one build per target. The package scripts copy
+        the build for the target they package into the bundle, and{" "}
+        <code>bundledLibraryPath(name)</code> from <code>denext/desktop</code>{" "}
+        returns where the running app has it, or <code>null</code>{" "}
+        when this build has none for the host. In <code>denext desktop run</code> / <code>dev</code>
+        {" "}
+        it returns the project&apos;s own file for the host OS and architecture, so the same code
+        works before packaging.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  bundle: {
+    libraries: [
+      // {os} darwin | linux | windows, {arch} arm64 | x64, {ext} dylib | so | dll,
+      // {target} the Rust triple (aarch64-apple-darwin, x86_64-unknown-linux-gnu, …)
+      "native/{target}/librullama_audio_ffi.{ext}", // name: "rullama_audio_ffi"
+      { path: "native/{os}-{arch}/libvad.{ext}", optional: true }, // skipped where missing
+      // an explicit per-target map: a target with no entry ships without it
+      { name: "audio", files: { "darwin-arm64": "native/mac/libaudio.dylib", "linux-x64": "native/linux/libaudio.so" } },
+    ],
+  },
+  extraPermissions: { ffi: ["*"] }, // Deno.dlopen needs --allow-ffi (see below)
+},
+
+// desktop.ts, or an extension module: the backend, never the page
+import { bundledLibraryPath } from "denext/desktop";
+const path = bundledLibraryPath("rullama_audio_ffi");
+const audio = path ? Deno.dlopen(path, { level: { parameters: [], result: "f32" } }) : null;`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Entries.</strong> A path pattern (a string, or{" "}
+          <code>{"{ path, name?, optional? }"}</code>) or{" "}
+          <code>{"{ name, files, optional? }"}</code>. A pattern&apos;s name is its file name
+          without the <code>lib</code>{" "}
+          prefix and the extension. Paths are relative to the project, with no <code>..</code> and
+          {" "}
+          <code>/</code> separators, and each names a <code>.dylib</code>, <code>.so</code>{" "}
+          (or a versioned <code>.so.N</code>) or{" "}
+          <code>.dll</code>; names, and the file names bundled for one target, are unique. A missing
+          file fails packaging for that target, naming the path it looked for, unless the entry is
+          {" "}
+          <code>optional</code>.
+        </li>
+        <li>
+          <strong>Where they land.</strong> <code>Contents/Frameworks/</code> in the macOS{" "}
+          <code>.app</code> (so a library that links another bundled one by <code>@rpath</code> or
+          {" "}
+          <code>@executable_path/../Frameworks</code> finds it; install names are not rewritten),
+          {" "}
+          <code>lib/</code> beside the executable in the Linux bundle, and beside the{" "}
+          <code>.exe</code> on Windows. Every installer is built from the bundle, so the{" "}
+          <code>.dmg</code>, <code>.pkg</code>, <code>.tar.gz</code>, <code>.deb</code>,{" "}
+          <code>.rpm</code>, AppImage, <code>.msi</code> and <code>.zip</code>{" "}
+          carry them. A library may not take the name of a file the bundle already has.
+        </li>
+        <li>
+          <strong>Signing.</strong>{" "}
+          On macOS each library is signed with the app&apos;s identity (the Hardened Runtime and a
+          secure timestamp when the app has an identity) before the bundle itself, so the
+          bundle&apos;s seal covers it and library validation passes without{" "}
+          <code>disable-library-validation</code>. On Windows the package script Authenticode-signs
+          every PE file in the bundle, the libraries included.
+        </li>
+        <li>
+          <strong>Universal macOS builds.</strong> <code>--arch universal</code>{" "}
+          lipo-merges a library both arches have, keeps one that is already universal (the same file
+          for both) as it is, and carries one built for one arch alone (where{" "}
+          <code>bundledLibraryPath</code> returns <code>null</code> on the other).
+        </li>
+        <li>
+          <strong>Permissions.</strong> <code>Deno.dlopen</code> needs{" "}
+          <code>--allow-ffi</code>, and a baked grant can name only paths known when the app is
+          packaged: where it gets installed is not (a <code>.deb</code> or <code>.rpm</code>{" "}
+          installs it under{" "}
+          <code>/usr/lib/&lt;package&gt;/lib/</code>, but a tarball, an AppImage or a dragged{" "}
+          <code>.app</code> can be anywhere). So grant <code>ffi: ["*"]</code> in{" "}
+          <code>desktop.extraPermissions</code>; the package run, <code>denext desktop run</code> /
+          {" "}
+          <code>dev</code> and <code>denext desktop doctor</code> say so when the grant is missing.
+          {" "}
+          <code>bundledLibraryPath</code> reads no file (the table comes from{" "}
+          <code>.deno-desktop/config.json</code>, which the generated <code>desktop.ts</code>{" "}
+          imports), so it works under <code>desktop.permissions: "strict"</code>{" "}
+          too, and loading a library needs no read grant.
+        </li>
+      </ul>
+
       <h2 id="desktop-sidecars">Sidecars: a backend next to the window</h2>
       <p>
         An Electron app often spawns its own server and talks to it from the window. A denext
@@ -5961,6 +6133,212 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           <code>spawnSelf</code>.
         </li>
       </ul>
+      <h3 id="desktop-sidecars-detached">Detached sidecars: a process that outlives the app</h3>
+      <p>
+        Every sidecar above ends with the app. A terminal wants its shells to survive quitting: a
+        daemon that keeps running, which the next launch finds and reattaches to.{" "}
+        <code>detached: true</code> on a module sidecar is that contract:
+      </p>
+      <Code lang="ts">
+        {`sidecars: [{
+  name: "ptyd",
+  run: { module: "./desktop/ptyd.ts" },
+  detached: true,                       // or { exitAfterMs: 600_000, keepAcrossUpdates: false }
+  port: "auto",
+  ready: { signal: true },
+  secrets: { token: "$random" },
+  logs: "file",
+}],
+
+// desktop/ptyd.ts: the daemon
+const sc = globalThis.denextSidecar;
+const server = startPtyServer(sc.port, sc.secrets.token);
+sc.detached.onAttachedChange((attached) => {
+  // false: the last app window quit; the shells keep running.
+  server.setBackgroundMode(!attached);
+});
+sc.onShutdown(() => server.closeAll()); // stop(), stopSidecars(), an update
+sc.ready();`}
+      </Code>
+      <ul>
+        <li>
+          A detached sidecar runs as its own OS process, not in a worker: the app&apos;s own
+          executable started again, headless, on the sidecar&apos;s module (the{" "}
+          <a href="#desktop-sidecars-children">child shape</a>{" "}
+          above, started by the app itself), in a session / process group of its own (on Windows,
+          its own console-less process group), its stdin closed and its output appended to its log
+          file (<code>logs: "file"</code> / <code>"both"</code>{" "}
+          — the file stays open in the sidecar, so it keeps logging after the app quit) or dropped (
+          <code>"inherit"</code> /{" "}
+          <code>"none"</code>: an inherited terminal would tie it to the app). It gets{" "}
+          <code>name</code>, <code>port</code>, <code>bootstrap</code>, <code>secrets</code>,{" "}
+          <code>ready()</code>, <code>onShutdown(fn)</code> and{" "}
+          <code>detached: {"{"} attached, onAttachedChange(fn) {"}"}</code>{" "}
+          (whether at least one app instance holds its control connection) on{" "}
+          <code>denextSidecar</code>, with <code>child: true</code>. <code>args</code>,{" "}
+          <code>env</code>, <code>loginShellEnv</code>, <code>port</code>, <code>ready</code> (but
+          {" "}
+          <code>ready.stdout</code>: its output never reaches the app), <code>restart</code>,{" "}
+          <code>expose</code>, <code>proxy</code> and <code>permissions</code> keep their meaning.
+        </li>
+        <li>
+          Quitting the app does not stop it: the app only closes its control connection. The next
+          launch finds it in the app&apos;s registry and reattaches:{" "}
+          <code>sidecar(name).status</code> has <code>detached: true</code> and{" "}
+          <code>reattached: true</code>, the same{" "}
+          <code>pid</code>, and the port, values and secrets it was started with (the record keeps
+          them, so the relaunched app and its page can still talk to it); <code>ready</code>{" "}
+          is not checked again. While the app runs, the control connection closing means the sidecar
+          ended, and <code>restart</code> applies (a restart is a fresh start).
+        </li>
+        <li>
+          <code>sidecar(name).stop()</code> really ends it (its <code>onShutdown</code>{" "}
+          handlers, then exit; within{" "}
+          <code>shutdown.graceMs</code>, at most 30 s) and removes its record;{" "}
+          <code>restart()</code> is stop then a fresh start. <code>stopSidecars()</code>{" "}
+          and installing a full-app update stop detached sidecars too: there is one behaviour,
+          everything stops (the binary is about to be replaced, and on Windows a running copy locks
+          it).
+        </li>
+        <li>
+          Two instances of the app starting at once (without{" "}
+          <code>singleInstance</code>) take a start lock in the registry, so one name never gets two
+          processes: the second reattaches.
+        </li>
+        <li>
+          On <code>runDesktop</code>&apos;s result, <code>detachedSidecars()</code>{" "}
+          lists the registry (<code>
+            {"{"} name, pid, startedAt, appVersion, reachable, declared {"}"}
+          </code>) and <code>stopDetachedSidecar(name)</code>{" "}
+          stops one, a leftover the app no longer declares included. The page sees the two status
+          flags through <code>sidecarStatus</code> / <code>onSidecarStatus</code>.
+        </li>
+        <li>
+          <code>denextSidecar.spawnSelf(args, {"{"} detached: true {"}"})</code>{" "}
+          in an ordinary sidecar is Node&apos;s{" "}
+          <code>detached</code>: a process nothing supervises, records or can find again.{" "}
+          <code>detached: true</code> on the definition is the supported contract.{" "}
+          <code>denext desktop add sidecar --entry … --detached</code> writes one.
+        </li>
+      </ul>
+      <h4 id="desktop-sidecars-detached-registry">The registry and the control connection</h4>
+      <p>
+        Each detached sidecar has a record, <code>&lt;app data&gt;/sidecars/&lt;name&gt;.json</code>
+        {" "}
+        (the folder <code>0700</code>, the record <code>0600</code>, written atomically):{" "}
+        <code>
+          {"{"} v, name, pid, startedAt, appVersion, control: {"{"} host, port{" "}
+          {"}"}, key, port, values, secrets {"}"}
+        </code>. <code>key</code>{" "}
+        is 32 random bytes the app makes for each start and hands the sidecar over its IPC channel
+        (never in argv or the environment); <code>appVersion</code>{" "}
+        is the version the full-app updater reports plus the executable&apos;s size and change time,
+        so a build installed over the old one counts as another version too (
+        <code>"dev"</code>{" "}
+        outside a packaged app). Before the module runs, denext&apos;s code in the sidecar opens a
+        loopback TCP control endpoint (<code>127.0.0.1</code>, a free port), which needs no
+        permission beyond the loopback grant every packaged app has. Both sides prove the key on
+        every connection without sending it: newline-delimited JSON, the client&apos;s and the
+        server&apos;s nonces, an HMAC-SHA256 from each side over a label, its role and both nonces,
+        checked in constant time. Any failure closes the socket with no detail; a line is at most 8
+        KiB, a handshake must finish within 5 s, and at most 16 connections may be waiting to
+        authenticate. An open authenticated connection is an attachment.
+      </p>
+      <h4 id="desktop-sidecars-detached-orphans">What ends a detached sidecar</h4>
+      <ul>
+        <li>
+          <strong>An update:</strong>{" "}
+          a launch whose app version differs from the record&apos;s asks the old process to shut
+          down and starts a fresh one, unless <code>detached.keepAcrossUpdates: true</code>{" "}
+          (rarely right: it keeps code from a superseded build running).
+        </li>
+        <li>
+          <strong>A dropped declaration:</strong>{" "}
+          at launch, a record whose name the app no longer declares as detached is told to shut down
+          and removed (an app that declares no sidecar at all still cleans its registry).
+        </li>
+        <li>
+          <strong>A lost registry:</strong>{" "}
+          the sidecar re-reads its own record every 30 s and whenever an app detaches; once it is
+          gone, unreadable or holds another key (the app was uninstalled, its data reset, or another
+          start replaced it), the sidecar shuts itself down. This is what cleans up after an
+          uninstall.
+        </li>
+        <li>
+          <strong>Idle (opt-in):</strong> <code>detached.exitAfterMs</code>{" "}
+          (at least 1 000) ends it once no app has been attached that long; the timer starts when
+          the last attachment closes and a new one cancels it. By default it stays until stopped.
+        </li>
+        <li>
+          <strong>Stale records:</strong>{" "}
+          a record whose endpoint does not authenticate (after a reboot or a crash) is deleted at
+          the next start, its pid never touched. A sidecar no app attaches to within 30 s of its
+          start ends itself.
+        </li>
+        <li>
+          The OS ends it at logout and shutdown. It is not a login item and is never restarted on
+          its own. Earlier than that: a kill-on-close job object the app was started in (some
+          Windows launchers), <code>KillUserProcesses=yes</code>{" "}
+          in systemd-logind, or a sandbox that ends the app&apos;s whole process tree (Flatpak,
+          Snap).
+        </li>
+      </ul>
+      <h4 id="desktop-sidecars-detached-security">Security</h4>
+      <ul>
+        <li>
+          A detached sidecar keeps running with the app&apos;s baked permissions, its code signature
+          and (macOS) its privacy grants after the last window closed and the app quit, with no Dock
+          icon, tray or window. Tell the user: an app that uses it should show that something keeps
+          running and offer to stop it (<code>detachedSidecars()</code> and{" "}
+          <code>stopDetachedSidecar()</code> exist for that).
+        </li>
+        <li>
+          The record holds the control key and the sidecar&apos;s secrets. Any process running as
+          the same user can read it, and so command the sidecar or read its secrets: the boundary of
+          the user&apos;s other app data, not a defense against same-user malware. Other users
+          cannot (a <code>0600</code> file in a <code>0700</code>{" "}
+          folder). On Windows the modes have no effect: the user profile&apos;s ACL is the
+          protection.
+        </li>
+        <li>
+          Any local process (any user) can connect to the control endpoint; none can authenticate
+          without the key. Both sides prove it, so a process that took the port after the sidecar
+          died cannot pass as it, and the key never crosses the socket. The connection is not
+          encrypted (loopback), so no secret is ever sent over it: a relaunched app reads them from
+          the record.
+        </li>
+        <li>
+          denext never signals a process id it has not authenticated: a forced kill (only where the
+          app holds the <code>run</code> permission) follows only an unanswered{" "}
+          <code>shutdown</code>{" "}
+          past its grace, and only for the pid the sidecar&apos;s own authenticated reply named on
+          that connection, so pid reuse cannot make it kill an unrelated process. Without the
+          permission <code>stop()</code> rejects with the reason and the status reads{" "}
+          <code>failed</code>; the record is removed anyway, so the sidecar ends itself at its next
+          registry check.
+        </li>
+        <li>
+          The sidecar starts no window and no web engine. denext&apos;s pinned runtime admits it
+          only as a fork of the running app (the self-fork rule above); under the stock runtime or
+          {" "}
+          <code>deno run</code> the sidecar needs <code>permissions.run</code>{" "}
+          over the executable, as <code>spawnSelf</code>{" "}
+          does, with the same error. A detached sidecar bakes a write of{" "}
+          <code>$APPDATA/sidecars</code> (its registry) into the packaged app.
+        </li>
+        <li>
+          Only a module sidecar can detach: a program (<code>run.exec</code>) has no control channel
+          denext can authenticate, so it could not be found and stopped again safely.
+        </li>
+      </ul>
+      <p>
+        A detached sidecar&apos;s own service (the PTY server above, say) can listen with{" "}
+        <a href="#desktop-local-ipc">
+          <code>listenLocalIpc</code>
+        </a>{" "}
+        instead of a loopback port: a Unix-domain socket or a named pipe that only the app&apos;s
+        user can reach on macOS and Linux, found again by name with <code>localIpcPath</code>.
+      </p>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
         An app opened from the Dock, Finder or Launchpad on macOS (and from some Linux desktop
@@ -6027,8 +6405,8 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}
         <code>whenReady</code>; <code>stopSidecars()</code> before{" "}
         <code>installAppUpdateAndRelaunch()</code>{" "}
-        gives them their graceful stop, and the install ends whatever is left), and the page from
-        {" "}
+        gives them their graceful stop, detached ones included, and the install ends whatever is
+        left), and the page from{" "}
         <code>denext/desktop/client</code>, token-gated like every bridge call:
       </p>
       <Code lang="ts">
@@ -6057,6 +6435,130 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         (it runs from the cache folder, whose path is only known on the user&apos;s machine), unless
         the runtime can scope it as above.
       </p>
+
+      <h3 id="desktop-local-ipc">Local IPC: a channel with no loopback port</h3>
+      <p>
+        A desktop app and its helper processes (a detached sidecar, a CLI of the app) can talk over
+        a Unix-domain socket on macOS and Linux and a named pipe on Windows, with no TCP port
+        another program could reach. <code>Deno.listen</code>{" "}
+        has no named-pipe transport, but the runtime&apos;s <code>node:net</code> does, so{" "}
+        <code>denext/desktop</code> exports one API over it for every OS:
+      </p>
+      <Code lang="ts">
+        {`import { connectLocalIpc, listenLocalIpc, localIpcPath } from "denext/desktop";
+
+const path = localIpcPath("ptyd"); // where the channel "ptyd" lives for this app and user
+
+// The server (the app, or a detached sidecar's own service):
+await using server = await listenLocalIpc(path, (conn) => {
+  conn.readable.pipeTo(conn.writable); // each connection is a pair of web streams
+});
+
+// A client (the app, a CLI, another helper):
+await using conn = await connectLocalIpc(path, { timeoutMs: 2_000 });
+const writer = conn.writable.getWriter();
+await writer.write(new TextEncoder().encode("hello"));
+await writer.close(); // a half close: the reply keeps flowing
+for await (const chunk of conn.readable) console.log(chunk);`}
+      </Code>
+      <ul>
+        <li>
+          <code>localIpcPath(name, {"{"} dir?, appId?, user?, os? {"}"})</code>{" "}
+          — the channel&apos;s path. <code>name</code> is 1 to 64 of <code>[A-Za-z0-9._-]</code>
+          {" "}
+          starting with a letter or digit (anything else is refused: it becomes part of a path).
+          macOS / Linux: <code>&lt;dir&gt;/&lt;name&gt;.sock</code>, <code>dir</code>{" "}
+          defaulting to the app&apos;s data folder + <code>/ipc</code> (created <code>0700</code>
+          {" "}
+          on the first listen). A socket path longer than <code>sun_path</code>{" "}
+          allows (103 bytes on macOS, 107 on Linux) is refused: pass a shorter{" "}
+          <code>dir</code>. Windows:{" "}
+          <code>\\.\pipe\&lt;appId&gt;.&lt;user&gt;.&lt;name&gt;</code>, where <code>user</code>
+          {" "}
+          is a short SHA-256 prefix of the user&apos;s profile folder (not secret, not the user
+          name), so two users of one machine never share a pipe name. <code>appId</code> defaults to
+          {" "}
+          <code>desktop.app.identifier</code>, as <code>resolveDesktopCapabilities</code>{" "}
+          registered it; a process where it did not run (a module sidecar&apos;s worker, a CLI)
+          passes <code>appId</code> (or, on Unix, <code>dir</code>).
+        </li>
+        <li>
+          <code>listenLocalIpc(path, onConnection, {"{"} signal? {"}"})</code>{" "}
+          resolves to a server with <code>path</code>, <code>close()</code> and{" "}
+          <code>Symbol.asyncDispose</code>; <code>close()</code>{" "}
+          stops listening, ends the open connections and removes the socket file. On Unix an
+          existing socket that answers is never taken over (<code>AddrInUse</code>), one that does
+          not (left by a crash) is replaced, a file that is not a socket is refused, and the bound
+          socket is made <code>0600</code>.
+        </li>
+        <li>
+          <code>connectLocalIpc(path, {"{"} timeoutMs?, signal? {"}"})</code> rejects with{" "}
+          <code>NotFound</code> / <code>ConnectionRefused</code> when nothing listens,{" "}
+          <code>TimedOut</code> after <code>timeoutMs</code>{" "}
+          (default 5000) and the signal&apos;s reason on an abort. A connection has{" "}
+          <code>readable</code>, <code>writable</code> (closing it half-closes),{" "}
+          <code>close()</code> (both directions at once) and <code>Symbol.asyncDispose</code>.
+        </li>
+      </ul>
+      <h4 id="desktop-local-ipc-permissions">Permissions</h4>
+      <p>
+        The runtime checks a socket or pipe path for read and write access to the path and for the
+        network grant <code>unix:&lt;path&gt;</code> (<code>--allow-net=unix:&lt;path&gt;</code>, or
+        {" "}
+        <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
+        with the split flags), on Windows as on Unix. A refused check rejects with{" "}
+        <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
+        grant names one exact path, and the runtime expands no folder token (<code>$APPDATA</code>,
+        {" "}
+        <code>$DENO_DESKTOP_DATA</code>) in a network grant, so a packaged app cannot bake the
+        per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
+        <code>netConnect</code> accept a <code>unix:</code>{" "}
+        entry only with an absolute path (anything else is a config error, since the runtime would
+        refuse to start). An app that serves a channel in its data folder grants the folder and the
+        direction:
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  extraPermissions: {
+    write: ["$APPDATA/ipc"],   // and read, under desktop.permissions: "strict"
+    netListen: ["*"],          // the server; netConnect: ["*"] for a client in the app
+  },
+},`}
+      </Code>
+      <p>
+        <code>netListen: ["*"]</code> is an unscoped <code>--allow-net-listen</code>{" "}
+        (any port too); where the runtime has no split flags it is folded into one unscoped{" "}
+        <code>--allow-net</code>.
+      </p>
+      <h4 id="desktop-local-ipc-security">Security</h4>
+      <ul>
+        <li>
+          macOS / Linux: the socket is <code>0600</code>{" "}
+          in a folder that must be owned by the user (or root) and not writable by its group or
+          others unless sticky; otherwise <code>listenLocalIpc</code>{" "}
+          refuses (<code>PermissionDenied</code>), as another user could replace the socket. Other
+          users cannot connect; any process of the same user can.
+        </li>
+        <li>
+          Windows: the runtime creates the pipe&apos;s first instance with{" "}
+          <code>FILE_FLAG_FIRST_PIPE_INSTANCE</code>, so a server never joins a pipe another process
+          created (it fails with <code>AddrInUse</code>), and with{" "}
+          <code>PIPE_REJECT_REMOTE_CLIENTS</code>{" "}
+          (tokio&apos;s default, which the runtime keeps), so a client on another machine is
+          refused. The pipe is created with no security attributes, which gives it Windows&apos;
+          default security descriptor: full control for LocalSystem, Administrators and the creating
+          user, and read access for Everyone and the anonymous account. So another local user can
+          open the pipe for reading and receive what the server writes on that connection, and the
+          pipe namespace is machine-wide: a process (of any user) that creates the name first makes
+          the app&apos;s <code>listenLocalIpc</code>{" "}
+          fail, and the app&apos;s clients then connect to that process instead.
+        </li>
+        <li>
+          So a channel that carries anything sensitive authenticates before it sends: the client
+          proves a secret the server checks (an app can keep one in its own data folder, which other
+          users cannot read), and the server writes nothing to a connection until it has.
+        </li>
+      </ul>
 
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>
       <p>

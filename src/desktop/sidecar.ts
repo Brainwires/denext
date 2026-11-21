@@ -12,6 +12,11 @@
  *   native addons copied beside it (`.deno-desktop/sidecars/<name>/`) and embedded into the app.
  * - `run: { exec }`: a separate program (a Go / Rust server, a CLI), spawned with `Deno.Command`.
  *
+ * A module sidecar may be `detached` ({@linkcode SidecarDetached}): it then runs as a separate OS
+ * process (the app's own executable started again, headless, on the module) that OUTLIVES the app,
+ * and the next launch finds it in the app's registry (`<app data>/sidecars/<name>.json`) and
+ * reattaches over an authenticated loopback control connection (see `sidecar-detached.ts`).
+ *
  * Runtime-safe (no Deno APIs at import): the config validator, the packaging code and the runtime
  * all read it.
  *
@@ -169,6 +174,24 @@ export interface SidecarLoginShellEnv {
   readonly keys?: readonly string[];
 }
 
+/**
+ * {@linkcode SidecarDefinition.detached} with options.
+ */
+export interface SidecarDetached {
+  /**
+   * End the detached sidecar once no app instance has been attached to it for this long (at least
+   * 1 000 ms). The timer starts when the last attachment closes and a new one cancels it. Default:
+   * none: it keeps running until it is stopped (outliving the app is the point).
+   */
+  readonly exitAfterMs?: number;
+  /**
+   * Keep a running instance started by another version of the app instead of replacing it at
+   * launch (default `false`: an update replaces it, so code from a superseded build does not
+   * linger). Should be rare.
+   */
+  readonly keepAcrossUpdates?: boolean;
+}
+
 /** A value a sidecar shares with the page ({@linkcode SidecarDefinition.expose}). */
 export type SidecarExposedValue = string | number | boolean | null;
 
@@ -254,6 +277,20 @@ export interface SidecarDefinition {
    * module sidecar runs with the app's permissions (one process); this widens them.
    */
   readonly permissions?: SidecarPermissions;
+  /**
+   * Run it as a separate OS process that outlives the app (a module sidecar only): the app's own
+   * executable started again, headless, on the module, in a session of its own, its output in the
+   * log file (`logs: "file"` / `"both"`) or nowhere. At the next launch the app finds it in its
+   * registry (`<app data>/sidecars/<name>.json`) and reattaches over a mutually authenticated
+   * loopback control connection (status `detached: true`, `reattached: true`; its port, secrets and
+   * values are the ones it was started with, and `ready` is not checked again). Quitting the app
+   * leaves it running; `sidecar(name).stop()`, `stopSidecars()` and installing a full-app update
+   * end it. An instance started by another app version is replaced at launch unless
+   * `keepAcrossUpdates`. In the sidecar: `denextSidecar.detached.attached` /
+   * `onAttachedChange(fn)`. Not with `run.exec` (a foreign program has no control channel denext
+   * can authenticate) nor `ready.stdout` (its output does not reach the app).
+   */
+  readonly detached?: boolean | SidecarDetached;
 }
 
 /** A sidecar's lifecycle state. */
@@ -296,6 +333,13 @@ export interface SidecarStatus {
   readonly lastExit?: SidecarExit;
   /** When the next start is due, while in `backoff` (epoch ms). */
   readonly retryAt?: number;
+  /** Set for a {@linkcode SidecarDefinition.detached} sidecar: it runs as its own process. */
+  readonly detached?: boolean;
+  /**
+   * Set while a detached sidecar's current run was found already running (started by an earlier
+   * launch of the app, or another instance) rather than started by this launch.
+   */
+  readonly reattached?: boolean;
 }
 
 /** What the page (and a `ready.probe`) learns about a sidecar: `sidecarInfo(name)`. */
@@ -360,6 +404,7 @@ const DEFINITION_KEYS = new Set([
   "proxy",
   "expose",
   "permissions",
+  "detached",
 ]);
 
 /** The permission kinds {@linkcode SidecarPermissions} takes. */
@@ -708,6 +753,73 @@ function cwdError(cwd: unknown, run: unknown): string | null {
     : null;
 }
 
+/** The problem with what `detached` cannot go with (`run.exec`, `ready.stdout`), or `null`. */
+function detachedConflictError(d: Record<string, unknown>): string | null {
+  if (isObject(d.run) && "exec" in d.run) {
+    return "detached applies to a module sidecar only: a program (run.exec) has no control " +
+      "channel denext can authenticate, so it could not be found and stopped again safely";
+  }
+  if (isObject(d.ready) && d.ready.stdout !== undefined) {
+    return "ready.stdout cannot be used with detached (a detached sidecar's output does not " +
+      "reach the app): use ready.signal or ready.http";
+  }
+  return null;
+}
+
+/** The problem with `detached`'s options object, or `null`. */
+function detachedObjectError(detached: Record<string, unknown>): string | null {
+  const ms = detached.exitAfterMs;
+  const keep = detached.keepAcrossUpdates;
+  return first([
+    () => unknownOption(detached, "detached", ["exitAfterMs", "keepAcrossUpdates"]),
+    () =>
+      ms === undefined || (isMs(ms) && (ms as number) >= 1000)
+        ? null
+        : "detached.exitAfterMs must be milliseconds, at least 1 000",
+    () =>
+      keep === undefined || typeof keep === "boolean"
+        ? null
+        : "detached.keepAcrossUpdates must be a boolean",
+  ]);
+}
+
+/** The problem with `detached`, or `null`. */
+function detachedError(d: Record<string, unknown>): string | null {
+  const detached = d.detached;
+  if (detached === undefined || detached === false) return null;
+  if (detached !== true && !isObject(detached)) {
+    return "detached must be a boolean or { exitAfterMs, keepAcrossUpdates }";
+  }
+  return detachedConflictError(d) ?? (detached === true ? null : detachedObjectError(detached));
+}
+
+/**
+ * Whether a definition is a detached sidecar ({@linkcode SidecarDefinition.detached} set and not
+ * `false`).
+ *
+ * @param definition The sidecar.
+ * @returns Whether it is detached.
+ */
+export function isDetachedSidecar(definition: SidecarDefinition): boolean {
+  return definition.detached !== undefined && definition.detached !== false;
+}
+
+/**
+ * A detached sidecar's settled options: `exitAfterMs` (`undefined`: none) and `keepAcrossUpdates`.
+ *
+ * @param definition The sidecar.
+ * @returns The options.
+ */
+export function detachedOptions(
+  definition: SidecarDefinition,
+): { exitAfterMs?: number; keepAcrossUpdates: boolean } {
+  const d = typeof definition.detached === "object" ? definition.detached : {};
+  return {
+    ...(d.exitAfterMs !== undefined ? { exitAfterMs: d.exitAfterMs } : {}),
+    keepAcrossUpdates: d.keepAcrossUpdates === true,
+  };
+}
+
 /** The problem with the scalar fields (`args`, `cwd`, `port`, `portEnv`, `logs`, `proxy`). */
 function scalarsError(d: Record<string, unknown>): string | null {
   return first([
@@ -753,6 +865,7 @@ export function sidecarDefinitionError(definition: unknown): string | null {
     () => secretsError(d.secrets),
     () => exposeError(d.expose, d.secrets),
     () => permissionsError(d.permissions),
+    () => detachedError(d),
   ]);
 }
 
@@ -815,6 +928,8 @@ export const SIDECAR_DEFAULTS = {
   graceMs: 5_000,
   logs: "inherit",
   portEnv: "PORT",
+  /** How often a detached sidecar re-reads its registry record (it ends itself once it is gone). */
+  detachedRecordPollMs: 30_000,
 } as const;
 
 /**
@@ -824,6 +939,11 @@ export const SIDECAR_DEFAULTS = {
 export const SIDECAR_CHILD_ENV = "DENEXT_SIDECAR_CHILD";
 /** How many of the launch's last arguments are the child's own (`process.argv.slice(2)`). */
 export const SIDECAR_CHILD_ARGC_ENV = "DENEXT_SIDECAR_CHILD_ARGC";
+/**
+ * The variable that makes a sidecar child the detached sidecar itself (`"1"`), set only by the
+ * app's detached launcher: a `spawnSelf` child of the detached sidecar is a plain child.
+ */
+export const SIDECAR_DETACHED_ENV = "DENEXT_SIDECAR_DETACHED";
 
 /** Where a bundled module sidecar lives in the project (and the app), relative to the project. */
 export const SIDECAR_BUNDLE_DIR = ".deno-desktop/sidecars";

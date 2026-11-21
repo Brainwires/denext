@@ -1,5 +1,5 @@
-// `denext desktop add sidecar --name <name> (--entry <module> [--node-modules <dir>] | --exec
-// <program>) [--ready <path>] [--proxy]`: append a sidecar to `desktop.sidecars` in
+// `denext desktop add sidecar --name <name> (--entry <module> [--node-modules <dir>] [--detached]
+// | --exec <program>) [--ready <path>] [--proxy]`: append a sidecar to `desktop.sidecars` in
 // denext.config.ts (the comment-preserving config splice `desktop add` uses for capabilities).
 //
 // A Node backend (`--node-modules`) whose node_modules holds a native addon also gets
@@ -28,6 +28,8 @@ export interface AddDesktopSidecarOptions {
   readonly ready?: string;
   /** Point `spa.proxy` at it. */
   readonly proxy?: boolean;
+  /** Run the module as its own process that outlives the app (`detached: true`). */
+  readonly detached?: boolean;
   /** Plan only. */
   readonly dryRun?: boolean;
 }
@@ -74,6 +76,7 @@ function sidecarEntry(opts: AddDesktopSidecarOptions, natives: readonly string[]
     port: "auto",
     ...(opts.ready ? { ready: { http: opts.ready } } : {}),
     ...(opts.proxy ? { proxy: true } : {}),
+    ...(opts.detached ? { detached: true } : {}),
     ...(natives.length > 0 ? { permissions: { ffi: ["*"] } } : {}),
   } as Record<string, unknown>;
 }
@@ -111,8 +114,15 @@ function sidecarNotes(opts: AddDesktopSidecarOptions, natives: readonly string[]
   const notes = [
     opts.exec !== undefined
       ? "the program gets PORT and one JSON line on stdin ({name, port, bootstrap, secrets}); exit when stdin closes"
+      : opts.detached
+      ? "the module runs as its own process that outlives the app (the next launch reattaches): read globalThis.denextSidecar (port, bootstrap, secrets, ready(), detached.onAttachedChange)"
       : "the module runs in a worker of the app: read globalThis.denextSidecar (port, bootstrap, secrets, ready())",
   ];
+  if (opts.detached) {
+    notes.push(
+      "detached: tell your users something keeps running after they quit, and offer to stop it (runDesktop's detachedSidecars() / stopDetachedSidecar())",
+    );
+  }
   if (opts.nodeModules) {
     notes.push(`denext desktop run / package bundle it into .deno-desktop/sidecars/${opts.name}`);
   }

@@ -38,12 +38,98 @@ and this project adheres to
   `runDesktop`'s result and an extension's host, and `getAppMenu()` / `getDockMenu()` in
   `denext/desktop/app`, return the native menu as the OS holds it (`MenuSnapshotItem[]`), `null`
   where the runtime has no read-back; `appCapabilities().menuSnapshot` says which.
+- **The real stacking order of the app's windows, the pointer on the screen, and drags between
+  windows.** From `denext/desktop/window`: `getWindowOrder()` answers `{ ids, source }`, the
+  windows front to back as the OS stacks them (`source: "os"`: macOS, Windows, Linux on X11, where
+  the runtime has `Deno.desktop.windowOrder`), else the order they last had the focus in
+  (`"focus"`); `getPointer()` asks the OS for the pointer's place on the screen, the buttons held
+  and the app window under it (`null` where the OS does not tell); `startDragSession({ data,
+  onMove })` follows a drag from the OS while the button is held, so it crosses the app's windows:
+  the origin gets `onMove` and an `ended` promise, and the window under the pointer hears
+  `onDragSession` events (`enter`, `over`, `leave`, `drop`) with the pointer in its own page's
+  coordinates and the JSON the origin attached. The data stays inside the app. On Wayland, where
+  no client is told the stacking order or the pointer outside its windows, the order is the focus
+  order and a session rejects `unsupported`. From `desktop.ts`: `windows.order()` and
+  `windows.pointer()`.
+- **Terminals: `ptyInfo` names what runs in the terminal, on every OS.** `ptyInfo(id)` from
+  `denext/desktop/client` now answers `{ pid, tty?, process?, argv?, cwd?, foregroundPid?,
+  foregroundGroup? }`: the terminal device, and the name, arguments, folder, id and process group
+  of the process in the terminal's foreground (the command a shell waits for, or the shell at its
+  prompt), asked of the OS at each call. It comes from the runtime's `Deno.Pty.foreground()` and
+  `ttyName` where the runtime has them (macOS, Linux, Windows); before, only Linux gave a name and
+  a folder. Windows has no foreground process group, so there the process is found in the process
+  tree below the terminal's program and `foregroundGroup` / `tty` are never set. A field the OS
+  refuses (a process of another user) is left out.
+- **Desktop apps ship their own native libraries: `desktop.bundle.libraries`.** One build per
+  target (OS + architecture), as a path pattern (`"native/{target}/libaudio.{ext}"`, with `{os}`,
+  `{arch}`, `{target}`, `{ext}`; or `{ path, name?, optional? }`) or a per-target map
+  (`{ name, files: { "darwin-arm64": "…" }, optional? }`). The package scripts copy the target's
+  file into each bundle (macOS `Contents/Frameworks`, Linux `lib/`, beside the Windows `.exe`),
+  so every installer carries it; on macOS each library is signed with the app's identity before
+  the bundle (the bundle's seal covers it), and the Windows script Authenticode-signs it with the
+  other PE files. A missing file fails packaging for that target, naming the path, unless the
+  entry is `optional`; unsafe entries (absolute paths, `..`, other extensions, duplicate names or
+  file names) are config errors. `bundledLibraryPath(name)` from `denext/desktop` returns the
+  running app's copy (the project's own file in `denext desktop run` / `dev`), or `null`, reading
+  no file. A universal macOS build lipo-merges a library both arches have and keeps an
+  already-universal one. `Deno.dlopen` needs `desktop.extraPermissions: { ffi: ["*"] }`: the
+  package run, `desktop run` / `dev` and `denext desktop doctor` (a new `libraries` check) say so
+  when it is missing.
+- **The project UI's config form renders a list of alternative shapes as typed rows** (each row
+  its own branch picker and fields) instead of a raw JSON box, and picks the object branch whose
+  required keys a value has.
+- **Detached sidecars: a module sidecar that outlives the app.** `detached: true` (or
+  `{ exitAfterMs, keepAcrossUpdates }`) on a `run: { module }` sidecar runs it as its own OS
+  process (the app's executable started again headless on the module, in a session of its own,
+  its output appended to its log file) instead of a worker. Quitting the app leaves it running;
+  the next launch finds it in the app's registry (`<app data>/sidecars/<name>.json`, `0600` in a
+  `0700` folder, written atomically) and reattaches over a loopback control connection on which
+  both sides prove a per-start key (HMAC-SHA256 over both nonces, the key never sent; lines capped
+  at 8 KiB, a 5 s handshake, at most 16 unauthenticated connections), with `detached: true` and
+  `reattached: true` on its status and the port, values and secrets it was started with.
+  `sidecar(name).stop()`, `stopSidecars()` and installing a full-app update end it (shutdown, then
+  a forced kill only of the process the authenticated reply named, where the app may signal
+  processes); another app version's instance is replaced at launch unless `keepAcrossUpdates`;
+  undeclared and stale records are cleaned at launch; the sidecar ends itself once its record is
+  gone (an uninstall), when no app attached within 30 s of its start, and after `exitAfterMs`
+  without an attachment. Two instances starting at once share a start lock. In the sidecar:
+  `denextSidecar.detached.attached` / `onAttachedChange(fn)` plus `port`, `bootstrap`, `secrets`,
+  `ready()` and `onShutdown(fn)`. On `runDesktop`'s result: `detachedSidecars()` and
+  `stopDetachedSidecar(name)`. `denext desktop add sidecar --detached` writes one; packaging bakes
+  a write of `$APPDATA/sidecars`. Not with `run.exec` or `ready.stdout` (config errors). New
+  types: `SidecarDetached` and `DetachedSidecarEntry` (`denext/desktop`),
+  `DesktopSidecarDetachedConfig` (`denext/server`).
+- **Local IPC for desktop apps and their helpers, with no loopback port.** From `denext/desktop`:
+  `localIpcPath(name, { dir?, appId?, user?, os? })` says where a channel lives (a
+  `<data folder>/ipc/<name>.sock` Unix-domain socket on macOS / Linux, refused past `sun_path`; a
+  `\\.\pipe\<appId>.<user hash>.<name>` named pipe on Windows), `listenLocalIpc(path,
+  onConnection, { signal })` serves it and `connectLocalIpc(path, { timeoutMs, signal })` connects,
+  each connection a pair of web streams (`readable`, `writable`, `close()`, `Symbol.asyncDispose`).
+  Built on the runtime's `node:net`, since `Deno.listen` has no named-pipe transport. On Unix a
+  live server's socket is never taken over, a stale one is replaced, the socket is `0600` and an
+  unsafe folder (another owner, group/world-writable without the sticky bit) is refused. A refused
+  permission check names the grants. Types: `LocalIpcConnection`, `LocalIpcServer`,
+  `LocalIpcPathOptions`, `LocalIpcListenOptions`, `LocalIpcConnectOptions`.
 
 ### Changed
 
 - **A click on a page's quick action reaches one page.** In a Deno Desktop window a Dock menu choice
   goes to the key window's page if it listens with `onQuickAction`, else to the page of the window
   focused most recently that does, instead of every window's page.
+- **A `unix:` entry in a network permission list must be an absolute path**
+  (`desktop.extraPermissions.net` / `netListen` / `netConnect`, a sidecar's `permissions`,
+  `compile.permissions`): the runtime expands no folder token (`$APPDATA`, `$DENO_DESKTOP_DATA`)
+  and no relative path in a network grant and refused to start a binary baked with one; the config
+  check now says so instead.
+- **`scripts/package-macos.ts` copies `desktop.bundle.libraries` into the bundle before signing**,
+  and its universal merge keeps a Mach-O both arches carry with the same bytes and carries one only
+  one arch has; regenerate it with `denext desktop package --regenerate-scripts` (`denext desktop
+  doctor` flags an older script in an app that bundles libraries). The Linux and Windows scripts
+  need no change (the copy is `buildDesktopBundle`'s).
+- **`SidecarInstance.stop()` (the sidecar launcher contract) may reject** for a detached sidecar
+  that could not be ended; `sidecar(name).stop()` then rejects with the reason and the status reads
+  `failed`. `killSidecarsNow()` takes a reason (`"exit"` lets detached sidecars go, `"update"`
+  stops them), and the sidecar stopper's `kill` receives it.
 
 ## [4.21.0] - 2026-11-21
 

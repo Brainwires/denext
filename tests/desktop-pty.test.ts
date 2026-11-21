@@ -16,6 +16,7 @@ import {
 } from "@std/assert";
 import {
   type DenoPty,
+  type DenoPtyForeground,
   type DenoPtyOptions,
   type DenoPtyStatus,
   ptyCapability,
@@ -69,7 +70,15 @@ interface FakeTerm {
 }
 
 /** A fake `Deno.openPty` that records every terminal it opens. */
-function fakeOpenPty(opts: { ignoreHangup?: boolean } = {}) {
+function fakeOpenPty(
+  opts: {
+    ignoreHangup?: boolean;
+    /** `Deno.Pty.foreground` of every terminal (a runtime that has it). */
+    foreground?: () => DenoPtyForeground | null;
+    /** `Deno.Pty.ttyName` of every terminal. */
+    ttyName?: string | null;
+  } = {},
+) {
   const terms: FakeTerm[] = [];
   let pid = 1000;
   const openPty = (options: DenoPtyOptions): DenoPty => {
@@ -99,6 +108,8 @@ function fakeOpenPty(opts: { ignoreHangup?: boolean } = {}) {
       writable,
       status,
       resize: (c, r) => void resizes.push([c, r]),
+      ...(opts.foreground === undefined ? {} : { foreground: opts.foreground }),
+      ...(opts.ttyName === undefined ? {} : { ttyName: opts.ttyName }),
       kill: (signal = "SIGHUP") => {
         kills.push(signal);
         if (signal === "SIGHUP" && opts.ignoreHangup) return;
@@ -210,9 +221,18 @@ const ENV: Record<string, string> = {
 
 /** A capability over the fakes (Linux shells, directories `/home/u` and `/srv`). */
 function setup(
-  over: Partial<PtyCapabilityOptions> & { pty?: unknown; ignoreHangup?: boolean } = {},
+  over: Partial<PtyCapabilityOptions> & {
+    pty?: unknown;
+    ignoreHangup?: boolean;
+    foreground?: () => DenoPtyForeground | null;
+    ttyName?: string | null;
+  } = {},
 ) {
-  const fake = fakeOpenPty({ ignoreHangup: over.ignoreHangup });
+  const fake = fakeOpenPty({
+    ignoreHangup: over.ignoreHangup,
+    foreground: over.foreground,
+    ttyName: over.ttyName,
+  });
   const host = fakeHost();
   const cap = ptyCapability({
     config: resolvePtyConfig(over.pty ?? true, "linux"),
@@ -493,6 +513,68 @@ Deno.test("pty: the owner writes (text, binary), resizes, inspects and kills", a
   await call(t.cap, "kill", { id: s.id, signal: "SIGTERM" });
   assertEquals(t.terms[0].kills, ["SIGTERM"]);
   await until(() => t.sent.some((e) => e.event === "exit"));
+});
+
+Deno.test("pty.info: the runtime's foreground process, on every OS", async () => {
+  // A runtime whose Deno.Pty has foreground() and ttyName: /proc is never read.
+  let fg: DenoPtyForeground | null = {
+    pgid: 4242,
+    pid: 4242,
+    name: "vim",
+    argv: ["vim", "-u", "NONE", "notes.md"],
+    cwd: "/home/u/notes",
+  };
+  const t = setup({
+    foreground: () => fg,
+    ttyName: "/dev/ttys004",
+    readTextFile: () => Promise.reject(new Error("no /proc here")),
+    readLink: () => Promise.reject(new Error("no /proc here")),
+  });
+  const s = await spawn(t.cap);
+  assertEquals(await call(t.cap, "info", { id: s.id }), {
+    pid: s.pid,
+    tty: "/dev/ttys004",
+    process: "vim",
+    foregroundPid: 4242,
+    foregroundGroup: 4242,
+    argv: ["vim", "-u", "NONE", "notes.md"],
+    cwd: "/home/u/notes",
+  });
+  // What the OS refuses (another user's process) is left out, not null.
+  fg = { pgid: 77, pid: 78, name: "sudo", argv: null, cwd: null };
+  assertEquals(await call(t.cap, "info", { id: s.id }), {
+    pid: s.pid,
+    tty: "/dev/ttys004",
+    process: "sudo",
+    foregroundPid: 78,
+    foregroundGroup: 77,
+  });
+  // Nothing in the foreground (every process on the terminal is gone).
+  fg = null;
+  assertEquals(await call(t.cap, "info", { id: s.id }), { pid: s.pid, tty: "/dev/ttys004" });
+  await t.quit();
+});
+
+Deno.test("pty.info: no process group and no device (Windows); a throw is no answer", async () => {
+  let throws = false;
+  const t = setup({
+    foreground: () => {
+      if (throws) throw new Error("the terminal closed");
+      return { pgid: null, pid: 900, name: "ping.exe", argv: ["ping", "-n", "3"], cwd: "C:\\" };
+    },
+    ttyName: null,
+  });
+  const s = await spawn(t.cap);
+  assertEquals(await call(t.cap, "info", { id: s.id }), {
+    pid: s.pid,
+    process: "ping.exe",
+    foregroundPid: 900,
+    argv: ["ping", "-n", "3"],
+    cwd: "C:\\",
+  });
+  throws = true;
+  assertEquals(await call(t.cap, "info", { id: s.id }), { pid: s.pid });
+  await t.quit();
 });
 
 Deno.test("pty.list: the window's own terminals and the detached ones", async () => {

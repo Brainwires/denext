@@ -52,7 +52,12 @@ import { desktopPublishUpdate } from "./desktop-publish-update.ts";
 import { desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
-import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
+import { desktopLibrariesFfiNote } from "../../build/desktop-bundle-libraries.ts";
+import {
+  syncDesktopAppConfigAt,
+  syncDesktopRuntimeConfig,
+  unpackagedLaunchEnv,
+} from "../../build/desktop-app-config.ts";
 import { desktopMediaCapture } from "../../build/desktop-media-capture.ts";
 import {
   assertStockRuntimeUsable,
@@ -338,6 +343,11 @@ async function buildDesktopWindow(
   const runConfig = await desktopRunConfig(dir);
   if (runConfig.dropped) console.warn(`  denext desktop: ${runConfig.dropped}.`);
   try {
+    // desktop.bundle.libraries: this build's bundledLibraryPath answers the project's own files
+    // (the table names the project); the file is rewritten without it once the build embedded it.
+    await syncDesktopRuntimeConfig(dir, launch.config, { projectDir: resolve(dir) });
+    const ffi = desktopLibrariesFfiNote(launch.config, os);
+    if (ffi) console.warn(`  denext desktop: NOTE: ${ffi}.`);
     const plan = await desktopLaunchBuildPlan({
       configArgs: runConfig.args,
       projectDir: dir,
@@ -375,6 +385,7 @@ async function buildDesktopWindow(
     throw err;
   } finally {
     await runConfig.cleanup();
+    await syncDesktopRuntimeConfig(dir, launch.config).catch(() => {});
   }
 }
 

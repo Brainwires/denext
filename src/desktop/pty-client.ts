@@ -70,14 +70,34 @@ export interface PtySpawned {
   readonly cwd: string;
 }
 
-/** What {@linkcode ptyInfo} resolves to. */
+/**
+ * What {@linkcode ptyInfo} resolves to: the terminal's program, and what runs in its foreground
+ * right now (the command a shell is waiting for, or the shell itself at its prompt).
+ *
+ * The foreground fields are there where the runtime's `Deno.Pty` has `foreground()` (macOS, Linux
+ * and Windows); on a runtime without it only Linux fills `process` and `cwd`. Each is left out
+ * when the OS refuses it (a process of another user, such as a `sudo`, hides its arguments and
+ * folder) and once the terminal's program has ended.
+ */
 export interface PtyInfo {
   /** The program's process id. */
   readonly pid: number;
-  /** The foreground process's name (`vim`), where the OS tells it (Linux). */
+  /** The terminal device (`/dev/ttys004`, `/dev/pts/3`); never on Windows (a ConPTY has none). */
+  readonly tty?: string;
+  /** The foreground process's name (`vim`; on Windows the image name, `vim.exe`). */
   readonly process?: string;
-  /** The foreground process's working directory, where the OS tells it (Linux). */
+  /** The foreground process's arguments, the program first. */
+  readonly argv?: string[];
+  /** The foreground process's working directory. */
   readonly cwd?: string;
+  /** The foreground process's id. */
+  readonly foregroundPid?: number;
+  /**
+   * The terminal's foreground process group (macOS, Linux). Windows has no foreground process
+   * group: there the foreground process is found in the process tree below the terminal's program
+   * (a shell's child started last, followed through nested shells).
+   */
+  readonly foregroundGroup?: number;
 }
 
 /** One terminal {@linkcode listPtys} reports. */
@@ -181,7 +201,8 @@ export async function killPty(id: string, signal?: PtySignal): Promise<void> {
 }
 
 /**
- * A terminal's process id, and (on Linux) the foreground process's name and folder.
+ * A terminal's process id and device, and what runs in its foreground: the process's name,
+ * arguments, folder, id and process group ({@linkcode PtyInfo}). Asked of the OS at each call.
  *
  * @param id The terminal.
  * @returns What the OS tells.
