@@ -2697,6 +2697,28 @@ await killPty(id); // SIGHUP; or "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"`}
         can be named in place of an older one).
       </p>
       <p>
+        An app with its own PTY backend (its own <code>Deno.openPty</code> calls in{" "}
+        <code>desktop.ts</code>, a sidecar or an extension, not the <code>pty</code>{" "}
+        capability) gets the same answer from <code>ptyInfoOf(pty)</code> in{" "}
+        <code>denext/desktop</code>: it takes the <code>Deno.Pty</code> and returns the{" "}
+        <code>PtyInfo</code> shape above from its <code>foreground()</code> and{" "}
+        <code>ttyName</code>, or Linux&apos;s <code>/proc</code> where the runtime has no{" "}
+        <code>foreground()</code>. It also takes a bare process id (a terminal from another PTY
+        library), which only Linux can describe; <code>{`{ pid }`}</code> elsewhere.{" "}
+        <code>ptyInfoSupport(pty)</code> says which sources a <code>Deno.Pty</code>{" "}
+        has (<code>foreground</code>, <code>ttyName</code>,{" "}
+        <code>procFallback</code>), so an app can tell a runtime without them from a terminal with
+        nothing in its foreground.
+      </p>
+      <Code lang="ts">
+        {`import { ptyInfoOf, ptyInfoSupport } from "denext/desktop";
+
+const pty = Deno.openPty({ command: "/bin/zsh", cols: 80, rows: 24 });
+if (ptyInfoSupport(pty).foreground) {
+  const { process, argv, cwd } = await ptyInfoOf(pty); // "vim", ["vim", "notes.md"], "/Users/me/src"
+}`}
+      </Code>
+      <p>
         Each terminal belongs to the window that started it: its events go to that window only, and
         another window that sends its id (to write, resize, kill, inspect or attach it) gets{" "}
         <code>not_found</code>, as for an id that does not exist. Ids are random. Closing the

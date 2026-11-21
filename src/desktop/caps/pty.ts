@@ -42,6 +42,7 @@ import {
 import { createOwnedResources, type OwnedResourcesHost } from "../owned-resources.ts";
 import { FIRST_PTY_RUNTIME, FIRST_WINDOWS_PTY_RUNTIME } from "../../build/deno-version.ts";
 import { isPtyShellFor, type PtyOs, type ResolvedPtyConfig } from "../pty-config.ts";
+import { ptyForegroundInfo } from "../pty-info.ts";
 
 /** `Deno.openPty`'s options (runtime 3.0.0-denext.12). */
 export interface DenoPtyOptions {
@@ -91,15 +92,6 @@ export interface DenoPty {
 
 /** `Deno.openPty`. */
 export type OpenPty = (options: DenoPtyOptions) => DenoPty;
-
-/** The foreground-process part of what `info` answers (see `PtyInfo` in `../pty-client.ts`). */
-interface PtyForegroundInfo {
-  readonly process?: string;
-  readonly cwd?: string;
-  readonly argv?: string[];
-  readonly foregroundPid?: number;
-  readonly foregroundGroup?: number;
-}
 
 /** The `exit` event's payload (`exitCode`: the program's exit code; `signal`: what killed it). */
 interface PtyExitPayload {
@@ -743,49 +735,11 @@ export function ptyCapability(options: PtyCapabilityOptions): DesktopCapability 
   };
 
   /**
-   * The terminal's foreground process on a runtime whose `Deno.Pty` has no `foreground()`: on
-   * Linux its name and folder from `/proc`, nothing elsewhere.
-   */
-  const foregroundFromProc = async (pid: number): Promise<{ process?: string; cwd?: string }> => {
-    if (os !== "linux") return {};
-    let fg = pid;
-    try {
-      const stat = await readTextFile(`/proc/${pid}/stat`);
-      // `pid (comm) state ppid pgrp session tty_nr tpgid …`; comm may hold spaces and parens.
-      const tpgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[5]);
-      if (Number.isInteger(tpgid) && tpgid > 0) fg = tpgid;
-    } catch { /* gone, or no /proc */ }
-    const out: { process?: string; cwd?: string } = {};
-    try {
-      out.process = (await readTextFile(`/proc/${fg}/comm`)).trim();
-    } catch { /* gone */ }
-    try {
-      out.cwd = await readLink(`/proc/${fg}/cwd`);
-    } catch { /* gone */ }
-    return out;
-  };
-
-  /**
    * What `info` tells about the terminal's foreground process: the runtime's own answer
-   * (`Deno.Pty.foreground()`: macOS, Linux and Windows) where it has one, else `/proc` on Linux.
+   * (`Deno.Pty.foreground()`: macOS, Linux and Windows) where it has one, else `/proc` on Linux
+   * (`ptyForegroundInfo`, shared with `ptyInfoOf` for an app's own PTYs).
    */
-  const foreground = async (pty: DenoPty): Promise<PtyForegroundInfo> => {
-    if (typeof pty.foreground !== "function") return await foregroundFromProc(pty.pid);
-    let fg: DenoPtyForeground | null;
-    try {
-      fg = pty.foreground();
-    } catch {
-      fg = null;
-    }
-    if (fg === null || typeof fg !== "object") return {};
-    return {
-      process: fg.name,
-      foregroundPid: fg.pid,
-      ...(fg.pgid === null ? {} : { foregroundGroup: fg.pgid }),
-      ...(fg.argv === null ? {} : { argv: fg.argv }),
-      ...(fg.cwd === null ? {} : { cwd: fg.cwd }),
-    };
-  };
+  const foreground = (pty: DenoPty) => ptyForegroundInfo(pty, { os, readTextFile, readLink });
 
   const info = async (args: unknown, ctx: DesktopCapCtx) => {
     openPty();

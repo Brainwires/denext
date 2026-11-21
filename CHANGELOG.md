@@ -123,6 +123,14 @@ and this project adheres to
   (`forbidden`), one it has no file for (`not_found`), and a reveal while the app may not run the
   file manager (`not_enabled`; the `shell` capability's `reveal` bakes that grant). Bridge method
   `webViewCall` `revealDownload` `{ download, path }`.
+- **`ptyInfoOf(pty)` for an app with its own PTY backend.** From `denext/desktop`: it takes a
+  `Deno.Pty` the app opened itself and answers the `PtyInfo` that `ptyInfo(id)` answers for the
+  `pty` capability's terminals (`pid`, `tty`, and the foreground process's `process`, `argv`,
+  `cwd`, `foregroundPid`, `foregroundGroup`), from the runtime's `foreground()` and `ttyName`,
+  else Linux's `/proc`. A bare process id gets Linux's `/proc` answer, `{ pid }` elsewhere.
+  `ptyInfoSupport(pty)` says which sources the `Deno.Pty` has (`foreground`, `ttyName`,
+  `procFallback`). Types: `PtyInfo`, `PtyInfoSource`, `PtyInfoOptions`, `PtyInfoSupport`,
+  `PtyForegroundProcess`. The `pty` capability now uses the same code.
 
 ### Changed
 

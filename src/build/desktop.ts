@@ -327,6 +327,18 @@ export {
   type LocalIpcServer,
 } from "../desktop/local-ipc.ts";
 
+// What runs in a terminal the app opened itself (`Deno.openPty`, or a process id): the `pty`
+// capability's `PtyInfo`, for an app with its own PTY backend.
+export {
+  type PtyForegroundProcess,
+  type PtyInfo,
+  ptyInfoOf,
+  type PtyInfoOptions,
+  type PtyInfoSource,
+  type PtyInfoSupport,
+  ptyInfoSupport,
+} from "../desktop/pty-info.ts";
+
 // The packager's per-app files: `.deno-desktop/app.json` (+ `compile.include`) and the packaged
 // `laufey-launch.json`, called by the scaffolded `scripts/package-*.ts`.
 export {
