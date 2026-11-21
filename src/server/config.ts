@@ -1056,10 +1056,31 @@ export interface DesktopCapabilitiesConfig {
    * (`NSCameraUsageDescription`, `com.apple.security.device.camera`).
    */
   camera?: boolean | DesktopMediaCaptureConfig;
+  /**
+   * Local IPC between the app and its helper processes (`listenLocalIpc` / `connectLocalIpc` in
+   * `denext/desktop`) in the default socket folder, `<app data>/ipc` on macOS and Linux: the
+   * packaged app bakes read and write of that folder alone (`$APPDATA/ipc`, which the runtime
+   * expands per user). Needs `desktop.app.identifier`, which names the folder. `channels` lists
+   * the channel names the app listens on or connects to, for the per-socket network grant (see
+   * {@link DesktopLocalIpcConfig.channels}).
+   */
+  localIpc?: boolean | DesktopLocalIpcConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** {@link DesktopCapabilitiesConfig.localIpc} with options. */
+export interface DesktopLocalIpcConfig {
+  /**
+   * The channel names (`localIpcPath(name)`, 1 to 64 of `[A-Za-z0-9._-]`) the app listens on or
+   * connects to. Each is the exact socket `<app data>/ipc/<name>.sock` a network grant
+   * (`unix:<path>`) must name; it is baked once the Deno Desktop runtime expands the folder token
+   * in a network grant, which no released runtime does yet (until then add the grant by hand, see
+   * the local IPC docs).
+   */
+  channels?: string[];
 }
 
 /** `desktop.capabilities.pty` options. */

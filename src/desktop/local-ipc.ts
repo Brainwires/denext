@@ -26,6 +26,9 @@ import { createHash } from "node:crypto";
 import { dirname } from "@std/path";
 import { join as posixJoin } from "@std/path/posix";
 import { type DesktopOsName, env, osDataDir } from "./app-dirs.ts";
+import { localIpcNameError } from "./local-ipc-config.ts";
+
+export { localIpcNameError } from "./local-ipc-config.ts";
 
 /** Options for {@linkcode localIpcPath}. */
 export interface LocalIpcPathOptions {
@@ -84,9 +87,6 @@ export interface LocalIpcConnectOptions {
   readonly timeoutMs?: number;
 }
 
-/** A channel or user name: 1 to 64 of `[A-Za-z0-9._-]`, starting with a letter or digit. */
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
 /** `sun_path`'s size (bytes, the terminating NUL included) per Unix OS. */
 const SUN_PATH_BYTES: Readonly<Record<"darwin" | "linux", number>> = { darwin: 104, linux: 108 };
 
@@ -113,21 +113,6 @@ export function registerLocalIpcAppId(appId: string | undefined): void {
 function registeredAppId(): string | undefined {
   const id = (globalThis as Record<symbol, unknown>)[APP_ID_KEY];
   return typeof id === "string" && id !== "" ? id : undefined;
-}
-
-/**
- * Why `name` cannot be a channel name, or `null`.
- *
- * @param name The name.
- * @param what What it names, for the message.
- * @returns The message, or `null`.
- */
-export function localIpcNameError(name: unknown, what = "channel name"): string | null {
-  if (typeof name !== "string" || !NAME.test(name)) {
-    return `local IPC ${what} ${JSON.stringify(name)} must be 1 to 64 of [A-Za-z0-9._-], ` +
-      "starting with a letter or digit";
-  }
-  return null;
 }
 
 /** `id` with every character outside `[A-Za-z0-9._-]` replaced by `-`. */
@@ -305,7 +290,8 @@ export function localIpcPermissionError(
       `--allow-net-${direction}=unix:${path}, or --allow-net=unix:${path} where the runtime has ` +
       "no split network flags). A packaged desktop app cannot name a per-user path in " +
       "desktop.extraPermissions.net (the runtime expands no folder token in a network grant): " +
-      `grant the folder (write: ["$APPDATA/ipc"]) and net${
+      `grant the folder with the local-ipc capability (\`denext desktop add local-ipc\`, or ` +
+      `extraPermissions write: ["$APPDATA/ipc"]) and net${
         direction === "listen" ? "Listen" : "Connect"
       }: ["*"]`,
     { cause },

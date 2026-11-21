@@ -417,6 +417,13 @@ function assertAppIdentity(hasExplicitId: boolean, caps: DesktopCapabilitiesConf
         "desktop app shares one data folder and one keychain (an app could read another's secrets).",
     );
   }
+  if (!hasExplicitId && caps.localIpc) {
+    throw new Error(
+      "desktop: set `desktop.app.identifier` in denext.config.ts (a unique reverse-DNS id) — " +
+        "localIpc's sockets live in the app's data folder, named after it, and without it every " +
+        "desktop app would share one socket folder.",
+    );
+  }
 }
 
 /** What the built-in factories need. */

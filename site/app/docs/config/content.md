@@ -460,7 +460,9 @@ See [Writing a plugin](/docs/plugins).
   `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
   `updates`, `pty` (`true` or `{ onWindowClose, replayBytes, shells }`), `microphone` and `camera`
   (`true` or `{ usageDescription }`; the microphone also takes
-  `speechRecognitionUsageDescription`, macOS's `NSSpeechRecognitionUsageDescription`), and
+  `speechRecognitionUsageDescription`, macOS's `NSSpeechRecognitionUsageDescription`),
+  `localIpc` (`true` or `{ channels }`: read and write of the local IPC socket folder
+  `<app data>/ipc` alone; see [Local IPC › Permissions](/docs/desktop#desktop-local-ipc-permissions)), and
   `extensions` (module paths of your
   `defineDesktopExtension` modules).
   The desktop runtime serves only what is

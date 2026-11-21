@@ -6608,8 +6608,39 @@ for await (const chunk of conn.readable) console.log(chunk);`}
         per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
         <code>netConnect</code> accept a <code>unix:</code>{" "}
         entry only with an absolute path (anything else is a config error, since the runtime would
-        refuse to start). An app that serves a channel in its data folder grants the folder and the
-        direction:
+        refuse to start).
+      </p>
+      <p>
+        <strong>
+          The <code>local-ipc</code> capability
+        </strong>{" "}
+        (<code>denext desktop add local-ipc</code>,{" "}
+        <code>desktop.capabilities.localIpc</code>) bakes the file part for the default socket
+        folder: read and write of <code>&lt;app data&gt;/ipc</code> alone on macOS and Linux, as
+        {" "}
+        <code>$DENO_DESKTOP_DATA/ipc</code>{" "}
+        where the runtime expands the folder token (the pinned one does, with{" "}
+        <code>desktop.app.identifier</code>, which the capability requires: it names the folder); an
+        older runtime gets the broad write the <code>fs</code>{" "}
+        capability gets. It lists the channels it uses in <code>{`{ channels: ["control"] }`}</code>
+        {" "}
+        for the network part: each is the exact socket{" "}
+        <code>&lt;app data&gt;/ipc/&lt;name&gt;.sock</code> a <code>unix:</code>{" "}
+        grant must name. No released runtime expands <code>$DENO_DESKTOP_DATA</code>{" "}
+        in a network grant yet, so that grant is not baked: until one does, the app adds it as below
+        (the folder grant is no longer needed by hand). Windows pipes have no folder; the capability
+        bakes nothing there.
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  app: { identifier: "com.example.term" },
+  capabilities: { localIpc: { channels: ["control"] } }, // read + write of <app data>/ipc only
+  extraPermissions: { netListen: ["*"] }, // the socket's network grant, until the runtime bakes it
+},`}
+      </Code>
+      <p>
+        Without the capability, an app that serves a channel in its data folder grants the folder
+        and the direction:
       </p>
       <Code lang="ts">
         {`desktop: {

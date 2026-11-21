@@ -36,4 +36,5 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "pty",
   "microphone",
   "camera",
+  "localIpc",
 ] as const;

@@ -1801,6 +1801,8 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
  * `microphone` / `camera` (the webview's own getUserMedia, granted by the launch file; no Deno
  * permission, covered by desktop-media-capture.test.ts). */
 const WEBVIEW_ONLY = new Set(["auth-session", "microphone", "camera"]);
+/** Catalog caps the app's own code uses directly (no bridge capability): `local-ipc`. */
+const PROCESS_ONLY = new Set(["local-ipc"]);
 
 /** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
 const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
@@ -1875,7 +1877,7 @@ function driftFlags(perms: (DesktopPermissions | undefined)[]): string[] {
 Deno.test("catalog per-OS permissions == the runtime caps' declared method permissions", () => {
   const oses: DesktopOs[] = ["darwin", "windows", "linux"];
   for (const name of Object.keys(DESKTOP_CAPABILITIES)) {
-    if (WEBVIEW_ONLY.has(name)) continue;
+    if (WEBVIEW_ONLY.has(name) || PROCESS_ONLY.has(name)) continue;
     const make = DRIFT_FACTORIES[name];
     assert(
       make,

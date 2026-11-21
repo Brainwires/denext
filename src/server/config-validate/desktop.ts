@@ -31,6 +31,7 @@ import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { webViewsConfigProblem } from "../../desktop/webview-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
+import { localIpcConfigProblem } from "../../desktop/local-ipc-config.ts";
 import { desktopBundleProblem } from "../../desktop/bundled-libraries.ts";
 import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
 import { desktopPackageHooksProblem } from "../../desktop/package-hooks-config.ts";
@@ -644,7 +645,7 @@ function validateDesktopCapabilities(caps: unknown, fail: Fail): void {
   validateCapabilityOptions(c, fail);
 }
 
-/** The capabilities that take an options object: `fs`, `shell`, `passkeys`, `pty`, `microphone`, `camera`. */
+/** The capabilities that take an options object: `fs`, `shell`, `passkeys`, `pty`, `microphone`, `camera`, `localIpc`. */
 function validateCapabilityOptions(c: Record<string, unknown>, fail: Fail): void {
   validatePasskeys(c.passkeys, fail);
   for (const key of ["microphone", "camera"]) validateMediaCapture(key, c[key], fail);
@@ -655,8 +656,14 @@ function validateCapabilityOptions(c: Record<string, unknown>, fail: Fail): void
     if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
   }
   validateOpenPathAllow(c.shell, fail);
-  const pty = ptyConfigProblem(c.pty);
-  if (pty) fail(pty[0], pty[1]);
+  failEach([ptyConfigProblem(c.pty), localIpcConfigProblem(c.localIpc)], fail);
+}
+
+/** Report each `[path, message]` problem (a `null` is none). */
+function failEach(problems: ReadonlyArray<[string, string] | null>, fail: Fail): void {
+  for (const problem of problems) {
+    if (problem) fail(problem[0], problem[1]);
+  }
 }
 
 /**

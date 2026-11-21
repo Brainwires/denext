@@ -144,6 +144,16 @@ and this project adheres to
   (`DENEXT_STAPLE_ATTEMPTS`, 1 to 20), 15 s apart and doubling up to 60 s, since a just-issued
   ticket often fails to staple at first ("Could not validate ticket"). It lives in
   `denext/desktop` (`desktopStapleMacos`), so existing scripts get it without regenerating.
+- **The `local-ipc` desktop capability.** `denext desktop add local-ipc` writes
+  `desktop.capabilities.localIpc` (`true` or `{ channels: string[] }`), and the package scripts
+  bake read and write of the default socket folder `<app data>/ipc` alone on macOS and Linux:
+  `$DENO_DESKTOP_DATA/ipc`, which the pinned runtime expands per user (with
+  `desktop.app.identifier`, which the capability requires at launch: it names the folder), else the
+  broad write the `fs` capability gets. The socket's `unix:` network grant is not baked: no
+  released runtime expands a folder token in a network grant, so the app still adds that grant by
+  hand; once one does, `desktopBuildFlags`'s `unixSocketTokens` bakes `unix:$DENO_DESKTOP_DATA/ipc/
+  <name>.sock` for each listed channel, both directions. Windows named pipes get nothing. The config
+  check validates the channel names. Type: `DesktopLocalIpcConfig` (`denext/server`).
 
 ### Changed
 

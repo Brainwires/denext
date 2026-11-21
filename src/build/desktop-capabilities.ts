@@ -43,6 +43,7 @@ import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
+import { LOCAL_IPC_FOLDER, localIpcChannels } from "../desktop/local-ipc-config.ts";
 import {
   WINDOWS_EXPLORER,
   WINDOWS_POWERSHELL,
@@ -179,6 +180,13 @@ export function desktopPermissionContext(
     windowsRuntimeStore: options.windowsSecureStore ?? windowsSecureStoreRuntime(),
   };
 }
+
+/** The `local-ipc` capability's socket folder (`localIpcPath`'s default `<data>/ipc`). */
+const LOCAL_IPC_DIR = `$APPDATA/${LOCAL_IPC_FOLDER}`;
+
+/** The by-hand step the `local-ipc` capability prints: the per-socket network grant. */
+const LOCAL_IPC_NET_MANUAL =
+  'local-ipc: a socket also needs the network grant unix:<socket path> (exact, per socket), which a packaged app cannot bake yet: the runtime expands no folder token in a network grant. Until a Deno Desktop runtime does, add it yourself for a fixed path (desktop.extraPermissions = { netListen: ["unix:/abs/path.sock"] }) or grant netListen / netConnect ["*"]; Windows named pipes need unix:\\\\.\\pipe\\<name> the same way.';
 
 /** The app's folders the `fs` capability may use by default. */
 const APP_FOLDERS = ["$APPDATA", "$CACHE"];
@@ -550,6 +558,25 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "passkeys: the packaged app's laufey-launch.json carries desktop.capabilities.passkeys.rpIds as passkeyRpIds, enforced natively; under a runtime with the strict launch policy (strictPolicy, as the pinned one has) a launch file without it refuses every request. Linux has no OS passkey API: USB security keys work natively where the runtime carries libwebauthn (the pinned one does), the browser otherwise.",
     ],
   },
+  "local-ipc": {
+    key: "localIpc",
+    value: true,
+    api: ["listenLocalIpc (denext/desktop)", "connectLocalIpc", "localIpcPath"],
+    // The default socket folder, `<app data>/ipc` (localIpcPath): read and write of that folder
+    // alone, baked as `$DENO_DESKTOP_DATA/ipc` where the runtime expands the token. Windows' named
+    // pipes are no file of the app's folders.
+    os: {
+      darwin: { read: [LOCAL_IPC_DIR], write: [LOCAL_IPC_DIR] },
+      linux: { read: [LOCAL_IPC_DIR], write: [LOCAL_IPC_DIR] },
+    },
+    trust: "scoped",
+    notes:
+      "a Unix-domain socket (macOS, Linux) or named pipe (Windows) between the app and its helpers, no loopback port: read + write of the socket folder <app data>/ipc only (scoped to it where the runtime expands $DENO_DESKTOP_DATA, with desktop.app.identifier)",
+    manual: [
+      "local-ipc: set desktop.app.identifier (it names the socket folder); list your channel names in desktop.capabilities.localIpc = { channels: [...] }.",
+      LOCAL_IPC_NET_MANUAL,
+    ],
+  },
 };
 
 /** A capability name as typed (`secure-store`, or its config key `secureStore`) → its table name. */
@@ -734,6 +761,14 @@ export interface DesktopBuildFlagOptions {
    * `desktopDataTokenRuntime()`.
    */
   readonly dataScope?: boolean;
+  /**
+   * The runtime expands `$DENO_DESKTOP_DATA` at the start of a `unix:` network grant's path, as it
+   * does in a read / write / run grant. No released Deno Desktop runtime does yet, so the default
+   * is `false` and the package scripts never set it. With it (and `dataScope`, in an app with
+   * `desktop.app.identifier`), each channel of `desktop.capabilities.localIpc.channels` is baked as
+   * `unix:$DENO_DESKTOP_DATA/ipc/<name>.sock` in both network directions, macOS and Linux.
+   */
+  readonly unixSocketTokens?: boolean;
   /**
    * What `desktop.permissions: "strict"` does when it cannot be honoured (the runtime does not
    * expand the folder tokens, or `desktop.app.identifier` is unset; see
@@ -1557,6 +1592,24 @@ function folderScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): 
   return (options.dataScope ?? desktopDataTokenRuntime()) && hasIdentifier(cfg);
 }
 
+/**
+ * The `unix:` network grants of the `local-ipc` capability's channels
+ * (`desktop.capabilities.localIpc.channels`): `unix:$DENO_DESKTOP_DATA/ipc/<name>.sock` each, on
+ * macOS and Linux, only with `unixSocketTokens` and the app-folder scope (a runtime that expands
+ * the token, `desktop.app.identifier`); none otherwise (an unexpanded token would not be a path).
+ */
+function localIpcSocketGrants(
+  cfg: DesktopFlagConfig,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions,
+): string[] {
+  const value = (cfg.desktop?.capabilities as { localIpc?: unknown } | undefined)?.localIpc;
+  if (value === undefined || value === false || value === null || os === "windows") return [];
+  const channels = localIpcChannels(value);
+  if (options.unixSocketTokens !== true || !folderScope(cfg, options)) return [];
+  return channels.map((name) => `unix:${DESKTOP_DATA_TOKEN}/${LOCAL_IPC_FOLDER}/${name}.sock`);
+}
+
 /** The kinds a permission set merges: the flag kinds plus the two network directions. */
 const MERGED_KINDS = [...PERMISSION_KINDS, "netConnect", "netListen"] as const;
 
@@ -1754,6 +1807,11 @@ export function desktopBuildFlags(
     ...(extra.net ?? []),
     ...(extra.netListen ?? []),
   ]);
+  // The local IPC sockets, each one exactly, on a runtime that expands the folder token there.
+  for (const socket of localIpcSocketGrants(cfg, os, options)) {
+    connect.add(socket);
+    listen.add(socket);
+  }
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
   const strict = strictMode(cfg, options);
