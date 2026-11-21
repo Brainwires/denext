@@ -33,6 +33,7 @@ import { sidecarListError } from "../../desktop/sidecar.ts";
 import { ptyConfigProblem } from "../../desktop/pty-config.ts";
 import { desktopBundleProblem } from "../../desktop/bundled-libraries.ts";
 import { secureStoreConfigProblem } from "../../desktop/secure-store-config.ts";
+import { desktopPackageHooksProblem } from "../../desktop/package-hooks-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
 /** The kinds `desktop.extraPermissions` takes. */
@@ -624,6 +625,8 @@ export function validateDesktop(
   validateDesktopCapabilities((desktop as { capabilities?: unknown }).capabilities, fail);
   const secureStore = secureStoreConfigProblem((desktop as { secureStore?: unknown }).secureStore);
   if (secureStore) fail(secureStore[0], secureStore[1]);
+  const hooks = desktopPackageHooksProblem((desktop as { packageHooks?: unknown }).packageHooks);
+  if (hooks) fail(hooks[0], hooks[1]);
 }
 
 /** `desktop.capabilities`: an object of capability names to `true` or options. */

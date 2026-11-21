@@ -362,7 +362,7 @@ Deno.test("strict: a package script prints the refusal as one line and exits 1; 
 
 Deno.test("strict: every package script template runs main through runDesktopPackageMain", () => {
   for (const text of [MACOS_PACKAGE_SCRIPT, LINUX_PACKAGE_SCRIPT, WINDOWS_PACKAGE_SCRIPT]) {
-    assertStringIncludes(text, "if (import.meta.main) await runDesktopPackageMain(main);");
+    assertStringIncludes(text, "  await runDesktopPackageMain(main, { os: ");
     assertStringIncludes(text, "  runDesktopPackageMain,\n");
   }
 });

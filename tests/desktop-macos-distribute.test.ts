@@ -11,6 +11,7 @@ import {
   desktopMacosDistributionNote,
   desktopNotarizeMacos,
   desktopSignMacosDmg,
+  desktopStapleMacos,
 } from "../src/build/desktop.ts";
 import { MACOS_PACKAGE_SCRIPT } from "../src/build/desktop-package-scripts.ts";
 
@@ -183,6 +184,73 @@ function art(
 ): DesktopMacosArtifact {
   return { path: `dist/App.${kind}`, kind, signature, notarized, stapled: notarized };
 }
+
+Deno.test("desktopStapleMacos: a staple that fails is tried again, the wait doubling up to 60 s", async () => {
+  let failures = 2;
+  const { calls, run } = recorder((cmd) => cmd[2] === "staple" && failures-- > 0);
+  const waits: number[] = [];
+  await desktopStapleMacos("dist/App.dmg", {
+    run,
+    stapleDelayMs: 40_000,
+    sleep: (ms) => (waits.push(ms), Promise.resolve()),
+  });
+  assertEquals(calls.length, 3);
+  assert(calls.every((c) => c.join(" ") === "xcrun stapler staple dist/App.dmg"));
+  assertEquals(waits, [40_000, 60_000]);
+});
+
+Deno.test("desktopStapleMacos: every attempt failing rethrows the last failure", async () => {
+  const { calls, run } = recorder(() => true);
+  const waits: number[] = [];
+  await assertRejects(
+    () =>
+      desktopStapleMacos("dist/App.app", {
+        run,
+        stapleAttempts: 3,
+        stapleDelayMs: 10,
+        sleep: (ms) => (waits.push(ms), Promise.resolve()),
+      }),
+    Error,
+    "stapler staple",
+  );
+  assertEquals(calls.length, 3);
+  assertEquals(waits, [10, 20]);
+});
+
+Deno.test("desktopStapleMacos: DENEXT_STAPLE_ATTEMPTS sets the attempts (1 to 20; else 5)", async () => {
+  const tries = async (value: string | undefined) => {
+    const { calls, run } = recorder(() => true);
+    await desktopStapleMacos("x.dmg", {
+      run,
+      sleep: () => Promise.resolve(),
+      env: (name) => name === "DENEXT_STAPLE_ATTEMPTS" ? value : undefined,
+    }).catch(() => {});
+    return calls.length;
+  };
+  assertEquals(await tries("2"), 2);
+  assertEquals(await tries("0"), 5);
+  assertEquals(await tries("99"), 5);
+  assertEquals(await tries("x"), 5);
+  assertEquals(await tries(undefined), 5);
+});
+
+Deno.test("desktopNotarizeMacos: a staple that fails once is retried before validating", async () => {
+  let failed = false;
+  const { calls, run } = recorder((cmd) => {
+    if (cmd[2] !== "staple" || failed) return false;
+    failed = true;
+    return true;
+  });
+  const [dmg] = await desktopNotarizeMacos(
+    [desktopMacosArtifact("dist/App.dmg", "dmg", "developer-id")],
+    PROFILE,
+    { run, sleep: () => Promise.resolve() },
+  );
+  assertEquals(dmg.stapled, true);
+  const kinds = calls.map((c) => c.slice(0, 3).join(" "));
+  assertEquals(kinds.filter((k) => k === "xcrun stapler staple").length, 2);
+  assert(kinds.indexOf("xcrun stapler validate") > kinds.lastIndexOf("xcrun stapler staple"));
+});
 
 Deno.test("desktopMacosDistributionNote: names what each artifact kind is, never more", () => {
   assertEquals(

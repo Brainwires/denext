@@ -154,7 +154,7 @@ async function installers(
   return out;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   const opts = parseDesktopPackageArgs(Deno.args, {
     arches: ["host", "x86_64", "arm64", "both"],
     legacy: { "--appimage": "appimage" },
@@ -178,6 +178,11 @@ async function main(): Promise<void> {
   console.log(
     "\n  (the target Linux desktop needs a WebKitGTK / webkit2gtk runtime installed)",
   );
+  return artifacts;
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: OS, entryUrl: import.meta.url });
+}

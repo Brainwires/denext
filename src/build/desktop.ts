@@ -446,7 +446,14 @@ export {
   desktopNotarizeMacos,
   desktopNotaryCredentials,
   desktopSignMacosDmg,
+  desktopStapleMacos,
 } from "./desktop-macos-distribute.ts";
+// desktop.packageHooks: the project's own steps around a packaging run (runDesktopPackageMain).
+export {
+  type DesktopPackageHook,
+  type DesktopPackageHookContext,
+  type DesktopPackageHooksConfig,
+} from "./desktop-package-hooks.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,
@@ -462,6 +469,7 @@ export {
   desktopPackageArches,
   type DesktopPackageArgs,
   type DesktopPackageArgSpec,
+  type DesktopPackageMainOptions,
   desktopPeFiles,
   desktopRequireTool,
   desktopRun,

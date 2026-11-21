@@ -39,6 +39,69 @@ export interface DesktopMacosArtifact {
 export interface DesktopMacosDistributeDeps {
   /** Runs a command, throwing on a non-zero exit (default {@linkcode desktopRun}). */
   readonly run?: (cmd: string[]) => Promise<void>;
+  /**
+   * How many times `xcrun stapler staple` is tried before the run fails (default
+   * `DENEXT_STAPLE_ATTEMPTS`, else 5): the ticket the notary service just issued can take a while
+   * to reach the CDN stapler downloads it from.
+   */
+  readonly stapleAttempts?: number;
+  /** The wait before the first retry, doubled each time up to 60 s (default 15 000 ms). */
+  readonly stapleDelayMs?: number;
+  /** Waits `ms` between attempts (tests). */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** Reads an environment variable (tests; default `Deno.env.get`, a denied read as unset). */
+  readonly env?: (name: string) => string | undefined;
+}
+
+/** The default number of staple attempts. */
+const STAPLE_ATTEMPTS = 5;
+/** The default wait before the first staple retry. */
+const STAPLE_DELAY_MS = 15_000;
+/** The longest wait between staple attempts. */
+const STAPLE_MAX_DELAY_MS = 60_000;
+
+/** The staple attempts: `deps`, else `DENEXT_STAPLE_ATTEMPTS` (1 to 20), else 5. */
+function stapleAttempts(deps: DesktopMacosDistributeDeps): number {
+  if (deps.stapleAttempts !== undefined) return Math.max(1, Math.floor(deps.stapleAttempts));
+  let raw: string | undefined;
+  try {
+    raw = (deps.env ?? ((name: string) => Deno.env.get(name)))("DENEXT_STAPLE_ATTEMPTS");
+  } catch { /* no env access */ }
+  const n = Number(raw);
+  return raw !== undefined && Number.isInteger(n) && n >= 1 && n <= 20 ? n : STAPLE_ATTEMPTS;
+}
+
+/**
+ * `xcrun stapler staple <path>`, tried again on failure: a ticket the notary service has just
+ * issued can take a while to propagate, and stapling it straight after `notarytool submit --wait`
+ * commonly fails ("Could not validate ticket", error 65) before a later try succeeds. Waits
+ * `stapleDelayMs` (default 15 s) before the first retry, doubling up to 60 s; rethrows the last
+ * failure once every attempt failed.
+ *
+ * @param path The notarized artifact.
+ * @param deps The command runner, the attempts, the delay and the sleep.
+ */
+export async function desktopStapleMacos(
+  path: string,
+  deps: DesktopMacosDistributeDeps = {},
+): Promise<void> {
+  const run = deps.run ?? desktopRun;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const attempts = stapleAttempts(deps);
+  let delay = deps.stapleDelayMs ?? STAPLE_DELAY_MS;
+  for (let attempt = 1;; attempt++) {
+    try {
+      return await run(["xcrun", "stapler", "staple", path]);
+    } catch (err) {
+      if (attempt >= attempts) throw err;
+      console.error(
+        `  stapling ${path} failed (attempt ${attempt} of ${attempts}); retrying in ` +
+          `${Math.round(delay / 1000)} s`,
+      );
+      await sleep(delay);
+      delay = Math.min(delay * 2, STAPLE_MAX_DELAY_MS);
+    }
+  }
 }
 
 /**
@@ -103,8 +166,9 @@ export async function desktopSignMacosDmg(
 async function notarizeOne(
   artifact: DesktopMacosArtifact,
   credentials: NotaryCredentials,
-  run: (cmd: string[]) => Promise<void>,
+  deps: DesktopMacosDistributeDeps,
 ): Promise<DesktopMacosArtifact> {
+  const run = deps.run ?? desktopRun;
   if (artifact.kind === "app") {
     const zip = `${artifact.path}.zip`;
     try {
@@ -117,7 +181,7 @@ async function notarizeOne(
   } else {
     await run(notarytoolSubmitArgs(artifact.path, credentials));
   }
-  await run(["xcrun", "stapler", "staple", artifact.path]);
+  await desktopStapleMacos(artifact.path, deps);
   await run(["xcrun", "stapler", "validate", artifact.path]);
   const assess = gatekeeperAssessArgs(artifact);
   if (assess) await run(assess);
@@ -166,10 +230,9 @@ export async function desktopNotarizeMacos(
   credentials: NotaryCredentials | undefined,
   deps: DesktopMacosDistributeDeps = {},
 ): Promise<DesktopMacosArtifact[]> {
-  const run = deps.run ?? desktopRun;
   return await Promise.all(
     artifacts.map((a) =>
-      credentials && a.signature === "developer-id" ? notarizeOne(a, credentials, run) : a
+      credentials && a.signature === "developer-id" ? notarizeOne(a, credentials, deps) : a
     ),
   );
 }

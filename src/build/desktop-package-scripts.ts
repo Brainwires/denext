@@ -684,7 +684,7 @@ async function installersFor(
   return installers;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   if (Deno.build.os !== "darwin") {
     console.error(
       "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
@@ -729,9 +729,14 @@ async function main(): Promise<void> {
   for (const a of done) if (a.kind !== "app") console.log("  " + a.path);
   // What each artifact actually is: signed, notarized, stapled — never more than was done.
   console.log(desktopMacosDistributionNote(done));
+  return [...artifacts, ...done.filter((a) => a.kind !== "app").map((a) => a.path)];
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: "darwin", entryUrl: import.meta.url });
+}
 `;
 
 /** The scaffolded Linux packaging script (scripts/package-linux.ts). `deno desktop`
@@ -894,7 +899,7 @@ async function installers(
   return out;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   const opts = parseDesktopPackageArgs(Deno.args, {
     arches: ["host", "x86_64", "arm64", "both"],
     legacy: { "--appimage": "appimage" },
@@ -918,9 +923,14 @@ async function main(): Promise<void> {
   console.log(
     "\\n  (the target Linux desktop needs a WebKitGTK / webkit2gtk runtime installed)",
   );
+  return artifacts;
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: OS, entryUrl: import.meta.url });
+}
 `;
 
 /** Windows packaging script — kept byte-identical to
@@ -1145,7 +1155,7 @@ async function packageArch(
   return { out, vcBundled };
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   const opts = parseDesktopPackageArgs(Deno.args, {
     arches: ["host", "x86_64", "arm64", "both"],
   });
@@ -1174,7 +1184,12 @@ async function main(): Promise<void> {
   console.log(
     "\\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime),
   );
+  return artifacts;
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: OS, entryUrl: import.meta.url });
+}
 `;

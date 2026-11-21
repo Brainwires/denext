@@ -33,6 +33,7 @@ import {
   stampDenoJsonVersion,
 } from "./desktop-installers.ts";
 import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import { runDesktopPackageHook } from "./desktop-package-hooks.ts";
 import { readDesktopTreeManifest, stampDesktopTreeManifest } from "./desktop-tree-manifest.ts";
 import {
   DEFAULT_TIMESTAMP_URL,
@@ -402,16 +403,60 @@ export interface DesktopRunOptions {
   readonly secrets?: readonly string[];
 }
 
+/** Options for {@linkcode runDesktopPackageMain}. */
+export interface DesktopPackageMainOptions {
+  /** The OS the script packages for (default: from its name, `package-<macos|linux|windows>.ts`). */
+  readonly os?: DesktopOs;
+  /** The script's `import.meta.url` (default `Deno.mainModule`): the project is its parent's parent. */
+  readonly entryUrl?: string;
+  /** The script's command line (default `Deno.args`), handed to the hooks. */
+  readonly args?: readonly string[];
+}
+
+/** The OS a package script's name says it packages for, else the host's. */
+function scriptOs(entryUrl: string): DesktopOs {
+  const m = /package-(macos|linux|windows)\.[cm]?[jt]s$/.exec(entryUrl);
+  if (m) return m[1] === "macos" ? "darwin" : m[1] as DesktopOs;
+  return Deno.build.os === "darwin" || Deno.build.os === "windows" ? Deno.build.os : "linux";
+}
+
 /**
- * Run a package script's `main`, printing a `desktop.permissions: "strict"` refusal
- * ({@linkcode DesktopStrictPermissionsError}) as its one-line message and exiting 1. Any other error
- * keeps its stack.
+ * Run a package script's `main` between the project's `desktop.packageHooks` (`pre` before it,
+ * `post` once it succeeded, with the artifacts `main` returns), printing a
+ * `desktop.permissions: "strict"` refusal ({@linkcode DesktopStrictPermissionsError}) as its
+ * one-line message and exiting 1. Any other error keeps its stack.
  *
- * @param main The script's entry point.
+ * @param main The script's entry point; it may return the artifacts it wrote (paths).
+ * @param options The OS and the script's URL (default: from `Deno.mainModule`).
  */
-export async function runDesktopPackageMain(main: () => Promise<void>): Promise<void> {
+export async function runDesktopPackageMain(
+  main: () => Promise<void | readonly string[]>,
+  options: DesktopPackageMainOptions = {},
+): Promise<void> {
+  const entryUrl = options.entryUrl ?? Deno.mainModule;
+  const root = new URL("../", entryUrl);
+  // The project folder without its trailing separator.
+  const projectDir = root.protocol === "file:" ? dirname(join(fromFileUrl(root), "x")) : "";
+  const hookContext = projectDir
+    ? {
+      os: options.os ?? scriptOs(entryUrl),
+      projectDir,
+      distDir: join(projectDir, "dist"),
+      args: options.args ?? Deno.args,
+    }
+    : undefined;
   try {
-    await main();
+    const config = hookContext ? await loadConfigBeside(entryUrl) : undefined;
+    if (hookContext) {
+      await runDesktopPackageHook({ config, context: { stage: "pre", ...hookContext } });
+    }
+    const artifacts = await main();
+    if (hookContext) {
+      await runDesktopPackageHook({
+        config,
+        context: { stage: "post", ...hookContext, ...(artifacts ? { artifacts } : {}) },
+      });
+    }
   } catch (err) {
     if (!(err instanceof DesktopStrictPermissionsError)) throw err;
     console.error(err.message);

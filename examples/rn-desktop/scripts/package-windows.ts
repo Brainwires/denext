@@ -216,7 +216,7 @@ async function packageArch(
   return { out, vcBundled };
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   const opts = parseDesktopPackageArgs(Deno.args, {
     arches: ["host", "x86_64", "arm64", "both"],
   });
@@ -245,6 +245,11 @@ async function main(): Promise<void> {
   console.log(
     "\n  " + desktopWindowsTargetNote(prepared.meta.backend, noVcRuntime),
   );
+  return artifacts;
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: OS, entryUrl: import.meta.url });
+}

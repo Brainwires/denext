@@ -490,8 +490,10 @@ See [Writing a plugin](/docs/plugins).
   `reopenClosed`, `list`, `items`; and `menus`, the app's own top-level menus beside the
   managed ones: [custom menus](/docs/desktop#desktop-custom-menus)), `tray` (a tray icon the backend owns), `permissions`
   (`"default"` or `"strict"`, which scopes the baked `--allow-read` / `--allow-env`),
-  `installers`, `linux` and `windows` (each OS's launch settings), `extraPermissions`
-  and `denoFlags`.
+  `installers`, `linux` and `windows` (each OS's launch settings), `extraPermissions`,
+  `denoFlags`, and `packageHooks` (`{ pre?, post? }`: project modules the package scripts run
+  before and after their work, which `--regenerate-scripts` never drops; see
+  [Desktop apps › Your own packaging steps](/docs/desktop#desktop-package-hooks)).
   `desktop.bundle.libraries` lists the app's own native libraries (for `Deno.dlopen`), one
   build per target: path patterns (`"native/{target}/libaudio.{ext}"`, with `{os}`, `{arch}`,
   `{target}`, `{ext}`; or `{ path, name?, optional? }`) or per-target maps

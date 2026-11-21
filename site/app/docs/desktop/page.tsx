@@ -796,6 +796,15 @@ denext task desktop:package --arch universal`}
         blocks.
       </p>
       <p>
+        Stapling is retried: a ticket the notary service has just issued can take a while to reach
+        the server <code>stapler</code>{" "}
+        downloads it from, so a staple straight after the submission commonly fails (&quot;Could not
+        validate ticket&quot;, error 65) and a later one succeeds. Each artifact gets 5 attempts
+        (<code>DENEXT_STAPLE_ATTEMPTS</code>, 1 to 20), 15 s apart and doubling up to 60 s; the last
+        failure fails the run. The retry is in <code>denext/desktop</code>{" "}
+        (<code>desktopStapleMacos</code>), so a script you have not regenerated gets it too.
+      </p>
+      <p>
         The script&apos;s last line names what each kind of artifact is, and says{" "}
         <em>ready to distribute</em> only when every one is signed, notarized and stapled:
       </p>
@@ -811,6 +820,59 @@ denext task desktop:package --arch universal`}
         <code>denext desktop package</code>, <code>denext desktop doctor</code> and{" "}
         <code>denext doctor</code> warn that it ships its <code>.dmg</code> un-notarized.
       </p>
+
+      <h3 id="desktop-package-hooks">Your own packaging steps: desktop.packageHooks</h3>
+      <p>
+        <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
+        <code>scripts/package-*.ts</code>{" "}
+        from denext&apos;s template, so an edit made in a script is lost at the next regeneration.
+        Steps of your own go in <code>denext.config.ts</code>{" "}
+        instead, as modules of the project that every package script runs around its work:{" "}
+        <code>pre</code> before it builds anything, <code>post</code>{" "}
+        once it has built every artifact (and on macOS signed, notarized and stapled them).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    packageHooks: { pre: "scripts/hooks/pre-package.ts", post: "scripts/hooks/post-package.ts" },
+  },
+};
+
+// scripts/hooks/post-package.ts
+import type { DesktopPackageHookContext } from "denext/desktop";
+
+export default async function ({ os, artifacts, distDir }: DesktopPackageHookContext) {
+  if (os !== "darwin") return;
+  for (const path of artifacts ?? []) await upload(path); // your own step
+}`}
+      </Code>
+      <ul>
+        <li>
+          Each path is relative to the project (no absolute path, no <code>..</code>) and ends in
+          {" "}
+          <code>.ts</code>, <code>.mts</code>, <code>.js</code> or{" "}
+          <code>.mjs</code>; the module default-exports a function, awaited with{" "}
+          <code>{`{ stage, os, projectDir, distDir, args, artifacts? }`}</code>: the stage (
+          <code>"pre"</code> / <code>"post"</code>), the OS being packaged for (not the host&apos;s:
+          {" "}
+          <code>"windows"</code> when cross-packaging from a Mac), the project and{" "}
+          <code>dist/</code> folders, the script&apos;s command line, and for <code>post</code>{" "}
+          the paths of the artifacts the script reported.
+        </li>
+        <li>
+          A hook that throws fails the run (a failed <code>pre</code> builds nothing), and{" "}
+          <code>post</code>{" "}
+          does not run when the script failed. The hooks run in the package script&apos;s own
+          process, with its permissions (<code>-A</code>): they are your code, as the script is.
+        </li>
+        <li>
+          <code>runDesktopPackageMain</code> (in{" "}
+          <code>denext/desktop</code>) runs them, so a script you have not regenerated runs them too
+          (it finds the target OS from its name); regenerating also hands <code>post</code>{" "}
+          the artifact list. The config check refuses a bad shape.
+        </li>
+      </ul>
 
       <h2>Linux</h2>
       <p>
@@ -2089,7 +2151,11 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         satisfy them. <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
-        of any file it changes. <code>denext desktop package</code>{" "}
+        of any file it changes, so keep your own steps out of the scripts: put them in{" "}
+        <a href="#desktop-package-hooks">
+          <code>desktop.packageHooks</code>
+        </a>{" "}
+        instead. <code>denext desktop package</code>{" "}
         warns when a script is stale: one from an older denext builds on the stock runtime.{" "}
         <code>desktopRuntimeDenoFlags</code> gives a build on an older runtime its{" "}
         <code>--unstable-no-legacy-abort</code>; on the runtime denext pins that behavior is the

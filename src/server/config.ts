@@ -1433,6 +1433,15 @@ export interface DesktopConfig {
    */
   denoFlags?: string[];
   /**
+   * The project's own steps around `denext desktop package` (the scaffolded
+   * `scripts/package-*.ts`), which survive `--regenerate-scripts` because they live here and in
+   * the project's modules, not in the scripts: `pre` runs before the script builds anything,
+   * `post` once it built (and on macOS signed, notarized and stapled) every artifact. Each names a
+   * module, relative to the project, whose default export gets `{ stage, os, projectDir, distDir,
+   * args, artifacts? }`; a hook that throws fails the run.
+   */
+  packageHooks?: DesktopPackageHooksConfig;
+  /**
    * Extra files the package scripts put inside the app bundle. `libraries`: the app's own native
    * libraries (loaded with `Deno.dlopen`), one build per target, copied into each bundle
    * (`Contents/Frameworks` on macOS, `lib/` on Linux, beside the `.exe` on Windows), code-signed
@@ -1499,6 +1508,20 @@ export interface DesktopSidecarConfig {
    * `"both"`) or nowhere. Not with `ready.stdout`.
    */
   detached?: boolean | DesktopSidecarDetachedConfig;
+}
+
+/** {@link DesktopConfig.packageHooks}: project modules run around a packaging run. */
+export interface DesktopPackageHooksConfig {
+  /**
+   * A module (relative to the project; `.ts`, `.mts`, `.js` or `.mjs`) whose default export runs
+   * before the script builds anything: a check, a generated file, a credential fetch.
+   */
+  pre?: string;
+  /**
+   * A module whose default export runs once the script built every artifact (and, on macOS,
+   * signed, notarized and stapled them): an upload, an extra check. Not run when the script failed.
+   */
+  post?: string;
 }
 
 /** {@link DesktopSidecarConfig.detached} with options. */

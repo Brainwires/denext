@@ -131,6 +131,19 @@ and this project adheres to
   `ptyInfoSupport(pty)` says which sources the `Deno.Pty` has (`foreground`, `ttyName`,
   `procFallback`). Types: `PtyInfo`, `PtyInfoSource`, `PtyInfoOptions`, `PtyInfoSupport`,
   `PtyForegroundProcess`. The `pty` capability now uses the same code.
+- **`desktop.packageHooks`: packaging steps of the project's own that survive
+  `--regenerate-scripts`.** `{ pre?, post? }` in `denext.config.ts` names project modules (relative
+  paths, `.ts` / `.mts` / `.js` / `.mjs`) whose default export the package scripts await with `{
+  stage, os, projectDir, distDir, args, artifacts? }`: `pre` before anything is built, `post` once
+  every artifact is (on macOS signed, notarized and stapled), with the artifacts' paths. A hook
+  that throws fails the run; `post` does not run after a failure. `runDesktopPackageMain(main, {
+  os, entryUrl })` runs them, so scripts that were not regenerated run them too. The config check
+  refuses a bad shape. Types: `DesktopPackageHook`, `DesktopPackageHookContext`,
+  `DesktopPackageHooksConfig`, `DesktopPackageMainOptions` (`denext/desktop`).
+- **macOS packaging retries stapling.** `xcrun stapler staple` is tried up to 5 times per artifact
+  (`DENEXT_STAPLE_ATTEMPTS`, 1 to 20), 15 s apart and doubling up to 60 s, since a just-issued
+  ticket often fails to staple at first ("Could not validate ticket"). It lives in
+  `denext/desktop` (`desktopStapleMacos`), so existing scripts get it without regenerating.
 
 ### Changed
 
@@ -151,6 +164,10 @@ and this project adheres to
   that could not be ended; `sidecar(name).stop()` then rejects with the reason and the status reads
   `failed`. `killSidecarsNow()` takes a reason (`"exit"` lets detached sidecars go, `"update"`
   stops them), and the sidecar stopper's `kill` receives it.
+- **The scaffolded `scripts/package-*.ts` return their artifacts and pass their target OS** to
+  `runDesktopPackageMain(main, { os, entryUrl: import.meta.url })`, which hands them to
+  `desktop.packageHooks.post`; regenerate with `denext desktop package --regenerate-scripts`.
+  `runDesktopPackageMain`'s `main` may return the artifact paths.
 
 ### Fixed
 

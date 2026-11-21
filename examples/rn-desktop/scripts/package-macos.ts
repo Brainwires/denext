@@ -675,7 +675,7 @@ async function installersFor(
   return installers;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<string[]> {
   if (Deno.build.os !== "darwin") {
     console.error(
       "package-macos.ts must run on macOS (it shells out to codesign/notarytool).",
@@ -720,6 +720,11 @@ async function main(): Promise<void> {
   for (const a of done) if (a.kind !== "app") console.log("  " + a.path);
   // What each artifact actually is: signed, notarized, stapled — never more than was done.
   console.log(desktopMacosDistributionNote(done));
+  return [...artifacts, ...done.filter((a) => a.kind !== "app").map((a) => a.path)];
 }
 
-if (import.meta.main) await runDesktopPackageMain(main);
+// desktop.packageHooks in denext.config.ts run around main (pre, then post with the artifacts):
+// your own steps live there, so --regenerate-scripts never drops them.
+if (import.meta.main) {
+  await runDesktopPackageMain(main, { os: "darwin", entryUrl: import.meta.url });
+}
