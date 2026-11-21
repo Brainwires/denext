@@ -4177,9 +4177,13 @@ view.setPermissionRequestHandler(({ origin, permissions, frame }) =>
           <code>permission-request</code> event fires either way, and with{" "}
           <code>state: "cancelled"</code>{" "}
           when a request goes away unanswered (the page navigated, the engine withdrew it): an
-          answer that comes later is dropped. An allowed camera, microphone or screen capture still
-          needs the OS&apos;s own consent for the app (on macOS its camera / microphone prompt and
-          usage strings).
+          answer that comes later is dropped. A handler that has not answered within 5 minutes gets
+          its request refused by denext, and the raw event then fires{" "}
+          <code>{`{ id, state: "cancelled", reason: "timeout" }`}</code>{" "}
+          (a cancellation the runtime reports has no{" "}
+          <code>reason</code>). An allowed camera, microphone or screen capture still needs the
+          OS&apos;s own consent for the app (on macOS its camera / microphone prompt and usage
+          strings).
         </li>
         <li>
           <strong>Per engine.</strong> <code>pause()</code> / <code>resume()</code>{" "}

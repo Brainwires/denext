@@ -389,11 +389,18 @@ export type WebViewPermissionRequestEvent =
     id: number;
     /** It went away unanswered (and was refused). */
     state: "cancelled";
+    /**
+     * `"timeout"`: the view's permission handler did not answer within 5 minutes, so denext
+     * refused it. Left out when the runtime withdrew the request (the page navigated, the engine
+     * withdrew it, the view closed).
+     */
+    reason?: "timeout";
   };
 
 /**
  * Answers a web view's permission requests: `true` allows, anything else refuses. A throw, a
- * rejection or no answer within 5 minutes refuses.
+ * rejection or no answer within 5 minutes refuses; the time limit also fires `permission-request`
+ * `{ id, state: "cancelled", reason: "timeout" }`.
  */
 export type WebViewPermissionHandler = (
   request: WebViewPermissionRequest,
@@ -542,8 +549,9 @@ export interface WebViewHandle {
   /**
    * Answer the view's permission requests (`permissions: "app"`) with `handler`, or `null` to
    * refuse every request at once (the default). The handler allows with `true`; anything else, a
-   * throw, a rejection or no answer within 5 minutes refuses. A request cancelled before the
-   * answer drops the answer. The raw `permission-request` event fires either way.
+   * throw, a rejection or no answer within 5 minutes refuses (the time limit also fires
+   * `permission-request` `{ id, state: "cancelled", reason: "timeout" }`). A request cancelled
+   * before the answer drops the answer. The raw `permission-request` event fires either way.
    */
   setPermissionRequestHandler(handler: WebViewPermissionHandler | null): void;
   /**

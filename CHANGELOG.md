@@ -110,6 +110,12 @@ and this project adheres to
   unsafe folder (another owner, group/world-writable without the sticky bit) is refused. A refused
   permission check names the grants. Types: `LocalIpcConnection`, `LocalIpcServer`,
   `LocalIpcPathOptions`, `LocalIpcListenOptions`, `LocalIpcConnectOptions`.
+- **A web view permission request the handler leaves unanswered says so.** When the view's
+  `setPermissionRequestHandler` handler has not answered within 5 minutes, denext refuses the
+  request (as before) and now fires the raw `permission-request` event `{ id, state: "cancelled",
+  reason: "timeout" }`, on the page's handle and `desktop.ts`'s alike. The runtime has no time
+  limit of its own and reports no event for this refusal; a cancellation it reports (the page
+  navigated, the engine withdrew the request, the view closed) has no `reason`.
 
 ### Changed
 

@@ -567,7 +567,11 @@ Deno.test("web view media: the permission handler — allow, refuse, throw, reje
   assertEquals(answers(), [[1, false]]);
   const seen: unknown[] = [];
   const raw: unknown[] = [];
-  view.on("permission-request", (e) => raw.push(e.state));
+  const timeouts: unknown[] = [];
+  view.on("permission-request", (e) => {
+    raw.push(e.state);
+    if (e.state === "cancelled" && e.reason === "timeout") timeouts.push(e.id);
+  });
   view.setPermissionRequestHandler((req) => {
     seen.push(req);
     if (req.id === 2) return true;
@@ -591,10 +595,13 @@ Deno.test("web view media: the permission handler — allow, refuse, throw, reje
     permissions: ["camera"],
     frame: { isMain: false, origin: "https://ads.example" },
   });
-  // No answer in time: refused.
+  // No answer in time: refused, and a cancelled event names the time limit.
+  assertEquals(timeouts, []);
   ask(7);
   await until(() => answers().length === 7);
   assertEquals(answers().at(-1), [7, false]);
+  await until(() => timeouts.length === 1);
+  assertEquals(timeouts, [7]);
   // Cancelled before the answer: the answer is dropped.
   let release: ((v: boolean) => void) | undefined;
   view.setPermissionRequestHandler(() => new Promise<boolean>((r) => (release = r)));
@@ -605,6 +612,8 @@ Deno.test("web view media: the permission handler — allow, refuse, throw, reje
   release!(true);
   await new Promise((r) => setTimeout(r, 50));
   assertEquals(answers().length, 7);
+  // A request the runtime cancelled is no timeout: no second cancelled event of denext's own.
+  assertEquals(timeouts, [7]);
   // Malformed requests are ignored; null removes the handler.
   v.fire("permission-request", { id: 20, state: "requested" });
   v.fire("permission-request", { state: "requested" });
@@ -633,6 +642,28 @@ Deno.test("web view media: the media core on its own (a runtime answer that fail
   m.closed();
   await new Promise((r) => setTimeout(r, 0));
   assertEquals(fired, []);
+});
+
+Deno.test("web view media: a request the handler leaves unanswered fires cancelled with reason timeout", async () => {
+  const fired: Array<[string, unknown]> = [];
+  const responded: Array<[number, boolean]> = [];
+  const m = createWebViewMedia({
+    control: () => Promise.resolve(),
+    respond: (id, allow) => (responded.push([id, allow]), Promise.resolve()),
+    reveal: () => Promise.resolve(),
+    hasListeners: () => true,
+    fire: (e, d) => void fired.push([e, d]),
+    fail: (code, message) => Object.assign(new Error(message), { code }),
+    onListenerError: () => {},
+    answerMs: 20,
+  });
+  m.setPermissionRequestHandler((req) => req.id === 1 ? true : new Promise(() => {}));
+  m.permissionRequest({ id: 1, state: "requested", origin: "o", permissions: ["camera"] });
+  m.permissionRequest({ id: 2, state: "requested", origin: "o", permissions: ["camera"] });
+  await until(() => responded.length === 2);
+  assertEquals(responded, [[1, true], [2, false]]);
+  assertEquals(fired, [["permission-request", { id: 2, state: "cancelled", reason: "timeout" }]]);
+  m.closed();
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -8,8 +8,9 @@
  *
  * Rules: a download requested while nothing listens to `will-download` is cancelled at once (it
  * would otherwise wait for an answer forever); with no permission handler a request is refused at
- * once; a handler that throws, rejects or has not answered in 5 minutes refuses; an answer to a
- * request the runtime cancelled meanwhile is dropped. The view closing ends every download still
+ * once; a handler that throws, rejects or has not answered in 5 minutes refuses (5 minutes without
+ * an answer also fires `permission-request` `{ id, state: "cancelled", reason: "timeout" }` to the
+ * view's listeners); an answer to a request the runtime cancelled meanwhile is dropped. The view closing ends every download still
  * running (`done` with `cancelled`) and drops every pending request with its timer.
  *
  * Client-safe: no Deno APIs, nothing runs at import. Internal to denext.
@@ -257,18 +258,23 @@ function requestOf(raw: Record<string, unknown>): WebViewPermissionRequest | nul
 function ask(m: MediaState, handler: WebViewPermissionHandler, req: WebViewPermissionRequest) {
   const pending: PendingRequest = {};
   m.requests.set(req.id, pending);
-  const limit = new Promise<boolean>((resolve) => {
-    pending.timer = setTimeout(() => resolve(false), m.ops.answerMs ?? PERMISSION_ANSWER_MS);
+  const limit = new Promise<"timeout">((resolve) => {
+    pending.timer = setTimeout(() => resolve("timeout"), m.ops.answerMs ?? PERMISSION_ANSWER_MS);
   });
   const answer = Promise.resolve()
     .then(() => handler(req))
     .then((allow) => allow === true, () => false);
-  void Promise.race([answer, limit]).then((allow) => {
+  void Promise.race([answer, limit]).then((outcome) => {
     clearTimeout(pending.timer);
     // Cancelled meanwhile (or the view closed): the late answer is dropped.
     if (m.requests.get(req.id) !== pending) return;
     m.requests.delete(req.id);
-    m.ops.respond(req.id, allow).catch(() => {});
+    m.ops.respond(req.id, outcome === true).catch(() => {});
+    // The limit passed: refused, and the view's `permission-request` listeners hear it went away
+    // (the runtime sends no event for it: the refusal is denext's own).
+    if (outcome === "timeout") {
+      m.ops.fire("permission-request", { id: req.id, state: "cancelled", reason: "timeout" });
+    }
   });
 }
 
