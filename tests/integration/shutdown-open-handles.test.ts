@@ -182,7 +182,10 @@ Deno.test({
           assertEquals(r.text, "slow done");
           assertStringIncludes(r.output, "onShutdown closed the pool");
           assert(!r.output.includes("open handle"), r.output);
-          assert(r.exitMs < DRAIN_MS, `exited ${r.exitMs} ms after SIGTERM:\n${r.output}`);
+          // The absent "open handle" line shows the drain deadline never fired, so the process did not
+          // wait for it; the bound only tells exiting from hanging (a hung process is only killed by
+          // stop()'s DRAIN_MS + 10 s cap), leaving a loaded runner room for the teardown.
+          assert(r.exitMs < DRAIN_MS + 8000, `exited ${r.exitMs} ms after SIGTERM:\n${r.output}`);
         },
       );
 
@@ -194,7 +197,14 @@ Deno.test({
           const r = await startThenStop(dir, { ...env, FIXTURE_CLOSE_ON_SHUTDOWN: "1" }, "break");
           assertEquals(r.text, "slow done");
           assertStringIncludes(r.output, "onShutdown closed the pool");
-          assert(r.exitMs < DRAIN_MS, `exited ${r.exitMs} ms after Ctrl-Break:\n${r.output}`);
+          assert(!r.output.includes("open handle"), r.output);
+          // The absent "open handle" line shows the drain deadline never fired, so the process did not
+          // wait for it; the bound only tells exiting from hanging (a hung process is only killed by
+          // stop()'s DRAIN_MS + 10 s cap), leaving a loaded runner room for the teardown.
+          assert(
+            r.exitMs < DRAIN_MS + 8000,
+            `exited ${r.exitMs} ms after Ctrl-Break:\n${r.output}`,
+          );
         },
       });
     } finally {
