@@ -91,7 +91,7 @@ Deno.test({
       assertNotEquals(before.code, 0, "the verb's modules were not in the cache yet");
 
       // `denext runtime install` (here with an explicit toolchain path: no download) caches them.
-      const install = await run(["run", "-A", "--config", config, cli, "toolchain", "install"], {
+      const install = await run(["run", "-A", "--config", config, cli, "runtime", "install"], {
         DENEXT_DENO: Deno.execPath(),
       });
       assertEquals(install.code, 0, install.err);

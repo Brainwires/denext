@@ -75,7 +75,7 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
       </p>
       <Code lang="sh">
         {`curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime-only
-curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=3.0.0-denext.31
+curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=<version>
 & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly`}
       </Code>
       <p>

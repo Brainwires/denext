@@ -31,7 +31,7 @@ Desktop runtime together, so they can never disagree. The first match wins:
    ```json
    {
      "denext": {
-       "runtime": { "version": "3.0.0-denext.31", "integrity": "sha256-…" }
+       "runtime": { "version": "<version>", "integrity": "sha256-…" }
      }
    }
    ```
@@ -112,7 +112,7 @@ channel themselves; the binary verifies everything. Two flags move only the runt
 
 ```sh
 curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime-only            # runtime upgrade only
-curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=3.0.0-denext.31 # install + use that release
+curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=<version> # install + use that release
 & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly  # Windows
 ```
 

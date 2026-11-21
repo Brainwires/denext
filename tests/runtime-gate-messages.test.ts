@@ -30,6 +30,13 @@ const ALLOWLIST: { path: string; line: string; why: string }[] = [
     line: "`(${FIRST_MEDIA_CAPTURE_RUNTIME}) but records laufey API ${",
     why: "maintainer-only pin check naming the constant to move",
   },
+  // `denext runtime version` reports the oldest runtime release this denext runs: that floor is the
+  // information the command exists to show, not a gate message.
+  {
+    path: "src/cli/commands/runtime.ts",
+    line: "oldest this denext runs: ${MIN_RUNTIME}",
+    why: "`runtime version` reports the runtime floor itself",
+  },
 ];
 
 /** Every shipped TypeScript source under `src/` and `packages/` (tests and fixtures excluded). */
