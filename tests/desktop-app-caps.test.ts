@@ -842,6 +842,10 @@ Deno.test("app: badge, bounce and the Dock menu (macOS only)", async () => {
       applied: true,
     },
   );
+  // A page hears its quick actions once it listens (onQuickAction subscribes).
+  click(mac.dock, "new-chat");
+  assertEquals(await call(mac.cap, "take"), []);
+  await call(mac.cap, "subscribeDockMenu", { on: true });
   click(mac.dock, "new-chat");
   assertEquals(await call(mac.cap, "take"), [{ source: "dock", id: "new-chat" }]);
   assertEquals(await call(mac.cap, "setDockMenu", { menu: null }), { applied: true });
@@ -1442,6 +1446,7 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     cameraAccessReason: null,
     bounce: false,
     dockMenu: false,
+    menuSnapshot: false,
     dockVisibility: false,
     activationPolicy: false,
     backendTray: false,

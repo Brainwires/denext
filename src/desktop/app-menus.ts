@@ -28,6 +28,7 @@ import { base64ToBytes } from "../mobile/base64.ts";
 import { DesktopCapError } from "./extension.ts";
 import type { DesktopMenuItem } from "./launch-events.ts";
 import {
+  type DesktopDockMenuItem,
   type DesktopMenuAnchor,
   type DesktopMenuItemSpec,
   type DesktopMenuItemState,
@@ -35,9 +36,11 @@ import {
   type DesktopMenuUpdate,
   type DesktopWindowMenuAppItem,
   menuItemStateProblem,
+  type MenuSnapshotItem,
   menuUpdateProblem,
   windowMenuAppItemsProblem,
 } from "./menu-config.ts";
+import type { DesktopWindowMenuItemContext } from "./window-menu.ts";
 
 /** The native id prefix of a custom menu's items. */
 export const MENU_ITEM_PREFIX = "denext:menu:";
@@ -71,9 +74,20 @@ export type DesktopAppMenuItemHandler = (
 ) => void | Promise<void>;
 
 /**
- * The custom menus as the backend drives them (`runDesktop`'s result, an extension's host). Each
- * call throws a `DesktopCapError` (`validation`, `not_found` for a window not open, `unsupported`
- * where the runtime sets no application menu).
+ * A handler of the Dock menu's clicks (`runDesktop({ onDockMenuItem })`, `onDockMenuItem` on its
+ * result and on an extension's host): the item's id and the key window (`{ id, key? }`, or `null`
+ * with no window open).
+ */
+export type DesktopDockMenuItemHandler = (
+  id: string,
+  ctx: DesktopWindowMenuItemContext,
+) => void | Promise<void>;
+
+/**
+ * The custom menus, the Dock menu and the menu read-back as the backend drives them
+ * (`runDesktop`'s result, an extension's host). Each call throws a `DesktopCapError`
+ * (`validation`, `not_found` for a window not open, `unsupported` where the runtime sets no
+ * application menu).
  */
 export interface DesktopAppMenusApi {
   /**
@@ -106,6 +120,46 @@ export interface DesktopAppMenusApi {
    * rejection is logged. Returns the unsubscribe.
    */
   onAppMenuItem(fn: DesktopAppMenuItemHandler): () => void;
+  /**
+   * Set the app's own Dock menu (macOS; a no-op elsewhere), or clear it with `null` (or `[]`):
+   * items `{ id, label, enabled?, checked? }`, `{ type: "separator" }` and submenus
+   * `{ label, submenu }`. The pages' quick actions (`setQuickActions`) follow it in the same menu,
+   * after a separator. Ids must be non-empty and unique, across the pages' quick actions too:
+   * throws `validation` otherwise.
+   */
+  setDockMenu(items: readonly DesktopDockMenuItem[] | null): void;
+  /**
+   * Call `fn` once per click on a Dock menu item, the backend's and the pages' quick actions alike,
+   * with its id and the key window (`{ id, key? }`, or `null` with no window open): with no window
+   * open too. A page's quick action also reaches one page's `onQuickAction`. A throw or a rejection
+   * is logged. Returns the unsubscribe.
+   */
+  onDockMenuItem(fn: DesktopDockMenuItemHandler): () => void;
+  /**
+   * An application menu as the OS holds it now (for self-tests): window `window`'s (its id or app
+   * key; `not_found` when none is open), or, omitted, the macOS menu bar as it shows now. `null`
+   * where the runtime has no read-back (`appCapabilities().menuSnapshot`), on Windows and Linux
+   * without a window, and with no menu.
+   */
+  getApplicationMenu(window?: string): MenuSnapshotItem[] | null;
+  /** The Dock menu as the OS holds it now (for self-tests); `null` with none or no read-back. */
+  getDockMenu(): MenuSnapshotItem[] | null;
+}
+
+/**
+ * A runtime read-back (`getApplicationMenu`, `Deno.dock.getMenu`) as a snapshot: its array, else
+ * `null` (none, no read-back, or it threw).
+ *
+ * @param read The runtime call (feature-detected by the caller: `undefined` when absent).
+ * @returns The menu, or `null`.
+ */
+export function menuSnapshotOf(read: () => unknown): MenuSnapshotItem[] | null {
+  try {
+    const menu = read();
+    return Array.isArray(menu) ? menu as MenuSnapshotItem[] : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A custom top-level menu, built for one window. */

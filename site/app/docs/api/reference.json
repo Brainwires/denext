@@ -45838,14 +45838,14 @@
             {
               "kind": "property",
               "name": "downloads",
-              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\"",
-              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser."
+              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\" | \"app\"",
+              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser, `\"app\"` hands each\ndownload to the app as a `will-download` event's {@linkcode WebViewDownloadItem} (where\n`webViewCapabilities().downloadEvents`; elsewhere the create rejects `unsupported`). With\n`\"app\"`, a download requested while nothing listens to `will-download` is cancelled."
             },
             {
               "kind": "property",
               "name": "permissions",
-              "signature": "permissions?: \"deny\" | \"ask\" | WebViewPermissions",
-              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user. The object form also sets the clipboard: `prompts`\n(default `\"deny\"`) is the string form's choice, `clipboardRead` (default `false`) lets the\nsite read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture."
+              "signature": "permissions?: \"deny\" | \"ask\" | \"app\" | WebViewPermissions",
+              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user, `\"app\"` asks the view's\n{@linkcode WebViewHandle.setPermissionRequestHandler} (where\n`webViewCapabilities().permissionRequests`; elsewhere the create rejects `unsupported`). The\nobject form also sets the clipboard: `prompts` (default `\"deny\"`) is the string form's choice,\n`clipboardRead` (default `false`) lets the site read the clipboard, `clipboardWrite` (default\n`true`) lets it write on a user gesture."
             },
             {
               "kind": "property",
@@ -46118,8 +46118,8 @@
           "slug": "DesktopAppMenusApi",
           "kind": "interface",
           "signature": "interface DesktopAppMenusApi",
-          "doc": "The custom menus as the backend drives them (runDesktop's result, an extension's host). Each call throws a DesktopCapError (validation, not_found for a window not open, unsupported where the runtime sets no application menu).",
-          "docFull": "The custom menus as the backend drives them (`runDesktop`'s result, an extension's host). Each\ncall throws a `DesktopCapError` (`validation`, `not_found` for a window not open, `unsupported`\nwhere the runtime sets no application menu).",
+          "doc": "The custom menus, the Dock menu and the menu read-back as the backend drives them (runDesktop's result, an extension's host). Each call throws a DesktopCapError (validation, not_found for a window not open, unsupported where the runtime sets no application menu).",
+          "docFull": "The custom menus, the Dock menu and the menu read-back as the backend drives them\n(`runDesktop`'s result, an extension's host). Each call throws a `DesktopCapError`\n(`validation`, `not_found` for a window not open, `unsupported` where the runtime sets no\napplication menu).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -46148,6 +46148,30 @@
               "name": "onAppMenuItem",
               "signature": "onAppMenuItem(fn: DesktopAppMenuItemHandler): () => void",
               "doc": "Call `fn` once per click on a custom menu's item or a window's own Window-menu item, with its\nid and {@linkcode DesktopAppMenuItemContext} (the key window, the menu, a checkbox's or radio\nitem's new state). The pages hear the same clicks through `onAppMenuItem`. A throw or a\nrejection is logged. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "setDockMenu",
+              "signature": "setDockMenu(items: readonly DesktopDockMenuItem[] | null): void",
+              "doc": "Set the app's own Dock menu (macOS; a no-op elsewhere), or clear it with `null` (or `[]`):\nitems `{ id, label, enabled?, checked? }`, `{ type: \"separator\" }` and submenus\n`{ label, submenu }`. The pages' quick actions (`setQuickActions`) follow it in the same menu,\nafter a separator. Ids must be non-empty and unique, across the pages' quick actions too:\nthrows `validation` otherwise."
+            },
+            {
+              "kind": "method",
+              "name": "onDockMenuItem",
+              "signature": "onDockMenuItem(fn: DesktopDockMenuItemHandler): () => void",
+              "doc": "Call `fn` once per click on a Dock menu item, the backend's and the pages' quick actions alike,\nwith its id and the key window (`{ id, key? }`, or `null` with no window open): with no window\nopen too. A page's quick action also reaches one page's `onQuickAction`. A throw or a rejection\nis logged. Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "getApplicationMenu",
+              "signature": "getApplicationMenu(window?: string): MenuSnapshotItem[] | null",
+              "doc": "An application menu as the OS holds it now (for self-tests): window `window`'s (its id or app\nkey; `not_found` when none is open), or, omitted, the macOS menu bar as it shows now. `null`\nwhere the runtime has no read-back (`appCapabilities().menuSnapshot`), on Windows and Linux\nwithout a window, and with no menu."
+            },
+            {
+              "kind": "method",
+              "name": "getDockMenu",
+              "signature": "getDockMenu(): MenuSnapshotItem[] | null",
+              "doc": "The Dock menu as the OS holds it now (for self-tests); `null` with none or no read-back."
             }
           ]
         },
@@ -46995,6 +47019,30 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopDockMenuItem",
+          "slug": "DesktopDockMenuItem",
+          "kind": "typeAlias",
+          "signature": "type DesktopDockMenuItem = { readonly id: string; readonly label: string; readonly enabled?: boolean; readonly checked?: boolean } | { readonly type: \"separator\" } | { readonly label: string; readonly submenu: readonly DesktopDockMenuItem[] }",
+          "doc": "One entry of the backend's Dock menu (macOS; setDockMenu on runDesktop's result and an extension's host, runDesktop({ dockMenu })): an item (id, label, optionally enabled and checked), a separator, or a submenu (label, submenu). Ids are unique across every level and across the pages' quick actions merged into the same menu.",
+          "docFull": "One entry of the backend's Dock menu (macOS; `setDockMenu` on `runDesktop`'s result and an\nextension's host, `runDesktop({ dockMenu })`): an item (`id`, `label`, optionally `enabled`\nand `checked`), a separator, or a submenu (`label`, `submenu`). Ids are unique across every\nlevel and across the pages' quick actions merged into the same menu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopDockMenuItemHandler",
+          "slug": "DesktopDockMenuItemHandler",
+          "kind": "typeAlias",
+          "signature": "type DesktopDockMenuItemHandler = (id: string, ctx: DesktopWindowMenuItemContext) => void | Promise<void>",
+          "doc": "A handler of the Dock menu's clicks (runDesktop({ onDockMenuItem }), onDockMenuItem on its result and on an extension's host): the item's id and the key window ({ id, key? }, or null with no window open).",
+          "docFull": "A handler of the Dock menu's clicks (`runDesktop({ onDockMenuItem })`, `onDockMenuItem` on its\nresult and on an extension's host): the item's id and the key window (`{ id, key? }`, or `null`\nwith no window open).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopDockReopenContext",
           "slug": "DesktopDockReopenContext",
           "kind": "interface",
@@ -47186,7 +47234,7 @@
           "kind": "interface",
           "signature": "interface DesktopExtensionHost extends DesktopAppMenusApi",
           "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
-          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `setMenu` / `setMenuItemState` / `setWindowMenuAppItems` / `onAppMenuItem` drive the app's\nown top-level menus and each window's Window-menu items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)\nevery top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.\n\nThe window lifecycle is here too: `onWindowOpened` / `onWindowClosed` / `onAppQuit` subscribe\nto what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`\ncan refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu\nitems, `setMenu` / `setMenuItemState` / `setWindowMenuAppItems` / `onAppMenuItem` drive the app's\nown top-level menus and each window's Window-menu items, `setDockMenu` / `onDockMenuItem` the\napp's own Dock menu (and every Dock-menu click), `getApplicationMenu` / `getDockMenu` read the\nnative menus back for self-tests, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)\nevery top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -50541,6 +50589,12 @@
               "name": "forget",
               "signature": "forget(key: string): void",
               "doc": "Forget the keyed window `key`: it leaves the windows Reopen Closed Window and the Dock's\nreopen click bring back (the Window menu follows) and {@linkcode lastSession}, as persisted in\nthe window store, so the next launch does not restore it either. Its saved frame is kept, and\nan open window with the key is not affected (it is in the next session if open at the quit)."
+            },
+            {
+              "kind": "method",
+              "name": "closed",
+              "signature": "closed(): readonly ClosedWindow[]",
+              "doc": "The keyed windows the user closed (not a quit's), most recent first, each key once: the list\nReopen Closed Window and the Dock's reopen click work from (what `runDesktop({ onDockReopen\n})` receives as `closed`), read now. Empty with none, or with no desktop runtime."
             }
           ]
         },
@@ -51005,6 +51059,74 @@
               "name": "readSigned",
               "signature": "readonly readSigned?: (path: string) => Promise<string>",
               "doc": "Reads `current`'s entitlements as an XML plist (default `codesign -d --entitlements - --xml`)."
+            }
+          ]
+        },
+        {
+          "name": "MenuSnapshotItem",
+          "slug": "MenuSnapshotItem",
+          "kind": "interface",
+          "signature": "interface MenuSnapshotItem",
+          "doc": "One item of a menu read back from the OS (getApplicationMenu, getDockMenu; for self-tests): what the native menu holds now, the items the OS or the runtime added included.",
+          "docFull": "One item of a menu read back from the OS (`getApplicationMenu`, `getDockMenu`; for\nself-tests): what the native menu holds now, the items the OS or the runtime added included.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type: \"item\" | \"submenu\" | \"separator\"",
+              "doc": "An item, a submenu or a separator."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label: string",
+              "doc": "The title the native item shows."
+            },
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "A custom item's id."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "readonly role?: string",
+              "doc": "The role an item was built from."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled: boolean",
+              "doc": "Selectable."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked: boolean",
+              "doc": "Shows a checkmark."
+            },
+            {
+              "kind": "property",
+              "name": "visible",
+              "signature": "readonly visible: boolean",
+              "doc": "Shown."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The key the native item is bound to, in canonical form (`\"Ctrl+Alt+Shift+Super+<Key>\"` with\nthe modifiers present; Command is `Super`)."
+            },
+            {
+              "kind": "property",
+              "name": "submenu",
+              "signature": "readonly submenu?: readonly MenuSnapshotItem[]",
+              "doc": "A submenu's items."
             }
           ]
         },
@@ -52050,6 +52172,18 @@
               "name": "onAppMenuItem",
               "signature": "onAppMenuItem?: DesktopAppMenuItemHandler",
               "doc": "Called once per click on one of the app's own top-level menus' items (`desktop.menu.menus`,\n`setMenu`) or a window's own Window-menu items (`setWindowMenuAppItems`), with the item's `id`\nand the context: the key window (`{ id, key? }`, or `null` with none open), the menu, a\ncheckbox's or radio item's new state, the window a Window-menu item belongs to. The pages hear\nthe same clicks (`onAppMenuItem` in `denext/desktop/app`); extensions get them too\n(`host.onAppMenuItem`). A throw or a rejection is logged."
+            },
+            {
+              "kind": "property",
+              "name": "dockMenu",
+              "signature": "dockMenu?: readonly DesktopDockMenuItem[]",
+              "doc": "The app's own Dock menu (macOS; ignored elsewhere), set at launch: items `{ id, label,\nenabled?, checked? }`, `{ type: \"separator\" }` and submenus `{ label, submenu }`, ids unique\nand non-empty (a bad menu fails the launch). `setDockMenu` on the result replaces it; the\npages' quick actions (`setQuickActions`) follow it in the same menu, after a separator."
+            },
+            {
+              "kind": "property",
+              "name": "onDockMenuItem",
+              "signature": "onDockMenuItem?: DesktopDockMenuItemHandler",
+              "doc": "Called once per click on a Dock menu item (macOS), the app's own (`dockMenu`, `setDockMenu`)\nand the pages' quick actions alike, with its `id` and the key window (`{ id, key? }`, or\n`null`): with no window open too. A page's quick action also reaches one page's\n`onQuickAction` (the key window's if it listens, else the one focused most recently that\ndoes); the app's own items never reach a page. Extensions get them too (`host.onDockMenuItem`).\nA throw or a rejection is logged."
             },
             {
               "kind": "property",
@@ -53122,6 +53256,302 @@
           ]
         },
         {
+          "name": "WebViewDownloadAction",
+          "slug": "WebViewDownloadAction",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadAction = \"save\" | \"saveAs\" | \"cancel\" | \"pause\" | \"resume\"",
+          "doc": "What a download item's control calls send the runtime.",
+          "docFull": "What a download item's control calls send the runtime.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewDownloadDestination",
+          "slug": "WebViewDownloadDestination",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadDestination",
+          "doc": "Where WebViewDownloadItem.save writes a download from the page: a file in one of the app's folders (directory \"data\", \"cache\" or \"documents\", path relative to it, missing folders created), or a writable picked item ({ picked: handle } from saveFile — the file itself, path \"\" — or from pickFolder, path relative to the folder). The same rules as the fs capability's and startFileDrag's: no absolute path, no .. or symlink out of the folder, never the runtime's own folders, and a read-only handle refused.",
+          "docFull": "Where {@linkcode WebViewDownloadItem.save} writes a download from the page: a file in one of the\napp's folders (`directory` `\"data\"`, `\"cache\"` or `\"documents\"`, `path` relative to it, missing\nfolders created), or a writable picked item (`{ picked: handle }` from `saveFile` — the file\nitself, `path` `\"\"` — or from `pickFolder`, `path` relative to the folder). The same rules as\nthe `fs` capability's and `startFileDrag`'s: no absolute path, no `..` or symlink out of the\nfolder, never the runtime's own folders, and a read-only handle refused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "directory",
+              "signature": "readonly directory: \"data\" | \"cache\" | \"documents\" | { readonly picked: string }",
+              "doc": "An app folder, or a picked file or folder."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "The file, relative to the folder (`\"\"` for a picked file itself)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadDone",
+          "slug": "WebViewDownloadDone",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadDone",
+          "doc": "What a download item's done listeners get: how it ended.",
+          "docFull": "What a download item's `done` listeners get: how it ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "readonly state: \"completed\" | \"cancelled\" | \"interrupted\"",
+              "doc": "`\"completed\"`, `\"cancelled\"` (also when its view closed) or `\"interrupted\"`."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "readonly reason?: WebViewDownloadInterruptReason",
+              "doc": "Why it was interrupted."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path?: string",
+              "doc": "Where it was saved, when it got that far."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadEvent",
+          "slug": "WebViewDownloadEvent",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadEvent",
+          "doc": "One of the runtime's download events (WebViewEventMap's download): every event of one download carries the same id, url and filename.",
+          "docFull": "One of the runtime's download events ({@linkcode WebViewEventMap}'s `download`): every event of\none download carries the same `id`, `url` and `filename`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id: number",
+              "doc": "The download's id (the runtime's)."
+            },
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "state: WebViewDownloadState",
+              "doc": "`\"requested\"` first (nothing is written until it is answered), then `\"progressing\"` (at most\n5 a second, and once on each pause / resume); `\"completed\"` and `\"cancelled\"` are the last\nevent, and so is `\"interrupted\"` unless `canResume` is `true`."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "What is being downloaded."
+            },
+            {
+              "kind": "property",
+              "name": "filename",
+              "signature": "filename: string",
+              "doc": "The suggested file name, reduced to a bare name (never a path)."
+            },
+            {
+              "kind": "property",
+              "name": "mimeType",
+              "signature": "mimeType?: string",
+              "doc": "Its MIME type, when the server says."
+            },
+            {
+              "kind": "property",
+              "name": "totalBytes",
+              "signature": "totalBytes?: number",
+              "doc": "Its size in bytes, left out while unknown."
+            },
+            {
+              "kind": "property",
+              "name": "receivedBytes",
+              "signature": "receivedBytes: number",
+              "doc": "The bytes received so far."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "path?: string",
+              "doc": "Where it is being saved, once decided."
+            },
+            {
+              "kind": "property",
+              "name": "paused",
+              "signature": "paused?: true",
+              "doc": "Set while it is paused."
+            },
+            {
+              "kind": "property",
+              "name": "canResume",
+              "signature": "canResume?: boolean",
+              "doc": "Whether `resume()` can restart it after an interruption."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "reason?: WebViewDownloadInterruptReason",
+              "doc": "Why it was interrupted."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadInterruptReason",
+          "slug": "WebViewDownloadInterruptReason",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadInterruptReason = \"network\" | \"server\" | \"file\" | \"crash\" | \"failed\"",
+          "doc": "Why a download was interrupted.",
+          "docFull": "Why a download was interrupted.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewDownloadItem",
+          "slug": "WebViewDownloadItem",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadItem",
+          "doc": "A download of a view created with downloads: \"app\" (the will-download event): its identity, its live state, and the calls that decide and control it. Each call resolves once the runtime took it and rejects with the desktop error shape: validation (a download that is over, an action its state does not take, a bad destination), unsupported (pause / resume where webViewCapabilities().downloadPause is false), forbidden (a destination outside the rules), closed (its view closed), failed.",
+          "docFull": "A download of a view created with `downloads: \"app\"` (the `will-download` event): its identity,\nits live state, and the calls that decide and control it. Each call resolves once the runtime\ntook it and rejects with the desktop error shape: `validation` (a download that is over, an\naction its state does not take, a bad destination), `unsupported` (`pause` / `resume` where\n`webViewCapabilities().downloadPause` is `false`), `forbidden` (a destination outside the rules),\n`closed` (its view closed), `failed`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: number",
+              "doc": "The download's id (the runtime's; the raw `download` events carry it)."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "What is being downloaded."
+            },
+            {
+              "kind": "property",
+              "name": "filename",
+              "signature": "readonly filename: string",
+              "doc": "The suggested file name (a bare name, never a path)."
+            },
+            {
+              "kind": "property",
+              "name": "mimeType",
+              "signature": "readonly mimeType?: string",
+              "doc": "Its MIME type, when the server says."
+            },
+            {
+              "kind": "property",
+              "name": "totalBytes",
+              "signature": "readonly totalBytes?: number",
+              "doc": "Its size in bytes, when known at the request."
+            },
+            {
+              "kind": "property",
+              "name": "receivedBytes",
+              "signature": "readonly receivedBytes: number",
+              "doc": "The bytes received so far."
+            },
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "readonly state: WebViewDownloadState",
+              "doc": "Where it is in its life."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path?: string",
+              "doc": "Where it is being saved, once decided."
+            },
+            {
+              "kind": "property",
+              "name": "paused",
+              "signature": "readonly paused: boolean",
+              "doc": "Whether it is paused."
+            },
+            {
+              "kind": "property",
+              "name": "canResume",
+              "signature": "readonly canResume: boolean",
+              "doc": "Whether `resume()` can restart it after an interruption."
+            },
+            {
+              "kind": "method",
+              "name": "save",
+              "signature": "save(target: WebViewDownloadDestination | string): Promise<void>",
+              "doc": "Answer the request by writing the download to `target`: from the page a\n{@linkcode WebViewDownloadDestination}; in `desktop.ts` an absolute path (its folder must\nexist, a file there is replaced; the app needs write permission for it)."
+            },
+            {
+              "kind": "method",
+              "name": "saveAs",
+              "signature": "saveAs(): Promise<void>",
+              "doc": "Answer the request with the OS save panel (dismissing it cancels the download)."
+            },
+            {
+              "kind": "method",
+              "name": "cancel",
+              "signature": "cancel(): Promise<void>",
+              "doc": "Cancel it, at any time before its last event."
+            },
+            {
+              "kind": "method",
+              "name": "pause",
+              "signature": "pause(): Promise<void>",
+              "doc": "Pause it (where `webViewCapabilities().downloadPause`)."
+            },
+            {
+              "kind": "method",
+              "name": "resume",
+              "signature": "resume(): Promise<void>",
+              "doc": "Resume it after a pause, or restart an interrupted one whose `canResume` is `true`."
+            },
+            {
+              "kind": "method",
+              "name": "reveal",
+              "signature": "reveal(): Promise<void>",
+              "doc": "Show the saved file in Finder / Explorer / the file manager. Rejects `not_found` before it\nhas a path. From the page this is `revealInFileManager`, with its rules: the `shell` capability\nwith `reveal` on, and a file in the app's folders or the picked file it was saved to (a file\nsaved through `saveAs()` or into a picked folder is outside them: `forbidden`)."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on(event: \"updated\", fn: (item: WebViewDownloadItem) => void): () => void",
+              "doc": "Listen for `\"updated\"` (each progress event, pause and resume, with the item) or `\"done\"`\n(once, with how it ended). Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on(event: \"done\", fn: (done: WebViewDownloadDone) => void): () => void",
+              "doc": "See the `\"updated\"` overload: `\"done\"` fires once, with how the download ended."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadState",
+          "slug": "WebViewDownloadState",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadState = \"requested\" | \"progressing\" | \"completed\" | \"cancelled\" | \"interrupted\"",
+          "doc": "Where a download is in its life.",
+          "docFull": "Where a download is in its life.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WebViewEventMap",
           "slug": "WebViewEventMap",
           "kind": "interface",
@@ -53192,6 +53622,24 @@
               "name": "keyup",
               "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
               "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
+            },
+            {
+              "kind": "property",
+              "name": "will-download",
+              "signature": "\"will-download\": WebViewDownloadItem",
+              "doc": "A download was requested (`downloads: \"app\"`), once per download: decide it with the item's\n`save` / `saveAs` / `cancel`, and follow it with its `on(\"updated\" | \"done\")`. A download\nrequested while nothing listens to this event is cancelled."
+            },
+            {
+              "kind": "property",
+              "name": "download",
+              "signature": "download: WebViewDownloadEvent",
+              "doc": "Each of the runtime's download events, as it reports it (`downloads: \"app\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "permission-request",
+              "signature": "\"permission-request\": WebViewPermissionRequestEvent",
+              "doc": "Each permission request (`permissions: \"app\"`) as the runtime reports it, and its\ncancellation (the page navigated, the engine withdrew it). The handler set with\n{@linkcode WebViewHandle.setPermissionRequestHandler} answers it."
             },
             {
               "kind": "property",
@@ -53371,6 +53819,12 @@
             },
             {
               "kind": "method",
+              "name": "setPermissionRequestHandler",
+              "signature": "setPermissionRequestHandler(handler: WebViewPermissionHandler | null): void",
+              "doc": "Answer the view's permission requests (`permissions: \"app\"`) with `handler`, or `null` to\nrefuse every request at once (the default). The handler allows with `true`; anything else, a\nthrow, a rejection or no answer within 5 minutes refuses. A request cancelled before the\nanswer drops the answer. The raw `permission-request` event fires either way."
+            },
+            {
+              "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
               "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
@@ -53458,6 +53912,80 @@
           "denextOnly": true
         },
         {
+          "name": "WebViewPermission",
+          "slug": "WebViewPermission",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermission = string",
+          "doc": "A permission a page in a web view asks for (\"camera\", \"microphone\", \"screen\", \"geolocation\", \"notifications\", \"midi\", \"pointer-lock\", \"storage-access\", \"sensors\", \"clipboard-read\", \"window-management\", \"local-fonts\", \"file-system\", \"multiple-downloads\", \"autoplay\"; the engine decides which it raises).",
+          "docFull": "A permission a page in a web view asks for (`\"camera\"`, `\"microphone\"`, `\"screen\"`,\n`\"geolocation\"`, `\"notifications\"`, `\"midi\"`, `\"pointer-lock\"`, `\"storage-access\"`, `\"sensors\"`,\n`\"clipboard-read\"`, `\"window-management\"`, `\"local-fonts\"`, `\"file-system\"`,\n`\"multiple-downloads\"`, `\"autoplay\"`; the engine decides which it raises).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissionHandler",
+          "slug": "WebViewPermissionHandler",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermissionHandler = (request: WebViewPermissionRequest) => boolean | Promise<boolean>",
+          "doc": "Answers a web view's permission requests: true allows, anything else refuses. A throw, a rejection or no answer within 5 minutes refuses.",
+          "docFull": "Answers a web view's permission requests: `true` allows, anything else refuses. A throw, a\nrejection or no answer within 5 minutes refuses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissionRequest",
+          "slug": "WebViewPermissionRequest",
+          "kind": "interface",
+          "signature": "interface WebViewPermissionRequest",
+          "doc": "A permission request as the handler gets it (WebViewPermissionHandler).",
+          "docFull": "A permission request as the handler gets it ({@linkcode WebViewPermissionHandler}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: number",
+              "doc": "The request's id (the runtime's; the raw `permission-request` events carry it)."
+            },
+            {
+              "kind": "property",
+              "name": "origin",
+              "signature": "readonly origin: string",
+              "doc": "The origin that asked (`\"https://example.com\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "readonly permissions: readonly WebViewPermission[]",
+              "doc": "What it asked for; one request may name several."
+            },
+            {
+              "kind": "property",
+              "name": "frame",
+              "signature": "readonly frame?: { readonly isMain: boolean; readonly origin?: string }",
+              "doc": "The frame that asked, where the engine says."
+            }
+          ]
+        },
+        {
+          "name": "WebViewPermissionRequestEvent",
+          "slug": "WebViewPermissionRequestEvent",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermissionRequestEvent = { id: number; state: \"requested\"; origin: string; permissions: WebViewPermission[]; frame?: { isMain: boolean; origin?: string } } | { id: number; state: \"cancelled\" }",
+          "doc": "The raw permission-request event: a request, or its cancellation.",
+          "docFull": "The raw `permission-request` event: a request, or its cancellation.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WebViewPermissions",
           "slug": "WebViewPermissions",
           "kind": "interface",
@@ -53472,7 +54000,7 @@
             {
               "kind": "property",
               "name": "prompts",
-              "signature": "prompts?: \"deny\" | \"ask\"",
+              "signature": "prompts?: \"deny\" | \"ask\" | \"app\"",
               "doc": "Camera / microphone / geolocation / notification prompts (default `\"deny\"`)."
             },
             {
@@ -55967,14 +56495,14 @@
             {
               "kind": "property",
               "name": "downloads",
-              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\"",
-              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser."
+              "signature": "downloads?: \"deny\" | \"ask\" | \"browser\" | \"app\"",
+              "doc": "What a download does: `\"deny\"` (default) cancels it, `\"ask\"` shows the OS save panel,\n`\"browser\"` cancels it in the view and opens its URL in the system browser, `\"app\"` hands each\ndownload to the app as a `will-download` event's {@linkcode WebViewDownloadItem} (where\n`webViewCapabilities().downloadEvents`; elsewhere the create rejects `unsupported`). With\n`\"app\"`, a download requested while nothing listens to `will-download` is cancelled."
             },
             {
               "kind": "property",
               "name": "permissions",
-              "signature": "permissions?: \"deny\" | \"ask\" | WebViewPermissions",
-              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user. The object form also sets the clipboard: `prompts`\n(default `\"deny\"`) is the string form's choice, `clipboardRead` (default `false`) lets the\nsite read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture."
+              "signature": "permissions?: \"deny\" | \"ask\" | \"app\" | WebViewPermissions",
+              "doc": "The camera / microphone / geolocation / notification prompts: `\"deny\"` (default) refuses them\nwithout a prompt, `\"ask\"` asks the user, `\"app\"` asks the view's\n{@linkcode WebViewHandle.setPermissionRequestHandler} (where\n`webViewCapabilities().permissionRequests`; elsewhere the create rejects `unsupported`). The\nobject form also sets the clipboard: `prompts` (default `\"deny\"`) is the string form's choice,\n`clipboardRead` (default `false`) lets the site read the clipboard, `clipboardWrite` (default\n`true`) lets it write on a user gesture."
             },
             {
               "kind": "property",
@@ -57520,8 +58048,8 @@
           "slug": "webViewCapabilities-fn",
           "kind": "function",
           "signature": "webViewCapabilities(): Promise<WebViewCapabilities>",
-          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
-          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,\n`forwardKeysBeforeMenu`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
+          "doc": "Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu, downloadEvents, downloadPause, permissionRequests). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.",
+          "docFull": "Whether this window can host web views, on which engine, and which of their features work\n(`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,\n`clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,\n`forwardKeysBeforeMenu`, `downloadEvents`, `downloadPause`, `permissionRequests`). On a runtime without web views it resolves `supported: false` and every feature\n`false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.",
           "params": [],
           "returns": "The capabilities. Off desktop it rejects unavailable.",
           "examples": [],
@@ -57640,8 +58168,322 @@
               "name": "forwardKeysBeforeMenu",
               "signature": "forwardKeysBeforeMenu: boolean",
               "doc": "Whether `forwardKeys` entries take `beforeMenu: true`."
+            },
+            {
+              "kind": "property",
+              "name": "downloadEvents",
+              "signature": "downloadEvents: boolean",
+              "doc": "Whether `downloads: \"app\"` works (the `will-download` and `download` events)."
+            },
+            {
+              "kind": "property",
+              "name": "downloadPause",
+              "signature": "downloadPause: boolean",
+              "doc": "Whether a download item's `pause()` / `resume()` work."
+            },
+            {
+              "kind": "property",
+              "name": "permissionRequests",
+              "signature": "permissionRequests: boolean",
+              "doc": "Whether `permissions: \"app\"` works ({@linkcode WebViewHandle.setPermissionRequestHandler})."
             }
           ]
+        },
+        {
+          "name": "WebViewDownloadAction",
+          "slug": "WebViewDownloadAction",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadAction = \"save\" | \"saveAs\" | \"cancel\" | \"pause\" | \"resume\"",
+          "doc": "What a download item's control calls send the runtime.",
+          "docFull": "What a download item's control calls send the runtime.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewDownloadDestination",
+          "slug": "WebViewDownloadDestination",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadDestination",
+          "doc": "Where WebViewDownloadItem.save writes a download from the page: a file in one of the app's folders (directory \"data\", \"cache\" or \"documents\", path relative to it, missing folders created), or a writable picked item ({ picked: handle } from saveFile — the file itself, path \"\" — or from pickFolder, path relative to the folder). The same rules as the fs capability's and startFileDrag's: no absolute path, no .. or symlink out of the folder, never the runtime's own folders, and a read-only handle refused.",
+          "docFull": "Where {@linkcode WebViewDownloadItem.save} writes a download from the page: a file in one of the\napp's folders (`directory` `\"data\"`, `\"cache\"` or `\"documents\"`, `path` relative to it, missing\nfolders created), or a writable picked item (`{ picked: handle }` from `saveFile` — the file\nitself, `path` `\"\"` — or from `pickFolder`, `path` relative to the folder). The same rules as\nthe `fs` capability's and `startFileDrag`'s: no absolute path, no `..` or symlink out of the\nfolder, never the runtime's own folders, and a read-only handle refused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "directory",
+              "signature": "readonly directory: \"data\" | \"cache\" | \"documents\" | { readonly picked: string }",
+              "doc": "An app folder, or a picked file or folder."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "The file, relative to the folder (`\"\"` for a picked file itself)."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadDone",
+          "slug": "WebViewDownloadDone",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadDone",
+          "doc": "What a download item's done listeners get: how it ended.",
+          "docFull": "What a download item's `done` listeners get: how it ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "readonly state: \"completed\" | \"cancelled\" | \"interrupted\"",
+              "doc": "`\"completed\"`, `\"cancelled\"` (also when its view closed) or `\"interrupted\"`."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "readonly reason?: WebViewDownloadInterruptReason",
+              "doc": "Why it was interrupted."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path?: string",
+              "doc": "Where it was saved, when it got that far."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadEvent",
+          "slug": "WebViewDownloadEvent",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadEvent",
+          "doc": "One of the runtime's download events (WebViewEventMap's download): every event of one download carries the same id, url and filename.",
+          "docFull": "One of the runtime's download events ({@linkcode WebViewEventMap}'s `download`): every event of\none download carries the same `id`, `url` and `filename`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "id: number",
+              "doc": "The download's id (the runtime's)."
+            },
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "state: WebViewDownloadState",
+              "doc": "`\"requested\"` first (nothing is written until it is answered), then `\"progressing\"` (at most\n5 a second, and once on each pause / resume); `\"completed\"` and `\"cancelled\"` are the last\nevent, and so is `\"interrupted\"` unless `canResume` is `true`."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "url: string",
+              "doc": "What is being downloaded."
+            },
+            {
+              "kind": "property",
+              "name": "filename",
+              "signature": "filename: string",
+              "doc": "The suggested file name, reduced to a bare name (never a path)."
+            },
+            {
+              "kind": "property",
+              "name": "mimeType",
+              "signature": "mimeType?: string",
+              "doc": "Its MIME type, when the server says."
+            },
+            {
+              "kind": "property",
+              "name": "totalBytes",
+              "signature": "totalBytes?: number",
+              "doc": "Its size in bytes, left out while unknown."
+            },
+            {
+              "kind": "property",
+              "name": "receivedBytes",
+              "signature": "receivedBytes: number",
+              "doc": "The bytes received so far."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "path?: string",
+              "doc": "Where it is being saved, once decided."
+            },
+            {
+              "kind": "property",
+              "name": "paused",
+              "signature": "paused?: true",
+              "doc": "Set while it is paused."
+            },
+            {
+              "kind": "property",
+              "name": "canResume",
+              "signature": "canResume?: boolean",
+              "doc": "Whether `resume()` can restart it after an interruption."
+            },
+            {
+              "kind": "property",
+              "name": "reason",
+              "signature": "reason?: WebViewDownloadInterruptReason",
+              "doc": "Why it was interrupted."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadInterruptReason",
+          "slug": "WebViewDownloadInterruptReason",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadInterruptReason = \"network\" | \"server\" | \"file\" | \"crash\" | \"failed\"",
+          "doc": "Why a download was interrupted.",
+          "docFull": "Why a download was interrupted.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewDownloadItem",
+          "slug": "WebViewDownloadItem",
+          "kind": "interface",
+          "signature": "interface WebViewDownloadItem",
+          "doc": "A download of a view created with downloads: \"app\" (the will-download event): its identity, its live state, and the calls that decide and control it. Each call resolves once the runtime took it and rejects with the desktop error shape: validation (a download that is over, an action its state does not take, a bad destination), unsupported (pause / resume where webViewCapabilities().downloadPause is false), forbidden (a destination outside the rules), closed (its view closed), failed.",
+          "docFull": "A download of a view created with `downloads: \"app\"` (the `will-download` event): its identity,\nits live state, and the calls that decide and control it. Each call resolves once the runtime\ntook it and rejects with the desktop error shape: `validation` (a download that is over, an\naction its state does not take, a bad destination), `unsupported` (`pause` / `resume` where\n`webViewCapabilities().downloadPause` is `false`), `forbidden` (a destination outside the rules),\n`closed` (its view closed), `failed`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: number",
+              "doc": "The download's id (the runtime's; the raw `download` events carry it)."
+            },
+            {
+              "kind": "property",
+              "name": "url",
+              "signature": "readonly url: string",
+              "doc": "What is being downloaded."
+            },
+            {
+              "kind": "property",
+              "name": "filename",
+              "signature": "readonly filename: string",
+              "doc": "The suggested file name (a bare name, never a path)."
+            },
+            {
+              "kind": "property",
+              "name": "mimeType",
+              "signature": "readonly mimeType?: string",
+              "doc": "Its MIME type, when the server says."
+            },
+            {
+              "kind": "property",
+              "name": "totalBytes",
+              "signature": "readonly totalBytes?: number",
+              "doc": "Its size in bytes, when known at the request."
+            },
+            {
+              "kind": "property",
+              "name": "receivedBytes",
+              "signature": "readonly receivedBytes: number",
+              "doc": "The bytes received so far."
+            },
+            {
+              "kind": "property",
+              "name": "state",
+              "signature": "readonly state: WebViewDownloadState",
+              "doc": "Where it is in its life."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path?: string",
+              "doc": "Where it is being saved, once decided."
+            },
+            {
+              "kind": "property",
+              "name": "paused",
+              "signature": "readonly paused: boolean",
+              "doc": "Whether it is paused."
+            },
+            {
+              "kind": "property",
+              "name": "canResume",
+              "signature": "readonly canResume: boolean",
+              "doc": "Whether `resume()` can restart it after an interruption."
+            },
+            {
+              "kind": "method",
+              "name": "save",
+              "signature": "save(target: WebViewDownloadDestination | string): Promise<void>",
+              "doc": "Answer the request by writing the download to `target`: from the page a\n{@linkcode WebViewDownloadDestination}; in `desktop.ts` an absolute path (its folder must\nexist, a file there is replaced; the app needs write permission for it)."
+            },
+            {
+              "kind": "method",
+              "name": "saveAs",
+              "signature": "saveAs(): Promise<void>",
+              "doc": "Answer the request with the OS save panel (dismissing it cancels the download)."
+            },
+            {
+              "kind": "method",
+              "name": "cancel",
+              "signature": "cancel(): Promise<void>",
+              "doc": "Cancel it, at any time before its last event."
+            },
+            {
+              "kind": "method",
+              "name": "pause",
+              "signature": "pause(): Promise<void>",
+              "doc": "Pause it (where `webViewCapabilities().downloadPause`)."
+            },
+            {
+              "kind": "method",
+              "name": "resume",
+              "signature": "resume(): Promise<void>",
+              "doc": "Resume it after a pause, or restart an interrupted one whose `canResume` is `true`."
+            },
+            {
+              "kind": "method",
+              "name": "reveal",
+              "signature": "reveal(): Promise<void>",
+              "doc": "Show the saved file in Finder / Explorer / the file manager. Rejects `not_found` before it\nhas a path. From the page this is `revealInFileManager`, with its rules: the `shell` capability\nwith `reveal` on, and a file in the app's folders or the picked file it was saved to (a file\nsaved through `saveAs()` or into a picked folder is outside them: `forbidden`)."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on(event: \"updated\", fn: (item: WebViewDownloadItem) => void): () => void",
+              "doc": "Listen for `\"updated\"` (each progress event, pause and resume, with the item) or `\"done\"`\n(once, with how it ended). Returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "on",
+              "signature": "on(event: \"done\", fn: (done: WebViewDownloadDone) => void): () => void",
+              "doc": "See the `\"updated\"` overload: `\"done\"` fires once, with how the download ended."
+            }
+          ]
+        },
+        {
+          "name": "WebViewDownloadState",
+          "slug": "WebViewDownloadState",
+          "kind": "typeAlias",
+          "signature": "type WebViewDownloadState = \"requested\" | \"progressing\" | \"completed\" | \"cancelled\" | \"interrupted\"",
+          "doc": "Where a download is in its life.",
+          "docFull": "Where a download is in its life.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "WebViewEngine",
@@ -57726,6 +58568,24 @@
               "name": "keyup",
               "signature": "keyup: WebViewKeyEvent & { type: \"keyup\"; forwarded: true }",
               "doc": "The release of a forwarded `keydown` (where `keyUp`), matched by its `code` whatever\nmodifiers are down by then; its page never sees it. A forwarded key still held when the view\nloses the keyboard (a click elsewhere, {@linkcode WebViewHandle.blur}, hiding it, the app\ndeactivated) gets its `keyup` then, so a hold always ends. Keyups of keys that were not\nforwarded stay the page's."
+            },
+            {
+              "kind": "property",
+              "name": "will-download",
+              "signature": "\"will-download\": WebViewDownloadItem",
+              "doc": "A download was requested (`downloads: \"app\"`), once per download: decide it with the item's\n`save` / `saveAs` / `cancel`, and follow it with its `on(\"updated\" | \"done\")`. A download\nrequested while nothing listens to this event is cancelled."
+            },
+            {
+              "kind": "property",
+              "name": "download",
+              "signature": "download: WebViewDownloadEvent",
+              "doc": "Each of the runtime's download events, as it reports it (`downloads: \"app\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "permission-request",
+              "signature": "\"permission-request\": WebViewPermissionRequestEvent",
+              "doc": "Each permission request (`permissions: \"app\"`) as the runtime reports it, and its\ncancellation (the page navigated, the engine withdrew it). The handler set with\n{@linkcode WebViewHandle.setPermissionRequestHandler} answers it."
             },
             {
               "kind": "property",
@@ -57905,6 +58765,12 @@
             },
             {
               "kind": "method",
+              "name": "setPermissionRequestHandler",
+              "signature": "setPermissionRequestHandler(handler: WebViewPermissionHandler | null): void",
+              "doc": "Answer the view's permission requests (`permissions: \"app\"`) with `handler`, or `null` to\nrefuse every request at once (the default). The handler allows with `true`; anything else, a\nthrow, a rejection or no answer within 5 minutes refuses. A request cancelled before the\nanswer drops the answer. The raw `permission-request` event fires either way."
+            },
+            {
+              "kind": "method",
               "name": "close",
               "signature": "close(): Promise<void>",
               "doc": "Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the\nkeyboard hands it back to the app's page."
@@ -57992,6 +58858,80 @@
           "denextOnly": true
         },
         {
+          "name": "WebViewPermission",
+          "slug": "WebViewPermission",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermission = string",
+          "doc": "A permission a page in a web view asks for (\"camera\", \"microphone\", \"screen\", \"geolocation\", \"notifications\", \"midi\", \"pointer-lock\", \"storage-access\", \"sensors\", \"clipboard-read\", \"window-management\", \"local-fonts\", \"file-system\", \"multiple-downloads\", \"autoplay\"; the engine decides which it raises).",
+          "docFull": "A permission a page in a web view asks for (`\"camera\"`, `\"microphone\"`, `\"screen\"`,\n`\"geolocation\"`, `\"notifications\"`, `\"midi\"`, `\"pointer-lock\"`, `\"storage-access\"`, `\"sensors\"`,\n`\"clipboard-read\"`, `\"window-management\"`, `\"local-fonts\"`, `\"file-system\"`,\n`\"multiple-downloads\"`, `\"autoplay\"`; the engine decides which it raises).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissionHandler",
+          "slug": "WebViewPermissionHandler",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermissionHandler = (request: WebViewPermissionRequest) => boolean | Promise<boolean>",
+          "doc": "Answers a web view's permission requests: true allows, anything else refuses. A throw, a rejection or no answer within 5 minutes refuses.",
+          "docFull": "Answers a web view's permission requests: `true` allows, anything else refuses. A throw, a\nrejection or no answer within 5 minutes refuses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WebViewPermissionRequest",
+          "slug": "WebViewPermissionRequest",
+          "kind": "interface",
+          "signature": "interface WebViewPermissionRequest",
+          "doc": "A permission request as the handler gets it (WebViewPermissionHandler).",
+          "docFull": "A permission request as the handler gets it ({@linkcode WebViewPermissionHandler}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: number",
+              "doc": "The request's id (the runtime's; the raw `permission-request` events carry it)."
+            },
+            {
+              "kind": "property",
+              "name": "origin",
+              "signature": "readonly origin: string",
+              "doc": "The origin that asked (`\"https://example.com\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "permissions",
+              "signature": "readonly permissions: readonly WebViewPermission[]",
+              "doc": "What it asked for; one request may name several."
+            },
+            {
+              "kind": "property",
+              "name": "frame",
+              "signature": "readonly frame?: { readonly isMain: boolean; readonly origin?: string }",
+              "doc": "The frame that asked, where the engine says."
+            }
+          ]
+        },
+        {
+          "name": "WebViewPermissionRequestEvent",
+          "slug": "WebViewPermissionRequestEvent",
+          "kind": "typeAlias",
+          "signature": "type WebViewPermissionRequestEvent = { id: number; state: \"requested\"; origin: string; permissions: WebViewPermission[]; frame?: { isMain: boolean; origin?: string } } | { id: number; state: \"cancelled\" }",
+          "doc": "The raw permission-request event: a request, or its cancellation.",
+          "docFull": "The raw `permission-request` event: a request, or its cancellation.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WebViewPermissions",
           "slug": "WebViewPermissions",
           "kind": "interface",
@@ -58006,7 +58946,7 @@
             {
               "kind": "property",
               "name": "prompts",
-              "signature": "prompts?: \"deny\" | \"ask\"",
+              "signature": "prompts?: \"deny\" | \"ask\" | \"app\"",
               "doc": "Camera / microphone / geolocation / notification prompts (default `\"deny\"`)."
             },
             {
@@ -58829,6 +59769,12 @@
             },
             {
               "kind": "property",
+              "name": "menuSnapshot",
+              "signature": "readonly menuSnapshot: boolean | PlatformUnknown",
+              "doc": "{@linkcode getAppMenu} / {@linkcode getDockMenu} read the native menus back (`\"unknown\"` on a\nruntime that has the calls but does not say; `false` on one without them)."
+            },
+            {
+              "kind": "property",
               "name": "dockVisibility",
               "signature": "readonly dockVisibility: boolean",
               "doc": "{@linkcode setDockVisible} shows and hides the Dock icon (macOS)."
@@ -59529,6 +60475,30 @@
           "denextOnly": true
         },
         {
+          "name": "getAppMenu",
+          "slug": "getAppMenu",
+          "kind": "function",
+          "signature": "getAppMenu(): Promise<MenuSnapshotItem[] | null>",
+          "doc": "This window's application menu as the OS holds it now, read back from the native menu objects (for self-tests): what setAppMenu and the managed menus ended up as, with the items the OS or the runtime added (on macOS the menu bar this window shows while it is key). null with no menu, or where the runtime has no read-back (appCapabilities().menuSnapshot).",
+          "docFull": "This window's application menu as the OS holds it now, read back from the native menu objects\n(for self-tests): what {@linkcode setAppMenu} and the managed menus ended up as, with the items\nthe OS or the runtime added (on macOS the menu bar this window shows while it is key). `null`\nwith no menu, or where the runtime has no read-back (`appCapabilities().menuSnapshot`).",
+          "params": [],
+          "returns": "The menu's items, or null. Off desktop it rejects unavailable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "getDockMenu",
+          "slug": "getDockMenu",
+          "kind": "function",
+          "signature": "getDockMenu(): Promise<MenuSnapshotItem[] | null>",
+          "doc": "The Dock menu (macOS) as the OS holds it now, read back (for self-tests): the app's own items, then the pages' quick actions. null with none, off macOS, or where the runtime has no read-back.",
+          "docFull": "The Dock menu (macOS) as the OS holds it now, read back (for self-tests): the app's own items,\nthen the pages' quick actions. `null` with none, off macOS, or where the runtime has no\nread-back.",
+          "params": [],
+          "returns": "The menu's items, or null. Off desktop it rejects unavailable.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getLaunchAtLogin",
           "slug": "getLaunchAtLogin",
           "kind": "function",
@@ -59606,6 +60576,74 @@
           "returns": "The accelerators.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "MenuSnapshotItem",
+          "slug": "MenuSnapshotItem",
+          "kind": "interface",
+          "signature": "interface MenuSnapshotItem",
+          "doc": "One item of a menu read back from the OS (getApplicationMenu, getDockMenu; for self-tests): what the native menu holds now, the items the OS or the runtime added included.",
+          "docFull": "One item of a menu read back from the OS (`getApplicationMenu`, `getDockMenu`; for\nself-tests): what the native menu holds now, the items the OS or the runtime added included.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type: \"item\" | \"submenu\" | \"separator\"",
+              "doc": "An item, a submenu or a separator."
+            },
+            {
+              "kind": "property",
+              "name": "label",
+              "signature": "readonly label: string",
+              "doc": "The title the native item shows."
+            },
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id?: string",
+              "doc": "A custom item's id."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "readonly role?: string",
+              "doc": "The role an item was built from."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled: boolean",
+              "doc": "Selectable."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked: boolean",
+              "doc": "Shows a checkmark."
+            },
+            {
+              "kind": "property",
+              "name": "visible",
+              "signature": "readonly visible: boolean",
+              "doc": "Shown."
+            },
+            {
+              "kind": "property",
+              "name": "accelerator",
+              "signature": "readonly accelerator?: string",
+              "doc": "The key the native item is bound to, in canonical form (`\"Ctrl+Alt+Shift+Super+<Key>\"` with\nthe modifiers present; Command is `Super`)."
+            },
+            {
+              "kind": "property",
+              "name": "submenu",
+              "signature": "readonly submenu?: readonly MenuSnapshotItem[]",
+              "doc": "A submenu's items."
+            }
+          ]
         },
         {
           "name": "onAppCapabilitiesChanged",
@@ -65952,7 +66990,7 @@
           "kind": "function",
           "signature": "onQuickAction(callback: (id: string) => void): () => void",
           "doc": "Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.",
-          "docFull": "Call `callback` with the `id` of each quick action the user chooses, including the one that\ncold-started the app: the shell keeps that until the first listener, so subscribe early (a\nroot layout or the app shell); only the subscribers present when it is handed over see it.\nOutside the native shell it does nothing.\n\nOn iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`\nin an app without scenes), which `denext mobile add quick-actions` wires. In a Deno Desktop\nwindow it reports the Dock-menu items chosen (macOS).",
+          "docFull": "Call `callback` with the `id` of each quick action the user chooses, including the one that\ncold-started the app: the shell keeps that until the first listener, so subscribe early (a\nroot layout or the app shell); only the subscribers present when it is handed over see it.\nOutside the native shell it does nothing.\n\nOn iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`\nin an app without scenes), which `denext mobile add quick-actions` wires. In a Deno Desktop\nwindow it reports the page's Dock-menu items chosen (macOS): each choice reaches one page only,\nthe key window's if it subscribed, else the page of the window focused most recently that did.",
           "params": [
             {
               "name": "callback",
@@ -68045,6 +69083,76 @@
               "name": "icon",
               "signature": "readonly icon?: string | { readonly ios?: string; readonly android?: string }",
               "doc": "The icon: an SF Symbol or asset-catalogue image name on iOS, a drawable resource name on\nAndroid. A string is used on both platforms; `{ ios, android }` names each. On iOS an\nicon shows only together with a `subtitle`."
+            },
+            {
+              "kind": "property",
+              "name": "enabled",
+              "signature": "readonly enabled?: boolean",
+              "doc": "Selectable (default `true`): the Dock menu only (ignored on iOS / Android)."
+            },
+            {
+              "kind": "property",
+              "name": "checked",
+              "signature": "readonly checked?: boolean",
+              "doc": "A checkmark next to the title: the Dock menu only (ignored on iOS / Android)."
+            }
+          ]
+        },
+        {
+          "name": "QuickActionEntry",
+          "slug": "QuickActionEntry",
+          "kind": "typeAlias",
+          "signature": "type QuickActionEntry = QuickAction | QuickActionSeparator | QuickActionSubmenu",
+          "doc": "One entry of setQuickActions: an action, a separator or a submenu.",
+          "docFull": "One entry of {@linkcode setQuickActions}: an action, a separator or a submenu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "QuickActionSeparator",
+          "slug": "QuickActionSeparator",
+          "kind": "interface",
+          "signature": "interface QuickActionSeparator",
+          "doc": "A separator line between quick actions: the Dock menu only (left out on iOS / Android).",
+          "docFull": "A separator line between quick actions: the Dock menu only (left out on iOS / Android).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "type",
+              "signature": "readonly type: \"separator\"",
+              "doc": "Always `\"separator\"`."
+            }
+          ]
+        },
+        {
+          "name": "QuickActionSubmenu",
+          "slug": "QuickActionSubmenu",
+          "kind": "interface",
+          "signature": "interface QuickActionSubmenu",
+          "doc": "A submenu of quick actions: the Dock menu only (iOS and Android have none, so setQuickActions rejects one there with a TypeError).",
+          "docFull": "A submenu of quick actions: the Dock menu only (iOS and Android have none, so\n`setQuickActions` rejects one there with a `TypeError`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "title",
+              "signature": "readonly title: string",
+              "doc": "The submenu's label."
+            },
+            {
+              "kind": "property",
+              "name": "submenu",
+              "signature": "readonly submenu: readonly QuickActionEntry[]",
+              "doc": "Its entries."
             }
           ]
         },
@@ -69336,16 +70444,16 @@
           "name": "setQuickActions",
           "slug": "setQuickActions",
           "kind": "function",
-          "signature": "setQuickActions(actions: readonly QuickAction[]): Promise<void>",
+          "signature": "setQuickActions(actions: readonly QuickActionEntry[]): Promise<void>",
           "doc": "Replace the app's home-screen quick actions (long-press on the icon).",
-          "docFull": "Replace the app's home-screen quick actions (long-press on the icon).\n\nInside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile\nadd quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list\nremoves them all. iOS shows at most four; Android's launcher shows about four. In a Deno\nDesktop window, the Dock icon's menu on macOS (titles only); nothing on Windows and Linux.\nElsewhere it does nothing.",
+          "docFull": "Replace the app's home-screen quick actions (long-press on the icon).\n\nInside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile\nadd quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list\nremoves them all. iOS shows at most four; Android's launcher shows about four. There a\nseparator is left out, `enabled` and `checked` are ignored, and a submenu is refused.\n\nIn a Deno Desktop window, the Dock icon's menu on macOS: titles (no subtitles or icons),\nseparators (`{ type: \"separator\" }`), submenus (`{ title, submenu }`), and `enabled` /\n`checked`; nothing on Windows and Linux. The page's entries follow the app's own Dock items\n(`setDockMenu` / `runDesktop({ dockMenu })` in `desktop.ts`) after a separator, and an id one of\nthose uses is refused (`validation`). A choice reaches one page's {@linkcode onQuickAction} (the\nkey window's if it listens, else the one focused most recently that does) and the backend's\n`onDockMenuItem`. Elsewhere it does nothing.",
           "params": [
             {
               "name": "actions",
-              "doc": "The actions, in display order."
+              "doc": "The entries, in display order."
             }
           ],
-          "returns": "A promise that settles once the OS has them. It rejects with a TypeError for an action without an id or title (before anything changes).",
+          "returns": "A promise that settles once the OS has them. It rejects with a TypeError for an action without an id or title, a submenu without a title, or a repeated id (before anything changes), and on iOS / Android for a submenu.",
           "examples": [
             "```ts\nimport { setQuickActions } from \"denext/mobile\";\n\nawait setQuickActions([\n  { id: \"new-note\", title: \"New note\", subtitle: \"Start a draft\", icon: \"square.and.pencil\" },\n  { id: \"search\", title: \"Search\" },\n]);\n```"
           ],

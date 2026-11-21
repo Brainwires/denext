@@ -280,6 +280,8 @@ export interface WindowRegistry {
    * one opened last; `undefined` with no app window open.
    */
   keyWindow(): RegisteredWindow | undefined;
+  /** The open windows' ids, the one that had the focus last first (those never focused left out). */
+  focusOrder(): readonly string[];
   /** Load another app path in window `id` (a keyed window's session follows); unknown id: nothing. */
   navigate(id: string, path: string): void;
   /** The open windows as the lifecycle hooks see them. */
@@ -1319,6 +1321,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     interceptClose: (id, event) => interceptClose(st, id, event),
     byKey: (key) => byKey(st, key),
     keyWindow: () => keyWindow(st),
+    focusOrder: () => st.focusOrder.filter((id) => st.windows.has(id)),
     navigate: (id, path) => {
       const entry = st.windows.get(id);
       if (entry) navigateWindow(st, entry, path);

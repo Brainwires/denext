@@ -682,7 +682,7 @@ is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `
 `denext/desktop/window` shares picked / app-folder files). Embedded web views: `createWebView({ url, bounds, partition?, allowPopups?, downloads?, permissions? })`
 from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts another http(s) site in a native view over the page (no bridge, own storage;
 `attachWebView(view, element)` follows an element's visible part; it draws above all HTML, so swap in `capture({ format: "jpeg", scale: 1 })` as an `<img>` + `setVisible(false)` under an overlay;
-`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `downloads: "app"` hands each download to `view.on("will-download", item => …)` (`item.save({ directory: "documents", path })` or a writable picked handle from a page, never an absolute path; an absolute path in `desktop.ts`; `saveAs`/`cancel`/`pause`/`resume`, `item.on("updated" | "done")`, `reveal()`; with no listener it is cancelled), `permissions: "app"` asks `view.setPermissionRequestHandler(req => boolean)` (a throw or 5 minutes without an answer refuses; none set refuses all); `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`, `downloadEvents` / `downloadPause` / `permissionRequests` included). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
 "mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` where
@@ -691,11 +691,16 @@ icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app s
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
 focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
-default keeps it in, invisible, at full timer rate) and the overlay calls
+default keeps it in, invisible, at full timer rate; on macOS an `overlay: true, focusable: false` panel shown again never takes the
+keyboard, `focusWindow()` makes it key without activating the app, `setVisibleOnAllWorkspaces(false)` keeps it on one Space) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
-`setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
+`setQuickActions` sets the macOS Dock menu (separators, `{ title, submenu }`, `checked` / `enabled` there; a click reaches one listening page);
+the backend's own Dock items come first: `runDesktop({ dockMenu, onDockMenuItem })` / `app.setDockMenu([{ id, label }, { type: "separator" }, { label, submenu }])`
+/ `host.onDockMenuItem(fn)` (every Dock click once, `(id, { keyWindow })`, no window open too; ids unique across both), `app.windows.closed()`
+(the reopen list), and for self-tests `getApplicationMenu(window?)` / `getDockMenu()` (host, result) and `getAppMenu()` / `getDockMenu()`
+in `denext/desktop/app` read the native menus back (`appCapabilities().menuSnapshot`). More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
 windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
 `{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app
@@ -3068,7 +3073,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopAppDirs` — The three per-app storage roots a desktop app uses (absolute paths, not created here).
 - `interface DesktopAppMenuItemContext` — What the backend's handlers (runDesktop({ onAppMenuItem }), an extension's host.onAppMenuItem) get with a click on a custom menu's item or a window's own Window-menu item.
 - `type DesktopAppMenuItemHandler = (id: string, ctx: DesktopAppMenuItemContext) => void | Promise<void>` — A handler of custom-menu clicks: the item's id and the click's context.
-- `interface DesktopAppMenusApi` — The custom menus as the backend drives them (runDesktop's result, an extension's host). Each call throws a DesktopCapError (validation, not_found for a window not open, unsupported where the runtime sets no application menu).
+- `interface DesktopAppMenusApi` — The custom menus, the Dock menu and the menu read-back as the backend drives them (runDesktop's result, an extension's host). Each call throws a DesktopCapError (validation, not_found for a window not open, unsupported where the runtime sets no application menu).
 - `desktopAppName(entryUrl?: string): Promise<string>` — The app's name for artifact paths: DENEXT_APP_NAME, else desktop.app.name in the project's denext.config.ts, else deno.json desktop.app.name, else "app".
 - `interface DesktopAppSettings` — The app-level settings of desktop.app that runDesktop applies at launch.
 - `interface DesktopAppSyncReport` — What syncDesktopAppConfig did.
@@ -3091,6 +3096,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopDenoFlagArgs(entryUrl: string): Promise<string[]>` — The project's desktop.denoFlags, checked, for a scaffolded packaging script: reads denext.config.ts next to entryUrl's folder (a script in scripts/ → ../), like desktopPackageFlags. A project without a config gets []; a refused flag throws.
 - `desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string, devBuild?: boolean): DesktopDevProxyDecision` — Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath), or devBuild (the mark only a denext desktop dev build compiles in) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case, and injectToken there requires the dev server's per-run session token on the URL (desktop dev --lan puts it there), so the window's page gets its bridge only from a dev server that gates its other peers. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.
 - `type DesktopDevProxyDecision = { readonly proxy: false; readonly refused?: string } | { readonly proxy: true; readonly target: string; readonly allowNonLoopback: boolean; readonly injectToken: boolean }` — The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.
+- `type DesktopDockMenuItem = { readonly id: string; readonly label: string; readonly enabled?: boolean; readonly checked?: boolean } | { readonly type: "separator" } | { readonly label: string; readonly submenu: readonly DesktopDockMenuItem[] }` — One entry of the backend's Dock menu (macOS; setDockMenu on runDesktop's result and an extension's host, runDesktop({ dockMenu })): an item (id, label, optionally enabled and checked), a separator, or a submenu (label, submenu). Ids are unique across every level and across the pages' quick actions merged into the same menu.
+- `type DesktopDockMenuItemHandler = (id: string, ctx: DesktopWindowMenuItemContext) => void | Promise<void>` — A handler of the Dock menu's clicks (runDesktop({ onDockMenuItem }), onDockMenuItem on its result and on an extension's host): the item's id and the key window ({ id, key? }, or null with no window open).
 - `interface DesktopDockReopenContext` — What runDesktop({ onDockReopen }) receives: the keyed windows the user closed.
 - `interface DesktopDockReopenEvent` — A Dock icon click as DesktopWindowsSetup.onDockReopen reports it.
 - `type DesktopDockReopenHandler = (ctx: DesktopDockReopenContext) => DesktopOpenWindowOptions | undefined` — What the macOS Dock icon's click opens when no window is showing (runDesktop({ onDockReopen })): the open options, or undefined for nothing at all. Without it the click reopens the most recently closed keyed window, else shows the main window.
@@ -3218,6 +3225,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface MacosCodesignOptions` — Options for macosCodesignArgs.
 - `macosSigningEntitlements(defaults: Readonly<Record<string, boolean>>, options?: MacosSigningEntitlementsOptions): Promise<string>` — Write the entitlements to sign one piece of code with under the Hardened Runtime: the explicit plist (or, without one, what current is signed with now), plus each of defaults it does not set. A key the base sets, to false too, is kept as set: allow-jit = false in DENEXT_ENTITLEMENTS turns the JIT default off.
 - `interface MacosSigningEntitlementsOptions` — Options for macosSigningEntitlements.
+- `interface MenuSnapshotItem` — One item of a menu read back from the OS (getApplicationMenu, getDockMenu; for self-tests): what the native menu holds now, the items the OS or the runtime added included.
 - `type NotaryCredentials = { readonly kind: "keychain-profile"; readonly profile: string } | { readonly kind: "api-key"; readonly key: string; readonly keyId: string; readonly issuer?: string }` — How xcrun notarytool authenticates: a keychain profile, or an App Store Connect API key.
 - `notarytoolSubmitArgs(file: string, credentials: NotaryCredentials, json?: boolean): string[]` — The xcrun notarytool submit … --wait argv for file (a .zip, .dmg or .pkg).
 - `interface OwnedResourceAddOptions` — Options for OwnedResources.add.
@@ -3280,11 +3288,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }` — One OS's tray icon: the icon, or the icon with its dark-mode variant.
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
+- `type WebViewDownloadAction = "save" | "saveAs" | "cancel" | "pause" | "resume"` — What a download item's control calls send the runtime.
+- `interface WebViewDownloadDestination` — Where WebViewDownloadItem.save writes a download from the page: a file in one of the app's folders (directory "data", "cache" or "documents", path relative to it, missing folders created), or a writable picked item ({ picked: handle } from saveFile — the file itself, path "" — or from pickFolder, path relative to the folder). The same rules as the fs capability's and startFileDrag's: no absolute path, no .. or symlink out of the folder, never the runtime's own folders, and a read-only handle refused.
+- `interface WebViewDownloadDone` — What a download item's done listeners get: how it ended.
+- `interface WebViewDownloadEvent` — One of the runtime's download events (WebViewEventMap's download): every event of one download carries the same id, url and filename.
+- `type WebViewDownloadInterruptReason = "network" | "server" | "file" | "crash" | "failed"` — Why a download was interrupted.
+- `interface WebViewDownloadItem` — A download of a view created with downloads: "app" (the will-download event): its identity, its live state, and the calls that decide and control it. Each call resolves once the runtime took it and rejects with the desktop error shape: validation (a download that is over, an action its state does not take, a bad destination), unsupported (pause / resume where webViewCapabilities().downloadPause is false), forbidden (a destination outside the rules), closed (its view closed), failed.
+- `type WebViewDownloadState = "requested" | "progressing" | "completed" | "cancelled" | "interrupted"` — Where a download is in its life.
 - `interface WebViewEventMap` — The events a web view fires (WebViewHandle.on) and their payloads.
 - `type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }` — One forwardKeys entry: an accelerator ("CmdOrCtrl+W"), or { accelerator, beforeMenu }.
 - `interface WebViewHandle` — A web view (from createWebView, or win.createWebView in desktop.ts).
 - `interface WebViewKeyEvent` — A key event of a web view (WebViewEventMap's keydown / keyup).
 - `type WebViewLoadState = "loading" | "interactive" | "complete" | "failed"` — A web view's last load state.
+- `type WebViewPermission = string` — A permission a page in a web view asks for ("camera", "microphone", "screen", "geolocation", "notifications", "midi", "pointer-lock", "storage-access", "sensors", "clipboard-read", "window-management", "local-fonts", "file-system", "multiple-downloads", "autoplay"; the engine decides which it raises).
+- `type WebViewPermissionHandler = (request: WebViewPermissionRequest) => boolean | Promise<boolean>` — Answers a web view's permission requests: true allows, anything else refuses. A throw, a rejection or no answer within 5 minutes refuses.
+- `interface WebViewPermissionRequest` — A permission request as the handler gets it (WebViewPermissionHandler).
+- `type WebViewPermissionRequestEvent = { id: number; state: "requested"; origin: string; permissions: WebViewPermission[]; frame?: { isMain: boolean; origin?: string } } | { id: number; state: "cancelled" }` — The raw permission-request event: a request, or its cancellation.
 - `interface WebViewPermissions` — The object form of CreateWebViewOptions.permissions.
 - `interface WebViewState` — What WebViewHandle.state answers.
 - `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
@@ -3455,14 +3474,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface WebViewAnchor` — The slice of a DOM element attachWebView measures.
 - `interface WebViewAttachment` — What attachWebView returns: call it (or its detach) to stop following; relayout() measures the element again at the next animation frame, for a move no event reports.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
-- `webViewCapabilities(): Promise<WebViewCapabilities>` — Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.
+- `webViewCapabilities(): Promise<WebViewCapabilities>` — Whether this window can host web views, on which engine, and which of their features work (capture, evaluate, zOrder, zoom, find, devTools, contextMenu, print, clipboard, menuAccelerators, unhandledKeys, forwardKeys, blur, keyUp, forwardKeysBeforeMenu, downloadEvents, downloadPause, permissionRequests). On a runtime without web views it resolves supported: false and every feature false; a feature the engine or runtime lacks is false, and its call rejects unsupported.
 - `interface WebViewCapabilities` — What webViewCapabilities answers.
+- `type WebViewDownloadAction = "save" | "saveAs" | "cancel" | "pause" | "resume"` — What a download item's control calls send the runtime.
+- `interface WebViewDownloadDestination` — Where WebViewDownloadItem.save writes a download from the page: a file in one of the app's folders (directory "data", "cache" or "documents", path relative to it, missing folders created), or a writable picked item ({ picked: handle } from saveFile — the file itself, path "" — or from pickFolder, path relative to the folder). The same rules as the fs capability's and startFileDrag's: no absolute path, no .. or symlink out of the folder, never the runtime's own folders, and a read-only handle refused.
+- `interface WebViewDownloadDone` — What a download item's done listeners get: how it ended.
+- `interface WebViewDownloadEvent` — One of the runtime's download events (WebViewEventMap's download): every event of one download carries the same id, url and filename.
+- `type WebViewDownloadInterruptReason = "network" | "server" | "file" | "crash" | "failed"` — Why a download was interrupted.
+- `interface WebViewDownloadItem` — A download of a view created with downloads: "app" (the will-download event): its identity, its live state, and the calls that decide and control it. Each call resolves once the runtime took it and rejects with the desktop error shape: validation (a download that is over, an action its state does not take, a bad destination), unsupported (pause / resume where webViewCapabilities().downloadPause is false), forbidden (a destination outside the rules), closed (its view closed), failed.
+- `type WebViewDownloadState = "requested" | "progressing" | "completed" | "cancelled" | "interrupted"` — Where a download is in its life.
 - `type WebViewEngine = "cef" | "wkwebview" | "webview2" | "webkitgtk"` — An engine that hosts web views.
 - `interface WebViewEventMap` — The events a web view fires (WebViewHandle.on) and their payloads.
 - `type WebViewForwardKey = string | { readonly accelerator: string; readonly beforeMenu?: boolean }` — One forwardKeys entry: an accelerator ("CmdOrCtrl+W"), or { accelerator, beforeMenu }.
 - `interface WebViewHandle` — A web view (from createWebView, or win.createWebView in desktop.ts).
 - `interface WebViewKeyEvent` — A key event of a web view (WebViewEventMap's keydown / keyup).
 - `type WebViewLoadState = "loading" | "interactive" | "complete" | "failed"` — A web view's last load state.
+- `type WebViewPermission = string` — A permission a page in a web view asks for ("camera", "microphone", "screen", "geolocation", "notifications", "midi", "pointer-lock", "storage-access", "sensors", "clipboard-read", "window-management", "local-fonts", "file-system", "multiple-downloads", "autoplay"; the engine decides which it raises).
+- `type WebViewPermissionHandler = (request: WebViewPermissionRequest) => boolean | Promise<boolean>` — Answers a web view's permission requests: true allows, anything else refuses. A throw, a rejection or no answer within 5 minutes refuses.
+- `interface WebViewPermissionRequest` — A permission request as the handler gets it (WebViewPermissionHandler).
+- `type WebViewPermissionRequestEvent = { id: number; state: "requested"; origin: string; permissions: WebViewPermission[]; frame?: { isMain: boolean; origin?: string } } | { id: number; state: "cancelled" }` — The raw permission-request event: a request, or its cancellation.
 - `interface WebViewPermissions` — The object form of CreateWebViewOptions.permissions.
 - `interface WebViewState` — What WebViewHandle.state answers.
 - `type WindowBackdrop = "none" | "mica" | "acrylic" | "tabbed" | "vibrancy"` — A backdrop behind the page, showing where the page's background is transparent: Windows 11's "mica", "acrylic", "tabbed", or macOS "vibrancy"; "none" removes it.
@@ -3502,12 +3532,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMenuUpdate` — What setMenu(menuId, update) sets: the entries, and optionally a new label and place.
 - `interface DesktopWindowMenuAppItem` — One of a window's own items in the Window menu (setWindowMenuAppItems): shown below the window list while that window is key.
 - `getActivationPolicy(): Promise<ActivationPolicy | null>` — The app's macOS activation policy.
+- `getAppMenu(): Promise<MenuSnapshotItem[] | null>` — This window's application menu as the OS holds it now, read back from the native menu objects (for self-tests): what setAppMenu and the managed menus ended up as, with the items the OS or the runtime added (on macOS the menu bar this window shows while it is key). null with no menu, or where the runtime has no read-back (appCapabilities().menuSnapshot).
+- `getDockMenu(): Promise<MenuSnapshotItem[] | null>` — The Dock menu (macOS) as the OS holds it now, read back (for self-tests): the app's own items, then the pages' quick actions. null with none, off macOS, or where the runtime has no read-back.
 - `getLaunchAtLogin(): Promise<LaunchAtLoginState>` — Whether the app starts when the user logs in. Needs denext desktop add launch-at-login and denext's pinned runtime.
 - `getTray(): Promise<AppTray | null>` — The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window's page — while that page runs: a window that does not show may have its page suspended (WKWebView on macOS) until it shows again, so the clicks a tray-first app must always answer (its menu items, a double click) go in desktop.ts instead (app.tray.onMenuItem, runDesktop({ tray: { onMenuItem } })).
 - `hideTrayPanel(): Promise<boolean>` — Hide the backend tray's panel.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
 - `type LaunchAtLoginState = "enabled" | "disabled" | "requires-approval" | "not-supported"` — Whether the app starts at login. requires-approval: registered, but the user has to allow it in the system settings (macOS Login Items, or a Windows startup entry the user turned off).
 - `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
+- `interface MenuSnapshotItem` — One item of a menu read back from the OS (getApplicationMenu, getDockMenu; for self-tests): what the native menu holds now, the items the OS or the runtime added included.
 - `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. A runtime without Deno.desktop.platformFeatures() never calls it.
 - `onAppMenuItem(handler: (id: string, info: AppMenuClickInfo) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator): the page's own items (setAppMenu), the custom menus' items (desktop.menu.menus, setMenu) and this window's own Window-menu items (setWindowMenuAppItems; only this window's page hears those). info says which (kind), the key window when it was chosen, a custom item's menu and a checkbox's or radio item's state after the click (the menu shows it already).
 - `onDockReopen(handler: (event: { readonly hasVisibleWindows: boolean }) => void): () => void` — Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the click first reopens the most recently closed keyed window (its key, path and frame), else shows the main window, unless runDesktop({ onDockReopen }) in desktop.ts decides what opens; hasVisibleWindows says whether a window was showing.
@@ -3848,6 +3881,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PushTap` — A tap on (or an action of) a notification.
 - `interface PushTapOptions` — Options for onPushTapped and usePushTapped.
 - `interface QuickAction` — One home-screen quick action.
+- `type QuickActionEntry = QuickAction | QuickActionSeparator | QuickActionSubmenu` — One entry of setQuickActions: an action, a separator or a submenu.
+- `interface QuickActionSeparator` — A separator line between quick actions: the Dock menu only (left out on iOS / Android).
+- `interface QuickActionSubmenu` — A submenu of quick actions: the Dock menu only (iOS and Android have none, so setQuickActions rejects one there with a TypeError).
 - `readClipboard(options?: ReadClipboardOptions): Promise<string>` — Read the clipboard: its text by default, or the HTML / image options.format asks for.
 - `interface ReadClipboardOptions` — Options for readClipboard.
 - `readFile(path: string, options?: ReadFileOptions): Promise<string>` — Read a file.
@@ -3904,7 +3940,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setNotificationCategories(categories: readonly NotificationCategory[]): Promise<void>` — Register the app's notification categories: the action buttons a notification shows when its categoryId names one. The call **replaces** every category registered before, so pass the full set each time.
 - `setNowPlaying(info: NowPlayingInfo): Promise<void>` — Show what is playing on the lock screen, in Control Center / the media notification, and on headsets and cars, and offer the controls in info.controls there (they reach onMediaControl). Each call merges info into the last one, so after the first a page sends what changed: { playing: false, position } on pause, a new title for the next track. Calls that only restate the clock (a timeupdate while playing) are not sent on: the OS runs the position on from the rate.
 - `setPrivacyScreen(enabled: boolean, options?: PrivacyScreenOptions): Promise<boolean>` — Turn the privacy screen on or off for the whole app.
-- `setQuickActions(actions: readonly QuickAction[]): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
+- `setQuickActions(actions: readonly QuickActionEntry[]): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
 - `setSystemBars(options: SystemBarsOptions): Promise<void>` — Style, hide or show the system bars.
 - `setWidgetData(kind: string, data: unknown, options?: SetWidgetDataOptions): Promise<void>` — Store data as the snapshot widget kind renders, and refresh that kind's widgets.
 - `interface SetWidgetDataOptions` — Options for setWidgetData.

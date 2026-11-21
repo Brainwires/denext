@@ -3028,8 +3028,10 @@ onCloseRequested(({ reason }) => {
         <code>{"{ key, url, title? }"}</code>) and answers the window to open, or{" "}
         <code>undefined</code> for nothing. With a window showing the click only activates the app.
         {" "}
-        <code>app.onDockReopen(fn)</code> on what <code>runDesktop()</code>{" "}
-        resolves with hears every click, with{" "}
+        <code>app.windows.closed()</code> reads the same list at any time (for a{" "}
+        <a href="#desktop-dock-menu">Dock menu</a> of them, say). <code>app.onDockReopen(fn)</code>
+        {" "}
+        on what <code>runDesktop()</code> resolves with hears every click, with{" "}
         <code>hasVisibleWindows</code>, and returns the unsubscribe. A{" "}
         <a href="#desktop-second-instance">second launch</a>{" "}
         with no window showing reopens the same way.
@@ -3137,6 +3139,20 @@ DENEXT_DESKTOP_HEADLESS=1 LAUFEY_HEADLESS=1 LAUFEY_ACTIVATION_POLICY=accessory \
         compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
         list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
         recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <p id="desktop-overlay-panels">
+        On macOS a window opened with <code>overlay: true, focusable: false</code>{" "}
+        is a non-activating panel where the runtime reports{" "}
+        <code>nonActivating</code>: showing it again after a hide (<code>showWindow()</code>,{" "}
+        <code>show()</code> on its <code>desktop.ts</code>{" "}
+        handle) never takes the keyboard from the app the user is typing in, and denext never
+        focuses it on its own. <code>focusWindow()</code>{" "}
+        on such a panel makes it the key window (it takes typing) without activating the app or
+        bringing the app&apos;s other windows forward: call it when the user clicks into a field of
+        the panel. The panel joins every Space by itself;{" "}
+        <code>setVisibleOnAllWorkspaces(false)</code> keeps it on the current one. The{" "}
+        <a href="#desktop-backend-tray">tray panel</a>{" "}
+        is different: it is meant to take typing, and takes the keyboard when it opens.
       </p>
       <p>
         On Wayland that is the only way a window stays on top, joins every workspace, keeps off the
@@ -3857,11 +3873,14 @@ if (caps.supported) {
           {" "}
           <code>downloads</code> — <code>"deny"</code> (default) cancels them, <code>"ask"</code>
           {" "}
-          shows the OS save panel, <code>"browser"</code> hands the URL to the system browser.{" "}
+          shows the OS save panel, <code>"browser"</code> hands the URL to the system browser,{" "}
+          <code>"app"</code> hands each download to the app (see{" "}
+          <a href="#desktop-web-views-downloads">Downloads and permission requests</a>).{" "}
           <code>permissions</code> — <code>"deny"</code>{" "}
           (default) refuses camera, microphone, location and notification requests without a prompt,
           {" "}
-          <code>"ask"</code> asks the user, naming the site; the object form{" "}
+          <code>"ask"</code> asks the user, naming the site, <code>"app"</code>{" "}
+          asks the view&apos;s permission handler; the object form{" "}
           <code>{`{ prompts, clipboardRead, clipboardWrite }`}</code>{" "}
           also sets the clipboard (see below). <code>contextMenu</code> — <code>"native"</code>{" "}
           (default) or <code>"app"</code>. <code>userAgent</code>{" "}
@@ -3878,7 +3897,10 @@ if (caps.supported) {
           <code>"blocked"</code>, <code>"aborted"</code> or <code>"failed"</code>),{" "}
           <code>console</code>, <code>focus-change</code>, <code>new-window</code>,{" "}
           <code>find-result</code>, <code>context-menu</code>, <code>keydown</code>,{" "}
-          <code>keyup</code> (see <a href="#desktop-web-views-keys">Keys and focus</a>) and{" "}
+          <code>keyup</code> (see <a href="#desktop-web-views-keys">Keys and focus</a>),{" "}
+          <code>will-download</code>, <code>download</code> and <code>permission-request</code> (see
+          {" "}
+          <a href="#desktop-web-views-downloads">Downloads and permission requests</a>) and{" "}
           <code>closed</code>, which comes once, last.
         </li>
         <li>
@@ -3951,12 +3973,144 @@ if (caps.supported) {
           <code>find</code>, <code>devTools</code>, <code>contextMenu</code>, <code>print</code>,
           {" "}
           <code>clipboard</code>, <code>menuAccelerators</code>, <code>unhandledKeys</code>,{" "}
-          <code>forwardKeys</code>, <code>blur</code>, <code>keyUp</code> and{" "}
-          <code>forwardKeysBeforeMenu</code> work (a feature reported <code>false</code> rejects
+          <code>forwardKeys</code>, <code>blur</code>, <code>keyUp</code>,{" "}
+          <code>forwardKeysBeforeMenu</code>, <code>downloadEvents</code>,{" "}
+          <code>downloadPause</code> and <code>permissionRequests</code> work (a feature reported
           {" "}
+          <code>false</code> rejects{" "}
           <code>unsupported</code>). On a runtime without web views it answers{" "}
           <code>supported: false</code> and <code>createWebView</code> rejects{" "}
           <code>unsupported</code>: keep an iframe path behind that check.
+        </li>
+      </ul>
+      <h4 id="desktop-web-views-downloads">Downloads and permission requests</h4>
+      <p>
+        With <code>downloads: "app"</code>{" "}
+        each download the view&apos;s page starts comes to the app instead of a policy: the handle
+        fires <code>will-download</code>{" "}
+        once per download with its item, and nothing is written until the app answers it (
+        Electron&apos;s <code>will-download</code>). With <code>permissions: "app"</code> (or{" "}
+        <code>{`{ prompts: "app" }`}</code>) each camera, microphone, screen, location, notification
+        or other request goes to the handler set with{" "}
+        <code>view.setPermissionRequestHandler(handler)</code> (Electron&apos;s{" "}
+        <code>setPermissionRequestHandler</code>). Both need a runtime and engine that report them:
+        {" "}
+        <code>webViewCapabilities().downloadEvents</code>, <code>downloadPause</code> and{" "}
+        <code>permissionRequests</code>; elsewhere the create rejects <code>unsupported</code>.{" "}
+        <code>desktop.ts</code>&apos;s handle (
+        <code>win.createWebView</code>) has the same events and handler.
+      </p>
+      <Code lang="ts">
+        {`const view = await createWebView({
+  url: "https://files.example",
+  bounds,
+  downloads: "app",
+  permissions: "app",
+});
+view.on("will-download", async (item) => {
+  // item.id, url, filename (a bare name), mimeType?, totalBytes?
+  await item.save({ directory: "documents", path: \`Downloads/\${item.filename}\` });
+  item.on("updated", (i) => progress(i.receivedBytes, i.totalBytes, i.paused));
+  item.on("done", ({ state, reason }) => state === "completed" ? item.reveal() : warn(reason));
+});
+view.setPermissionRequestHandler(({ origin, permissions, frame }) =>
+  origin === "https://meet.example" && frame?.isMain !== false &&
+  permissions.every((p) => p === "camera" || p === "microphone")
+);`}
+      </Code>
+      <ul>
+        <li>
+          <strong>The item.</strong> <code>id</code>, <code>url</code>, <code>filename</code>{" "}
+          (the suggested name, already a bare file name), <code>mimeType</code> and{" "}
+          <code>totalBytes</code> when known, and live <code>receivedBytes</code>,{" "}
+          <code>state</code> (<code>"requested"</code>, <code>"progressing"</code>,{" "}
+          <code>"completed"</code>, <code>"cancelled"</code>, <code>"interrupted"</code>),{" "}
+          <code>path</code> (once decided), <code>paused</code> and <code>canResume</code>.{" "}
+          <code>save(target)</code>, <code>saveAs()</code>{" "}
+          (the OS save panel; dismissing it cancels), <code>cancel()</code>, <code>pause()</code>
+          {" "}
+          and <code>resume()</code> (also restarts an interrupted download whose{" "}
+          <code>canResume</code>{" "}
+          is true) each resolve once the runtime took them and reject with the desktop error shape:
+          {" "}
+          <code>validation</code>{" "}
+          (a download that is over, an action its state doesn&apos;t take, a bad target),{" "}
+          <code>forbidden</code>, <code>unsupported</code>, <code>closed</code>,{" "}
+          <code>failed</code>. <code>item.on("updated", fn)</code>{" "}
+          fires on each progress event, pause and resume; <code>item.on("done", fn)</code>{" "}
+          once, with <code>{`{ state, reason?, path? }`}</code> (<code>"completed"</code>,{" "}
+          <code>"cancelled"</code> or an <code>"interrupted"</code>{" "}
+          it can&apos;t resume from). Each returns the unsubscribe. The raw <code>download</code>
+          {" "}
+          event carries every runtime event of every download, for apps that want the stream.
+        </li>
+        <li>
+          <strong>Nothing waits forever.</strong> A download requested while nothing listens to{" "}
+          <code>will-download</code>{" "}
+          is cancelled at once. Closing the view cancels its downloads (their <code>done</code>{" "}
+          fires with <code>"cancelled"</code> before{" "}
+          <code>closed</code>). A reload or navigation of the window&apos;s page cancels its
+          views&apos; downloads still waiting for an answer and refuses their pending permission
+          requests: the page that would have answered is gone.
+        </li>
+        <li>
+          <strong>
+            What <code>save()</code> accepts from a page.
+          </strong>{" "}
+          Never an absolute path: <code>{`{ directory, path }`}</code> with the rules the{" "}
+          <code>fs</code> capability and <code>startFileDrag</code> use. <code>directory</code>{" "}
+          <code>"data"</code>, <code>"cache"</code> or <code>"documents"</code> with{" "}
+          <code>path</code> a file relative to that app folder (its missing folders are made; no
+          {" "}
+          <code>..</code> or symlink out of it, never the runtime&apos;s own folders); or{" "}
+          <code>{`{ picked: handle }`}</code> from <code>saveFile</code> (the file itself,{" "}
+          <code>path: ""</code>) or <code>pickFolder</code> (<code>path</code>{" "}
+          a file in that folder). A read-only handle (an opened or dropped file) is{" "}
+          <code>forbidden</code>. There is no Downloads-folder shortcut: use <code>saveAs()</code>,
+          {" "}
+          <code>saveFile</code> or a picked folder for a place of the user&apos;s choosing. In{" "}
+          <code>desktop.ts</code> <code>save(path)</code>{" "}
+          takes an absolute path (its folder must exist, a file there is replaced, and the app needs
+          write permission for it).
+        </li>
+        <li>
+          <strong>
+            <code>reveal()</code>
+          </strong>{" "}
+          shows the saved file in Finder, Explorer or the file manager; it rejects{" "}
+          <code>not_found</code> before the download has a path. From a page it is{" "}
+          <code>revealInFileManager</code> with its rules (the <code>shell</code> capability with
+          {" "}
+          <code>reveal</code>{" "}
+          on; a file in the app&apos;s folders, or the picked file it was saved to), so a file saved
+          through <code>saveAs()</code> or into a picked folder is <code>forbidden</code> there.
+          {" "}
+          <code>desktop.ts</code>&apos;s reveals any path.
+        </li>
+        <li>
+          <strong>The permission handler</strong> gets{" "}
+          <code>{`{ id, origin, permissions, frame? }`}</code> (<code>frame</code>:{" "}
+          <code>{`{ isMain, origin? }`}</code>{" "}
+          where the engine says which frame asked) and allows with <code>true</code>{" "}
+          (or a promise of it). Anything else, a throw, a rejection or no answer within 5 minutes
+          refuses; with no handler set (the default, or{" "}
+          <code>null</code>) every request is refused at once. The raw{" "}
+          <code>permission-request</code> event fires either way, and with{" "}
+          <code>state: "cancelled"</code>{" "}
+          when a request goes away unanswered (the page navigated, the engine withdrew it): an
+          answer that comes later is dropped. An allowed camera, microphone or screen capture still
+          needs the OS&apos;s own consent for the app (on macOS its camera / microphone prompt and
+          usage strings).
+        </li>
+        <li>
+          <strong>Per engine.</strong> <code>pause()</code> / <code>resume()</code>{" "}
+          work on CEF and WebView2 only (<code>downloadPause</code>). WKWebView (macOS) raises only
+          camera and microphone requests. WebKitGTK (Linux) never says which frame asked, and its
+          download events need WebKitGTK 2.40 or later. CEF (Chromium) remembers an allowed or
+          refused prompted permission per origin in the view&apos;s partition (camera, microphone
+          and screen are asked every time), and starts receiving a waiting download into a temporary
+          file of its own before the app answers. WebView2 never raises a request for screen
+          capture: it stays refused.
         </li>
       </ul>
       <h4 id="desktop-web-views-stacking">How web views stack and overlap</h4>
@@ -4512,11 +4666,76 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>"title"</code>, with <code>badgeReason</code>). <code>bounce</code>{" "}
           bounces the Dock icon, flashes the taskbar button or marks the window urgent.
         </li>
-        <li>
+        <li id="desktop-dock-menu">
           The Dock menu is <code>denext/mobile</code>&apos;s <code>setQuickActions</code> /{" "}
           <code>onQuickAction</code>: the same calls that set an iOS or Android app&apos;s
           home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
-          none, and the call does nothing there).
+          none, and the call does nothing there). On the Dock an entry may also be a separator (
+          <code>{`{ type: "separator" }`}</code>), a submenu (<code>{`{ title, submenu }`}</code>)
+          or a disabled or checked action (<code>enabled: false</code>,{" "}
+          <code>checked: true</code>); on iOS and Android a separator is left out,{" "}
+          <code>enabled</code> / <code>checked</code> are ignored and a submenu is refused (a{" "}
+          <code>TypeError</code>). A choice reaches one page only: the key window&apos;s if it
+          listens with{" "}
+          <code>onQuickAction</code>, else the page of the window focused most recently that does.
+        </li>
+        <li>
+          The backend has a Dock menu of its own: <code>setDockMenu(items | null)</code> and{" "}
+          <code>onDockMenuItem(fn)</code> on what <code>runDesktop()</code>{" "}
+          resolves with and on an extension&apos;s host, or{" "}
+          <code>runDesktop({`{ dockMenu, onDockMenuItem }`})</code>. Items are{" "}
+          <code>{`{ id, label, enabled?, checked? }`}</code>, <code>{`{ type: "separator" }`}</code>
+          {" "}
+          and <code>{`{ label, submenu }`}</code>; ids are non-empty and unique (a bad menu throws
+          {" "}
+          <code>validation</code>, and fails the launch from{" "}
+          <code>runDesktop</code>). The backend&apos;s items come first, then a separator and the
+          pages&apos; quick actions; an id both use is refused, whichever sets it second. Every
+          click on the Dock menu, the backend&apos;s items and the pages&apos; alike, reaches the
+          backend once, with <code>(id, {`{ keyWindow }`})</code> (<code>{`{ id, key? }`}</code>, or
+          {" "}
+          <code>null</code>{" "}
+          with no window open: the clicks arrive with none open too); the backend&apos;s own items
+          never reach a page. <code>app.windows.closed()</code>{" "}
+          lists the keyed windows the user closed, most recent first, as <code>onDockReopen</code>
+          {" "}
+          gets them, so a Dock menu can offer them:
+          <Code lang="ts">
+            {`// desktop.ts
+const app = await runDesktop({
+  dockMenu: [{ id: "new-window", label: "New Window" }],
+  onDockMenuItem: (id) => {
+    if (id === "new-window") return void open({ url: "/", key: crypto.randomUUID() });
+    const closed = app.windows.closed().find((c) => \`reopen:\${c.key}\` === id);
+    if (closed) open({ url: closed.url, key: closed.key });
+  },
+});
+// The closed windows as a submenu, refreshed as windows close.
+const refreshDock = () =>
+  app.setDockMenu([
+    { id: "new-window", label: "New Window" },
+    { label: "Reopen", submenu: app.windows.closed().map((c) =>
+      ({ id: \`reopen:\${c.key}\`, label: c.title ?? c.key })) },
+  ]);
+const open = (options) => app.windows.open(options).onClosed(refreshDock);`}
+          </Code>
+        </li>
+        <li id="desktop-menu-read-back">
+          The menus read back, for self-tests: <code>getApplicationMenu(window?)</code> and{" "}
+          <code>getDockMenu()</code> on{" "}
+          <code>runDesktop()</code>&apos;s result and an extension&apos;s host (a window by id or
+          app key, <code>not_found</code>{" "}
+          when none is open; left out, the macOS menu bar as it shows now), and{" "}
+          <code>getAppMenu()</code> (the calling window&apos;s) / <code>getDockMenu()</code> in{" "}
+          <code>denext/desktop/app</code>, answer the native menu as the OS holds it: items{" "}
+          <code>
+            {`{ type, label, id?, role?, enabled, checked, visible, accelerator?, submenu? }`}
+          </code>{" "}
+          (<code>MenuSnapshotItem</code>), the items the OS or the runtime added included.{" "}
+          <code>null</code> with no menu and where the runtime has no read-back:{" "}
+          <code>appCapabilities().menuSnapshot</code> is <code>true</code>, <code>false</code>, or
+          {" "}
+          <code>"unknown"</code> on a runtime that has the calls but does not say.
         </li>
         <li>
           <code>setDockVisible(false)</code>{" "}

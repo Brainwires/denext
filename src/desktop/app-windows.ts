@@ -55,11 +55,13 @@ import {
   type DesktopWindowMenuItemHandler,
   type WindowMenu,
 } from "./window-menu.ts";
-import type { DesktopMenuSettings } from "./menu-config.ts";
-import type {
-  DesktopAppMenuItemContext,
-  DesktopAppMenuItemHandler,
-  DesktopAppMenusApi,
+import type { DesktopDockMenuItem, DesktopMenuSettings } from "./menu-config.ts";
+import {
+  type DesktopAppMenuItemContext,
+  type DesktopAppMenuItemHandler,
+  type DesktopAppMenusApi,
+  type DesktopDockMenuItemHandler,
+  menuSnapshotOf,
 } from "./app-menus.ts";
 import type { SessionWindow } from "./window-store.ts";
 import type { CreateWebViewOptions, WebViewHandle } from "./webview.ts";
@@ -248,6 +250,12 @@ export interface DesktopWindows {
    * an open window with the key is not affected (it is in the next session if open at the quit).
    */
   forget(key: string): void;
+  /**
+   * The keyed windows the user closed (not a quit's), most recent first, each key once: the list
+   * Reopen Closed Window and the Dock's reopen click work from (what `runDesktop({ onDockReopen
+   * })` receives as `closed`), read now. Empty with none, or with no desktop runtime.
+   */
+  closed(): readonly ClosedWindow[];
 }
 
 /** What `runDesktop({ onDockReopen })` receives: the keyed windows the user closed. */
@@ -338,6 +346,10 @@ export interface DesktopWindowsOptions {
   readonly onWindowMenuItem?: DesktopWindowMenuItemHandler;
   /** `desktop.ts`'s handler of the custom menus' clicks (`runDesktop({ onAppMenuItem })`). */
   readonly onAppMenuItem?: DesktopAppMenuItemHandler;
+  /** `desktop.ts`'s Dock menu (`runDesktop({ dockMenu })`), set at launch. */
+  readonly dockMenu?: readonly DesktopDockMenuItem[];
+  /** `desktop.ts`'s handler of the Dock menu's clicks (`runDesktop({ onDockMenuItem })`). */
+  readonly onDockMenuItem?: DesktopDockMenuItemHandler;
   /** `desktop.ts`'s second launch (`runDesktop({ onSecondInstance })`). */
   readonly onSecondInstance?: DesktopSecondInstanceHandler;
   /** End the process (default `Deno.exit`). */
@@ -455,6 +467,8 @@ interface SetupState {
   readonly menuItemHandlers: Set<DesktopWindowMenuItemHandler>;
   /** The extensions' handlers of the custom menus' clicks. */
   readonly appMenuHandlers: Set<DesktopAppMenuItemHandler>;
+  /** The handlers of the Dock menu's clicks (`desktop.ts`'s result, the extensions'). */
+  readonly dockMenuHandlers: Set<DesktopDockMenuItemHandler>;
   /** The extensions' second-launch subscribers. */
   readonly secondInstanceHandlers: Set<DesktopSecondInstanceListener>;
   /** The Dock helper's presence (`desktop.app.dock: "while-window-open"`, macOS), once started. */
@@ -636,6 +650,7 @@ function windowsApi(st: SetupState): DesktopWindows {
     forget: (key) => {
       if (st.registry?.forget(key)) st.menu?.refresh();
     },
+    closed: () => st.registry?.recentlyClosed() ?? [],
   };
 }
 
@@ -877,9 +892,10 @@ function callMenuItemHandler<C>(
   fn: (id: string, ctx: C) => void | Promise<void>,
   id: string,
   ctx: C,
+  what = "Window menu item",
 ): void {
   const failed = (err: unknown) =>
-    st.warn(`the Window menu item "${id}" failed: ${err instanceof Error ? err.message : err}`);
+    st.warn(`the ${what} "${id}" failed: ${err instanceof Error ? err.message : err}`);
   try {
     const out = fn(id, ctx);
     if (out && typeof (out as Promise<void>).then === "function") {
@@ -923,6 +939,31 @@ function appMenuItemChosen(st: SetupState, id: string, ctx: DesktopAppMenuItemCo
   }
 }
 
+/**
+ * A Dock menu item was chosen (the backend's, or a page's quick action): hand it, once, to
+ * `desktop.ts`'s handler and to every other subscriber.
+ */
+function dockMenuItemChosen(
+  st: SetupState,
+  id: string,
+  ctx: { readonly keyWindow: { readonly id: string; readonly key?: string } | null },
+): void {
+  const first = st.options.onDockMenuItem;
+  for (const fn of [...(first ? [first] : []), ...st.dockMenuHandlers]) {
+    callMenuItemHandler(st, fn, id, ctx, "Dock menu item");
+  }
+}
+
+/** Window `ref`'s application menu read back (its id or key; `not_found` when none is open). */
+function windowMenuSnapshot(st: SetupState, ref: string) {
+  const entry = st.registry?.get(ref) ?? st.registry?.byKey(ref);
+  if (!entry) {
+    throw new DesktopCapError("not_found", `no open window "${ref}"`, { status: 404 });
+  }
+  const win = entry.window as { getApplicationMenu?(): unknown } | undefined;
+  return menuSnapshotOf(() => win?.getApplicationMenu?.());
+}
+
 /** The custom menus' calls for `desktop.ts` and extensions (over the `app` controller). */
 function appMenusApi(st: SetupState): DesktopAppMenusApi {
   const app = (): AppController => {
@@ -940,6 +981,16 @@ function appMenusApi(st: SetupState): DesktopAppMenusApi {
       st.appMenuHandlers.add(fn);
       return () => void st.appMenuHandlers.delete(fn);
     },
+    setDockMenu: (items) => app().setDockMenu(items),
+    onDockMenuItem: (fn) => {
+      st.dockMenuHandlers.add(fn);
+      return () => void st.dockMenuHandlers.delete(fn);
+    },
+    getApplicationMenu: (window) =>
+      window === undefined
+        ? menuSnapshotOf(() => st.options.api?.getApplicationMenu?.())
+        : windowMenuSnapshot(st, window),
+    getDockMenu: () => menuSnapshotOf(() => st.dock?.getMenu?.()),
   };
 }
 
@@ -994,9 +1045,13 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     menuWindows: () => menuWindows(st, registry),
     hasWindow: (id) => registry.get(id) !== undefined,
     keyWindow: () => registry.keyWindow(),
+    focusOrder: () => registry.focusOrder(),
     onMenuItem: (id, ctx) => appMenuItemChosen(st, id, ctx),
+    onDockMenuItem: (id, ctx) => dockMenuItemChosen(st, id, ctx),
   });
   st.app = app;
+  // `runDesktop({ dockMenu })`: a bad menu fails the launch, as a bad config does.
+  if (o.dockMenu) app.setDockMenu(o.dockMenu);
   st.menu = createMenu(st, registry, app);
   return [registry.router, registry.capability, app.capability];
 }
@@ -1021,6 +1076,7 @@ export function setUpDesktopWindows(given: DesktopWindowsOptions): DesktopWindow
     closedHandlers: new Map(),
     menuItemHandlers: new Set(),
     appMenuHandlers: new Set(),
+    dockMenuHandlers: new Set(),
     secondInstanceHandlers: new Set(),
   };
   const win = typeof options.window === "object" && options.window !== null
@@ -1195,6 +1251,7 @@ export function noDesktopWindows(): DesktopAppMenusApi & {
       list: () => [],
       lastSession: () => [],
       forget: () => {},
+      closed: () => [],
     },
     setDockVisible: () => false,
     setActivationPolicy: () => false,
@@ -1206,6 +1263,10 @@ export function noDesktopWindows(): DesktopAppMenusApi & {
     setMenuItemState: noMenus,
     setWindowMenuAppItems: noMenus,
     onAppMenuItem: () => () => {},
+    setDockMenu: noMenus,
+    onDockMenuItem: () => () => {},
+    getApplicationMenu: () => null,
+    getDockMenu: () => null,
   };
 }
 

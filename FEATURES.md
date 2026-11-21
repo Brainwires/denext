@@ -805,7 +805,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `src/desktop/caps/window.ts`.
 - **Embedded web views** — `createWebView` (page) / `win.createWebView` (`desktop.ts`) put another
   site in a native view inside the window, isolated from the bridge, the app's storage and its
-  navigation guard (named or ephemeral partitions; popup, download and permission policies;
+  navigation guard (named or ephemeral partitions; popup, download and permission policies, or
+  app-decided downloads (`will-download`) and permission requests (`setPermissionRequestHandler`);
   http(s) only, never the app's origin, an optional `desktop.webViews.allowedOrigins`, a
   per-window `limit`), with navigation, `state`, `capture` (a `Blob`, at a chosen scale), isolated
   `evaluate`, stacking (`raise` / `lower` / `setZOrder`), zoom, find, print, DevTools (only where

@@ -16,7 +16,8 @@
  *   runtime (elsewhere they reject `unavailable`).
  *
  * The Dock menu (macOS) is `setQuickActions` / `onQuickAction` in `denext/mobile`, the same calls
- * that set an iOS / Android app's home-screen quick actions.
+ * that set an iOS / Android app's home-screen quick actions; {@linkcode getAppMenu} /
+ * {@linkcode getDockMenu} read the native menus back for self-tests.
  *
  * A page load (a reload, a navigation) removes the tray icons and releases the shortcuts the
  * previous page created: their handlers went with it. Create them again at startup.
@@ -54,6 +55,7 @@ import type {
   DesktopMenuItemType,
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
+  MenuSnapshotItem,
 } from "./menu-config.ts";
 import { menuWire } from "./menu-wire.ts";
 import { pullQueue } from "./pull.ts";
@@ -75,6 +77,7 @@ export type {
   DesktopMenuItemType,
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
+  MenuSnapshotItem,
 };
 
 /** A standard menu item the OS draws and handles itself. */
@@ -269,6 +272,11 @@ export interface AppCapabilities {
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
   readonly dockMenu: boolean;
+  /**
+   * {@linkcode getAppMenu} / {@linkcode getDockMenu} read the native menus back (`"unknown"` on a
+   * runtime that has the calls but does not say; `false` on one without them).
+   */
+  readonly menuSnapshot: boolean | PlatformUnknown;
   /** {@linkcode setDockVisible} shows and hides the Dock icon (macOS). */
   readonly dockVisibility: boolean;
   /** The app has a backend tray ({@linkcode getTray}). */
@@ -369,6 +377,7 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     cameraAccessReason: text(raw, "cameraAccessReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
+    menuSnapshot: oneOf(raw, "menuSnapshot", [true, false]),
     dockVisibility: flag("dockVisibility"),
     backendTray: flag("backendTray"),
     trayPanel: flag("trayPanel"),
@@ -572,6 +581,31 @@ export async function getActivationPolicy(): Promise<ActivationPolicy | null> {
   const out = await desktopRpc<{ policy?: unknown }>("app", "getActivationPolicy", {});
   const p = out?.policy;
   return p === "regular" || p === "accessory" || p === "prohibited" ? p : null;
+}
+
+/**
+ * This window's application menu as the OS holds it now, read back from the native menu objects
+ * (for self-tests): what {@linkcode setAppMenu} and the managed menus ended up as, with the items
+ * the OS or the runtime added (on macOS the menu bar this window shows while it is key). `null`
+ * with no menu, or where the runtime has no read-back (`appCapabilities().menuSnapshot`).
+ *
+ * @returns The menu's items, or `null`. Off desktop it rejects `unavailable`.
+ */
+export async function getAppMenu(): Promise<MenuSnapshotItem[] | null> {
+  const menu = await desktopRpc<unknown>("app", "getAppMenu", {});
+  return Array.isArray(menu) ? menu as MenuSnapshotItem[] : null;
+}
+
+/**
+ * The Dock menu (macOS) as the OS holds it now, read back (for self-tests): the app's own items,
+ * then the pages' quick actions. `null` with none, off macOS, or where the runtime has no
+ * read-back.
+ *
+ * @returns The menu's items, or `null`. Off desktop it rejects `unavailable`.
+ */
+export async function getDockMenu(): Promise<MenuSnapshotItem[] | null> {
+  const menu = await desktopRpc<unknown>("app", "getDockMenu", {});
+  return Array.isArray(menu) ? menu as MenuSnapshotItem[] : null;
 }
 
 /**
