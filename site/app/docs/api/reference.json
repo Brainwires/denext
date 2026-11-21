@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.20.1\"",
+          "signature": "VERSION: \"4.21.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -76941,6 +76941,12 @@
               "name": "permissions",
               "signature": "permissions: string[]",
               "doc": "The `--allow-*` baked into it."
+            },
+            {
+              "kind": "property",
+              "name": "runtime",
+              "signature": "runtime?: string",
+              "doc": "The denext runtime release whose `denort` it runs on (the release the build selected).\nAbsent when `deno compile` chose its own runtime, or in a manifest from before it was recorded."
             }
           ]
         },
@@ -77177,6 +77183,12 @@
               "name": "denext",
               "signature": "denext: string",
               "doc": "The denext version that wrote it."
+            },
+            {
+              "kind": "property",
+              "name": "runtime",
+              "signature": "runtime?: { version: string | null; source: string; integrity: string | null } | null",
+              "doc": "The denext runtime release the build ran on: its version, where the choice came from\n(`\"project\"`: the `deno.json` pin, `\"default\"`: this machine's user default, `\"bundled\"`:\nthe release this denext ships with, `\"env\"` / `\"override\"` / `\"inherited\"`), and the\nrelease document's `sha256-<hex>` (`null` for the bundled pins). A deploy that should run the\nsame release pins it in `deno.json` (`denext runtime use <version> --project`). Absent in a\nmanifest from before it was recorded; `null` when no release could be told."
             },
             {
               "kind": "property",
@@ -81416,6 +81428,12 @@
               "name": "permissions",
               "signature": "permissions: string[]",
               "doc": "The `--allow-*` baked into it."
+            },
+            {
+              "kind": "property",
+              "name": "runtime",
+              "signature": "runtime?: string",
+              "doc": "The denext runtime release whose `denort` it runs on (the release the build selected).\nAbsent when `deno compile` chose its own runtime, or in a manifest from before it was recorded."
             }
           ]
         },
@@ -81632,6 +81650,12 @@
               "name": "denext",
               "signature": "denext: string",
               "doc": "The denext version that wrote it."
+            },
+            {
+              "kind": "property",
+              "name": "runtime",
+              "signature": "runtime?: { version: string | null; source: string; integrity: string | null } | null",
+              "doc": "The denext runtime release the build ran on: its version, where the choice came from\n(`\"project\"`: the `deno.json` pin, `\"default\"`: this machine's user default, `\"bundled\"`:\nthe release this denext ships with, `\"env\"` / `\"override\"` / `\"inherited\"`), and the\nrelease document's `sha256-<hex>` (`null` for the bundled pins). A deploy that should run the\nsame release pins it in `deno.json` (`denext runtime use <version> --project`). Absent in a\nmanifest from before it was recorded; `null` when no release could be told."
             },
             {
               "kind": "property",
