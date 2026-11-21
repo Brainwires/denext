@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext build --compile` prunes unused npm packages on any denext Deno.** The compile passes
+  `--exclude-unused-npm` whenever the Deno that runs it is denext's (its `Deno.build.denext`, or
+  the `denext <version> (Brainwires)` line of its `deno --version`), not only on the pinned
+  toolchain: a `DENEXT_DENO=<path>` that names a denext Deno build no longer embeds the whole
+  lockfile snapshot (the framework's build tools included) in the binary. A stock Deno still
+  embeds it.
+
 ## [4.21.0] - 2026-11-21
 
 ### Added

@@ -14,6 +14,7 @@ import {
   compileBuildFlags,
   compileFrameworkImports,
   denortBinary,
+  isDenextDenoBinary,
   neverEmbedded,
   relativeCssRedirects,
   toolchainCompileFlags,
@@ -65,6 +66,37 @@ Deno.test("toolchainCompileFlags: the toolchain's npm pruning and runtime flags,
   ]);
   // From 3.0.0-rc.5 the new abort is the runtime's default: only the npm pruning.
   assertEquals(toolchainCompileFlags("3.0.0-rc.5"), ["--exclude-unused-npm"]);
+  // denext's Deno named by DENEXT_DENO=<path> (no toolchain version): the npm pruning still
+  // applies; a stock Deno gets none.
+  assertEquals(toolchainCompileFlags(undefined, true), ["--exclude-unused-npm"]);
+  assertEquals(toolchainCompileFlags(undefined, false), []);
+});
+
+Deno.test("isDenextDenoBinary: by the binary's own identity, not by how it was chosen", async () => {
+  const current = { path: "/bin/self", identity: { deno: "3.0.0-denext.27", denext: "4.21.0" } };
+  const versions: Record<string, string> = {
+    "/opt/denext-deno": "deno 3.0.0-denext.27 (release, aarch64-apple-darwin)\n" +
+      "denext 4.21.0 (Brainwires)\nv8 14.0\ntypescript 7.0\n",
+    "/opt/stock-deno": "deno 2.9.8 (stable, release, aarch64-apple-darwin)\nv8 14.0\n",
+  };
+  const seams = {
+    current,
+    versionOutput: (bin: string) => Promise.resolve(versions[bin] ?? null),
+  };
+  // this process's own binary: its Deno.build.denext, without running it
+  assertEquals(await isDenextDenoBinary("/bin/self", seams), true);
+  assertEquals(
+    await isDenextDenoBinary("/bin/self", {
+      ...seams,
+      current: { ...current, identity: { deno: "2.9.8" } },
+    }),
+    false,
+  );
+  // another binary (DENEXT_DENO=<path>): its `deno --version` marker line
+  assertEquals(await isDenextDenoBinary("/opt/denext-deno", seams), true);
+  assertEquals(await isDenextDenoBinary("/opt/stock-deno", seams), false);
+  // one that can't be run is not known to be denext's
+  assertEquals(await isDenextDenoBinary("/opt/missing", seams), false);
 });
 
 Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere", async () => {

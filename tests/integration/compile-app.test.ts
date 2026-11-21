@@ -18,6 +18,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
+import { isDenextDenoBinary } from "../../src/build/compile-app.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
 import { boundPort } from "../helpers/port.ts";
@@ -30,6 +31,25 @@ const STORAGE_SECRET = "compile-test-storage-secret-0123456789abcdef";
 /** Whether the build runs on denext's toolchain (the default): the binary is then on its denort. */
 const ON_TOOLCHAIN = Deno.env.get("DENEXT_DENO") === undefined ||
   Deno.env.get("DENEXT_DENO") === "pinned";
+
+/**
+ * The Deno that runs the build's `deno compile`: denext's toolchain by default, else what
+ * `DENO_BIN` / `DENEXT_DENO=<path>` names, else (`DENEXT_DENO=stock`) this Deno.
+ */
+function compilingDeno(): string | undefined {
+  const choice = Deno.env.get("DENEXT_DENO");
+  if (choice === undefined || choice === "pinned") return undefined;
+  return Deno.env.get("DENO_BIN") || (choice === "stock" ? Deno.execPath() : choice);
+}
+
+/**
+ * Whether that Deno is denext's, by its own identity (a `DENEXT_DENO=<path>` may name denext's
+ * Deno too): the compile then prunes the unused npm packages (`--exclude-unused-npm`).
+ */
+async function compilesOnDenextDeno(): Promise<boolean> {
+  const bin = compilingDeno();
+  return bin === undefined || await isDenextDenoBinary(bin);
+}
 
 /** The fixture project's files (path → content). */
 function fixtureFiles(): Record<string, string> {
@@ -441,7 +461,9 @@ Deno.test({
           );
         }
         assert(!r.out.includes("--allow-all"), r.out);
-        assertSlimEmbed(r.out);
+        // Only denext's Deno prunes the npm packages the server doesn't reach: a stock Deno
+        // embeds the whole lockfile snapshot.
+        if (await compilesOnDenextDeno()) assertSlimEmbed(r.out);
         // Every local module the binary loads is reached by a relative path, so it resolves to
         // its embedded copy: an absolute one would read this checkout from disk instead.
         const compileDir = join(project, ".denext", "compile");

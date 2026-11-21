@@ -45,7 +45,13 @@ import { supplyChainConfig } from "./workspace-imports.ts";
 import { CONFIG_FILES, type ProjectPaths, resolveProject } from "./paths.ts";
 import { relativeSpecifier } from "./swc-ast.ts";
 import { netSplitFlags, supportsNetSplit } from "./net-permissions.ts";
-import { currentDenoIdentity } from "./deno-version.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  denoVersionOutput,
+  isDenextDenoVersion,
+  parseDenoVersionOutput,
+} from "./deno-version.ts";
 import {
   type CompileSignDeps,
   type CompileSignResult,
@@ -372,19 +378,67 @@ function toolchainVersion(): string | undefined {
 }
 
 /**
- * The flags only a toolchain compile gets (`version`: the toolchain's, `undefined` off it):
- * `--exclude-unused-npm` embeds only the npm packages the server's graph reaches, not the whole
- * lockfile snapshot (the framework's build tools are no part of the server), and the toolchain's
- * runtime flags are baked into the binary's metadata (`--unstable-no-legacy-abort` before runtime
- * 3.0.0-rc.5, where it became the default: the server runs as under `denext start`; the
+ * The flags only a compile on denext's Deno gets: `--exclude-unused-npm` (whenever the Deno that
+ * compiles is denext's, {@linkcode isDenextDenoBinary}, however it was chosen) embeds only the npm
+ * packages the server's graph reaches, not the whole lockfile snapshot (the framework's build tools
+ * are no part of the server), and the toolchain's runtime flags (`version`: the toolchain's,
+ * `undefined` off it) are baked into the binary's metadata (`--unstable-no-legacy-abort` before
+ * runtime 3.0.0-rc.5, where it became the default: the server runs as under `denext start`; the
  * toolchain's denort keeps it from 2.9.7-denext.21, so the first request prints no legacy-abort
  * notice).
  *
  * @param version The toolchain version this process runs on, or `undefined`.
- * @returns The flags (none off the toolchain).
+ * @param denextDeno Whether the Deno that compiles is denext's (default: whether `version` is set).
+ * @returns The flags (none on a stock Deno).
  */
-export function toolchainCompileFlags(version: string | undefined): string[] {
-  return version === undefined ? [] : ["--exclude-unused-npm", ...toolchainRuntimeFlags(version)];
+export function toolchainCompileFlags(
+  version: string | undefined,
+  denextDeno: boolean = version !== undefined,
+): string[] {
+  return [
+    ...(denextDeno ? ["--exclude-unused-npm"] : []),
+    ...(version === undefined ? [] : toolchainRuntimeFlags(version)),
+  ];
+}
+
+/**
+ * The flags a compile on the Deno denext chose gets (an explicit `deno` keeps its own):
+ * {@linkcode toolchainCompileFlags} for `deno`, then the idle trim's `trimFlags`.
+ */
+async function ownDenoFlags(deno: string, trimFlags: readonly string[]): Promise<string[]> {
+  return [
+    ...toolchainCompileFlags(toolchainVersion(), await isDenextDenoBinary(deno)),
+    ...trimFlags,
+  ];
+}
+
+/** What {@linkcode isDenextDenoBinary} reads (tests pass fakes). */
+export interface DenoBinarySeams {
+  /** This process's Deno: its path and identity (default `Deno.execPath()`, `Deno.build.denext`). */
+  readonly current?: { readonly path: string; readonly identity: DenoIdentity };
+  /** `<bin> --version`'s output, or null when it can't be run (default `denoVersionOutput`). */
+  readonly versionOutput?: (bin: string) => Promise<string | null>;
+}
+
+/**
+ * Whether `bin` (the Deno that runs `deno compile`) is denext's Deno, by what the binary says about
+ * itself: this process's `Deno.build.denext` when `bin` is this process's own executable, else the
+ * `denext <version> (Brainwires)` line of its `deno --version` (src/build/deno-version.ts). Never
+ * by `DENEXT_DENO` or the toolchain marker: `DENEXT_DENO=<path>` may name denext's Deno too.
+ *
+ * @param bin The Deno binary.
+ * @param seams Test seams.
+ * @returns Whether it is denext's Deno (`false` when its version can't be read).
+ */
+export async function isDenextDenoBinary(
+  bin: string,
+  seams: DenoBinarySeams = {},
+): Promise<boolean> {
+  const current = seams.current ?? { path: Deno.execPath(), identity: currentDenoIdentity() };
+  const identity = bin === current.path
+    ? current.identity
+    : parseDenoVersionOutput(await (seams.versionOutput ?? denoVersionOutput)(bin) ?? "");
+  return identity !== null && isDenextDenoVersion(identity);
 }
 
 /** How {@linkcode denortBinary} reaches the toolchain (tests pass fakes). */
@@ -877,7 +931,7 @@ export async function compileApp(
     "compile",
     "--no-check",
     "--unstable-sloppy-imports",
-    ...(options.deno ? [] : [...toolchainCompileFlags(toolchainVersion()), ...trimFlags]),
+    ...(options.deno ? [] : await ownDenoFlags(deno, trimFlags)),
     ...limitFlags,
     // start.tls with several certificates needs the unstable net APIs, and the compile config
     // above carries no `unstable` from the project's deno.json.
